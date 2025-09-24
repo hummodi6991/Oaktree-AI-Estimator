@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: oaktree-estimator
+  labels: { app: oaktree-estimator }
+spec:
+  selector: { app: oaktree-estimator }
+  type: LoadBalancer
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000

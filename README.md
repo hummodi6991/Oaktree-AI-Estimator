@@ -23,14 +23,12 @@ pytest -q
 - `GET /v1/comps`
 - `POST /v1/estimates` (returns placeholder P50 pro-forma)
 
-## Deploy (Google Cloud Run, me-central2)
+## Deploy (sccc by stc / Alibaba Cloud Riyadh, me-central-1)
 
-1. Create a GCP project bound to CNTXT billing; enable: Cloud Run, Cloud SQL Admin, Artifact Registry, Secret Manager, Cloud Build.
-2. Create an Artifact Registry repo (Docker) and Cloud SQL (Postgres). Put the DB password in Secret Manager as `DB_PASSWORD`.
-3. Configure Workload Identity Federation (OIDC) for GitHub; create service account `github-deployer` with the required roles.
-4. In GitHub → **Settings → Actions** configure:
-   - **Variables**: `PROJECT_ID`, `REGION=me-central2`, `AR_REPO`, `SERVICE`
-   - **Secrets**: `GCP_PROJECT_NUMBER`
-5. Merge this PR; pushes to `main` trigger the **Deploy to GCP** workflow.
+1. In sccc by stc (Alibaba Cloud Riyadh), provision an ACK cluster in `me-central-1` and an ACR instance reachable at `cr.me-central-1.aliyuncs.com`. Create a RAM role that trusts GitHub’s OIDC provider so the workflow can exchange its short-lived token for STS credentials—no long-lived secrets are required.
+2. In GitHub → **Settings → Actions** configure:
+   - **Variables**: `ALIBABA_REGION=me-central-1`, `ACR_NAMESPACE`, `SERVICE_NAME`, `ACK_CLUSTER_ID`
+   - **Secrets**: `ALIBABA_CLOUD_ACR_INSTANCE_ID`, `ALIBABA_CLOUD_RAM_ROLE_ARN`, `ALIBABA_CLOUD_RAM_OIDC_ARN`
+3. Pushes to `main` trigger `.github/workflows/deploy-sccc.yml`. The workflow builds the Docker image, pushes it to ACR at `cr.me-central-1.aliyuncs.com`, then applies the manifests in `k8s/` to update the ACK deployment.
 
 No secrets are committed. For production, switch the database to HA and add RBAC/SSO per the roadmap.  [oai_citation:5‡AI App Blueprint .docx](file-service://file-ALgZg1S1QWVEsFVxeedqkv)
