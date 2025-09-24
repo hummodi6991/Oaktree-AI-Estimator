@@ -1,0 +1,3 @@
+- Python 3.11, FastAPI, SQLAlchemy, Alembic.
+- JSON responses use `{ "items": [...] }` for list endpoints.
+- Add docs in README when changing API behavior.
