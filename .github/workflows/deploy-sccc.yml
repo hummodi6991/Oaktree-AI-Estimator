@@ -48,11 +48,11 @@ jobs:
       - name: Get temporary ACR login (STS)
         id: acr
         run: |
-          # fetch a short-lived Docker username/password for ACR EE (force JSON per command)
-          JSON=$(aliyun --output json cr GetAuthorizationToken --RegionId "$ALIBABA_REGION" --InstanceId "$ACR_INSTANCE_ID")
-          # support both response shapes (classic vs data.{...})
-          ACR_USER=$(echo "$JSON" | jq -r '.TempUsername // .data.tempUserName')
-          ACR_PASS=$(echo "$JSON" | jq -r '.AuthorizationToken // .data.authorizationToken')
+          # Fetch a short-lived Docker username/password for ACR EE (no --output flags)
+          JSON=$(aliyun cr GetAuthorizationToken --RegionId "$ALIBABA_REGION" --InstanceId "$ACR_INSTANCE_ID")
+          # Support multiple response shapes
+          ACR_USER=$(echo "$JSON" | jq -r '.TempUsername // .tempUserName // .data.tempUserName // .data.TempUsername')
+          ACR_PASS=$(echo "$JSON" | jq -r '.AuthorizationToken // .authorizationToken // .data.authorizationToken // .data.AuthorizationToken')
           if [ -z "$ACR_USER" ] || [ -z "$ACR_PASS" ]; then
             echo "Failed to parse ACR token response" >&2
             echo "$JSON" | jq -r 'del(.AuthorizationToken,.data.authorizationToken)' >&2
@@ -77,7 +77,7 @@ jobs:
       - name: Get kubeconfig for ACK
         id: kube
         run: |
-          aliyun cs DescribeClusterUserKubeconfig --RegionId "$ALIBABA_REGION" --ClusterId "$ACK_CLUSTER_ID" --Output json | jq -r '.config' > kubeconfig
+          aliyun cs DescribeClusterUserKubeconfig --RegionId "$ALIBABA_REGION" --ClusterId "$ACK_CLUSTER_ID" | jq -r '.config' > kubeconfig
           echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
 
       # 6) Deploy to ACK (patch image and apply)
