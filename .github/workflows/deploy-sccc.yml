@@ -11,7 +11,6 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write   # required for OIDC
   contents: read
 
 env:
@@ -20,6 +19,7 @@ env:
   ACR_NAMESPACE: ${{ vars.ACR_NAMESPACE }}              # e.g., oaktree
   SERVICE_NAME: ${{ vars.SERVICE_NAME }}                # e.g., oaktree-estimator
   ACK_CLUSTER_ID: ${{ vars.ACK_CLUSTER_ID }}            # e.g., c5b5e80b0b64a4bf...
+  ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}        # e.g., oaktree-ai-estimator-registry.me-central-1.cr.aliyuncs.com
 
 jobs:
   deploy:
@@ -27,15 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1) OIDC -> Alibaba Cloud STS credentials
-      - name: Authenticate to Alibaba Cloud (OIDC)
-        uses: mozillazg/alibabacloud-oidc-auth@v1
-        with:
-          role-arn-to-assume: ${{ secrets.ALIBABA_CLOUD_RAM_ROLE_ARN }}
-          oidc-provider-arn: ${{ secrets.ALIBABA_CLOUD_RAM_OIDC_ARN }}
-          export-environment-variables: 'true'
-
-      # 2) Tooling
+      # 1) Tooling
       - name: Install CLI tooling (aliyun, kubectl, jq)
         run: |
           sudo apt-get update && sudo apt-get install -y jq
@@ -43,24 +35,31 @@ jobs:
           tar -xzf aliyun.tgz && sudo mv aliyun /usr/local/bin/aliyun
           curl -L -o kubectl https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
           chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
+      # 2) Configure Alibaba Cloud credentials (AK/SK workaround until OIDC is enabled)
+      - name: Configure Alibaba Cloud credentials
+        run: |
+          aliyun configure set \
+            --mode AK \
+            --access-key-id "${{ secrets.ALIBABA_ACCESS_KEY_ID }}" \
+            --access-key-secret "${{ secrets.ALIBABA_ACCESS_KEY_SECRET }}" \
+            --region "${{ env.ALIBABA_REGION }}"
 
-      # 3) Ephemeral ACR login (no static secrets)
+      # 3) Ephemeral ACR login (token from ACR API)
       - name: Get temporary ACR login (STS)
         id: acr
         run: |
           JSON=$(aliyun cr GetAuthorizationToken --RegionId "$ALIBABA_REGION" --InstanceId "$ACR_INSTANCE_ID" --Output json)
           echo "acr_username=$(echo "$JSON" | jq -r '.TempUsername')" >> "$GITHUB_OUTPUT"
           echo "acr_password=$(echo "$JSON" | jq -r '.AuthorizationToken')" >> "$GITHUB_OUTPUT"
-          echo "login_server=cr.${ALIBABA_REGION}.aliyuncs.com" >> "$GITHUB_OUTPUT"
 
       - name: Docker login to ACR
-        run: echo "${{ steps.acr.outputs.acr_password }}" | docker login ${{ steps.acr.outputs.login_server }} -u "${{ steps.acr.outputs.acr_username }}" --password-stdin
+        run: echo "${{ steps.acr.outputs.acr_password }}" | docker login "${{ env.ACR_LOGIN_SERVER }}" -u "${{ steps.acr.outputs.acr_username }}" --password-stdin
 
       # 4) Build & push Docker image to ACR
       - name: Build & push image
         id: img
         run: |
-          IMAGE="${{ steps.acr.outputs.login_server }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+          IMAGE="${{ env.ACR_LOGIN_SERVER }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
