@@ -48,10 +48,9 @@ jobs:
       - name: Get temporary ACR login (STS)
         id: acr
         run: |
-          # Ensure aliyun prints JSON, then fetch short-lived ACR Docker creds
-          aliyun configure set --output json
-          JSON=$(aliyun cr GetAuthorizationToken --RegionId "$ALIBABA_REGION" --InstanceId "$ACR_INSTANCE_ID" --output json)
-          # Support both response shapes (classic and data.*)
+          # fetch a short-lived Docker username/password for ACR EE (force JSON per command)
+          JSON=$(aliyun --output json cr GetAuthorizationToken --RegionId "$ALIBABA_REGION" --InstanceId "$ACR_INSTANCE_ID")
+          # support both response shapes (classic vs data.{...})
           ACR_USER=$(echo "$JSON" | jq -r '.TempUsername // .data.tempUserName')
           ACR_PASS=$(echo "$JSON" | jq -r '.AuthorizationToken // .data.authorizationToken')
           if [ -z "$ACR_USER" ] || [ -z "$ACR_PASS" ]; then
