@@ -48,9 +48,19 @@ jobs:
       - name: Get temporary ACR login (STS)
         id: acr
         run: |
-          JSON=$(aliyun cr GetAuthorizationToken --RegionId "$ALIBABA_REGION" --InstanceId "$ACR_INSTANCE_ID" --Output json)
-          echo "acr_username=$(echo "$JSON" | jq -r '.TempUsername')" >> "$GITHUB_OUTPUT"
-          echo "acr_password=$(echo "$JSON" | jq -r '.AuthorizationToken')" >> "$GITHUB_OUTPUT"
+          # Ensure aliyun prints JSON, then fetch short-lived ACR Docker creds
+          aliyun configure set --output json
+          JSON=$(aliyun cr GetAuthorizationToken --RegionId "$ALIBABA_REGION" --InstanceId "$ACR_INSTANCE_ID" --output json)
+          # Support both response shapes (classic and data.*)
+          ACR_USER=$(echo "$JSON" | jq -r '.TempUsername // .data.tempUserName')
+          ACR_PASS=$(echo "$JSON" | jq -r '.AuthorizationToken // .data.authorizationToken')
+          if [ -z "$ACR_USER" ] || [ -z "$ACR_PASS" ]; then
+            echo "Failed to parse ACR token response" >&2
+            echo "$JSON" | jq -r 'del(.AuthorizationToken,.data.authorizationToken)' >&2
+            exit 1
+          fi
+          echo "acr_username=$ACR_USER" >> "$GITHUB_OUTPUT"
+          echo "acr_password=$ACR_PASS" >> "$GITHUB_OUTPUT"
 
       - name: Docker login to ACR
         run: echo "${{ steps.acr.outputs.acr_password }}" | docker login "${{ env.ACR_LOGIN_SERVER }}" -u "${{ steps.acr.outputs.acr_username }}" --password-stdin
