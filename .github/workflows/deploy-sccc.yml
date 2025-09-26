@@ -35,6 +35,16 @@ jobs:
           tar -xzf aliyun.tgz && sudo mv aliyun /usr/local/bin/aliyun
           curl -L -o kubectl https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
           chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
+
+      # Normalize registry host (strip scheme, CR/LF, trailing slashes)
+      - name: Normalize ACR registry host
+        id: reg
+        run: |
+          R="${ACR_LOGIN_SERVER}"
+          R="${R#http://}"; R="${R#https://}"
+          R="$(printf '%s' "$R" | tr -d '\r' | tr -d '\n' | sed 's:/*$::')"
+          echo "host=$R" >> "$GITHUB_OUTPUT"
+          echo "ACR_REG_HOST=$R" >> "$GITHUB_ENV"
       # 2) Configure Alibaba Cloud credentials (AK/SK workaround until OIDC is enabled)
       - name: Configure Alibaba Cloud credentials
         run: |
@@ -62,13 +72,13 @@ jobs:
           echo "acr_password=$ACR_PASS" >> "$GITHUB_OUTPUT"
 
       - name: Docker login to ACR
-        run: echo "${{ steps.acr.outputs.acr_password }}" | docker login "${{ env.ACR_LOGIN_SERVER }}" -u "${{ steps.acr.outputs.acr_username }}" --password-stdin
+        run: echo "${{ steps.acr.outputs.acr_password }}" | docker login "${{ steps.reg.outputs.host }}" -u "${{ steps.acr.outputs.acr_username }}" --password-stdin
 
       # 4) Build & push Docker image to ACR
       - name: Build & push image
         id: img
         run: |
-          IMAGE="${{ env.ACR_LOGIN_SERVER }}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+          IMAGE="${ACR_REG_HOST}/${{ env.ACR_NAMESPACE }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
