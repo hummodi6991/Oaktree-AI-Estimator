@@ -25,10 +25,11 @@ pytest -q
 
 ## Deploy (sccc by stc / Alibaba Cloud Riyadh, me-central-1)
 
-1. In sccc by stc (Alibaba Cloud Riyadh), provision an ACK cluster in `me-central-1` and an ACR instance reachable at `cr.me-central-1.aliyuncs.com`. Create a RAM role that trusts GitHub’s OIDC provider so the workflow can exchange its short-lived token for STS credentials—no long-lived secrets are required.
-2. In GitHub → **Settings → Actions** configure:
-   - **Variables**: `ALIBABA_REGION=me-central-1`, `ACR_NAMESPACE`, `SERVICE_NAME`, `ACK_CLUSTER_ID`
-   - **Secrets**: `ALIBABA_CLOUD_ACR_INSTANCE_ID`, `ALIBABA_CLOUD_RAM_ROLE_ARN`, `ALIBABA_CLOUD_RAM_OIDC_ARN`
-3. Pushes to `main` trigger `.github/workflows/deploy-sccc.yml`. The workflow builds the Docker image, pushes it to ACR at `cr.me-central-1.aliyuncs.com`, then applies the manifests in `k8s/` to update the ACK deployment.
+1. In sccc by stc (Alibaba Cloud Riyadh), provision an ACK cluster in `me-central-1` and an **Enterprise ACR instance** (the registry should expose a domain such as `oaktree-ai-estimator-registry.me-central-1.cr.aliyuncs.com`).
+2. Until GitHub OIDC is enabled in the region, the workflow authenticates with AK/SK credentials. In GitHub → **Settings → Actions** configure:
+   - **Variables**: `ALIBABA_REGION=me-central-1`, `ACR_NAMESPACE`, `SERVICE_NAME`, `ACK_CLUSTER_ID`, `ACR_LOGIN_SERVER=<enterprise-acr-domain>`
+   - **Secrets**: `ALIBABA_CLOUD_ACR_INSTANCE_ID`, `ALIBABA_ACCESS_KEY_ID`, `ALIBABA_ACCESS_KEY_SECRET`
+3. Pushes to `main` trigger `.github/workflows/deploy-sccc.yml`. The workflow builds the Docker image, pushes it to the Enterprise ACR domain specified in `ACR_LOGIN_SERVER`, then applies the manifests in `k8s/` to update the ACK deployment.
+4. (Preferred, once available) Switch back to GitHub OIDC by providing `ALIBABA_CLOUD_RAM_ROLE_ARN` and `ALIBABA_CLOUD_RAM_OIDC_ARN` secrets and removing the AK/SK credentials.
 
 No secrets are committed. For production, switch the database to HA and add RBAC/SSO per the roadmap.  [oai_citation:5‡AI App Blueprint .docx](file-service://file-ALgZg1S1QWVEsFVxeedqkv)
