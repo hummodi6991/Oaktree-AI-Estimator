@@ -88,3 +88,16 @@ class AssumptionLedger(Base):
     unit = Column(String(16))
     owner = Column(String(64))
     created_at = Column(DateTime)
+
+
+class BoqItem(Base):
+    __tablename__ = "boq_item"
+
+    code = Column(String(32), primary_key=True)
+    description = Column(String(256), nullable=False)
+    uom = Column(String(16), nullable=False, default="m2")
+    quantity_per_m2 = Column(Numeric(12, 4), nullable=False, default=1.0)
+    baseline_unit_cost = Column(Numeric(12, 2), nullable=False)
+    city_factor = Column(Numeric(6, 3), nullable=False, default=1.000)
+    volatility_tag = Column(String(32))
+    source_url = Column(String(512))
