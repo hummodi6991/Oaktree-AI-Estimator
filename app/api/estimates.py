@@ -19,6 +19,36 @@ from app.models.tables import EstimateHeader, EstimateLine
 router = APIRouter(tags=["estimates"])
 
 
+_INMEM_HEADERS: dict[str, dict[str, Any]] = {}
+_INMEM_LINES: dict[str, list[dict[str, Any]]] = {}
+
+
+def _supports_sqlalchemy(db: Any) -> bool:
+    """Return True when the dependency looks like a SQLAlchemy session."""
+
+    required = ("add", "add_all", "commit", "query", "get")
+    return all(hasattr(db, attr) for attr in required)
+
+
+def _persist_inmemory(
+    estimate_id: str,
+    strategy: str,
+    totals: dict[str, Any],
+    notes: dict[str, Any],
+    assumptions: list[dict[str, Any]],
+    lines: list[dict[str, Any]],
+) -> None:
+    """Persist estimate data in a simple in-memory store (used in tests)."""
+
+    _INMEM_HEADERS[estimate_id] = {
+        "strategy": strategy,
+        "totals": dict(totals),
+        "notes": notes.copy() if isinstance(notes, dict) else dict(notes or {}),
+        "assumptions": [dict(a) for a in assumptions],
+    }
+    _INMEM_LINES[estimate_id] = [dict(line) for line in lines]
+
+
 class UnitMix(BaseModel):
     type: str
     count: int
@@ -126,45 +156,128 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
     ]
 
     # Persist
-    if all(hasattr(db, attr) for attr in ("add", "add_all", "commit")):
-        est_id = str(uuid.uuid4())
+    est_id = str(uuid.uuid4())
+    totals = result["totals"]
+    notes_payload = {"bands": bands, "notes": result["notes"]}
+    assumptions = result["assumptions"]
+    line_dicts: list[dict[str, Any]] = []
+    for key in ["land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"]:
+        line_dicts.append(
+            {
+                "estimate_id": est_id,
+                "category": "cost" if key != "revenues" else "revenue",
+                "key": key,
+                "value": totals[key],
+                "unit": "SAR",
+                "source_type": "Model",
+                "owner": "api",
+                "url": None,
+                "model_version": None,
+                "created_at": None,
+            }
+        )
+    for assumption in assumptions:
+        line_dicts.append(
+            {
+                "estimate_id": est_id,
+                "category": "assumption",
+                "key": assumption["key"],
+                "value": assumption.get("value"),
+                "unit": assumption.get("unit"),
+                "source_type": assumption.get("source_type"),
+                "owner": "api",
+                "url": None,
+                "model_version": None,
+                "created_at": None,
+            }
+        )
+
+    if _supports_sqlalchemy(db):
+        orm_lines = [EstimateLine(**entry) for entry in line_dicts]
         header = EstimateHeader(
             id=est_id,
             strategy=req.strategy,
             input_json=json.dumps(req.model_dump()),
-            totals_json=json.dumps(result["totals"]),
-            notes_json=json.dumps({"bands": bands, "notes": result["notes"]}),
+            totals_json=json.dumps(totals),
+            notes_json=json.dumps(notes_payload),
         )
         db.add(header)
-        # store lines (cost/revenue + assumptions)
-        lines = []
-        t = result["totals"]
-        for k in ["land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"]:
-            lines.append(EstimateLine(estimate_id=est_id, category="cost" if k != "revenues" else "revenue", key=k, value=t[k], unit="SAR", source_type="Model", owner="api"))
-        for a in result["assumptions"]:
-            lines.append(EstimateLine(estimate_id=est_id, category="assumption", key=a["key"], value=a.get("value"), unit=a.get("unit"), source_type=a.get("source_type"), owner="api"))
-        db.add_all(lines)
-        db.commit()
-
-        result["id"] = est_id
+        db.add_all(orm_lines)
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
     else:
-        result["id"] = None
+        _persist_inmemory(est_id, req.strategy, totals, notes_payload, assumptions, line_dicts)
+
+    result["id"] = est_id
     return result
 
 
 @router.get("/estimates/{estimate_id}")
 def get_estimate(estimate_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
-    header = db.get(EstimateHeader, estimate_id)
-    if not header:
-        raise HTTPException(status_code=404, detail="Estimate not found")
-    totals = json.loads(header.totals_json)
-    notes = json.loads(header.notes_json) if header.notes_json else {}
-    rows = db.query(EstimateLine).filter(EstimateLine.estimate_id == estimate_id).all()
-    assumptions = [
-        {"key": r.key, "value": float(r.value) if r.value is not None else None, "unit": r.unit, "source_type": r.source_type}
-        for r in rows if r.category == "assumption"
-    ]
-    return {"id": estimate_id, "strategy": header.strategy, "totals": totals, "assumptions": assumptions, "notes": notes}
+    if _supports_sqlalchemy(db):
+        header = db.get(EstimateHeader, estimate_id)
+        if header:
+            totals = json.loads(header.totals_json)
+            notes = json.loads(header.notes_json) if header.notes_json else {}
+            rows = db.query(EstimateLine).filter(EstimateLine.estimate_id == estimate_id).all()
+            assumptions_source: list[dict[str, Any]] = [
+                {
+                    "key": r.key,
+                    "value": float(r.value) if r.value is not None else None,
+                    "unit": r.unit,
+                    "source_type": r.source_type,
+                }
+                for r in rows
+                if r.category == "assumption"
+            ]
+            strategy = header.strategy
+        else:
+            record = _INMEM_HEADERS.get(estimate_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail="Estimate not found")
+            totals = dict(record.get("totals", {}))
+            notes = record.get("notes", {})
+            assumptions_source = list(record.get("assumptions", []))
+            strategy = record.get("strategy")
+    else:
+        record = _INMEM_HEADERS.get(estimate_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Estimate not found")
+        totals = dict(record.get("totals", {}))
+        notes = record.get("notes", {})
+        assumptions_source = list(record.get("assumptions", []))
+        strategy = record.get("strategy")
+
+    normalized_assumptions = []
+    for item in assumptions_source:
+        value = item.get("value")
+        if value is not None:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                pass
+        normalized_assumptions.append(
+            {
+                "key": item.get("key"),
+                "value": value,
+                "unit": item.get("unit"),
+                "source_type": item.get("source_type"),
+            }
+        )
+
+    notes_dict = notes.copy() if isinstance(notes, dict) else dict(notes or {})
+
+    return {
+        "id": estimate_id,
+        "strategy": strategy,
+        "totals": totals,
+        "assumptions": normalized_assumptions,
+        "notes": notes_dict,
+    }
+
 
 
 class ScenarioPatch(BaseModel):
@@ -202,10 +315,44 @@ def export_estimate(estimate_id: str, format: Literal["json","csv"] = "json", db
     if format == "json":
         return base
     # CSV (lines)
-    rows = db.query(EstimateLine).filter(EstimateLine.estimate_id == estimate_id).all()
+    rows_data: list[dict[str, Any]] = []
+    if _supports_sqlalchemy(db):
+        rows = db.query(EstimateLine).filter(EstimateLine.estimate_id == estimate_id).all()
+        rows_data = [
+            {
+                "category": r.category,
+                "key": r.key,
+                "value": r.value,
+                "unit": r.unit,
+                "source_type": r.source_type,
+                "url": getattr(r, "url", None),
+                "model_version": getattr(r, "model_version", None),
+                "owner": r.owner,
+                "created_at": getattr(r, "created_at", None),
+            }
+            for r in rows
+        ]
+    if not rows_data:
+        fallback_lines = _INMEM_LINES.get(estimate_id, [])
+        rows_data = [dict(line) for line in fallback_lines]
+    if not rows_data:
+        raise HTTPException(status_code=404, detail="Estimate lines not found")
+
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["category", "key", "value", "unit", "source_type", "url", "model_version", "owner", "created_at"])
-    for r in rows:
-        w.writerow([r.category, r.key, r.value, r.unit, r.source_type, r.url, r.model_version, r.owner, r.created_at])
+    for row in rows_data:
+        w.writerow(
+            [
+                row.get("category"),
+                row.get("key"),
+                row.get("value"),
+                row.get("unit"),
+                row.get("source_type"),
+                row.get("url"),
+                row.get("model_version"),
+                row.get("owner"),
+                row.get("created_at"),
+            ]
+        )
     return Response(content=buf.getvalue(), media_type="text/csv")
