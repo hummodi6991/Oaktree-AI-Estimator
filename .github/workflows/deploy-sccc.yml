@@ -8,6 +8,7 @@ on:
       - "Dockerfile"
       - ".github/workflows/deploy-sccc.yml"
       - "k8s/**"
+      - "models/**"
   workflow_dispatch:
 
 permissions:
