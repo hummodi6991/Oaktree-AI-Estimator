@@ -64,9 +64,13 @@ jobs:
 
       - name: Prepare schema (alembic) + seed (only for ephemeral)
         if: ${{ inputs.use_ephemeral_db == 'true' }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           alembic upgrade head
           python -m app.ingest.seed
+          python -m app.ingest.seed_boq
+          python -m app.ingest.seed_indicators
 
       - name: Train and save model
         run: |
