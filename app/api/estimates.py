@@ -14,6 +14,8 @@ from app.services.financing import compute_financing
 from app.services.proforma import assemble
 from app.services.revenue import build_to_sell_revenue, build_to_lease_revenue
 from app.services.simulate import p_bands
+from app.services.residual import residual_land_value
+from app.services.cashflow import build_equity_cashflow
 from app.models.tables import EstimateHeader, EstimateLine
 
 router = APIRouter(tags=["estimates"])
@@ -99,7 +101,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
     if not ppm2:
         ppm2 = 2800.0
     meta = meta or {}
-    land_value = site_area_m2 * ppm2
+    hedonic_land_value = site_area_m2 * ppm2
 
     # Hard + soft
     asof = date.today().replace(day=1)
@@ -131,14 +133,12 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
 
     # Totals + uncertainty
     result = assemble(
-        land_value=land_value,
+        land_value=hedonic_land_value,
         hard_costs=hard_costs,
         soft_costs=soft_costs,
         financing_interest=fin["interest"],
         revenues=rev["gdv"],
     )
-    bands = p_bands(result["totals"]["p50_profit"], drivers={"land_ppm2": (1.0, 0.10), "unit_cost": (1.0, 0.08), "gdv_m2_price": (1.0, 0.10)})
-    result["confidence_bands"] = bands
     result["notes"] = {
         "site_area_m2": round(site_area_m2, 2),
         "nfa_m2": round(nfa, 2),
@@ -154,6 +154,43 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
         {"key": "ltv", "value": req.financing_params.ltv, "source_type": "Manual"},
         {"key": "margin_bps", "value": req.financing_params.margin_bps, "source_type": "Manual"},
     ]
+
+    # --- Residual land value & combiner (simple weight by comps density) ---
+    rlv = residual_land_value(rev["gdv"], hard_costs, soft_costs, fin["interest"], dev_margin_pct=0.15)
+    comps_n = meta.get("n_comps", 0) or 0
+    w_hedonic = min(1.0, comps_n / 8.0)
+    w_resid = 1.0 - w_hedonic
+    combined_land = w_hedonic * hedonic_land_value + w_resid * rlv
+    result["land_value_breakdown"] = {
+        "hedonic": hedonic_land_value,
+        "residual": rlv,
+        "combined": combined_land,
+        "weights": {"hedonic": w_hedonic, "residual": w_resid},
+        "comps_used": comps_n,
+    }
+    result["totals"]["land_value"] = combined_land
+    result["totals"]["p50_profit"] = result["totals"]["revenues"] - (
+        combined_land + result["totals"]["hard_costs"] + result["totals"]["soft_costs"] + result["totals"]["financing"]
+    )
+    result["confidence_bands"] = p_bands(
+        result["totals"]["p50_profit"],
+        drivers={"land_ppm2": (1.0, 0.10), "unit_cost": (1.0, 0.08), "gdv_m2_price": (1.0, 0.10)},
+    )
+    bands = result["confidence_bands"]
+
+    # --- Monthly cashflow & IRR (equity view) ---
+    cf = build_equity_cashflow(
+        months=req.timeline.months,
+        land_value=combined_land,
+        hard_costs=hard_costs,
+        soft_costs=soft_costs,
+        gdv=rev["gdv"],
+        apr=fin["apr"],
+        ltv=req.financing_params.ltv,
+        sales_cost_pct=0.02,
+    )
+    result["metrics"] = {"irr_annual": cf["irr_annual"]}
+    result["cashflow"] = {"monthly": cf["schedule"], "peaks": cf["peaks"]}
 
     # Persist
     est_id = str(uuid.uuid4())
