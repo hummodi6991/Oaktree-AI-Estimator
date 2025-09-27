@@ -1,4 +1,7 @@
 from logging.config import fileConfig
+import sys, pathlib
+# add repo root to sys.path so `import app` works when alembic runs in CI
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from alembic import context
 
