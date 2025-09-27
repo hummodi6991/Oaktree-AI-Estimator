@@ -15,6 +15,7 @@ from app.services.proforma import assemble
 from app.services.revenue import build_to_sell_revenue, build_to_lease_revenue
 from app.services.simulate import p_bands
 from app.services.explain import top_sale_comps, to_comp_dict, heuristic_drivers
+from app.services.pdf import build_memo_pdf
 from app.services.residual import residual_land_value
 from app.services.cashflow import build_equity_cashflow
 from app.models.tables import EstimateHeader, EstimateLine
@@ -400,3 +401,24 @@ def export_estimate(estimate_id: str, format: Literal["json","csv"] = "json", db
             ]
         )
     return Response(content=buf.getvalue(), media_type="text/csv")
+
+
+@router.get("/estimates/{estimate_id}/memo.pdf")
+def export_pdf(estimate_id: str, db: Session = Depends(get_db)):
+    base = get_estimate(estimate_id, db)
+    comps_rows = top_sale_comps(db, city=None, district=None, asset_type="land", since=None, limit=8)
+    comps = [to_comp_dict(r) for r in comps_rows]
+    try:
+        pdf_bytes = build_memo_pdf(
+            title=f"Estimate {estimate_id}",
+            totals=base["totals"],
+            assumptions=base.get("assumptions", []),
+            top_comps=comps,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="estimate_{estimate_id}.pdf"'},
+    )
