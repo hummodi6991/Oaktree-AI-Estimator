@@ -14,6 +14,7 @@ from app.services.financing import compute_financing
 from app.services.proforma import assemble
 from app.services.revenue import build_to_sell_revenue, build_to_lease_revenue
 from app.services.simulate import p_bands
+from app.services.explain import top_sale_comps, to_comp_dict, heuristic_drivers
 from app.services.residual import residual_land_value
 from app.services.cashflow import build_equity_cashflow
 from app.models.tables import EstimateHeader, EstimateLine
@@ -154,6 +155,12 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
         {"key": "ltv", "value": req.financing_params.ltv, "source_type": "Manual"},
         {"key": "margin_bps", "value": req.financing_params.margin_bps, "source_type": "Manual"},
     ]
+    # Explainability (top comps + drivers)
+    comps_rows = top_sale_comps(db, city=req.city, district=None, asset_type="land", since=None, limit=10)
+    result["explainability"] = {
+        "top_comps": [to_comp_dict(r) for r in comps_rows],
+        "drivers": heuristic_drivers(ppm2, comps_rows),
+    }
 
     # --- Residual land value & combiner (simple weight by comps density) ---
     rlv = residual_land_value(rev["gdv"], hard_costs, soft_costs, fin["interest"], dev_margin_pct=0.15)
