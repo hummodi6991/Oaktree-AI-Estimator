@@ -147,6 +147,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
         "cci_scalar": hard.get("cci_scalar"),
         "financing_apr": fin["apr"],
         "revenue_lines": rev.get("lines", []),
+        "land_model": meta.get("model"),  # shows {"model_used": true/false, mape, n_rows}
     }
     result["assumptions"] = [
         {"key": "ppm2", "value": ppm2, "unit": "SAR/m2", "source_type": "Model" if meta.get("n_comps", 0) > 0 else "Manual"},
