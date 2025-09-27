@@ -1,5 +1,9 @@
 from typing import List, Dict, Any
-from fpdf import FPDF
+
+try:  # pragma: no cover - dependency availability handled at runtime
+    from fpdf import FPDF
+except ModuleNotFoundError:  # pragma: no cover
+    FPDF = None  # type: ignore[assignment]
 
 
 def _fmt_money(x: float | None) -> str:
@@ -15,6 +19,8 @@ def build_memo_pdf(
     assumptions: List[Dict[str, Any]],
     top_comps: List[Dict[str, Any]],
 ) -> bytes:
+    if FPDF is None:
+        raise RuntimeError("fpdf library is not installed")
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.set_title(title)
