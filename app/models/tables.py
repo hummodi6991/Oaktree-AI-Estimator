@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, Numeric, DateTime
+from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, Text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.base import Base
@@ -101,3 +101,44 @@ class BoqItem(Base):
     city_factor = Column(Numeric(6, 3), nullable=False, default=1.000)
     volatility_tag = Column(String(32))
     source_url = Column(String(512))
+
+
+class MarketIndicator(Base):
+    __tablename__ = "market_indicator"
+
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False)
+    city = Column(String(64), nullable=False)
+    asset_type = Column(String(32), nullable=False)
+    indicator_type = Column(String(32), nullable=False)
+    value = Column(Numeric(12, 2), nullable=False)
+    unit = Column(String(16), nullable=False)
+    source_url = Column(String(512))
+    asof_date = Column(Date)
+
+
+class EstimateHeader(Base):
+    __tablename__ = "estimate_header"
+
+    id = Column(String(36), primary_key=True)
+    created_at = Column(DateTime)
+    strategy = Column(String(32), nullable=False)
+    input_json = Column(Text, nullable=False)
+    totals_json = Column(Text, nullable=False)
+    notes_json = Column(Text)
+
+
+class EstimateLine(Base):
+    __tablename__ = "estimate_line"
+
+    id = Column(Integer, primary_key=True)
+    estimate_id = Column(String(36), nullable=False)
+    category = Column(String(32), nullable=False)
+    key = Column(String(64), nullable=False)
+    value = Column(Numeric(18, 4))
+    unit = Column(String(16))
+    source_type = Column(String(16))
+    url = Column(String(512))
+    model_version = Column(String(64))
+    owner = Column(String(64))
+    created_at = Column(DateTime)
