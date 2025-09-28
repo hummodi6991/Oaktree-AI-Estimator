@@ -3,7 +3,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0003_market_indicators_and_estimates"
+revision = "0003_market_ind_est"
 down_revision = "0002_boq"  # or "0001_initial" if you skipped 0002
 branch_labels = None
 depends_on = None
