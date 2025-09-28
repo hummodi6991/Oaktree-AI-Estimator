@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.comps import router as comps_router
 from app.api.estimates import router as estimates_router
+from app.api.geo_portal import router as geo_router
 from app.api.health import router as health_router
 from app.api.indices import router as indices_router
 from app.api.ingest import router as ingest_router
@@ -25,3 +26,4 @@ app.include_router(comps_router, prefix="/v1")
 app.include_router(estimates_router, prefix="/v1")
 app.include_router(metadata_router, prefix="/v1")
 app.include_router(ingest_router)
+app.include_router(geo_router)
