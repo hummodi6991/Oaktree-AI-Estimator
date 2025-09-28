@@ -14,5 +14,28 @@ class Settings:
     DB_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
     DB_PORT: int = int(os.getenv("POSTGRES_PORT", "5432"))
 
+    # --- External data & APIs (env-driven) ---
+    # ArcGIS (البوابة المكانية) parcels/zoning
+    ARCGIS_BASE_URL: str | None = os.getenv("ARCGIS_BASE_URL")
+    ARCGIS_PARCEL_LAYER: int | None = (
+        int(os.getenv("ARCGIS_PARCEL_LAYER")) if os.getenv("ARCGIS_PARCEL_LAYER") else None
+    )
+    ARCGIS_TOKEN: str | None = os.getenv("ARCGIS_TOKEN")
+
+    # GASTAT Construction Cost Index (CSV/Excel export)
+    GASTAT_CCI_CSV_URL: str | None = os.getenv("GASTAT_CCI_CSV_URL")
+
+    # SAMA rates (open-data JSON endpoint)
+    SAMA_OPEN_JSON: str | None = os.getenv("SAMA_OPEN_JSON")
+
+    # REGA / SREM indicators (one or more CSV URLs; comma-separated)
+    REGA_CSV_URLS: list[str] = [
+        u.strip() for u in os.getenv("REGA_CSV_URLS", "").split(",") if u.strip()
+    ]
+
+    # Suhail (licensed partner API)
+    SUHAIL_API_URL: str | None = os.getenv("SUHAIL_API_URL")
+    SUHAIL_API_KEY: str | None = os.getenv("SUHAIL_API_KEY")
+
 
 settings = Settings()

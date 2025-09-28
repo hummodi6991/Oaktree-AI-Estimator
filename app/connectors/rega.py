@@ -1,7 +1,9 @@
 from typing import Iterable, Dict
 
-# Many indicator pages provide CSV/Excel exports; wire their direct file URLs once identified.
-CSV_URLS: list[str] = []  # add one or more allowed CSV export links
+from app.core.config import settings
+
+# Many indicator pages provide CSV/Excel exports; configured via env (comma-separated)
+CSV_URLS: list[str] = settings.REGA_CSV_URLS
 
 
 def fetch_market_indicators() -> Iterable[Dict]:

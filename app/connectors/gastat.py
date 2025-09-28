@@ -3,9 +3,9 @@ import csv
 import io
 
 from app.connectors.open_data import safe_get_bytes
+from app.core.config import settings
 
-# Placeholder: you will replace CSV_URL once you have the official open-data link
-CSV_URL = None  # e.g., https://dp.stats.gov.sa/.../cci.csv
+CSV_URL = settings.GASTAT_CCI_CSV_URL
 
 
 def fetch_cci_rows() -> Iterable[Dict]:
