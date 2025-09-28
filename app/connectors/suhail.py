@@ -1,7 +1,9 @@
 from typing import Iterable, Dict
 
-API_URL = None
-API_KEY = None
+from app.core.config import settings
+
+API_URL = settings.SUHAIL_API_URL
+API_KEY = settings.SUHAIL_API_KEY
 
 def fetch_comps(query: Dict) -> Iterable[Dict]:
     """

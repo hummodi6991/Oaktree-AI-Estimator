@@ -1,9 +1,9 @@
 from typing import Iterable, Dict
 
 from app.connectors.open_data import safe_get_json
+from app.core.config import settings
 
-# Option A: if you adopt an open-data mirror that exposes JSON with date/value (e.g., Opendatasoft/KAPSARC)
-OPEN_JSON = None  # e.g., "https://data.kapsarc.org/api/records/1.0/search/?dataset=interest-rates-and-sama-average-bills&rows=5000"
+OPEN_JSON = settings.SAMA_OPEN_JSON
 
 
 def fetch_rates() -> Iterable[Dict]:
