@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Map from "./Map";
 import { createEstimate, getFreshness, memoPdfUrl, runScenario } from "./api";
 
 const DEFAULT_POLY = {
@@ -16,6 +17,7 @@ export default function App() {
   const [error, setError] = useState<string|undefined>();
   const [estimate, setEstimate] = useState<any>(null);
   const [uplift, setUplift] = useState(0);
+  const parsedGeom = (() => { try { return JSON.parse(geom); } catch { return null; } })();
 
   useEffect(() => {
     getFreshness().then(setFreshness).catch(() => {});
@@ -84,6 +86,11 @@ export default function App() {
           <label>Timeline (months)</label><br/>
           <input type="number" value={months} onChange={e => setMonths(parseInt(e.target.value || "18",10))}/>
         </div>
+      </section>
+
+      <section style={{ marginTop: 8, marginBottom: 12 }}>
+        <label>Draw Site Polygon</label>
+        <Map initial={parsedGeom} onChange={(g:any) => g && setGeom(JSON.stringify(g, null, 2))} />
       </section>
 
       <div style={{ marginTop: 16 }}>
