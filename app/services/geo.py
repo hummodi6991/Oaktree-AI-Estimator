@@ -1,5 +1,5 @@
 from typing import Tuple, Dict, Any
-from shapely.geometry import shape, mapping
+from shapely.geometry import shape, mapping, Polygon, MultiPolygon
 import math
 
 
@@ -12,21 +12,39 @@ def project_to_xy_meters(lon: float, lat: float, lat0: float) -> Tuple[float, fl
     x = math.radians(lon) * R * math.cos(math.radians(lat0))
     y = math.radians(lat) * R
     return x, y
+def _ring_area_m2(coords, lat0: float) -> float:
+    XY = [project_to_xy_meters(lon, lat, lat0) for lon, lat in coords]
+    shoelace = 0.0
+    for i in range(len(XY) - 1):
+        x1, y1 = XY[i]
+        x2, y2 = XY[i + 1]
+        shoelace += (x1 * y2 - x2 * y1)
+    return abs(shoelace) / 2.0
+
+
+def _poly_area_m2(poly: Polygon) -> float:
+    lat0 = poly.centroid.y
+    area = _ring_area_m2(list(poly.exterior.coords), lat0)
+    for interior in poly.interiors:
+        area -= _ring_area_m2(list(interior.coords), lat0)
+    return max(0.0, area)
 
 
 def area_m2(geom) -> float:
     # Equirectangular approximation around centroid latitude (good enough for MVP)
-    c = geom.centroid
-    lat0 = c.y
-    coords = list(geom.exterior.coords)
-    XY = [project_to_xy_meters(lon, lat, lat0) for lon, lat in coords]
-    # Shoelace
-    area = 0.0
-    for i in range(len(XY) - 1):
-        x1, y1 = XY[i]
-        x2, y2 = XY[i + 1]
-        area += (x1 * y2 - x2 * y1)
-    return abs(area) / 2.0
+    if isinstance(geom, MultiPolygon):
+        return sum(_poly_area_m2(poly) for poly in geom.geoms)
+    if isinstance(geom, Polygon):
+        return _poly_area_m2(geom)
+
+    # Fallback for unexpected geometry types: attempt to coerce to polygonal area
+    try:
+        polygonized = geom.buffer(0)
+        if isinstance(polygonized, (Polygon, MultiPolygon)):
+            return area_m2(polygonized)
+    except Exception:
+        pass
+    return 0.0
 
 
 def to_geojson(geom):
