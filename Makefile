@@ -1,4 +1,4 @@
-.PHONY: api db-up db-down db-init test fmt lint
+.PHONY: api db-up db-down db-init test fmt lint harvest
 
 api:
 	uvicorn app.main:app --reload --port 8000
@@ -20,3 +20,7 @@ fmt:
 
 lint:
 	flake8 app tests
+
+.PHONY: harvest
+harvest:
+	python -m app.ingest.harvest_open

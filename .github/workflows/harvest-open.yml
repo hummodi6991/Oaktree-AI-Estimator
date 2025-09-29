@@ -1,0 +1,93 @@
+name: Harvest Open Data (CCI / SAMA / REGA)
+
+on:
+  workflow_dispatch:
+    inputs:
+      use_ephemeral_db:
+        description: "Use ephemeral Postgres?"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+  schedule:
+    - cron: "30 1 * * *"   # 01:30 UTC daily
+
+permissions:
+  contents: read
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: oaktree
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: oaktree
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U oaktree"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # --- DB env selection ---
+      - name: Configure DB env (ephemeral)
+        if: ${{ inputs.use_ephemeral_db == 'true' }}
+        run: |
+          echo "POSTGRES_USER=oaktree" >> $GITHUB_ENV
+          echo "POSTGRES_PASSWORD=devpass" >> $GITHUB_ENV
+          echo "POSTGRES_DB=oaktree" >> $GITHUB_ENV
+          echo "POSTGRES_HOST=127.0.0.1" >> $GITHUB_ENV
+          echo "POSTGRES_PORT=5432" >> $GITHUB_ENV
+
+      - name: Configure DB env (managed)
+        if: ${{ inputs.use_ephemeral_db == 'false' }}
+        run: |
+          echo "POSTGRES_USER=${{ secrets.POSTGRES_USER }}" >> $GITHUB_ENV
+          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> $GITHUB_ENV
+          echo "POSTGRES_DB=${{ secrets.POSTGRES_DB }}" >> $GITHUB_ENV
+          echo "POSTGRES_HOST=${{ secrets.POSTGRES_HOST }}" >> $GITHUB_ENV
+          echo "POSTGRES_PORT=${{ secrets.POSTGRES_PORT }}" >> $GITHUB_ENV
+
+      # --- Source URLs/keys from repo variables/secrets ---
+      - name: Configure source endpoints
+        run: |
+          echo "GASTAT_CCI_CSV_URL=${{ vars.GASTAT_CCI_CSV_URL }}" >> $GITHUB_ENV
+          echo "SAMA_OPEN_JSON=${{ vars.SAMA_OPEN_JSON }}" >> $GITHUB_ENV
+          echo "REGA_CSV_URLS=${{ vars.REGA_CSV_URLS }}" >> $GITHUB_ENV
+
+      - name: Migrate schema
+        run: alembic upgrade head
+
+      - name: Run harvest
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m app.ingest.harvest_open
+
+      - name: Show freshness
+        run: |
+          python - << 'PY'
+          from app.db.session import SessionLocal
+          from app.models.tables import CostIndexMonthly, Rate, MarketIndicator
+          from sqlalchemy import func
+          db=SessionLocal()
+          try:
+              print("CCI max:", db.query(func.max(CostIndexMonthly.month)).scalar())
+              print("Rate max:", db.query(func.max(Rate.date)).scalar())
+              print("Indicator max:", db.query(func.max(MarketIndicator.date)).scalar())
+          finally:
+              db.close()
+          PY

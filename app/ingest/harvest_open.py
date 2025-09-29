@@ -88,3 +88,16 @@ def upsert_indicators(db: Session) -> int:
         n += 1
     db.commit()
     return n
+
+
+if __name__ == "__main__":
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        n1 = upsert_cci(db)
+        n2 = upsert_rates(db)
+        n3 = upsert_indicators(db)
+        print(f"Harvest complete: CCI={n1}, rates={n2}, indicators={n3}")
+    finally:
+        db.close()
