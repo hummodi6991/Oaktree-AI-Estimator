@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.comps import router as comps_router
@@ -8,6 +8,7 @@ from app.api.health import router as health_router
 from app.api.indices import router as indices_router
 from app.api.ingest import router as ingest_router
 from app.api.metadata import router as metadata_router
+from app.security.auth import require as auth_require
 
 app = FastAPI(title="Oaktree Estimator API", version="0.1.0")
 
@@ -20,10 +21,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(health_router, prefix="")
-app.include_router(indices_router, prefix="/v1")
-app.include_router(comps_router, prefix="/v1")
-app.include_router(estimates_router, prefix="/v1")
-app.include_router(metadata_router, prefix="/v1")
-app.include_router(ingest_router)
-app.include_router(geo_router)
+app.include_router(health_router, prefix="")  # public
+deps: list = []  # stays empty unless AUTH_MODE != disabled (kept simple)
+try:
+    # if not disabled, enforce dependency
+    from app.security.auth import MODE as _MODE
+
+    if _MODE != "disabled":
+        deps = [Depends(auth_require)]
+except Exception:
+    pass
+
+app.include_router(indices_router, prefix="/v1", dependencies=deps)
+app.include_router(comps_router, prefix="/v1", dependencies=deps)
+app.include_router(estimates_router, prefix="/v1", dependencies=deps)
+app.include_router(metadata_router, prefix="/v1", dependencies=deps)
+app.include_router(ingest_router, dependencies=deps)
+app.include_router(geo_router, prefix="/v1", dependencies=deps)
