@@ -8,9 +8,11 @@ from app.api.health import router as health_router
 from app.api.indices import router as indices_router
 from app.api.ingest import router as ingest_router
 from app.api.metadata import router as metadata_router
+from app.telemetry import setup_otel_if_configured
 from app.security.auth import require as auth_require
 
 app = FastAPI(title="Oaktree Estimator API", version="0.1.0")
+setup_otel_if_configured(app)
 
 # Allow cross-origin requests for the API (tighten in production as needed).
 app.add_middleware(
