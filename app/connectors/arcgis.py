@@ -35,6 +35,9 @@ def query_features(
         "returnGeometry": "true",
         "resultRecordCount": result_record_count,
     }
+    # Some ArcGIS servers require token as a query param instead of Authorization.
+    if token:
+        params["token"] = token
     with httpx.Client(timeout=30) as client:
         response = client.get(url, params=params, headers=_headers(token))
         response.raise_for_status()
