@@ -338,21 +338,55 @@ class ScenarioPatch(BaseModel):
 @router.post("/estimates/{estimate_id}/scenario")
 def scenario(estimate_id: str, patch: ScenarioPatch, db: Session = Depends(get_db)) -> dict[str, Any]:
     base = get_estimate(estimate_id, db)
-    # Apply simple perturbations to totals (fast scenario; full re-solve can also be done)
-    t = base["totals"].copy()
+    # Fast scenario: scale area-driven items by NFA ratio; then apply margin/softcost/price tweaks.
+    base_totals = base["totals"]
+    t = base_totals.copy()
+    notes = base.get("notes", {}) or {}
+    assumptions = base.get("assumptions", []) or []
+
+    def _assumption_value(key: str, default: float) -> float:
+        for item in assumptions:
+            if item.get("key") == key:
+                val = item.get("value")
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    return default
+        return default
+
+    site_m2 = float(notes.get("site_area_m2") or 0.0)
+    base_nfa = float(notes.get("nfa_m2") or (site_m2 * 2.0 * 0.82))
+    new_far = patch.far if patch.far is not None else _assumption_value("far", 2.0)
+    new_eff = patch.efficiency if patch.efficiency is not None else _assumption_value("efficiency", 0.82)
+    new_nfa = site_m2 * new_far * new_eff if site_m2 > 0 else base_nfa
+    area_ratio = (new_nfa / base_nfa) if base_nfa > 0 else 1.0
+
+    t["hard_costs"] = t["hard_costs"] * area_ratio
+    t["revenues"] = t["revenues"] * area_ratio
+
+    base_soft_ratio = (
+        (base_totals.get("soft_costs", 0.0) / base_totals.get("hard_costs", 0.0))
+        if base_totals.get("hard_costs")
+        else 0.15
+    )
+    base_cost_sum = base_totals.get("hard_costs", 0.0) + base_totals.get("soft_costs", 0.0)
+    base_financing_ratio = (base_totals.get("financing", 0.0) / base_cost_sum) if base_cost_sum else 0.6
     # Price uplift affects revenues
     uplift = 1.0 + (patch.price_uplift_pct or 0.0) / 100.0
     t["revenues"] = t["revenues"] * uplift
     # Financing sensitivity via margin_bps (linear approx)
+    if patch.soft_cost_pct is not None:
+        t["soft_costs"] = t["hard_costs"] * patch.soft_cost_pct
+    else:
+        t["soft_costs"] = t["hard_costs"] * base_soft_ratio
+
+    t["financing"] = base_financing_ratio * (t["hard_costs"] + t["soft_costs"])
     if patch.margin_bps is not None:
         delta = (patch.margin_bps - 250) / 250.0  # relative to default 250 bps
         t["financing"] = t["financing"] * (1.0 + 0.4 * delta)
-    # Soft-cost pct perturbation
-    if patch.soft_cost_pct is not None:
-        t["soft_costs"] = (t["hard_costs"] * patch.soft_cost_pct)
     t["p50_profit"] = t["revenues"] - (t["land_value"] + t["hard_costs"] + t["soft_costs"] + t["financing"])
     bands = p_bands(t["p50_profit"], drivers={"land_ppm2": (1.0, 0.10), "unit_cost": (1.0, 0.08), "gdv_m2_price": (1.0, 0.10)})
-    return {"baseline": base["totals"], "scenario": t, "delta": {k: t[k] - base["totals"][k] for k in t}, "confidence_bands": bands}
+    return {"baseline": base_totals, "scenario": t, "delta": {k: t[k] - base_totals[k] for k in t}, "confidence_bands": bands}
 
 
 @router.get("/estimates/{estimate_id}/export")
