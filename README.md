@@ -23,6 +23,24 @@ pytest -q
 - `GET /v1/comps`
 - `POST /v1/estimates` (returns placeholder P50 pro-forma)
 
+## Frontend dev
+
+Start the API by following the Quick start above (or `make db-up && make db-init && make api`). Then run the Vite dev server:
+
+```bash
+cd frontend
+npm install
+cp .env.development.example .env.development
+# For Codespaces: open the forwarded 8000 port link and paste that as VITE_API_BASE_URL.
+npm run dev
+```
+
+If you're using Codespaces, the FastAPI URL will look like:
+
+```
+https://<your-codespace>-8000.app.github.dev
+```
+
 ## Deploy (sccc by stc / Alibaba Cloud Riyadh, me-central-1)
 
 1. In sccc by stc (Alibaba Cloud Riyadh), provision an ACK cluster in `me-central-1` and an **Enterprise ACR instance** (the registry should expose a domain such as `oaktree-ai-estimator-registry.me-central-1.cr.aliyuncs.com`).

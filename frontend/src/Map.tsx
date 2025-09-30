@@ -1,17 +1,32 @@
 import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
+import type {
+  DrawCreateEvent,
+  DrawDeleteEvent,
+  DrawUpdateEvent
+} from "@mapbox/mapbox-gl-draw";
+import type { Feature, Polygon } from "geojson";
+import type { IControl, LngLatLike } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 
-type Props = {
-  initial?: any;
-  onChange: (geojson: any) => void;
+type MapProps = {
+  polygon?: Polygon | null;
+  onPolygon: (geometry: Polygon | null) => void;
 };
 
-export default function Map({ initial, onChange }: Props) {
+const SITE_FEATURE_ID = "site";
+
+export default function Map({ polygon, onPolygon }: MapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const drawRef = useRef<MapboxDraw | null>(null);
+  const callbackRef = useRef(onPolygon);
+
+  useEffect(() => {
+    callbackRef.current = onPolygon;
+  }, [onPolygon]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -20,76 +35,84 @@ export default function Map({ initial, onChange }: Props) {
       container: containerRef.current,
       style: "https://demotiles.maplibre.org/style.json",
       center: [46.675, 24.713],
-      zoom: 13
+      zoom: 13,
     });
+
     mapRef.current = map;
 
     const draw = new MapboxDraw({
       displayControlsDefault: false,
-      controls: { polygon: true, trash: true }
+      controls: { polygon: true, trash: true },
     });
+
     drawRef.current = draw;
-    map.addControl(draw);
+    map.addControl(draw as unknown as IControl);
 
-    map.on("load", () => {
-      if (initial) {
-        try {
-          draw.deleteAll();
-          draw.add({
-            id: "site",
-            type: "Feature",
-            properties: {},
-            geometry: initial
-          } as any);
-        } catch (error) {
-          console.warn("Failed to load initial geometry", error);
-        }
-      }
-    });
-
-    const update = () => {
+    const emitPolygon = () => {
       if (!drawRef.current) return;
-      const fc = drawRef.current.getAll();
-      const poly = fc.features.find(f => f.geometry.type === "Polygon");
-      if (poly) {
-        onChange(poly.geometry);
-      }
+      const collection = drawRef.current.getAll();
+      const firstPolygon = collection.features.find(
+        (feature): feature is Feature<Polygon> => feature.geometry.type === "Polygon"
+      );
+      callbackRef.current(firstPolygon ? firstPolygon.geometry : null);
     };
 
-    map.on("draw.create", update);
-    map.on("draw.update", update);
-    map.on("draw.delete", () => onChange(null));
+    map.on("draw.create", (event: DrawCreateEvent) => {
+      if (!drawRef.current) return;
+      const polygonFeature = event.features.find(
+        (feature): feature is Feature<Polygon> => feature.geometry.type === "Polygon"
+      );
+      if (!polygonFeature) return;
+      drawRef.current.deleteAll();
+      drawRef.current.add(polygonFeature);
+      callbackRef.current(polygonFeature.geometry);
+    });
+
+    map.on("draw.update", (_event: DrawUpdateEvent) => emitPolygon());
+    map.on("draw.delete", (_event: DrawDeleteEvent) => callbackRef.current(null));
 
     return () => {
       map.remove();
-      mapRef.current = null;
       drawRef.current = null;
+      mapRef.current = null;
     };
   }, []);
 
   useEffect(() => {
     if (!drawRef.current) return;
+
     const draw = drawRef.current;
     draw.deleteAll();
 
-    if (initial) {
-      try {
-        draw.add({
-          id: "site",
-          type: "Feature",
-          properties: {},
-          geometry: initial
-        } as any);
-      } catch (error) {
-        console.warn("Failed to update geometry", error);
+    if (polygon) {
+      const feature: Feature<Polygon> = {
+        id: SITE_FEATURE_ID,
+        type: "Feature",
+        properties: {},
+        geometry: polygon,
+      };
+      draw.add(feature as any);
+
+      if (mapRef.current) {
+        const bounds = polygon.coordinates[0].reduce<maplibregl.LngLatBounds | null>((acc, coord) => {
+          if (!acc) {
+            return new maplibregl.LngLatBounds(coord as LngLatLike, coord as LngLatLike);
+          }
+          acc.extend(coord as LngLatLike);
+          return acc;
+        }, null);
+
+        if (bounds && !bounds.isEmpty()) {
+          mapRef.current.fitBounds(bounds, { padding: 24, duration: 300 });
+        }
       }
     }
-  }, [initial]);
+  }, [polygon]);
 
   return (
     <div
       ref={containerRef}
-      style={{ width: "100%", height: 360, borderRadius: 6, border: "1px solid #ddd" }}
+      style={{ width: "100%", height: 360, borderRadius: 8, border: "1px solid #d0d5dd", overflow: "hidden" }}
     />
   );
 }

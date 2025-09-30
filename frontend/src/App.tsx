@@ -1,10 +1,19 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { Polygon } from "geojson";
 import Map from "./Map";
 import { createEstimate, getFreshness, memoPdfUrl, runScenario } from "./api";
 
-const DEFAULT_POLY = {
+const DEFAULT_POLY: Polygon = {
   type: "Polygon",
-  coordinates: [[[46.675,24.713],[46.676,24.713],[46.676,24.714],[46.675,24.714],[46.675,24.713]]]
+  coordinates: [
+    [
+      [46.675, 24.713],
+      [46.676, 24.713],
+      [46.676, 24.714],
+      [46.675, 24.714],
+      [46.675, 24.713]
+    ]
+  ]
 };
 
 export default function App() {
@@ -14,10 +23,20 @@ export default function App() {
   const [months, setMonths] = useState(18);
   const [geom, setGeom] = useState(JSON.stringify(DEFAULT_POLY, null, 2));
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string|undefined>();
+  const [error, setError] = useState<string | undefined>();
   const [estimate, setEstimate] = useState<any>(null);
   const [uplift, setUplift] = useState(0);
-  const parsedGeom = (() => { try { return JSON.parse(geom); } catch { return null; } })();
+
+  const parsedGeom = useMemo(() => {
+    try {
+      const parsed = JSON.parse(geom);
+      return parsed?.type === "Polygon" ? (parsed as Polygon) : null;
+    } catch {
+      return null;
+    }
+  }, [geom]);
+
+  const polygonForMap = parsedGeom ?? DEFAULT_POLY;
 
   useEffect(() => {
     getFreshness().then(setFreshness).catch(() => {});
@@ -26,28 +45,36 @@ export default function App() {
   const totals = estimate?.totals;
   const irr = estimate?.metrics?.irr_annual;
 
+  const handlePolygon = useCallback(
+    (geometry: Polygon | null) => {
+      const next = geometry ?? DEFAULT_POLY;
+      setGeom(JSON.stringify(next, null, 2));
+    },
+    []
+  );
+
   async function onEstimate() {
     setError(undefined);
     setLoading(true);
     try {
-      const geometry = JSON.parse(geom);
+      const geometry: Polygon = parsedGeom ?? DEFAULT_POLY;
       const today = new Date();
-      const start = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,"0")}-01`;
+      const start = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-01`;
       const payload = {
         geometry,
         asset_program: "residential_midrise",
         unit_mix: [{ type: "1BR", count: 10, avg_m2: 60 }],
-        finish_level: "mid",
+        finish_level: "mid" as const,
         timeline: { start, months },
         financing_params: { margin_bps: 250, ltv: 0.6 },
-        strategy: "build_to_sell",
+        strategy: "build_to_sell" as const,
         city,
         far,
-        efficiency: 0.82
+        efficiency: 0.82,
       };
       const res = await createEstimate(payload);
       setEstimate(res);
-    } catch (e:any) {
+    } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
       setLoading(false);
@@ -59,13 +86,13 @@ export default function App() {
     try {
       const res = await runScenario(estimate.id, { price_uplift_pct: uplift || 0 });
       alert(`Δ Profit (SAR): ${Math.round(res.delta.p50_profit).toLocaleString()}`);
-    } catch (e:any) {
+    } catch (e: any) {
       alert(e?.message || String(e));
     }
   }
 
   return (
-    <div style={{ maxWidth: 920, margin: "2rem auto", padding: "0 1rem", fontFamily: "system-ui, Arial" }}>
+    <div style={{ maxWidth: 960, margin: "2rem auto", padding: "0 1rem", fontFamily: "system-ui, Arial" }}>
       <h1>Oaktree Estimator — Operator Console (v0)</h1>
       {freshness && (
         <div style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6, marginBottom: 12 }}>
@@ -73,42 +100,63 @@ export default function App() {
         </div>
       )}
 
-      <section style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
         <div>
-          <label>City</label><br/>
-          <input value={city} onChange={e => setCity(e.target.value)} />
+          <label htmlFor="city-input">City</label>
+          <input id="city-input" value={city} onChange={(e) => setCity(e.target.value)} />
         </div>
         <div>
-          <label>FAR</label><br/>
-          <input type="number" step="0.1" value={far} onChange={e => setFar(parseFloat(e.target.value))}/>
+          <label htmlFor="far-input">FAR</label>
+          <input
+            id="far-input"
+            type="number"
+            step="0.1"
+            value={far}
+            onChange={(e) => setFar(parseFloat(e.target.value))}
+          />
         </div>
         <div>
-          <label>Timeline (months)</label><br/>
-          <input type="number" value={months} onChange={e => setMonths(parseInt(e.target.value || "18",10))}/>
+          <label htmlFor="timeline-input">Timeline (months)</label>
+          <input
+            id="timeline-input"
+            type="number"
+            value={months}
+            onChange={(e) => setMonths(parseInt(e.target.value || "18", 10))}
+          />
         </div>
       </section>
 
-      <section style={{ marginTop: 8, marginBottom: 12 }}>
+      <section style={{ marginTop: 16, marginBottom: 12 }}>
         <label>Draw Site Polygon</label>
-        <Map initial={parsedGeom} onChange={(g:any) => g && setGeom(JSON.stringify(g, null, 2))} />
+        <Map polygon={polygonForMap} onPolygon={handlePolygon} />
       </section>
 
       <div style={{ marginTop: 16 }}>
-        <label>Geometry (GeoJSON Polygon)</label>
-        <textarea value={geom} onChange={e => setGeom(e.target.value)} style={{ width: "100%", height: 160, fontFamily: "monospace" }}/>
+        <label htmlFor="geometry-input">Geometry (GeoJSON Polygon)</label>
+        <textarea
+          id="geometry-input"
+          value={geom}
+          onChange={(e) => setGeom(e.target.value)}
+          style={{ width: "100%", height: 180, fontFamily: "monospace" }}
+        />
       </div>
 
-      <div style={{ marginTop: 12 }}>
+      <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
         <button onClick={onEstimate} disabled={loading} style={{ padding: "8px 14px" }}>
           {loading ? "Estimating…" : "Run Estimate"}
         </button>
         {estimate?.id && (
           <>
-            <button onClick={onScenario} style={{ padding: "8px 14px", marginLeft: 8 }}>
+            <button onClick={onScenario} style={{ padding: "8px 14px" }}>
               Scenario: +{uplift}% price
             </button>
-            <input type="number" value={uplift} onChange={e => setUplift(parseFloat(e.target.value||"0"))} style={{ width: 80, marginLeft: 8 }}/>
-            <a href={memoPdfUrl(estimate.id)} target="_blank" rel="noreferrer" style={{ marginLeft: 12 }}>
+            <input
+              type="number"
+              value={uplift}
+              onChange={(e) => setUplift(parseFloat(e.target.value || "0"))}
+              style={{ width: 80 }}
+            />
+            <a href={memoPdfUrl(estimate.id)} target="_blank" rel="noreferrer" style={{ marginLeft: 4 }}>
               Open PDF Memo
             </a>
           </>
@@ -126,11 +174,15 @@ export default function App() {
             <li>Soft costs: {Math.round(totals.soft_costs).toLocaleString()}</li>
             <li>Financing: {Math.round(totals.financing).toLocaleString()}</li>
             <li>Revenues: {Math.round(totals.revenues).toLocaleString()}</li>
-            <li><strong>P50 Profit: {Math.round(totals.p50_profit).toLocaleString()}</strong></li>
+            <li>
+              <strong>P50 Profit: {Math.round(totals.p50_profit).toLocaleString()}</strong>
+            </li>
           </ul>
-          {typeof irr === "number" && <p>Equity IRR (annual): {(irr*100).toFixed(1)}%</p>}
+          {typeof irr === "number" && <p>Equity IRR (annual): {(irr * 100).toFixed(1)}%</p>}
           {estimate?.confidence_bands && (
-            <p>P5 / P50 / P95 profit: {Math.round(estimate.confidence_bands.p5).toLocaleString()} / {Math.round(estimate.confidence_bands.p50).toLocaleString()} / {Math.round(estimate.confidence_bands.p95).toLocaleString()}</p>
+            <p>
+              P5 / P50 / P95 profit: {Math.round(estimate.confidence_bands.p5).toLocaleString()} / {Math.round(estimate.confidence_bands.p50).toLocaleString()} / {Math.round(estimate.confidence_bands.p95).toLocaleString()}
+            </p>
           )}
         </div>
       )}
