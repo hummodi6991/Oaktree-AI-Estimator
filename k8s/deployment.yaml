@@ -18,16 +18,9 @@ spec:
           env:
             - name: APP_ENV
               value: "prod"
-            - name: POSTGRES_HOST
-              value: "YOUR_PG_HOST"
-            - name: POSTGRES_PORT
-              value: "5432"
-            - name: POSTGRES_DB
-              value: "oaktree"
-            - name: POSTGRES_USER
-              value: "oaktree"
-            - name: POSTGRES_PASSWORD
-              value: "CHANGEME"
+          envFrom:
+            - secretRef:
+                name: oaktree-db-env
           readinessProbe:
             httpGet: { path: /health, port: 8000 }
             initialDelaySeconds: 5

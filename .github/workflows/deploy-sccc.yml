@@ -103,7 +103,18 @@ jobs:
           aliyun cs DescribeClusterUserKubeconfig --RegionId "$ALIBABA_REGION" --ClusterId "$ACK_CLUSTER_ID" | jq -r '.config' > kubeconfig
           echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
 
-      # 6) Deploy to ACK (patch image and apply)
+      # 6) Create/Update DB Secret (oaktree-db-env)
+      - name: Create/Update DB Secret (oaktree-db-env)
+        run: |
+          kubectl create secret generic oaktree-db-env \
+            --from-literal=POSTGRES_USER="${{ secrets.POSTGRES_USER }}" \
+            --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            --from-literal=POSTGRES_DB="${{ secrets.POSTGRES_DB }}" \
+            --from-literal=POSTGRES_HOST="${{ secrets.POSTGRES_HOST }}" \
+            --from-literal=POSTGRES_PORT="${{ secrets.POSTGRES_PORT }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # 7) Deploy to ACK (patch image and apply)
       - name: Deploy manifests
         run: |
           sed -i "s|IMAGE_PLACEHOLDER|${{ steps.img.outputs.image }}|g" k8s/deployment.yaml
