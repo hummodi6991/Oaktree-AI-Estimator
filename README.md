@@ -1,5 +1,12 @@
 # Oaktree Estimator – Starter (GCP / KSA)
 
+## Operator Quickstart (from a polygon to a memo)
+1. Start the API locally (or hit staging) and the React UI (Vite).
+2. In the UI, draw a site polygon (Riyadh default). Enter city/FAR/timeline.
+3. Click **Run Estimate** to compute land, costs, financing, revenues, and P5/P50/P95.
+4. Click **Open PDF Memo** to export.
+5. Use **Scenario** to test deltas (e.g., +x% price).
+
 FastAPI + PostgreSQL starter for Oaktree’s cost/revenue estimator app. Built to match the approved blueprint and phased plan. Runs locally via Docker and deploys to **Google Cloud Run** in **Dammam (me-central2)** using keyless GitHub OIDC.  [oai_citation:2‡AI App Blueprint .docx](file-service://file-ALgZg1S1QWVEsFVxeedqkv)  [oai_citation:3‡comprehensive, step‑by‑step, end‑to‑end build guide.docx](file-service://file-2mLQo2SYnT3iuikLqGJy8N)
 
 ## Quick start (local)
@@ -13,6 +20,12 @@ alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 # open http://127.0.0.1:8000/docs
 pytest -q
+```
+
+### Load sample data (optional)
+```bash
+python scripts/ingest_samples.py
+curl -fsS 127.0.0.1:8000/v1/metadata/freshness
 ```
 
 ### Endpoints (MVP)
@@ -39,6 +52,13 @@ If you're using Codespaces, the FastAPI URL will look like:
 
 ```
 https://<your-codespace>-8000.app.github.dev
+```
+
+### Using the UI against staging (ACK)
+If the API is deployed on sccc/ACK, set:
+
+```
+VITE_API_BASE_URL=https://<your-loadbalancer-dns-or-ip>
 ```
 
 ## Deploy (sccc by stc / Alibaba Cloud Riyadh, me-central-1)

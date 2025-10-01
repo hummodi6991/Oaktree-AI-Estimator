@@ -1,0 +1,2 @@
+id,date,city,district,asset_type,net_area_m2,price_total,price_per_m2,source,source_url,asof_date
+C-001,2025-06-15,Riyadh,Al Olaya,land,1500,4200000,2800,rega_indicator,https://example-rega,2025-06-30
