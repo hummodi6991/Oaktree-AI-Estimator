@@ -17,6 +17,7 @@ type MapProps = {
 };
 
 const SITE_FEATURE_ID = "site";
+const DEFAULT_MAP_STYLE = "https://demotiles.maplibre.org/style.json";
 
 export default function Map({ polygon, onPolygon }: MapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -31,9 +32,11 @@ export default function Map({ polygon, onPolygon }: MapProps) {
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const style = import.meta.env.VITE_MAP_STYLE || DEFAULT_MAP_STYLE;
+
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: "https://demotiles.maplibre.org/style.json",
+      style,
       center: [46.675, 24.713],
       zoom: 13,
     });
@@ -112,7 +115,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
   return (
     <div
       ref={containerRef}
-      style={{ width: "100%", height: 360, borderRadius: 8, border: "1px solid #d0d5dd", overflow: "hidden" }}
+      style={{ width: "100%", height: 480, borderRadius: 8, border: "1px solid #d0d5dd", overflow: "hidden" }}
     />
   );
 }
