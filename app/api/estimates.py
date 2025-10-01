@@ -438,6 +438,90 @@ def export_estimate(estimate_id: str, format: Literal["json","csv"] = "json", db
     return Response(content=buf.getvalue(), media_type="text/csv")
 
 
+@router.get("/estimates/{estimate_id}/ledger")
+def get_ledger(estimate_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Return a flattened ledger of estimate lines and assumptions."""
+
+    base = get_estimate(estimate_id, db)
+
+    items: list[dict[str, Any]] = []
+    if _supports_sqlalchemy(db):
+        rows = db.query(EstimateLine).filter(EstimateLine.estimate_id == estimate_id).all()
+        items = [
+            {
+                "category": r.category,
+                "key": r.key,
+                "value": r.value,
+                "unit": r.unit,
+                "source_type": r.source_type,
+                "url": getattr(r, "url", None),
+                "model_version": getattr(r, "model_version", None),
+                "owner": r.owner,
+                "created_at": getattr(r, "created_at", None),
+            }
+            for r in rows
+        ]
+    if not items:
+        fallback_lines = _INMEM_LINES.get(estimate_id, [])
+        items = [dict(line) for line in fallback_lines]
+
+    if not items:
+        # Build a minimal ledger from the totals as a fallback (e.g., legacy estimates).
+        totals = base.get("totals", {}) or {}
+        notes = base.get("notes", {}) or {}
+        if isinstance(notes, dict):
+            if "land_model" in notes:
+                land_model = notes.get("land_model") or {}
+            else:
+                land_model = notes.get("notes", {}).get("land_model", {})
+        else:
+            land_model = {}
+        for key in ["land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"]:
+            value = totals.get(key)
+            if value is None:
+                continue
+            if key == "revenues":
+                category = "revenue"
+            elif key == "p50_profit":
+                category = "profit"
+            else:
+                category = "cost"
+            items.append(
+                {
+                    "category": category,
+                    "key": key,
+                    "value": value,
+                    "unit": "SAR",
+                    "source_type": "Model",
+                    "url": None,
+                    "model_version": "hedonic_v0" if land_model.get("model_used") else None,
+                    "owner": None,
+                    "created_at": None,
+                }
+            )
+
+    seen = {(item.get("category"), item.get("key")) for item in items}
+    for assumption in base.get("assumptions", []) or []:
+        identifier = ("assumption", assumption.get("key"))
+        if identifier in seen:
+            continue
+        items.append(
+            {
+                "category": "assumption",
+                "key": assumption.get("key"),
+                "value": assumption.get("value"),
+                "unit": assumption.get("unit"),
+                "source_type": assumption.get("source_type"),
+                "url": assumption.get("url"),
+                "model_version": assumption.get("model_version"),
+                "owner": None,
+                "created_at": None,
+            }
+        )
+
+    return {"items": items}
+
+
 @router.get("/estimates/{estimate_id}/memo.pdf")
 def export_pdf(estimate_id: str, db: Session = Depends(get_db)):
     base = get_estimate(estimate_id, db)
