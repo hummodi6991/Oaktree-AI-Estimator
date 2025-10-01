@@ -42,3 +42,13 @@ export async function runScenario(id: string, patch: { price_uplift_pct?: number
 export function memoPdfUrl(id: string) {
   return `${BASE}/v1/estimates/${id}/memo.pdf`;
 }
+
+export async function getComps(params: { city?: string; type?: string; since?: string }) {
+  const q = new URLSearchParams();
+  if (params.city) q.set("city", params.city);
+  if (params.type) q.set("type", params.type);
+  if (params.since) q.set("since", params.since);
+  const r = await fetch(`${BASE}/v1/comps?${q.toString()}`);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}

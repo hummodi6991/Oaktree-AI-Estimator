@@ -1,7 +1,8 @@
+import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Polygon } from "geojson";
 import Map from "./Map";
-import { createEstimate, getFreshness, memoPdfUrl, runScenario } from "./api";
+import { createEstimate, getFreshness, memoPdfUrl, runScenario, getComps } from "./api";
 
 const DEFAULT_POLY: Polygon = {
   type: "Polygon",
@@ -25,6 +26,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [estimate, setEstimate] = useState<any>(null);
+  const [comps, setComps] = useState<any[]>([]);
   const [uplift, setUplift] = useState(0);
 
   const parsedGeom = useMemo(() => {
@@ -53,9 +55,32 @@ export default function App() {
     []
   );
 
+  function fmt(x: any, digits = 0) {
+    const n = Number(x);
+    return isFinite(n)
+      ? n.toLocaleString(undefined, { maximumFractionDigits: digits })
+      : String(x ?? "—");
+  }
+
+  function badgeStyle(kind?: string): CSSProperties {
+    const k = (kind || "").toLowerCase();
+    const bg = k === "observed" ? "#e6ffed" : k === "manual" ? "#fff4e6" : "#eef2ff";
+    const fg = k === "observed" ? "#066a2b" : k === "manual" ? "#8a4608" : "#2b3a67";
+    return {
+      background: bg,
+      color: fg,
+      padding: "2px 6px",
+      borderRadius: 4,
+      fontSize: 12,
+      border: "1px solid rgba(0,0,0,0.05)",
+      textTransform: "capitalize",
+    };
+  }
+
   async function onEstimate() {
     setError(undefined);
     setLoading(true);
+    setComps([]);
     try {
       const geometry: Polygon = parsedGeom ?? DEFAULT_POLY;
       const today = new Date();
@@ -74,6 +99,10 @@ export default function App() {
       };
       const res = await createEstimate(payload);
       setEstimate(res);
+      const since = new Date();
+      since.setMonth(since.getMonth() - 12);
+      const compsRes = await getComps({ city, type: "land", since: since.toISOString().slice(0, 10) });
+      setComps(compsRes?.items || []);
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -184,6 +213,151 @@ export default function App() {
               P5 / P50 / P95 profit: {Math.round(estimate.confidence_bands.p5).toLocaleString()} / {Math.round(estimate.confidence_bands.p50).toLocaleString()} / {Math.round(estimate.confidence_bands.p95).toLocaleString()}
             </p>
           )}
+
+          {estimate?.land_value_breakdown && (
+            <div style={{ marginTop: 12 }}>
+              <h4>Land Value Breakdown</h4>
+              <ul>
+                <li>Hedonic: {fmt(estimate.land_value_breakdown.hedonic)}</li>
+                <li>Residual: {fmt(estimate.land_value_breakdown.residual)}</li>
+                <li>
+                  <strong>Combined: {fmt(estimate.land_value_breakdown.combined)}</strong>
+                </li>
+              </ul>
+              <small>
+                Weights — hedonic {fmt(estimate.land_value_breakdown.weights?.hedonic, 2)}, residual {fmt(estimate.land_value_breakdown.weights?.residual, 2)}; comps used: {fmt(estimate.land_value_breakdown.comps_used)}
+              </small>
+            </div>
+          )}
+
+          <div style={{ marginTop: 16 }}>
+            <h4>Key Assumptions</h4>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Key</th>
+                  <th style={{ textAlign: "right", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Value</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(estimate?.assumptions || []).map((a: any) => (
+                  <tr key={a.key}>
+                    <td style={{ padding: "6px 4px" }}>{a.key}</td>
+                    <td style={{ padding: "6px 4px", textAlign: "right" }}>
+                      {fmt(a.value)} {a.unit || ""}
+                    </td>
+                    <td style={{ padding: "6px 4px" }}>
+                      <span style={badgeStyle(a.source_type)}>{a.source_type || "—"}</span>
+                    </td>
+                  </tr>
+                ))}
+                {(estimate?.notes?.revenue_lines || []).map((l: any, i: number) => (
+                  <tr key={`rev-${i}`}>
+                    <td style={{ padding: "6px 4px" }}>{l.key}</td>
+                    <td style={{ padding: "6px 4px", textAlign: "right" }}>
+                      {fmt(l.value)} {l.unit || ""}
+                    </td>
+                    <td style={{ padding: "6px 4px" }}>
+                      <span style={badgeStyle(l.source_type)}>{l.source_type || "—"}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {(estimate?.explainability?.drivers || estimate?.explainability?.top_comps) && (
+            <div style={{ marginTop: 16 }}>
+              <h4>Explainability</h4>
+              {Array.isArray(estimate?.explainability?.drivers) && estimate.explainability.drivers.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <strong>Drivers</strong>
+                  <ul>
+                    {estimate.explainability.drivers.map((d: any, i: number) => (
+                      <li key={i}>
+                        {d.name}: {d.direction} (≈ {fmt(d.magnitude, d.unit === "ratio" ? 2 : 0)} {d.unit || ""})
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {Array.isArray(estimate?.explainability?.top_comps) && estimate.explainability.top_comps.length > 0 && (
+                <div style={{ overflowX: "auto" }}>
+                  <strong>Top Comps</strong>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>ID</th>
+                        <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Date</th>
+                        <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>City/District</th>
+                        <th style={{ textAlign: "right", borderBottom: "1px solid #eee", padding: "6px 4px" }}>SAR/m²</th>
+                        <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Source</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {estimate.explainability.top_comps.map((c: any) => (
+                        <tr key={c.id}>
+                          <td style={{ padding: "6px 4px" }}>{c.id}</td>
+                          <td style={{ padding: "6px 4px" }}>{c.date}</td>
+                          <td style={{ padding: "6px 4px" }}>
+                            {c.city}
+                            {c.district ? ` / ${c.district}` : ""}
+                          </td>
+                          <td style={{ padding: "6px 4px", textAlign: "right" }}>{fmt(c.price_per_m2)}</td>
+                          <td style={{ padding: "6px 4px" }}>
+                            {c.source_url ? (
+                              <a href={c.source_url} target="_blank" rel="noreferrer">
+                                link
+                              </a>
+                            ) : (
+                              c.source || "—"
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {estimate?.id && comps.length > 0 && (
+        <div style={{ marginTop: 20 }}>
+          <h3>Recent Land Comps in {city}</h3>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>ID</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Date</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>District</th>
+                <th style={{ textAlign: "right", borderBottom: "1px solid #eee", padding: "6px 4px" }}>SAR/m²</th>
+                <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {comps.map((r) => (
+                <tr key={r.id}>
+                  <td style={{ padding: "6px 4px" }}>{r.id}</td>
+                  <td style={{ padding: "6px 4px" }}>{r.date}</td>
+                  <td style={{ padding: "6px 4px" }}>{r.district || "—"}</td>
+                  <td style={{ padding: "6px 4px", textAlign: "right" }}>{fmt(r.price_per_m2)}</td>
+                  <td style={{ padding: "6px 4px" }}>
+                    {r.source_url ? (
+                      <a href={r.source_url} target="_blank" rel="noreferrer">
+                        link
+                      </a>
+                    ) : (
+                      r.source || "—"
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
