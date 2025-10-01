@@ -1,0 +1,3 @@
+date,value,tenor,rate_type,source_url
+2025-06-01,6.00,overnight,SAMA_base,https://example-sama
+2025-06-01,6.10,1M,SAIBOR,https://example-sama

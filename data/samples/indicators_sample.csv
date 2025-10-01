@@ -1,0 +1,3 @@
+date,city,asset_type,indicator_type,value,unit,source_url
+2025-06-01,Riyadh,residential,sale_price_per_m2,6500,SAR/m2,https://example-rega
+2025-06-01,Riyadh,residential,rent_per_m2,230,SAR/m2/mo,https://example-rega

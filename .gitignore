@@ -4,5 +4,8 @@ pycache/
 .env
 node_modules/
 *.log
-data/
+# Ignore generated data but keep checked-in samples
+data/*
+!data/samples/
+!data/samples/**
 __pycache__/
