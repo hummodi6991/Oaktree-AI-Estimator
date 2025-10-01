@@ -2,7 +2,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Polygon } from "geojson";
 import Map from "./Map";
-import { createEstimate, getFreshness, memoPdfUrl, runScenario, getComps } from "./api";
+import { createEstimate, getFreshness, memoPdfUrl, runScenario, getComps, exportCsvUrl } from "./api";
 
 const DEFAULT_POLY: Polygon = {
   type: "Polygon",
@@ -187,6 +187,9 @@ export default function App() {
             />
             <a href={memoPdfUrl(estimate.id)} target="_blank" rel="noreferrer" style={{ marginLeft: 4 }}>
               Open PDF Memo
+            </a>
+            <a href={exportCsvUrl(estimate.id)} target="_blank" rel="noreferrer" style={{ marginLeft: 8 }}>
+              Download CSV
             </a>
           </>
         )}
