@@ -115,6 +115,10 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       # 7) Deploy to ACK (patch image and apply)
+      - name: Validate manifests (dry-run)
+        run: |
+          kubectl apply --dry-run=client -f k8s/
+
       - name: Deploy manifests
         run: |
           sed -i "s|IMAGE_PLACEHOLDER|${{ steps.img.outputs.image }}|g" k8s/deployment.yaml
