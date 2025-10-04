@@ -21,6 +21,8 @@ spec:
           envFrom:
             - secretRef:
                 name: oaktree-db-env
+            - secretRef:
+                name: oaktree-app-env
           readinessProbe:
             httpGet: { path: /health, port: 8000 }
             initialDelaySeconds: 5
