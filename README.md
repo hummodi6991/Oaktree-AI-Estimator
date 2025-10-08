@@ -28,6 +28,16 @@ python scripts/ingest_samples.py
 curl -fsS 127.0.0.1:8000/v1/metadata/freshness
 ```
 
+### Ingest shapefiles (external layers)
+Zip the `.shp/.shx/.dbf/.prj` components together, then upload them via the ingest API:
+
+```bash
+curl -F "file=@/path/to/rydpolygons.zip" "http://127.0.0.1:8000/v1/ingest/shapefile?layer=rydpolygons"
+curl -F "file=@/path/to/rydpoints.zip"   "http://127.0.0.1:8000/v1/ingest/shapefile?layer=rydpoints"
+```
+
+Each feature is stored in the `external_feature` table with GeoJSON geometry and original properties so the UI can surface them immediately.
+
 ### Endpoints (MVP)
 
 - `GET /health`

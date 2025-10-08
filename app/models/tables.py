@@ -142,3 +142,14 @@ class EstimateLine(Base):
     model_version = Column(String(64))
     owner = Column(String(64))
     created_at = Column(DateTime)
+
+
+class ExternalFeature(Base):
+    __tablename__ = "external_feature"
+
+    id = Column(Integer, primary_key=True)
+    layer_name = Column(String(128), nullable=False)
+    feature_type = Column(String(16), nullable=False)
+    geometry = Column(JSONB, nullable=False)
+    properties = Column(JSONB)
+    source = Column(String(256))
