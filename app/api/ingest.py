@@ -19,6 +19,7 @@ from app.models.tables import (
     RentComp,
     SaleComp,
     ExternalFeature,
+    LandUseStat,
 )
 
 router = APIRouter(prefix="/v1/ingest", tags=["ingest"])
@@ -42,6 +43,21 @@ def _clean_optional(value):
         stripped = value.strip()
         return stripped or None
     return value
+
+
+def _coerce_date(value, default: date | None = None) -> date | None:
+    if value is None:
+        return default
+    try:
+        text = str(value).strip()
+    except Exception:
+        return default
+    if not text:
+        return default
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return default
 
 
 @router.post("/cci")
@@ -327,3 +343,45 @@ def ingest_indicators(
         upserted += 1
     db.commit()
     return {"status": "ok", "rows": int(upserted)}
+
+
+@router.post("/land_use")
+def ingest_land_use(
+    file: UploadFile = File(...),
+    city: str = "Riyadh",
+    db: Session = Depends(get_db),
+):
+    """Ingest reshaped land-use statistics."""
+
+    df = _read_table(file)
+    df.columns = [c.lower() for c in df.columns]
+    required = {"date", "sub_municipality_en", "category_en", "metric_name_en", "unit", "value"}
+    missing = required - set(df.columns)
+    if missing:
+        raise HTTPException(400, f"Missing columns: {sorted(missing)}")
+
+    inserted = 0
+    for _, row in df.iterrows():
+        record_date = _coerce_date(row.get("date"), default=date(2019, 1, 1))
+        raw_value = row.get("value")
+        value = None
+        if raw_value is not None and not pd.isna(raw_value):
+            try:
+                value = float(raw_value)
+            except (TypeError, ValueError):
+                value = None
+        stat = LandUseStat(
+            date=record_date or date(2019, 1, 1),
+            city=city,
+            sub_municipality=_clean_optional(row.get("sub_municipality_en")),
+            category=_clean_optional(row.get("category_en")),
+            metric=_clean_optional(row.get("metric_name_en")),
+            unit=_clean_optional(row.get("unit")),
+            value=value,
+            source_url=_clean_optional(row.get("source_url")),
+        )
+        db.add(stat)
+        inserted += 1
+
+    db.commit()
+    return {"status": "ok", "rows": int(inserted)}

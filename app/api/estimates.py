@@ -4,6 +4,7 @@ import json, uuid, csv, io
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
@@ -18,7 +19,7 @@ from app.services.explain import top_sale_comps, to_comp_dict, heuristic_drivers
 from app.services.pdf import build_memo_pdf
 from app.services.residual import residual_land_value
 from app.services.cashflow import build_equity_cashflow
-from app.models.tables import EstimateHeader, EstimateLine
+from app.models.tables import EstimateHeader, EstimateLine, LandUseStat
 
 router = APIRouter(tags=["estimates"])
 
@@ -114,14 +115,32 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
     # Program area
     nfa = _nfa_from_mix(site_area_m2, req.far, req.efficiency, req.unit_mix)
 
+    avg_unit_m2 = None
+    if req.unit_mix:
+        total_area = sum((u.avg_m2 or 0.0) * u.count for u in req.unit_mix)
+        total_units = sum(u.count for u in req.unit_mix)
+        avg_unit_m2 = (total_area / total_units) if (total_units and total_area > 0) else None
+
     # Revenue
     if req.strategy == "build_to_sell":
         rev = build_to_sell_revenue(db, net_floor_area_m2=nfa, city=req.city, asset_type="residential")
     elif req.strategy == "build_to_lease":
-        rev = build_to_lease_revenue(db, net_floor_area_m2=nfa, city=req.city, asset_type="residential")
+        rev = build_to_lease_revenue(
+            db,
+            net_floor_area_m2=nfa,
+            city=req.city,
+            asset_type="residential",
+            avg_unit_size_m2=avg_unit_m2,
+        )
     else:
         # Hotel path can plug here (ADR/Occ later per roadmap)
-        rev = build_to_lease_revenue(db, net_floor_area_m2=nfa, city=req.city, asset_type="hospitality")
+        rev = build_to_lease_revenue(
+            db,
+            net_floor_area_m2=nfa,
+            city=req.city,
+            asset_type="hospitality",
+            avg_unit_size_m2=avg_unit_m2,
+        )
 
     # Financing
     fin = compute_financing(
@@ -181,11 +200,37 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
     result["totals"]["p50_profit"] = result["totals"]["revenues"] - (
         combined_land + result["totals"]["hard_costs"] + result["totals"]["soft_costs"] + result["totals"]["financing"]
     )
+    res_share = 0.0
+    if _supports_sqlalchemy(db):
+        try:
+            city = req.city or "Riyadh"
+            total_area = (
+                db.query(func.sum(LandUseStat.value))
+                .filter(LandUseStat.city == city)
+                .filter(LandUseStat.metric.ilike("%area%"))
+                .filter(LandUseStat.value.isnot(None))
+                .scalar()
+            ) or 0.0
+            residential_area = (
+                db.query(func.sum(LandUseStat.value))
+                .filter(LandUseStat.city == city)
+                .filter(LandUseStat.metric.ilike("%area%"))
+                .filter(LandUseStat.category.ilike("%residential%"))
+                .filter(LandUseStat.value.isnot(None))
+                .scalar()
+            ) or 0.0
+            if float(total_area) > 0:
+                res_share = float(residential_area) / float(total_area)
+        except Exception:
+            res_share = 0.0
+
+    unit_cost_sigma = 0.06 if res_share >= 0.35 else 0.08
     result["confidence_bands"] = p_bands(
         result["totals"]["p50_profit"],
-        drivers={"land_ppm2": (1.0, 0.10), "unit_cost": (1.0, 0.08), "gdv_m2_price": (1.0, 0.10)},
+        drivers={"land_ppm2": (1.0, 0.10), "unit_cost": (1.0, unit_cost_sigma), "gdv_m2_price": (1.0, 0.10)},
     )
     bands = result["confidence_bands"]
+    result["notes"]["land_use_residential_share"] = res_share
 
     # --- Monthly cashflow & IRR (equity view) ---
     cf = build_equity_cashflow(
