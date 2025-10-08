@@ -3,6 +3,7 @@ import io
 import pathlib
 import tempfile
 import zipfile
+from typing import List
 
 import pandas as pd
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Query
@@ -284,6 +285,66 @@ def ingest_shapefile(
                     geometry=geometry_geojson,
                     properties=props,
                     source=file.filename,
+                )
+            )
+            upserted += 1
+
+        db.commit()
+
+    return {
+        "status": "ok",
+        "layer": layer,
+        "rows": int(upserted),
+        "feature_type": feature_type,
+    }
+
+
+@router.post("/shapefile/components")
+def ingest_shapefile_components(
+    files: List[UploadFile] = File(...),
+    layer: str = Query(default="default"),
+    db: Session = Depends(get_db),
+):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = pathlib.Path(tmpdir)
+        for upload in files:
+            if not upload:
+                continue
+            filename = upload.filename or "blob"
+            (tmp_path / filename).write_bytes(upload.file.read())
+
+        shp_candidates = list(tmp_path.rglob("*.shp"))
+        if not shp_candidates:
+            raise HTTPException(400, "No .shp among uploaded files")
+
+        reader = shapefile.Reader(str(shp_candidates[0]))
+        fields = [f[0] for f in reader.fields[1:]]
+        upserted = 0
+        feature_type = (reader.shapeTypeName or "").lower()
+
+        for rec in reader.iterShapeRecords():
+            try:
+                props = rec.record.as_dict()
+            except Exception:  # pragma: no cover - fallback for old pyshp
+                props = dict(zip(fields, list(rec.record)))
+
+            geometry_geojson = rec.shape.__geo_interface__
+            try:
+                geom = shapely_shape(geometry_geojson)
+                if not geom.is_valid:
+                    geom = geom.buffer(0)
+                geometry_geojson = geom.__geo_interface__
+            except Exception:
+                pass
+
+            db.add(
+                ExternalFeature(
+                    layer_name=layer,
+                    feature_type=feature_type
+                    or geometry_geojson.get("type", "").lower(),
+                    geometry=geometry_geojson,
+                    properties=props,
+                    source="multipart",
                 )
             )
             upserted += 1

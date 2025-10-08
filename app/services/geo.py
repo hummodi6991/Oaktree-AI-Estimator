@@ -1,5 +1,6 @@
-from typing import Tuple, Dict, Any
+from typing import Tuple, Dict, Any, Optional
 from shapely.geometry import shape, mapping, Polygon, MultiPolygon
+from shapely.geometry import shape as _shape
 import math
 
 
@@ -49,3 +50,18 @@ def area_m2(geom) -> float:
 
 def to_geojson(geom):
     return mapping(geom)
+
+
+def infer_district_from_features(db, geom, layer: str = "rydpolygons") -> Optional[str]:
+    from app.models.tables import ExternalFeature
+
+    rows = db.query(ExternalFeature).filter(ExternalFeature.layer_name == layer).all()
+    for r in rows:
+        try:
+            poly = _shape(r.geometry)
+            if poly.contains(geom):
+                props = {(k or "").lower(): v for k, v in (r.properties or {}).items()}
+                return props.get("district") or props.get("name") or props.get("district_en")
+        except Exception:
+            continue
+    return None

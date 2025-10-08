@@ -7,12 +7,15 @@ from app.models.tables import SaleComp
 def fetch_sale_comps(
     db: Session,
     city: Optional[str] = None,
+    district: Optional[str] = None,
     since: Optional[date] = None,
     limit: int = 200,
 ) -> List[SaleComp]:
     q = db.query(SaleComp)
     if city:
         q = q.filter(SaleComp.city.ilike(city))
+    if district:
+        q = q.filter(SaleComp.district.ilike(district))
     if since:
         q = q.filter(SaleComp.date >= since)
     return q.order_by(SaleComp.date.desc()).limit(limit).all()

@@ -1,3 +1,4 @@
+import io
 import os
 import tempfile
 import zipfile
@@ -68,16 +69,38 @@ def test_ingest_shapefile_roundtrip():
                 files={"file": ("points.zip", fh, "application/zip")},
             )
 
+        files_payload = []
+        for ext in ("shp", "shx", "dbf", "prj"):
+            with open(f"{shp_base}.{ext}", "rb") as component:
+                data = component.read()
+            files_payload.append(
+                (
+                    "files",
+                    (f"points.{ext}", io.BytesIO(data), "application/octet-stream"),
+                )
+            )
+
+        response_multi = client.post(
+            "/v1/ingest/shapefile/components?layer=test_points_multi",
+            files=files_payload,
+        )
+
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "ok"
     assert payload["rows"] == 1
     assert payload["layer"] == "test_points"
 
+    assert response_multi.status_code == 200
+    payload_multi = response_multi.json()
+    assert payload_multi["status"] == "ok"
+    assert payload_multi["rows"] > 0
+    assert payload_multi["layer"] == "test_points_multi"
+
     with session_factory() as session:
         stored = session.query(ExternalFeature).all()
-        assert len(stored) == 1
-        assert stored[0].properties.get("name") == "A"
-        assert stored[0].geometry["type"].lower() == "point"
+        assert len(stored) == 2
+        assert any(row.properties.get("name") == "A" for row in stored)
+        assert all(row.geometry["type"].lower() == "point" for row in stored)
 
     app.dependency_overrides.pop(get_db, None)
