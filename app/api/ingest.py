@@ -1,10 +1,15 @@
 from datetime import date
 import io
+import pathlib
+import tempfile
+import zipfile
 
 import pandas as pd
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Query
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
+import shapefile
+from shapely.geometry import shape as shapely_shape
 
 from app.db.deps import get_db
 from app.models.tables import (
@@ -13,6 +18,7 @@ from app.models.tables import (
     MarketIndicator,
     RentComp,
     SaleComp,
+    ExternalFeature,
 )
 
 router = APIRouter(prefix="/v1/ingest", tags=["ingest"])
@@ -198,6 +204,82 @@ def ingest_rates(
         upserted += 1
     db.commit()
     return {"status": "ok", "rows": int(upserted)}
+
+
+@router.post("/shapefile")
+def ingest_shapefile(
+    file: UploadFile = File(...),
+    layer: str = Query(default="default"),
+    db: Session = Depends(get_db),
+):
+    """Ingest features from an uploaded shapefile (.zip or raw .shp)."""
+
+    raw = file.file.read()
+    if not raw:
+        raise HTTPException(400, "Empty upload")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = pathlib.Path(tmpdir) / (file.filename or "upload.bin")
+        tmp_path.write_bytes(raw)
+
+        if zipfile.is_zipfile(tmp_path):
+            with zipfile.ZipFile(tmp_path) as zf:
+                zf.extractall(tmpdir)
+            shp_candidates = list(pathlib.Path(tmpdir).rglob("*.shp"))
+            if not shp_candidates:
+                raise HTTPException(400, "Zip does not contain a .shp file")
+            shp_path = str(shp_candidates[0])
+        else:
+            if tmp_path.suffix.lower() != ".shp":
+                raise HTTPException(
+                    400, "Upload a .zip containing the shapefile components"
+                )
+            shp_path = str(tmp_path)
+
+        try:
+            reader = shapefile.Reader(shp_path)
+        except Exception as exc:  # pragma: no cover - passthrough of library errors
+            raise HTTPException(400, f"Could not read shapefile: {exc}") from exc
+
+        fields = [f[0] for f in reader.fields[1:]]
+        upserted = 0
+        feature_type = (reader.shapeTypeName or "").lower()
+
+        for record in reader.iterShapeRecords():
+            try:
+                props = record.record.as_dict()
+            except Exception:  # pragma: no cover - fallback for old pyshp
+                props = dict(zip(fields, list(record.record)))
+
+            geometry_geojson = record.shape.__geo_interface__
+            try:
+                geom = shapely_shape(geometry_geojson)
+                if not geom.is_valid:
+                    geom = geom.buffer(0)
+                geometry_geojson = geom.__geo_interface__
+            except Exception:
+                pass
+
+            db.add(
+                ExternalFeature(
+                    layer_name=layer,
+                    feature_type=feature_type
+                    or geometry_geojson.get("type", "").lower(),
+                    geometry=geometry_geojson,
+                    properties=props,
+                    source=file.filename,
+                )
+            )
+            upserted += 1
+
+        db.commit()
+
+    return {
+        "status": "ok",
+        "layer": layer,
+        "rows": int(upserted),
+        "feature_type": feature_type,
+    }
 
 
 @router.post("/indicators")
