@@ -58,14 +58,20 @@ def build_to_lease_revenue(
     op_ex_ratio: float = 0.30,
     cap_rate: float = 0.075,
     fallback_rent_per_m2: float = 220.0,
+    avg_unit_size_m2: float | None = None,
 ) -> Dict[str, Any]:
     indicator_rent = _indicator(db, "rent_per_m2", city, asset_type)
-    if indicator_rent is None:
-        rent = fallback_rent_per_m2
-        rent_source_type = "Manual"
-    else:
+    rent_source_type = "Observed"
+    if indicator_rent is not None:
         rent = indicator_rent
-        rent_source_type = "Observed"
+    else:
+        alt = _indicator(db, "rent_avg_unit", city, asset_type)
+        if alt is not None and (avg_unit_size_m2 or 0) > 0:
+            rent = float(alt) / float(avg_unit_size_m2)
+            rent_source_type = "Derived"
+        else:
+            rent = fallback_rent_per_m2
+            rent_source_type = "Manual"
     # SAR/m2/month
     annual_rent = rent * net_floor_area_m2 * 12.0 * occ
     noi = annual_rent * (1.0 - op_ex_ratio)
@@ -83,6 +89,18 @@ def build_to_lease_revenue(
                 "unit": "SAR/m2/mo",
                 "source_type": rent_source_type,
             },
+            *(
+                [
+                    {
+                        "key": "avg_unit_m2",
+                        "value": avg_unit_size_m2,
+                        "unit": "m2",
+                        "source_type": "Manual",
+                    }
+                ]
+                if avg_unit_size_m2
+                else []
+            ),
             {"key": "occ", "value": occ, "unit": "ratio", "source_type": "Manual"},
             {
                 "key": "op_ex_ratio",

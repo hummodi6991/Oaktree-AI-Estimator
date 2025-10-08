@@ -117,6 +117,20 @@ class MarketIndicator(Base):
     asof_date = Column(Date)
 
 
+class LandUseStat(Base):
+    __tablename__ = "land_use_stat"
+
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False)
+    city = Column(String(64), nullable=False)
+    sub_municipality = Column(String(128))
+    category = Column(String(128))
+    metric = Column(String(64))
+    unit = Column(String(32))
+    value = Column(Numeric(18, 4))
+    source_url = Column(String(512))
+
+
 class EstimateHeader(Base):
     __tablename__ = "estimate_header"
 
