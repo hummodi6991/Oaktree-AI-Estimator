@@ -95,12 +95,17 @@ def _nfa_from_mix(site_m2: float, far: float, eff: float, mix: List[UnitMix]) ->
 def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
     # Geometry → area
     geom = geo_svc.parse_geojson(req.geometry)
+    district = None
+    try:
+        district = geo_svc.infer_district_from_features(db, geom, layer="rydpolygons")
+    except Exception:
+        pass
     if geom.is_empty:
         raise HTTPException(status_code=400, detail="Empty geometry provided")
     site_area_m2 = geo_svc.area_m2(geom)
 
     # Land value (hedonic/median comps)
-    ppm2, meta = land_price_per_m2(db, city=req.city, since=None)
+    ppm2, meta = land_price_per_m2(db, city=req.city, since=None, district=district)
     if not ppm2:
         ppm2 = 2800.0
     meta = meta or {}
@@ -167,6 +172,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
         "financing_apr": fin["apr"],
         "revenue_lines": rev.get("lines", []),
         "land_model": meta.get("model"),  # shows {"model_used": true/false, mape, n_rows}
+        "district": district,
     }
     result["assumptions"] = [
         {"key": "ppm2", "value": ppm2, "unit": "SAR/m2", "source_type": "Model" if meta.get("n_comps", 0) > 0 else "Manual"},
@@ -177,7 +183,14 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
         {"key": "margin_bps", "value": req.financing_params.margin_bps, "source_type": "Manual"},
     ]
     # Explainability (top comps + drivers)
-    comps_rows = top_sale_comps(db, city=req.city, district=None, asset_type="land", since=None, limit=10)
+    comps_rows = top_sale_comps(
+        db,
+        city=req.city,
+        district=district,
+        asset_type="land",
+        since=None,
+        limit=10,
+    )
     result["explainability"] = {
         "top_comps": [to_comp_dict(r) for r in comps_rows],
         "drivers": heuristic_drivers(ppm2, comps_rows),
