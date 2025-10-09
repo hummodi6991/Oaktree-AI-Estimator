@@ -6,6 +6,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "0004_external_features"
+# 0003's declared revision id is "0003_market_ind_est"; ensure continuity.
 down_revision = "0003_market_ind_est"
 branch_labels = None
 depends_on = None

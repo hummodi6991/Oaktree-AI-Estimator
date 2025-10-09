@@ -3,7 +3,7 @@ from datetime import date
 import json, uuid, csv, io
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -81,6 +81,31 @@ class EstimateRequest(BaseModel):
     city: Optional[str] = None
     far: float = 2.0
     efficiency: float = 0.82
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [
+                        [
+                            [46.675, 24.713],
+                            [46.676, 24.713],
+                            [46.676, 24.714],
+                            [46.675, 24.714],
+                            [46.675, 24.713],
+                        ]
+                    ],
+                },
+                "asset_program": "residential_midrise",
+                "timeline": {"start": "2025-10-01", "months": 18},
+                "financing_params": {"margin_bps": 250, "ltv": 0.6},
+                "strategy": "build_to_sell",
+                "city": "Riyadh",
+                "far": 2.0,
+                "efficiency": 0.82,
+            }
+        }
+    )
 
 
 def _nfa_from_mix(site_m2: float, far: float, eff: float, mix: List[UnitMix]) -> float:
