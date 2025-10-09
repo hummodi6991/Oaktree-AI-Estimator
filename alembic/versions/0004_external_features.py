@@ -6,7 +6,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "0004_external_features"
-down_revision = "0003_market_indicators_and_estimates"
+down_revision = "0003_market_ind_est"
 branch_labels = None
 depends_on = None
 
