@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.db.deps import get_db
 from app.models.tables import Parcel
 
-router = APIRouter(prefix="/v1/geo", tags=["geo"])
+router = APIRouter(prefix="/geo", tags=["geo"])
 
 
 class ParcelQuery(BaseModel):
