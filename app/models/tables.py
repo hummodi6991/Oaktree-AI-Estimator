@@ -131,6 +131,14 @@ class LandUseStat(Base):
     source_url = Column(String(512))
 
 
+class LandUseResidentialShare(Base):
+    __tablename__ = "land_use_residential_share"
+
+    city = Column(String(64), primary_key=True)
+    sub_municipality = Column(String(128), primary_key=True)
+    residential_share = Column(Numeric(18, 6))
+
+
 class EstimateHeader(Base):
     __tablename__ = "estimate_header"
 
