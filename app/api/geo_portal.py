@@ -1,7 +1,7 @@
 """Endpoints for parcel queries via external GIS."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.connectors.arcgis import query_features
@@ -9,14 +9,35 @@ from app.core.config import settings
 from app.db.deps import get_db
 from app.models.tables import Parcel
 
+# Keep router local to "geo"; main.py mounts routers at "/v1".
 router = APIRouter(prefix="/geo", tags=["geo"])
 
 
 class ParcelQuery(BaseModel):
     """Request body for parcel lookups."""
 
-    geometry: dict
-    where: str | None = None
+    geometry: dict = Field(
+        ...,
+        description="GeoJSON Polygon or MultiPolygon in WGS84 (EPSG:4326).",
+        json_schema_extra={
+            "example": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [46.675, 24.713],
+                        [46.676, 24.713],
+                        [46.676, 24.714],
+                        [46.675, 24.714],
+                        [46.675, 24.713],
+                    ]
+                ],
+            }
+        },
+    )
+    where: str | None = Field(
+        default="1=1",
+        description='Optional SQL-like predicate understood by ArcGIS (default "1=1").',
+    )
 
 
 @router.post("/parcels")
