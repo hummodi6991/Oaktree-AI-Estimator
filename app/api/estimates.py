@@ -70,20 +70,31 @@ class FinancingParams(BaseModel):
     ltv: float = 0.6
 
 
+def _default_timeline() -> "Timeline":
+    # First day of the current month, 18-month program
+    return Timeline(start=date.today().replace(day=1).isoformat(), months=18)
+
+
+def _default_financing() -> "FinancingParams":
+    return FinancingParams()
+
+
 class EstimateRequest(BaseModel):
-    geometry: Dict[str, Any]
-    asset_program: str
+    # accept dict or JSON string (Swagger users often paste as text)
+    geometry: Dict[str, Any] | str
+    asset_program: str = "residential_midrise"
     unit_mix: List[UnitMix] = Field(default_factory=list)
     finish_level: Literal["low", "mid", "high"] = "mid"
-    timeline: Timeline
-    financing_params: FinancingParams
+    timeline: Timeline = Field(default_factory=_default_timeline)
+    financing_params: FinancingParams = Field(default_factory=_default_financing)
     strategy: Literal["build_to_sell", "build_to_lease", "hotel"] = "build_to_sell"
     city: Optional[str] = None
     far: float = 2.0
     efficiency: float = 0.82
     model_config = ConfigDict(
         json_schema_extra={
-            "example": {
+            # Use OpenAPI "examples" so Swagger renders a runnable example
+            "examples": [{
                 "geometry": {
                     "type": "Polygon",
                     "coordinates": [
@@ -103,7 +114,7 @@ class EstimateRequest(BaseModel):
                 "city": "Riyadh",
                 "far": 2.0,
                 "efficiency": 0.82,
-            }
+            }]
         }
     )
 
@@ -119,7 +130,11 @@ def _nfa_from_mix(site_m2: float, far: float, eff: float, mix: List[UnitMix]) ->
 @router.post("/estimates")
 def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
     # Geometry → area
-    geom = geo_svc.parse_geojson(req.geometry)
+    try:
+        geom = geo_svc.parse_geojson(req.geometry)
+    except Exception as exc:
+        # Give a precise, user-friendly 400 instead of a cryptic 422
+        raise HTTPException(status_code=400, detail=f"Invalid GeoJSON for 'geometry': {exc}")
     district = None
     try:
         district = geo_svc.infer_district_from_features(db, geom, layer="rydpolygons")

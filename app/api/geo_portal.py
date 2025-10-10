@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+import json
 
 from app.connectors.arcgis import query_features
 from app.core.config import settings
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/geo", tags=["geo"])
 class ParcelQuery(BaseModel):
     """Request body for parcel lookups."""
 
-    geometry: dict = Field(
+    geometry: dict | str = Field(
         ...,
         description="GeoJSON Polygon or MultiPolygon in WGS84 (EPSG:4326).",
         json_schema_extra={
@@ -50,7 +51,15 @@ def parcels(q: ParcelQuery, db: Session = Depends(get_db)):
     if not (base and isinstance(layer, int)):
         raise HTTPException(status_code=500, detail="ArcGIS not configured")
 
-    feats = query_features(base, layer, q.geometry, where=q.where or "1=1", token=token)
+    # Accept either a dict or a JSON string for geometry
+    geometry = q.geometry
+    if isinstance(geometry, str):
+        try:
+            geometry = json.loads(geometry)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid GeoJSON string: {exc}")
+
+    feats = query_features(base, layer, geometry, where=q.where or "1=1", token=token)
     items = []
     for feature in feats:
         props = feature.get("properties") or {}
@@ -83,7 +92,7 @@ def parcels(q: ParcelQuery, db: Session = Depends(get_db)):
             db.add(
                 Parcel(
                     id=parcel_id,
-                    gis_polygon=q.geometry,
+                    gis_polygon=geometry,
                     municipality=item["municipality"],
                     district=item["district"],
                     zoning=item["zoning"],
