@@ -1,10 +1,19 @@
 from typing import Tuple, Dict, Any, Optional
 from shapely.geometry import shape, mapping, Polygon, MultiPolygon
+import json
 from shapely.geometry import shape as _shape
 import math
 
 
-def parse_geojson(gj: Dict[str, Any]):
+def parse_geojson(gj: Dict[str, Any] | str):
+    """
+    Accept GeoJSON either as a dict or a JSON string; return a Shapely geometry.
+    """
+    if isinstance(gj, str):
+        try:
+            gj = json.loads(gj)
+        except Exception as exc:
+            raise ValueError("geometry must be a GeoJSON object or JSON-encoded string") from exc
     return shape(gj)
 
 
