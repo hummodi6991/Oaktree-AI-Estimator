@@ -9,6 +9,7 @@ from app.api.health import router as health_router
 from app.api.indices import router as indices_router
 from app.api.ingest import router as ingest_router
 from app.api.metadata import router as metadata_router
+from app.api.tiles import router as tiles_router
 from app.telemetry import setup_otel_if_configured
 from app.security.auth import require as auth_require
 from app.core.config import settings
@@ -41,6 +42,7 @@ app.include_router(comps_router, prefix="/v1", dependencies=deps)
 app.include_router(estimates_router, prefix="/v1", dependencies=deps)
 app.include_router(metadata_router, prefix="/v1", dependencies=deps)
 app.include_router(ingest_router, dependencies=deps)
+app.include_router(tiles_router, prefix="")  # serves /tiles/...
 if settings.ARCGIS_BASE_URL and isinstance(settings.ARCGIS_PARCEL_LAYER, int):
     # Only expose ArcGIS-backed routes when configured
     app.include_router(geo_router, prefix="/v1", dependencies=deps)
