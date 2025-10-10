@@ -114,6 +114,38 @@ jobs:
             --from-literal=POSTGRES_PORT="${{ secrets.POSTGRES_PORT }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Create/Update App Secret (oaktree-app-env)
+        run: |
+          kubectl create secret generic oaktree-app-env \
+            --from-literal=APP_ENV=prod \
+            --from-literal=AUTH_MODE=disabled \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Run DB migrations (alembic)
+        run: |
+          cat > migrate-job.yaml <<'YAML'
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: oaktree-migrate
+          spec:
+            ttlSecondsAfterFinished: 120
+            template:
+              spec:
+                restartPolicy: OnFailure
+                containers:
+                  - name: migrate
+                    image: ${{ steps.img.outputs.image }}
+                    command: ["sh","-lc","alembic upgrade head"]
+                    envFrom:
+                      - secretRef:
+                          name: oaktree-db-env
+                      - secretRef:
+                          name: oaktree-app-env
+          YAML
+          kubectl apply -f migrate-job.yaml
+          kubectl wait --for=condition=complete job/oaktree-migrate --timeout=180s
+
       # 7) Deploy to ACK (patch image and apply)
       - name: Validate manifests (dry-run)
         run: |
