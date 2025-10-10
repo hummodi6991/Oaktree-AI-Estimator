@@ -10,6 +10,7 @@ from app.api.ingest import router as ingest_router
 from app.api.metadata import router as metadata_router
 from app.telemetry import setup_otel_if_configured
 from app.security.auth import require as auth_require
+from app.core.config import settings
 
 app = FastAPI(title="Oaktree Estimator API", version="0.1.0")
 setup_otel_if_configured(app)
@@ -39,4 +40,6 @@ app.include_router(comps_router, prefix="/v1", dependencies=deps)
 app.include_router(estimates_router, prefix="/v1", dependencies=deps)
 app.include_router(metadata_router, prefix="/v1", dependencies=deps)
 app.include_router(ingest_router, dependencies=deps)
-app.include_router(geo_router, prefix="/v1", dependencies=deps)
+if settings.ARCGIS_BASE_URL and isinstance(settings.ARCGIS_PARCEL_LAYER, int):
+    # Only expose ArcGIS-backed routes when configured
+    app.include_router(geo_router, prefix="/v1", dependencies=deps)
