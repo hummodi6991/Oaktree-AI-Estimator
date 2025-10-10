@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
     paths:
       - "app/**"
+      - "frontend/**"
       - "Dockerfile"
       - ".github/workflows/deploy-sccc.yml"
       - "k8s/**"
