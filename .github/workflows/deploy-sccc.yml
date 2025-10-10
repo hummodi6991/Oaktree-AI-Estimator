@@ -103,7 +103,7 @@ jobs:
           aliyun cs DescribeClusterUserKubeconfig --RegionId "$ALIBABA_REGION" --ClusterId "$ACK_CLUSTER_ID" | jq -r '.config' > kubeconfig
           echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
 
-      # 6) Create/Update DB Secret (oaktree-db-env)
+      # 6) Create/Update Secrets (oaktree-db-env / oaktree-app-env)
       - name: Create/Update DB Secret (oaktree-db-env)
         run: |
           kubectl create secret generic oaktree-db-env \
