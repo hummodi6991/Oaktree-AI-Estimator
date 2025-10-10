@@ -1,4 +1,7 @@
-const BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+// Use VITE_API_BASE_URL when provided; otherwise talk to the same origin.
+const ENV_BASE = (import.meta.env as any).VITE_API_BASE_URL as string | undefined;
+const BASE =
+  (ENV_BASE && ENV_BASE.trim() !== "" ? ENV_BASE : window.location.origin).replace(/\/+$/, "");
 
 export type EstimateRequest = {
   geometry: any;

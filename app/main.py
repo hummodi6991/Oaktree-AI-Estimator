@@ -1,5 +1,6 @@
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.staticfiles import StaticFiles
 
 from app.api.comps import router as comps_router
 from app.api.estimates import router as estimates_router
@@ -43,3 +44,11 @@ app.include_router(ingest_router, dependencies=deps)
 if settings.ARCGIS_BASE_URL and isinstance(settings.ARCGIS_PARCEL_LAYER, int):
     # Only expose ArcGIS-backed routes when configured
     app.include_router(geo_router, prefix="/v1", dependencies=deps)
+
+# Serve the compiled React app (frontend/dist) from the same container.
+# UI will be reachable at "/" on the same LoadBalancer as the API.
+try:
+    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="web")
+except Exception:
+    # In dev without a build the directory may not exist; ignore.
+    pass
