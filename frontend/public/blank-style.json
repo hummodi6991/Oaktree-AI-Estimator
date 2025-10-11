@@ -1,0 +1,9 @@
+{
+  "version": 8,
+  "name": "No-Internet",
+  "sources": {},
+  "layers": [
+    { "id": "bg", "type": "background",
+      "paint": { "background-color": "#f2e9d8" } }
+  ]
+}
