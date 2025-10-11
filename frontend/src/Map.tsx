@@ -50,8 +50,8 @@ export default function Map({ polygon, onPolygon }: MapProps) {
       container: containerRef.current,
       style: configuredStyle,
       center: [46.675, 24.713],
-      zoom: 13,
-      maxZoom: 16,
+      zoom: 15,
+      maxZoom: 19,
     });
 
     mapRef.current = map;
