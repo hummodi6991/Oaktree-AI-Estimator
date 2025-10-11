@@ -80,7 +80,8 @@ export default function Map({ polygon, onPolygon }: MapProps) {
       if (!drawRef.current) return;
       const collection = drawRef.current.getAll();
       const firstPolygon = collection.features.find(
-        (feature): feature is Feature<Polygon> => feature.geometry.type === "Polygon"
+        (feature: Feature): feature is Feature<Polygon> =>
+          (feature.geometry as any)?.type === "Polygon"
       );
       callbackRef.current(firstPolygon ? firstPolygon.geometry : null);
     };
@@ -88,7 +89,8 @@ export default function Map({ polygon, onPolygon }: MapProps) {
     map.on("draw.create", (event) => {
       if (!drawRef.current) return;
       const polygonFeature = event.features.find(
-        (feature): feature is Feature<Polygon> => feature.geometry.type === "Polygon"
+        (feature: Feature): feature is Feature<Polygon> =>
+          (feature.geometry as any)?.type === "Polygon"
       );
       if (!polygonFeature) return;
       drawRef.current.deleteAll();
