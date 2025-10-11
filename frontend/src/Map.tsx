@@ -51,6 +51,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
       style: configuredStyle,
       center: [46.675, 24.713],
       zoom: 13,
+      maxZoom: 16,
     });
 
     mapRef.current = map;
