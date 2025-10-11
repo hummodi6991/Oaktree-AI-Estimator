@@ -1,23 +1,34 @@
 import { useEffect, useRef } from "react";
 import maplibregl from "maplibre-gl";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
-import type {
-  DrawCreateEvent,
-  DrawDeleteEvent,
-  DrawUpdateEvent
-} from "@mapbox/mapbox-gl-draw";
 import type { Feature, Polygon } from "geojson";
 import type { IControl, LngLatLike } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 
-type MapProps = {
-  polygon?: Polygon | null;
-  onPolygon: (geometry: Polygon | null) => void;
-};
+type MapProps = { polygon?: Polygon | null; onPolygon: (geometry: Polygon | null) => void; };
 
 const SITE_FEATURE_ID = "site";
+
+// keep the existing default
 const DEFAULT_MAP_STYLE = "https://demotiles.maplibre.org/style.json";
+
+// NEW: inline fallback style that never needs a remote style.json
+const FALLBACK_RASTER_STYLE: any = {
+  version: 8,
+  sources: {
+    osm: {
+      type: "raster",
+      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      attribution: "© OpenStreetMap contributors",
+    },
+  },
+  layers: [
+    { id: "bg", type: "background", paint: { "background-color": "#f8f8f8" } },
+    { id: "osm", type: "raster", source: "osm" },
+  ],
+};
 
 export default function Map({ polygon, onPolygon }: MapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -32,16 +43,30 @@ export default function Map({ polygon, onPolygon }: MapProps) {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const style = import.meta.env.VITE_MAP_STYLE || DEFAULT_MAP_STYLE;
+    // Use env var if present, else default demo style
+    const configuredStyle = import.meta.env.VITE_MAP_STYLE || DEFAULT_MAP_STYLE;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style,
+      style: configuredStyle,
       center: [46.675, 24.713],
       zoom: 13,
     });
 
     mapRef.current = map;
+
+    // If the remote style/sprites/glyphs fail (CORS/mixed-content), swap to inline OSM style.
+    map.on("error", (e) => {
+      const msg = String((e as any)?.error?.message || "");
+      if (
+        msg.includes("Failed to load") ||
+        msg.includes("style") ||
+        msg.includes("glyph") ||
+        msg.includes("sprite")
+      ) {
+        try { map.setStyle(FALLBACK_RASTER_STYLE as any); } catch {}
+      }
+    });
 
     const draw = new MapboxDraw({
       displayControlsDefault: false,
@@ -60,7 +85,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
       callbackRef.current(firstPolygon ? firstPolygon.geometry : null);
     };
 
-    map.on("draw.create", (event: DrawCreateEvent) => {
+    map.on("draw.create", (event) => {
       if (!drawRef.current) return;
       const polygonFeature = event.features.find(
         (feature): feature is Feature<Polygon> => feature.geometry.type === "Polygon"
@@ -71,8 +96,8 @@ export default function Map({ polygon, onPolygon }: MapProps) {
       callbackRef.current(polygonFeature.geometry);
     });
 
-    map.on("draw.update", (_event: DrawUpdateEvent) => emitPolygon());
-    map.on("draw.delete", (_event: DrawDeleteEvent) => callbackRef.current(null));
+    map.on("draw.update", () => emitPolygon());
+    map.on("draw.delete", () => callbackRef.current(null));
 
     return () => {
       map.remove();
