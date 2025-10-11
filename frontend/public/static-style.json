@@ -1,0 +1,15 @@
+{
+  "version": 8,
+  "name": "Local Static Tiles",
+  "sources": {
+    "local": {
+      "type": "raster",
+      "tiles": ["/static-tiles/{z}/{x}/{y}.png"],
+      "tileSize": 256
+    }
+  },
+  "layers": [
+    { "id": "bg", "type": "background", "paint": { "background-color": "#f8f8f8" } },
+    { "id": "raster", "type": "raster", "source": "local", "minzoom": 0, "maxzoom": 19 }
+  ]
+}
