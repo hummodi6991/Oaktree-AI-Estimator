@@ -94,8 +94,17 @@ export default function Map({ polygon, onPolygon }: MapProps) {
           (feature.geometry as any)?.type === "Polygon"
       );
       if (!polygonFeature) return;
+
+      // Keep exactly one polygon
       drawRef.current.deleteAll();
-      drawRef.current.add(polygonFeature);
+      const added = drawRef.current.add(polygonFeature) as any;
+
+      // NEW: switch to simple_select so the whole polygon can be dragged
+      const id = (added?.features?.[0]?.id || polygonFeature.id) as string;
+      if (id) {
+        drawRef.current.changeMode("simple_select", { featureIds: [id] as any });
+      }
+
       callbackRef.current(polygonFeature.geometry);
     });
 
@@ -123,6 +132,12 @@ export default function Map({ polygon, onPolygon }: MapProps) {
         geometry: polygon,
       };
       draw.add(feature as any);
+
+      // NEW: select it to enable drag-move
+      const id = (feature.id ?? draw.getAll().features[0]?.id) as string;
+      if (id) {
+        draw.changeMode("simple_select", { featureIds: [id] as any });
+      }
 
       if (mapRef.current) {
         const bounds = polygon.coordinates[0].reduce<maplibregl.LngLatBounds | null>((acc, coord) => {
