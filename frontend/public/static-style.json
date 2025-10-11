@@ -1,5 +1,6 @@
 {
   "version": 8,
+<<<<<<< HEAD
   "name": "Offline Raster",
   "sources": {
     "offline": {
@@ -7,10 +8,23 @@
       "tiles": ["/static-tiles/{z}/{x}/{y}.png"],
       "tileSize": 256,
       "attribution": "© OpenStreetMap (cached)"
+=======
+  "name": "Local raster",
+  "sources": {
+    "local": {
+      "type": "raster",
+      "tiles": ["/static-tiles/{z}/{x}/{y}.png"],
+      "tileSize": 256,
+      "attribution": "© OpenStreetMap contributors (cached)"
+>>>>>>> 8c3943d (feat(map): switch to offline tiles (static-style + tiles))
     }
   },
   "layers": [
     { "id": "bg", "type": "background", "paint": { "background-color": "#f8f8f8" } },
+<<<<<<< HEAD
     { "id": "offline", "type": "raster", "source": "offline" }
+=======
+    { "id": "local", "type": "raster", "source": "local" }
+>>>>>>> 8c3943d (feat(map): switch to offline tiles (static-style + tiles))
   ]
 }
