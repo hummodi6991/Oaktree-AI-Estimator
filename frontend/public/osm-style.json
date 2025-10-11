@@ -1,10 +1,10 @@
 {
   "version": 8,
-  "name": "OSM Raster",
+  "name": "OSM Raster (local)",
   "sources": {
     "osm": {
       "type": "raster",
-      "tiles": ["/tiles/{z}/{x}/{y}.png"],
+      "tiles": ["/static-tiles/{z}/{x}/{y}.png"],
       "tileSize": 256,
       "attribution": "© OpenStreetMap contributors"
     }
