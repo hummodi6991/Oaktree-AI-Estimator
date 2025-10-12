@@ -4,6 +4,9 @@ import type { Polygon } from "geojson";
 import Map from "./Map";
 import { createEstimate, getFreshness, memoPdfUrl, runScenario, getComps, exportCsvUrl } from "./api";
 import "./App.css";
+import type { EstimateResponse } from "./lib/types";
+import { pickRent } from "./lib/pickRent";
+import RentSummary from "./components/RentSummary";
 
 const DEFAULT_POLY: Polygon = {
   type: "Polygon",
@@ -74,7 +77,7 @@ export default function App() {
   const [geom, setGeom] = useState(JSON.stringify(DEFAULT_POLY, null, 2));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const [estimate, setEstimate] = useState<any>(null);
+  const [estimate, setEstimate] = useState<EstimateResponse | null>(null);
   const [comps, setComps] = useState<any[]>([]);
   const [uplift, setUplift] = useState(0);
 
@@ -96,6 +99,7 @@ export default function App() {
 
   const totals = estimate?.totals;
   const irr = estimate?.metrics?.irr_annual;
+  const { rent, comps: rentComps } = estimate ? pickRent(estimate) : { rent: null, comps: [] };
 
   const handlePolygon = useCallback(
     (geometry: Polygon | null) => {
@@ -147,7 +151,7 @@ export default function App() {
         far,
         efficiency: 0.82,
       };
-      const res = await createEstimate(payload);
+      const res = (await createEstimate(payload)) as EstimateResponse;
       setEstimate(res);
       const since = new Date();
       since.setMonth(since.getMonth() - 12);
@@ -481,6 +485,41 @@ export default function App() {
             </div>
           )}
         </section>
+      )}
+
+      {rent && (
+        <>
+          <RentSummary rent={rent} />
+          {!!rentComps?.length && (
+            <div className="card">
+              <h3 className="card-title">Top Rent Indicators</h3>
+              <div className="overflow-x-auto">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Date</th>
+                      <th>District</th>
+                      <th>SAR/m²/mo</th>
+                      <th>Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rentComps.map((r: any) => (
+                      <tr key={r.id || r.Identifier}>
+                        <td>{r.id || r.Identifier}</td>
+                        <td>{r.date || r.Date}</td>
+                        <td>{r.district || r.District || "—"}</td>
+                        <td>{r.rent_ppm2 ?? r.Rent_SAR_m2_mo ?? "—"}</td>
+                        <td>{r.source || r.Source || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {estimate?.id && comps.length > 0 && (
