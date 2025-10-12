@@ -10,10 +10,13 @@ export type EstimateRequest = {
   finish_level: "low" | "mid" | "high";
   timeline: { start: string; months: number };
   financing_params: { margin_bps: number; ltv: number };
-  strategy: "build_to_sell" | "build_to_lease" | "hotel";
+  strategy: "build_to_sell" | "build_to_rent";
   city?: string | null;
   far?: number;
   efficiency?: number;
+  sale_price_per_m2?: number;
+  soft_cost_pct?: number;
+  btr_params?: { occupancy?: number; opex_ratio?: number; cap_rate?: number };
 };
 
 export async function getFreshness() {
