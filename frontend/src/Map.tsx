@@ -218,7 +218,13 @@ export default function Map({ polygon, onPolygon }: MapProps) {
     };
 
     map.on("draw.modechange", (event: any) => {
-      isDrawingRef.current = event.mode === "draw_polygon";
+      const isDrawing = event.mode === "draw_polygon";
+      isDrawingRef.current = isDrawing;
+      if (isDrawing) {
+        map.doubleClickZoom.disable();
+      } else {
+        map.doubleClickZoom.enable();
+      }
       syncToolbar();
     });
 
@@ -254,6 +260,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
 
     return () => {
       toolbarRef.current = null;
+      map.doubleClickZoom.enable();
       map.remove();
       drawRef.current = null;
       mapRef.current = null;
