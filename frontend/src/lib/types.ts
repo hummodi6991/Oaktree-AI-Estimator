@@ -8,17 +8,53 @@ export type RentOutputs = {
   stabilized_value?: number; // SAR (NOI/cap_rate if both present)
 };
 
-export type RentExplainabilityRow = {
-  id: string;
-  date: string;
+export type RentDriver = {
+  name?: string;
+  direction?: string;
+  magnitude?: number;
+  unit?: string;
+};
+
+export type RentTopComparable = {
+  identifier?: string;
+  id?: string;
+  Identifier?: string;
+  date?: string;
+  Date?: string;
+  city?: string;
+  City?: string;
   district?: string;
+  District?: string;
   rent_ppm2?: number;
+  rent_per_m2?: number;
+  sar_per_m2?: number;
+  price_per_m2?: number;
+  Rent_SAR_m2_mo?: number;
   source?: string;
+  Source?: string;
+  source_url?: string;
+};
+
+export type RentExplainability = {
+  drivers?: RentDriver[];
+  top_comps?: RentTopComparable[];
+  rent_comparables?: RentTopComparable[];
+  top_rent_comparables?: RentTopComparable[];
+};
+
+export type RentBlock = RentOutputs & {
+  explainability?: RentExplainability;
+  rent_explainability?: RentExplainability;
+  drivers?: RentDriver[];
+  top_comps?: RentTopComparable[];
+  rent_comparables?: RentTopComparable[];
+  top_rent_comparables?: RentTopComparable[];
 };
 
 export type EstimateResponse = Record<string, any> & {
   // existing fields…
-  rent?: RentOutputs; // if backend groups under `rent`
+  rent?: RentBlock; // if backend groups under `rent`
+  rent_explainability?: RentExplainability;
   // fallback keys (some backends flatten fields). Leave optional:
   rent_ppm2?: number;
   rent_avg_unit?: number;
@@ -28,10 +64,9 @@ export type EstimateResponse = Record<string, any> & {
   annual_rent_revenue?: number;
   stabilized_value?: number;
 
-  explainability?: {
+  explainability?: RentExplainability & {
     // keep existing sale comparables
-    rent_comparables?: RentExplainabilityRow[];
-    top_rent_comparables?: RentExplainabilityRow[]; // support either key
+    top_comps?: any[];
   };
   key_assumptions?: Record<string, any>; // we’ll read rent_* if present
 };

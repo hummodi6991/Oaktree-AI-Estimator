@@ -99,7 +99,9 @@ export default function App() {
 
   const totals = estimate?.totals;
   const irr = estimate?.metrics?.irr_annual;
-  const { rent, comps: rentComps } = estimate ? pickRent(estimate) : { rent: null, comps: [] };
+  const { rent, comps: rentComps, drivers: rentDrivers } = estimate
+    ? pickRent(estimate)
+    : { rent: null, comps: [], drivers: [] };
 
   const handlePolygon = useCallback(
     (geometry: Polygon | null) => {
@@ -490,33 +492,91 @@ export default function App() {
       {rent && (
         <>
           <RentSummary rent={rent} />
-          {!!rentComps?.length && (
+          {(rentDrivers.length > 0 || rentComps.length > 0) && (
             <div className="card">
-              <h3 className="card-title">Top Rent Indicators</h3>
-              <div className="overflow-x-auto">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Date</th>
-                      <th>District</th>
-                      <th>SAR/m²/mo</th>
-                      <th>Source</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rentComps.map((r: any) => (
-                      <tr key={r.id || r.Identifier}>
-                        <td>{r.id || r.Identifier}</td>
-                        <td>{r.date || r.Date}</td>
-                        <td>{r.district || r.District || "—"}</td>
-                        <td>{r.rent_ppm2 ?? r.Rent_SAR_m2_mo ?? "—"}</td>
-                        <td>{r.source || r.Source || "—"}</td>
+              <h3 className="card-title">Rent Explainability</h3>
+              {rentDrivers.length > 0 && (
+                <div className="card-subsection drivers-block">
+                  <h4>Drivers</h4>
+                  <ul>
+                    {rentDrivers.map((d: any, i: number) => {
+                      const magnitude =
+                        typeof d.magnitude === "number"
+                          ? fmt(d.magnitude, d.unit === "ratio" ? 2 : 0)
+                          : d.magnitude ?? "—";
+                      const unitLabel =
+                        d.unit && d.unit !== "ratio"
+                          ? ` ${d.unit}`
+                          : d.unit === "ratio"
+                          ? ""
+                          : "";
+                      return (
+                        <li key={i}>
+                          {d.name || `Driver ${i + 1}`}:
+                          {" "}
+                          {d.direction || "—"}
+                          {d.magnitude != null || d.unit ? (
+                            <>
+                              {" "}(≈ {magnitude}
+                              {unitLabel})
+                            </>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+              {rentComps.length > 0 && (
+                <div className="overflow-x-auto">
+                  <h4 className="card-subtitle">Top Rent Indicators</h4>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Date</th>
+                        <th>City / District</th>
+                        <th>SAR/m²/mo</th>
+                        <th>Source</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {rentComps.map((r: any, index: number) => {
+                        const identifier = r.identifier || r.id || r.Identifier || "";
+                        const date = r.date || r.Date || "—";
+                        const locationParts = [r.city || r.City, r.district || r.District].filter(Boolean);
+                        const location = locationParts.length > 0 ? locationParts.join(" / ") : "—";
+                        const rentValue =
+                          r.rent_ppm2 ??
+                          r.rent_per_m2 ??
+                          r.sar_per_m2 ??
+                          r.price_per_m2 ??
+                          r.Rent_SAR_m2_mo ??
+                          "—";
+                        const source = r.source || r.Source || "—";
+                        const sourceContent = r.source_url ? (
+                          <a href={r.source_url} target="_blank" rel="noreferrer">
+                            View source
+                          </a>
+                        ) : (
+                          source
+                        );
+                        return (
+                          <tr key={`${identifier || "rent"}-${index}`}>
+                            <td>{identifier || "—"}</td>
+                            <td>{date}</td>
+                            <td>{location}</td>
+                            <td>
+                              {typeof rentValue === "number" ? fmt(rentValue) : rentValue}
+                            </td>
+                            <td>{sourceContent}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </>
