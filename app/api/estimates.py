@@ -15,7 +15,14 @@ from app.services.costs import compute_hard_costs
 from app.services.financing import compute_financing
 from app.services.proforma import assemble
 from app.services.simulate import p_bands
-from app.services.explain import top_sale_comps, to_comp_dict, heuristic_drivers
+from app.services.explain import (
+    heuristic_drivers,
+    rent_heuristic_drivers,
+    top_rent_comps,
+    top_sale_comps,
+    to_comp_dict,
+    to_rent_comp_dict,
+)
 from app.services.pdf import build_memo_pdf
 from app.services.residual import residual_land_value
 from app.services.cashflow import build_equity_cashflow
@@ -74,6 +81,49 @@ class BtrParams(BaseModel):
     occupancy: float | None = None
     opex_ratio: float | None = None
     cap_rate: float | None = None
+
+
+class ExplainabilityRow(BaseModel):
+    name: str
+    direction: str
+    magnitude: float
+    unit: Optional[str] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class RentComparable(BaseModel):
+    id: str
+    date: str | None = None
+    city: Optional[str] = None
+    district: Optional[str] = None
+    sar_per_m2: Optional[float] = None
+    source: Optional[str] = None
+    source_url: Optional[str] = None
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class RentBlock(BaseModel):
+    drivers: List[ExplainabilityRow] = Field(default_factory=list)
+    top_comps: List[RentComparable] = Field(default_factory=list)
+    rent_comparables: List[RentComparable] = Field(default_factory=list)
+    top_rent_comparables: List[RentComparable] = Field(default_factory=list)
+    rent_price_per_m2: float | None = None
+    rent_unit_rate: float | None = None
+    rent_vacancy_pct: float | None = None
+    rent_growth_pct: float | None = None
+
+
+class EstimateResponseModel(BaseModel):
+    id: str
+    strategy: str
+    totals: Dict[str, Any]
+    assumptions: List[Dict[str, Any]]
+    notes: Dict[str, Any]
+    rent: RentBlock = Field(default_factory=RentBlock)
+
+    model_config = ConfigDict(extra="allow")
 
 
 def _default_timeline() -> "Timeline":
@@ -139,8 +189,8 @@ class EstimateRequest(BaseModel):
         }
     )
 
-@router.post("/estimates")
-def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+@router.post("/estimates", response_model=EstimateResponseModel)
+def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> EstimateResponseModel:
     # Geometry → area
     try:
         geom = geo_svc.parse_geojson(req.geometry)
@@ -181,6 +231,8 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
     soft_pct = req.soft_cost_pct if (req.soft_cost_pct and req.soft_cost_pct > 0) else default_soft
     soft_costs = hard_costs * soft_pct
 
+    rent_block: RentBlock = RentBlock()
+
     sale_indicator = indicators_svc.latest_sale_price_per_m2(db, city=req.city, district=district)
     if req.sale_price_per_m2 and req.sale_price_per_m2 > 0:
         sale_ppm2 = float(req.sale_price_per_m2)
@@ -194,6 +246,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
     sale_gdv = nfa_m2 * sale_ppm2
 
     rent_indicator = indicators_svc.latest_rent_per_m2(db, city=req.city, district=district)
+    rent_unit_indicator = indicators_svc.latest_rent_unit_rate(db, city=req.city, district=district)
+    rent_vacancy_indicator = indicators_svc.latest_rent_vacancy_pct(db, city=req.city, district=district)
+    rent_growth_indicator = indicators_svc.latest_rent_growth_pct(db, city=req.city, district=district)
     if rent_indicator is not None:
         rent_ppm2 = rent_indicator
         rent_source = "Observed"
@@ -203,9 +258,19 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
     occ = (req.btr_params.occupancy if req.btr_params and req.btr_params.occupancy is not None else 0.92)
     opex = (req.btr_params.opex_ratio if req.btr_params and req.btr_params.opex_ratio is not None else 0.30)
     cap = (req.btr_params.cap_rate if req.btr_params and req.btr_params.cap_rate is not None else 0.07)
+    rent_unit_rate = rent_unit_indicator
+    rent_vacancy_pct = rent_vacancy_indicator
+    rent_growth_pct = rent_growth_indicator
     nla_m2 = nfa_m2
     egi = rent_ppm2 * nla_m2 * occ * 12.0
     noi = egi * (1.0 - opex)
+    if rent_vacancy_pct is None:
+        try:
+            occ_float = float(occ)
+        except (TypeError, ValueError):
+            occ_float = None
+        if occ_float is not None and 0.0 <= occ_float <= 1.0:
+            rent_vacancy_pct = max(0.0, 1.0 - occ_float)
     btr_value = noi / cap if cap else 0.0
     btr_notes = {
         "rent_per_m2_month": rent_ppm2,
@@ -214,6 +279,58 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
         "cap_rate": cap,
         "nla_equals_nfa": True,
     }
+
+    try:
+        rent_rows = top_rent_comps(
+            db,
+            city=req.city,
+            district=district,
+            asset_type="residential",
+            since=None,
+            limit=10,
+        )
+        rent_comp_dicts = [to_rent_comp_dict(r) for r in rent_rows]
+        rent_comparables: List[RentComparable] = []
+        for comp in rent_comp_dicts:
+            comp_id = comp.get("id") or comp.get("identifier")
+            if not comp_id:
+                comp_id = str(uuid.uuid4())
+            rent_comparables.append(
+                RentComparable(
+                    id=str(comp_id),
+                    date=comp.get("date"),
+                    city=comp.get("city"),
+                    district=comp.get("district"),
+                    sar_per_m2=comp.get("sar_per_m2"),
+                    source=comp.get("source"),
+                    source_url=comp.get("source_url"),
+                )
+            )
+
+        rent_driver_dicts = rent_heuristic_drivers(rent_ppm2, rent_rows)
+        if req.strategy != "build_to_rent":
+            rent_driver_dicts.insert(
+                0,
+                {
+                    "name": "strategy_note",
+                    "direction": "strategy is build_to_sell; rent shown for reference",
+                    "magnitude": 0.0,
+                },
+            )
+        rent_drivers = [ExplainabilityRow(**d) for d in rent_driver_dicts]
+
+        rent_block = RentBlock(
+            drivers=rent_drivers,
+            top_comps=rent_comparables[:5],
+            rent_comparables=rent_comparables,
+            top_rent_comparables=rent_comparables[:5],
+            rent_price_per_m2=float(rent_ppm2) if rent_ppm2 is not None else None,
+            rent_unit_rate=float(rent_unit_rate) if rent_unit_rate is not None else None,
+            rent_vacancy_pct=float(rent_vacancy_pct) if rent_vacancy_pct is not None else None,
+            rent_growth_pct=float(rent_growth_pct) if rent_growth_pct is not None else None,
+        )
+    except Exception:
+        rent_block = RentBlock()
 
     if req.strategy == "build_to_rent":
         revenues_value = btr_value
@@ -299,6 +416,8 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
         "top_comps": [to_comp_dict(r) for r in comps_rows],
         "drivers": heuristic_drivers(ppm2, comps_rows),
     }
+
+    result["rent"] = rent_block.model_dump()
 
     # --- Residual land value & combiner (simple weight by comps density) ---
     rlv = residual_land_value(revenues_value, hard_costs, soft_costs, fin["interest"], dev_margin_pct=0.15)
@@ -420,7 +539,8 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
         _persist_inmemory(est_id, req.strategy, totals, notes_payload, assumptions, line_dicts)
 
     result["id"] = est_id
-    return result
+    result["strategy"] = req.strategy
+    return EstimateResponseModel.model_validate(result)
 
 
 @router.get("/estimates/{estimate_id}")
