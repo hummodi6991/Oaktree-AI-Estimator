@@ -58,3 +58,36 @@ def latest_rent_per_m2(db: Session, city: Optional[str], district: Optional[str]
     if "year" in unit_lower or "/yr" in unit_lower:
         rent_value = rent_value / 12.0
     return rent_value
+
+
+def latest_rent_unit_rate(db: Session, city: Optional[str], district: Optional[str]) -> Optional[float]:
+    """Fetch the latest rent per unit indicator when available."""
+
+    for indicator_key in ("rent_unit_rate", "rent_avg_unit"):
+        result = _latest_indicator_value(db, indicator_key, city, district)
+        if result:
+            value, _unit = result
+            return float(value)
+    return None
+
+
+def latest_rent_vacancy_pct(db: Session, city: Optional[str], district: Optional[str]) -> Optional[float]:
+    """Return the latest vacancy percentage tied to rent benchmarks."""
+
+    for indicator_key in ("rent_vacancy_pct", "vacancy_pct"):
+        result = _latest_indicator_value(db, indicator_key, city, district)
+        if result:
+            value, _unit = result
+            return float(value)
+    return None
+
+
+def latest_rent_growth_pct(db: Session, city: Optional[str], district: Optional[str]) -> Optional[float]:
+    """Return the latest rent growth percentage, if tracked."""
+
+    for indicator_key in ("rent_growth_pct", "rent_growth"):
+        result = _latest_indicator_value(db, indicator_key, city, district)
+        if result:
+            value, _unit = result
+            return float(value)
+    return None

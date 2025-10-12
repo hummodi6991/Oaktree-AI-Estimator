@@ -1,72 +1,43 @@
-export type RentOutputs = {
-  rent_ppm2?: number; // SAR/m²/month
-  rent_avg_unit?: number; // SAR/unit/month
-  occupancy?: number; // 0–1 or %
-  cap_rate?: number; // 0–1
-  noi?: number; // SAR/yr
-  annual_rent_revenue?: number; // SAR/yr (backend-provided if available)
-  stabilized_value?: number; // SAR (NOI/cap_rate if both present)
-};
-
-export type RentDriver = {
-  name?: string;
-  direction?: string;
-  magnitude?: number;
+export type ExplainabilityRow = {
+  name: string;
+  direction: string;
+  magnitude: number;
   unit?: string;
 };
 
-export type RentTopComparable = {
-  identifier?: string;
-  id?: string;
-  Identifier?: string;
-  date?: string;
-  Date?: string;
-  city?: string;
-  City?: string;
-  district?: string;
-  District?: string;
-  rent_ppm2?: number;
-  rent_per_m2?: number;
-  sar_per_m2?: number;
-  price_per_m2?: number;
-  Rent_SAR_m2_mo?: number;
-  source?: string;
-  Source?: string;
-  source_url?: string;
+export type RentComparable = {
+  id: string;
+  date?: string | null;
+  city?: string | null;
+  district?: string | null;
+  sar_per_m2?: number | null;
+  source?: string | null;
+  source_url?: string | null;
 };
 
-export type RentExplainability = {
-  drivers?: RentDriver[];
-  top_comps?: RentTopComparable[];
-  rent_comparables?: RentTopComparable[];
-  top_rent_comparables?: RentTopComparable[];
-};
-
-export type RentBlock = RentOutputs & {
-  explainability?: RentExplainability;
-  rent_explainability?: RentExplainability;
-  drivers?: RentDriver[];
-  top_comps?: RentTopComparable[];
-  rent_comparables?: RentTopComparable[];
-  top_rent_comparables?: RentTopComparable[];
+export type RentBlock = {
+  drivers: ExplainabilityRow[];
+  top_comps: RentComparable[];
+  rent_comparables: RentComparable[];
+  top_rent_comparables: RentComparable[];
+  rent_price_per_m2?: number | null;
+  rent_unit_rate?: number | null;
+  rent_vacancy_pct?: number | null;
+  rent_growth_pct?: number | null;
 };
 
 export type EstimateResponse = Record<string, any> & {
-  // existing fields…
-  rent?: RentBlock; // if backend groups under `rent`
-  rent_explainability?: RentExplainability;
-  // fallback keys (some backends flatten fields). Leave optional:
-  rent_ppm2?: number;
-  rent_avg_unit?: number;
-  occupancy?: number;
-  cap_rate?: number;
-  noi?: number;
-  annual_rent_revenue?: number;
-  stabilized_value?: number;
-
-  explainability?: RentExplainability & {
-    // keep existing sale comparables
+  id: string;
+  strategy: "build_to_sell" | "build_to_rent";
+  totals: Record<string, number>;
+  assumptions: Array<Record<string, any>>;
+  notes: Record<string, any>;
+  rent: RentBlock;
+  metrics?: { irr_annual?: number };
+  confidence_bands?: { p5?: number; p50?: number; p95?: number };
+  land_value_breakdown?: Record<string, any>;
+  explainability?: {
     top_comps?: any[];
+    drivers?: ExplainabilityRow[];
   };
-  key_assumptions?: Record<string, any>; // we’ll read rent_* if present
 };

@@ -4,9 +4,7 @@ import type { Polygon } from "geojson";
 import Map from "./Map";
 import { createEstimate, getFreshness, memoPdfUrl, runScenario, getComps, exportCsvUrl } from "./api";
 import "./App.css";
-import type { EstimateResponse } from "./lib/types";
-import { pickRent } from "./lib/pickRent";
-import RentSummary from "./components/RentSummary";
+import type { EstimateResponse, RentBlock } from "./lib/types";
 
 const DEFAULT_POLY: Polygon = {
   type: "Polygon",
@@ -99,9 +97,20 @@ export default function App() {
 
   const totals = estimate?.totals;
   const irr = estimate?.metrics?.irr_annual;
-  const { rent, comps: rentComps, drivers: rentDrivers } = estimate
-    ? pickRent(estimate)
-    : { rent: null, comps: [], drivers: [] };
+  const rentBlock: RentBlock | null = estimate?.rent ?? null;
+  const rentDrivers = rentBlock?.drivers ?? [];
+  const rentComps = rentBlock?.top_comps?.length
+    ? rentBlock.top_comps
+    : rentBlock?.top_rent_comparables?.length
+    ? rentBlock.top_rent_comparables
+    : rentBlock?.rent_comparables ?? [];
+  const rentHeadline = rentBlock?.rent_price_per_m2 ?? null;
+  const rentUnitRate = rentBlock?.rent_unit_rate ?? null;
+  const rentVacancy = rentBlock?.rent_vacancy_pct ?? null;
+  const rentGrowth = rentBlock?.rent_growth_pct ?? null;
+  const rentHasDrivers = rentDrivers.length > 0;
+  const rentHasComps = rentComps.length > 0;
+  const strategy = estimate?.strategy ?? "build_to_sell";
 
   const handlePolygon = useCallback(
     (geometry: Polygon | null) => {
@@ -360,11 +369,9 @@ export default function App() {
           )}
           {estimate?.confidence_bands && (
             <p className="metrics-note">
-              Percentile 5 (P5) / Percentile 50 (P50) / Percentile 95 (P95) profit: {Math.round(
+              Percentile 5 (P5) / Percentile 50 (P50) / Percentile 95 (P95) profit: {fmt(
                 estimate.confidence_bands.p5
-              ).toLocaleString()} / {Math.round(estimate.confidence_bands.p50).toLocaleString()} / {Math.round(
-                estimate.confidence_bands.p95
-              ).toLocaleString()}
+              )} / {fmt(estimate.confidence_bands.p50)} / {fmt(estimate.confidence_bands.p95)}
             </p>
           )}
 
@@ -486,100 +493,101 @@ export default function App() {
               )}
             </div>
           )}
-        </section>
-      )}
 
-      {rent && (
-        <>
-          <RentSummary rent={rent} />
-          {(rentDrivers.length > 0 || rentComps.length > 0) && (
-            <div className="card">
-              <h3 className="card-title">Rent Explainability</h3>
-              {rentDrivers.length > 0 && (
-                <div className="card-subsection drivers-block">
+          {rentBlock && (
+            <div className="card-subsection">
+              <h3 className="section-heading">
+                {strategy === "build_to_rent" ? "Rent Snapshot" : "Rent Snapshot (reference)"}
+              </h3>
+              <dl className="metrics-grid">
+                <div>
+                  <dt>Headline Rent (SAR/m²/month)</dt>
+                  <dd>{rentHeadline != null ? fmt(rentHeadline) : "—"}</dd>
+                </div>
+                {rentUnitRate != null && (
+                  <div>
+                    <dt>Average Unit Rent (SAR/unit/month)</dt>
+                    <dd>{fmt(rentUnitRate)}</dd>
+                  </div>
+                )}
+                {rentVacancy != null && (
+                  <div>
+                    <dt>Vacancy</dt>
+                    <dd>
+                      {`${fmt(Math.abs(rentVacancy) <= 1 ? rentVacancy * 100 : rentVacancy, 1)}%`}
+                    </dd>
+                  </div>
+                )}
+                {rentGrowth != null && (
+                  <div>
+                    <dt>Rent Growth</dt>
+                    <dd>
+                      {`${fmt(Math.abs(rentGrowth) <= 1 ? rentGrowth * 100 : rentGrowth, 1)}%`}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+              {rentHasDrivers && (
+                <div className="drivers-block">
                   <h4>Drivers</h4>
                   <ul>
-                    {rentDrivers.map((d: any, i: number) => {
-                      const magnitude =
-                        typeof d.magnitude === "number"
-                          ? fmt(d.magnitude, d.unit === "ratio" ? 2 : 0)
-                          : d.magnitude ?? "—";
-                      const unitLabel =
-                        d.unit && d.unit !== "ratio"
-                          ? ` ${d.unit}`
-                          : d.unit === "ratio"
-                          ? ""
-                          : "";
+                    {rentDrivers.map((d, i) => {
+                      const unitLabel = d.unit && d.unit !== "ratio" ? d.unit : "";
+                      const digits = d.unit === "ratio" ? 2 : unitLabel === "SAR/m2" ? 0 : 2;
                       return (
-                        <li key={i}>
-                          {d.name || `Driver ${i + 1}`}:
-                          {" "}
-                          {d.direction || "—"}
-                          {d.magnitude != null || d.unit ? (
-                            <>
-                              {" "}(≈ {magnitude}
-                              {unitLabel})
-                            </>
-                          ) : null}
+                        <li key={`${d.name}-${i}`}>
+                          {d.name}: {d.direction} (≈ {fmt(d.magnitude, digits)} {unitLabel})
                         </li>
                       );
                     })}
                   </ul>
                 </div>
               )}
-              {rentComps.length > 0 && (
-                <div className="overflow-x-auto">
-                  <h4 className="card-subtitle">Top Rent Indicators</h4>
-                  <table className="table">
+              {rentHasComps && (
+                <div className="table-wrapper">
+                  <h4>Top Rent Comparables</h4>
+                  <table className="data-table">
                     <thead>
                       <tr>
-                        <th>ID</th>
-                        <th>Date</th>
-                        <th>City / District</th>
-                        <th>SAR/m²/mo</th>
-                        <th>Source</th>
+                        <th scope="col">Identifier</th>
+                        <th scope="col">Date</th>
+                        <th scope="col">District</th>
+                        <th scope="col">SAR/m²/month</th>
+                        <th scope="col">Source</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {rentComps.map((r: any, index: number) => {
-                        const identifier = r.identifier || r.id || r.Identifier || "";
-                        const date = r.date || r.Date || "—";
-                        const locationParts = [r.city || r.City, r.district || r.District].filter(Boolean);
-                        const location = locationParts.length > 0 ? locationParts.join(" / ") : "—";
-                        const rentValue =
-                          r.rent_ppm2 ??
-                          r.rent_per_m2 ??
-                          r.sar_per_m2 ??
-                          r.price_per_m2 ??
-                          r.Rent_SAR_m2_mo ??
-                          "—";
-                        const source = r.source || r.Source || "—";
-                        const sourceContent = r.source_url ? (
-                          <a href={r.source_url} target="_blank" rel="noreferrer">
-                            View source
-                          </a>
-                        ) : (
-                          source
-                        );
-                        return (
-                          <tr key={`${identifier || "rent"}-${index}`}>
-                            <td>{identifier || "—"}</td>
-                            <td>{date}</td>
-                            <td>{location}</td>
-                            <td>
-                              {typeof rentValue === "number" ? fmt(rentValue) : rentValue}
-                            </td>
-                            <td>{sourceContent}</td>
-                          </tr>
-                        );
-                      })}
+                      {rentComps.map((r, index) => (
+                        <tr key={`${r.id}-${index}`}>
+                          <td>{r.id}</td>
+                          <td>{r.date ?? "—"}</td>
+                          <td>
+                            {r.city}
+                            {r.district ? ` / ${r.district}` : ""}
+                          </td>
+                          <td className="numeric-cell">{fmt(r.sar_per_m2)}</td>
+                          <td>
+                            {r.source_url ? (
+                              <a href={r.source_url} target="_blank" rel="noreferrer">
+                                View source
+                              </a>
+                            ) : (
+                              r.source || "—"
+                            )}
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
               )}
+              {!rentHasDrivers && !rentHasComps && rentHeadline == null && rentUnitRate == null &&
+                rentVacancy == null && rentGrowth == null && (
+                  <p className="metrics-note">No rent indicators available for the selected area.</p>
+                )}
             </div>
           )}
-        </>
+        </section>
       )}
 
       {estimate?.id && comps.length > 0 && (
