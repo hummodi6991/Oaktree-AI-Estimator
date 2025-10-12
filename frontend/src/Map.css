@@ -81,7 +81,7 @@
   padding: 14px 18px;
   border-radius: 14px;
   max-width: 320px;
-  pointer-events: none;
+  pointer-events: auto;
   box-shadow: 0 18px 30px rgba(15, 23, 42, 0.25);
 }
 
@@ -100,6 +100,25 @@
   margin: 4px 0 0;
   font-size: 0.85rem;
   line-height: 1.45;
+}
+
+.map-overlay__finish {
+  margin-top: 12px;
+  font: inherit;
+  font-weight: 600;
+  background: #f8fafc;
+  color: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 999px;
+  padding: 6px 16px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.map-overlay__finish:hover {
+  background: rgba(96, 165, 250, 0.2);
+  color: #e0f2fe;
+  border-color: rgba(148, 163, 184, 0.85);
 }
 
 @media (max-width: 640px) {

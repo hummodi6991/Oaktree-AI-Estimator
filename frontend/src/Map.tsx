@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import type { Feature, Polygon } from "geojson";
@@ -74,7 +74,7 @@ function createToolbarControl(actions: {
 
       const hint = document.createElement("p");
       hint.className = "map-toolbar__hint";
-      hint.textContent = "Click to add vertices, double-click to close the polygon.";
+      hint.textContent = "Click to add vertices. Double-click or press Finish shape to close the polygon.";
       container.append(hint);
 
       control.setState(actions.getState());
@@ -114,6 +114,8 @@ export default function Map({ polygon, onPolygon }: MapProps) {
   const toolbarRef = useRef<ToolbarControl | null>(null);
   const callbackRef = useRef(onPolygon);
   const isDrawingRef = useRef(false);
+  const finishDrawingRef = useRef<() => void>(() => undefined);
+  const [isDrawing, setIsDrawing] = useState(false);
 
   useEffect(() => {
     callbackRef.current = onPolygon;
@@ -159,6 +161,11 @@ export default function Map({ polygon, onPolygon }: MapProps) {
     map.addControl(draw as unknown as IControl);
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
 
+    const updateDrawingState = (value: boolean) => {
+      isDrawingRef.current = value;
+      setIsDrawing(value);
+    };
+
     const currentState = (): ToolbarState => ({
       isDrawing: isDrawingRef.current,
       hasPolygon:
@@ -176,34 +183,40 @@ export default function Map({ polygon, onPolygon }: MapProps) {
       callbackRef.current(polygonFeature ? polygonFeature.geometry : null);
     };
 
+    const finishDrawing = () => {
+      if (!drawRef.current) return;
+      drawRef.current.changeMode("simple_select");
+      const firstPolygon = drawRef.current
+        .getAll()
+        .features.find(
+          (feature: Feature): feature is Feature<Polygon> => (feature.geometry as any)?.type === "Polygon"
+        );
+      if (firstPolygon) {
+        const id = firstPolygon.id as string | undefined;
+        if (id) {
+          drawRef.current.changeMode("simple_select", { featureIds: [id] as any });
+        }
+      }
+      updateDrawingState(false);
+      toolbarRef.current?.setState(currentState());
+      emitPolygon();
+    };
+
+    finishDrawingRef.current = finishDrawing;
+
     const toolbar = createToolbarControl({
       onStart: () => {
         if (!drawRef.current) return;
         drawRef.current.deleteAll();
         drawRef.current.changeMode("draw_polygon");
-        isDrawingRef.current = true;
+        updateDrawingState(true);
         toolbarRef.current?.setState({ isDrawing: true, hasPolygon: false });
       },
-      onFinish: () => {
-        if (!drawRef.current) return;
-        drawRef.current.changeMode("simple_select");
-        const firstPolygon = drawRef.current
-          .getAll()
-          .features.find((feature: Feature): feature is Feature<Polygon> => (feature.geometry as any)?.type === "Polygon");
-        if (firstPolygon) {
-          const id = firstPolygon.id as string | undefined;
-          if (id) {
-            drawRef.current.changeMode("simple_select", { featureIds: [id] as any });
-          }
-        }
-        isDrawingRef.current = false;
-        toolbarRef.current?.setState(currentState());
-        emitPolygon();
-      },
+      onFinish: finishDrawing,
       onClear: () => {
         if (!drawRef.current) return;
         drawRef.current.deleteAll();
-        isDrawingRef.current = false;
+        updateDrawingState(false);
         toolbarRef.current?.setState({ isDrawing: false, hasPolygon: false });
         callbackRef.current(null);
       },
@@ -219,7 +232,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
 
     map.on("draw.modechange", (event: any) => {
       const isDrawing = event.mode === "draw_polygon";
-      isDrawingRef.current = isDrawing;
+      updateDrawingState(isDrawing);
       if (isDrawing) {
         map.doubleClickZoom.disable();
       } else {
@@ -242,7 +255,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
         drawRef.current.changeMode("simple_select", { featureIds: [id] as any });
       }
 
-      isDrawingRef.current = false;
+      updateDrawingState(false);
       syncToolbar();
       emitPolygon();
     });
@@ -254,11 +267,12 @@ export default function Map({ polygon, onPolygon }: MapProps) {
 
     map.on("draw.delete", () => {
       callbackRef.current(null);
-      isDrawingRef.current = false;
+      updateDrawingState(false);
       syncToolbar();
     });
 
     return () => {
+      finishDrawingRef.current = () => undefined;
       toolbarRef.current = null;
       map.doubleClickZoom.enable();
       map.remove();
@@ -288,6 +302,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
       }
 
       toolbarRef.current?.setState({ isDrawing: false, hasPolygon: true });
+      setIsDrawing(false);
 
       if (mapRef.current) {
         const bounds = polygon.coordinates[0].reduce<maplibregl.LngLatBounds | null>((acc, coord) => {
@@ -304,6 +319,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
       }
     } else {
       toolbarRef.current?.setState({ isDrawing: false, hasPolygon: false });
+      setIsDrawing(false);
     }
   }, [polygon]);
 
@@ -312,7 +328,15 @@ export default function Map({ polygon, onPolygon }: MapProps) {
       <div ref={containerRef} className="map-canvas" />
       <div className="map-overlay">
         <span className="map-overlay__badge">Guidance</span>
-        <p>Drag vertices to adjust the parcel or press Clear to remove the polygon.</p>
+        <p>
+          Click to add vertices. Double-click or press Finish shape to close the polygon, then drag
+          vertices to adjust the parcel or press Clear to remove it.
+        </p>
+        {isDrawing && (
+          <button type="button" className="map-overlay__finish" onClick={() => finishDrawingRef.current()}>
+            Finish shape
+          </button>
+        )}
       </div>
     </div>
   );
