@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Literal, Optional
 from datetime import date
-import json, uuid, csv, io
+import json, uuid, csv, io, os
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, ConfigDict
@@ -9,11 +9,11 @@ from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
 from app.services import geo as geo_svc
+from app.services import indicators as indicators_svc
 from app.services.hedonic import land_price_per_m2
 from app.services.costs import compute_hard_costs
 from app.services.financing import compute_financing
 from app.services.proforma import assemble
-from app.services.revenue import build_to_sell_revenue, build_to_lease_revenue
 from app.services.simulate import p_bands
 from app.services.explain import top_sale_comps, to_comp_dict, heuristic_drivers
 from app.services.pdf import build_memo_pdf
@@ -70,6 +70,12 @@ class FinancingParams(BaseModel):
     ltv: float = 0.6
 
 
+class BtrParams(BaseModel):
+    occupancy: float | None = None
+    opex_ratio: float | None = None
+    cap_rate: float | None = None
+
+
 def _default_timeline() -> "Timeline":
     # First day of the current month, 18-month program
     return Timeline(start=date.today().replace(day=1).isoformat(), months=18)
@@ -87,10 +93,25 @@ class EstimateRequest(BaseModel):
     finish_level: Literal["low", "mid", "high"] = "mid"
     timeline: Timeline = Field(default_factory=_default_timeline)
     financing_params: FinancingParams = Field(default_factory=_default_financing)
-    strategy: Literal["build_to_sell", "build_to_lease", "hotel"] = "build_to_sell"
+    strategy: Literal["build_to_sell", "build_to_rent"] = Field(
+        default="build_to_sell",
+        description="Development exit strategy. Use 'build_to_sell' for GDV sales, 'build_to_rent' for NOI/cap exits.",
+    )
     city: Optional[str] = None
     far: float = 2.0
     efficiency: float = 0.82
+    sale_price_per_m2: float | None = Field(
+        default=None,
+        description="Optional override for sale price per square meter (SAR/m2).",
+    )
+    soft_cost_pct: float | None = Field(
+        default=None,
+        description="Soft cost percentage as share of hard costs. Defaults to environment configuration when omitted.",
+    )
+    btr_params: BtrParams | None = Field(
+        default=None,
+        description="Optional overrides for build-to-rent assumptions (occupancy, opex_ratio, cap_rate).",
+    )
     model_config = ConfigDict(
         json_schema_extra={
             # Use OpenAPI "examples" so Swagger renders a runnable example
@@ -118,15 +139,6 @@ class EstimateRequest(BaseModel):
         }
     )
 
-
-def _nfa_from_mix(site_m2: float, far: float, eff: float, mix: List[UnitMix]) -> float:
-    # Simple: FAR × site × efficiency (unit mix fine-tunes later)
-    base = site_m2 * far * eff
-    # If avg areas provided, constrain to sum(units × avg_m2) if smaller
-    mix_total = sum([(u.avg_m2 or 0.0) * u.count for u in mix])
-    return min(base, mix_total) if mix_total > 0 else base
-
-
 @router.post("/estimates")
 def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
     # Geometry → area
@@ -144,6 +156,15 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
         raise HTTPException(status_code=400, detail="Empty geometry provided")
     site_area_m2 = geo_svc.area_m2(geom)
 
+    auto_far = None
+    try:
+        auto_far = geo_svc.infer_far_from_features(db, geom, layer="rydpolygons")
+    except Exception:
+        auto_far = None
+    far_used = float(auto_far) if auto_far else float(req.far)
+    efficiency = req.efficiency or 1.0
+    nfa_m2 = site_area_m2 * far_used * efficiency
+
     # Land value (hedonic/median comps)
     ppm2, meta = land_price_per_m2(db, city=req.city, since=None, district=district)
     if not ppm2:
@@ -155,37 +176,58 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
     asof = date.today().replace(day=1)
     hard = compute_hard_costs(db, area_m2=site_area_m2, month=asof)
     hard_costs = hard["total"]
-    soft_costs = hard_costs * 0.15  # MVP param
+    default_soft = float(os.getenv("DEFAULT_SOFT_COST_PCT", "0.12"))
+    soft_defaulted = (req.soft_cost_pct is None) or (req.soft_cost_pct <= 0)
+    soft_pct = req.soft_cost_pct if (req.soft_cost_pct and req.soft_cost_pct > 0) else default_soft
+    soft_costs = hard_costs * soft_pct
 
-    # Program area
-    nfa = _nfa_from_mix(site_area_m2, req.far, req.efficiency, req.unit_mix)
-
-    avg_unit_m2 = None
-    if req.unit_mix:
-        total_area = sum((u.avg_m2 or 0.0) * u.count for u in req.unit_mix)
-        total_units = sum(u.count for u in req.unit_mix)
-        avg_unit_m2 = (total_area / total_units) if (total_units and total_area > 0) else None
-
-    # Revenue
-    if req.strategy == "build_to_sell":
-        rev = build_to_sell_revenue(db, net_floor_area_m2=nfa, city=req.city, asset_type="residential")
-    elif req.strategy == "build_to_lease":
-        rev = build_to_lease_revenue(
-            db,
-            net_floor_area_m2=nfa,
-            city=req.city,
-            asset_type="residential",
-            avg_unit_size_m2=avg_unit_m2,
-        )
+    sale_indicator = indicators_svc.latest_sale_price_per_m2(db, city=req.city, district=district)
+    if req.sale_price_per_m2 and req.sale_price_per_m2 > 0:
+        sale_ppm2 = float(req.sale_price_per_m2)
+        sale_source = "Manual"
+    elif sale_indicator is not None:
+        sale_ppm2 = sale_indicator
+        sale_source = "Observed"
     else:
-        # Hotel path can plug here (ADR/Occ later per roadmap)
-        rev = build_to_lease_revenue(
-            db,
-            net_floor_area_m2=nfa,
-            city=req.city,
-            asset_type="hospitality",
-            avg_unit_size_m2=avg_unit_m2,
-        )
+        sale_ppm2 = 5500.0
+        sale_source = "Manual"
+    sale_gdv = nfa_m2 * sale_ppm2
+
+    rent_indicator = indicators_svc.latest_rent_per_m2(db, city=req.city, district=district)
+    if rent_indicator is not None:
+        rent_ppm2 = rent_indicator
+        rent_source = "Observed"
+    else:
+        rent_ppm2 = 220.0
+        rent_source = "Manual"
+    occ = (req.btr_params.occupancy if req.btr_params and req.btr_params.occupancy is not None else 0.92)
+    opex = (req.btr_params.opex_ratio if req.btr_params and req.btr_params.opex_ratio is not None else 0.30)
+    cap = (req.btr_params.cap_rate if req.btr_params and req.btr_params.cap_rate is not None else 0.07)
+    nla_m2 = nfa_m2
+    egi = rent_ppm2 * nla_m2 * occ * 12.0
+    noi = egi * (1.0 - opex)
+    btr_value = noi / cap if cap else 0.0
+    btr_notes = {
+        "rent_per_m2_month": rent_ppm2,
+        "occupancy": occ,
+        "opex_ratio": opex,
+        "cap_rate": cap,
+        "nla_equals_nfa": True,
+    }
+
+    if req.strategy == "build_to_rent":
+        revenues_value = btr_value
+        revenue_lines = [
+            {"key": "rent_per_m2_month", "value": rent_ppm2, "unit": "SAR/m2/mo", "source_type": rent_source},
+            {"key": "occupancy", "value": occ, "unit": "ratio", "source_type": "Manual"},
+            {"key": "opex_ratio", "value": opex, "unit": "ratio", "source_type": "Manual"},
+            {"key": "cap_rate", "value": cap, "unit": "ratio", "source_type": "Manual"},
+        ]
+    else:
+        revenues_value = sale_gdv
+        revenue_lines = [
+            {"key": "sale_price_per_m2", "value": sale_ppm2, "unit": "SAR/m2", "source_type": sale_source},
+        ]
 
     # Financing
     fin = compute_financing(
@@ -203,25 +245,47 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
         hard_costs=hard_costs,
         soft_costs=soft_costs,
         financing_interest=fin["interest"],
-        revenues=rev["gdv"],
+        revenues=revenues_value,
     )
+    result["totals"]["revenues"] = revenues_value
     result["notes"] = {
         "site_area_m2": round(site_area_m2, 2),
-        "nfa_m2": round(nfa, 2),
+        "nfa_m2": nfa_m2,
         "cci_scalar": hard.get("cci_scalar"),
         "financing_apr": fin["apr"],
-        "revenue_lines": rev.get("lines", []),
+        "revenue_lines": revenue_lines,
         "land_model": meta.get("model"),  # shows {"model_used": true/false, mape, n_rows}
         "district": district,
+        "far_source": "external_feature/rydpolygons" if auto_far else "manual",
+        "soft_cost_pct_defaulted": soft_defaulted,
     }
+    if req.strategy == "build_to_rent":
+        result["notes"]["btr"] = btr_notes
     result["assumptions"] = [
         {"key": "ppm2", "value": ppm2, "unit": "SAR/m2", "source_type": "Model" if meta.get("n_comps", 0) > 0 else "Manual"},
-        {"key": "far", "value": req.far, "source_type": "Manual"},
-        {"key": "efficiency", "value": req.efficiency, "source_type": "Manual"},
-        {"key": "soft_cost_pct", "value": 0.15, "source_type": "Manual"},
+        {"key": "far", "value": far_used, "source_type": "Observed" if auto_far else "Manual"},
+        {"key": "efficiency", "value": efficiency, "source_type": "Manual"},
+        {
+            "key": "soft_cost_pct",
+            "value": soft_pct,
+            "source_type": "Manual" if not soft_defaulted else "Model",
+        },
         {"key": "ltv", "value": req.financing_params.ltv, "source_type": "Manual"},
         {"key": "margin_bps", "value": req.financing_params.margin_bps, "source_type": "Manual"},
     ]
+    if req.strategy == "build_to_rent":
+        result["assumptions"].extend(
+            [
+                {"key": "rent_per_m2_month", "value": rent_ppm2, "unit": "SAR/m2/mo", "source_type": rent_source},
+                {"key": "occupancy", "value": occ, "unit": "ratio", "source_type": "Manual"},
+                {"key": "opex_ratio", "value": opex, "unit": "ratio", "source_type": "Manual"},
+                {"key": "cap_rate", "value": cap, "unit": "ratio", "source_type": "Manual"},
+            ]
+        )
+    else:
+        result["assumptions"].append(
+            {"key": "sale_price_per_m2", "value": sale_ppm2, "unit": "SAR/m2", "source_type": sale_source}
+        )
     # Explainability (top comps + drivers)
     comps_rows = top_sale_comps(
         db,
@@ -237,7 +301,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
     }
 
     # --- Residual land value & combiner (simple weight by comps density) ---
-    rlv = residual_land_value(rev["gdv"], hard_costs, soft_costs, fin["interest"], dev_margin_pct=0.15)
+    rlv = residual_land_value(revenues_value, hard_costs, soft_costs, fin["interest"], dev_margin_pct=0.15)
     comps_n = meta.get("n_comps", 0) or 0
     w_hedonic = min(1.0, comps_n / 8.0)
     w_resid = 1.0 - w_hedonic
@@ -291,7 +355,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> dict
         land_value=combined_land,
         hard_costs=hard_costs,
         soft_costs=soft_costs,
-        gdv=rev["gdv"],
+        gdv=revenues_value,
         apr=fin["apr"],
         ltv=req.financing_params.ltv,
         sales_cost_pct=0.02,

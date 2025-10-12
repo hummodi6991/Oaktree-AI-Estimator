@@ -74,3 +74,31 @@ def infer_district_from_features(db, geom, layer: str = "rydpolygons") -> Option
         except Exception:
             continue
     return None
+
+
+def infer_far_from_features(db, geom, layer: str = "rydpolygons") -> float | None:
+    """Infer the maximum FAR from external features intersecting the geometry."""
+
+    from app.models.tables import ExternalFeature
+
+    rows = db.query(ExternalFeature).filter(ExternalFeature.layer_name == layer).all()
+    candidates: list[float] = []
+    for r in rows:
+        try:
+            poly = _shape(r.geometry)
+            if not poly.intersects(geom):
+                continue
+            props = {(k or "").lower(): v for k, v in (r.properties or {}).items()}
+            for key in ("far", "max_far", "far_max", "z_far"):
+                val = props.get(key)
+                if val is None:
+                    continue
+                try:
+                    numeric = float(str(val).replace(",", ""))
+                    if numeric > 0:
+                        candidates.append(numeric)
+                except Exception:
+                    continue
+        except Exception:
+            continue
+    return max(candidates) if candidates else None
