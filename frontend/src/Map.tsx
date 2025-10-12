@@ -257,22 +257,47 @@ export default function Map({ polygon, onPolygon }: MapProps) {
     });
 
     map.on("draw.create", (event) => {
-      if (!drawRef.current) return;
+      const draw = drawRef.current;
+      if (!draw) return;
+
       const polygonFeature = event.features.find(
         (feature: Feature): feature is Feature<Polygon> => (feature.geometry as any)?.type === "Polygon"
       );
       if (!polygonFeature) return;
 
-      deleteAll(true);
-      const added = drawRef.current.add(polygonFeature) as any;
-      const id = (added?.features?.[0]?.id || polygonFeature.id) as string | undefined;
-      if (id) {
-        drawRef.current.changeMode("simple_select", { featureIds: [id] as any });
+      // Keep the newly created feature; drop any others without emitting a null selection.
+      const createdId = (polygonFeature as any).id;
+      try {
+        const all = draw.getAll();
+        if (all?.features?.length) {
+          suppressDeleteRef.current = true;
+          for (const f of all.features) {
+            const id = (f as any).id;
+            if (id && id !== createdId) {
+              try {
+                draw.delete(id);
+              } catch {}
+            }
+          }
+        }
+      } catch {}
+      suppressDeleteRef.current = false;
+
+      // Send the geometry up to the React state
+      callbackRef.current(polygonFeature.geometry);
+
+      if (createdId) {
+        try {
+          draw.changeMode("simple_select", { featureIds: [createdId] as any });
+        } catch {}
+      } else {
+        try {
+          draw.changeMode("simple_select");
+        } catch {}
       }
 
       updateDrawingState(false);
       syncToolbar();
-      emitPolygon();
     });
 
     map.on("draw.update", () => {
