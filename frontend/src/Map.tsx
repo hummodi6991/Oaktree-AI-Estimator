@@ -114,8 +114,23 @@ export default function Map({ polygon, onPolygon }: MapProps) {
   const toolbarRef = useRef<ToolbarControl | null>(null);
   const callbackRef = useRef(onPolygon);
   const isDrawingRef = useRef(false);
+  const suppressDeleteRef = useRef(false);
   const finishDrawingRef = useRef<() => void>(() => undefined);
   const [isDrawing, setIsDrawing] = useState(false);
+
+  const deleteAll = (suppressCallback = false) => {
+    if (!drawRef.current) return;
+    const draw = drawRef.current;
+    const features = draw.getAll().features || [];
+    const hadFeatures = features.length > 0;
+    if (suppressCallback && hadFeatures) {
+      suppressDeleteRef.current = true;
+    }
+    draw.deleteAll();
+    if (suppressCallback && !hadFeatures) {
+      suppressDeleteRef.current = false;
+    }
+  };
 
   useEffect(() => {
     callbackRef.current = onPolygon;
@@ -207,7 +222,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
     const toolbar = createToolbarControl({
       onStart: () => {
         if (!drawRef.current) return;
-        drawRef.current.deleteAll();
+        deleteAll(true);
         drawRef.current.changeMode("draw_polygon");
         updateDrawingState(true);
         toolbarRef.current?.setState({ isDrawing: true, hasPolygon: false });
@@ -215,7 +230,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
       onFinish: finishDrawing,
       onClear: () => {
         if (!drawRef.current) return;
-        drawRef.current.deleteAll();
+        deleteAll(true);
         updateDrawingState(false);
         toolbarRef.current?.setState({ isDrawing: false, hasPolygon: false });
         callbackRef.current(null);
@@ -248,7 +263,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
       );
       if (!polygonFeature) return;
 
-      drawRef.current.deleteAll();
+      deleteAll(true);
       const added = drawRef.current.add(polygonFeature) as any;
       const id = (added?.features?.[0]?.id || polygonFeature.id) as string | undefined;
       if (id) {
@@ -266,6 +281,10 @@ export default function Map({ polygon, onPolygon }: MapProps) {
     });
 
     map.on("draw.delete", () => {
+      if (suppressDeleteRef.current) {
+        suppressDeleteRef.current = false;
+        return;
+      }
       callbackRef.current(null);
       updateDrawingState(false);
       syncToolbar();
@@ -285,7 +304,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
     if (!drawRef.current) return;
 
     const draw = drawRef.current;
-    draw.deleteAll();
+    deleteAll(true);
 
     if (polygon) {
       const feature: Feature<Polygon> = {
