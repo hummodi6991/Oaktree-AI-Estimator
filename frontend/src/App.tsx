@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Polygon } from "geojson";
 import Map from "./Map";
 import { createEstimate, getFreshness, memoPdfUrl, runScenario, getComps, exportCsvUrl } from "./api";
+import "./App.css";
 
 const DEFAULT_POLY: Polygon = {
   type: "Polygon",
@@ -16,6 +17,54 @@ const DEFAULT_POLY: Polygon = {
     ]
   ]
 };
+
+type PolygonStats = {
+  areaSqm: number;
+  perimeterMeters: number;
+  vertexCount: number;
+};
+
+function computePolygonStats(polygon: Polygon | null | undefined): PolygonStats | null {
+  if (!polygon?.coordinates?.[0]) return null;
+  const ring = polygon.coordinates[0];
+  if (!Array.isArray(ring) || ring.length < 4) return null;
+
+  const isClosed =
+    ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1];
+  const workingRing = isClosed ? ring.slice(0, -1) : [...ring];
+  if (workingRing.length < 3) return null;
+
+  const earthRadius = 6378137;
+  const avgLatRad =
+    workingRing.reduce((sum, [, lat]) => sum + (lat * Math.PI) / 180, 0) / workingRing.length;
+  const cosLat = Math.cos(avgLatRad || 0);
+
+  const projected = workingRing.map(([lng, lat]) => {
+    const lngRad = (lng * Math.PI) / 180;
+    const latRad = (lat * Math.PI) / 180;
+    const x = earthRadius * lngRad * cosLat;
+    const y = earthRadius * latRad;
+    return [x, y] as [number, number];
+  });
+
+  let area = 0;
+  let perimeter = 0;
+  for (let i = 0; i < projected.length; i += 1) {
+    const j = (i + 1) % projected.length;
+    const [x1, y1] = projected[i];
+    const [x2, y2] = projected[j];
+    area += x1 * y2 - x2 * y1;
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    perimeter += Math.sqrt(dx * dx + dy * dy);
+  }
+
+  return {
+    areaSqm: Math.abs(area) / 2,
+    perimeterMeters: perimeter,
+    vertexCount: workingRing.length,
+  };
+}
 
 export default function App() {
   const [freshness, setFreshness] = useState<any>(null);
@@ -39,6 +88,7 @@ export default function App() {
   }, [geom]);
 
   const polygonForMap = parsedGeom ?? DEFAULT_POLY;
+  const polygonStats = useMemo(() => computePolygonStats(polygonForMap), [polygonForMap]);
 
   useEffect(() => {
     getFreshness().then(setFreshness).catch(() => {});
@@ -55,11 +105,11 @@ export default function App() {
     []
   );
 
-  function fmt(x: any, digits = 0) {
-    const n = Number(x);
-    return isFinite(n)
+  function fmt(value: any, digits = 0) {
+    const n = Number(value);
+    return Number.isFinite(n)
       ? n.toLocaleString(undefined, { maximumFractionDigits: digits })
-      : String(x ?? "—");
+      : String(value ?? "—");
   }
 
   function badgeStyle(kind?: string): CSSProperties {
@@ -114,154 +164,259 @@ export default function App() {
     if (!estimate?.id) return;
     try {
       const res = await runScenario(estimate.id, { price_uplift_pct: uplift || 0 });
-      alert(`Δ Profit (SAR): ${Math.round(res.delta.p50_profit).toLocaleString()}`);
+      alert(`Δ Profit (Saudi Riyal - SAR): ${Math.round(res.delta.p50_profit).toLocaleString()}`);
     } catch (e: any) {
       alert(e?.message || String(e));
     }
   }
 
   return (
-    <div style={{ maxWidth: 960, margin: "2rem auto", padding: "0 1rem", fontFamily: "system-ui, Arial" }}>
-      <h1>Oaktree Estimator — Operator Console (v0)</h1>
-      {freshness && (
-        <div style={{ padding: "8px 12px", border: "1px solid #ddd", borderRadius: 6, marginBottom: 12 }}>
-          <strong>Data Freshness</strong>: CCI {freshness.cost_index_monthly || "–"} · Rates {freshness.rates || "–"} · Indicators {freshness.market_indicator || "–"} · Sale comps {freshness.sale_comp || "–"}
-        </div>
-      )}
-
-      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+    <div className="app-shell">
+      <header className="page-header">
         <div>
-          <label htmlFor="city-input">City</label>
-          <input id="city-input" value={city} onChange={(e) => setCity(e.target.value)} />
+          <h1 className="page-title">Oaktree Estimator — Operator Console (v0)</h1>
+          <p className="page-subtitle">
+            Configure market assumptions, draw the site boundary, and generate an investment estimate in minutes.
+          </p>
         </div>
-        <div>
-          <label htmlFor="far-input">FAR</label>
-          <input
-            id="far-input"
-            type="number"
-            step="0.1"
-            value={far}
-            onChange={(e) => setFar(parseFloat(e.target.value))}
-          />
-        </div>
-        <div>
-          <label htmlFor="timeline-input">Timeline (months)</label>
-          <input
-            id="timeline-input"
-            type="number"
-            value={months}
-            onChange={(e) => setMonths(parseInt(e.target.value || "18", 10))}
-          />
-        </div>
-      </section>
-
-      <section style={{ marginTop: 16, marginBottom: 12 }}>
-        <label>Draw Site Polygon</label>
-        <Map polygon={polygonForMap} onPolygon={handlePolygon} />
-      </section>
-
-      <div style={{ marginTop: 16 }}>
-        <label htmlFor="geometry-input">Geometry (GeoJSON Polygon)</label>
-        <textarea
-          id="geometry-input"
-          value={geom}
-          onChange={(e) => setGeom(e.target.value)}
-          style={{ width: "100%", height: 180, fontFamily: "monospace" }}
-        />
-      </div>
-
-      <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-        <button onClick={onEstimate} disabled={loading} style={{ padding: "8px 14px" }}>
-          {loading ? "Estimating…" : "Run Estimate"}
-        </button>
-        {estimate?.id && (
-          <>
-            <button onClick={onScenario} style={{ padding: "8px 14px" }}>
-              Scenario: +{uplift}% price
-            </button>
-            <input
-              type="number"
-              value={uplift}
-              onChange={(e) => setUplift(parseFloat(e.target.value || "0"))}
-              style={{ width: 80 }}
-            />
-            <a href={memoPdfUrl(estimate.id)} target="_blank" rel="noreferrer" style={{ marginLeft: 4 }}>
-              Open PDF Memo
-            </a>
-            <a href={exportCsvUrl(estimate.id)} target="_blank" rel="noreferrer" style={{ marginLeft: 8 }}>
-              Download CSV
-            </a>
-          </>
+        {freshness && (
+          <section className="card freshness-card" aria-label="Data Freshness">
+            <h2 className="card-title">Data Freshness</h2>
+            <dl className="freshness-grid">
+              <div>
+                <dt>Construction Cost Index (CCI)</dt>
+                <dd>{freshness.cost_index_monthly || "–"}</dd>
+              </div>
+              <div>
+                <dt>Financing Rates</dt>
+                <dd>{freshness.rates || "–"}</dd>
+              </div>
+              <div>
+                <dt>Market Indicators</dt>
+                <dd>{freshness.market_indicator || "–"}</dd>
+              </div>
+              <div>
+                <dt>Sale Comparables</dt>
+                <dd>{freshness.sale_comp || "–"}</dd>
+              </div>
+            </dl>
+          </section>
         )}
-      </div>
+      </header>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      <div className="layout-grid">
+        <div className="layout-column">
+          <section className="card" aria-labelledby="project-inputs-heading">
+            <div className="card-header">
+              <div>
+                <h2 id="project-inputs-heading" className="card-title">Project Inputs</h2>
+                <p className="card-subtitle">Define the context for the analysis.</p>
+              </div>
+            </div>
+            <div className="form-grid">
+              <label className="form-field" htmlFor="city-input">
+                <span>City</span>
+                <input id="city-input" value={city} onChange={(e) => setCity(e.target.value)} />
+              </label>
+              <label className="form-field" htmlFor="far-input">
+                <span>Floor Area Ratio (FAR)</span>
+                <input
+                  id="far-input"
+                  type="number"
+                  step="0.1"
+                  value={far}
+                  onChange={(e) => setFar(parseFloat(e.target.value))}
+                />
+              </label>
+              <label className="form-field" htmlFor="timeline-input">
+                <span>Development Timeline (months)</span>
+                <input
+                  id="timeline-input"
+                  type="number"
+                  value={months}
+                  onChange={(e) => setMonths(parseInt(e.target.value || "18", 10))}
+                />
+              </label>
+            </div>
+
+            <div className="action-panel">
+              <button className="primary-button" onClick={onEstimate} disabled={loading}>
+                {loading ? "Calculating estimate…" : "Run Estimate"}
+              </button>
+              {estimate?.id && (
+                <div className="scenario-panel">
+                  <label className="scenario-field" htmlFor="uplift-input">
+                    <span>Sale Price Uplift (%)</span>
+                    <input
+                      id="uplift-input"
+                      type="number"
+                      value={uplift}
+                      onChange={(e) => setUplift(parseFloat(e.target.value || "0"))}
+                    />
+                  </label>
+                  <button className="secondary-button" onClick={onScenario}>
+                    Apply price uplift scenario
+                  </button>
+                  <div className="link-row">
+                    <a className="text-link" href={memoPdfUrl(estimate.id)} target="_blank" rel="noreferrer">
+                      Open Portable Document Format (PDF) memo
+                    </a>
+                    <a className="text-link" href={exportCsvUrl(estimate.id)} target="_blank" rel="noreferrer">
+                      Download Comma-Separated Values (CSV) export
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+            {error && <p className="error-text">{error}</p>}
+          </section>
+
+          <section className="card" aria-labelledby="geometry-heading">
+            <div className="card-header">
+              <div>
+                <h2 id="geometry-heading" className="card-title">Geometry (GeoJSON Polygon)</h2>
+                <p className="card-subtitle">Paste or edit the geographic coordinates that define the parcel.</p>
+              </div>
+            </div>
+            <textarea
+              id="geometry-input"
+              value={geom}
+              onChange={(e) => setGeom(e.target.value)}
+              className="code-textarea"
+            />
+            {polygonStats && (
+              <dl className="metrics-grid">
+                <div>
+                  <dt>Approximate Area</dt>
+                  <dd>{fmt(polygonStats.areaSqm)} square meters (m²)</dd>
+                </div>
+                <div>
+                  <dt>Approximate Perimeter</dt>
+                  <dd>{fmt(polygonStats.perimeterMeters)} meters (m)</dd>
+                </div>
+                <div>
+                  <dt>Vertices</dt>
+                  <dd>{polygonStats.vertexCount}</dd>
+                </div>
+              </dl>
+            )}
+          </section>
+        </div>
+
+        <div className="layout-column">
+          <section className="card map-card" aria-labelledby="map-heading">
+            <div className="card-header">
+              <div>
+                <h2 id="map-heading" className="card-title">Site Boundary</h2>
+                <p className="card-subtitle">
+                  Use the toolbar to draw or refine the site polygon. Click the map to add vertices and finish when the shape is
+                  closed.
+                </p>
+              </div>
+            </div>
+            <Map polygon={polygonForMap} onPolygon={handlePolygon} />
+          </section>
+        </div>
+      </div>
 
       {totals && (
-        <div style={{ marginTop: 20, borderTop: "1px solid #eee", paddingTop: 12 }}>
-          <h3>Totals (SAR)</h3>
-          <ul>
-            <li>Land value: {Math.round(totals.land_value).toLocaleString()}</li>
-            <li>Hard costs: {Math.round(totals.hard_costs).toLocaleString()}</li>
-            <li>Soft costs: {Math.round(totals.soft_costs).toLocaleString()}</li>
-            <li>Financing: {Math.round(totals.financing).toLocaleString()}</li>
-            <li>Revenues: {Math.round(totals.revenues).toLocaleString()}</li>
-            <li>
-              <strong>P50 Profit: {Math.round(totals.p50_profit).toLocaleString()}</strong>
-            </li>
-          </ul>
-          {typeof irr === "number" && <p>Equity IRR (annual): {(irr * 100).toFixed(1)}%</p>}
+        <section className="card full-width" aria-labelledby="financial-summary-heading">
+          <div className="card-header">
+            <div>
+              <h2 id="financial-summary-heading" className="card-title">Financial Summary</h2>
+              <p className="card-subtitle">Values are denominated in Saudi Riyal (SAR).</p>
+            </div>
+          </div>
+          <dl className="stat-grid">
+            {["land_value", "hard_costs", "soft_costs", "financing", "revenues"].map((key) => (
+              <div key={key} className="stat">
+                <dt>{
+                  key === "land_value"
+                    ? "Land value"
+                    : key === "hard_costs"
+                    ? "Hard costs"
+                    : key === "soft_costs"
+                    ? "Soft costs"
+                    : key === "financing"
+                    ? "Financing"
+                    : "Revenues"
+                }</dt>
+                <dd>{Math.round(totals[key]).toLocaleString()}</dd>
+              </div>
+            ))}
+            <div className="stat highlight">
+              <dt>Percentile 50 (P50) profit</dt>
+              <dd>{Math.round(totals.p50_profit).toLocaleString()}</dd>
+            </div>
+          </dl>
+          {typeof irr === "number" && (
+            <p className="metrics-note">Equity Internal Rate of Return (IRR): {(irr * 100).toFixed(1)}%</p>
+          )}
           {estimate?.confidence_bands && (
-            <p>
-              P5 / P50 / P95 profit: {Math.round(estimate.confidence_bands.p5).toLocaleString()} / {Math.round(estimate.confidence_bands.p50).toLocaleString()} / {Math.round(estimate.confidence_bands.p95).toLocaleString()}
+            <p className="metrics-note">
+              Percentile 5 (P5) / Percentile 50 (P50) / Percentile 95 (P95) profit: {Math.round(
+                estimate.confidence_bands.p5
+              ).toLocaleString()} / {Math.round(estimate.confidence_bands.p50).toLocaleString()} / {Math.round(
+                estimate.confidence_bands.p95
+              ).toLocaleString()}
             </p>
           )}
 
           {estimate?.land_value_breakdown && (
-            <div style={{ marginTop: 12 }}>
-              <h4>Land Value Breakdown</h4>
-              <ul>
-                <li>Hedonic: {fmt(estimate.land_value_breakdown.hedonic)}</li>
-                <li>Residual: {fmt(estimate.land_value_breakdown.residual)}</li>
-                <li>
-                  <strong>Combined: {fmt(estimate.land_value_breakdown.combined)}</strong>
-                </li>
-              </ul>
-              <small>
-                Weights — hedonic {fmt(estimate.land_value_breakdown.weights?.hedonic, 2)}, residual {fmt(estimate.land_value_breakdown.weights?.residual, 2)}; comps used: {fmt(estimate.land_value_breakdown.comps_used)}
-              </small>
+            <div className="card-subsection">
+              <h3 className="section-heading">Land Value Breakdown</h3>
+              <dl className="metrics-grid">
+                <div>
+                  <dt>Hedonic estimate</dt>
+                  <dd>{fmt(estimate.land_value_breakdown.hedonic)}</dd>
+                </div>
+                <div>
+                  <dt>Residual estimate</dt>
+                  <dd>{fmt(estimate.land_value_breakdown.residual)}</dd>
+                </div>
+                <div>
+                  <dt>Combined value</dt>
+                  <dd>{fmt(estimate.land_value_breakdown.combined)}</dd>
+                </div>
+              </dl>
+              <p className="metrics-note">
+                Weights — hedonic {fmt(estimate.land_value_breakdown.weights?.hedonic, 2)}, residual {fmt(
+                  estimate.land_value_breakdown.weights?.residual,
+                  2
+                )}; comparables used: {fmt(estimate.land_value_breakdown.comps_used)}
+              </p>
             </div>
           )}
 
-          <div style={{ marginTop: 16 }}>
-            <h4>Key Assumptions</h4>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <div className="card-subsection">
+            <h3 className="section-heading">Key Assumptions</h3>
+            <table className="data-table">
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Key</th>
-                  <th style={{ textAlign: "right", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Value</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Source</th>
+                  <th scope="col">Key</th>
+                  <th scope="col">Value</th>
+                  <th scope="col">Source</th>
                 </tr>
               </thead>
               <tbody>
                 {(estimate?.assumptions || []).map((a: any) => (
                   <tr key={a.key}>
-                    <td style={{ padding: "6px 4px" }}>{a.key}</td>
-                    <td style={{ padding: "6px 4px", textAlign: "right" }}>
+                    <td>{a.key}</td>
+                    <td className="numeric-cell">
                       {fmt(a.value)} {a.unit || ""}
                     </td>
-                    <td style={{ padding: "6px 4px" }}>
+                    <td>
                       <span style={badgeStyle(a.source_type)}>{a.source_type || "—"}</span>
                     </td>
                   </tr>
                 ))}
                 {(estimate?.notes?.revenue_lines || []).map((l: any, i: number) => (
                   <tr key={`rev-${i}`}>
-                    <td style={{ padding: "6px 4px" }}>{l.key}</td>
-                    <td style={{ padding: "6px 4px", textAlign: "right" }}>
+                    <td>{l.key}</td>
+                    <td className="numeric-cell">
                       {fmt(l.value)} {l.unit || ""}
                     </td>
-                    <td style={{ padding: "6px 4px" }}>
+                    <td>
                       <span style={badgeStyle(l.source_type)}>{l.source_type || "—"}</span>
                     </td>
                   </tr>
@@ -271,11 +426,11 @@ export default function App() {
           </div>
 
           {(estimate?.explainability?.drivers || estimate?.explainability?.top_comps) && (
-            <div style={{ marginTop: 16 }}>
-              <h4>Explainability</h4>
+            <div className="card-subsection">
+              <h3 className="section-heading">Explainability</h3>
               {Array.isArray(estimate?.explainability?.drivers) && estimate.explainability.drivers.length > 0 && (
-                <div style={{ marginBottom: 10 }}>
-                  <strong>Drivers</strong>
+                <div className="drivers-block">
+                  <h4>Drivers</h4>
                   <ul>
                     {estimate.explainability.drivers.map((d: any, i: number) => (
                       <li key={i}>
@@ -286,32 +441,32 @@ export default function App() {
                 </div>
               )}
               {Array.isArray(estimate?.explainability?.top_comps) && estimate.explainability.top_comps.length > 0 && (
-                <div style={{ overflowX: "auto" }}>
-                  <strong>Top Comps</strong>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <div className="table-wrapper">
+                  <h4>Top Comparables</h4>
+                  <table className="data-table">
                     <thead>
                       <tr>
-                        <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>ID</th>
-                        <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Date</th>
-                        <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>City/District</th>
-                        <th style={{ textAlign: "right", borderBottom: "1px solid #eee", padding: "6px 4px" }}>SAR/m²</th>
-                        <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Source</th>
+                        <th scope="col">Identifier</th>
+                        <th scope="col">Date</th>
+                        <th scope="col">City / District</th>
+                        <th scope="col">Saudi Riyal per square meter (SAR/m²)</th>
+                        <th scope="col">Source</th>
                       </tr>
                     </thead>
                     <tbody>
                       {estimate.explainability.top_comps.map((c: any) => (
                         <tr key={c.id}>
-                          <td style={{ padding: "6px 4px" }}>{c.id}</td>
-                          <td style={{ padding: "6px 4px" }}>{c.date}</td>
-                          <td style={{ padding: "6px 4px" }}>
+                          <td>{c.id}</td>
+                          <td>{c.date}</td>
+                          <td>
                             {c.city}
                             {c.district ? ` / ${c.district}` : ""}
                           </td>
-                          <td style={{ padding: "6px 4px", textAlign: "right" }}>{fmt(c.price_per_m2)}</td>
-                          <td style={{ padding: "6px 4px" }}>
+                          <td className="numeric-cell">{fmt(c.price_per_m2)}</td>
+                          <td>
                             {c.source_url ? (
                               <a href={c.source_url} target="_blank" rel="noreferrer">
-                                link
+                                View source
                               </a>
                             ) : (
                               c.source || "—"
@@ -325,43 +480,50 @@ export default function App() {
               )}
             </div>
           )}
-        </div>
+        </section>
       )}
 
       {estimate?.id && comps.length > 0 && (
-        <div style={{ marginTop: 20 }}>
-          <h3>Recent Land Comps in {city}</h3>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>ID</th>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Date</th>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>District</th>
-                <th style={{ textAlign: "right", borderBottom: "1px solid #eee", padding: "6px 4px" }}>SAR/m²</th>
-                <th style={{ textAlign: "left", borderBottom: "1px solid #eee", padding: "6px 4px" }}>Source</th>
-              </tr>
-            </thead>
-            <tbody>
-              {comps.map((r) => (
-                <tr key={r.id}>
-                  <td style={{ padding: "6px 4px" }}>{r.id}</td>
-                  <td style={{ padding: "6px 4px" }}>{r.date}</td>
-                  <td style={{ padding: "6px 4px" }}>{r.district || "—"}</td>
-                  <td style={{ padding: "6px 4px", textAlign: "right" }}>{fmt(r.price_per_m2)}</td>
-                  <td style={{ padding: "6px 4px" }}>
-                    {r.source_url ? (
-                      <a href={r.source_url} target="_blank" rel="noreferrer">
-                        link
-                      </a>
-                    ) : (
-                      r.source || "—"
-                    )}
-                  </td>
+        <section className="card full-width" aria-labelledby="recent-comps-heading">
+          <div className="card-header">
+            <div>
+              <h2 id="recent-comps-heading" className="card-title">Recent Land Comparables in {city}</h2>
+              <p className="card-subtitle">Recorded transactions expressed as Saudi Riyal per square meter (SAR/m²).</p>
+            </div>
+          </div>
+          <div className="table-wrapper">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th scope="col">Identifier</th>
+                  <th scope="col">Date</th>
+                  <th scope="col">District</th>
+                  <th scope="col">Saudi Riyal per square meter (SAR/m²)</th>
+                  <th scope="col">Source</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {comps.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.id}</td>
+                    <td>{r.date}</td>
+                    <td>{r.district || "—"}</td>
+                    <td className="numeric-cell">{fmt(r.price_per_m2)}</td>
+                    <td>
+                      {r.source_url ? (
+                        <a href={r.source_url} target="_blank" rel="noreferrer">
+                          View source
+                        </a>
+                      ) : (
+                        r.source || "—"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
     </div>
   );
