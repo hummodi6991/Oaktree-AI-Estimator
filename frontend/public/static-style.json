@@ -4,7 +4,7 @@
   "sources": {
     "local": {
       "type": "raster",
-      "tiles": ["/static-tiles/{z}/{x}/{y}.png"],
+      "tiles": ["/tiles/{z}/{x}/{y}.png"],
       "tileSize": 256,
       "attribution": "© OpenStreetMap contributors (cached)"
     }
