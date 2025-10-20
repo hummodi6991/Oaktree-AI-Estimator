@@ -21,6 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # End well before the 6h Actions hard cap; we'll finish and commit in the 5th hour.
+    env:
+      TIME_BUDGET_SEC: 17400   # 4h 50m
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,8 +37,11 @@ jobs:
           python scripts/prefetch_tiles.py \
             --bbox "${{ github.event.inputs.bbox }}" \
             --zooms "${{ github.event.inputs.zooms }}" \
-            --dest "${{ github.event.inputs.dest }}"
+            --dest "${{ github.event.inputs.dest }}" \
+            --max-seconds "${TIME_BUDGET_SEC}" \
+            --log-every 500
       - name: Commit & push tiles (idempotent)
+        if: always()   # still run if the fetcher stops early
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

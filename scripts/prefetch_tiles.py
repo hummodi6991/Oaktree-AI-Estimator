@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse, math, pathlib, sys, time
 import httpx
+from typing import Optional
 
 UA = "oaktree-estimator/0.1 (offline prefetch)"
 
@@ -23,6 +24,10 @@ def main():
     ap.add_argument("--zooms", default="12-15", help="e.g. 12-15 or 12,13,14")
     ap.add_argument("--dest", required=True, help="directory to write tiles into")
     ap.add_argument("--upstream", default="https://tile.openstreetmap.org")
+    ap.add_argument("--max-seconds", type=int, default=None,
+                    help="Gracefully stop after N seconds (so the workflow can commit/push).")
+    ap.add_argument("--log-every", type=int, default=250,
+                    help="Print progress every N tiles.")
     args = ap.parse_args()
 
     lon_min, lat_min, lon_max, lat_max = [float(x) for x in args.bbox.split(",")]
@@ -32,12 +37,21 @@ def main():
     client = httpx.Client(timeout=30.0, headers={"User-Agent": UA})
     total = 0
     started = time.time()
+    deadline: Optional[float] = (started + args.max_seconds) if args.max_seconds else None
 
     for z in parse_zooms(args.zooms):
         x0, y_max = lonlat_to_tile(lon_min, lat_min, z)
         x1, y_min = lonlat_to_tile(lon_max, lat_max, z)
         for x in range(min(x0, x1), max(x0, x1) + 1):
             for y in range(min(y_min, y_max), max(y_min, y_max) + 1):
+                # Stop early if we've hit the time budget
+                if deadline is not None and time.time() >= deadline:
+                    elapsed = time.time() - started
+                    print(f"[graceful-exit] Time budget reached after {elapsed:0.1f}s; "
+                          f"downloaded {total} tiles. Exiting so the workflow can commit.",
+                          file=sys.stderr)
+                    print(f"Partial. Tiles stored under: {dest} (count={total})")
+                    return
                 out = dest / str(z) / str(x) / f"{y}.png"
                 if out.exists():
                     total += 1
@@ -48,7 +62,7 @@ def main():
                 r.raise_for_status()
                 out.write_bytes(r.content)
                 total += 1
-                if total % 250 == 0:
+                if total % args.log_every == 0:
                     elapsed = time.time() - started
                     print(f"Fetched {total} tiles in {elapsed:0.1f}s", file=sys.stderr)
     print(f"Done. Tiles stored under: {dest} (count={total})")
