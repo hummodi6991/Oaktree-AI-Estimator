@@ -73,6 +73,7 @@ export default function App() {
   const [far, setFar] = useState(2.0);
   const [months, setMonths] = useState(18);
   const [geom, setGeom] = useState(JSON.stringify(DEFAULT_POLY, null, 2));
+  const [geomVer, setGeomVer] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [estimate, setEstimate] = useState<EstimateResponse | null>(null);
@@ -116,6 +117,7 @@ export default function App() {
     (geometry: Polygon | null) => {
       const next = geometry ?? DEFAULT_POLY;
       setGeom(JSON.stringify(next, null, 2));
+      setGeomVer((v) => v + 1);
     },
     []
   );
@@ -294,6 +296,7 @@ export default function App() {
               </div>
             </div>
             <textarea
+              key={geomVer}
               id="geometry-input"
               value={geom}
               onChange={(e) => setGeom(e.target.value)}
