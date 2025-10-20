@@ -1,0 +1,44 @@
+name: Prefetch offline map tiles
+
+on:
+  workflow_dispatch:
+    inputs:
+      bbox:
+        description: "minLon,minLat,maxLon,maxLat"
+        required: true
+        default: "46.20,24.20,47.30,25.10"
+      zooms:
+        description: "Zooms (range or list)"
+        required: true
+        default: "17-19"
+      dest:
+        description: "Destination folder"
+        required: true
+        default: "frontend/public/static-tiles"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Prefetch tiles
+        run: |
+          python scripts/prefetch_tiles.py \
+            --bbox "${{ github.event.inputs.bbox }}" \
+            --zooms "${{ github.event.inputs.zooms }}" \
+            --dest "${{ github.event.inputs.dest }}"
+      - name: Commit & push tiles (idempotent)
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A frontend/public/static-tiles
+          git commit -m "chore(tiles): prefetch ${{ github.event.inputs.zooms }} for ${{ github.event.inputs.bbox }}" || echo "No tile changes"
+          git push
