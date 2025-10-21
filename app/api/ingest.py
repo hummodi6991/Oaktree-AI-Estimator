@@ -21,6 +21,7 @@ from app.models.tables import (
     SaleComp,
     ExternalFeature,
     LandUseStat,
+    FarRule,
 )
 
 router = APIRouter(prefix="/v1/ingest", tags=["ingest"])
@@ -59,6 +60,15 @@ def _coerce_date(value, default: date | None = None) -> date | None:
         return date.fromisoformat(text[:10])
     except ValueError:
         return default
+
+
+def _coerce_float(value):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    try:
+        return float(str(value).replace(",", "").strip())
+    except Exception:
+        return None
 
 
 @router.post("/cci")
@@ -446,3 +456,57 @@ def ingest_land_use(
 
     db.commit()
     return {"status": "ok", "rows": int(inserted)}
+
+
+@router.post("/far_rules")
+def ingest_far_rules(
+    file: UploadFile = File(...),
+    city_default: str = "Riyadh",
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest district-level FAR rules.
+    Required columns: district, far_max
+    Optional columns: city, zoning, road_class, frontage_min_m, asof_date, source_url
+    Accepts CSV or Excel.
+    """
+
+    df = _read_table(file)
+    df.columns = [c.lower() for c in df.columns]
+    required = {"district", "far_max"}
+    missing = required - set(df.columns)
+    if missing:
+        raise HTTPException(400, f"Missing columns: {sorted(missing)}")
+
+    upserted = 0
+    for _, r in df.iterrows():
+        city = (r.get("city") or city_default or "Riyadh")
+        district = str(r.get("district") or "").strip()
+        if not district:
+            continue
+        data = dict(
+            city=city,
+            district=district,
+            zoning=_clean_optional(r.get("zoning")),
+            road_class=_clean_optional(r.get("road_class")),
+            frontage_min_m=_coerce_float(r.get("frontage_min_m")),
+            far_max=_coerce_float(r.get("far_max")) or 0.0,
+            asof_date=_coerce_date(r.get("asof_date")),
+            source_url=_clean_optional(r.get("source_url")),
+        )
+        q = db.query(FarRule).filter(
+            FarRule.city == data["city"],
+            FarRule.district == data["district"],
+            FarRule.zoning.is_(data["zoning"]) if data["zoning"] is None else FarRule.zoning == data["zoning"],
+            FarRule.road_class.is_(data["road_class"]) if data["road_class"] is None else FarRule.road_class == data["road_class"],
+            FarRule.frontage_min_m.is_(data["frontage_min_m"]) if data["frontage_min_m"] is None else FarRule.frontage_min_m == data["frontage_min_m"],
+        )
+        obj = q.first()
+        if obj:
+            for k, v in data.items():
+                setattr(obj, k, v)
+        else:
+            db.add(FarRule(**data))
+        upserted += 1
+    db.commit()
+    return {"status": "ok", "rows": int(upserted)}

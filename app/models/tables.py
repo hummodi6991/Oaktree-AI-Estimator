@@ -175,3 +175,17 @@ class ExternalFeature(Base):
     geometry = Column(JSONB, nullable=False)
     properties = Column(JSONB)
     source = Column(String(256))
+
+
+class FarRule(Base):
+    __tablename__ = "far_rule"
+
+    id = Column(Integer, primary_key=True)
+    city = Column(String(64), nullable=False)
+    district = Column(String(128), nullable=False)
+    zoning = Column(String(64))
+    road_class = Column(String(32))
+    frontage_min_m = Column(Numeric(10, 2))
+    far_max = Column(Numeric(6, 3), nullable=False)
+    asof_date = Column(Date)
+    source_url = Column(String(512))
