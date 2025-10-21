@@ -10,20 +10,18 @@ on:
       zooms:
         description: "Zooms (range or list)"
         required: true
-        default: "17-19"
+        default: "15-18"
       dest:
         description: "Destination folder"
         required: true
-        default: "frontend/public/static-tiles"
+        default: "tiles_cache"
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
+    timeout-minutes: 310   # keep under 6h hard limit
     permissions:
       contents: write
-    # End well before the 6h Actions hard cap; we'll finish and commit in the 5th hour.
-    env:
-      TIME_BUDGET_SEC: 17400   # 4h 50m
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,19 +30,32 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      - name: Mark run start time
+        run: echo "RUN_STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
       - name: Prefetch tiles
         run: |
-          python scripts/prefetch_tiles.py \
+          # Use stdbuf so logs stream continuously (prevents idle disconnects)
+          stdbuf -oL -eL python scripts/prefetch_tiles.py \
             --bbox "${{ github.event.inputs.bbox }}" \
             --zooms "${{ github.event.inputs.zooms }}" \
             --dest "${{ github.event.inputs.dest }}" \
-            --max-seconds "${TIME_BUDGET_SEC}" \
-            --log-every 500
+            --max-seconds $((5*60*60 - 600)) \
+            --log-every 2000
       - name: Commit & push tiles (idempotent)
         if: always()   # still run if the fetcher stops early
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A frontend/public/static-tiles
-          git commit -m "chore(tiles): prefetch ${{ github.event.inputs.zooms }} for ${{ github.event.inputs.bbox }}" || echo "No tile changes"
+          git config --global gc.auto 0
+          # Only stage files created/modified during this run to keep the diff small
+          if [ -n "${RUN_STARTED:-}" ]; then
+            find "${{ github.event.inputs.dest }}" -type f -newermt "$RUN_STARTED" -print0 \
+              | xargs -0 -r git add -f --
+          else
+            git add -A "${{ github.event.inputs.dest }}"
+          fi
+          COUNT=$(git status --porcelain | wc -l | tr -d ' ')
+          echo "Files to commit: $COUNT"
+          git commit -m "chore(tiles): +${COUNT} tiles @ ${{ github.event.inputs.zooms }} for ${{ github.event.inputs.bbox }}" || echo "No tile changes"
+          git pull --rebase
           git push

@@ -24,10 +24,10 @@ def main():
     ap.add_argument("--zooms", default="12-15", help="e.g. 12-15 or 12,13,14")
     ap.add_argument("--dest", required=True, help="directory to write tiles into")
     ap.add_argument("--upstream", default="https://tile.openstreetmap.org")
-    ap.add_argument("--max-seconds", type=int, default=None,
-                    help="Gracefully stop after N seconds (so the workflow can commit/push).")
-    ap.add_argument("--log-every", type=int, default=250,
-                    help="Print progress every N tiles.")
+    ap.add_argument("--max-seconds", type=int, default=17400,  # 4h50m
+                    help="Stop gracefully after this many seconds")
+    ap.add_argument("--log-every", type=int, default=2000,
+                    help="Progress log interval")
     args = ap.parse_args()
 
     lon_min, lat_min, lon_max, lat_max = [float(x) for x in args.bbox.split(",")]
@@ -47,10 +47,12 @@ def main():
                 # Stop early if we've hit the time budget
                 if deadline is not None and time.time() >= deadline:
                     elapsed = time.time() - started
-                    print(f"[graceful-exit] Time budget reached after {elapsed:0.1f}s; "
-                          f"downloaded {total} tiles. Exiting so the workflow can commit.",
-                          file=sys.stderr)
-                    print(f"Partial. Tiles stored under: {dest} (count={total})")
+                    print(
+                        f"Time budget reached; stopping at {total} tiles after {elapsed:0.1f}s",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    print(f"Done. Tiles stored under: {dest} (count={total})")
                     return
                 out = dest / str(z) / str(x) / f"{y}.png"
                 if out.exists():
@@ -64,7 +66,11 @@ def main():
                 total += 1
                 if total % args.log_every == 0:
                     elapsed = time.time() - started
-                    print(f"Fetched {total} tiles in {elapsed:0.1f}s", file=sys.stderr)
+                    print(
+                        f"Fetched {total} tiles in {elapsed:0.1f}s",
+                        file=sys.stderr,
+                        flush=True,
+                    )
     print(f"Done. Tiles stored under: {dest} (count={total})")
 
 if __name__ == "__main__":
