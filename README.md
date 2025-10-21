@@ -38,6 +38,19 @@ curl -F "file=@/path/to/rydpoints.zip"   "http://127.0.0.1:8000/v1/ingest/shapef
 
 Each feature is stored in the `external_feature` table with GeoJSON geometry and original properties so the UI can surface them immediately.
 
+### Ingest FAR rules (CSV/Excel)
+If you maintain a tabular **district-level** FAR list (no geometry), load it via:
+
+```bash
+curl -F "file=@/path/to/far_rules_riyadh_v1.csv" "http://127.0.0.1:8000/v1/ingest/far_rules?city_default=Riyadh"
+```
+
+**CSV columns**
+```
+district,far_max,city,zoning,road_class,frontage_min_m,asof_date,source_url
+```
+Only `district` and `far_max` are required. When an estimate runs, the API first tries polygon features for FAR; if none are found, it falls back to this rules table by matching the inferred **district**.
+
 ### Endpoints (MVP)
 
 - `GET /health`

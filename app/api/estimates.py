@@ -26,6 +26,7 @@ from app.services.explain import (
 from app.services.pdf import build_memo_pdf
 from app.services.residual import residual_land_value
 from app.services.cashflow import build_equity_cashflow
+from app.services.far_rules import lookup_far
 from app.models.tables import EstimateHeader, EstimateLine, LandUseStat
 
 router = APIRouter(tags=["estimates"])
@@ -206,12 +207,23 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         raise HTTPException(status_code=400, detail="Empty geometry provided")
     site_area_m2 = geo_svc.area_m2(geom)
 
-    auto_far = None
+    far_source = "manual"
+    auto_far_value = None
     try:
-        auto_far = geo_svc.infer_far_from_features(db, geom, layer="rydpolygons")
+        auto_far_value = geo_svc.infer_far_from_features(db, geom, layer="rydpolygons")
+        if auto_far_value:
+            far_source = "external_feature/rydpolygons"
     except Exception:
-        auto_far = None
-    far_used = float(auto_far) if auto_far else float(req.far)
+        auto_far_value = None
+    if (auto_far_value is None) and district:
+        try:
+            rule_far = lookup_far(db, city=req.city or "Riyadh", district=district)
+            if rule_far:
+                auto_far_value = rule_far
+                far_source = "far_rule"
+        except Exception:
+            pass
+    far_used = float(auto_far_value) if auto_far_value else float(req.far)
     efficiency = req.efficiency or 1.0
     nfa_m2 = site_area_m2 * far_used * efficiency
 
@@ -373,14 +385,18 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         "revenue_lines": revenue_lines,
         "land_model": meta.get("model"),  # shows {"model_used": true/false, mape, n_rows}
         "district": district,
-        "far_source": "external_feature/rydpolygons" if auto_far else "manual",
+        "far_source": far_source,
         "soft_cost_pct_defaulted": soft_defaulted,
     }
     if req.strategy == "build_to_rent":
         result["notes"]["btr"] = btr_notes
     result["assumptions"] = [
         {"key": "ppm2", "value": ppm2, "unit": "SAR/m2", "source_type": "Model" if meta.get("n_comps", 0) > 0 else "Manual"},
-        {"key": "far", "value": far_used, "source_type": "Observed" if auto_far else "Manual"},
+        {
+            "key": "far",
+            "value": far_used,
+            "source_type": "Observed" if far_source != "manual" else "Manual",
+        },
         {"key": "efficiency", "value": efficiency, "source_type": "Manual"},
         {
             "key": "soft_cost_pct",
