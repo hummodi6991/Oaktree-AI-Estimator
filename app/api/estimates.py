@@ -14,6 +14,7 @@ from app.services.hedonic import land_price_per_m2
 from app.services.costs import compute_hard_costs
 from app.services.financing import compute_financing
 from app.services.proforma import assemble
+from app.services.excel_method import compute_excel_estimate
 from app.services.simulate import p_bands
 from app.services.explain import (
     heuristic_drivers,
@@ -163,6 +164,7 @@ class EstimateRequest(BaseModel):
         default=None,
         description="Optional overrides for build-to-rent assumptions (occupancy, opex_ratio, cap_rate).",
     )
+    excel_inputs: dict | None = None
     model_config = ConfigDict(
         json_schema_extra={
             # Use OpenAPI "examples" so Swagger renders a runnable example
@@ -206,6 +208,99 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     if geom.is_empty:
         raise HTTPException(status_code=400, detail="Empty geometry provided")
     site_area_m2 = geo_svc.area_m2(geom)
+
+    def _finalize_result(result: dict[str, Any], bands: dict[str, Any] | None = None) -> EstimateResponseModel:
+        payload_bands = bands or {}
+        est_id = str(uuid.uuid4())
+        totals = result["totals"]
+        assumptions = result.get("assumptions", [])
+        notes_payload = {"bands": payload_bands, "notes": result["notes"]}
+
+        line_dicts: list[dict[str, Any]] = []
+        for key in ["land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"]:
+            line_dicts.append(
+                {
+                    "estimate_id": est_id,
+                    "category": "cost" if key != "revenues" else "revenue",
+                    "key": key,
+                    "value": totals[key],
+                    "unit": "SAR",
+                    "source_type": "Model",
+                    "owner": "api",
+                    "url": None,
+                    "model_version": None,
+                    "created_at": None,
+                }
+            )
+
+        for assumption in assumptions:
+            line_dicts.append(
+                {
+                    "estimate_id": est_id,
+                    "category": "assumption",
+                    "key": assumption["key"],
+                    "value": assumption.get("value"),
+                    "unit": assumption.get("unit"),
+                    "source_type": assumption.get("source_type"),
+                    "owner": "api",
+                    "url": None,
+                    "model_version": None,
+                    "created_at": None,
+                }
+            )
+
+        if _supports_sqlalchemy(db):
+            orm_lines = [EstimateLine(**entry) for entry in line_dicts]
+            header = EstimateHeader(
+                id=est_id,
+                strategy=req.strategy,
+                input_json=json.dumps(req.model_dump()),
+                totals_json=json.dumps(totals),
+                notes_json=json.dumps(notes_payload),
+            )
+            db.add(header)
+            db.add_all(orm_lines)
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        else:
+            _persist_inmemory(est_id, req.strategy, totals, notes_payload, assumptions, line_dicts)
+
+        result["id"] = est_id
+        result["strategy"] = req.strategy
+        return EstimateResponseModel.model_validate(result)
+
+    if req.excel_inputs:
+        excel = compute_excel_estimate(site_area_m2, req.excel_inputs)
+        totals = {
+            "land_value": excel["land_cost"],
+            "hard_costs": excel["sub_total"],
+            "soft_costs": excel["contingency_cost"]
+            + excel["consultants_cost"]
+            + excel["feasibility_fee"]
+            + excel["transaction_cost"],
+            "financing": 0.0,
+            "revenues": excel["y1_income"],
+            "p50_profit": excel["y1_income"] - excel["grand_total_capex"],
+        }
+        result = {
+            "totals": totals,
+            "assumptions": [
+                {"key": "excel_method", "value": 1, "unit": None, "source_type": "Manual"},
+                {"key": "site_area_m2", "value": site_area_m2, "unit": "m2", "source_type": "Observed"},
+            ],
+            "notes": {
+                "excel_inputs_keys": list(req.excel_inputs.keys()),
+                "excel_breakdown": excel,
+                "site_area_m2": site_area_m2,
+            },
+            "rent": {},
+            "explainability": {},
+            "confidence_bands": {},
+        }
+        return _finalize_result(result, {})
 
     far_source = "manual"
     auto_far_value = None
@@ -498,65 +593,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     result["metrics"] = {"irr_annual": cf["irr_annual"]}
     result["cashflow"] = {"monthly": cf["schedule"], "peaks": cf["peaks"]}
 
-    # Persist
-    est_id = str(uuid.uuid4())
-    totals = result["totals"]
-    notes_payload = {"bands": bands, "notes": result["notes"]}
-    assumptions = result["assumptions"]
-    line_dicts: list[dict[str, Any]] = []
-    for key in ["land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"]:
-        line_dicts.append(
-            {
-                "estimate_id": est_id,
-                "category": "cost" if key != "revenues" else "revenue",
-                "key": key,
-                "value": totals[key],
-                "unit": "SAR",
-                "source_type": "Model",
-                "owner": "api",
-                "url": None,
-                "model_version": None,
-                "created_at": None,
-            }
-        )
-    for assumption in assumptions:
-        line_dicts.append(
-            {
-                "estimate_id": est_id,
-                "category": "assumption",
-                "key": assumption["key"],
-                "value": assumption.get("value"),
-                "unit": assumption.get("unit"),
-                "source_type": assumption.get("source_type"),
-                "owner": "api",
-                "url": None,
-                "model_version": None,
-                "created_at": None,
-            }
-        )
-
-    if _supports_sqlalchemy(db):
-        orm_lines = [EstimateLine(**entry) for entry in line_dicts]
-        header = EstimateHeader(
-            id=est_id,
-            strategy=req.strategy,
-            input_json=json.dumps(req.model_dump()),
-            totals_json=json.dumps(totals),
-            notes_json=json.dumps(notes_payload),
-        )
-        db.add(header)
-        db.add_all(orm_lines)
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-    else:
-        _persist_inmemory(est_id, req.strategy, totals, notes_payload, assumptions, line_dicts)
-
-    result["id"] = est_id
-    result["strategy"] = req.strategy
-    return EstimateResponseModel.model_validate(result)
+    return _finalize_result(result, bands)
 
 
 @router.get("/estimates/{estimate_id}")
