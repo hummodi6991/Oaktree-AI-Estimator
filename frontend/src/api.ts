@@ -1,64 +1,36 @@
-// Use VITE_API_BASE_URL when provided; otherwise talk to the same origin.
-const ENV_BASE = (import.meta.env as any).VITE_API_BASE_URL as string | undefined;
-const BASE =
-  (ENV_BASE && ENV_BASE.trim() !== "" ? ENV_BASE : window.location.origin).replace(/\/+$/, "");
-
-export type EstimateRequest = {
-  geometry: any;
-  asset_program: string;
-  unit_mix: { type: string; count: number; avg_m2?: number }[];
-  finish_level: "low" | "mid" | "high";
-  timeline: { start: string; months: number };
-  financing_params: { margin_bps: number; ltv: number };
-  strategy: "build_to_sell" | "build_to_rent";
-  city?: string | null;
-  far?: number;
-  efficiency?: number;
-  sale_price_per_m2?: number;
-  soft_cost_pct?: number;
-  btr_params?: { occupancy?: number; opex_ratio?: number; cap_rate?: number };
-};
-
-export async function getFreshness() {
-  const r = await fetch(`${BASE}/v1/metadata/freshness`);
-  if (!r.ok) throw new Error("freshness failed");
-  return r.json();
-}
-
-export async function createEstimate(body: EstimateRequest) {
-  const r = await fetch(`${BASE}/v1/estimates`, {
+export async function identify(lng: number, lat: number) {
+  const r = await fetch(`${import.meta.env.VITE_API_BASE_URL || ""}/v1/geo/identify`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lng, lat }),
   });
   if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  return (await r.json()).items[0];
 }
 
-export async function runScenario(id: string, patch: { price_uplift_pct?: number; soft_cost_pct?: number; margin_bps?: number }) {
-  const r = await fetch(`${BASE}/v1/estimates/${id}/scenario`, {
+export async function landPrice(
+  city: string,
+  district?: string,
+  provider: "srem" | "suhail" = "srem",
+  parcelId?: string,
+) {
+  const params = new URLSearchParams({ city });
+  if (district) params.set("district", district);
+  params.set("provider", provider);
+  if (parcelId) params.set("parcel_id", parcelId);
+  const r = await fetch(
+    `${import.meta.env.VITE_API_BASE_URL || ""}/v1/pricing/land?${params.toString()}`,
+  );
+  if (!r.ok) throw new Error(await r.text());
+  return await r.json();
+}
+
+export async function makeEstimate(geometry: any, excel_inputs: any) {
+  const r = await fetch(`${import.meta.env.VITE_API_BASE_URL || ""}/v1/estimates`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(patch),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ geometry, excel_inputs }),
   });
   if (!r.ok) throw new Error(await r.text());
-  return r.json();
-}
-
-export function memoPdfUrl(id: string) {
-  return `${BASE}/v1/estimates/${id}/memo.pdf`;
-}
-
-export function exportCsvUrl(id: string) {
-  return `${BASE}/v1/estimates/${id}/export?format=csv`;
-}
-
-export async function getComps(params: { city?: string; type?: string; since?: string }) {
-  const q = new URLSearchParams();
-  if (params.city) q.set("city", params.city);
-  if (params.type) q.set("type", params.type);
-  if (params.since) q.set("since", params.since);
-  const r = await fetch(`${BASE}/v1/comps?${q.toString()}`);
-  if (!r.ok) throw new Error(await r.text());
-  return r.json();
+  return await r.json();
 }
