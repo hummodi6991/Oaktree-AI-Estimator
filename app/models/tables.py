@@ -189,3 +189,17 @@ class FarRule(Base):
     far_max = Column(Numeric(6, 3), nullable=False)
     asof_date = Column(Date)
     source_url = Column(String(512))
+
+
+class PriceQuote(Base):
+    __tablename__ = "price_quote"
+
+    id = Column(Integer, primary_key=True)
+    provider = Column(String(32), nullable=False)
+    city = Column(String(64), nullable=False)
+    district = Column(String(128))
+    parcel_id = Column(String(64))
+    sar_per_m2 = Column(Numeric(12, 2), nullable=False)
+    observed_at = Column(DateTime)
+    method = Column(String(64))
+    source_url = Column(String(512))

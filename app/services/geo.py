@@ -102,3 +102,19 @@ def infer_far_from_features(db, geom, layer: str = "rydpolygons") -> float | Non
         except Exception:
             continue
     return max(candidates) if candidates else None
+
+
+def _landuse_code_from_label(label: str) -> str | None:
+    """Map authoritative land-use labels to short codes."""
+
+    t = (label or "").strip()
+    if not t:
+        return None
+    s_labels = {"سكني", "residential"}
+    m_labels = {"mixed", "mixed use", "mixed-use", "مختلط", "تجاري سكني"}
+    tl = t.lower()
+    if t in s_labels or "سكن" in t or "residential" in tl:
+        return "s"
+    if t in m_labels or "mixed" in tl:
+        return "m"
+    return None
