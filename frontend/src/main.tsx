@@ -4,13 +4,14 @@ import { createRoot } from "react-dom/client";
 import Map from "./components/Map";
 import ExcelForm from "./components/ExcelForm";
 import "./index.css";
+import type { ParcelSummary } from "./api";
 
 function App() {
-  const [parcel, setParcel] = useState<any>(null);
+  const [parcel, setParcel] = useState<ParcelSummary | null>(null);
 
   return (
     <>
-      <Map onParcel={setParcel} />
+      <Map onParcel={(parcel) => setParcel(parcel)} />
       <div style={{ padding: 12 }}>
         {parcel ? (
           <>

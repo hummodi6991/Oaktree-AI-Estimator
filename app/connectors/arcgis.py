@@ -19,22 +19,33 @@ def query_features(
     out_fields: str = "*",
     token: Optional[str] = None,
     result_record_count: int = 2000,
+    geometry_type: str = "esriGeometryPolygon",
+    spatial_rel: str = "esriSpatialRelIntersects",
+    in_sr: Optional[int] = None,
+    distance: Optional[float] = None,
+    units: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Generic ArcGIS FeatureServer query using GeoJSON geometry (intersects).
     Returns list of GeoJSON features (attributes under ['properties'] if f=geojson).
     """
     url = urljoin(base_url.rstrip("/") + "/", f"FeatureServer/{layer_id}/query")
-    params = {
+    params: Dict[str, Any] = {
         "f": "geojson",
         "where": where,
         "outFields": out_fields,
         "geometry": json.dumps(geometry_geojson),
-        "geometryType": "esriGeometryPolygon",
-        "spatialRel": "esriSpatialRelIntersects",
+        "geometryType": geometry_type,
+        "spatialRel": spatial_rel,
         "returnGeometry": "true",
         "resultRecordCount": result_record_count,
     }
+    if in_sr is not None:
+        params["inSR"] = in_sr
+    if distance is not None:
+        params["distance"] = distance
+    if units is not None:
+        params["units"] = units
     # Some ArcGIS servers require token as a query param instead of Authorization.
     if token:
         params["token"] = token
