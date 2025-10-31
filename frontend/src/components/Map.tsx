@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
+import type { FeatureCollection, Geometry, GeoJsonProperties } from "geojson";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -28,16 +29,16 @@ export default function Map({ onParcel }: MapProps) {
       try {
         const parcel = await identify(e.lngLat.lng, e.lngLat.lat);
         onParcel(parcel);
-        const featureCollection = {
+        const featureCollection: FeatureCollection<Geometry, GeoJsonProperties> = {
           type: "FeatureCollection",
           features: [
             {
               type: "Feature",
-              geometry: parcel.geometry,
+              geometry: parcel.geometry as Geometry,
               properties: {},
             },
           ],
-        } as const;
+        };
         if (!map.getSource(sourceId)) {
           map.addSource(sourceId, { type: "geojson", data: featureCollection });
           map.addLayer({

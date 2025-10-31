@@ -1,0 +1,39 @@
+# Version control and configuration
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Python artifacts
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+dist/
+build/
+.eggs/
+*.egg-info/
+
+# Node / frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.cache/
+*.log
+
+# Data and generated assets
+data/
+mlruns/
+outputs/
+*.csv
+*.parquet
+*.xlsx
+*.pdf
+*.zip
+*.tar
+*.tar.gz
+
+# Docker leftovers
+Dockerfile~
+.dockerignore~
