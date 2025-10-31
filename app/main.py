@@ -45,9 +45,8 @@ app.include_router(pricing_router.router, prefix="/v1", dependencies=deps)
 app.include_router(metadata_router, prefix="/v1", dependencies=deps)
 app.include_router(ingest_router, dependencies=deps)
 app.include_router(tiles_router, prefix="")  # serves /tiles/...
-if settings.ARCGIS_BASE_URL and isinstance(settings.ARCGIS_PARCEL_LAYER, int):
-    # Only expose ArcGIS-backed routes when configured
-    app.include_router(geo_router, prefix="/v1", dependencies=deps)
+# Always mount geo routes; the router itself decides which backends are usable.
+app.include_router(geo_router, prefix="/v1", dependencies=deps)
 
 # Serve the compiled React app (frontend/dist) from the same container.
 # UI will be reachable at "/" on the same LoadBalancer as the API.
