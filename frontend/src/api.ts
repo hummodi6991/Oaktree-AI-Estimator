@@ -1,3 +1,5 @@
+import type { Geometry } from "geojson";
+
 const RAW_BASE = (import.meta.env.VITE_API_BASE_URL || "") as string;
 const API_BASE = typeof RAW_BASE === "string" ? RAW_BASE.replace(/\/+$/, "") : "";
 
@@ -32,13 +34,32 @@ async function readJson<T = any>(res: Response): Promise<T> {
   }
 }
 
+export type ParcelSummary = {
+  parcel_id?: string | null;
+  geometry?: Geometry | null;
+  area_m2?: number | null;
+  perimeter_m?: number | null;
+  landuse_raw?: string | null;
+  classification_raw?: string | null;
+  landuse_code?: string | null;
+  source_url?: string | null;
+};
+
+export type IdentifyResponse = {
+  found: boolean;
+  tolerance_m?: number;
+  source?: string;
+  message?: string;
+  parcel?: ParcelSummary | null;
+};
+
 export async function identify(lng: number, lat: number) {
   const res = await fetch(withBase("/v1/geo/identify"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lng, lat }),
   });
-  return readJson(res);
+  return readJson<IdentifyResponse>(res);
 }
 
 export async function landPrice(
