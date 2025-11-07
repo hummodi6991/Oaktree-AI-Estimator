@@ -110,6 +110,79 @@ class ParcelQuery(BaseModel):
     )
 
 
+class ClassifyResponse(BaseModel):
+    code: str | None
+    residential_share: float
+    commercial_share: float
+    method: str = "osm_area_share"
+
+
+@router.post("/osm-classify", response_model=ClassifyResponse)
+def osm_classify(q: ParcelQuery, db: Session = Depends(get_db)):
+    """
+    Approximate land-use classification (s|m) using OSM overlays inside the input geometry.
+    Requires osm2pgsql-imported tables (planet_osm_polygon) in EPSG:4326.
+    """
+
+    # Accept dict or JSON string
+    gj = q.geometry
+    if isinstance(gj, str):
+        try:
+            gj = json.loads(gj)
+        except Exception as exc:  # pragma: no cover - validated by FastAPI in runtime
+            raise HTTPException(status_code=400, detail=f"Invalid GeoJSON: {exc}")
+
+    # Compute residential/commercial area shares from OSM landuse/building tags
+    sql = text(
+        """
+        WITH g AS (
+          SELECT ST_SetSRID(ST_GeomFromGeoJSON(:gj), 4326) AS geom
+        ),
+        total AS (
+          SELECT ST_Area(ST_Transform(geom, 3857)) AS a FROM g
+        ),
+        res_poly AS (
+          SELECT SUM(ST_Area(ST_Transform(ST_Intersection(p.way, g.geom), 3857))) AS a
+          FROM planet_osm_polygon p, g
+          WHERE ST_Intersects(p.way, g.geom)
+            AND (
+              p.landuse IN ('residential')
+              OR p.building IN ('residential','apartments','house','detached','terrace','semidetached')
+            )
+        ),
+        com_poly AS (
+          SELECT SUM(ST_Area(ST_Transform(ST_Intersection(p.way, g.geom), 3857))) AS a
+          FROM planet_osm_polygon p, g
+          WHERE ST_Intersects(p.way, g.geom)
+            AND (
+              p.landuse IN ('commercial','retail')
+              OR p.building IN ('retail','commercial','office','shop')
+            )
+        )
+        SELECT
+          COALESCE(res_poly.a,0) / NULLIF(total.a,0) AS res_share,
+          COALESCE(com_poly.a,0) / NULLIF(total.a,0) AS com_share
+        FROM total LEFT JOIN res_poly ON TRUE LEFT JOIN com_poly ON TRUE;
+        """
+    )
+    row = db.execute(sql, {"gj": json.dumps(gj)}).mappings().first()
+    if not row:
+        return ClassifyResponse(code=None, residential_share=0.0, commercial_share=0.0)
+    res = float(row["res_share"] or 0.0)
+    com = float(row["com_share"] or 0.0)
+
+    # Simple rule-of-thumb:
+    #   - s if residential dominates and commercial is light
+    #   - m if both present meaningfully or commercial dominates
+    code: str | None = None
+    if res >= 0.50 and com < 0.25:
+        code = "s"
+    elif (res >= 0.25 and com >= 0.25) or com >= 0.50:
+        code = "m"
+
+    return ClassifyResponse(code=code, residential_share=res, commercial_share=com)
+
+
 class IdentifyPoint(BaseModel):
     lng: float
     lat: float
