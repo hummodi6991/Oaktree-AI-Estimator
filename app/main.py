@@ -45,8 +45,7 @@ app.include_router(pricing_router.router, prefix="/v1", dependencies=deps)
 app.include_router(metadata_router, prefix="/v1", dependencies=deps)
 app.include_router(ingest_router, dependencies=deps)
 app.include_router(tiles_router, prefix="")  # serves /tiles/...
-# Always expose geo endpoints. They will use PostGIS if available and
-# fall back to ExternalFeature when parcels table isn't present.
+# Always expose geo routes; they already try PostGIS first and fall back to ArcGIS/external.
 app.include_router(geo_router, prefix="/v1", dependencies=deps)
 
 # Serve the compiled React app (frontend/dist) from the same container.
