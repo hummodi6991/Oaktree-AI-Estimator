@@ -1,0 +1,62 @@
+name: OSM → PostGIS (Riyadh)
+on:
+  workflow_dispatch: {}
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install osm2pgsql & osmium-tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osm2pgsql osmium-tool curl
+
+      - name: Download Saudi Arabia PBF (with retries)
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 5 --connect-timeout 15 \
+            -o saudi-arabia-latest.osm.pbf \
+            https://download.geofabrik.de/asia/saudi-arabia-latest.osm.pbf
+          ls -lh saudi-arabia-latest.osm.pbf
+
+      - name: Extract Riyadh bounding box
+        run: |
+          # bbox: west,south,east,north  (same bbox you used elsewhere)
+          osmium extract -b 46.20,24.20,47.30,25.10 \
+            -o riyadh.osm.pbf saudi-arabia-latest.osm.pbf
+          ls -lh riyadh.osm.pbf
+
+      - name: Import to RDS over SSL
+        env:
+          PGHOST:     ${{ secrets.PGHOST }}
+          PGPORT:     ${{ secrets.PGPORT }}
+          PGDATABASE: ${{ secrets.PGDATABASE }}
+          PGUSER:     ${{ secrets.PGUSER }}
+          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+        run: |
+          set -euxo pipefail
+          # DSN form makes passing sslmode simple
+          DSN="postgresql://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT/$PGDATABASE?sslmode=require"
+          osm2pgsql \
+            --create --slim -G --hstore \
+            --style /usr/share/osm2pgsql/default.style \
+            --prefix planet_osm \
+            --cache 2048 \
+            --database "$DSN" \
+            riyadh.osm.pbf
+
+      - name: Indexes (fast intersects + tag filters)
+        env:
+          PGHOST:     ${{ secrets.PGHOST }}
+          PGPORT:     ${{ secrets.PGPORT }}
+          PGDATABASE: ${{ secrets.PGDATABASE }}
+          PGUSER:     ${{ secrets.PGUSER }}
+          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+        run: |
+          set -euxo pipefail
+          DSN="postgresql://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT/$PGDATABASE?sslmode=require"
+          psql "$DSN" -c "CREATE INDEX IF NOT EXISTS planet_osm_polygon_way_gix ON planet_osm_polygon USING GIST(way);"
+          psql "$DSN" -c "CREATE INDEX IF NOT EXISTS planet_osm_polygon_landuse_idx ON planet_osm_polygon(landuse);"
+          psql "$DSN" -c "CREATE INDEX IF NOT EXISTS planet_osm_polygon_building_idx ON planet_osm_polygon(building);"
