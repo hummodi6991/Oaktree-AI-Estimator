@@ -19,6 +19,7 @@ jobs:
       PGUSER: ${{ secrets.POSTGRES_USER }}
       PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       PGSSLMODE: require
+      BBOX_INPUT: ${{ github.event.inputs.bbox || '46.20,24.20,47.30,25.10' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -44,11 +45,19 @@ jobs:
           out body; >; out skel qt;
           EOF
 
+          # Parse bbox input (minLon,minLat,maxLon,maxLat)
+          IFS=',' read -r MINLON MINLAT MAXLON MAXLAT <<<"${BBOX_INPUT}"
+
+          if [ -z "${MINLON:-}" ] || [ -z "${MINLAT:-}" ] || [ -z "${MAXLON:-}" ] || [ -z "${MAXLAT:-}" ]; then
+            echo "Invalid bbox input: ${BBOX_INPUT}" >&2
+            exit 1
+          fi
+
           # Overpass wants bbox as: south,west,north,east (lat,lon,lat,lon)
-          SOUTH=24.20
-          WEST=46.20
-          NORTH=25.10
-          EAST=47.30
+          SOUTH="$MINLAT"
+          WEST="$MINLON"
+          NORTH="$MAXLAT"
+          EAST="$MAXLON"
           BBOX="${SOUTH},${WEST},${NORTH},${EAST}"
 
           # Try two mirrors; stop on first success
@@ -64,6 +73,11 @@ jobs:
               break
             fi
           done
+
+          if [ ! -s data/osm/riyadh.osm.xml ]; then
+            echo "Failed to download OSM data from Overpass mirrors" >&2
+            exit 3
+          fi
 
           # Sanity checks (must be XML and larger than a few KB)
           head -n1 data/osm/riyadh.osm.xml
