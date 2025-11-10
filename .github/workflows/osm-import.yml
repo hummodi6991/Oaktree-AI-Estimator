@@ -31,7 +31,7 @@ jobs:
       - name: Download Riyadh OSM via Overpass (landuse/building only)
         run: |
           mkdir -p data/osm
-          cat > data/osm/riyadh.overpass <<'Q'
+          cat > data/osm/riyadh.overpass <<'EOF'
           [out:xml][timeout:120];
           {{bbox}}
           (
@@ -42,16 +42,38 @@ jobs:
           );
           (._;>;);
           out body; >; out skel qt;
-          Q
+          EOF
 
-          BBOX="${{ github.event.inputs.bbox }}"
+          # Overpass wants bbox as: south,west,north,east (lat,lon,lat,lon)
+          SOUTH=24.20
+          WEST=46.20
+          NORTH=25.10
+          EAST=47.30
+          BBOX="${SOUTH},${WEST},${NORTH},${EAST}"
 
-          curl -fL --data-urlencode data@data/osm/riyadh.overpass \
-            "https://overpass-api.de/api/interpreter?bbox=$BBOX" \
-            -o data/osm/riyadh.osm.xml
+          # Try two mirrors; stop on first success
+          for OAPI in \
+            https://overpass.kumi.systems/api/interpreter \
+            https://overpass-api.de/api/interpreter
+          do
+            echo "Trying $OAPI ..."
+            if curl -fsSL --retry 4 --retry-connrefused \
+                 --data-urlencode data@data/osm/riyadh.overpass \
+                 --data-urlencode bbox="$BBOX" \
+                 "$OAPI" -o data/osm/riyadh.osm.xml; then
+              break
+            fi
+          done
 
+          # Sanity checks (must be XML and larger than a few KB)
           head -n1 data/osm/riyadh.osm.xml
-          wc -c data/osm/riyadh.osm.xml
+          test -s data/osm/riyadh.osm.xml
+          file data/osm/riyadh.osm.xml || true
+          # Fail if Overpass returned an error page
+          grep -m1 -E '<osm|<osm3s' data/osm/riyadh.osm.xml >/dev/null || {
+            echo "Overpass did not return OSM XML" >&2
+            exit 2
+          }
 
       - name: Enable PostGIS + hstore on RDS
         run: |
@@ -62,22 +84,28 @@ jobs:
       - name: Import with osm2pgsql (create)
         run: |
           set -euo pipefail
-          cd data/osm
-          PGURI="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=${PGSSLMODE}&keepalives=1&keepalives_idle=30&keepalives_interval=10&keepalives_count=5"
+          PGURI="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=require"
           osm2pgsql \
-            -d "$PGURI" \
-            --create --slim --latlong --hstore \
+            --create \
+            --slim \
+            --latlong \
+            --hstore \
             --number-processes=1 \
+            --style /usr/share/osm2pgsql/default.style \
             --prefix planet_osm \
-            riyadh.osm.xml
+            --database "$PGURI" \
+            data/osm/riyadh.osm.xml
 
       - name: Touch-up indexes (fast intersects + tag filters)
         run: |
-          PGURI="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=${PGSSLMODE}"
+          PGURI="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=require"
           psql "$PGURI" -v ON_ERROR_STOP=1 <<'SQL'
-          CREATE INDEX IF NOT EXISTS idx_osm_poly_way_4326 ON planet_osm_polygon USING GIST (way);
-          CREATE INDEX IF NOT EXISTS idx_osm_poly_landuse ON planet_osm_polygon (landuse);
-          CREATE INDEX IF NOT EXISTS idx_osm_poly_building ON planet_osm_polygon (building);
+          CREATE INDEX IF NOT EXISTS idx_planet_osm_polygon_geom
+            ON planet_osm_polygon USING GIST (way);
+          CREATE INDEX IF NOT EXISTS idx_planet_osm_polygon_landuse
+            ON planet_osm_polygon ((tags->'landuse'));
+          CREATE INDEX IF NOT EXISTS idx_planet_osm_polygon_building
+            ON planet_osm_polygon ((tags->'building'));
           ANALYZE planet_osm_polygon;
           SQL
 
