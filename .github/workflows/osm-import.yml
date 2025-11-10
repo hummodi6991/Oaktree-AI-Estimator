@@ -12,6 +12,13 @@ jobs:
   import:
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    env:
+      PGHOST: ${{ secrets.POSTGRES_HOST }}
+      PGPORT: ${{ secrets.POSTGRES_PORT }}
+      PGDATABASE: ${{ secrets.POSTGRES_DB }}
+      PGUSER: ${{ secrets.POSTGRES_USER }}
+      PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      PGSSLMODE: require
 
     steps:
       - uses: actions/checkout@v4
@@ -23,83 +30,59 @@ jobs:
 
       - name: Download Riyadh OSM via Overpass (landuse/building only)
         run: |
-          mkdir -p data/osm && cd data/osm
-          cat > riyadh.overpass <<'QL'
-          [out:xml][timeout:480];
+          mkdir -p data/osm
+          cat > data/osm/riyadh.overpass <<'Q'
+          [out:xml][timeout:120];
+          {{bbox}}
           (
-            nwr(46.20,24.20,47.30,25.10)[landuse];
-            nwr(46.20,24.20,47.30,25.10)[building];
+            way["building"];
+            relation["building"];
+            way["landuse"];
+            relation["landuse"];
           );
-          out body;
-          >;
-          out skel qt;
-          QL
-          curl -fsSL --data-urlencode data@riyadh.overpass \
-               https://overpass-api.de/api/interpreter -o riyadh.osm.xml
-          test $(wc -c < riyadh.osm.xml) -gt 500000 || \
-            (echo "Overpass result too small; bailing."; exit 2)
-          head -n 1 riyadh.osm.xml  # must be <?xml ...
+          (._;>;);
+          out body; >; out skel qt;
+          Q
+
+          BBOX="${{ github.event.inputs.bbox }}"
+
+          curl -fL --data-urlencode data@data/osm/riyadh.overpass \
+            "https://overpass-api.de/api/interpreter?bbox=$BBOX" \
+            -o data/osm/riyadh.osm.xml
+
+          head -n1 data/osm/riyadh.osm.xml
+          wc -c data/osm/riyadh.osm.xml
 
       - name: Enable PostGIS + hstore on RDS
-        env:
-          PGHOST: ${{ secrets.POSTGRES_HOST }}
-          PGPORT: ${{ secrets.POSTGRES_PORT }}
-          PGDATABASE: ${{ secrets.POSTGRES_DB }}
-          PGUSER: ${{ secrets.POSTGRES_USER }}
-          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          PGSSLMODE: require
-          PGOPTIONS: "-c statement_timeout=0 -c idle_in_transaction_session_timeout=0 -c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=10"
         run: |
-          psql -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS postgis;"
-          psql -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS hstore;"
+          PGURI="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=${PGSSLMODE}"
+          psql "$PGURI" -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS postgis;'
+          psql "$PGURI" -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS hstore;'
 
       - name: Import with osm2pgsql (create)
-        env:
-          PGHOST: ${{ secrets.POSTGRES_HOST }}
-          PGPORT: ${{ secrets.POSTGRES_PORT }}
-          PGDATABASE: ${{ secrets.POSTGRES_DB }}
-          PGUSER: ${{ secrets.POSTGRES_USER }}
-          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          PGSSLMODE: require
-          PGOPTIONS: "-c statement_timeout=0 -c idle_in_transaction_session_timeout=0 -c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=10"
         run: |
+          set -euo pipefail
           cd data/osm
-          # Small AOI → --slim is still recommended so queries use indexes
+          PGURI="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=${PGSSLMODE}&keepalives=1&keepalives_idle=30&keepalives_interval=10&keepalives_count=5"
           osm2pgsql \
-            --create \
-            --slim \
-            --hstore \
-            --latlong \
-            --number-processes=2 \
+            -d "$PGURI" \
+            --create --slim --latlong --hstore \
+            --number-processes=1 \
             --prefix planet_osm \
-            --database "$PGDATABASE" --host "$PGHOST" --port "$PGPORT" \
-            --username "$PGUSER" --password \
-            -r xml riyadh.osm.xml
+            riyadh.osm.xml
 
-      - name: Touch-up indexes (fast intersects for the API)
-        env:
-          PGHOST: ${{ secrets.POSTGRES_HOST }}
-          PGPORT: ${{ secrets.POSTGRES_PORT }}
-          PGDATABASE: ${{ secrets.POSTGRES_DB }}
-          PGUSER: ${{ secrets.POSTGRES_USER }}
-          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          PGSSLMODE: require
+      - name: Touch-up indexes (fast intersects + tag filters)
         run: |
-          psql -v ON_ERROR_STOP=1 <<'SQL'
-          -- Make sure these exist. osm2pgsql usually creates GIST on way.
-          CREATE INDEX IF NOT EXISTS planet_osm_polygon_landuse_idx ON planet_osm_polygon(landuse);
-          CREATE INDEX IF NOT EXISTS planet_osm_polygon_building_idx ON planet_osm_polygon(building);
+          PGURI="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=${PGSSLMODE}"
+          psql "$PGURI" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE INDEX IF NOT EXISTS idx_osm_poly_way_4326 ON planet_osm_polygon USING GIST (way);
+          CREATE INDEX IF NOT EXISTS idx_osm_poly_landuse ON planet_osm_polygon (landuse);
+          CREATE INDEX IF NOT EXISTS idx_osm_poly_building ON planet_osm_polygon (building);
           ANALYZE planet_osm_polygon;
           SQL
 
       - name: Smoke test
-        env:
-          PGHOST: ${{ secrets.POSTGRES_HOST }}
-          PGPORT: ${{ secrets.POSTGRES_PORT }}
-          PGDATABASE: ${{ secrets.POSTGRES_DB }}
-          PGUSER: ${{ secrets.POSTGRES_USER }}
-          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-          PGSSLMODE: require
         run: |
-          psql -c "SELECT to_char(now(),'YYYY-MM-DD HH24:MI') as imported_at,
-                          (SELECT count(*) FROM planet_osm_polygon) AS polygons;"
+          PGURI="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${PGDATABASE}?sslmode=${PGSSLMODE}"
+          psql "$PGURI" -c "SELECT COUNT(*) AS polygons FROM planet_osm_polygon;"
+          psql "$PGURI" -c "SELECT landuse, COUNT(*) FROM planet_osm_polygon GROUP BY 1 ORDER BY 2 DESC LIMIT 10;"
