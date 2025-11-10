@@ -1,62 +1,105 @@
-name: OSM → PostGIS (Riyadh)
+name: Import OSM (Riyadh -> RDS)
+
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      bbox:
+        description: "minLon,minLat,maxLon,maxLat"
+        required: true
+        default: "46.20,24.20,47.30,25.10"
 
 jobs:
   import:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install osm2pgsql & osmium-tool
+      - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y osm2pgsql osmium-tool curl
+          sudo apt-get install -y osm2pgsql postgresql-client curl jq
 
-      - name: Download Saudi Arabia PBF (with retries)
+      - name: Download Riyadh OSM via Overpass (landuse/building only)
         run: |
-          set -euxo pipefail
-          curl -fL --retry 5 --connect-timeout 15 \
-            -o saudi-arabia-latest.osm.pbf \
-            https://download.geofabrik.de/asia/saudi-arabia-latest.osm.pbf
-          ls -lh saudi-arabia-latest.osm.pbf
+          mkdir -p data/osm && cd data/osm
+          cat > riyadh.overpass <<'QL'
+          [out:xml][timeout:480];
+          (
+            nwr(46.20,24.20,47.30,25.10)[landuse];
+            nwr(46.20,24.20,47.30,25.10)[building];
+          );
+          out body;
+          >;
+          out skel qt;
+          QL
+          curl -fsSL --data-urlencode data@riyadh.overpass \
+               https://overpass-api.de/api/interpreter -o riyadh.osm.xml
+          test $(wc -c < riyadh.osm.xml) -gt 500000 || \
+            (echo "Overpass result too small; bailing."; exit 2)
+          head -n 1 riyadh.osm.xml  # must be <?xml ...
 
-      - name: Extract Riyadh bounding box
-        run: |
-          # bbox: west,south,east,north  (same bbox you used elsewhere)
-          osmium extract -b 46.20,24.20,47.30,25.10 \
-            -o riyadh.osm.pbf saudi-arabia-latest.osm.pbf
-          ls -lh riyadh.osm.pbf
-
-      - name: Import to RDS over SSL
+      - name: Enable PostGIS + hstore on RDS
         env:
-          PGHOST:     ${{ secrets.PGHOST }}
-          PGPORT:     ${{ secrets.PGPORT }}
-          PGDATABASE: ${{ secrets.PGDATABASE }}
-          PGUSER:     ${{ secrets.PGUSER }}
-          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+          PGHOST: ${{ secrets.POSTGRES_HOST }}
+          PGPORT: ${{ secrets.POSTGRES_PORT }}
+          PGDATABASE: ${{ secrets.POSTGRES_DB }}
+          PGUSER: ${{ secrets.POSTGRES_USER }}
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          PGSSLMODE: require
+          PGOPTIONS: "-c statement_timeout=0 -c idle_in_transaction_session_timeout=0 -c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=10"
         run: |
-          set -euxo pipefail
-          # DSN form makes passing sslmode simple
-          DSN="postgresql://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT/$PGDATABASE?sslmode=require"
+          psql -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+          psql -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS hstore;"
+
+      - name: Import with osm2pgsql (create)
+        env:
+          PGHOST: ${{ secrets.POSTGRES_HOST }}
+          PGPORT: ${{ secrets.POSTGRES_PORT }}
+          PGDATABASE: ${{ secrets.POSTGRES_DB }}
+          PGUSER: ${{ secrets.POSTGRES_USER }}
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          PGSSLMODE: require
+          PGOPTIONS: "-c statement_timeout=0 -c idle_in_transaction_session_timeout=0 -c tcp_keepalives_idle=60 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=10"
+        run: |
+          cd data/osm
+          # Small AOI → --slim is still recommended so queries use indexes
           osm2pgsql \
-            --create --slim -G --hstore \
-            --style /usr/share/osm2pgsql/default.style \
+            --create \
+            --slim \
+            --hstore \
+            --latlong \
+            --number-processes=2 \
             --prefix planet_osm \
-            --cache 2048 \
-            --database "$DSN" \
-            riyadh.osm.pbf
+            --database "$PGDATABASE" --host "$PGHOST" --port "$PGPORT" \
+            --username "$PGUSER" --password \
+            -r xml riyadh.osm.xml
 
-      - name: Indexes (fast intersects + tag filters)
+      - name: Touch-up indexes (fast intersects for the API)
         env:
-          PGHOST:     ${{ secrets.PGHOST }}
-          PGPORT:     ${{ secrets.PGPORT }}
-          PGDATABASE: ${{ secrets.PGDATABASE }}
-          PGUSER:     ${{ secrets.PGUSER }}
-          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+          PGHOST: ${{ secrets.POSTGRES_HOST }}
+          PGPORT: ${{ secrets.POSTGRES_PORT }}
+          PGDATABASE: ${{ secrets.POSTGRES_DB }}
+          PGUSER: ${{ secrets.POSTGRES_USER }}
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          PGSSLMODE: require
         run: |
-          set -euxo pipefail
-          DSN="postgresql://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT/$PGDATABASE?sslmode=require"
-          psql "$DSN" -c "CREATE INDEX IF NOT EXISTS planet_osm_polygon_way_gix ON planet_osm_polygon USING GIST(way);"
-          psql "$DSN" -c "CREATE INDEX IF NOT EXISTS planet_osm_polygon_landuse_idx ON planet_osm_polygon(landuse);"
-          psql "$DSN" -c "CREATE INDEX IF NOT EXISTS planet_osm_polygon_building_idx ON planet_osm_polygon(building);"
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          -- Make sure these exist. osm2pgsql usually creates GIST on way.
+          CREATE INDEX IF NOT EXISTS planet_osm_polygon_landuse_idx ON planet_osm_polygon(landuse);
+          CREATE INDEX IF NOT EXISTS planet_osm_polygon_building_idx ON planet_osm_polygon(building);
+          ANALYZE planet_osm_polygon;
+          SQL
+
+      - name: Smoke test
+        env:
+          PGHOST: ${{ secrets.POSTGRES_HOST }}
+          PGPORT: ${{ secrets.POSTGRES_PORT }}
+          PGDATABASE: ${{ secrets.POSTGRES_DB }}
+          PGUSER: ${{ secrets.POSTGRES_USER }}
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          PGSSLMODE: require
+        run: |
+          psql -c "SELECT to_char(now(),'YYYY-MM-DD HH24:MI') as imported_at,
+                          (SELECT count(*) FROM planet_osm_polygon) AS polygons;"
