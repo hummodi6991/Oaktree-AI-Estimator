@@ -2,16 +2,14 @@ name: Import OSM (Riyadh -> RDS)
 
 on:
   workflow_dispatch:
-    inputs:
-      bbox:
-        description: "minLon,minLat,maxLon,maxLat"
-        default: "46.20,24.20,47.30,25.10"
-        required: true
+
+permissions:
+  contents: read
 
 jobs:
   import:
     runs-on: ubuntu-latest
-    # (deliberately no 'timeout-minutes': we rely on the GitHub default max)
+    # no job-level timeout; GitHub’s platform cap (~6h) still applies
 
     steps:
       - uses: actions/checkout@v4
@@ -19,121 +17,133 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y osm2pgsql postgresql-client curl jq
+          sudo apt-get install -y osm2pgsql postgresql-client osmium-tool curl jq
 
-      - name: Configure DB env (managed RDS with SSL)
+      # --- DB env from secrets (SSL required) ---
+      - name: Configure DB env
         run: |
           echo "PGHOST=${{ secrets.POSTGRES_HOST }}"       >> $GITHUB_ENV
           echo "PGPORT=${{ secrets.POSTGRES_PORT }}"       >> $GITHUB_ENV
           echo "PGDATABASE=${{ secrets.POSTGRES_DB }}"     >> $GITHUB_ENV
           echo "PGUSER=${{ secrets.POSTGRES_USER }}"       >> $GITHUB_ENV
           echo "PGPASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> $GITHUB_ENV
-          echo "PGSSLMODE=require"                        >> $GITHUB_ENV
-          echo "PGCONNECT_TIMEOUT=60"                     >> $GITHUB_ENV
-          echo "BBOX=${{ inputs.bbox }}"                  >> $GITHUB_ENV
+          echo "PGSSLMODE=require"                         >> $GITHUB_ENV
+          # optional: keepalives to survive long COPYs on managed PG
+          echo "PGOPTIONS=-c statement_timeout=0 -c idle_in_transaction_session_timeout=0 -c tcp_keepalives_idle=30 -c tcp_keepalives_interval=30 -c tcp_keepalives_count=10" >> $GITHUB_ENV
 
+      # --- build Overpass query safely (no YAML quoting issues) ---
       - name: Prepare Overpass query + download (with fallback)
-        shell: bash
         run: |
-          set -euo pipefail
           mkdir -p data/osm
+          cat > data/osm/riyadh.overpass <<'Q'
+          [out:xml][timeout:600];
+          {{bbox}}
+          (
+            way["building"];
+            relation["building"];
+            way["landuse"];
+            relation["landuse"];
+          );
+          (._;>;);
+          out body; >; out skel qt;
+          Q
 
-          # Write Overpass QL with a {{bbox}} placeholder so we can reuse it
-          cat > data/osm/riyadh.template.overpass <<'EOF'
-[out:xml][timeout:120];
-({{bbox}});
-(
-  way["building"];
-  relation["building"];
-  way["landuse"];
-  relation["landuse"];
-);
-(._;>;);
-out body; >; out skel qt;
-EOF
+          BBOX="46.20,24.20,47.30,25.10"  # west,south,east,north (Riyadh)
+          # Try two endpoints; fail only if both fail
+          curl -fL --data-urlencode data@data/osm/riyadh.overpass "https://overpass-api.de/api/interpreter?bbox=${BBOX}" -o data/osm/riyadh.osm.xml \
+          || curl -fL --data-urlencode data@data/osm/riyadh.overpass "https://overpass.kumi.systems/api/interpreter?bbox=${BBOX}" -o data/osm/riyadh.osm.xml
 
-          # Replace {{bbox}} with the configured BBOX (west,south,east,north)
-          sed "s/{{bbox}}/${{ env.BBOX }}/g" data/osm/riyadh.template.overpass > data/osm/riyadh.overpass
-
-          # Try multiple Overpass mirrors (kumi first, then official).
-          tried=0
-          for O in https://overpass.kumi.systems/api/interpreter https://overpass-api.de/api/interpreter; do
-            tried=$((tried+1))
-            if curl -fsSL -o data/osm/riyadh.osm.xml \
-                 --data-urlencode data@data/osm/riyadh.overpass \
-                 "$O"; then
-              echo "Downloaded OSM extract via $O"
-              break
-            else
-              echo "Warn: Overpass attempt $tried failed ($O); trying next mirror…" >&2
-            fi
-          done
-
-          # Sanity check (should be tens of MB and start with <?xml …>)
+          # sanity check: should be tens of MB, and start with XML
           head -n 1 data/osm/riyadh.osm.xml
-          test -s data/osm/riyadh.osm.xml
+          wc -c     data/osm/riyadh.osm.xml
 
-      - name: Enable PostGIS + hstore + helper (id extractor)
-        shell: bash
+      - name: Enable PostGIS + hstore
         run: |
-          set -euo pipefail
-          PGURL="postgresql://${{ env.PGUSER }}:${{ env.PGPASSWORD }}@${{ env.PGHOST }}:${{ env.PGPORT }}/${{ env.PGDATABASE }}?sslmode=${{ env.PGSSLMODE }}"
-          psql "$PGURL" -c "CREATE EXTENSION IF NOT EXISTS postgis;"
-          psql "$PGURL" -c "CREATE EXTENSION IF NOT EXISTS hstore;"
+          psql -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+          psql -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS hstore;"
 
       - name: Decide mode (create vs append)
         id: mode
-        shell: bash
         run: |
-          set -euo pipefail
-          PGURL="postgresql://${{ env.PGUSER }}:${{ env.PGPASSWORD }}@${{ env.PGHOST }}:${{ env.PGPORT }}/${{ env.PGDATABASE }}?sslmode=${{ env.PGSSLMODE }}"
-          if psql "$PGURL" -tAc "select to_regclass('public.planet_osm_point') is not null" | grep -q t; then
+          EXIST=$(psql -Atqc "SELECT to_regclass('public.planet_osm_point') IS NOT NULL")
+          if [ "$EXIST" = "t" ]; then
             echo "mode=append" >> $GITHUB_OUTPUT
           else
             echo "mode=create" >> $GITHUB_OUTPUT
           fi
+          echo "Using mode: $(cat $GITHUB_OUTPUT | sed -n 's/mode=//p')"
 
-      - name: Import with osm2pgsql (${{ steps.mode.outputs.mode }})
-        shell: bash
-        timeout-minutes: 350  # near max; see note below
+      - name: Import with osm2pgsql
+        env:
+          MODE: ${{ steps.mode.outputs.mode }}
         run: |
           set -euo pipefail
-          MODE="${{ steps.mode.outputs.mode }}"
-          PGURL="postgresql://${{ env.PGUSER }}:${{ env.PGPASSWORD }}@${{ env.PGHOST }}:${{ env.PGPORT }}/${{ env.PGDATABASE }}?sslmode=${{ env.PGSSLMODE }}"
-          # Keep EPSG:4326 so API code that expects WGS84 continues to work
-          osm2pgsql \
-            --${MODE} \
-            --slim \
-            --latlong \
-            --hstore \
-            --prefix planet_osm \
-            --style /usr/share/osm2pgsql/default.style \
-            --cache 1024 \
-            -d "$PGURL" \
-            data/osm/riyadh.osm.xml
+          echo "osm2pgsql version:"
+          osm2pgsql --version
 
-      - name: Touch-up indexes (fast intersects + tags)
-        shell: bash
+          # Use libpq env (PG* vars) instead of flags that differ between versions
+          if [ "$MODE" = "create" ]; then
+            osm2pgsql \
+              --create \
+              --slim \
+              --latlong \
+              --hstore \
+              --prefix planet_osm \
+              --style /usr/share/osm2pgsql/default.style \
+              --cache 1024 \
+              data/osm/riyadh.osm.xml
+          else
+            osm2pgsql \
+              --append \
+              --slim \
+              --latlong \
+              --hstore \
+              --prefix planet_osm \
+              --style /usr/share/osm2pgsql/default.style \
+              --cache 1024 \
+              data/osm/riyadh.osm.xml
+          fi
+
+      - name: Touch-up indexes (geometry + tags)
         run: |
-          set -euo pipefail
-          PGURL="postgresql://${{ env.PGUSER }}:${{ env.PGPASSWORD }}@${{ env.PGHOST }}:${{ env.PGPORT }}/${{ env.PGDATABASE }}?sslmode=${{ env.PGSSLMODE }}"
-          psql "$PGURL" -v ON_ERROR_STOP=1 <<'SQL'
-          DO $$ BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='planet_osm_polygon_way_idx') THEN
-              EXECUTE 'CREATE INDEX planet_osm_polygon_way_idx ON planet_osm_polygon USING GIST(way);';
-            END IF;
-            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='planet_osm_polygon_tags_idx') THEN
-              EXECUTE 'CREATE INDEX planet_osm_polygon_tags_idx ON planet_osm_polygon USING GIN(tags);';
-            END IF;
-          END $$;
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          -- geometry access
+          CREATE INDEX IF NOT EXISTS planet_osm_polygon_way_gix ON planet_osm_polygon USING GIST (way);
+          CREATE INDEX IF NOT EXISTS planet_osm_line_way_gix    ON planet_osm_line    USING GIST (way);
+          CREATE INDEX IF NOT EXISTS planet_osm_point_way_gix   ON planet_osm_point   USING GIST (way);
+          -- tags access
+          CREATE INDEX IF NOT EXISTS planet_osm_polygon_tags_gin ON planet_osm_polygon USING GIN (tags);
+          CREATE INDEX IF NOT EXISTS planet_osm_line_tags_gin    ON planet_osm_line    USING GIN (tags);
+          CREATE INDEX IF NOT EXISTS planet_osm_point_tags_gin   ON planet_osm_point   USING GIN (tags);
+          SQL
+
+      - name: Create land-use classification view
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DROP VIEW IF EXISTS osm_landuse_classified;
+          CREATE VIEW osm_landuse_classified AS
+          SELECT
+            osm_id,
+            way,
+            tags,
+            -- pick the most useful single tag, then map to coarse categories
+            COALESCE(tags->'landuse', tags->'building', tags->'amenity', tags->'leisure', tags->'shop')                           AS primary_tag,
+            CASE
+              WHEN (tags->'landuse') IN ('residential','garages') OR (tags->'building') IN ('residential','apartments','house','detached','terrace') THEN 'residential'
+              WHEN (tags->'landuse') IN ('retail','commercial') OR (tags->'building') IN ('retail','commercial','office')         THEN 'commercial'
+              WHEN (tags->'landuse') IN ('industrial') OR (tags->'building') IN ('industrial','warehouse','factory')             THEN 'industrial'
+              WHEN (tags->'landuse') IN ('mixed_use') OR (tags->'building') IN ('mixed_use','retail;residential')                 THEN 'mixed'
+              WHEN (tags->'amenity') IN ('school','university','hospital','clinic','place_of_worship','government')               THEN 'institutional'
+              WHEN (tags->'leisure') IS NOT NULL OR (tags->'landuse') IN ('recreation_ground','grass','meadow','forest')          THEN 'open_space'
+              ELSE 'other'
+            END AS use_class
+          FROM planet_osm_polygon;
+          -- spatial index for the view via a materialized helper if you later need speed:
+          -- CREATE MATERIALIZED VIEW osm_landuse_classified_m AS SELECT * FROM osm_landuse_classified;
+          -- CREATE INDEX IF NOT EXISTS osm_landuse_classified_m_gix ON osm_landuse_classified_m USING GIST(way);
           SQL
 
       - name: Smoke test
-        env:
-          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
-          psql "host=$PGHOST port=$PGPORT dbname=$PGDATABASE user=$PGUSER sslmode=$PGSSLMODE" \
-            -c "SELECT to_char(now(),'YYYY-MM-DD HH24:MI') as imported_at" \
-            -c "SELECT count(*) AS polygons FROM planet_osm_polygon" \
-            -c "SELECT count(*) AS lines    FROM planet_osm_line" \
-            -c "SELECT count(*) AS points   FROM planet_osm_point"
+          psql -c "SELECT count(*) AS polygons FROM planet_osm_polygon;"
+          psql -c "SELECT use_class, count(*) FROM osm_landuse_classified GROUP BY use_class ORDER BY count DESC;"
