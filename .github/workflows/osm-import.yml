@@ -5,22 +5,13 @@ on:
     inputs:
       bbox:
         description: "minLon,minLat,maxLon,maxLat"
-        required: true
         default: "46.20,24.20,47.30,25.10"
+        required: true
 
 jobs:
   import:
     runs-on: ubuntu-latest
-    env:
-      PGHOST: ${{ secrets.POSTGRES_HOST }}
-      PGPORT: ${{ secrets.POSTGRES_PORT }}
-      PGDATABASE: ${{ secrets.POSTGRES_DB }}
-      PGUSER: ${{ secrets.POSTGRES_USER }}
-      PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-      PGSSLMODE: require
-      PGURL: 'postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@${{ secrets.POSTGRES_HOST }}:${{ secrets.POSTGRES_PORT }}/${{ secrets.POSTGRES_DB }}?sslmode=require'
-      PGOPTIONS: "-c statement_timeout=0 -c idle_in_transaction_session_timeout=0 -c tcp_keepalives_idle=30 -c tcp_keepalives_interval=10 -c tcp_keepalives_count=10"
-      BBOX_INPUT: ${{ github.event.inputs.bbox || '46.20,24.20,47.30,25.10' }}
+    # (deliberately no 'timeout-minutes': we rely on the GitHub default max)
 
     steps:
       - uses: actions/checkout@v4
@@ -30,88 +21,124 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y osm2pgsql postgresql-client curl jq
 
-      - name: Download Riyadh OSM via Overpass (landuse/building only)
+      - name: Configure DB env (managed RDS with SSL)
         run: |
-          set -euo pipefail
-          mkdir -p data/osm && cd data/osm
+          echo "PGHOST=${{ secrets.POSTGRES_HOST }}"       >> $GITHUB_ENV
+          echo "PGPORT=${{ secrets.POSTGRES_PORT }}"       >> $GITHUB_ENV
+          echo "PGDATABASE=${{ secrets.POSTGRES_DB }}"     >> $GITHUB_ENV
+          echo "PGUSER=${{ secrets.POSTGRES_USER }}"       >> $GITHUB_ENV
+          echo "PGPASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> $GITHUB_ENV
+          echo "PGSSLMODE=require"                        >> $GITHUB_ENV
+          echo "PGCONNECT_TIMEOUT=60"                     >> $GITHUB_ENV
 
-          # Overpass QL: embed bbox directly; only the tags we need
-          cat > riyadh.overpass <<'QL'
-          [out:xml][timeout:480];
+      - name: Prepare Overpass query + download (with fallback)
+        run: |
+          mkdir -p data/osm
+          BBOX="${{ inputs.bbox }}"
+          cat > data/osm/riyadh.overpass <<'OVP'
+          [out:xml][timeout:120];
+          {{bbox}};
           (
-            nwr(46.20,24.20,47.30,25.10)[landuse];
-            nwr(46.20,24.20,47.30,25.10)[building];
+            way["building"];
+            relation["building"];
+            way["landuse"];
+            relation["landuse"];
           );
+          (._;>;);
           out body;
-          >;
-          out skel qt;
-          QL
-
-          # Try multiple mirrors; show error body, and validate output
-          UA="oaktree-estimator-ci/1.0 (+github actions)"
-          for URL in \
-            https://overpass.kumi.systems/api/interpreter \
-            https://lz4.overpass-api.de/api/interpreter \
-            https://overpass-api.de/api/interpreter ; do
-            echo "Attempting Overpass: $URL"
-            if curl -A "$UA" --retry 6 --retry-all-errors --retry-delay 10 \
-                 --max-time 600 --connect-timeout 20 \
-                 --data-urlencode data@riyadh.overpass \
-                 "$URL" -o riyadh.osm.xml ; then
+          >; out skel qt;
+          OVP
+          # bake bbox into the query
+          sed -i "s/{{bbox}}/(${BBOX})/" data/osm/riyadh.overpass
+          # try main endpoint then fallback
+          for EP in https://overpass-api.de/api/interpreter https://overpass.kumi.systems/api/interpreter ; do
+            if curl -fsSL --data-urlencode data@data/osm/riyadh.overpass "$EP" -o data/osm/riyadh.osm.xml ; then
               break
             fi
-            echo "Overpass failed at $URL; backing off..."
-            sleep 20
+            sleep 10
           done
+          head -n1 data/osm/riyadh.osm.xml
+          test -s data/osm/riyadh.osm.xml
 
-          # Basic sanity: must be XML and big enough to be real data (not HTML error)
-          head -n1 riyadh.osm.xml || true
-          if ! grep -q "<osm" riyadh.osm.xml; then
-            echo "ERROR: Overpass did not return OSM XML:"
-            sed -n '1,120p' riyadh.osm.xml || true
-            exit 2
-          fi
-          test $(wc -c < riyadh.osm.xml) -gt 500000
-
-      - name: Enable PostGIS + hstore on RDS
+      - name: Enable PostGIS + hstore + helper function (id extractor)
+        env:
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
-          psql "$PGURL" -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS postgis;'
-          psql "$PGURL" -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS hstore;'
+          psql "host=$PGHOST port=$PGPORT dbname=$PGDATABASE user=$PGUSER sslmode=$PGSSLMODE" <<'SQL'
+          CREATE EXTENSION IF NOT EXISTS postgis;
+          CREATE EXTENSION IF NOT EXISTS hstore;
 
-      - name: Import with osm2pgsql
+          -- Needed by some planet_osm relation indexes
+          CREATE OR REPLACE FUNCTION public.planet_osm_member_ids(members jsonb, membertype character)
+          RETURNS bigint[]
+          LANGUAGE sql
+          IMMUTABLE
+          PARALLEL SAFE
+          AS $$
+            SELECT COALESCE(array_agg( (elem->>'id')::bigint ), '{}')
+            FROM jsonb_array_elements(COALESCE(members,'[]'::jsonb)) AS elem
+            WHERE upper(left(elem->>'type',1)) = upper(membertype::text);
+          $$;
+          SQL
+
+      - name: Decide mode (create vs append)
+        id: mode
+        env:
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
-          set -euo pipefail
-          cd data/osm
-
-          EXISTS=$(psql "$PGURL" -tAc "select to_regclass('public.planet_osm_polygon')")
-          if [ "$EXISTS" = "planet_osm_polygon" ]; then
-            OSM2PGSQL_MODE="--append"
+          # if any main table exists with rows, use --append; otherwise --create
+          COUNT=$(psql -At "host=$PGHOST port=$PGPORT dbname=$PGDATABASE user=$PGUSER sslmode=$PGSSLMODE" \
+            -c "SELECT COALESCE((SELECT reltuples::bigint FROM pg_class WHERE relname='planet_osm_polygon'),0)")
+          if [ "$COUNT" -gt 0 ]; then
+            echo "mode=append" >> $GITHUB_OUTPUT
           else
-            OSM2PGSQL_MODE="--create"
+            echo "mode=create" >> $GITHUB_OUTPUT
           fi
 
-          osm2pgsql $OSM2PGSQL_MODE \
+      - name: Import with osm2pgsql (${{ steps.mode.outputs.mode }})
+        env:
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          MODE="${{ steps.mode.outputs.mode }}"
+          osm2pgsql $( [ "$MODE" = create ] && echo --create || echo --append ) \
             --slim \
             --latlong \
             --hstore \
-            --number-processes=2 \
+            --cache 1024 \
             --prefix planet_osm \
-            --database "$PGURL" \
-            -r xml riyadh.osm.xml
+            --style /usr/share/osm2pgsql/default.style \
+            -H "$PGHOST" -P "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+            data/osm/riyadh.osm.xml
 
       - name: Touch-up indexes (fast intersects + tag filters)
+        env:
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
-          psql "$PGURL" -v ON_ERROR_STOP=1 <<'SQL'
-          CREATE INDEX IF NOT EXISTS idx_planet_osm_polygon_geom
-            ON planet_osm_polygon USING GIST (way);
-          CREATE INDEX IF NOT EXISTS idx_planet_osm_polygon_landuse
-            ON planet_osm_polygon ((tags->'landuse'));
-          CREATE INDEX IF NOT EXISTS idx_planet_osm_polygon_building
-            ON planet_osm_polygon ((tags->'building'));
-          ANALYZE planet_osm_polygon;
+          psql "host=$PGHOST port=$PGPORT dbname=$PGDATABASE user=$PGUSER sslmode=$PGSSLMODE" <<'SQL'
+          -- geometry
+          CREATE INDEX IF NOT EXISTS planet_osm_polygon_way_gist ON planet_osm_polygon USING gist(way);
+          CREATE INDEX IF NOT EXISTS planet_osm_line_way_gist    ON planet_osm_line    USING gist(way);
+
+          -- common filters (depends on default.style columns)
+          DO $$
+          BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='planet_osm_polygon' AND column_name='landuse') THEN
+              EXECUTE 'CREATE INDEX IF NOT EXISTS planet_osm_polygon_landuse_idx ON planet_osm_polygon(landuse)';
+            END IF;
+            IF EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='planet_osm_polygon' AND column_name='building') THEN
+              EXECUTE 'CREATE INDEX IF NOT EXISTS planet_osm_polygon_building_idx ON planet_osm_polygon(building)';
+            END IF;
+          END$$;
           SQL
 
       - name: Smoke test
+        env:
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
-          psql "$PGURL" -c "SELECT COUNT(*) AS polygons FROM planet_osm_polygon;"
-          psql "$PGURL" -c "SELECT landuse, COUNT(*) FROM planet_osm_polygon GROUP BY 1 ORDER BY 2 DESC LIMIT 10;"
+          psql "host=$PGHOST port=$PGPORT dbname=$PGDATABASE user=$PGUSER sslmode=$PGSSLMODE" \
+            -c "SELECT to_char(now(),'YYYY-MM-DD HH24:MI') as imported_at" \
+            -c "SELECT count(*) AS polygons FROM planet_osm_polygon" \
+            -c "SELECT count(*) AS lines    FROM planet_osm_line" \
+            -c "SELECT count(*) AS points   FROM planet_osm_point"
