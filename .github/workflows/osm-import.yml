@@ -78,10 +78,51 @@ jobs:
           test -s data/osm/riyadh.osm.xml
           head -n1 data/osm/riyadh.osm.xml | grep -q '<?xml'
 
-      - name: Enable PostGIS + hstore
+      - name: Enable PostGIS + hstore + helper function (id extractor)
         run: |
-          psql -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS postgis;"
-          psql -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS hstore;"
+          set -eu
+          PGMODE="sslmode=require"
+          PGURL="postgresql://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@${{ secrets.POSTGRES_HOST }}:${{ secrets.POSTGRES_PORT }}/${{ secrets.POSTGRES_DB }}?${PGMODE}"
+
+          # Extensions (idempotent)
+          psql "$PGURL" -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+          psql "$PGURL" -c "CREATE EXTENSION IF NOT EXISTS hstore;"
+
+          # Ensure we can create in public (some managed PGs restrict this)
+          psql "$PGURL" -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1
+              FROM   information_schema.role_table_grants
+              WHERE  grantee = current_user
+            ) THEN
+              -- If this fails, your DB role lacks privileges; grant in RDS console or with admin.
+              RAISE NOTICE 'Ensure CREATE on schema public for %', current_user;
+            END IF;
+          END $$;
+          SQL
+
+          # Helper that extracts member ids from planet_osm_rels.members (jsonb)
+          psql "$PGURL" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE OR REPLACE FUNCTION public.planet_osm_member_ids(members jsonb, t text)
+          RETURNS bigint[] LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+            SELECT coalesce(array_agg( (e->>'ref')::bigint ORDER BY (e->>'ref')::bigint ), '{}')
+            FROM jsonb_array_elements(members) e
+            WHERE CASE upper(t)
+                    WHEN 'N' THEN e->>'type'='node'
+                    WHEN 'W' THEN e->>'type'='way'
+                    WHEN 'R' THEN e->>'type'='relation'
+                    ELSE false
+                  END;
+          $$;
+
+          -- Wrapper so calls like 'N'::character work too
+          CREATE OR REPLACE FUNCTION public.planet_osm_member_ids(members jsonb, t character)
+          RETURNS bigint[] LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+            SELECT public.planet_osm_member_ids(members, t::text);
+          $$;
+          SQL
 
       - name: Decide mode (create vs append)
         id: mode
