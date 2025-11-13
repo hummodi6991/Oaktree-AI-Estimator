@@ -9,23 +9,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from shapely.geometry import shape as shapely_shape
 
 from app.connectors.arcgis import query_features
 from app.core.config import settings
 from app.db.deps import get_db
 from app.models.tables import Parcel
-from app.services.geo import area_m2, to_geojson, _landuse_code_from_label
+from app.services.geo import _landuse_code_from_label
 
 logger = logging.getLogger(__name__)
 
-try:  # pragma: no cover - exercised indirectly in runtime
-    from pyproj import Transformer
-except ImportError:  # pragma: no cover - keeps runtime resilient if optional dep missing
-    Transformer = None  # type: ignore[assignment]
-    logger.warning(
-        "pyproj is not installed; parcel identify will fall back to ArcGIS/external features."
-    )
+Transformer = None  # no local transform; we use ST_Transform on the server
 
 
 def _safe_identifier(value: str | None, fallback: str) -> str:
@@ -48,16 +41,14 @@ _PARCEL_GEOM_COLUMN = _safe_identifier(
     getattr(settings, "PARCEL_IDENTIFY_GEOM_COLUMN", "geom"), "geom"
 )
 
-_TRANSFORMER = None
-if Transformer is not None:
-    try:
-        _TRANSFORMER = Transformer.from_crs(4326, _TARGET_SRID, always_xy=True)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.warning("Failed to initialise coordinate transformer: %s", exc)
-        _TRANSFORMER = None
+_TRANSFORMER = None  # unused (server-side transform)
 
 _IDENTIFY_SQL = text(
     f"""
+    WITH q AS (
+      SELECT
+        ST_Transform(ST_SetSRID(ST_Point(:lng, :lat), 4326), :srid) AS pt
+    )
     SELECT
         id,
         landuse,
@@ -65,16 +56,9 @@ _IDENTIFY_SQL = text(
         ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
         ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
         ST_AsGeoJSON({_PARCEL_GEOM_COLUMN})         AS geom
-    FROM {_PARCEL_TABLE}
-    WHERE ST_DWithin(
-        {_PARCEL_GEOM_COLUMN},
-        ST_SetSRID(ST_Point(:x, :y), :srid),
-        :tol
-    )
-    ORDER BY ST_Distance(
-        {_PARCEL_GEOM_COLUMN},
-        ST_SetSRID(ST_Point(:x, :y), :srid)
-    )
+    FROM {_PARCEL_TABLE}, q
+    WHERE ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol)
+    ORDER BY {_PARCEL_GEOM_COLUMN} <-> q.pt
     LIMIT 1;
     """
 )
@@ -194,15 +178,7 @@ class IdentifyPoint(BaseModel):
 
 
 def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Optional[Dict[str, Any]]:
-    if _TRANSFORMER is None:
-        return None
-    try:
-        x, y = _TRANSFORMER.transform(lng, lat)
-    except Exception as exc:  # pragma: no cover - transformation rarely fails
-        logger.warning("Failed to transform identify point: %s", exc)
-        return None
-
-    params = {"x": x, "y": y, "tol": tol_m, "srid": _TARGET_SRID}
+    params = {"lng": lng, "lat": lat, "tol": tol_m, "srid": _TARGET_SRID}
     try:
         row = db.execute(_IDENTIFY_SQL, params).mappings().first()
     except SQLAlchemyError as exc:
@@ -238,12 +214,11 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
     }
 
     logger.debug(
-        "Identify point %.6f, %.6f transformed to %.2f, %.2f (tol=%.1fm)",
+        "Identify point %.6f, %.6f (tol=%.1fm, srid=%s)",
         lng,
         lat,
-        x,
-        y,
         tol_m,
+        _TARGET_SRID,
     )
 
     return {
@@ -255,94 +230,12 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
 
 
 def _identify_arcgis(lng: float, lat: float, tol_m: float, db: Session) -> Dict[str, Any]:
-    base = getattr(settings, "ARCGIS_BASE_URL", None)
-    layer = getattr(settings, "ARCGIS_PARCEL_LAYER", None)
-    token = getattr(settings, "ARCGIS_TOKEN", None)
-
-    feats: list[dict[str, Any]] = []
-    if base and isinstance(layer, int):
-        point = {"x": lng, "y": lat, "spatialReference": {"wkid": 4326}}
-        feats = query_features(
-            base,
-            layer,
-            point,
-            where="1=1",
-            token=token,
-            geometry_type="esriGeometryPoint",
-            in_sr=4326,
-            distance=tol_m,
-            units="esriSRUnit_Meter",
-        )
-    else:
-        from app.models.tables import ExternalFeature
-
-        buf = 0.00003
-        poly = {
-            "type": "Polygon",
-            "coordinates": [[
-                [lng - buf, lat - buf],
-                [lng + buf, lat - buf],
-                [lng + buf, lat + buf],
-                [lng - buf, lat + buf],
-                [lng - buf, lat - buf],
-            ]],
-        }
-        rows = (
-            db.query(ExternalFeature)
-            .filter(ExternalFeature.layer_name == "rydpolygons")
-            .all()
-        )
-        p = shapely_shape(poly)
-        for r in rows:
-            try:
-                g = shapely_shape(r.geometry)
-                if g.contains(p):
-                    feats.append({"geometry": to_geojson(g), "properties": r.properties or {}})
-            except Exception:
-                continue
-
-    if not feats:
-        return {
-            "found": False,
-            "tolerance_m": tol_m,
-            "source": "arcgis" if base else "external_feature/rydpolygons",
-            "message": "No parcel found at this location.",
-        }
-
-    f = feats[0]
-    props = {(k or "").lower(): v for k, v in (f.get("properties") or {}).items()}
-    landuse_raw = (
-        props.get("landuse")
-        or props.get("classification")
-        or props.get("land_use")
-        or ""
-    )
-    code = _landuse_code_from_label(str(landuse_raw))
-
-    gj = f.get("geometry")
-    try:
-        a = area_m2(shapely_shape(gj))
-    except Exception:
-        a = 0.0
-
-    parcel = {
-        "parcel_id": props.get("parcel_id")
-        or props.get("id")
-        or props.get("parcelid"),
-        "geometry": gj,
-        "area_m2": a,
-        "perimeter_m": None,
-        "landuse_raw": landuse_raw,
-        "classification_raw": props.get("classification"),
-        "landuse_code": code,
-        "source_url": base or "external_feature/rydpolygons",
-    }
-
+    # Disabled by policy: no fallbacks
     return {
-        "found": True,
+        "found": False,
         "tolerance_m": tol_m,
-        "source": "arcgis" if base else "external_feature/rydpolygons",
-        "parcel": parcel,
+        "source": "disabled",
+        "message": "fallbacks disabled",
     }
 
 
@@ -351,15 +244,13 @@ def identify(pt: IdentifyPoint, db: Session = Depends(get_db)):
     tol = pt.tol_m if pt.tol_m is not None and pt.tol_m > 0 else _DEFAULT_TOLERANCE
 
     postgis_result = _identify_postgis(pt.lng, pt.lat, tol, db)
-    if postgis_result is not None:
-        if postgis_result.get("found"):
-            return postgis_result
-        fallback = _identify_arcgis(pt.lng, pt.lat, tol, db)
-        if fallback.get("found"):
-            return fallback
-        return postgis_result
-
-    return _identify_arcgis(pt.lng, pt.lat, tol, db)
+    if postgis_result is None:
+        # If PostGIS is misconfigured, return an explicit server error
+        raise HTTPException(
+            status_code=500,
+            detail="PostGIS identify unavailable (check parcels table & SRID)",
+        )
+    return postgis_result
 
 
 @router.post("/parcels")
