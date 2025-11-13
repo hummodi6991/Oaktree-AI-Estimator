@@ -253,6 +253,23 @@ def identify(pt: IdentifyPoint, db: Session = Depends(get_db)):
     return postgis_result
 
 
+@router.get("/identify")
+def identify_get(
+    lng: float,
+    lat: float,
+    tol_m: float | None = None,
+    db: Session = Depends(get_db),
+):
+    tol = tol_m if tol_m and tol_m > 0 else _DEFAULT_TOLERANCE
+    postgis_result = _identify_postgis(lng, lat, tol, db)
+    if postgis_result is None:
+        raise HTTPException(
+            status_code=500,
+            detail="PostGIS identify unavailable (check parcels table & SRID)",
+        )
+    return postgis_result
+
+
 @router.post("/parcels")
 def parcels(q: ParcelQuery, db: Session = Depends(get_db)):
     """Query parcels intersecting the provided geometry."""
