@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -255,19 +255,19 @@ def identify(pt: IdentifyPoint, db: Session = Depends(get_db)):
 
 @router.get("/identify")
 def identify_get(
-    lng: float,
-    lat: float,
+    lng: float = Query(...),
+    lat: float = Query(...),
     tol_m: float | None = None,
     db: Session = Depends(get_db),
 ):
     tol = tol_m if tol_m and tol_m > 0 else _DEFAULT_TOLERANCE
-    postgis_result = _identify_postgis(lng, lat, tol, db)
-    if postgis_result is None:
+    result = _identify_postgis(lng, lat, tol, db)
+    if result is None:
         raise HTTPException(
             status_code=500,
             detail="PostGIS identify unavailable (check parcels table & SRID)",
         )
-    return postgis_result
+    return result
 
 
 @router.post("/parcels")
