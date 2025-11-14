@@ -45,22 +45,21 @@ _TRANSFORMER = None  # unused (server-side transform)
 
 _IDENTIFY_SQL = text(
     f"""
-    WITH q AS (
-      SELECT
-        ST_Transform(ST_SetSRID(ST_Point(:lng, :lat), 4326), :srid) AS pt
-    )
-    SELECT
-        id,
-        landuse,
-        classification,
-        ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
-        ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
-        ST_AsGeoJSON({_PARCEL_GEOM_COLUMN})         AS geom
-    FROM {_PARCEL_TABLE}, q
-    WHERE ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol)
-    ORDER BY {_PARCEL_GEOM_COLUMN} <-> q.pt
-    LIMIT 1;
-    """
+  WITH q AS (
+    SELECT ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid) AS pt
+  )
+  SELECT
+    id,
+    landuse,
+    classification,
+    ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
+    ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
+    ST_AsGeoJSON({_PARCEL_GEOM_COLUMN})         AS geom,
+    ST_Distance({_PARCEL_GEOM_COLUMN}, q.pt)    AS distance_m
+  FROM {_PARCEL_TABLE}, q
+  ORDER BY {_PARCEL_GEOM_COLUMN} <-> q.pt
+  LIMIT 1;
+  """
 )
 
 # Keep router local to "geo"; main.py mounts routers at "/v1".
@@ -178,7 +177,7 @@ class IdentifyPoint(BaseModel):
 
 
 def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Optional[Dict[str, Any]]:
-    params = {"lng": lng, "lat": lat, "tol": tol_m, "srid": _TARGET_SRID}
+    params = {"lng": lng, "lat": lat, "srid": _TARGET_SRID}
     try:
         row = db.execute(_IDENTIFY_SQL, params).mappings().first()
     except SQLAlchemyError as exc:
@@ -190,7 +189,17 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
             "found": False,
             "tolerance_m": tol_m,
             "source": "postgis",
-            "message": "No parcel matched within tolerance.",
+            "message": "No parcels table/row returned.",
+        }
+
+    # Enforce tolerance in Python
+    if row.get("distance_m") is not None and float(row["distance_m"]) > tol_m:
+        return {
+            "found": False,
+            "tolerance_m": tol_m,
+            "source": "postgis",
+            "message": "Nearest polygon is outside tolerance.",
+            "distance_m": float(row["distance_m"]),
         }
 
     geom_json = row.get("geom")
