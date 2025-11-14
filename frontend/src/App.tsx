@@ -190,11 +190,23 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="page-header">
-        <div>
-          <h1 className="page-title">Oaktree Estimator — Operator Console (v0)</h1>
-          <p className="page-subtitle">
-            Configure market assumptions, draw the site boundary, and generate an investment estimate in minutes.
-          </p>
+        <div className="page-hero">
+          <div className="brand-block">
+            <span className="brand-emblem" aria-hidden="true">
+              O
+            </span>
+            <span className="brand-wordmark">Oaktree Group</span>
+          </div>
+          <div className="page-intro">
+            <h1 className="page-title">From Vision to Legacy</h1>
+            <p className="page-subtitle">
+              A curated investment console to sculpt transformative developments across the Kingdom of Saudi Arabia.
+            </p>
+            <div className="page-meta">
+              <span className="version-pill">Estimator Console v0</span>
+              <span>Confidential — Strategic Planning Office</span>
+            </div>
+          </div>
         </div>
         {freshness && (
           <section className="card freshness-card" aria-label="Data Freshness">
