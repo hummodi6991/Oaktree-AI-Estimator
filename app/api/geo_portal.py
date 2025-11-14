@@ -240,7 +240,7 @@ def _identify_arcgis(lng: float, lat: float, tol_m: float, db: Session) -> Dict[
 
 
 @router.post("/identify")
-def identify(pt: IdentifyPoint, db: Session = Depends(get_db)):
+def identify_post(pt: IdentifyPoint, db: Session = Depends(get_db)):
     tol = pt.tol_m if pt.tol_m is not None and pt.tol_m > 0 else _DEFAULT_TOLERANCE
 
     postgis_result = _identify_postgis(pt.lng, pt.lat, tol, db)
@@ -257,17 +257,17 @@ def identify(pt: IdentifyPoint, db: Session = Depends(get_db)):
 def identify_get(
     lng: float = Query(...),
     lat: float = Query(...),
-    tol_m: float | None = None,
+    tol_m: float | None = Query(None, ge=0.0),
     db: Session = Depends(get_db),
 ):
-    tol = tol_m if tol_m and tol_m > 0 else _DEFAULT_TOLERANCE
-    result = _identify_postgis(lng, lat, tol, db)
-    if result is None:
+    tol = tol_m if tol_m is not None and tol_m > 0 else _DEFAULT_TOLERANCE
+    postgis_result = _identify_postgis(lng, lat, tol, db)
+    if postgis_result is None:
         raise HTTPException(
             status_code=500,
             detail="PostGIS identify unavailable (check parcels table & SRID)",
         )
-    return result
+    return postgis_result
 
 
 @router.post("/parcels")
