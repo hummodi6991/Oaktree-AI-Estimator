@@ -9,8 +9,8 @@ on:
         default: ""
 
 env:
-  # west,south,east,north (same bbox you’ve used elsewhere)
-  BBOX: "46.20,24.20,47.30,25.10"
+  # south,west,north,east (Overpass ordering) — Riyadh metro
+  BBOX: "24.20,46.20,25.10,47.30"
   OVERPASS_MAIN: "https://overpass-api.de/api/interpreter"
   OVERPASS_FALLBACK: "https://overpass.kumi.systems/api/interpreter"
 
