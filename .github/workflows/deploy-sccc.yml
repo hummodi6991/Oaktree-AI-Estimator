@@ -120,6 +120,7 @@ jobs:
           kubectl create secret generic oaktree-app-env \
             --from-literal=APP_ENV=prod \
             --from-literal=AUTH_MODE=disabled \
+            --from-literal=PARCEL_IDENTIFY_TOLERANCE_M=25 \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Run DB migrations (alembic)
