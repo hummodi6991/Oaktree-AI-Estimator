@@ -40,7 +40,7 @@ class Settings:
     # Parcels identify service configuration
     PARCEL_TARGET_SRID: int = int(os.getenv("PARCEL_TARGET_SRID", "32638"))
     PARCEL_IDENTIFY_TOLERANCE_M: float = float(
-        os.getenv("PARCEL_IDENTIFY_TOLERANCE_M", "5.0")
+        os.getenv("PARCEL_IDENTIFY_TOLERANCE_M", "25.0")
     )
     PARCEL_IDENTIFY_TABLE: str = os.getenv("PARCEL_IDENTIFY_TABLE", "parcels")
     PARCEL_IDENTIFY_GEOM_COLUMN: str = os.getenv("PARCEL_IDENTIFY_GEOM_COLUMN", "geom")

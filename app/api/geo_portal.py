@@ -32,9 +32,9 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
 
 
 _TARGET_SRID = getattr(settings, "PARCEL_TARGET_SRID", 32638)
-_DEFAULT_TOLERANCE = getattr(settings, "PARCEL_IDENTIFY_TOLERANCE_M", 5.0) or 5.0
+_DEFAULT_TOLERANCE = getattr(settings, "PARCEL_IDENTIFY_TOLERANCE_M", 25.0) or 25.0
 if _DEFAULT_TOLERANCE <= 0:
-    _DEFAULT_TOLERANCE = 5.0
+    _DEFAULT_TOLERANCE = 25.0
 
 _PARCEL_TABLE = _safe_identifier(getattr(settings, "PARCEL_IDENTIFY_TABLE", "parcels"), "parcels")
 _PARCEL_GEOM_COLUMN = _safe_identifier(
