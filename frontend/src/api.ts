@@ -89,8 +89,12 @@ export async function createEstimate(payload: FormData | Record<string, unknown>
   return readJson(res);
 }
 
-export async function makeEstimate(geometry: any, excelInputs: any) {
-  return createEstimate({ geometry, excel_inputs: excelInputs });
+export async function makeEstimate(geometry: any, excelInputs: any, landUseOverride?: string) {
+  return createEstimate({
+    geometry,
+    excel_inputs: excelInputs,
+    land_use_override: landUseOverride,
+  });
 }
 
 export async function runScenario(estimateId: string, patch: Record<string, unknown>) {

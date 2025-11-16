@@ -14,10 +14,41 @@ type MapProps = {
 const NOT_FOUND_HINT =
   "لم يتم العثور على قطعة في هذا الموضع — حاول التكبير أو النقر داخل حدود القطعة.";
 
+function geometryToBounds(geometry?: Geometry | null) {
+  if (!geometry) return null;
+
+  let bounds: maplibregl.LngLatBounds | null = null;
+
+  const addCoord = (coord: number[]) => {
+    if (coord.length < 2) return;
+    const [lng, lat] = coord;
+    if (!bounds) {
+      bounds = new maplibregl.LngLatBounds([lng, lat], [lng, lat]);
+    } else {
+      bounds.extend([lng, lat]);
+    }
+  };
+
+  const walk = (coords: any) => {
+    if (!coords) return;
+    if (typeof coords[0] === "number") {
+      addCoord(coords as number[]);
+      return;
+    }
+    for (const child of coords as any[]) {
+      walk(child);
+    }
+  };
+
+  walk((geometry as any).coordinates);
+  return bounds;
+}
+
 export default function Map({ onParcel }: MapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [sourceId] = useState("parcel-src");
   const [layerId] = useState("parcel-layer");
+  const [fillLayerId] = useState("parcel-layer-fill");
   const [status, setStatus] = useState<string | null>(
     "انقر على الخريطة لتحديد قطعة أرض.",
   );
@@ -67,13 +98,32 @@ export default function Map({ onParcel }: MapProps) {
         if (!map.getSource(sourceId)) {
           map.addSource(sourceId, { type: "geojson", data: featureCollection });
           map.addLayer({
+            id: fillLayerId,
+            type: "fill",
+            source: sourceId,
+            paint: { "fill-color": "#4f8bff", "fill-opacity": 0.2 },
+          });
+          map.addLayer({
             id: layerId,
             type: "line",
             source: sourceId,
-            paint: { "line-width": 3, "line-color": "#ff6b00" },
+            paint: { "line-width": 3, "line-color": "#1d4ed8" },
           });
         } else {
           (map.getSource(sourceId) as maplibregl.GeoJSONSource).setData(featureCollection);
+        }
+
+        const bounds = geometryToBounds(parcel.geometry as Geometry);
+        const camera = bounds ? map.cameraForBounds(bounds, { padding: 40 }) : null;
+        if (camera) {
+          const currentZoom = map.getZoom();
+          const targetZoom = Math.max(camera.zoom ?? currentZoom, currentZoom);
+          map.easeTo({
+            ...camera,
+            zoom: targetZoom,
+            duration: 500,
+            easing: (t) => t,
+          });
         }
 
         if (parcel.parcel_id) {
@@ -92,7 +142,7 @@ export default function Map({ onParcel }: MapProps) {
       disposed = true;
       map.remove();
     };
-  }, [layerId, onParcel, sourceId, setStatus]);
+  }, [fillLayerId, layerId, onParcel, sourceId, setStatus]);
 
   return (
     <div>

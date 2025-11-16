@@ -4,9 +4,10 @@ import { landPrice, makeEstimate } from "../api";
 
 type ExcelFormProps = {
   parcel: any;
+  landUseOverride?: string;
 };
 
-export default function ExcelForm({ parcel }: ExcelFormProps) {
+export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [provider, setProvider] = useState<"srem" | "suhail">("srem");
   const [price, setPrice] = useState<number | null>(null);
   const [inputs, setInputs] = useState<any>({
@@ -33,7 +34,7 @@ export default function ExcelForm({ parcel }: ExcelFormProps) {
 
   async function runEstimate() {
     if (!parcel) return;
-    const estimate = await makeEstimate(parcel.geometry, inputs);
+    const estimate = await makeEstimate(parcel.geometry, inputs, landUseOverride);
     console.log(estimate);
     const totals = estimate.totals;
     const numerator =
