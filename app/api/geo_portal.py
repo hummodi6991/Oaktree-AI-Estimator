@@ -46,18 +46,23 @@ _TRANSFORMER = None  # unused (server-side transform)
 _IDENTIFY_SQL = text(
     f"""
   WITH q AS (
-    SELECT ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid) AS pt
+    SELECT
+      ST_SetSRID(ST_Point(:lng,:lat), 4326)                          AS pt_wgs84,
+      ST_Transform(ST_SetSRID(ST_Point(:lng,:lat),4326), :srid)      AS pt_proj
   )
   SELECT
     id,
     landuse,
     classification,
-    ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
-    ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
-    ST_AsGeoJSON({_PARCEL_GEOM_COLUMN})         AS geom,
-    ST_Distance({_PARCEL_GEOM_COLUMN}, q.pt)    AS distance_m
+    -- always return metric area/perimeter
+    ST_Area(ST_Transform({_PARCEL_GEOM_COLUMN}, 3857))::bigint       AS area_m2,
+    ST_Perimeter(ST_Transform({_PARCEL_GEOM_COLUMN}, 3857))::bigint  AS perimeter_m,
+    -- return geometry in WGS84 so the frontend can draw it
+    ST_AsGeoJSON(ST_Transform({_PARCEL_GEOM_COLUMN}, 4326))          AS geom,
+    -- robust distance in metres regardless of table SRID
+    ST_Distance({_PARCEL_GEOM_COLUMN}::geography, q.pt_wgs84::geography) AS distance_m
   FROM {_PARCEL_TABLE}, q
-  ORDER BY {_PARCEL_GEOM_COLUMN} <-> q.pt
+  ORDER BY {_PARCEL_GEOM_COLUMN} <-> q.pt_proj
   LIMIT 1;
   """
 )
