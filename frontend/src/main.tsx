@@ -13,6 +13,7 @@ function App() {
   const effectiveLandUse = parcel
     ? landUseOverride.trim() || parcel.landuse_code || parcel.landuse_raw || parcel.classification_raw || "—"
     : "—";
+  const needsOverride = parcel ? !parcel.landuse_code : false;
 
   return (
     <>
@@ -29,21 +30,25 @@ function App() {
               <b>Parcel:</b> {parcel.parcel_id} | <b>Area:</b> {parcel.area_m2?.toFixed(0)} m² | <b>Land-use:</b>{" "}
               {effectiveLandUse}
             </div>
-            <div style={{ margin: "10px 0", display: "flex", gap: 8, alignItems: "center" }}>
-              <label style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                <span style={{ fontWeight: 600 }}>Override land use (optional):</span>
-                <input
-                  type="text"
-                  value={landUseOverride}
-                  onChange={(event) => setLandUseOverride(event.target.value)}
-                  placeholder="e.g., Residential"
-                  style={{ padding: "6px 10px", minWidth: 220 }}
-                />
-              </label>
-              <span style={{ color: "#475467" }}>
-                Leave blank to use the detected classification ({parcel.landuse_code || parcel.landuse_raw || "غير متوفر"}).
-              </span>
-            </div>
+            {needsOverride && (
+              <div style={{ margin: "10px 0", display: "flex", gap: 8, alignItems: "center" }}>
+                <label style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontWeight: 600 }}>Override land use (optional):</span>
+                  <select
+                    value={landUseOverride}
+                    onChange={(event) => setLandUseOverride(event.target.value)}
+                    style={{ padding: "6px 10px", minWidth: 220 }}
+                  >
+                    <option value="">— اختر —</option>
+                    <option value="s">s (Residential)</option>
+                    <option value="m">m (Mixed-use)</option>
+                  </select>
+                </label>
+                <span style={{ color: "#475467" }}>
+                  Optional if land-use is missing; otherwise detected values are used.
+                </span>
+              </div>
+            )}
             <ExcelForm parcel={parcel} landUseOverride={landUseOverride.trim() || undefined} />
           </>
         ) : (
