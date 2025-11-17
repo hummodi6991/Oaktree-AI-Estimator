@@ -14,6 +14,39 @@ type MapProps = {
 const NOT_FOUND_HINT =
   "لم يتم العثور على قطعة في هذا الموضع — حاول التكبير أو النقر داخل حدود القطعة.";
 
+const SELECT_SOURCE_ID = "selected-parcel-src";
+const SELECT_FILL_LAYER_ID = "selected-parcel-fill";
+const SELECT_LINE_LAYER_ID = "selected-parcel-line";
+
+function ensureSelectionLayers(map: maplibregl.Map) {
+  if (!map.getSource(SELECT_SOURCE_ID)) {
+    map.addSource(SELECT_SOURCE_ID, {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] },
+    });
+
+    map.addLayer({
+      id: SELECT_FILL_LAYER_ID,
+      type: "fill",
+      source: SELECT_SOURCE_ID,
+      paint: {
+        "fill-color": "#3b82f6",
+        "fill-opacity": 0.25,
+      },
+    });
+
+    map.addLayer({
+      id: SELECT_LINE_LAYER_ID,
+      type: "line",
+      source: SELECT_SOURCE_ID,
+      paint: {
+        "line-color": "#2563eb",
+        "line-width": 2,
+      },
+    });
+  }
+}
+
 function geometryToBounds(geometry?: Geometry | null) {
   if (!geometry) return null;
 
@@ -46,9 +79,6 @@ function geometryToBounds(geometry?: Geometry | null) {
 
 export default function Map({ onParcel }: MapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [sourceId] = useState("parcel-src");
-  const [layerId] = useState("parcel-layer");
-  const [fillLayerId] = useState("parcel-layer-fill");
   const [status, setStatus] = useState<string | null>(
     "انقر على الخريطة لتحديد قطعة أرض.",
   );
@@ -95,35 +125,14 @@ export default function Map({ onParcel }: MapProps) {
           ],
         };
 
-        if (!map.getSource(sourceId)) {
-          map.addSource(sourceId, { type: "geojson", data: featureCollection });
-          map.addLayer({
-            id: fillLayerId,
-            type: "fill",
-            source: sourceId,
-            paint: { "fill-color": "#4f8bff", "fill-opacity": 0.2 },
-          });
-          map.addLayer({
-            id: layerId,
-            type: "line",
-            source: sourceId,
-            paint: { "line-width": 3, "line-color": "#1d4ed8" },
-          });
-        } else {
-          (map.getSource(sourceId) as maplibregl.GeoJSONSource).setData(featureCollection);
-        }
+        ensureSelectionLayers(map);
+        (map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource).setData(
+          featureCollection,
+        );
 
         const bounds = geometryToBounds(parcel.geometry as Geometry);
-        const camera = bounds ? map.cameraForBounds(bounds, { padding: 40 }) : null;
-        if (camera) {
-          const currentZoom = map.getZoom();
-          const targetZoom = Math.max(camera.zoom ?? currentZoom, currentZoom);
-          map.easeTo({
-            ...camera,
-            zoom: targetZoom,
-            duration: 500,
-            easing: (t) => t,
-          });
+        if (bounds) {
+          map.fitBounds(bounds, { padding: 40, duration: 700, maxZoom: 19 });
         }
 
         if (parcel.parcel_id) {
@@ -142,7 +151,7 @@ export default function Map({ onParcel }: MapProps) {
       disposed = true;
       map.remove();
     };
-  }, [fillLayerId, layerId, onParcel, sourceId, setStatus]);
+  }, [onParcel, setStatus]);
 
   return (
     <div>
