@@ -286,8 +286,10 @@ def parcels(q: ParcelQuery, db: Session = Depends(get_db)):
     base = getattr(settings, "ARCGIS_BASE_URL", None)
     layer = getattr(settings, "ARCGIS_PARCEL_LAYER", None)
     token = getattr(settings, "ARCGIS_TOKEN", None)
+    # ArcGIS is optional in this deployment. If it's not configured, return an
+    # empty, non-error payload so the UI doesn't spam an alert.
     if not (base and isinstance(layer, int)):
-        raise HTTPException(status_code=500, detail="ArcGIS not configured")
+        return {"items": [], "configured": False, "source": "arcgis"}
 
     # Accept either a dict or a JSON string for geometry
     geometry = q.geometry
