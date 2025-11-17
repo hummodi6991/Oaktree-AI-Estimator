@@ -82,6 +82,11 @@ export default function Map({ onParcel }: MapProps) {
   const [status, setStatus] = useState<string | null>(
     "انقر على الخريطة لتحديد قطعة أرض.",
   );
+  const onParcelRef = useRef(onParcel);
+
+  useEffect(() => {
+    onParcelRef.current = onParcel;
+  }, [onParcel]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -95,6 +100,10 @@ export default function Map({ onParcel }: MapProps) {
 
     let disposed = false;
 
+    map.on("load", () => {
+      ensureSelectionLayers(map);
+    });
+
     map.on("click", async (e) => {
       setStatus("جارٍ التحقق من القطعة…");
       try {
@@ -107,7 +116,7 @@ export default function Map({ onParcel }: MapProps) {
         }
 
         const parcel = data.parcel;
-        onParcel(parcel);
+        onParcelRef.current(parcel);
 
         if (!parcel.geometry) {
           setStatus("تم العثور على القطعة لكن دون بيانات هندسية.");
@@ -132,7 +141,17 @@ export default function Map({ onParcel }: MapProps) {
 
         const bounds = geometryToBounds(parcel.geometry as Geometry);
         if (bounds) {
-          map.fitBounds(bounds, { padding: 40, duration: 700, maxZoom: 19 });
+          const camera = map.cameraForBounds(bounds, { padding: 40 });
+          const currentZoom = map.getZoom();
+          map.easeTo({
+            center: camera?.center ?? map.getCenter(),
+            zoom:
+              camera?.zoom !== undefined && camera.zoom > currentZoom
+                ? camera.zoom
+                : currentZoom,
+            duration: 700,
+            essential: true,
+          });
         }
 
         if (parcel.parcel_id) {
@@ -151,7 +170,7 @@ export default function Map({ onParcel }: MapProps) {
       disposed = true;
       map.remove();
     };
-  }, [onParcel, setStatus]);
+  }, []);
 
   return (
     <div>
