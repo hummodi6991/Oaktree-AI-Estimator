@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import maplibregl from "maplibre-gl";
+import maplibregl, { Map as MapLibreMap, NavigationControl } from "maplibre-gl";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import type { Feature, Polygon } from "geojson";
-import type { IControl, LngLatLike, Map } from "maplibre-gl";
+import type { IControl, LngLatLike } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import "./Map.css";
@@ -63,7 +63,7 @@ const VIEWPAD = {
  * - Limits the step size per click (MAX_ZOOM_DELTA)
  * - Adds padding so the bottom sheet doesn't cover the parcel
  */
-export function smartFocus(map: Map, feature: GeoJSON.Feature) {
+export function smartFocus(map: MapLibreMap, feature: GeoJSON.Feature) {
   const bounds = boundsOfFeature(feature);
   // Ask MapLibre what the camera should be for those bounds, then clamp
   const cam = map.cameraForBounds(bounds, { padding: VIEWPAD, maxZoom: MAX_SELECT_ZOOM }) || {};
@@ -159,9 +159,9 @@ function createToolbarControl(actions: {
   return control;
 }
 
-export default function Map({ polygon, onPolygon }: MapProps) {
+export default function MapView({ polygon, onPolygon }: MapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
   const drawRef = useRef<MapboxDraw | null>(null);
   const toolbarRef = useRef<ToolbarControl | null>(null);
   const callbackRef = useRef(onPolygon);
@@ -226,7 +226,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
 
     drawRef.current = draw;
     map.addControl(draw as unknown as IControl);
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
+    map.addControl(new NavigationControl({ showCompass: false }), "top-left");
 
     const updateDrawingState = (value: boolean) => {
       isDrawingRef.current = value;
