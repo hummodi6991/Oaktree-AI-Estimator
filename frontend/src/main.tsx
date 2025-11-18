@@ -27,7 +27,7 @@ function App() {
         {parcel ? (
           <>
             <div>
-              <b>Parcel:</b> {parcel.parcel_id} | <b>Area:</b> {parcel.area_m2?.toFixed(0)} m² | <b>Land-use:</b>{" "}
+              <b>Parcel:</b> {parcel.parcel_id} | <b>Area:</b> {Math.round(parcel.area_m2 || 0).toLocaleString()} m² | <b>Land-use:</b>{" "}
               {effectiveLandUse}
             </div>
             {needsOverride && (
@@ -40,8 +40,13 @@ function App() {
                     style={{ padding: "6px 10px", minWidth: 220 }}
                   >
                     <option value="">— اختر —</option>
-                    <option value="s">s (Residential)</option>
-                    <option value="m">m (Mixed-use)</option>
+                    <option value="house">House</option>
+                    <option value="residential">Residential</option>
+                    <option value="commercial">Commercial</option>
+                    <option value="retail">Retail</option>
+                    <option value="industrial">Industrial</option>
+                    <option value="public">Public</option>
+                    <option value="religious">Religious</option>
                   </select>
                 </label>
                 <span style={{ color: "#475467" }}>

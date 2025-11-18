@@ -56,7 +56,7 @@ function ensureSelectionLayers(map: maplibregl.Map) {
       type: "fill",
       source: SELECT_SOURCE_ID,
       paint: {
-        "fill-color": "#4da3ff",
+        "fill-color": "#356fe9",
         "fill-opacity": 0.25,
       },
     });
@@ -66,11 +66,35 @@ function ensureSelectionLayers(map: maplibregl.Map) {
       type: "line",
       source: SELECT_SOURCE_ID,
       paint: {
-        "line-color": "#1d6fd8",
+        "line-color": "#2b66b3",
         "line-width": 2,
       },
     });
   }
+}
+
+function fitToGeometry(map: maplibregl.Map, geometry: Geometry) {
+  const bounds = new maplibregl.LngLatBounds();
+  const pushCoords = (coords: any) => {
+    if (!coords) return;
+    if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+      bounds.extend(coords as [number, number]);
+      return;
+    }
+    if (Array.isArray(coords)) {
+      coords.forEach(pushCoords);
+    }
+  };
+
+  pushCoords((geometry as any).coordinates);
+
+  if (bounds.isEmpty()) return;
+
+  map.fitBounds(bounds, {
+    padding: 20,
+    maxZoom: 19,
+    duration: 250,
+  });
 }
 
 export default function Map({ onParcel }: MapProps) {
@@ -103,7 +127,7 @@ export default function Map({ onParcel }: MapProps) {
     map.on("click", async (e) => {
       setStatus("جارٍ التحقق من القطعة…");
       try {
-        const data: IdentifyResponse = await identify(e.lngLat.lng, e.lngLat.lat);
+        const data: IdentifyResponse = await identify(e.lngLat.lng, e.lngLat.lat, 25);
         if (disposed) return;
 
         if (!data?.found || !data.parcel) {
@@ -138,6 +162,8 @@ export default function Map({ onParcel }: MapProps) {
         (map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource).setData(
           featureCollection,
         );
+
+        fitToGeometry(map, geometry);
 
         if (parcel.parcel_id) {
           setStatus(`تم تحديد القطعة ${parcel.parcel_id}.`);

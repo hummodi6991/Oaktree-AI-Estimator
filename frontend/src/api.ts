@@ -53,11 +53,11 @@ export type IdentifyResponse = {
   parcel?: ParcelSummary | null;
 };
 
-export async function identify(lng: number, lat: number) {
+export async function identify(lng: number, lat: number, tolMeters = 25) {
   const res = await fetch(withBase("/v1/geo/identify"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ lng, lat }),
+    body: JSON.stringify({ lng, lat, tol_m: tolMeters }),
   });
   return readJson<IdentifyResponse>(res);
 }
