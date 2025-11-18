@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import type { Feature, Polygon } from "geojson";
-import type { IControl, LngLatLike } from "maplibre-gl";
+import type { IControl, LngLatLike, Map } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import "./Map.css";
@@ -31,6 +31,58 @@ const FALLBACK_RASTER_STYLE: any = {
     { id: "osm", type: "raster", source: "osm" },
   ],
 };
+
+/**
+ * Compute a LngLatBounds from a (Multi)Polygon without adding turf as a dep.
+ */
+function boundsOfFeature(f: GeoJSON.Feature): maplibregl.LngLatBounds {
+  const b = new maplibregl.LngLatBounds();
+  const g = f.geometry;
+  if (g.type === "Polygon") {
+    (g.coordinates[0] || []).forEach(([lng, lat]) => b.extend([lng, lat]));
+  } else if (g.type === "MultiPolygon") {
+    g.coordinates.forEach((poly) => (poly[0] || []).forEach(([lng, lat]) => b.extend([lng, lat])));
+  }
+  return b;
+}
+
+// --- Camera behavior constants ---
+const MAX_SELECT_ZOOM = 17.0; // never zoom past this when focusing
+const MAX_ZOOM_DELTA = 1.5; // don't jump more than +1.5 on a single click
+const VIEWPAD = {
+  // keep selection clear of the bottom info panel
+  top: 24,
+  right: 24,
+  bottom: 280,
+  left: 24,
+} as const;
+
+/**
+ * Smoothly bring a feature into view without over-zooming small parcels.
+ * - Limits the absolute zoom (MAX_SELECT_ZOOM)
+ * - Limits the step size per click (MAX_ZOOM_DELTA)
+ * - Adds padding so the bottom sheet doesn't cover the parcel
+ */
+export function smartFocus(map: Map, feature: GeoJSON.Feature) {
+  const bounds = boundsOfFeature(feature);
+  // Ask MapLibre what the camera should be for those bounds, then clamp
+  const cam = map.cameraForBounds(bounds, { padding: VIEWPAD, maxZoom: MAX_SELECT_ZOOM }) || {};
+  const current = map.getZoom();
+  const suggested = typeof (cam as any).zoom === "number" ? (cam as any).zoom : current;
+  const clamped = Math.min(
+    MAX_SELECT_ZOOM,
+    Math.max(current, Math.min(suggested, current + MAX_ZOOM_DELTA))
+  );
+  const targetCenter = (cam as any).center ?? bounds.getCenter();
+
+  map.easeTo({
+    center: targetCenter,
+    zoom: clamped,
+    bearing: map.getBearing(),
+    pitch: map.getPitch(),
+    duration: 650,
+  });
+}
 
 function createToolbarControl(actions: {
   onStart: () => void;
@@ -358,7 +410,7 @@ export default function Map({ polygon, onPolygon }: MapProps) {
         }, null);
 
         if (bounds && !bounds.isEmpty()) {
-          mapRef.current.fitBounds(bounds, { padding: 36, duration: 300 });
+          smartFocus(mapRef.current, feature as Feature);
         }
       }
     } else {
