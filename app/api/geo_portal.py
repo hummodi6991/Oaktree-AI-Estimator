@@ -43,47 +43,21 @@ _PARCEL_GEOM_COLUMN = _safe_identifier(
 
 _TRANSFORMER = None  # unused (server-side transform)
 
-# Optional hard cap to avoid selecting entire districts when a smaller feature exists.
-# Tunable via env: PARCEL_IDENTIFY_MAX_AREA_M2 (set to 0 or negative to disable).
-_MAX_AREA_M2 = getattr(settings, "PARCEL_IDENTIFY_MAX_AREA_M2", 300_000.0)
-
 _IDENTIFY_SQL = text(
     f"""
   WITH q AS (
-    SELECT
-      ST_SetSRID(ST_Point(:lng,:lat), 4326)                             AS pt_wgs84,
-      ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid)        AS pt_proj
-  ),
-  candidates AS (
-    -- 1) Prefer features that CONTAIN the click; otherwise allow near-within tolerance
-    SELECT
-      id,
-      landuse,
-      classification,
-      {_PARCEL_GEOM_COLUMN}                                            AS g,
-      ST_Area(ST_Transform({_PARCEL_GEOM_COLUMN}, 3857))::bigint       AS a_m2,
-      ST_Perimeter(ST_Transform({_PARCEL_GEOM_COLUMN}, 3857))::bigint  AS p_m
-    FROM {_PARCEL_TABLE}, q
-    WHERE
-      ST_Contains({_PARCEL_GEOM_COLUMN}, q.pt_proj)
-      OR ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt_proj, GREATEST(:tol_m, 0.01))
+    SELECT ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid) AS pt
   )
   SELECT
-    c.id,
-    c.landuse,
-    c.classification,
-    c.a_m2                                                              AS area_m2,
-    c.p_m                                                               AS perimeter_m,
-    ST_AsGeoJSON(ST_Transform(c.g, 4326))                               AS geom,
-    -- robust distance (metres) regardless of table SRID
-    ST_Distance(ST_Transform(c.g, 4326)::geography, q.pt_wgs84::geography) AS distance_m
-  FROM candidates c, q
-  WHERE (:max_area_m2 <= 0 OR c.a_m2 <= :max_area_m2)
-  ORDER BY
-    -- 2) Containment first (true = 0), then smallest area, then KNN
-    CASE WHEN ST_Contains(c.g, q.pt_proj) THEN 0 ELSE 1 END,
-    c.a_m2 ASC,
-    c.g <-> q.pt_proj
+    id,
+    landuse,
+    classification,
+    ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
+    ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
+    ST_AsGeoJSON({_PARCEL_GEOM_COLUMN})         AS geom,
+    ST_Distance({_PARCEL_GEOM_COLUMN}, q.pt)    AS distance_m
+  FROM {_PARCEL_TABLE}, q
+  ORDER BY {_PARCEL_GEOM_COLUMN} <-> q.pt
   LIMIT 1;
   """
 )
@@ -203,13 +177,7 @@ class IdentifyPoint(BaseModel):
 
 
 def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Optional[Dict[str, Any]]:
-    params = {
-        "lng": lng,
-        "lat": lat,
-        "srid": _TARGET_SRID,
-        "tol_m": tol_m,
-        "max_area_m2": float(_MAX_AREA_M2 or 0),
-    }
+    params = {"lng": lng, "lat": lat, "srid": _TARGET_SRID}
     try:
         row = db.execute(_IDENTIFY_SQL, params).mappings().first()
     except SQLAlchemyError as exc:
