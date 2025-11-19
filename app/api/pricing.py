@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from shapely.geometry import Point
 
 from app.db.deps import get_db
+from app.services import geo as geo_svc
 from app.services.pricing import price_from_srem, price_from_suhail, store_quote
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
@@ -13,8 +15,20 @@ def land_price(
     district: str | None = Query(default=None),
     provider: str = Query(default="srem", pattern="^(srem|suhail)$"),
     parcel_id: str | None = Query(default=None),
+    lng: float | None = Query(default=None, description="Centroid longitude (WGS84)"),
+    lat: float | None = Query(default=None, description="Centroid latitude (WGS84)"),
     db: Session = Depends(get_db),
 ):
+    if (district is None) and (lng is not None) and (lat is not None):
+        try:
+            inferred = geo_svc.infer_district_from_features(
+                db, Point(lng, lat), layer="rydpolygons"
+            )
+            if inferred:
+                district = inferred
+        except Exception:
+            pass
+
     if provider == "srem":
         result = price_from_srem(db, city, district)
     else:
