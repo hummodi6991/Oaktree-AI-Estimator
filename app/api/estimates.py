@@ -284,6 +284,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "financing": 0.0,
             "revenues": excel["y1_income"],
             "p50_profit": excel["y1_income"] - excel["grand_total_capex"],
+            "excel_roi": excel["roi"],
         }
         result = {
             "totals": totals,
@@ -295,6 +296,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "excel_inputs_keys": list(req.excel_inputs.keys()),
                 "excel_breakdown": excel,
                 "site_area_m2": site_area_m2,
+                "excel_roi": excel["roi"],
             },
             "rent": {},
             "explainability": {},

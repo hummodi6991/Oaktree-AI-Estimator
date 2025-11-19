@@ -70,11 +70,15 @@ export async function landPrice(
   district?: string,
   provider: "srem" | "suhail" = "srem",
   parcelId?: string,
+  lng?: number,
+  lat?: number,
 ) {
   const params = new URLSearchParams({ city });
   if (district) params.set("district", district);
   params.set("provider", provider);
   if (parcelId) params.set("parcel_id", parcelId);
+  if (lng != null) params.set("lng", String(lng));
+  if (lat != null) params.set("lat", String(lat));
   const res = await fetch(withBase(`/v1/pricing/land?${params.toString()}`));
   return readJson(res);
 }
