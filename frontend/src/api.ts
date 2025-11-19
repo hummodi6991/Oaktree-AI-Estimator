@@ -42,6 +42,9 @@ export type ParcelSummary = {
   landuse_raw?: string | null;
   classification_raw?: string | null;
   landuse_code?: string | null;
+  landuse_method?: string | null;
+  residential_share?: number | null;
+  commercial_share?: number | null;
   source_url?: string | null;
 };
 
