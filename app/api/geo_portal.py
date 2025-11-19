@@ -66,6 +66,55 @@ _IDENTIFY_SQL = text(
 router = APIRouter(prefix="/geo", tags=["geo"])
 
 
+_OSM_CLASSIFY_SQL = text(
+    """
+    WITH g AS (
+      SELECT ST_SetSRID(ST_GeomFromGeoJSON(:gj), 4326) AS geom
+    ),
+    total AS (
+      SELECT ST_Area(ST_Transform(geom, 3857)) AS a FROM g
+    ),
+    res_poly AS (
+      SELECT SUM(ST_Area(ST_Transform(ST_Intersection(p.way, g.geom), 3857))) AS a
+      FROM planet_osm_polygon p, g
+      WHERE ST_Intersects(p.way, g.geom)
+        AND (
+          p.landuse IN ('residential')
+          OR p.building IN ('residential','apartments','house','detached','terrace','semidetached')
+        )
+    ),
+    com_poly AS (
+      SELECT SUM(ST_Area(ST_Transform(ST_Intersection(p.way, g.geom), 3857))) AS a
+      FROM planet_osm_polygon p, g
+      WHERE ST_Intersects(p.way, g.geom)
+        AND (
+          p.landuse IN ('commercial','retail')
+          OR p.building IN ('retail','commercial','office','shop')
+        )
+    )
+    SELECT COALESCE(res_poly.a,0) / NULLIF(total.a,0) AS res_share,
+           COALESCE(com_poly.a,0) / NULLIF(total.a,0) AS com_share
+    FROM total LEFT JOIN res_poly ON TRUE LEFT JOIN com_poly ON TRUE;
+    """
+)
+
+
+def _osm_fallback_code(geometry: dict, db) -> tuple[str | None, float, float]:
+    if not geometry:
+        return None, 0.0, 0.0
+    row = db.execute(_OSM_CLASSIFY_SQL, {"gj": json.dumps(geometry)}).mappings().first()
+    if not row:
+        return None, 0.0, 0.0
+    res = float(row["res_share"] or 0.0)
+    com = float(row["com_share"] or 0.0)
+    code: str | None = None
+    if res >= 0.50 and com < 0.25:
+        code = "s"
+    elif (res >= 0.25 and com >= 0.25) or com >= 0.50:
+        code = "m"
+    return code, res, com
+
+
 class ParcelQuery(BaseModel):
     """Request body for parcel lookups."""
 
@@ -219,6 +268,9 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         "landuse_raw": landuse_raw,
         "classification_raw": row.get("classification"),
         "landuse_code": _landuse_code_from_label(str(landuse_raw)),
+        "landuse_method": "label",
+        "residential_share": None,
+        "commercial_share": None,
         "source_url": f"postgis/{_PARCEL_TABLE}",
     }
 
@@ -229,6 +281,19 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         tol_m,
         _TARGET_SRID,
     )
+
+    # If ambiguous (None or boolean-like), fall back to OSM overlay
+    raw_l = (str(landuse_raw) or "").strip().lower()
+    if (parcel["landuse_code"] is None) or (raw_l in {"", "yes", "true", "1", "y"}):
+        try:
+            code, rsh, csh = _osm_fallback_code(geometry, db)
+            if code:
+                parcel["landuse_code"] = code
+                parcel["landuse_method"] = "osm_overlay"
+                parcel["residential_share"] = rsh
+                parcel["commercial_share"] = csh
+        except Exception:
+            pass
 
     return {
         "found": True,

@@ -105,16 +105,33 @@ def infer_far_from_features(db, geom, layer: str = "rydpolygons") -> float | Non
 
 
 def _landuse_code_from_label(label: str) -> str | None:
-    """Map authoritative land-use labels to short codes."""
-
+    """
+    Normalize any upstream land-use/zone label to { 's', 'm' } or None.
+    - 's': residential / housing (سكني, house, apartments, residential, …)
+    - 'm': mixed/commercial (mixed-use, commercial, retail, office, تجاري, مختلط, …)
+    - 'yes'/'true'/'1' → None (ambiguous; caller should fall back to OSM overlay)
+    """
     t = (label or "").strip()
     if not t:
         return None
-    s_labels = {"سكني", "residential"}
-    m_labels = {"mixed", "mixed use", "mixed-use", "مختلط", "تجاري سكني"}
     tl = t.lower()
-    if t in s_labels or "سكن" in t or "residential" in tl:
+    if tl in {"s", "m"}:
+        return tl
+
+    # Ambiguous boolean-ish values from OSM tags (e.g., building=yes)
+    if tl in {"yes", "true", "1", "y"}:
+        return None
+
+    # Residential signals
+    if ("سكن" in t) or any(k in tl for k in [
+        "residential", "residence", "housing", "house", "apart", "apartment", "villa", "dwelling"
+    ]):
         return "s"
-    if t in m_labels or "mixed" in tl:
+
+    # Mixed/commercial signals
+    if ("تجاري" in t) or ("مختلط" in t) or any(k in tl for k in [
+        "mixed", "mixed-use", "mixed use", "commercial", "retail", "office", "shop", "mall"
+    ]):
         return "m"
+
     return None
