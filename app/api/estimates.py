@@ -273,7 +273,32 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         return EstimateResponseModel.model_validate(result)
 
     if req.excel_inputs:
-        excel = compute_excel_estimate(site_area_m2, req.excel_inputs)
+        # Enrich Excel inputs with a parcel/district–aware land price when the
+        # caller does not provide one. We re-use the same hedonic/median comps
+        # function used by the default path so both methods stay consistent.
+        excel_inputs: Dict[str, Any] = dict(req.excel_inputs)
+        ppm2_src = "Manual"
+        ppm2_meta: Dict[str, Any] | None = None
+        try:
+            override = excel_inputs.get("land_price_sar_m2")
+            override_f = float(override) if override is not None else 0.0
+        except Exception:
+            override_f = 0.0
+        if override_f <= 0.0:
+            ppm2_val, ppm2_meta = land_price_per_m2(
+                db, city=req.city, since=None, district=district
+            )
+            if not ppm2_val:
+                # Conservative default if no comps/model available
+                ppm2_val = 2800.0
+                ppm2_src = "Manual"
+            else:
+                ppm2_src = "Model"
+            excel_inputs["land_price_sar_m2"] = float(ppm2_val)
+        else:
+            ppm2_val = override_f
+            ppm2_src = "Manual"
+        excel = compute_excel_estimate(site_area_m2, excel_inputs)
         totals = {
             "land_value": excel["land_cost"],
             "hard_costs": excel["sub_total"],
@@ -291,11 +316,18 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "assumptions": [
                 {"key": "excel_method", "value": 1, "unit": None, "source_type": "Manual"},
                 {"key": "site_area_m2", "value": site_area_m2, "unit": "m2", "source_type": "Observed"},
+                {"key": "ppm2", "value": float(ppm2_val), "unit": "SAR/m2", "source_type": ppm2_src},
             ],
             "notes": {
-                "excel_inputs_keys": list(req.excel_inputs.keys()),
+                "excel_inputs_keys": list(excel_inputs.keys()),
                 "excel_breakdown": excel,
                 "site_area_m2": site_area_m2,
+                "district": district,
+                "excel_land_price": {
+                    "ppm2": float(ppm2_val),
+                    "source_type": ppm2_src,
+                    "model": (ppm2_meta or {}).get("model"),
+                },
                 "excel_roi": excel["roi"],
             },
             "rent": {},
