@@ -164,7 +164,11 @@ class EstimateRequest(BaseModel):
         default=None,
         description="Optional overrides for build-to-rent assumptions (occupancy, opex_ratio, cap_rate).",
     )
-    excel_inputs: dict | None = None
+    # Excel-only mode: require excel_inputs and route exclusively through the Excel method.
+    excel_inputs: dict = Field(
+        ...,
+        description="Required. Parameters for the Excel-style method (see app/services/excel_method.py).",
+    )
     model_config = ConfigDict(
         json_schema_extra={
             # Use OpenAPI "examples" so Swagger renders a runnable example
@@ -188,6 +192,19 @@ class EstimateRequest(BaseModel):
                 "city": "Riyadh",
                 "far": 2.0,
                 "efficiency": 0.82,
+                "excel_inputs": {
+                    "area_ratio": {"residential": 1.6, "basement": 0.5},
+                    "unit_cost": {"residential": 2200, "basement": 1200},
+                    "efficiency": {"residential": 0.82},
+                    "cp_sqm_per_space": {"basement": 30},
+                    "rent_sar_m2_yr": {"residential": 2400},
+                    "fitout_rate": 400,
+                    "contingency_pct": 0.10,
+                    "consultants_pct": 0.06,
+                    "feasibility_fee": 1500000,
+                    "transaction_pct": 0.03,
+                    "land_price_sar_m2": 2800,
+                }
             }]
         }
     )
@@ -209,7 +226,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         raise HTTPException(status_code=400, detail="Empty geometry provided")
     site_area_m2 = geo_svc.area_m2(geom)
 
-    def _finalize_result(result: dict[str, Any], bands: dict[str, Any] | None = None) -> EstimateResponseModel:
+    def _finalize_result(
+        result: dict[str, Any], bands: dict[str, Any] | None = None
+    ) -> EstimateResponseModel:
         payload_bands = bands or {}
         est_id = str(uuid.uuid4())
         totals = result["totals"]
@@ -272,6 +291,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         result["strategy"] = req.strategy
         return EstimateResponseModel.model_validate(result)
 
+    # Excel-only mode: always use the Excel-style computation and short-circuit other paths.
     if req.excel_inputs:
         # Enrich Excel inputs with a parcel/district–aware land price when the
         # caller does not provide one. We re-use the same hedonic/median comps
@@ -335,6 +355,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "confidence_bands": {},
         }
         return _finalize_result(result, {})
+
+    # Defensive guard (should be unreachable because excel_inputs is required)
+    raise HTTPException(status_code=400, detail="excel-only mode: 'excel_inputs' is required")
 
     far_source = "manual"
     auto_far_value = None

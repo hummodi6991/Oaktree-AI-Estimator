@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.db.deps import get_db
 from app.main import app
+from tests.excel_inputs import sample_excel_inputs
 
 pytest.importorskip("fpdf")
 
@@ -94,6 +95,7 @@ def _make_estimate() -> str:
         "financing_params": {"margin_bps": 250, "ltv": 0.6},
         "strategy": "build_to_sell",
         "city": "Riyadh",
+        "excel_inputs": sample_excel_inputs(),
     }
     response = client.post("/v1/estimates", json=payload)
     assert response.status_code == 200
