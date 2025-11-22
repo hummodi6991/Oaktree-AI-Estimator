@@ -4,7 +4,7 @@ from shapely.geometry import Point
 
 from app.db.deps import get_db
 from app.services import geo as geo_svc
-from app.services.pricing import price_from_srem, price_from_suhail, store_quote
+from app.services.pricing import price_from_aqar, store_quote
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
 
@@ -13,7 +13,8 @@ router = APIRouter(prefix="/pricing", tags=["pricing"])
 def land_price(
     city: str = Query(...),
     district: str | None = Query(default=None),
-    provider: str = Query(default="srem", pattern="^(srem|suhail)$"),
+    # Keep param for backward compatibility with the UI, but we will ignore it and serve aqar.
+    provider: str = Query(default="aqar", pattern="^(aqar|srem|suhail)$"),
     parcel_id: str | None = Query(default=None),
     lng: float | None = Query(default=None, description="Centroid longitude (WGS84)"),
     lat: float | None = Query(default=None, description="Centroid latitude (WGS84)"),
@@ -29,21 +30,19 @@ def land_price(
         except Exception:
             pass
 
-    if provider == "srem":
-        result = price_from_srem(db, city, district)
-    else:
-        result = price_from_suhail(db, city, district)
+    # Always use aqar pricing regardless of the provider requested.
+    result = price_from_aqar(db, city, district)
     if not result:
         raise HTTPException(status_code=404, detail="No price available")
 
     value, method = result
     try:
-        store_quote(db, provider, city, district, parcel_id, value, method)
+        store_quote(db, "aqar", city, district, parcel_id, value, method)
     except Exception:
         pass
 
     return {
-        "provider": provider,
+        "provider": "aqar",
         "city": city,
         "district": district,
         "sar_per_m2": value,
