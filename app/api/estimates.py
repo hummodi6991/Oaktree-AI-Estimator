@@ -28,6 +28,7 @@ from app.services.pdf import build_memo_pdf
 from app.services.residual import residual_land_value
 from app.services.cashflow import build_equity_cashflow
 from app.services.far_rules import lookup_far
+from app.services.pricing import price_from_aqar
 from app.models.tables import EstimateHeader, EstimateLine, LandUseStat
 
 router = APIRouter(tags=["estimates"])
@@ -293,31 +294,24 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
     # Excel-only mode: always use the Excel-style computation and short-circuit other paths.
     if req.excel_inputs:
-        # Enrich Excel inputs with a parcel/district–aware land price when the
-        # caller does not provide one. We re-use the same hedonic/median comps
-        # function used by the default path so both methods stay consistent.
-        excel_inputs: Dict[str, Any] = dict(req.excel_inputs)
-        ppm2_src = "Manual"
-        ppm2_meta: Dict[str, Any] | None = None
+        # Copy inputs and enrich land price if caller didn't provide one (or provided 0/None)
+        excel_inputs = dict(req.excel_inputs)
+        ppm2_val: float = 0.0
+        ppm2_src: str = "Manual"
         try:
             override = excel_inputs.get("land_price_sar_m2")
             override_f = float(override) if override is not None else 0.0
         except Exception:
             override_f = 0.0
         if override_f <= 0.0:
-            ppm2_val, ppm2_meta = land_price_per_m2(
-                db, city=req.city, since=None, district=district
-            )
-            if not ppm2_val:
-                # Conservative default if no comps/model available
-                ppm2_val = 2800.0
-                ppm2_src = "Manual"
-            else:
-                ppm2_src = "Model"
-            excel_inputs["land_price_sar_m2"] = float(ppm2_val)
+            # Use aqar price (district → city fallback)
+            aqar = price_from_aqar(db, req.city or "Riyadh", district)
+            if aqar:
+                ppm2_val, ppm2_src = float(aqar[0]), aqar[1]
+                excel_inputs["land_price_sar_m2"] = ppm2_val
         else:
-            ppm2_val = override_f
-            ppm2_src = "Manual"
+            ppm2_val, ppm2_src = override_f, "Manual"
+
         excel = compute_excel_estimate(site_area_m2, excel_inputs)
         totals = {
             "land_value": excel["land_cost"],
@@ -329,6 +323,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "financing": 0.0,
             "revenues": excel["y1_income"],
             "p50_profit": excel["y1_income"] - excel["grand_total_capex"],
+            # Echo ROI for the UI dialog:
             "excel_roi": excel["roi"],
         }
         result = {
@@ -346,7 +341,6 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "excel_land_price": {
                     "ppm2": float(ppm2_val),
                     "source_type": ppm2_src,
-                    "model": (ppm2_meta or {}).get("model"),
                 },
                 "excel_roi": excel["roi"],
             },
