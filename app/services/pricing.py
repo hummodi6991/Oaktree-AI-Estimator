@@ -27,50 +27,43 @@ def price_from_suhail(db: Session, city: str, district: Optional[str]) -> Option
 def price_from_aqar(db: Session, city: str, district: Optional[str]) -> Optional[Tuple[float, str]]:
     """
     Return SAR/m² from the Kaggle aqar.fm dataset aggregated in Postgres.
-    Prefers district-level, falls back to city-level. Assumes the view:
-      aqar.mv_city_month_price_per_sqm(month, city, district, property_type, price_per_sqm)
-    and that land listings map to Arabic/English variants ('أرض','ارض','land').
+    Uses the non‑monthly view aqar.mv_city_price_per_sqm(city, district, property_type, price_per_sqm, n).
+    Prefers district-level, falls back to city-level.
     """
-    # 1) District-level (if column exists in the view)
+    # 1) District-level
     if district:
-        try:
-            row = db.execute(
-                text(
-                    """
-                    SELECT price_per_sqm
-                    FROM aqar.mv_city_month_price_per_sqm
-                    WHERE lower(city) = lower(:city)
-                      AND lower(coalesce(district, '')) = lower(:district)
-                      AND lower(property_type) IN ('أرض','ارض','land')
-                    ORDER BY month DESC
-                    LIMIT 1
-                    """
-                ),
-                {"city": city, "district": district},
-            ).first()
-            if row and row[0] is not None:
-                return float(row[0]), "aqar.mv_city_month_price_per_sqm (district)"
-        except Exception:
-            # If the view doesn't have district or any other SQL issue, silently fall through.
-            pass
+        row = db.execute(
+            text(
+                """
+                SELECT price_per_sqm
+                FROM aqar.mv_city_price_per_sqm
+                WHERE lower(city) = lower(:city)
+                  AND lower(coalesce(district,'')) = lower(:district)
+                  AND lower(property_type) = 'land'
+                LIMIT 1
+                """
+            ),
+            {"city": city, "district": district},
+        ).first()
+        if row and row[0] is not None:
+            return float(row[0]), "aqar.mv_city_price_per_sqm (district)"
 
     # 2) City-level
     row = db.execute(
         text(
             """
             SELECT price_per_sqm
-            FROM aqar.mv_city_month_price_per_sqm
+            FROM aqar.mv_city_price_per_sqm
             WHERE lower(city) = lower(:city)
-              AND lower(property_type) IN ('أرض','ارض','land')
-            ORDER BY month DESC
+              AND lower(property_type) = 'land'
             LIMIT 1
-        """
+            """
         ),
         {"city": city},
     ).first()
     if not row or row[0] is None:
         return None
-    return float(row[0]), "aqar.mv_city_month_price_per_sqm"
+    return float(row[0]), "aqar.mv_city_price_per_sqm"
 
 
 def store_quote(
