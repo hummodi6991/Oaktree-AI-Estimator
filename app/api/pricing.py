@@ -13,7 +13,7 @@ router = APIRouter(prefix="/pricing", tags=["pricing"])
 def land_price(
     city: str = Query(...),
     district: str | None = Query(default=None),
-    # Keep param for backward compatibility with the UI, but we will ignore it and serve aqar.
+    # Keep param for UI compatibility, but ignore it and always serve Kaggle.
     provider: str = Query(default="aqar", pattern="^(aqar|srem|suhail)$"),
     parcel_id: str | None = Query(default=None),
     lng: float | None = Query(default=None, description="Centroid longitude (WGS84)"),
@@ -30,7 +30,7 @@ def land_price(
         except Exception:
             pass
 
-    # Always use aqar pricing regardless of the provider requested.
+    # Always use Kaggle view (Excel-only flow wants parcel/district-aware land price)
     result = price_from_aqar(db, city, district)
     if not result:
         raise HTTPException(status_code=404, detail="No price available")
