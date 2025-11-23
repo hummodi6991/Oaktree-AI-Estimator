@@ -24,46 +24,43 @@ def price_from_suhail(db: Session, city: str, district: Optional[str]) -> Option
     return None
 
 
-def price_from_aqar(db: Session, city: str, district: Optional[str]) -> Optional[Tuple[float, str]]:
+def price_from_aqar(db: Session, city: str | None, district: str | None):
     """
-    Return SAR/m² from the Kaggle aqar.fm dataset aggregated in Postgres.
-    Uses the non‑monthly view aqar.mv_city_price_per_sqm(city, district, property_type, price_per_sqm, n).
-    Prefers district-level, falls back to city-level.
+    Return (value, method) where value is SAR/m2 and method describes the source.
+    Prefers district-level median for 'land' from aqar.mv_city_price_per_sqm.
+    Falls back to city-level, then a direct median from aqar.listings.
     """
-    # 1) District-level
-    if district:
-        row = db.execute(
-            text(
-                """
-                SELECT price_per_sqm
-                FROM aqar.mv_city_price_per_sqm
-                WHERE lower(city) = lower(:city)
-                  AND lower(coalesce(district,'')) = lower(:district)
-                  AND lower(property_type) = 'land'
-                LIMIT 1
-                """
-            ),
-            {"city": city, "district": district},
-        ).first()
-        if row and row[0] is not None:
-            return float(row[0]), "aqar.mv_city_price_per_sqm (district)"
-
-    # 2) City-level
-    row = db.execute(
-        text(
-            """
-            SELECT price_per_sqm
-            FROM aqar.mv_city_price_per_sqm
-            WHERE lower(city) = lower(:city)
-              AND lower(property_type) = 'land'
-            LIMIT 1
-            """
-        ),
-        {"city": city},
-    ).first()
-    if not row or row[0] is None:
+    if not city:
         return None
-    return float(row[0]), "aqar.mv_city_price_per_sqm"
+
+    # 1) Try district-level median in the materialized view
+    val = db.execute(text("""
+        SELECT price_per_sqm
+        FROM aqar.mv_city_price_per_sqm
+        WHERE lower(city)=lower(:city)
+          AND property_type='land'
+          AND (:district IS NULL OR lower(district)=lower(:district))
+        ORDER BY (CASE WHEN lower(district)=lower(:district) THEN 0 ELSE 1 END), n DESC NULLS LAST
+        LIMIT 1
+    """), {"city": city, "district": district}).scalar()
+    if val:
+        return float(val), "aqar.mv_city_price_per_sqm"
+
+    # 2) Fallback: direct city median from aqar.listings (no month)
+    val = db.execute(text("""
+        SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY price_per_sqm)
+        FROM aqar.listings
+        WHERE lower(city)=lower(:city)
+          AND price_per_sqm IS NOT NULL
+          AND (
+            lower(property_type) ~ '\\m(أرض|ارض|land|plot)\\M'
+            OR lower(coalesce(title,'')) ~ '\\m(أرض|ارض|land|plot)\\M'
+            OR lower(coalesce(description,'')) ~ '\\m(أرض|ارض|land|plot)\\M'
+          )
+    """), {"city": city}).scalar()
+    if val:
+        return float(val), "aqar.listings_median_fallback"
+    return None
 
 
 def store_quote(
