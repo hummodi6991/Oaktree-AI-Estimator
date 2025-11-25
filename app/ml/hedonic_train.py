@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import date
 import os, json, math
 import joblib
 import pandas as pd
@@ -49,16 +50,19 @@ def _ensure_residential_share_view(db: Session) -> None:
 
 def _load_df(db: Session) -> pd.DataFrame:
     _ensure_residential_share_view(db)
+
+    # Only land comps from Kaggle aqar.fm
     rows = (
         db.query(
             SaleComp.date,
             SaleComp.city,
             SaleComp.district,
-            SaleComp.asset_type,
             SaleComp.net_area_m2,
             SaleComp.price_per_m2,
             LandUseResidentialShare.residential_share,
         )
+        .filter(SaleComp.asset_type == "land")
+        .filter(SaleComp.source == "kaggle_aqar")
         .outerjoin(
             LandUseResidentialShare,
             (SaleComp.city == LandUseResidentialShare.city)
@@ -66,22 +70,32 @@ def _load_df(db: Session) -> pd.DataFrame:
         )
         .all()
     )
-    items = []
+
+    items: list[dict] = []
     for r in rows:
-        items.append({
-            "date": r.date,
-            "city": r.city,
-            "district": r.district,
-            "asset_type": r.asset_type,
-            "net_area_m2": float(r.net_area_m2) if r.net_area_m2 else None,
-            "price_per_m2": float(r.price_per_m2) if r.price_per_m2 else None,
-            "residential_share": float(r.residential_share) if r.residential_share is not None else None,
-        })
-    df = pd.DataFrame(items).dropna(subset=["price_per_m2", "city"])
+        if not r.price_per_m2 or not r.city:
+            continue
+
+        dt = r.date or date.today()
+        ym = dt.strftime("%Y-%m")
+
+        items.append(
+            {
+                "date": dt,
+                "city": r.city.strip(),
+                "district": (r.district or "").strip(),
+                "net_area_m2": float(r.net_area_m2 or 0.0),
+                "price_per_m2": float(r.price_per_m2),
+                "residential_share": float(r.residential_share or 0.0),
+                "ym": ym,
+            }
+        )
+
+    df = pd.DataFrame(items)
     if df.empty:
         raise RuntimeError("No sale_comp rows with price_per_m2")
-    df["ym"] = pd.to_datetime(df["date"]).dt.to_period("M").astype(str)
-    df["log_area"] = df["net_area_m2"].fillna(df["net_area_m2"].median() or 1.0).apply(lambda x: math.log(max(1.0, x)))
+
+    df["log_area"] = df["net_area_m2"].apply(lambda x: math.log(max(1.0, x)))
     df["residential_share"] = pd.to_numeric(df["residential_share"], errors="coerce")
     if df["residential_share"].notna().any():
         df["residential_share"] = df["residential_share"].fillna(df["residential_share"].median())

@@ -4,7 +4,7 @@ from shapely.geometry import Point
 
 from app.db.deps import get_db
 from app.services import geo as geo_svc
-from app.services.pricing import price_from_aqar, store_quote
+from app.services.pricing import price_from_kaggle_hedonic, store_quote
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
 
@@ -13,10 +13,10 @@ router = APIRouter(prefix="/pricing", tags=["pricing"])
 def land_price(
     city: str = Query(...),
     district: str | None = Query(default=None),
-    # Kept only for UI compatibility – backend always uses the Kaggle aqar.fm view.
+    # Kept only for UI compatibility – backend always uses the Kaggle hedonic model.
     provider: str = Query(
-        default="aqar",
-        description="Provider label from the UI. Backend always uses Kaggle aqar.fm.",
+        default="kaggle_hedonic",
+        description="Provider label from the UI. Backend always uses Kaggle hedonic model.",
     ),
     parcel_id: str | None = Query(default=None),
     lng: float | None = Query(default=None, description="Centroid longitude (WGS84)"),
@@ -33,21 +33,21 @@ def land_price(
         except Exception:
             pass
 
-    result = price_from_aqar(db, city, district)
+    result = price_from_kaggle_hedonic(db, city, district)
     if not result:
         # Clean “no data” response instead of a 500
         raise HTTPException(
-            status_code=404, detail="No price available from Kaggle aqar.fm"
+            status_code=404, detail="No price available from Kaggle hedonic model"
         )
 
     value, method = result
     try:
-        store_quote(db, "aqar", city, district, parcel_id, value, method)
+        store_quote(db, provider or "kaggle_hedonic", city, district, parcel_id, value, method)
     except Exception:
         pass
 
     return {
-        "provider": "aqar",
+        "provider": provider or "kaggle_hedonic",
         "city": city,
         "district": district,
         "sar_per_m2": value,
