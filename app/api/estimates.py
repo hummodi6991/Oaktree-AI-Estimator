@@ -314,18 +314,44 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
         excel = compute_excel_estimate(site_area_m2, excel_inputs)
         totals = {
-            "land_value": excel["land_cost"],
-            "hard_costs": excel["sub_total"],
-            "soft_costs": excel["contingency_cost"]
-            + excel["consultants_cost"]
-            + excel["feasibility_fee"]
-            + excel["transaction_cost"],
+            "land_value": float(excel["land_cost"]),
+            "hard_costs": float(excel["sub_total"]),
+            "soft_costs": float(
+                excel["contingency_cost"]
+                + excel["consultants_cost"]
+                + excel["feasibility_fee"]
+                + excel["transaction_cost"]
+            ),
             "financing": 0.0,
-            "revenues": excel["y1_income"],
-            "p50_profit": excel["y1_income"] - excel["grand_total_capex"],
+            "revenues": float(excel["y1_income"]),
+            "p50_profit": float(excel["y1_income"] - excel["grand_total_capex"]),
             # Echo ROI for the UI dialog:
-            "excel_roi": excel["roi"],
+            "excel_roi": float(excel["roi"]),
         }
+        direct_cost_total = float(sum(excel.get("direct_cost", {}).values()))
+        cost_breakdown = {
+            "land_cost": float(excel["land_cost"]),
+            "construction_direct_cost": direct_cost_total,
+            "fitout_cost": float(excel["fitout_cost"]),
+            "contingency_cost": float(excel["contingency_cost"]),
+            "consultants_cost": float(excel["consultants_cost"]),
+            "feasibility_fee": float(excel["feasibility_fee"]),
+            "transaction_cost": float(excel["transaction_cost"]),
+            "grand_total_capex": float(excel["grand_total_capex"]),
+            "y1_income": float(excel["y1_income"]),
+            "roi": float(excel["roi"]),
+        }
+        summary_text = (
+            f"For a site of {site_area_m2:,.0f} m² in "
+            f"{district or (req.city or 'the selected city')}, "
+            f"land is valued at {excel['land_cost']:,.0f} SAR based on the Kaggle aqar.fm "
+            f"median land price/m². Construction and fit-out total "
+            f"{excel['sub_total']:,.0f} SAR, with contingency, consultants, "
+            f"feasibility fees and transaction costs bringing total capex to "
+            f"{excel['grand_total_capex']:,.0f} SAR. Year 1 net income of "
+            f"{excel['y1_income']:,.0f} SAR implies an unlevered ROI of "
+            f"{excel['roi']*100:,.1f}%."
+        )
         result = {
             "totals": totals,
             "assumptions": [
@@ -336,6 +362,8 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "notes": {
                 "excel_inputs_keys": list(excel_inputs.keys()),
                 "excel_breakdown": excel,
+                "cost_breakdown": cost_breakdown,
+                "summary": summary_text,
                 "site_area_m2": site_area_m2,
                 "district": district,
                 "excel_land_price": {
