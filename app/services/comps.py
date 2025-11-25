@@ -9,6 +9,8 @@ def fetch_sale_comps(
     city: Optional[str] = None,
     district: Optional[str] = None,
     since: Optional[date] = None,
+    source: Optional[str] = None,
+    property_type: Optional[str] = None,
     limit: int = 200,
 ) -> List[SaleComp]:
     q = db.query(SaleComp)
@@ -18,6 +20,10 @@ def fetch_sale_comps(
         q = q.filter(SaleComp.district.ilike(district))
     if since:
         q = q.filter(SaleComp.date >= since)
+    if source:
+        q = q.filter(SaleComp.source == source)
+    if property_type:
+        q = q.filter(SaleComp.asset_type == property_type)
     return q.order_by(SaleComp.date.desc()).limit(limit).all()
 
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { Geometry } from "geojson";
 
 import { landPrice, makeEstimate } from "../api";
@@ -25,6 +25,22 @@ const DEFAULT_EXCEL_INPUTS = {
 };
 
 type Centroid = [number, number];
+
+type ExcelResult = {
+  roi: number;
+  costs: {
+    land_cost: number;
+    construction_direct_cost: number;
+    fitout_cost: number;
+    contingency_cost: number;
+    consultants_cost: number;
+    feasibility_fee: number;
+    transaction_cost: number;
+    grand_total_capex: number;
+    y1_income: number;
+  };
+  summary: string;
+};
 
 function polygonCentroidAndArea(coords: number[][][]): { area: number; centroid: Centroid } | null {
   if (!coords?.length) return null;
@@ -73,40 +89,6 @@ function centroidFromGeometry(geometry?: Geometry | null): Centroid | null {
   return null;
 }
 
-function extractExcelRoi(estimate: any): number | null {
-  const candidates = [
-    estimate?.totals?.excel_roi,
-    estimate?.notes?.excel_breakdown?.roi,
-    estimate?.notes?.excel_roi,
-  ];
-  for (const value of candidates) {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-  }
-
-  const totals = estimate?.totals;
-  const pieces = [
-    totals?.revenues,
-    totals?.land_value,
-    totals?.hard_costs,
-    totals?.soft_costs,
-    totals?.financing,
-  ];
-  if (pieces.every((value) => typeof value === "number")) {
-    const numerator =
-      totals.revenues -
-      (totals.land_value + totals.hard_costs + totals.soft_costs + totals.financing);
-    const denominator =
-      totals.land_value + totals.hard_costs + totals.soft_costs + totals.financing;
-    if (denominator) {
-      return numerator / denominator;
-    }
-  }
-
-  return null;
-}
-
 type ExcelFormProps = {
   parcel: any;
   landUseOverride?: string;
@@ -116,8 +98,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [provider, setProvider] = useState<"aqar">("aqar");
   const [price, setPrice] = useState<number | null>(null);
   const [inputs, setInputs] = useState<any>(DEFAULT_EXCEL_INPUTS);
-  const [estimate, setEstimate] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [excelResult, setExcelResult] = useState<ExcelResult | null>(null);
 
   const selectedLandUse = landUseOverride || parcel?.landuse_code || "";
   const assetProgram =
@@ -146,6 +128,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   async function runEstimate() {
     if (!parcel) return;
     setError(null);
+    setExcelResult(null);
     try {
       const result = await makeEstimate({
         geometry: parcel.geometry,
@@ -157,22 +140,29 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         efficiency: 0.82,
         landUseOverride,
       });
-      setEstimate(result);
-      const roi = extractExcelRoi(result);
-      const display = typeof roi === "number" && Number.isFinite(roi) ? roi : -1;
-      alert(`ROI (Excel mode): ${display.toFixed(3)}`);
+      const notes = result?.notes || {};
+      const costs = notes.cost_breakdown || {};
+
+      setExcelResult({
+        roi: notes.excel_roi ?? result?.totals?.excel_roi ?? 0,
+        costs: {
+          land_cost: costs.land_cost ?? 0,
+          construction_direct_cost: costs.construction_direct_cost ?? 0,
+          fitout_cost: costs.fitout_cost ?? 0,
+          contingency_cost: costs.contingency_cost ?? 0,
+          consultants_cost: costs.consultants_cost ?? 0,
+          feasibility_fee: costs.feasibility_fee ?? 0,
+          transaction_cost: costs.transaction_cost ?? 0,
+          grand_total_capex: costs.grand_total_capex ?? 0,
+          y1_income: costs.y1_income ?? 0,
+        },
+        summary: notes.summary ?? "",
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
     }
   }
-
-  const summary = estimate?.notes?.notes?.summary;
-  const breakdown = estimate?.notes?.notes?.cost_breakdown;
-  const breakdownEntries = useMemo(() => {
-    if (!breakdown || typeof breakdown !== "object") return [];
-    return Object.entries(breakdown);
-  }, [breakdown]);
 
   return (
     <div>
@@ -199,25 +189,92 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         </div>
       )}
 
-      {summary && (
-        <p className="mt-4 text-sm text-gray-200" style={{ marginTop: 16 }}>
-          {summary}
-        </p>
-      )}
+      {excelResult && (
+        <div
+          style={{
+            marginTop: "1rem",
+            padding: "1rem",
+            borderRadius: "0.5rem",
+            background: "rgba(0,0,0,0.3)",
+            color: "white",
+            maxWidth: "480px",
+            fontSize: "0.9rem",
+          }}
+        >
+          <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>
+            Excel method – cost breakdown
+          </h3>
 
-      {breakdownEntries.length > 0 && (
-        <table className="mt-4 text-sm" style={{ marginTop: 12 }}>
-          <tbody>
-            {breakdownEntries.map(([key, value]) => (
-              <tr key={key}>
-                <td style={{ paddingRight: 12 }}>{key.replace(/_/g, " ")}</td>
-                <td>
-                  {Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} SAR
+          <p style={{ marginTop: 0, marginBottom: "0.75rem" }}>
+            {excelResult.summary ||
+              `Unlevered ROI: ${(excelResult.roi * 100).toFixed(1)}%`}
+          </p>
+
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <tbody>
+              <tr>
+                <td>Land cost</td>
+                <td style={{ textAlign: "right" }}>
+                  {excelResult.costs.land_cost.toLocaleString()} SAR
                 </td>
               </tr>
-            ))}
-          </tbody>
-        </table>
+              <tr>
+                <td>Construction (direct)</td>
+                <td style={{ textAlign: "right" }}>
+                  {excelResult.costs.construction_direct_cost.toLocaleString()} SAR
+                </td>
+              </tr>
+              <tr>
+                <td>Fit-out</td>
+                <td style={{ textAlign: "right" }}>
+                  {excelResult.costs.fitout_cost.toLocaleString()} SAR
+                </td>
+              </tr>
+              <tr>
+                <td>Contingency</td>
+                <td style={{ textAlign: "right" }}>
+                  {excelResult.costs.contingency_cost.toLocaleString()} SAR
+                </td>
+              </tr>
+              <tr>
+                <td>Consultants</td>
+                <td style={{ textAlign: "right" }}>
+                  {excelResult.costs.consultants_cost.toLocaleString()} SAR
+                </td>
+              </tr>
+              <tr>
+                <td>Feasibility fee</td>
+                <td style={{ textAlign: "right" }}>
+                  {excelResult.costs.feasibility_fee.toLocaleString()} SAR
+                </td>
+              </tr>
+              <tr>
+                <td>Transaction costs</td>
+                <td style={{ textAlign: "right" }}>
+                  {excelResult.costs.transaction_cost.toLocaleString()} SAR
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Total capex</strong></td>
+                <td style={{ textAlign: "right" }}>
+                  <strong>{excelResult.costs.grand_total_capex.toLocaleString()} SAR</strong>
+                </td>
+              </tr>
+              <tr>
+                <td>Year 1 net income</td>
+                <td style={{ textAlign: "right" }}>
+                  {excelResult.costs.y1_income.toLocaleString()} SAR
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Unlevered ROI</strong></td>
+                <td style={{ textAlign: "right" }}>
+                  <strong>{(excelResult.roi * 100).toFixed(1)}%</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
