@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.tables import PriceQuote
 from app.services.comps import fetch_sale_comps, summarize_ppm2
+from app.services.hedonic import land_price_per_m2
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,21 @@ def price_from_aqar(db: Session, city: str | None, district: str | None):
 
     # Nothing usable from Kaggle
     return None
+
+
+def price_from_kaggle_hedonic(
+    db: Session, city: str | None, district: str | None
+) -> Optional[Tuple[float, str]]:
+    """Wrapper that proxies land pricing to the hedonic model."""
+
+    if not city:
+        return None
+
+    ppm2, _meta = land_price_per_m2(db, city=city, since=None, district=district)
+    if not ppm2:
+        return None
+
+    return float(ppm2), "kaggle_hedonic_v0"
 
 
 def store_quote(
