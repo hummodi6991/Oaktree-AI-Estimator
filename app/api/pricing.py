@@ -13,8 +13,11 @@ router = APIRouter(prefix="/pricing", tags=["pricing"])
 def land_price(
     city: str = Query(...),
     district: str | None = Query(default=None),
-    # Keep param for UI compatibility, but ignore it and always serve Kaggle.
-    provider: str = Query(default="aqar", pattern="^(aqar|srem|suhail)$"),
+    # Kept only for UI compatibility – backend always uses the Kaggle aqar.fm view.
+    provider: str = Query(
+        default="aqar",
+        description="Provider label from the UI. Backend always uses Kaggle aqar.fm.",
+    ),
     parcel_id: str | None = Query(default=None),
     lng: float | None = Query(default=None, description="Centroid longitude (WGS84)"),
     lat: float | None = Query(default=None, description="Centroid latitude (WGS84)"),

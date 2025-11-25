@@ -68,7 +68,7 @@ export async function identify(lng: number, lat: number) {
 export async function landPrice(
   city: string,
   district?: string,
-  provider: "srem" | "suhail" = "srem",
+  provider: "aqar" = "aqar",
   parcelId?: string,
   lng?: number,
   lat?: number,
@@ -96,10 +96,37 @@ export async function createEstimate(payload: FormData | Record<string, unknown>
   return readJson(res);
 }
 
-export async function makeEstimate(geometry: any, excelInputs: any, landUseOverride?: string) {
+type EstimateStrategy = "build_to_sell" | "build_to_rent";
+
+export async function makeEstimate(params: {
+  geometry: any;
+  excelInputs: any;
+  assetProgram?: string;
+  strategy?: EstimateStrategy;
+  city?: string;
+  far?: number;
+  efficiency?: number;
+  landUseOverride?: string;
+}) {
+  const {
+    geometry,
+    excelInputs,
+    assetProgram,
+    strategy,
+    city,
+    far,
+    efficiency,
+    landUseOverride,
+  } = params;
+
   return createEstimate({
     geometry,
     excel_inputs: excelInputs,
+    asset_program: assetProgram,
+    strategy,
+    city,
+    far,
+    efficiency,
     land_use_override: landUseOverride,
   });
 }
