@@ -33,10 +33,12 @@ def land_price(
         except Exception:
             pass
 
-    # Always use Kaggle view (Excel-only flow wants parcel/district-aware land price)
     result = price_from_aqar(db, city, district)
     if not result:
-        raise HTTPException(status_code=404, detail="No price available")
+        # Clean “no data” response instead of a 500
+        raise HTTPException(
+            status_code=404, detail="No price available from Kaggle aqar.fm"
+        )
 
     value, method = result
     try:

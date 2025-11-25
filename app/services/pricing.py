@@ -1,11 +1,15 @@
 from typing import Optional, Tuple
 from datetime import datetime
+import logging
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.tables import PriceQuote
 from app.services.comps import fetch_sale_comps, summarize_ppm2
+
+logger = logging.getLogger(__name__)
 
 
 def price_from_srem(db: Session, city: str, district: Optional[str]) -> Optional[Tuple[float, str]]:
@@ -26,40 +30,69 @@ def price_from_suhail(db: Session, city: str, district: Optional[str]) -> Option
 
 def price_from_aqar(db: Session, city: str | None, district: str | None):
     """
-    Return (value, method) where value is SAR/m2 and method describes the source.
-    Prefers district-level median for 'land' from aqar.mv_city_price_per_sqm.
-    Falls back to city-level, then a direct median from aqar.listings.
+    Return (value, method) where value is SAR/m² and method describes the source.
+
+    Uses ONLY the Kaggle aqar.fm dataset:
+      1) District-level median for 'land' from aqar.mv_city_price_per_sqm
+      2) City-level median from aqar.listings (land-only filter)
     """
     if not city:
         return None
 
     # 1) Try district-level median in the materialized view
-    val = db.execute(text("""
-        SELECT price_per_sqm
-        FROM aqar.mv_city_price_per_sqm
-        WHERE lower(city)=lower(:city)
-          AND property_type='land'
-          AND (:district IS NULL OR lower(district)=lower(:district))
-        ORDER BY (CASE WHEN lower(district)=lower(:district) THEN 0 ELSE 1 END), n DESC NULLS LAST
-        LIMIT 1
-    """), {"city": city, "district": district}).scalar()
-    if val:
+    try:
+        val = db.execute(
+            text(
+                """
+                SELECT price_per_sqm
+                FROM aqar.mv_city_price_per_sqm
+                WHERE lower(city)=lower(:city)
+                  AND property_type='land'
+                  AND (:district IS NULL OR lower(district)=lower(:district))
+                ORDER BY
+                  CASE
+                    WHEN :district IS NOT NULL AND lower(district)=lower(:district)
+                    THEN 0 ELSE 1
+                  END,
+                  n DESC NULLS LAST
+                LIMIT 1
+                """
+            ),
+            {"city": city, "district": district},
+        ).scalar()
+    except SQLAlchemyError as exc:
+        logger.warning("aqar.mv_city_price_per_sqm query failed: %s", exc)
+        val = None
+
+    if val is not None:
         return float(val), "aqar.mv_city_price_per_sqm"
 
-    # 2) Fallback: direct city median from aqar.listings (no month)
-    val = db.execute(text("""
-        SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY price_per_sqm)
-        FROM aqar.listings
-        WHERE lower(city)=lower(:city)
-          AND price_per_sqm IS NOT NULL
-          AND (
-            lower(property_type) ~ '\\m(أرض|ارض|land|plot)\\M'
-            OR lower(coalesce(title,'')) ~ '\\m(أرض|ارض|land|plot)\\M'
-            OR lower(coalesce(description,'')) ~ '\\m(أرض|ارض|land|plot)\\M'
-          )
-    """), {"city": city}).scalar()
-    if val:
+    # 2) Fallback: direct city median from aqar.listings (still Kaggle data)
+    try:
+        val = db.execute(
+            text(
+                """
+                SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY price_per_sqm)
+                FROM aqar.listings
+                WHERE lower(city)=lower(:city)
+                  AND price_per_sqm IS NOT NULL
+                  AND (
+                    lower(property_type) ~ '\\m(أرض|ارض|land|plot)\\M'
+                    OR lower(coalesce(title,'')) ~ '\\m(أرض|ارض|land|plot)\\M'
+                    OR lower(coalesce(description,'')) ~ '\\m(أرض|ارض|land|plot)\\M'
+                  )
+                """
+            ),
+            {"city": city},
+        ).scalar()
+    except SQLAlchemyError as exc:
+        logger.warning("aqar.listings median query failed: %s", exc)
+        val = None
+
+    if val is not None:
         return float(val), "aqar.listings_median_fallback"
+
+    # Nothing usable from Kaggle
     return None
 
 
