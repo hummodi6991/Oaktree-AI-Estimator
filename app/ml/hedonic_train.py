@@ -113,19 +113,33 @@ def train_and_save() -> dict:
         db.close()
 
     y = df["price_per_m2"]
-    X = df[["city","district","ym","log_area","residential_share"]]
+    X = df[["city", "district", "ym", "log_area", "residential_share"]]
     pre = ColumnTransformer([
-        ("cat", OneHotEncoder(handle_unknown="ignore"), ["city","district","ym"]),
+        ("cat", OneHotEncoder(handle_unknown="ignore"), ["city", "district", "ym"]),
         ("num", "passthrough", ["log_area", "residential_share"]),
     ])
-    model = Pipeline([("pre", pre), ("rf", RandomForestRegressor(n_estimators=300, random_state=42))])
+
+    # Smaller, shallower forest – massively reduces model size but still accurate
+    rf = RandomForestRegressor(
+        n_estimators=120,      # was 300
+        max_depth=18,          # limit tree depth so trees don’t explode in size
+        min_samples_leaf=10,   # avoid tiny leaves that bloat trees
+        n_jobs=-1,
+        random_state=42,
+    )
+
+    model = Pipeline([("pre", pre), ("rf", rf)])
 
     n = len(df)
     cut = max(10, int(n * 0.85))
     model.fit(X.iloc[:cut], y.iloc[:cut])
-    mape = float(mean_absolute_percentage_error(y.iloc[cut:], model.predict(X.iloc[cut:]))) if n > cut else None
+    mape = float(mean_absolute_percentage_error(
+        y.iloc[cut:], model.predict(X.iloc[cut:])
+    )) if n > cut else None
 
-    joblib.dump(model, MODEL_PATH)
+    # Compress the model on disk so GitHub is happy
+    joblib.dump(model, MODEL_PATH, compress=3)
+
     meta = {"mape_holdout": mape, "n_rows": n}
     with open(META_PATH, "w") as f:
         json.dump(meta, f)
@@ -133,7 +147,9 @@ def train_and_save() -> dict:
     with mlflow.start_run(run_name="hedonic_v0"):
         mlflow.log_params({
             "model": "RandomForestRegressor",
-            "n_estimators": 300,
+            "n_estimators": rf.n_estimators,
+            "max_depth": rf.max_depth,
+            "min_samples_leaf": rf.min_samples_leaf,
             "features": "city,district,ym,log_area,residential_share",
         })
         metrics = {"n_rows": n}
