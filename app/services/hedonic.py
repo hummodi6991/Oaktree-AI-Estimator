@@ -14,10 +14,9 @@ def land_price_per_m2(
     since: Optional[date] = None,
     district: Optional[str] = None,
 ) -> Tuple[Optional[float], Dict[str, Any]]:
-    """Return best-guess land price per m² for a city/district.
-
-    Uses Kaggle aqar.fm comps when available; falls back to hedonic model
-    when comps are thin or missing.
+    """
+    Land price per m² using the Kaggle hedonic model as primary source,
+    with Kaggle sale comps as fallback when the model is unavailable.
     """
 
     model_ppm2, model_meta = predict_ppm2(city=city, district=district, on=since)
@@ -35,12 +34,13 @@ def land_price_per_m2(
     method = "none"
     ppm2: Optional[float] = None
 
-    if median_ppm2 is not None and len(comps) >= 5:
+    # NEW LOGIC: prefer hedonic; use comps only as fallback
+    if model_ppm2 is not None:
+        ppm2 = float(model_ppm2)
+        method = "kaggle_hedonic_v0"
+    elif median_ppm2 is not None and len(comps) >= 5:
         ppm2 = float(median_ppm2)
         method = "kaggle_comps_median"
-    elif model_ppm2 is not None:
-        ppm2 = float(model_ppm2)
-        method = "hedonic_model"
     elif median_ppm2 is not None:
         ppm2 = float(median_ppm2)
         method = "kaggle_comps_median_thin"
