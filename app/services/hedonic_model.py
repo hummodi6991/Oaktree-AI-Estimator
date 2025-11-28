@@ -11,6 +11,8 @@ _META_PATH  = os.path.join(_BASE, "hedonic_v0.meta.json")
 
 
 def _norm(s: str | None) -> str:
+    """Match the normalization used in app.ml.hedonic_train."""
+
     return (s or "").strip().lower()
 
 
@@ -39,11 +41,14 @@ def predict_ppm2(
     ref_date = on or date.today()
     ym = ref_date.strftime("%Y-%m")
 
+    city_n = _norm(city)
+    district_n = _norm(district)
+
     df = pd.DataFrame(
         [
             {
-                "city": _norm(city),
-                "district": _norm(district),
+                "city": city_n,
+                "district": district_n,
                 "ym": ym,
                 "log_area": 6.5,  # about 665 m², neutral parcel size
                 "residential_share": 0.0,  # until land_use_stat is fully populated
