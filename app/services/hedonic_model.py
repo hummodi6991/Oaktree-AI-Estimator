@@ -9,6 +9,11 @@ _BASE = os.environ.get("MODEL_DIR", "models")
 _MODEL_PATH = os.path.join(_BASE, "hedonic_v0.pkl")
 _META_PATH  = os.path.join(_BASE, "hedonic_v0.meta.json")
 
+
+def _norm(s: str | None) -> str:
+    return (s or "").strip().lower()
+
+
 def try_load_model():
     global _MODEL, _META
     if _MODEL is None and os.path.exists(_MODEL_PATH):
@@ -37,8 +42,8 @@ def predict_ppm2(
     df = pd.DataFrame(
         [
             {
-                "city": city,
-                "district": district or "",
+                "city": _norm(city),
+                "district": _norm(district),
                 "ym": ym,
                 "log_area": 6.5,  # about 665 m², neutral parcel size
                 "residential_share": 0.0,  # until land_use_stat is fully populated

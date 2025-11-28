@@ -20,6 +20,10 @@ MODEL_PATH = os.path.join(MODEL_DIR, "hedonic_v0.pkl")
 META_PATH  = os.path.join(MODEL_DIR, "hedonic_v0.meta.json")
 
 
+def _norm(s: str | None) -> str:
+    return (s or "").strip().lower()
+
+
 def _ensure_residential_share_view(db: Session) -> None:
     db.execute(
         text(
@@ -82,8 +86,8 @@ def _load_df(db: Session) -> pd.DataFrame:
         items.append(
             {
                 "date": dt,
-                "city": r.city.strip(),
-                "district": (r.district or "").strip(),
+                "city": _norm(r.city),
+                "district": _norm(r.district),
                 "net_area_m2": float(r.net_area_m2 or 0.0),
                 "price_per_m2": float(r.price_per_m2),
                 "residential_share": float(r.residential_share or 0.0),
