@@ -52,8 +52,8 @@ def main() -> None:
                 net_area_m2=_coerce_float(r.get("net_area_m2")),
                 price_total=_coerce_float(r.get("price_total")),
                 price_per_m2=_coerce_float(r.get("price_per_m2")),
-                # keep the CSV source if present, but tag these rows
-                source=str(r.get("source") or SOURCE_NAME),
+                # ALWAYS tag these as our internal Riyadh land comps source
+                source=SOURCE_NAME,
                 source_url=r.get("source_url") if not pd.isna(r.get("source_url")) else None,
                 asof_date=pd.to_datetime(r.get("asof_date")).date()
                 if not pd.isna(r.get("asof_date"))
