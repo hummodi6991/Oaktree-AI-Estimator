@@ -71,8 +71,18 @@ def train_and_save() -> dict:
     finally:
         db.close()
 
-    y = df["price_per_m2"]
-    X = df[["city", "district", "ym", "log_area", "residential_share"]]
+    # Target: prefer explicit price_per_m2; fall back to legacy 'ppm2'
+    if "price_per_m2" in df.columns:
+        y = df["price_per_m2"].astype(float)
+    elif "ppm2" in df.columns:
+        y = df["ppm2"].astype(float)
+    else:
+        raise ValueError(
+            "Training dataframe is missing both 'price_per_m2' and 'ppm2' columns"
+        )
+
+    feature_cols = ["city", "district", "ym", "log_area", "residential_share"]
+    X = df[feature_cols]
 
     pre = ColumnTransformer(
         [
