@@ -1,10 +1,11 @@
 from __future__ import annotations
-from typing import Any, List
+from typing import Any
 import os, json, math
 from datetime import date
 import joblib
 import pandas as pd
 import mlflow
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -13,7 +14,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_percentage_error
 
 from app.db.session import SessionLocal
-from app.models.tables import SaleComp
+from app.models.tables import LandUseResidentialShare, SaleComp
 
 MODEL_DIR = os.environ.get("MODEL_DIR", "models")
 MODEL_PATH = os.path.join(MODEL_DIR, "hedonic_v0.pkl")
@@ -33,8 +34,17 @@ def _load_df(db: Session) -> pd.DataFrame:
     - Cleans obvious junk and outliers
     """
 
-    rows: List[SaleComp] = (
-        db.query(SaleComp)
+    rows = (
+        db.query(
+            SaleComp.asof_date,
+            SaleComp.date,
+            SaleComp.city,
+            SaleComp.district,
+            SaleComp.net_area_m2,
+            SaleComp.price_per_m2,
+            SaleComp.source,
+            LandUseResidentialShare.residential_share,
+        )
         .filter(SaleComp.asset_type == "land")
         .filter(SaleComp.price_per_m2.isnot(None))
         .filter(SaleComp.net_area_m2.isnot(None))
@@ -44,6 +54,11 @@ def _load_df(db: Session) -> pd.DataFrame:
             SaleComp.source.in_(
                 ["kaggle_aqar", "riyadh_land_comps_2024"]
             )
+        )
+        .outerjoin(
+            LandUseResidentialShare,
+            func.lower(SaleComp.city)
+            == func.lower(LandUseResidentialShare.city),
         )
         .all()
     )
@@ -72,8 +87,7 @@ def _load_df(db: Session) -> pd.DataFrame:
                 "ym": ym,
                 "log_area": math.log(area),
                 "price_per_m2": price_per_m2,
-                # simple placeholder for now; we’ll improve with land‑use data later
-                "residential_share": 0.4,
+                "residential_share": float(r.residential_share or 0.4),
                 "source": r.source,
             }
         )
