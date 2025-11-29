@@ -52,7 +52,7 @@ def _load_df(db: Session) -> pd.DataFrame:
                 if r.net_area_m2 and r.net_area_m2 > 0
                 else 6.5,
                 "residential_share": 0.0,  # until land_use stats are wired
-                "ppm2": float(r.price_per_m2),
+                "price_per_m2": float(r.price_per_m2),
             }
         )
 
@@ -71,7 +71,7 @@ def train_and_save() -> dict:
     finally:
         db.close()
 
-    y = df["ppm2"]
+    y = df["price_per_m2"]
     X = df[["city", "district", "ym", "log_area", "residential_share"]]
 
     pre = ColumnTransformer(
