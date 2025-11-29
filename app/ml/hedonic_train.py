@@ -1,10 +1,9 @@
 from __future__ import annotations
-from datetime import date
+from typing import Any, List
 import os, json, math
 import joblib
 import pandas as pd
 import mlflow
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -13,7 +12,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_percentage_error
 
 from app.db.session import SessionLocal
-from app.models.tables import SaleComp, LandUseResidentialShare
+from app.models.tables import SaleComp
 
 MODEL_DIR = os.environ.get("MODEL_DIR", "models")
 MODEL_PATH = os.path.join(MODEL_DIR, "hedonic_v0.pkl")
@@ -24,63 +23,23 @@ def _norm(s: str | None) -> str:
     return (s or "").strip().lower()
 
 
-def _ensure_residential_share_view(db: Session) -> None:
-    db.execute(
-        text(
-            """
-            CREATE OR REPLACE VIEW land_use_residential_share AS
-            SELECT
-                city,
-                sub_municipality,
-                CASE
-                    WHEN NULLIF(SUM(CASE WHEN metric ILIKE '%area%' THEN value ELSE 0 END), 0) IS NULL
-                        THEN NULL
-                    ELSE SUM(
-                        CASE
-                            WHEN metric ILIKE '%area%' AND category ILIKE '%residential%'
-                                THEN value
-                            ELSE 0
-                        END
-                    ) / NULLIF(SUM(CASE WHEN metric ILIKE '%area%' THEN value ELSE 0 END), 0)
-                END AS residential_share
-            FROM land_use_stat
-            WHERE value IS NOT NULL
-            GROUP BY city, sub_municipality
-            """
-        )
-    )
-    db.commit()
-
-
 def _load_df(db: Session) -> pd.DataFrame:
-    _ensure_residential_share_view(db)
-
-    # Only land comps from Kaggle aqar.fm
-    rows = (
-        db.query(
-            SaleComp.date,
-            SaleComp.city,
-            SaleComp.district,
-            SaleComp.net_area_m2,
-            SaleComp.price_per_m2,
-            LandUseResidentialShare.residential_share,
-        )
+    q = (
+        db.query(SaleComp)
         .filter(SaleComp.asset_type == "land")
-        .filter(SaleComp.source == "kaggle_aqar")
-        .outerjoin(
-            LandUseResidentialShare,
-            (SaleComp.city == LandUseResidentialShare.city)
-            & (SaleComp.district == LandUseResidentialShare.sub_municipality),
-        )
-        .all()
+        .filter(SaleComp.price_per_m2.isnot(None))
     )
+    # If you want to be extra explicit about sources:
+    # .filter(SaleComp.source.in_(["kaggle_aqar", "REGA_indicators", "riyadh_land_comps_2024"]))
 
-    items: list[dict] = []
+    rows: List[SaleComp] = q.all()
+
+    items: list[dict[str, Any]] = []
     for r in rows:
-        if not r.price_per_m2 or not r.city:
+        if not r.city or not r.price_per_m2 or r.price_per_m2 <= 0:
             continue
 
-        dt = r.date or date.today()
+        dt = r.date
         ym = dt.strftime("%Y-%m")
 
         items.append(
@@ -88,23 +47,19 @@ def _load_df(db: Session) -> pd.DataFrame:
                 "date": dt,
                 "city": _norm(r.city),
                 "district": _norm(r.district),
-                "net_area_m2": float(r.net_area_m2 or 0.0),
-                "price_per_m2": float(r.price_per_m2),
-                "residential_share": float(r.residential_share or 0.0),
                 "ym": ym,
+                "log_area": math.log(float(r.net_area_m2))
+                if r.net_area_m2 and r.net_area_m2 > 0
+                else 6.5,
+                "residential_share": 0.0,  # until land_use stats are wired
+                "ppm2": float(r.price_per_m2),
             }
         )
 
     df = pd.DataFrame(items)
     if df.empty:
-        raise RuntimeError("No sale_comp rows with price_per_m2")
+        raise RuntimeError("No sale_comp rows available for hedonic training")
 
-    df["log_area"] = df["net_area_m2"].apply(lambda x: math.log(max(1.0, x)))
-    df["residential_share"] = pd.to_numeric(df["residential_share"], errors="coerce")
-    if df["residential_share"].notna().any():
-        df["residential_share"] = df["residential_share"].fillna(df["residential_share"].median())
-    else:
-        df["residential_share"] = 0.0
     return df
 
 
@@ -116,7 +71,7 @@ def train_and_save() -> dict:
     finally:
         db.close()
 
-    y = df["price_per_m2"]
+    y = df["ppm2"]
     X = df[["city", "district", "ym", "log_area", "residential_share"]]
 
     pre = ColumnTransformer(
