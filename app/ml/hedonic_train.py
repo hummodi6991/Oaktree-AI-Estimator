@@ -22,7 +22,8 @@ META_PATH  = os.path.join(MODEL_DIR, "hedonic_v0.meta.json")
 
 
 def _norm(s: str | None) -> str:
-    return (s or "").strip()
+    # Keep this in sync with app.services.hedonic_model._norm
+    return (s or "").strip().lower()
 
 
 def _load_df(db: Session) -> pd.DataFrame:
