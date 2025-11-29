@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Any, List
 import os, json, math
+from datetime import date
 import joblib
 import pandas as pd
 import mlflow
@@ -20,45 +21,70 @@ META_PATH  = os.path.join(MODEL_DIR, "hedonic_v0.meta.json")
 
 
 def _norm(s: str | None) -> str:
-    return (s or "").strip().lower()
+    return (s or "").strip()
 
 
 def _load_df(db: Session) -> pd.DataFrame:
-    q = (
+    """
+    Build the training dataframe from sale_comp.
+
+    - Uses Riyadh land comps 2024 + Kaggle aqar land rows
+    - Drops REGA indicator rows (they are not sale comps)
+    - Cleans obvious junk and outliers
+    """
+
+    rows: List[SaleComp] = (
         db.query(SaleComp)
         .filter(SaleComp.asset_type == "land")
         .filter(SaleComp.price_per_m2.isnot(None))
+        .filter(SaleComp.net_area_m2.isnot(None))
+        .filter(SaleComp.price_per_m2 > 0)
+        .filter(SaleComp.net_area_m2 > 0)
+        .filter(
+            SaleComp.source.in_(
+                ["kaggle_aqar", "riyadh_land_comps_2024"]
+            )
+        )
+        .all()
     )
-    # If you want to be extra explicit about sources:
-    # .filter(SaleComp.source.in_(["kaggle_aqar", "REGA_indicators", "riyadh_land_comps_2024"]))
-
-    rows: List[SaleComp] = q.all()
 
     items: list[dict[str, Any]] = []
     for r in rows:
-        if not r.city or not r.price_per_m2 or r.price_per_m2 <= 0:
+        city = _norm(r.city)
+        district = _norm(r.district) or f"{city} – citywide"
+
+        if not city:
             continue
 
-        dt = r.date
-        ym = dt.strftime("%Y-%m")
+        asof = r.asof_date or r.date or date(2024, 1, 1)
+        ym = asof.strftime("%Y-%m")
+
+        area = float(r.net_area_m2)
+        price_per_m2 = float(r.price_per_m2)
+
+        if area <= 0 or price_per_m2 <= 0:
+            continue
 
         items.append(
             {
-                "date": dt,
-                "city": _norm(r.city),
-                "district": _norm(r.district),
+                "city": city,
+                "district": district,
                 "ym": ym,
-                "log_area": math.log(float(r.net_area_m2))
-                if r.net_area_m2 and r.net_area_m2 > 0
-                else 6.5,
-                "residential_share": 0.0,  # until land_use stats are wired
-                "price_per_m2": float(r.price_per_m2),
+                "log_area": math.log(area),
+                "price_per_m2": price_per_m2,
+                # simple placeholder for now; we’ll improve with land‑use data later
+                "residential_share": 0.4,
+                "source": r.source,
             }
         )
 
     df = pd.DataFrame(items)
     if df.empty:
-        raise RuntimeError("No sale_comp rows available for hedonic training")
+        raise RuntimeError("No training data for hedonic model")
+
+    # Robust outlier clip so one crazy comp doesn’t dominate
+    lo, hi = df["price_per_m2"].quantile([0.01, 0.99])
+    df = df[(df["price_per_m2"] >= lo) & (df["price_per_m2"] <= hi)]
 
     return df
 
