@@ -39,25 +39,14 @@ def land_price(
             # Missing layer etc. → ignore and fall back to Kaggle-based inference
             pass
 
-    # 2) Fallback: nearest Kaggle Aqar listing
-    if (district is None) and (lng is not None) and (lat is not None):
-        try:
-            inferred = geo_svc.infer_district_from_aqar_listings(
-                db, city=city, lon=lng, lat=lat
-            )
-            if inferred:
-                district = inferred
-        except Exception:
-            # Do not block pricing if the Kaggle lookup fails
-            pass
-
-    result = price_from_kaggle_hedonic(db, city, district)
+    result = price_from_kaggle_hedonic(db, city, district, lon=lng, lat=lat)
     if not result:
         raise HTTPException(
             status_code=404, detail="No price available from Kaggle hedonic model"
         )
 
-    value, method = result
+    value, method, meta = result
+    district = meta.get("district") or district
 
     try:
         store_quote(
@@ -78,4 +67,5 @@ def land_price(
         "district": district,
         "sar_per_m2": value,
         "method": method,
+        "meta": meta,
     }

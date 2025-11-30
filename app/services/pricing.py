@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.models.tables import PriceQuote
 from app.services.comps import fetch_sale_comps, summarize_ppm2
 from app.services.hedonic import land_price_per_m2
+from app.services.kaggle_district import infer_district_from_kaggle
 
 logger = logging.getLogger(__name__)
 
@@ -98,18 +99,36 @@ def price_from_aqar(db: Session, city: str | None, district: str | None):
 
 
 def price_from_kaggle_hedonic(
-    db: Session, city: str | None, district: str | None
-) -> Optional[Tuple[float, str]]:
+    db: Session,
+    city: str | None,
+    district: str | None,
+    *,
+    lon: float | None = None,
+    lat: float | None = None,
+) -> Optional[Tuple[float, str, dict]]:
     """Wrapper that proxies land pricing to the hedonic model."""
 
     if not city:
         return None
 
-    ppm2, _meta = land_price_per_m2(db, city=city, since=None, district=district)
+    inferred_dist: str | None = None
+    dist_m: float | None = None
+
+    if district is None and lon is not None and lat is not None:
+        inferred_dist, dist_m = infer_district_from_kaggle(
+            db, lon=lon, lat=lat, city=city
+        )
+        district = inferred_dist
+
+    ppm2, meta = land_price_per_m2(db, city=city, since=None, district=district)
     if not ppm2:
         return None
 
-    return float(ppm2), "kaggle_hedonic_v0"
+    meta = dict(meta or {})
+    meta["district_from"] = "request" if inferred_dist is None else "kaggle_nearest"
+    meta["kaggle_nearest_distance_m"] = dist_m
+
+    return float(ppm2), "kaggle_hedonic_v0", meta
 
 
 def store_quote(
