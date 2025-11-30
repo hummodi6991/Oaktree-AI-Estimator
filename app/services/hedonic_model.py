@@ -37,7 +37,12 @@ def predict_ppm2(
     ym = ref_date.strftime("%Y-%m")
 
     city_n = norm_city(city)
+    if not city_n:
+        city_n = norm_city(default_city) or default_city
+
     district_n = norm_district(city, district)
+    if not district_n:
+        district_n = f"{city_n} – citywide"
 
     df = pd.DataFrame(
         [
