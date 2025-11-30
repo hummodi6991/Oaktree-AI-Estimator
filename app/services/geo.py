@@ -144,53 +144,27 @@ def _landuse_code_from_label(label: str) -> str | None:
 
 
 def infer_district_from_aqar_listings(
-    db: Session,
-    point,
-    city: str | None = None,
-    max_distance_km: float = 3.0,
+    db: Session, city: str, lon: float, lat: float
 ) -> str | None:
-    """
-    Infer a district name from the nearest Kaggle Aqar listing.
+    """Infer a district name from the nearest Kaggle Aqar listing."""
 
-    - Uses aqar.listings (Kaggle scrape) which should have lat/lng columns.
-    - Restricts to the requested city when provided.
-    - Ignores results further than `max_distance_km` (to avoid crazy matches).
-    """
+    row = db.execute(
+        text(
+            """
+            SELECT district
+            FROM aqar.listings
+            WHERE price_per_sqm IS NOT NULL
+              AND lat IS NOT NULL
+              AND lon IS NOT NULL
+              AND (city = :city OR lower(city) = lower(:city))
+            ORDER BY ST_DistanceSphere(
+                     ST_SetSRID(ST_MakePoint(:lon, :lat), 4326),
+                     ST_SetSRID(ST_MakePoint(lon,  lat),  4326)
+            )
+            LIMIT 1
+            """
+        ),
+        {"lon": lon, "lat": lat, "city": city},
+    ).first()
 
-    if point is None:
-        return None
-
-    lon = float(point.x)
-    lat = float(point.y)
-
-    # Adjust column names here if your table uses different ones,
-    # e.g. "longitude"/"latitude" instead of "lng"/"lat".
-    sql = text(
-        """
-        SELECT district,
-               ST_DistanceSphere(
-                 ST_SetSRID(ST_MakePoint(:lon, :lat), 4326),
-                 ST_SetSRID(ST_MakePoint(lng, lat), 4326)
-               ) AS dist_m
-        FROM aqar.listings
-        WHERE price_per_sqm IS NOT NULL
-          AND lat IS NOT NULL
-          AND lng IS NOT NULL
-          AND (:city IS NULL OR lower(city) = lower(:city))
-        ORDER BY dist_m
-        LIMIT 1
-        """
-    )
-
-    row = db.execute(sql, {"lon": lon, "lat": lat, "city": city}).first()
-    if not row:
-        return None
-
-    dist_m = row.dist_m
-    if dist_m is not None and dist_m > max_distance_km * 1000:
-        logger.info(
-            "Nearest Aqar listing too far away (%.1f m); not using its district", dist_m
-        )
-        return None
-
-    return row.district
+    return row[0] if row else None
