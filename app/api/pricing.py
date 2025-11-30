@@ -23,26 +23,52 @@ def land_price(
     lat: float | None = Query(default=None, description="Centroid latitude (WGS84)"),
     db: Session = Depends(get_db),
 ):
-    if (district is None) and (lng is not None) and (lat is not None):
+    geom = None
+    if lng is not None and lat is not None:
+        geom = Point(lng, lat)
+
+    # 1) Try polygons, if you ever load rydpolygons in future
+    if (district is None) and geom is not None:
         try:
             inferred = geo_svc.infer_district_from_features(
-                db, Point(lng, lat), layer="rydpolygons"
+                db, geom, layer="rydpolygons"
             )
             if inferred:
                 district = inferred
         except Exception:
+            # Missing layer etc. → ignore and fall back to Kaggle-based inference
+            pass
+
+    # 2) Fallback: nearest Kaggle Aqar listing
+    if (district is None) and geom is not None:
+        try:
+            inferred = geo_svc.infer_district_from_aqar_listings(
+                db, geom, city=city
+            )
+            if inferred:
+                district = inferred
+        except Exception:
+            # Do not block pricing if the Kaggle lookup fails
             pass
 
     result = price_from_kaggle_hedonic(db, city, district)
     if not result:
-        # Clean “no data” response instead of a 500
         raise HTTPException(
             status_code=404, detail="No price available from Kaggle hedonic model"
         )
 
     value, method = result
+
     try:
-        store_quote(db, provider or "kaggle_hedonic", city, district, parcel_id, value, method)
+        store_quote(
+            db,
+            provider or "kaggle_hedonic",
+            city,
+            district,
+            parcel_id,
+            value,
+            method,
+        )
     except Exception:
         pass
 
