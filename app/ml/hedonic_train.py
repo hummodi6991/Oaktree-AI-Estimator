@@ -15,16 +15,11 @@ from sklearn.metrics import mean_absolute_percentage_error
 
 from app.db.session import SessionLocal
 from app.models.tables import LandUseResidentialShare, SaleComp
+from app.ml.name_normalization import norm_city, norm_district
 
 MODEL_DIR = os.environ.get("MODEL_DIR", "models")
 MODEL_PATH = os.path.join(MODEL_DIR, "hedonic_v0.pkl")
 META_PATH  = os.path.join(MODEL_DIR, "hedonic_v0.meta.json")
-
-
-def _norm(s: str | None) -> str:
-    # Keep this in sync with app.services.hedonic_model._norm
-    return (s or "").strip().lower()
-
 
 def _load_df(db: Session) -> pd.DataFrame:
     """
@@ -66,8 +61,8 @@ def _load_df(db: Session) -> pd.DataFrame:
 
     items: list[dict[str, Any]] = []
     for r in rows:
-        city = _norm(r.city)
-        district = _norm(r.district) or f"{city} – citywide"
+        city = norm_city(r.city)
+        district = norm_district(r.city, r.district) or f"{city} – citywide"
 
         if not city:
             continue
