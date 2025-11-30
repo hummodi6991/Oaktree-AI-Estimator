@@ -40,10 +40,10 @@ def land_price(
             pass
 
     # 2) Fallback: nearest Kaggle Aqar listing
-    if (district is None) and geom is not None:
+    if (district is None) and (lng is not None) and (lat is not None):
         try:
             inferred = geo_svc.infer_district_from_aqar_listings(
-                db, geom, city=city
+                db, city=city, lon=lng, lat=lat
             )
             if inferred:
                 district = inferred
