@@ -4,17 +4,12 @@ from datetime import date
 from typing import Any, Dict, Optional
 import pandas as pd
 
+from app.ml.name_normalization import norm_city, norm_district
+
 _MODEL, _META = None, {}
 _BASE = os.environ.get("MODEL_DIR", "models")
 _MODEL_PATH = os.path.join(_BASE, "hedonic_v0.pkl")
 _META_PATH  = os.path.join(_BASE, "hedonic_v0.meta.json")
-
-
-def _norm(s: str | None) -> str:
-    """Match the normalization used in app.ml.hedonic_train."""
-
-    return (s or "").strip().lower()
-
 
 def try_load_model():
     global _MODEL, _META
@@ -41,8 +36,8 @@ def predict_ppm2(
     ref_date = on or date.today()
     ym = ref_date.strftime("%Y-%m")
 
-    city_n = _norm(city)
-    district_n = _norm(district)
+    city_n = norm_city(city)
+    district_n = norm_district(city, district)
 
     df = pd.DataFrame(
         [
