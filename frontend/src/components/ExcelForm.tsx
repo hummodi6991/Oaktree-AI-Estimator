@@ -39,6 +39,10 @@ type ExcelResult = {
     grand_total_capex: number;
     y1_income: number;
   };
+  breakdown: Record<string, any>;
+  inputs: any;
+  siteArea?: number;
+  landPrice?: { ppm2?: number; source_type?: string };
   summary: string;
 };
 
@@ -130,9 +134,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     setError(null);
     setExcelResult(null);
     try {
+      const currentInputs = inputs;
       const result = await makeEstimate({
         geometry: parcel.geometry,
-        excelInputs: inputs,
+        excelInputs: currentInputs,
         assetProgram,
         strategy: "build_to_sell",
         city: "Riyadh",
@@ -156,6 +161,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           grand_total_capex: costs.grand_total_capex ?? 0,
           y1_income: costs.y1_income ?? 0,
         },
+        breakdown: notes.excel_breakdown || {},
+        inputs: currentInputs,
+        siteArea: notes.site_area_m2,
+        landPrice: notes.excel_land_price,
         summary: notes.summary ?? "",
       });
     } catch (err) {
@@ -163,6 +172,65 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       setError(message);
     }
   }
+
+  const breakdown = excelResult?.breakdown || {};
+  const builtArea = breakdown.built_area || {};
+  const nla = breakdown.nla || {};
+  const directCost = breakdown.direct_cost || {};
+  const incomeComponents = breakdown.y1_income_components || {};
+  const usedInputs = excelResult?.inputs || {};
+  const unitCost = usedInputs.unit_cost || {};
+  const rentRates = usedInputs.rent_sar_m2_yr || {};
+  const efficiency = usedInputs.efficiency || {};
+  const contingencyPct = usedInputs.contingency_pct ?? null;
+  const consultantsPct = usedInputs.consultants_pct ?? null;
+  const transactionPct = usedInputs.transaction_pct ?? null;
+  const fitoutRate = usedInputs.fitout_rate ?? null;
+  const siteArea = excelResult?.siteArea ?? null;
+  const landCost = excelResult?.costs?.land_cost ?? null;
+  const landPricePpm2 =
+    excelResult?.landPrice?.ppm2 ??
+    (siteArea && siteArea > 0 && landCost != null && landCost > 0
+      ? landCost / siteArea
+      : null);
+  const fitoutArea = Object.entries(builtArea).reduce(
+    (acc, [key, value]) => {
+      const numericValue = typeof value === "number" ? value : Number(value) || 0;
+      return key.toLowerCase().startsWith("basement") ? acc : acc + numericValue;
+    },
+    0,
+  );
+  const constructionSubtotal = typeof breakdown.sub_total === "number" ? breakdown.sub_total : 0;
+  const contingencyAmount = typeof breakdown.contingency_cost === "number" ? breakdown.contingency_cost : 0;
+  const consultantsBase = constructionSubtotal + contingencyAmount;
+
+  const directNote = Object.keys(directCost)
+    .map((key) => {
+      const area = builtArea[key] ?? 0;
+      const costPerUnit = unitCost[key] ?? 0;
+      return `${key}: ${area.toLocaleString()} m² × ${costPerUnit.toLocaleString()} SAR/m²`;
+    })
+    .filter(Boolean)
+    .join("; ");
+
+  const incomeNote = Object.keys(incomeComponents)
+    .map((key) => {
+      const nlaVal = nla[key] ?? 0;
+      const efficiencyVal = efficiency[key] ?? null;
+      const baseArea = builtArea[key] ?? null;
+      const efficiencyText =
+        efficiencyVal != null && baseArea != null
+          ? `NLA ${nlaVal.toLocaleString()} m² (built area ${baseArea.toLocaleString()} m² × efficiency ${(efficiencyVal * 100).toFixed(0)}%)`
+          : `NLA ${nlaVal.toLocaleString()} m²`;
+      const rent = rentRates[key] ?? 0;
+      return `${key}: ${efficiencyText} × ${rent.toLocaleString()} SAR/m²/yr`;
+    })
+    .filter(Boolean)
+    .join("; ");
+
+  const noteStyle = { fontSize: "0.8rem", color: "#cbd5f5" } as const;
+  const formatPercent = (value: number | null) =>
+    value != null ? `${(value * 100).toFixed(1)}%` : "n/a";
 
   return (
     <div>
@@ -211,11 +279,23 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           </p>
 
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", fontWeight: 600 }}>Item</th>
+                <th style={{ textAlign: "right", fontWeight: 600 }}>Amount</th>
+                <th style={{ textAlign: "left", fontWeight: 600 }}>How we calculated it</th>
+              </tr>
+            </thead>
             <tbody>
               <tr>
                 <td>Land cost</td>
                 <td style={{ textAlign: "right" }}>
                   {excelResult.costs.land_cost.toLocaleString()} SAR
+                </td>
+                <td style={noteStyle}>
+                  {siteArea && landPricePpm2
+                    ? `Site area ${siteArea.toLocaleString()} m² × ${landPricePpm2.toLocaleString()} SAR/m² (${excelResult?.landPrice?.source_type || "input"})`
+                    : "Site area × land price per m²"}
                 </td>
               </tr>
               <tr>
@@ -223,11 +303,21 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                 <td style={{ textAlign: "right" }}>
                   {excelResult.costs.construction_direct_cost.toLocaleString()} SAR
                 </td>
+                <td style={noteStyle}>
+                  {directNote
+                    ? `${directNote}; sums to construction subtotal of ${constructionSubtotal.toLocaleString()} SAR before fit-out`
+                    : "Sum of built area × unit cost for each use"}
+                </td>
               </tr>
               <tr>
                 <td>Fit-out</td>
                 <td style={{ textAlign: "right" }}>
                   {excelResult.costs.fitout_cost.toLocaleString()} SAR
+                </td>
+                <td style={noteStyle}>
+                  {fitoutRate != null
+                    ? `Non-basement area ${fitoutArea.toLocaleString()} m² × ${fitoutRate.toLocaleString()} SAR/m²`
+                    : "Fit-out applied to above-ground areas"}
                 </td>
               </tr>
               <tr>
@@ -235,11 +325,17 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                 <td style={{ textAlign: "right" }}>
                   {excelResult.costs.contingency_cost.toLocaleString()} SAR
                 </td>
+                <td style={noteStyle}>
+                  Subtotal {constructionSubtotal.toLocaleString()} SAR × contingency {formatPercent(contingencyPct)}
+                </td>
               </tr>
               <tr>
                 <td>Consultants</td>
                 <td style={{ textAlign: "right" }}>
                   {excelResult.costs.consultants_cost.toLocaleString()} SAR
+                </td>
+                <td style={noteStyle}>
+                  (Subtotal + contingency) {consultantsBase.toLocaleString()} SAR × consultants {formatPercent(consultantsPct)}
                 </td>
               </tr>
               <tr>
@@ -247,11 +343,17 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                 <td style={{ textAlign: "right" }}>
                   {excelResult.costs.feasibility_fee.toLocaleString()} SAR
                 </td>
+                <td style={noteStyle}>
+                  Fixed allowance from inputs: {(usedInputs.feasibility_fee ?? 0).toLocaleString()} SAR
+                </td>
               </tr>
               <tr>
                 <td>Transaction costs</td>
                 <td style={{ textAlign: "right" }}>
                   {excelResult.costs.transaction_cost.toLocaleString()} SAR
+                </td>
+                <td style={noteStyle}>
+                  Land cost {excelResult.costs.land_cost.toLocaleString()} SAR × transaction {formatPercent(transactionPct)}
                 </td>
               </tr>
               <tr>
@@ -259,17 +361,27 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                 <td style={{ textAlign: "right" }}>
                   <strong>{excelResult.costs.grand_total_capex.toLocaleString()} SAR</strong>
                 </td>
+                <td style={noteStyle}>
+                  Land + construction + fit-out + contingency + consultants + feasibility + transaction costs
+                </td>
               </tr>
               <tr>
                 <td>Year 1 net income</td>
                 <td style={{ textAlign: "right" }}>
                   {excelResult.costs.y1_income.toLocaleString()} SAR
                 </td>
+                <td style={noteStyle}>
+                  {incomeNote ||
+                    "Net leasable area per use × rent rate (SAR/m²/yr), using efficiency to convert built area to NLA"}
+                </td>
               </tr>
               <tr>
                 <td><strong>Unlevered ROI</strong></td>
                 <td style={{ textAlign: "right" }}>
                   <strong>{(excelResult.roi * 100).toFixed(1)}%</strong>
+                </td>
+                <td style={noteStyle}>
+                  Year 1 net income ÷ total capex
                 </td>
               </tr>
             </tbody>
