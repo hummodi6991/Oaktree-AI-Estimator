@@ -265,7 +265,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             borderRadius: "0.5rem",
             background: "rgba(0,0,0,0.3)",
             color: "white",
-            maxWidth: "480px",
+            maxWidth: "720px",
             fontSize: "0.9rem",
           }}
         >

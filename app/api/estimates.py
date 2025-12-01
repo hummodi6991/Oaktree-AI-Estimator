@@ -344,8 +344,8 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         summary_text = (
             f"For a site of {site_area_m2:,.0f} m² in "
             f"{district or (req.city or 'the selected city')}, "
-            f"land is valued at {excel['land_cost']:,.0f} SAR based on the Kaggle aqar.fm "
-            f"median land price/m². Construction and fit-out total "
+            f"land is valued at {excel['land_cost']:,.0f} SAR using the Kaggle hedonic model. "
+            f"Construction and fit-out total "
             f"{excel['sub_total']:,.0f} SAR, with contingency, consultants, "
             f"feasibility fees and transaction costs bringing total capex to "
             f"{excel['grand_total_capex']:,.0f} SAR. Year 1 net income of "
