@@ -108,52 +108,42 @@ def price_from_kaggle_hedonic(
     lat: Optional[float] = None,
     district: Optional[str] = None,
 ) -> Tuple[Optional[float], str, Dict[str, Any]]:
-    """
-    Hedonic land price for Kaggle provider.
-
-    - If district is missing but we have lon/lat, infer the district from the
-      nearest Kaggle aqar.fm listing.
-    - Always call the hedonic model with the (possibly inferred) district.
-    - Return rich meta so the API can show what happened.
-    """
-
     inferred_district: Optional[str] = None
-    distance_m: Optional[float] = None
+    inferred_distance: Optional[float] = None
+    hedonic_meta: Optional[Dict[str, Any]] = None
 
-    # Try to infer district from Kaggle listings when we don't already have one
-    if (not district) and city and (lon is not None) and (lat is not None):
+    if not city:
+        return None, "kaggle_hedonic_v0", {
+            "source": "kaggle_hedonic_v0",
+            "district": district,
+            "inferred_district": inferred_district,
+            "distance_m": inferred_distance,
+            "hedonic_meta": hedonic_meta,
+        }
+
+    # Try to infer a district from Kaggle listings when we only have coords
+    if district is None and lon is not None and lat is not None:
         try:
-            inferred_district, distance_m = infer_district_from_kaggle(
+            inferred_district, inferred_distance = infer_district_from_kaggle(
                 db, lon=lon, lat=lat, city=city
             )
+            if inferred_district:
+                district = inferred_district
         except Exception as exc:  # noqa: BLE001 - Keep the API robust
             # Keep the API robust: if inference fails, just fall back to city-only
             logger.warning("infer_district_from_kaggle failed: %s", exc)
-            inferred_district, distance_m = None, None
 
-        if inferred_district:
-            district = inferred_district
-
-    # Call hedonic model
-    ppm2, hedonic_meta = land_price_per_m2(
-        db,
-        city=city or "Riyadh",
-        since=None,
-        district=district,
-    )
+    ppm2, hedonic_meta = land_price_per_m2(db, city=city, since=None, district=district)
+    value = float(ppm2) if ppm2 is not None else None
 
     meta: Dict[str, Any] = {
         "source": "kaggle_hedonic_v0",
         "district": district,
         "inferred_district": inferred_district,
-        "distance_m": distance_m,
+        "distance_m": inferred_distance,
         "hedonic_meta": hedonic_meta,
     }
-
-    if ppm2 is None:
-        return None, "kaggle_hedonic_v0", meta
-
-    return float(ppm2), "kaggle_hedonic_v0", meta
+    return value, "kaggle_hedonic_v0", meta
 
 
 def store_quote(
