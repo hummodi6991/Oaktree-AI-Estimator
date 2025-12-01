@@ -39,19 +39,18 @@ def land_price(
             # Missing layer etc. → ignore and fall back to Kaggle-based inference
             pass
 
-    result = price_from_kaggle_hedonic(db, city, district, lon=lng, lat=lat)
-    if not result:
+    value, method, meta = price_from_kaggle_hedonic(
+        db,
+        city=city,
+        lon=lng,
+        lat=lat,
+        district=district,
+    )
+    if value is None:
         raise HTTPException(
             status_code=404,
             detail="No land price estimate available for this location.",
         )
-
-    meta: dict = {}
-    if len(result) == 3:
-        value, method, meta = result
-    else:
-        value, method = result
-        meta = {}
 
     district = meta.get("district") or district
 
@@ -74,5 +73,5 @@ def land_price(
         "district": district,
         "sar_per_m2": value,
         "method": method,
-        "meta": meta,
+        "kaggle_hedonic_v0_meta": meta,
     }
