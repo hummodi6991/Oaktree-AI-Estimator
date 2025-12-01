@@ -105,30 +105,27 @@ def price_from_kaggle_hedonic(
     *,
     lon: float | None = None,
     lat: float | None = None,
-) -> Optional[Tuple[float, str, dict]]:
-    """Wrapper that proxies land pricing to the hedonic model."""
+) -> Optional[Tuple[float, str]]:
+    """Wrapper that proxies land pricing to the hedonic model.
+
+    Returns (value, method) where value is SAR/m².
+    """
 
     if not city:
         return None
 
-    inferred_dist: str | None = None
-    dist_m: float | None = None
-
     if district is None and lon is not None and lat is not None:
-        inferred_dist, dist_m = infer_district_from_kaggle(
+        inferred_dist, _dist_m = infer_district_from_kaggle(
             db, lon=lon, lat=lat, city=city
         )
-        district = inferred_dist
+        if inferred_dist:
+            district = inferred_dist
 
-    ppm2, meta = land_price_per_m2(db, city=city, since=None, district=district)
+    ppm2, _meta = land_price_per_m2(db, city=city, since=None, district=district)
     if not ppm2:
         return None
 
-    meta = dict(meta or {})
-    meta["district_from"] = "request" if inferred_dist is None else "kaggle_nearest"
-    meta["kaggle_nearest_distance_m"] = dist_m
-
-    return float(ppm2), "kaggle_hedonic_v0", meta
+    return float(ppm2), "kaggle_hedonic_v0"
 
 
 def store_quote(
