@@ -45,7 +45,12 @@ def land_price(
             status_code=404, detail="No price available from Kaggle hedonic model"
         )
 
-    value, method, meta = result
+    meta: dict = {}
+    if len(result) == 3:
+        value, method, meta = result
+    else:
+        value, method = result
+
     district = meta.get("district") or district
 
     try:
