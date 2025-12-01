@@ -15,7 +15,7 @@ def land_price(
     district: str | None = Query(default=None),
     # Kept only for UI compatibility – backend always uses the Kaggle hedonic model.
     provider: str = Query(
-        default="kaggle_hedonic",
+        default="kaggle_hedonic_v0",
         description="Provider label from the UI. Backend always uses Kaggle hedonic model.",
     ),
     parcel_id: str | None = Query(default=None),
@@ -42,7 +42,8 @@ def land_price(
     result = price_from_kaggle_hedonic(db, city, district, lon=lng, lat=lat)
     if not result:
         raise HTTPException(
-            status_code=404, detail="No price available from Kaggle hedonic model"
+            status_code=404,
+            detail="No land price estimate available for this location.",
         )
 
     meta: dict = {}
@@ -50,13 +51,14 @@ def land_price(
         value, method, meta = result
     else:
         value, method = result
+        meta = {}
 
     district = meta.get("district") or district
 
     try:
         store_quote(
             db,
-            provider or "kaggle_hedonic",
+            provider or "kaggle_hedonic_v0",
             city,
             district,
             parcel_id,
@@ -67,7 +69,7 @@ def land_price(
         pass
 
     return {
-        "provider": provider or "kaggle_hedonic",
+        "provider": provider or "kaggle_hedonic_v0",
         "city": city,
         "district": district,
         "sar_per_m2": value,
