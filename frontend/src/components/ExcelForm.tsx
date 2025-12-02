@@ -6,7 +6,7 @@ import { landPrice, makeEstimate } from "../api";
 const PROVIDERS = [
   {
     value: "aqar" as const,
-    label: "Saudi Arabia Real Estate dataset – Kaggle (aqar.fm scrape)",
+    label: "Hedonic model (trained partly on Kaggle data)",
   },
 ];
 
