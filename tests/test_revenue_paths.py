@@ -67,29 +67,7 @@ def client(session_factory):
 
 @pytest.fixture(autouse=True)
 def stub_costs_and_land(monkeypatch):
-    monkeypatch.setattr(
-        estimates_api,
-        "land_price_per_m2",
-        lambda *args, **kwargs: (2800.0, {"n_comps": 0, "model": {}}),
-    )
-    monkeypatch.setattr(
-        estimates_api,
-        "compute_hard_costs",
-        lambda *args, **kwargs: {"total": 1000.0, "cci_scalar": 1.0, "lines": []},
-    )
-    monkeypatch.setattr(
-        estimates_api,
-        "compute_financing",
-        lambda *args, **kwargs: {
-            "interest": 100.0,
-            "apr": 0.08,
-            "ltv": 0.6,
-            "months": 18,
-            "principal": 600.0,
-        },
-    )
     monkeypatch.setattr(estimates_api, "top_sale_comps", lambda *args, **kwargs: [])
-    monkeypatch.setattr(estimates_api, "heuristic_drivers", lambda *args, **kwargs: [])
 
 
 def _simple_polygon():
