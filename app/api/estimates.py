@@ -1,35 +1,21 @@
 from typing import Any, Dict, List, Literal, Optional
 from datetime import date
-import json, uuid, csv, io, os
+import json, uuid, csv, io
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, ConfigDict
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
 from app.services import geo as geo_svc
-from app.services import indicators as indicators_svc
-from app.services.hedonic import land_price_per_m2
-from app.services.costs import compute_hard_costs
-from app.services.financing import compute_financing
-from app.services.proforma import assemble
 from app.services.excel_method import compute_excel_estimate
-from app.services.simulate import p_bands
 from app.services.explain import (
-    heuristic_drivers,
-    rent_heuristic_drivers,
-    top_rent_comps,
     top_sale_comps,
     to_comp_dict,
-    to_rent_comp_dict,
 )
 from app.services.pdf import build_memo_pdf
-from app.services.residual import residual_land_value
-from app.services.cashflow import build_equity_cashflow
-from app.services.far_rules import lookup_far
-from app.services.pricing import price_from_aqar
-from app.models.tables import EstimateHeader, EstimateLine, LandUseStat
+from app.services.pricing import price_from_kaggle_hedonic, price_from_aqar
+from app.models.tables import EstimateHeader, EstimateLine
 
 router = APIRouter(tags=["estimates"])
 
@@ -304,11 +290,25 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         except Exception:
             override_f = 0.0
         if override_f <= 0.0:
-            # Use aqar price (district → city fallback)
-            aqar = price_from_aqar(db, req.city or "Riyadh", district)
-            if aqar:
-                ppm2_val, ppm2_src = float(aqar[0]), aqar[1]
+            # Use Kaggle hedonic v0 model (same logic as /v1/pricing/land)
+            value, method, meta = price_from_kaggle_hedonic(
+                db,
+                city=req.city or "Riyadh",
+                lon=None,
+                lat=None,
+                district=district,
+            )
+            if value is not None:
+                ppm2_val = float(value)
+                ppm2_src = method or (meta.get("source") if isinstance(meta, dict) else "kaggle_hedonic_v0")
                 excel_inputs["land_price_sar_m2"] = ppm2_val
+            else:
+                # Fallback: previous Kaggle median logic (aqar.mv_city_price_per_sqm / aqar.listings)
+                aqar = price_from_aqar(db, req.city or "Riyadh", district)
+                if aqar:
+                    ppm2_val, ppm2_src = float(aqar[0]), aqar[1]
+                    excel_inputs["land_price_sar_m2"] = ppm2_val
+
         else:
             ppm2_val, ppm2_src = override_f, "Manual"
 
@@ -341,13 +341,22 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "y1_income": float(excel["y1_income"]),
             "roi": float(excel["roi"]),
         }
+        if ppm2_src.startswith("kaggle_hedonic"):
+            land_source_label = "the Kaggle hedonic v0 land price model"
+        elif ppm2_src.startswith("aqar."):
+            land_source_label = "Kaggle aqar.fm median land price/m²"
+        elif ppm2_src == "Manual":
+            land_source_label = "a manually entered land price"
+        else:
+            land_source_label = ppm2_src or "the configured land price source"
+
         summary_text = (
             f"For a site of {site_area_m2:,.0f} m² in "
             f"{district or (req.city or 'the selected city')}, "
-            f"land is valued at {excel['land_cost']:,.0f} SAR using the Kaggle hedonic model. "
+            f"land is valued at {excel['land_cost']:,.0f} SAR based on {land_source_label}. "
             f"Construction and fit-out total "
-            f"{excel['sub_total']:,.0f} SAR, with contingency, consultants, "
-            f"feasibility fees and transaction costs bringing total capex to "
+            f"{excel['sub_total']:,.0f} SAR, with contingency, "
+            f"consultants, feasibility fees and transaction costs bringing total capex to "
             f"{excel['grand_total_capex']:,.0f} SAR. Year 1 net income of "
             f"{excel['y1_income']:,.0f} SAR implies an unlevered ROI of "
             f"{excel['roi']*100:,.1f}%."
@@ -380,299 +389,6 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
     # Defensive guard (should be unreachable because excel_inputs is required)
     raise HTTPException(status_code=400, detail="excel-only mode: 'excel_inputs' is required")
-
-    far_source = "manual"
-    auto_far_value = None
-    try:
-        auto_far_value = geo_svc.infer_far_from_features(db, geom, layer="rydpolygons")
-        if auto_far_value:
-            far_source = "external_feature/rydpolygons"
-    except Exception:
-        auto_far_value = None
-    if (auto_far_value is None) and district:
-        try:
-            rule_far = lookup_far(db, city=req.city or "Riyadh", district=district)
-            if rule_far:
-                auto_far_value = rule_far
-                far_source = "far_rule"
-        except Exception:
-            pass
-    far_used = float(auto_far_value) if auto_far_value else float(req.far)
-    efficiency = req.efficiency or 1.0
-    nfa_m2 = site_area_m2 * far_used * efficiency
-
-    # Land value (hedonic/median comps)
-    ppm2, meta = land_price_per_m2(db, city=req.city, since=None, district=district)
-    if not ppm2:
-        ppm2 = 2800.0
-    meta = meta or {}
-    hedonic_land_value = site_area_m2 * ppm2
-
-    # Hard + soft
-    asof = date.today().replace(day=1)
-    hard = compute_hard_costs(db, area_m2=site_area_m2, month=asof)
-    hard_costs = hard["total"]
-    default_soft = float(os.getenv("DEFAULT_SOFT_COST_PCT", "0.12"))
-    soft_defaulted = (req.soft_cost_pct is None) or (req.soft_cost_pct <= 0)
-    soft_pct = req.soft_cost_pct if (req.soft_cost_pct and req.soft_cost_pct > 0) else default_soft
-    soft_costs = hard_costs * soft_pct
-
-    rent_block: RentBlock = RentBlock()
-
-    sale_indicator = indicators_svc.latest_sale_price_per_m2(db, city=req.city, district=district)
-    if req.sale_price_per_m2 and req.sale_price_per_m2 > 0:
-        sale_ppm2 = float(req.sale_price_per_m2)
-        sale_source = "Manual"
-    elif sale_indicator is not None:
-        sale_ppm2 = sale_indicator
-        sale_source = "Observed"
-    else:
-        sale_ppm2 = 5500.0
-        sale_source = "Manual"
-    sale_gdv = nfa_m2 * sale_ppm2
-
-    rent_indicator = indicators_svc.latest_rent_per_m2(db, city=req.city, district=district)
-    rent_unit_indicator = indicators_svc.latest_rent_unit_rate(db, city=req.city, district=district)
-    rent_vacancy_indicator = indicators_svc.latest_rent_vacancy_pct(db, city=req.city, district=district)
-    rent_growth_indicator = indicators_svc.latest_rent_growth_pct(db, city=req.city, district=district)
-    if rent_indicator is not None:
-        rent_ppm2 = rent_indicator
-        rent_source = "Observed"
-    else:
-        rent_ppm2 = 220.0
-        rent_source = "Manual"
-    occ = (req.btr_params.occupancy if req.btr_params and req.btr_params.occupancy is not None else 0.92)
-    opex = (req.btr_params.opex_ratio if req.btr_params and req.btr_params.opex_ratio is not None else 0.30)
-    cap = (req.btr_params.cap_rate if req.btr_params and req.btr_params.cap_rate is not None else 0.07)
-    rent_unit_rate = rent_unit_indicator
-    rent_vacancy_pct = rent_vacancy_indicator
-    rent_growth_pct = rent_growth_indicator
-    nla_m2 = nfa_m2
-    egi = rent_ppm2 * nla_m2 * occ * 12.0
-    noi = egi * (1.0 - opex)
-    if rent_vacancy_pct is None:
-        try:
-            occ_float = float(occ)
-        except (TypeError, ValueError):
-            occ_float = None
-        if occ_float is not None and 0.0 <= occ_float <= 1.0:
-            rent_vacancy_pct = max(0.0, 1.0 - occ_float)
-    btr_value = noi / cap if cap else 0.0
-    btr_notes = {
-        "rent_per_m2_month": rent_ppm2,
-        "occupancy": occ,
-        "opex_ratio": opex,
-        "cap_rate": cap,
-        "nla_equals_nfa": True,
-    }
-
-    try:
-        rent_rows = top_rent_comps(
-            db,
-            city=req.city,
-            district=district,
-            asset_type="residential",
-            since=None,
-            limit=10,
-        )
-        rent_comp_dicts = [to_rent_comp_dict(r) for r in rent_rows]
-        rent_comparables: List[RentComparable] = []
-        for comp in rent_comp_dicts:
-            comp_id = comp.get("id") or comp.get("identifier")
-            if not comp_id:
-                comp_id = str(uuid.uuid4())
-            rent_comparables.append(
-                RentComparable(
-                    id=str(comp_id),
-                    date=comp.get("date"),
-                    city=comp.get("city"),
-                    district=comp.get("district"),
-                    sar_per_m2=comp.get("sar_per_m2"),
-                    source=comp.get("source"),
-                    source_url=comp.get("source_url"),
-                )
-            )
-
-        rent_driver_dicts = rent_heuristic_drivers(rent_ppm2, rent_rows)
-        if req.strategy != "build_to_rent":
-            rent_driver_dicts.insert(
-                0,
-                {
-                    "name": "strategy_note",
-                    "direction": "strategy is build_to_sell; rent shown for reference",
-                    "magnitude": 0.0,
-                },
-            )
-        rent_drivers = [ExplainabilityRow(**d) for d in rent_driver_dicts]
-
-        rent_block = RentBlock(
-            drivers=rent_drivers,
-            top_comps=rent_comparables[:5],
-            rent_comparables=rent_comparables,
-            top_rent_comparables=rent_comparables[:5],
-            rent_price_per_m2=float(rent_ppm2) if rent_ppm2 is not None else None,
-            rent_unit_rate=float(rent_unit_rate) if rent_unit_rate is not None else None,
-            rent_vacancy_pct=float(rent_vacancy_pct) if rent_vacancy_pct is not None else None,
-            rent_growth_pct=float(rent_growth_pct) if rent_growth_pct is not None else None,
-        )
-    except Exception:
-        rent_block = RentBlock()
-
-    if req.strategy == "build_to_rent":
-        revenues_value = btr_value
-        revenue_lines = [
-            {"key": "rent_per_m2_month", "value": rent_ppm2, "unit": "SAR/m2/mo", "source_type": rent_source},
-            {"key": "occupancy", "value": occ, "unit": "ratio", "source_type": "Manual"},
-            {"key": "opex_ratio", "value": opex, "unit": "ratio", "source_type": "Manual"},
-            {"key": "cap_rate", "value": cap, "unit": "ratio", "source_type": "Manual"},
-        ]
-    else:
-        revenues_value = sale_gdv
-        revenue_lines = [
-            {"key": "sale_price_per_m2", "value": sale_ppm2, "unit": "SAR/m2", "source_type": sale_source},
-        ]
-
-    # Financing
-    fin = compute_financing(
-        db,
-        hard_plus_soft=hard_costs + soft_costs,
-        months=req.timeline.months,
-        margin_bps=req.financing_params.margin_bps,
-        ltv=req.financing_params.ltv,
-        asof=asof,
-    )
-
-    # Totals + uncertainty
-    result = assemble(
-        land_value=hedonic_land_value,
-        hard_costs=hard_costs,
-        soft_costs=soft_costs,
-        financing_interest=fin["interest"],
-        revenues=revenues_value,
-    )
-    result["totals"]["revenues"] = revenues_value
-    result["notes"] = {
-        "site_area_m2": round(site_area_m2, 2),
-        "nfa_m2": nfa_m2,
-        "cci_scalar": hard.get("cci_scalar"),
-        "financing_apr": fin["apr"],
-        "revenue_lines": revenue_lines,
-        "land_model": meta.get("model"),  # shows {"model_used": true/false, mape, n_rows}
-        "district": district,
-        "far_source": far_source,
-        "soft_cost_pct_defaulted": soft_defaulted,
-    }
-    if req.strategy == "build_to_rent":
-        result["notes"]["btr"] = btr_notes
-    result["assumptions"] = [
-        {"key": "ppm2", "value": ppm2, "unit": "SAR/m2", "source_type": "Model" if meta.get("n_comps", 0) > 0 else "Manual"},
-        {
-            "key": "far",
-            "value": far_used,
-            "source_type": "Observed" if far_source != "manual" else "Manual",
-        },
-        {"key": "efficiency", "value": efficiency, "source_type": "Manual"},
-        {
-            "key": "soft_cost_pct",
-            "value": soft_pct,
-            "source_type": "Manual" if not soft_defaulted else "Model",
-        },
-        {"key": "ltv", "value": req.financing_params.ltv, "source_type": "Manual"},
-        {"key": "margin_bps", "value": req.financing_params.margin_bps, "source_type": "Manual"},
-    ]
-    if req.strategy == "build_to_rent":
-        result["assumptions"].extend(
-            [
-                {"key": "rent_per_m2_month", "value": rent_ppm2, "unit": "SAR/m2/mo", "source_type": rent_source},
-                {"key": "occupancy", "value": occ, "unit": "ratio", "source_type": "Manual"},
-                {"key": "opex_ratio", "value": opex, "unit": "ratio", "source_type": "Manual"},
-                {"key": "cap_rate", "value": cap, "unit": "ratio", "source_type": "Manual"},
-            ]
-        )
-    else:
-        result["assumptions"].append(
-            {"key": "sale_price_per_m2", "value": sale_ppm2, "unit": "SAR/m2", "source_type": sale_source}
-        )
-    # Explainability (top comps + drivers)
-    comps_rows = top_sale_comps(
-        db,
-        city=req.city,
-        district=district,
-        asset_type="land",
-        since=None,
-        limit=10,
-    )
-    result["explainability"] = {
-        "top_comps": [to_comp_dict(r) for r in comps_rows],
-        "drivers": heuristic_drivers(ppm2, comps_rows),
-    }
-
-    result["rent"] = rent_block.model_dump()
-
-    # --- Residual land value & combiner (simple weight by comps density) ---
-    rlv = residual_land_value(revenues_value, hard_costs, soft_costs, fin["interest"], dev_margin_pct=0.15)
-    comps_n = meta.get("n_comps", 0) or 0
-    w_hedonic = min(1.0, comps_n / 8.0)
-    w_resid = 1.0 - w_hedonic
-    combined_land = w_hedonic * hedonic_land_value + w_resid * rlv
-    result["land_value_breakdown"] = {
-        "hedonic": hedonic_land_value,
-        "residual": rlv,
-        "combined": combined_land,
-        "weights": {"hedonic": w_hedonic, "residual": w_resid},
-        "comps_used": comps_n,
-    }
-    result["totals"]["land_value"] = combined_land
-    result["totals"]["p50_profit"] = result["totals"]["revenues"] - (
-        combined_land + result["totals"]["hard_costs"] + result["totals"]["soft_costs"] + result["totals"]["financing"]
-    )
-    res_share = 0.0
-    if _supports_sqlalchemy(db):
-        try:
-            city = req.city or "Riyadh"
-            total_area = (
-                db.query(func.sum(LandUseStat.value))
-                .filter(LandUseStat.city == city)
-                .filter(LandUseStat.metric.ilike("%area%"))
-                .filter(LandUseStat.value.isnot(None))
-                .scalar()
-            ) or 0.0
-            residential_area = (
-                db.query(func.sum(LandUseStat.value))
-                .filter(LandUseStat.city == city)
-                .filter(LandUseStat.metric.ilike("%area%"))
-                .filter(LandUseStat.category.ilike("%residential%"))
-                .filter(LandUseStat.value.isnot(None))
-                .scalar()
-            ) or 0.0
-            if float(total_area) > 0:
-                res_share = float(residential_area) / float(total_area)
-        except Exception:
-            res_share = 0.0
-
-    unit_cost_sigma = 0.06 if res_share >= 0.35 else 0.08
-    result["confidence_bands"] = p_bands(
-        result["totals"]["p50_profit"],
-        drivers={"land_ppm2": (1.0, 0.10), "unit_cost": (1.0, unit_cost_sigma), "gdv_m2_price": (1.0, 0.10)},
-    )
-    bands = result["confidence_bands"]
-    result["notes"]["land_use_residential_share"] = res_share
-
-    # --- Monthly cashflow & IRR (equity view) ---
-    cf = build_equity_cashflow(
-        months=req.timeline.months,
-        land_value=combined_land,
-        hard_costs=hard_costs,
-        soft_costs=soft_costs,
-        gdv=revenues_value,
-        apr=fin["apr"],
-        ltv=req.financing_params.ltv,
-        sales_cost_pct=0.02,
-    )
-    result["metrics"] = {"irr_annual": cf["irr_annual"]}
-    result["cashflow"] = {"monthly": cf["schedule"], "peaks": cf["peaks"]}
-
-    return _finalize_result(result, bands)
 
 
 @router.get("/estimates/{estimate_id}")
