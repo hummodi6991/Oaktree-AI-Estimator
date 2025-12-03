@@ -15,6 +15,10 @@ def _latest_cci(db: Session, for_month: date, sector: str = "construction") -> f
     return idx  # base 2023=100 in GASTAT; scale = idx/100
 
 
+def latest_cci_scalar(db: Session, asof: date, sector: str = "construction") -> float:
+    return _latest_cci(db, asof, sector=sector) / 100.0
+
+
 def compute_hard_costs(db: Session, area_m2: float, month: date) -> Dict[str, Any]:
     items = db.query(BoqItem).all()
     if not items:

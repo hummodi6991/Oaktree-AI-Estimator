@@ -9,11 +9,19 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     cp_density = inputs.get("cp_sqm_per_space", {}) or {}
     efficiency = inputs.get("efficiency", {}) or {}
     rent_rates = inputs.get("rent_sar_m2_yr", {}) or {}
+    cci_scalar = float(inputs.get("cci_scalar") or 1.0)
 
     built_area = {key: float(area_ratio.get(key, 0.0)) * float(site_area_m2) for key in area_ratio.keys()}
-    direct_cost = {
-        key: built_area.get(key, 0.0) * float(unit_cost.get(key, 0.0)) for key in area_ratio.keys()
-    }
+    shell_unit = (unit_cost.get("residential") or 0.0) * cci_scalar
+    basement_unit = (unit_cost.get("basement") or 0.0) * cci_scalar
+    direct_cost = {}
+    for key in area_ratio.keys():
+        unit_rate = float(unit_cost.get(key, 0.0)) * cci_scalar
+        if key == "residential":
+            unit_rate = float(shell_unit)
+        elif key.lower().startswith("basement"):
+            unit_rate = float(basement_unit)
+        direct_cost[key] = built_area.get(key, 0.0) * unit_rate
     parking_required = {
         key: (
             (built_area.get(key, 0.0) / float(cp_density.get(key, 1.0)))
@@ -26,7 +34,8 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     fitout_area = sum(
         value for key, value in built_area.items() if not key.lower().startswith("basement")
     )
-    fitout_cost = fitout_area * float(inputs.get("fitout_rate", 0.0))
+    fitout_rate = float(inputs.get("fitout_rate") or 0.0) * cci_scalar
+    fitout_cost = fitout_area * fitout_rate
 
     sub_total = sum(direct_cost.values()) + fitout_cost
     contingency_cost = sub_total * float(inputs.get("contingency_pct", 0.0))
@@ -56,6 +65,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "built_area": built_area,
         "direct_cost": direct_cost,
         "fitout_cost": fitout_cost,
+        "cci_scalar": cci_scalar,
         "parking_required_spaces": sum(parking_required.values()),
         "sub_total": sub_total,
         "contingency_cost": contingency_cost,
