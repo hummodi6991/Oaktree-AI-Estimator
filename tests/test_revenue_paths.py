@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -9,6 +11,7 @@ from sqlalchemy.ext.compiler import compiles
 from app.db.deps import get_db
 from app.main import app
 from app.models.tables import (
+    CostIndexMonthly,
     EstimateHeader,
     EstimateLine,
     ExternalFeature,
@@ -35,6 +38,7 @@ def session_factory():
     )
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     for table in (
+        CostIndexMonthly.__table__,
         ExternalFeature.__table__,
         MarketIndicator.__table__,
         EstimateHeader.__table__,
@@ -68,6 +72,25 @@ def client(session_factory):
 @pytest.fixture(autouse=True)
 def stub_costs_and_land(monkeypatch):
     monkeypatch.setattr(estimates_api, "top_sale_comps", lambda *args, **kwargs: [])
+
+
+def seed_test_cci_data(session):
+    session.add(
+        CostIndexMonthly(
+            month=date(2024, 1, 1),
+            sector="construction",
+            cci_index=100.0,
+            source_url="test",
+            asof_date=date(2024, 1, 1),
+        )
+    )
+    session.commit()
+
+
+@pytest.fixture(autouse=True)
+def seed_cost_index(session_factory):
+    with session_factory() as session:
+        seed_test_cci_data(session)
 
 
 def _simple_polygon():
