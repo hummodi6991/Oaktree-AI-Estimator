@@ -11,12 +11,15 @@ from app.models.tables import MarketIndicator
 def _latest_indicator_value(
     db: Session,
     indicator_type: str,
+    asset_type: Optional[str],
     city: Optional[str],
     district: Optional[str],
 ) -> Optional[tuple[float, str]]:
     """Return the latest indicator value and unit for a city/district pair."""
 
     q = db.query(MarketIndicator).filter(MarketIndicator.indicator_type == indicator_type)
+    if asset_type:
+        q = q.filter(func.lower(MarketIndicator.asset_type) == asset_type.lower())
     if city:
         q = q.filter(func.lower(MarketIndicator.city) == city.lower())
 
@@ -39,7 +42,7 @@ def _latest_indicator_value(
 def latest_sale_price_per_m2(db: Session, city: Optional[str], district: Optional[str]) -> Optional[float]:
     """Fetch the latest sale price per square meter (SAR/m2)."""
 
-    result = _latest_indicator_value(db, "sale_price_per_m2", city, district)
+    result = _latest_indicator_value(db, "sale_price_per_m2", None, city, district)
     if not result:
         return None
     value, _unit = result
@@ -49,7 +52,7 @@ def latest_sale_price_per_m2(db: Session, city: Optional[str], district: Optiona
 def latest_rent_per_m2(db: Session, city: Optional[str], district: Optional[str]) -> Optional[float]:
     """Fetch the latest rent per square meter per month (SAR/m2/month)."""
 
-    result = _latest_indicator_value(db, "rent_per_m2", city, district)
+    result = _latest_indicator_value(db, "rent_per_m2", None, city, district)
     if not result:
         return None
     value, unit = result
@@ -64,7 +67,7 @@ def latest_rent_unit_rate(db: Session, city: Optional[str], district: Optional[s
     """Fetch the latest rent per unit indicator when available."""
 
     for indicator_key in ("rent_unit_rate", "rent_avg_unit"):
-        result = _latest_indicator_value(db, indicator_key, city, district)
+        result = _latest_indicator_value(db, indicator_key, None, city, district)
         if result:
             value, _unit = result
             return float(value)
@@ -75,7 +78,7 @@ def latest_rent_vacancy_pct(db: Session, city: Optional[str], district: Optional
     """Return the latest vacancy percentage tied to rent benchmarks."""
 
     for indicator_key in ("rent_vacancy_pct", "vacancy_pct"):
-        result = _latest_indicator_value(db, indicator_key, city, district)
+        result = _latest_indicator_value(db, indicator_key, None, city, district)
         if result:
             value, _unit = result
             return float(value)
@@ -86,8 +89,39 @@ def latest_rent_growth_pct(db: Session, city: Optional[str], district: Optional[
     """Return the latest rent growth percentage, if tracked."""
 
     for indicator_key in ("rent_growth_pct", "rent_growth"):
-        result = _latest_indicator_value(db, indicator_key, city, district)
+        result = _latest_indicator_value(db, indicator_key, None, city, district)
         if result:
             value, _unit = result
             return float(value)
     return None
+
+
+def latest_re_price_index(
+    db: Session,
+    asset_type: str = "Residential",
+    city: str = "Saudi Arabia",
+) -> float | None:
+    """Latest real estate price index (2014=100) for given asset type."""
+
+    result = _latest_indicator_value(
+        db,
+        indicator_type="real_estate_price_index",
+        asset_type=asset_type,
+        city=city,
+        district=None,
+    )
+    if not result:
+        return None
+    value, _unit = result
+    return float(value)
+
+
+def latest_re_price_index_scalar(
+    db: Session,
+    asset_type: str = "Residential",
+    city: str = "Saudi Arabia",
+) -> float:
+    """Index rescaled so 2014=1.0, analogous to CCI scalar."""
+
+    idx = latest_re_price_index(db, asset_type=asset_type, city=city)
+    return (idx / 100.0) if idx is not None else 1.0

@@ -16,6 +16,11 @@ from app.services.explain import (
 from app.services.pdf import build_memo_pdf
 from app.services.pricing import price_from_kaggle_hedonic, price_from_aqar
 from app.services.costs import latest_cci_scalar
+from app.services.indicators import (
+    latest_rent_per_m2,
+    latest_re_price_index_scalar,
+    latest_sale_price_per_m2,
+)
 from app.models.tables import EstimateHeader, EstimateLine
 
 router = APIRouter(tags=["estimates"])
@@ -323,6 +328,10 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         cci_scalar = latest_cci_scalar(db, asof)
         excel_inputs["cci_scalar"] = cci_scalar
 
+        # New: GASTAT real estate price index scalar (2014=1.0)
+        re_scalar = latest_re_price_index_scalar(db, asset_type="Residential")
+        excel_inputs["re_price_index_scalar"] = re_scalar
+
         excel = compute_excel_estimate(site_area_m2, excel_inputs)
         totals = {
             "land_value": float(excel["land_cost"]),
@@ -378,12 +387,19 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 {"key": "excel_method", "value": 1, "unit": None, "source_type": "Manual"},
                 {"key": "site_area_m2", "value": site_area_m2, "unit": "m2", "source_type": "Observed"},
                 {"key": "ppm2", "value": float(ppm2_val), "unit": "SAR/m2", "source_type": ppm2_src},
+                {
+                    "key": "real_estate_price_index_scalar",
+                    "value": float(re_scalar),
+                    "unit": "2014=1.0",
+                    "source_type": "GASTAT",
+                },
             ],
             "notes": {
                 "excel_inputs_keys": list(excel_inputs.keys()),
                 "excel_breakdown": excel,
                 "cost_breakdown": cost_breakdown,
                 "cci_scalar": cci_scalar,
+                "re_price_index_scalar": re_scalar,
                 "summary": summary_text,
                 "site_area_m2": site_area_m2,
                 "district": district,

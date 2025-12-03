@@ -10,6 +10,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     efficiency = inputs.get("efficiency", {}) or {}
     rent_rates = inputs.get("rent_sar_m2_yr", {}) or {}
     cci_scalar = float(inputs.get("cci_scalar") or 1.0)
+    re_scalar = float(inputs.get("re_price_index_scalar") or 1.0)
 
     built_area = {key: float(area_ratio.get(key, 0.0)) * float(site_area_m2) for key in area_ratio.keys()}
     shell_unit = (unit_cost.get("residential") or 0.0) * cci_scalar
@@ -55,7 +56,8 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
 
     nla = {key: built_area.get(key, 0.0) * float(efficiency.get(key, 0.0)) for key in area_ratio.keys()}
     y1_income_components = {
-        key: nla.get(key, 0.0) * float(rent_rates.get(key, 0.0)) for key in area_ratio.keys()
+        key: nla.get(key, 0.0) * float(rent_rates.get(key, 0.0)) * re_scalar
+        for key in area_ratio.keys()
     }
     y1_income = sum(y1_income_components.values())
 
