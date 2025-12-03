@@ -138,14 +138,15 @@ jobs:
           metadata:
             name: oaktree-migrate
           spec:
-            ttlSecondsAfterFinished: 120
+            backoffLimit: 1
             template:
               spec:
-                restartPolicy: OnFailure
+                restartPolicy: Never
                 containers:
                   - name: migrate
                     image: ${{ steps.img.outputs.image }}
-                    command: ["sh","-lc","alembic upgrade head"]
+                    imagePullPolicy: Always
+                    command: ["alembic", "upgrade", "head"]
                     envFrom:
                       - secretRef:
                           name: oaktree-db-env
@@ -153,7 +154,12 @@ jobs:
                           name: oaktree-app-env
           YAML
           kubectl apply -f migrate-job.yaml
-          kubectl wait --for=condition=complete job/oaktree-migrate --timeout=180s
+          if ! kubectl wait --for=condition=complete job/oaktree-migrate --timeout=600s; then
+            echo "Migration job did not complete, dumping logs…"
+            kubectl describe job/oaktree-migrate || true
+            kubectl logs job/oaktree-migrate || true
+            exit 1
+          fi
 
       # 7) Deploy to ACK (patch image and apply)
       - name: Validate manifests (dry-run)
