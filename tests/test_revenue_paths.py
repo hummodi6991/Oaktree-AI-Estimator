@@ -10,6 +10,7 @@ from sqlalchemy.ext.compiler import compiles
 
 from app.db.deps import get_db
 from app.main import app
+from app.models.base import Base
 from app.models.tables import (
     CostIndexMonthly,
     EstimateHeader,
@@ -36,16 +37,24 @@ def session_factory():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    for table in (
-        CostIndexMonthly.__table__,
-        ExternalFeature.__table__,
-        MarketIndicator.__table__,
-        EstimateHeader.__table__,
-        EstimateLine.__table__,
-        LandUseStat.__table__,
-    ):
-        table.create(bind=engine)
+
+    # Ensure at least one CCI row exists for tests that depend on cost indices.
+    with TestingSessionLocal() as session:
+        if not session.query(CostIndexMonthly).first():
+            session.add(
+                CostIndexMonthly(
+                    month=date(2024, 1, 1),
+                    sector="construction",
+                    cci_index=100.0,
+                    source_url="internal:test_fixture",
+                    asof_date=date(2024, 1, 1),
+                )
+            )
+            session.commit()
 
     def _session_maker():
         return TestingSessionLocal()
@@ -67,30 +76,9 @@ def client(session_factory):
     client = TestClient(app)
     yield client
     app.dependency_overrides.pop(get_db, None)
-
-
 @pytest.fixture(autouse=True)
 def stub_costs_and_land(monkeypatch):
     monkeypatch.setattr(estimates_api, "top_sale_comps", lambda *args, **kwargs: [])
-
-
-def seed_test_cci_data(session):
-    session.add(
-        CostIndexMonthly(
-            month=date(2024, 1, 1),
-            sector="construction",
-            cci_index=100.0,
-            source_url="test",
-            asof_date=date(2024, 1, 1),
-        )
-    )
-    session.commit()
-
-
-@pytest.fixture(autouse=True)
-def seed_cost_index(session_factory):
-    with session_factory() as session:
-        seed_test_cci_data(session)
 
 
 def _simple_polygon():
