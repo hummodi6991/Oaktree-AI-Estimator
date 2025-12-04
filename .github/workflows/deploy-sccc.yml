@@ -132,20 +132,22 @@ jobs:
 
       - name: Run DB migrations (alembic)
         run: |
-          cat > migrate-job.yaml <<'YAML'
+          set -euo pipefail
+
+          kubectl delete job/oaktree-migrate --ignore-not-found=true
+
+          cat > migrate-job.yml <<'YAML'
           apiVersion: batch/v1
           kind: Job
           metadata:
             name: oaktree-migrate
           spec:
-            backoffLimit: 1
             template:
               spec:
-                restartPolicy: Never
+                restartPolicy: OnFailure
                 containers:
                   - name: migrate
                     image: ${{ steps.img.outputs.image }}
-                    imagePullPolicy: Always
                     command: ["alembic", "upgrade", "head"]
                     envFrom:
                       - secretRef:
@@ -153,13 +155,10 @@ jobs:
                       - secretRef:
                           name: oaktree-app-env
           YAML
-          kubectl apply -f migrate-job.yaml
-          if ! kubectl wait --for=condition=complete job/oaktree-migrate --timeout=600s; then
-            echo "Migration job did not complete, dumping logs…"
-            kubectl describe job/oaktree-migrate || true
-            kubectl logs job/oaktree-migrate || true
-            exit 1
-          fi
+
+          kubectl apply -f migrate-job.yml
+          kubectl wait --for=condition=complete --timeout=600s job/oaktree-migrate
+          kubectl logs -l job-name=oaktree-migrate --tail=200
 
       # 7) Deploy to ACK (patch image and apply)
       - name: Validate manifests (dry-run)
