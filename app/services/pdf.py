@@ -18,6 +18,7 @@ def build_memo_pdf(
     totals: Dict[str, Any],
     assumptions: List[Dict[str, Any]],
     top_comps: List[Dict[str, Any]],
+    excel_breakdown: Dict[str, Any] | None = None,
 ) -> bytes:
     if FPDF is None:
         raise RuntimeError("fpdf library is not installed")
@@ -36,6 +37,37 @@ def build_memo_pdf(
     for k in ["land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"]:
         pdf.cell(60, 7, k.replace("_", " ").title()+":", border=0)
         pdf.cell(0, 7, _fmt_money(totals.get(k)), ln=True)
+
+    if excel_breakdown:
+        pdf.ln(2)
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, "Excel method – cost breakdown", ln=True)
+        pdf.set_font("Arial", "", 10)
+
+        explanations = excel_breakdown.get("explanations") or {}
+        direct_cost_total = sum((excel_breakdown.get("direct_cost") or {}).values())
+
+        rows = [
+            ("Land cost", excel_breakdown.get("land_cost"), explanations.get("land_cost")),
+            (
+                "Construction (direct)",
+                direct_cost_total,
+                explanations.get("construction_direct"),
+            ),
+            ("Fit-out", excel_breakdown.get("fitout_cost"), explanations.get("fitout")),
+            ("Contingency", excel_breakdown.get("contingency_cost"), explanations.get("contingency")),
+            ("Consultants", excel_breakdown.get("consultants_cost"), explanations.get("consultants")),
+            ("Transaction costs", excel_breakdown.get("transaction_cost"), explanations.get("transaction_cost")),
+            ("Year 1 net income", excel_breakdown.get("y1_income"), explanations.get("y1_income")),
+        ]
+
+        for label, amount, note in rows:
+            pdf.cell(60, 6, f"{label}:", ln=False)
+            pdf.cell(0, 6, f"{_fmt_money(amount)} SAR", ln=True)
+            if note:
+                pdf.set_font("Arial", "", 8)
+                pdf.multi_cell(0, 5, f"    {note}")
+                pdf.set_font("Arial", "", 10)
 
     # Assumptions
     pdf.ln(2)

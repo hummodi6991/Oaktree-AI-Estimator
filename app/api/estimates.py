@@ -327,6 +327,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
         cci_scalar = latest_cci_scalar(db, asof)
         excel_inputs["cci_scalar"] = cci_scalar
+        excel_inputs["cci_asof_date"] = asof.isoformat()
 
         # New: GASTAT real estate price index scalar (2014=1.0)
         re_scalar = latest_re_price_index_scalar(db, asset_type="Residential")
@@ -685,12 +686,14 @@ def export_pdf(estimate_id: str, db: Session = Depends(get_db)):
     base = get_estimate(estimate_id, db)
     comps_rows = top_sale_comps(db, city=None, district=None, asset_type="land", since=None, limit=8)
     comps = [to_comp_dict(r) for r in comps_rows]
+    notes = base.get("notes") if isinstance(base, dict) else {}
     try:
         pdf_bytes = build_memo_pdf(
             title=f"Estimate {estimate_id}",
             totals=base["totals"],
             assumptions=base.get("assumptions", []),
             top_comps=comps,
+            excel_breakdown=notes.get("excel_breakdown"),
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
