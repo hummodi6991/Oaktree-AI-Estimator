@@ -23,6 +23,7 @@ from app.models.tables import (
     ExternalFeature,
     LandUseStat,
     FarRule,
+    TaxRule,
 )
 
 router = APIRouter(prefix="/v1/ingest", tags=["ingest"])
@@ -526,6 +527,75 @@ if multipart_available:
         db.commit()
         return {"status": "ok", "rows": int(upserted)}
 
+
+    @router.post("/tax_rules")
+    def ingest_tax_rules(
+        file: UploadFile = File(...),
+        db: Session = Depends(get_db),
+    ):
+        """
+        Ingest tax rules (starting with Saudi RETT).
+
+        Required columns:
+          - rule_id
+          - tax_type
+          - rate
+
+        Optional columns:
+          - base_type
+          - payer_default
+          - exemptions
+          - notes
+
+        Accepts CSV or Excel.
+        """
+
+        df = _read_table(file)
+        df.columns = [c.lower() for c in df.columns]
+        required = {"rule_id", "tax_type", "rate"}
+        missing = required - set(df.columns)
+        if missing:
+            raise HTTPException(400, f"Missing columns: {sorted(missing)}")
+
+        def _coerce_int(val):
+            if val is None:
+                return None
+            try:
+                return int(float(str(val).replace(",", "").strip()))
+            except Exception:
+                return None
+
+        upserted = 0
+        for _, r in df.iterrows():
+            tax_type = str(r.get("tax_type") or "").strip()
+            if not tax_type:
+                continue
+
+            data = dict(
+                rule_id=_coerce_int(r.get("rule_id")) or 0,
+                tax_type=tax_type,
+                rate=_coerce_float(r.get("rate")) or 0.0,
+                base_type=_clean_optional(r.get("base_type")),
+                payer_default=_clean_optional(r.get("payer_default")),
+                exemptions=_clean_optional(r.get("exemptions")),
+                notes=_clean_optional(r.get("notes")),
+            )
+
+            q = db.query(TaxRule).filter(
+                TaxRule.rule_id == data["rule_id"],
+                TaxRule.tax_type == data["tax_type"],
+            )
+            obj = q.first()
+            if obj:
+                for k, v in data.items():
+                    setattr(obj, k, v)
+            else:
+                db.add(TaxRule(**data))
+            upserted += 1
+
+        db.commit()
+        return {"status": "ok", "rows": int(upserted)}
+
 else:
 
     @router.post("/cci")
@@ -558,4 +628,8 @@ else:
 
     @router.post("/far_rules")
     async def ingest_far_rules_unavailable():
+        _multipart_not_installed()
+
+    @router.post("/tax_rules")
+    async def ingest_tax_rules_unavailable():
         _multipart_not_installed()

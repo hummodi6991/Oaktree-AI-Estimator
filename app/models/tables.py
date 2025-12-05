@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, Text
+from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, Text, Index
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.base import Base
@@ -24,6 +24,8 @@ class Rate(Base):
     rate_type = Column(String(32), nullable=False)
     value = Column(Numeric(6, 3), nullable=False)
     source_url = Column(String(512))
+
+    __table_args__ = (Index("ix_rate_date_type_tenor", "date", "rate_type", "tenor"),)
 
 
 class SaleComp(Base):
@@ -203,3 +205,25 @@ class PriceQuote(Base):
     observed_at = Column(DateTime)
     method = Column(String(64))
     source_url = Column(String(512))
+
+
+class TaxRule(Base):
+    """
+    Generic tax rules (starting with Saudi RETT).
+    Ingested from CSV via /v1/ingest/tax_rules.
+    """
+
+    __tablename__ = "tax_rule"
+
+    id = Column(Integer, primary_key=True, index=True)
+    rule_id = Column(Integer, nullable=False)
+    tax_type = Column(String(32), nullable=False)  # e.g. 'RETT'
+    rate = Column(Numeric(6, 4), nullable=False)  # 0.0500 = 5%
+    base_type = Column(String(128), nullable=True)  # e.g. 'max(sale_price,fair_market_value)'
+    payer_default = Column(String(32), nullable=True)
+    exemptions = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_tax_rule_type_rule_id", "tax_type", "rule_id", unique=True),
+    )

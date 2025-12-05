@@ -21,6 +21,7 @@ from app.services.indicators import (
     latest_re_price_index_scalar,
     latest_sale_price_per_m2,
 )
+from app.services.tax import latest_tax_rate
 from app.models.tables import EstimateHeader, EstimateLine
 
 router = APIRouter(tags=["estimates"])
@@ -333,6 +334,42 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         re_scalar = latest_re_price_index_scalar(db, asset_type="Residential")
         excel_inputs["re_price_index_scalar"] = re_scalar
 
+        # New: Real Estate Transaction Tax (RETT) from tax_rule table.
+        # If caller did not provide transaction_pct (or set it <= 0),
+        # default to the RETT rate from the ingested CSV.
+        current_tx_pct: float = 0.0
+        try:
+            raw_tx = excel_inputs.get("transaction_pct")
+            current_tx_pct = float(raw_tx) if raw_tx is not None else 0.0
+        except Exception:
+            current_tx_pct = 0.0
+
+        rett_info = latest_tax_rate(db, tax_type="RETT")
+        if rett_info:
+            rett_rate = float(rett_info["rate"])
+            # Only auto-populate when caller didn't override.
+            if current_tx_pct <= 0.0:
+                excel_inputs["transaction_pct"] = rett_rate
+                current_tx_pct = rett_rate
+
+            # Human-readable label used in build_excel_explanations()
+            if not excel_inputs.get("transaction_label"):
+                label = "Real Estate Transaction Tax (RETT)"
+                base_type = rett_info.get("base_type")
+                if base_type:
+                    label += f" on {base_type}"
+                excel_inputs["transaction_label"] = label
+
+            # Simple metadata for debugging in notes
+            excel_inputs.setdefault(
+                "transaction_tax_metadata",
+                {
+                    "tax_type": rett_info.get("tax_type"),
+                    "rule_id": rett_info.get("rule_id"),
+                    "rate": current_tx_pct,
+                },
+            )
+
         excel = compute_excel_estimate(site_area_m2, excel_inputs)
         totals = {
             "land_value": float(excel["land_cost"]),
@@ -401,6 +438,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "cost_breakdown": cost_breakdown,
                 "cci_scalar": cci_scalar,
                 "re_price_index_scalar": re_scalar,
+                "transaction_tax": excel_inputs.get("transaction_tax_metadata"),
                 "summary": summary_text,
                 "site_area_m2": site_area_m2,
                 "district": district,
