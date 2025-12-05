@@ -22,10 +22,9 @@ def latest_tax_rule(db: Session, tax_type: str = "RETT") -> Optional[TaxRule]:
     )
 
 
-def latest_tax_rate(db: Session, tax_type: str = "RETT") -> Optional[Dict[str, Any]]:
-    """
-    Convenience wrapper returning a dict with rate + metadata, or None if missing.
-    """
+def latest_tax_rate(db: Session, tax_type: str = "RETT") -> dict[str, Any] | None:
+    """Return the highest rule_id for this tax_type with rate + metadata."""
+
     row = latest_tax_rule(db, tax_type=tax_type)
     if not row:
         return None
