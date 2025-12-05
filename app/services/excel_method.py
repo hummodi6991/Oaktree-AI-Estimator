@@ -77,9 +77,10 @@ def build_excel_explanations(
     )
 
     transaction_pct = float(inputs.get("transaction_pct") or 0.0)
+    tx_label = inputs.get("transaction_label") or "transaction"
     explanations["transaction_cost"] = (
         f"Land cost {float(breakdown.get('land_cost') or 0.0):,.0f} SAR "
-        f"× transaction {transaction_pct:.1%}"
+        f"× {tx_label} {transaction_pct:.1%}"
     )
 
     income_parts = []
