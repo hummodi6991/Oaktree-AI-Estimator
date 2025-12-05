@@ -24,6 +24,9 @@ const DEFAULT_EXCEL_INPUTS = {
   land_price_sar_m2: 0,
 };
 
+const formatPercent = (value?: number | null) =>
+  value != null ? `${(value * 100).toFixed(1)}%` : "n/a";
+
 type Centroid = [number, number];
 
 type ExcelResult = {
@@ -263,8 +266,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const calcColumnStyle = { ...noteStyle, paddingLeft: "0.75rem" } as const;
   const amountHeaderStyle = { ...amountColumnStyle, fontWeight: 600 } as const;
   const calcHeaderStyle = { textAlign: "left", fontWeight: 600, paddingLeft: "0.75rem" } as const;
-  const formatPercent = (value: number | null) =>
-    value != null ? `${(value * 100).toFixed(1)}%` : "n/a";
 
   return (
     <div>
