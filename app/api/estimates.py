@@ -334,6 +334,26 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         re_scalar = latest_re_price_index_scalar(db, asset_type="Residential")
         excel_inputs["re_price_index_scalar"] = re_scalar
 
+        # NEW: Prefill Excel rent assumptions from REGA rent_per_m2 if not provided.
+        rent_rates = excel_inputs.get("rent_sar_m2_yr") or {}
+        if not rent_rates:
+            # latest_rent_per_m2 returns SAR/m²/month from MarketIndicator
+            rega_rent_monthly = latest_rent_per_m2(db, req.city, district)
+            if rega_rent_monthly is not None:
+                annual_rent = float(rega_rent_monthly) * 12.0  # convert to SAR/m²/year
+                # For now we only have residential REGA indicators in the attached CSV.
+                rent_rates = {"residential": annual_rent}
+                excel_inputs["rent_sar_m2_yr"] = rent_rates
+                # Keep a simple note so the UI / PDF can explain the assumption source.
+                excel_inputs["rent_source_metadata"] = {
+                    "provider": "REGA",
+                    "indicator_type": "rent_per_m2",
+                    "unit_input": "SAR/m2/mo",
+                    "unit_excel": "SAR/m2/yr",
+                    "city": req.city,
+                    "district": district,
+                }
+
         rett = latest_tax_rate(db, tax_type="RETT")
         if rett:
             rett_rate = float(rett.get("rate") or 0.0)
