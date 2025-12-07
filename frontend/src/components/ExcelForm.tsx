@@ -301,7 +301,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       </div>
 
       <button onClick={runEstimate} style={{ marginTop: 12 }}>
-        Calculate (Excel method)
+        Calculate estimate
       </button>
 
       {error && (
@@ -323,7 +323,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           }}
         >
           <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>
-            Excel method – cost breakdown
+            Cost breakdown
           </h3>
 
           <p style={{ marginTop: 0, marginBottom: "0.75rem" }}>
@@ -333,7 +333,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
           {rentMeta?.provider === "REGA" && residentialRentMo != null && (
             <p style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.8rem", color: "#cbd5f5" }}>
-              Base rent for the Excel method uses the <strong>REGA residential rent benchmark</strong> for
+              Base rent uses the <strong>REGA residential rent benchmark</strong> for
               {" "}
               {rentMeta.district || rentMeta.city || "the selected city"}: {" "}
               {residentialRentMo.toLocaleString("en-US", {

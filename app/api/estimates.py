@@ -158,7 +158,7 @@ class EstimateRequest(BaseModel):
         default=None,
         description="Optional overrides for build-to-rent assumptions (occupancy, opex_ratio, cap_rate).",
     )
-    # Excel-only mode: require excel_inputs and route exclusively through the Excel method.
+    # Excel-only mode: require excel_inputs and route exclusively through the Excel workflow.
     excel_inputs: dict = Field(
         ...,
         description="Required. Parameters for the Excel-style method (see app/services/excel_method.py).",
@@ -440,7 +440,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             base_monthly = base_annual / 12.0
 
             summary_text += (
-                " Base rent for the Excel method uses the REGA residential rent "
+                " Base rent uses the REGA residential rent "
                 f"benchmark for {rent_meta.get('city') or 'Riyadh'}: "
                 f"{base_monthly:,.0f} SAR/m²/month ({base_annual:,.0f} SAR/m²/year). "
                 "This rent fully overrides any manual rent inputs."
