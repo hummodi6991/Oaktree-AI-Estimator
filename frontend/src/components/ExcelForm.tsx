@@ -191,6 +191,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const unitCost = usedInputs.unit_cost || {};
   const rentRates = usedInputs.rent_sar_m2_yr || {};
   const efficiency = usedInputs.efficiency || {};
+  const areaRatio = usedInputs.area_ratio || {};
   const excelRent = excelResult?.excelRent;
   const rentMeta = excelRent?.rent_source_metadata as any;
   const rentRatesFromNotes = excelRent?.rent_sar_m2_yr as Record<string, number> | undefined;
@@ -226,6 +227,21 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const constructionSubtotal = typeof breakdown.sub_total === "number" ? breakdown.sub_total : 0;
   const contingencyAmount = typeof breakdown.contingency_cost === "number" ? breakdown.contingency_cost : 0;
   const consultantsBase = constructionSubtotal + contingencyAmount;
+
+  const formatArea = (value: number | null | undefined) => {
+    if (value == null || Number.isNaN(Number(value))) return "";
+    return `${Number(value).toLocaleString()} m²`;
+  };
+
+  const buaNote = (key: string) => {
+    const noteKey = `${key}_bua`;
+    if (explanations[noteKey]) return explanations[noteKey];
+    const ratio = areaRatio?.[key];
+    if (siteArea != null && ratio != null) {
+      return `Site area ${siteArea.toLocaleString()} m² × area ratio ${Number(ratio).toFixed(2)}`;
+    }
+    return "Built-up area based on provided ratios";
+  };
 
   const landNote =
     explanations.land_cost ||
@@ -356,6 +372,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <td>Residential BUA</td>
+                <td style={amountColumnStyle}>{formatArea(builtArea.residential)}</td>
+                <td style={calcColumnStyle}>{buaNote("residential")}</td>
+              </tr>
+              <tr>
+                <td>Basement BUA</td>
+                <td style={amountColumnStyle}>{formatArea(builtArea.basement)}</td>
+                <td style={calcColumnStyle}>{buaNote("basement")}</td>
+              </tr>
               <tr>
                 <td>Land cost</td>
                 <td style={amountColumnStyle}>
