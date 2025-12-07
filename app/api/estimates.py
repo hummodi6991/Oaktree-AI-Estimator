@@ -415,7 +415,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         elif ppm2_src.startswith("aqar."):
             land_source_label = "Kaggle aqar.fm median land price/m²"
         elif ppm2_src == "Manual":
-            land_source_label = "a manually entered land price"
+            land_source_label = "a hedonic land price model"
         else:
             land_source_label = ppm2_src or "the configured land price source"
 
