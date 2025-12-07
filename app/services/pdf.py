@@ -13,6 +13,13 @@ def _fmt_money(x: float | None) -> str:
         return str(x)
 
 
+def _fmt_amount(x: float | None) -> str:
+    try:
+        return f"{float(x):,.0f}"
+    except Exception:
+        return str(x)
+
+
 def build_memo_pdf(
     title: str,
     totals: Dict[str, Any],
@@ -46,8 +53,28 @@ def build_memo_pdf(
 
         explanations = excel_breakdown.get("explanations") or {}
         direct_cost_total = sum((excel_breakdown.get("direct_cost") or {}).values())
+        built_area = excel_breakdown.get("built_area") or {}
+
+        def _format_amount(value: Any, unit: str | None = "SAR") -> str:
+            if value is None:
+                return ""
+            formatter = _fmt_amount if unit and unit != "SAR" else _fmt_money
+            unit_suffix = f" {unit}" if unit else ""
+            return f"{formatter(value)}{unit_suffix}"
 
         rows = [
+            (
+                "Residential BUA",
+                built_area.get("residential"),
+                explanations.get("residential_bua"),
+                "m²",
+            ),
+            (
+                "Basement BUA",
+                built_area.get("basement"),
+                explanations.get("basement_bua"),
+                "m²",
+            ),
             ("Land cost", excel_breakdown.get("land_cost"), explanations.get("land_cost")),
             (
                 "Construction (direct)",
@@ -61,9 +88,9 @@ def build_memo_pdf(
             ("Year 1 net income", excel_breakdown.get("y1_income"), explanations.get("y1_income")),
         ]
 
-        for label, amount, note in rows:
+        for label, amount, note, *unit in rows:
             pdf.cell(60, 6, f"{label}:", ln=False)
-            pdf.cell(0, 6, f"{_fmt_money(amount)} SAR", ln=True)
+            pdf.cell(0, 6, _format_amount(amount, unit[0] if unit else "SAR"), ln=True)
             if note:
                 pdf.set_font("Arial", "", 8)
                 pdf.multi_cell(0, 5, f"    {note}")

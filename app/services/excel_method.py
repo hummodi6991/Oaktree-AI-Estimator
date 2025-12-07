@@ -19,6 +19,7 @@ def build_excel_explanations(
     unit_cost = inputs.get("unit_cost", {}) or {}
     rent_rates = inputs.get("rent_sar_m2_yr", {}) or {}
     efficiency = inputs.get("efficiency", {}) or {}
+    area_ratio = inputs.get("area_ratio", {}) or {}
 
     built_area = breakdown.get("built_area", {}) or {}
     nla = breakdown.get("nla", {}) or {}
@@ -39,6 +40,14 @@ def build_excel_explanations(
     explanations["land_cost"] = (
         f"Site area {_fmt_amount(site_area_m2)} m² × {land_price:,.0f} SAR/m²"
     )
+
+    for key, area in built_area.items():
+        ratio = float(area_ratio.get(key, 0.0) or 0.0)
+        explanations[f"{key}_bua"] = (
+            f"Site area {_fmt_amount(site_area_m2)} m² × area ratio {ratio:.2f}"
+            if ratio
+            else f"Built-up area {_fmt_amount(area)} m²"
+        )
 
     sub_total = float(breakdown.get("sub_total", 0.0) or 0.0)
     construction_parts = []
