@@ -11,7 +11,7 @@ def _fmt_amount(value: float | int | str | None, decimals: int = 3) -> str:
 def build_excel_explanations(
     site_area_m2: float, inputs: Dict[str, Any], breakdown: Dict[str, Any]
 ) -> Dict[str, str]:
-    """Human-readable explanations for the Excel method breakdown.
+    """Human-readable explanations for the Excel-style cost breakdown.
 
     These are used by the web UI and PDF export, so keep wording synchronized here.
     """

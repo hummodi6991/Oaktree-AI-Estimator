@@ -41,7 +41,7 @@ def build_memo_pdf(
     if excel_breakdown:
         pdf.ln(2)
         pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 8, "Excel method – cost breakdown", ln=True)
+        pdf.cell(0, 8, "Cost breakdown", ln=True)
         pdf.set_font("Arial", "", 10)
 
         explanations = excel_breakdown.get("explanations") or {}
