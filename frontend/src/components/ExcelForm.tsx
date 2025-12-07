@@ -47,6 +47,10 @@ type ExcelResult = {
   siteArea?: number;
   landPrice?: { ppm2?: number; source_type?: string };
   summary: string;
+  excelRent?: {
+    rent_sar_m2_yr?: Record<string, number>;
+    rent_source_metadata?: Record<string, any>;
+  };
 };
 
 function polygonCentroidAndArea(coords: number[][][]): { area: number; centroid: Centroid } | null {
@@ -169,6 +173,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         siteArea: notes.site_area_m2,
         landPrice: notes.excel_land_price,
         summary: notes.summary ?? "",
+        excelRent: notes.excel_rent,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -186,6 +191,19 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const unitCost = usedInputs.unit_cost || {};
   const rentRates = usedInputs.rent_sar_m2_yr || {};
   const efficiency = usedInputs.efficiency || {};
+  const excelRent = excelResult?.excelRent;
+  const rentMeta = excelRent?.rent_source_metadata as any;
+  const rentRatesFromNotes = excelRent?.rent_sar_m2_yr as Record<string, number> | undefined;
+
+  let residentialRentYr: number | null = null;
+  if (rentRatesFromNotes && typeof rentRatesFromNotes === "object") {
+    residentialRentYr =
+      (rentRatesFromNotes as any).residential ??
+      ((Object.values(rentRatesFromNotes)[0] as number | undefined) ?? null);
+  }
+
+  const residentialRentMo =
+    residentialRentYr != null ? residentialRentYr / 12 : null;
   const contingencyPct = usedInputs.contingency_pct ?? null;
   const consultantsPct = usedInputs.consultants_pct ?? null;
   const transactionPct = usedInputs.transaction_pct ?? null;
@@ -312,6 +330,22 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             {excelResult.summary ||
               `Unlevered ROI: ${(excelResult.roi * 100).toFixed(1)}%`}
           </p>
+
+          {rentMeta?.provider === "REGA" && residentialRentMo != null && (
+            <p style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.8rem", color: "#cbd5f5" }}>
+              Base rent for the Excel method uses the <strong>REGA residential rent benchmark</strong> for
+              {" "}
+              {rentMeta.district || rentMeta.city || "the selected city"}: {" "}
+              {residentialRentMo.toLocaleString("en-US", {
+                maximumFractionDigits: 0,
+              })}{" "}
+              SAR/m²/month (
+              {residentialRentYr!.toLocaleString("en-US", {
+                maximumFractionDigits: 0,
+              })}{" "}
+              SAR/m²/year). This rent fully overrides any manual rent inputs.
+            </p>
+          )}
 
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
