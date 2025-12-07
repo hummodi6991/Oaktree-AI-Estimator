@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional
+from datetime import date
+from typing import Optional, Tuple
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -61,6 +62,50 @@ def latest_rent_per_m2(db: Session, city: Optional[str], district: Optional[str]
     if "year" in unit_lower or "/yr" in unit_lower:
         rent_value = rent_value / 12.0
     return rent_value
+
+
+def latest_rega_residential_rent_per_m2(
+    db: Session,
+    city: Optional[str],
+    district: Optional[str],
+) -> Optional[Tuple[float, str, date, Optional[str]]]:
+    """
+    Latest REGA residential rent per m² per month for a city/district.
+
+    Returns (rent_value_monthly, unit, as_of_date, source_url).
+    """
+
+    q = db.query(MarketIndicator).filter(
+        MarketIndicator.indicator_type == "rent_per_m2",
+        func.lower(MarketIndicator.asset_type) == "residential",
+        MarketIndicator.source_url.ilike("%rega.gov.sa%"),
+    )
+
+    if city:
+        q = q.filter(func.lower(MarketIndicator.city) == city.lower())
+
+    district_column = getattr(MarketIndicator, "district", None)
+    if district and district_column is not None:
+        row = (
+            q.filter(func.lower(district_column) == district.lower())
+            .order_by(MarketIndicator.date.desc(), MarketIndicator.id.desc())
+            .first()
+        )
+    else:
+        row = q.order_by(MarketIndicator.date.desc(), MarketIndicator.id.desc()).first()
+
+    if not row:
+        return None
+
+    value = float(row.value)
+    unit = (row.unit or "").strip()
+    unit_lower = unit.lower()
+
+    rent_value = value
+    if "year" in unit_lower or "/yr" in unit_lower:
+        rent_value = rent_value / 12.0
+
+    return rent_value, unit, row.date, row.source_url
 
 
 def latest_rent_unit_rate(db: Session, city: Optional[str], district: Optional[str]) -> Optional[float]:
