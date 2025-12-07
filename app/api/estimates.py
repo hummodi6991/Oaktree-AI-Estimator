@@ -17,7 +17,7 @@ from app.services.pdf import build_memo_pdf
 from app.services.pricing import price_from_kaggle_hedonic, price_from_aqar
 from app.services.costs import latest_cci_scalar
 from app.services.indicators import (
-    latest_rent_per_m2,
+    latest_rega_residential_rent_per_m2,
     latest_re_price_index_scalar,
     latest_sale_price_per_m2,
 )
@@ -334,13 +334,13 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         re_scalar = latest_re_price_index_scalar(db, asset_type="Residential")
         excel_inputs["re_price_index_scalar"] = re_scalar
 
-        # NEW: Always drive Excel rent assumptions from REGA rent_per_m2 when available.
+        # NEW: Always drive Excel rent assumptions from REGA residential rent_per_m2 when available.
         # Any manual rent inputs are ignored if we have a REGA benchmark.
-        rega_rent_monthly = latest_rent_per_m2(db, req.city, district)
+        rega_result = latest_rega_residential_rent_per_m2(db, req.city, district)
         rent_rates = excel_inputs.get("rent_sar_m2_yr") or {}
 
-        if rega_rent_monthly is not None:
-            # latest_rent_per_m2 returns SAR/m²/month from MarketIndicator
+        if rega_result is not None:
+            rega_rent_monthly, _rent_unit, rent_date, rent_source_url = rega_result
             annual_rent = float(rega_rent_monthly) * 12.0  # convert to SAR/m²/year
             # For now we only have residential REGA indicators in the attached CSV.
             rent_rates = {"residential": annual_rent}
@@ -348,12 +348,16 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
             # Keep a simple note so the UI / PDF can explain the assumption source.
             excel_inputs["rent_source_metadata"] = {
-                "provider": "REGA",
+                "provider": "REGA (Real Estate General Authority)",
                 "indicator_type": "rent_per_m2",
-                "unit_input": "SAR/m2/mo",
-                "unit_excel": "SAR/m2/yr",
+                "asset_type": "Residential",
                 "city": req.city,
                 "district": district,
+                "unit": "SAR/m²/month",
+                "benchmark_per_m2_month": float(rega_rent_monthly),
+                "benchmark_per_m2_year": annual_rent,
+                "as_of_date": rent_date.isoformat() if rent_date else None,
+                "source_url": rent_source_url,
             }
         else:
             # Fallback: use whatever rent_sar_m2_yr was passed in (manual or template)
