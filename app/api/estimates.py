@@ -334,25 +334,25 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         re_scalar = latest_re_price_index_scalar(db, asset_type="Residential")
         excel_inputs["re_price_index_scalar"] = re_scalar
 
-        # NEW: Prefill Excel rent assumptions from REGA rent_per_m2 if not provided.
-        rent_rates = excel_inputs.get("rent_sar_m2_yr") or {}
-        if not rent_rates:
-            # latest_rent_per_m2 returns SAR/m²/month from MarketIndicator
-            rega_rent_monthly = latest_rent_per_m2(db, req.city, district)
-            if rega_rent_monthly is not None:
-                annual_rent = float(rega_rent_monthly) * 12.0  # convert to SAR/m²/year
-                # For now we only have residential REGA indicators in the attached CSV.
-                rent_rates = {"residential": annual_rent}
-                excel_inputs["rent_sar_m2_yr"] = rent_rates
-                # Keep a simple note so the UI / PDF can explain the assumption source.
-                excel_inputs["rent_source_metadata"] = {
-                    "provider": "REGA",
-                    "indicator_type": "rent_per_m2",
-                    "unit_input": "SAR/m2/mo",
-                    "unit_excel": "SAR/m2/yr",
-                    "city": req.city,
-                    "district": district,
-                }
+        # Always override Excel rent with REGA rent_per_m2 when available.
+        rega_rent_monthly = latest_rent_per_m2(db, req.city, district)
+        if rega_rent_monthly is not None:
+            annual_rent = float(rega_rent_monthly) * 12.0  # SAR/m²/year
+            rent_rates = {"residential": annual_rent}
+            excel_inputs["rent_sar_m2_yr"] = rent_rates
+            excel_inputs["rent_source_metadata"] = {
+                "provider": "REGA",
+                "indicator_type": "rent_per_m2",
+                "unit_input": "SAR/m2/mo",
+                "unit_excel": "SAR/m2/yr",
+                "city": req.city,
+                "district": district,
+                "sar_per_m2_month": float(rega_rent_monthly),
+                "sar_per_m2_year": annual_rent,
+            }
+        else:
+            # Fallback: keep any manual rent if REGA doesn’t have a benchmark here
+            rent_rates = excel_inputs.get("rent_sar_m2_yr") or {}
 
         rett = latest_tax_rate(db, tax_type="RETT")
         if rett:
@@ -409,6 +409,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         else:
             land_source_label = ppm2_src or "the configured land price source"
 
+        # Base narrative
         summary_text = (
             f"For a site of {site_area_m2:,.0f} m² in "
             f"{district or (req.city or 'the selected city')}, "
@@ -416,9 +417,41 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             f"Construction and fit-out total "
             f"{excel['sub_total']:,.0f} SAR, with contingency, "
             f"consultants, feasibility fees and transaction costs bringing total capex to "
-            f"{excel['grand_total_capex']:,.0f} SAR. Year 1 net income of "
-            f"{excel['y1_income']:,.0f} SAR implies an unlevered ROI of "
-            f"{excel['roi']*100:,.1f}%."
+            f"{excel['grand_total_capex']:,.0f} SAR. "
+        )
+
+        # Append rent / income explanation
+        rent_meta = excel_inputs.get("rent_source_metadata") or {}
+        rent_rates = excel_inputs.get("rent_sar_m2_yr") or {}
+        residential_rent = None
+        if isinstance(rent_rates, dict):
+            residential_rent = rent_rates.get("residential") or next(
+                iter(rent_rates.values()), None
+            )
+
+        if residential_rent:
+            monthly_rent = float(residential_rent) / 12.0
+            if rent_meta.get("provider") == "REGA":
+                loc_label = (
+                    rent_meta.get("district")
+                    or rent_meta.get("city")
+                    or (req.city or "the selected city")
+                )
+                summary_text += (
+                    f"Year 1 net income assumes REGA residential benchmark rent of "
+                    f"{monthly_rent:,.0f} SAR/m²/month "
+                    f"({residential_rent:,.0f} SAR/m²/year) in {loc_label}. "
+                )
+            else:
+                summary_text += (
+                    f"Year 1 net income assumes average rent of "
+                    f"{monthly_rent:,.0f} SAR/m²/month "
+                    f"({residential_rent:,.0f} SAR/m²/year). "
+                )
+
+        summary_text += (
+            f"Year 1 net income of {excel['y1_income']:,.0f} SAR implies an unlevered ROI "
+            f"of {excel['roi']*100:,.1f}%."
         )
         result = {
             "totals": totals,
@@ -446,6 +479,10 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "excel_land_price": {
                     "ppm2": float(ppm2_val),
                     "source_type": ppm2_src,
+                },
+                "excel_rent": {
+                    "rent_sar_m2_yr": excel_inputs.get("rent_sar_m2_yr"),
+                    "rent_source_metadata": excel_inputs.get("rent_source_metadata"),
                 },
                 "excel_roi": excel["roi"],
             },
