@@ -378,10 +378,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             Financial breakdown
           </h3>
 
-          <p style={{ marginTop: 0, marginBottom: "0.75rem" }}>
-            {excelResult.summary || `Unlevered ROI: ${(excelResult.roi * 100).toFixed(1)}%`}
-          </p>
-
           <div
             style={{
               display: "grid",
@@ -536,6 +532,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
               </table>
             </div>
           </div>
+
+          <p style={{ marginTop: "0.75rem", marginBottom: 0 }}>
+            {excelResult.summary || `Unlevered ROI: ${(excelResult.roi * 100).toFixed(1)}%`}
+          </p>
         </div>
       )}
     </div>
