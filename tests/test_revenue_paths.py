@@ -1,5 +1,3 @@
-from datetime import date
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -12,7 +10,6 @@ from app.db.deps import get_db
 from app.main import app
 from app.models.base import Base
 from app.models.tables import (
-    CostIndexMonthly,
     EstimateHeader,
     EstimateLine,
     ExternalFeature,
@@ -41,20 +38,6 @@ def session_factory():
     Base.metadata.create_all(bind=engine)
 
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-    # Ensure at least one CCI row exists for tests that depend on cost indices.
-    with TestingSessionLocal() as session:
-        if not session.query(CostIndexMonthly).first():
-            session.add(
-                CostIndexMonthly(
-                    month=date(2024, 1, 1),
-                    sector="construction",
-                    cci_index=100.0,
-                    source_url="internal:test_fixture",
-                    asof_date=date(2024, 1, 1),
-                )
-            )
-            session.commit()
 
     def _session_maker():
         return TestingSessionLocal()

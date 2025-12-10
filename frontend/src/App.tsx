@@ -213,10 +213,6 @@ export default function App() {
             <h2 className="card-title">Data Freshness</h2>
             <dl className="freshness-grid">
               <div>
-                <dt>Construction Cost Index (CCI)</dt>
-                <dd>{freshness.cost_index_monthly || "–"}</dd>
-              </div>
-              <div>
                 <dt>Financing Rates</dt>
                 <dd>{freshness.rates || "–"}</dd>
               </div>

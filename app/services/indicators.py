@@ -166,7 +166,7 @@ def latest_re_price_index_scalar(
     asset_type: str = "Residential",
     city: str = "Saudi Arabia",
 ) -> float:
-    """Index rescaled so 2014=1.0, analogous to CCI scalar."""
+    """Index rescaled so 2014=1.0."""
 
     idx = latest_re_price_index(db, asset_type=asset_type, city=city)
     return (idx / 100.0) if idx is not None else 1.0

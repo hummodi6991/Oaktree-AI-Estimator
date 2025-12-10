@@ -25,13 +25,6 @@ def build_excel_explanations(
     nla = breakdown.get("nla", {}) or {}
     y1_income_components = breakdown.get("y1_income_components", {}) or {}
 
-    cci_scalar = float(inputs.get("cci_scalar") or breakdown.get("cci_scalar") or 1.0)
-    cci_asof = inputs.get("cci_asof_date") or inputs.get("cci_asof")
-    cci_suffix = " (GASTAT construction cost index, 2023=100"
-    if cci_asof:
-        cci_suffix += f", as of {cci_asof}"
-    cci_suffix += ")"
-
     re_scalar = float(inputs.get("re_price_index_scalar") or 1.0)
 
     explanations: Dict[str, str] = {}
@@ -54,7 +47,7 @@ def build_excel_explanations(
     for key, area in built_area.items():
         base_unit = unit_cost.get("basement") if key.lower().startswith("basement") else unit_cost.get(key, 0.0)
         construction_parts.append(
-            f"{key}: {_fmt_amount(area)} m² × {float(base_unit):,.0f} SAR/m² × CCI scalar {cci_scalar:.3f}{cci_suffix}"
+            f"{key}: {_fmt_amount(area)} m² × {float(base_unit):,.0f} SAR/m²"
         )
     if construction_parts:
         construction_parts.append(
@@ -67,14 +60,12 @@ def build_excel_explanations(
     )
     fitout_rate = float(inputs.get("fitout_rate") or 0.0)
     explanations["fitout"] = (
-        f"Non-basement area {_fmt_amount(fitout_area)} m² × {fitout_rate:,.0f} SAR/m² "
-        f"× CCI scalar {cci_scalar:.3f}{cci_suffix}"
+        f"Non-basement area {_fmt_amount(fitout_area)} m² × {fitout_rate:,.0f} SAR/m²"
     )
 
     contingency_pct = float(inputs.get("contingency_pct") or 0.0)
     explanations["contingency"] = (
-        f"Subtotal (after applying CCI scalar) {_fmt_amount(sub_total)} SAR "
-        f"× contingency {contingency_pct:.1%}"
+        f"Subtotal {_fmt_amount(sub_total)} SAR × contingency {contingency_pct:.1%}"
     )
 
     contingency_cost = float(breakdown.get("contingency_cost", 0.0) or 0.0)
@@ -119,15 +110,14 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     cp_density = inputs.get("cp_sqm_per_space", {}) or {}
     efficiency = inputs.get("efficiency", {}) or {}
     rent_rates = inputs.get("rent_sar_m2_yr", {}) or {}
-    cci_scalar = float(inputs.get("cci_scalar") or 1.0)
     re_scalar = float(inputs.get("re_price_index_scalar") or 1.0)
 
     built_area = {key: float(area_ratio.get(key, 0.0)) * float(site_area_m2) for key in area_ratio.keys()}
-    shell_unit = (unit_cost.get("residential") or 0.0) * cci_scalar
-    basement_unit = (unit_cost.get("basement") or 0.0) * cci_scalar
+    shell_unit = (unit_cost.get("residential") or 0.0)
+    basement_unit = (unit_cost.get("basement") or 0.0)
     direct_cost = {}
     for key in area_ratio.keys():
-        unit_rate = float(unit_cost.get(key, 0.0)) * cci_scalar
+        unit_rate = float(unit_cost.get(key, 0.0))
         if key == "residential":
             unit_rate = float(shell_unit)
         elif key.lower().startswith("basement"):
@@ -145,7 +135,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     fitout_area = sum(
         value for key, value in built_area.items() if not key.lower().startswith("basement")
     )
-    fitout_rate = float(inputs.get("fitout_rate") or 0.0) * cci_scalar
+    fitout_rate = float(inputs.get("fitout_rate") or 0.0)
     fitout_cost = fitout_area * fitout_rate
 
     sub_total = sum(direct_cost.values()) + fitout_cost
@@ -177,7 +167,6 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "built_area": built_area,
         "direct_cost": direct_cost,
         "fitout_cost": fitout_cost,
-        "cci_scalar": cci_scalar,
         "parking_required_spaces": sum(parking_required.values()),
         "sub_total": sub_total,
         "contingency_cost": contingency_cost,
