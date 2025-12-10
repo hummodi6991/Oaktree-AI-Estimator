@@ -2,32 +2,9 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.models.tables import CostIndexMonthly, Rate, MarketIndicator
-from app.connectors.gastat import fetch_cci_rows
+from app.models.tables import Rate, MarketIndicator
 from app.connectors.sama import fetch_rates
 from app.connectors.rega import fetch_market_indicators
-
-
-def upsert_cci(db: Session) -> int:
-    n = 0
-    for r in fetch_cci_rows():
-        d = date.fromisoformat(str(r["month"])[:7] + "-01")
-        row = db.query(CostIndexMonthly).filter_by(month=d, sector="construction").first()
-        if row:
-            row.cci_index = float(r["cci_index"])
-            row.source_url = r.get("source_url")
-        else:
-            db.add(
-                CostIndexMonthly(
-                    month=d,
-                    sector="construction",
-                    cci_index=float(r["cci_index"]),
-                    source_url=r.get("source_url"),
-                )
-            )
-        n += 1
-    db.commit()
-    return n
 
 
 def upsert_rates(db: Session) -> int:
@@ -90,14 +67,13 @@ def upsert_indicators(db: Session) -> int:
     return n
 
 
-if __name__ == "__main__":
+    if __name__ == "__main__":
     from app.db.session import SessionLocal
 
     db = SessionLocal()
     try:
-        n1 = upsert_cci(db)
-        n2 = upsert_rates(db)
-        n3 = upsert_indicators(db)
-        print(f"Harvest complete: CCI={n1}, rates={n2}, indicators={n3}")
+        n1 = upsert_rates(db)
+        n2 = upsert_indicators(db)
+        print(f"Harvest complete: rates={n1}, indicators={n2}")
     finally:
         db.close()

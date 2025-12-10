@@ -22,9 +22,6 @@ class Settings:
     )
     ARCGIS_TOKEN: str | None = os.getenv("ARCGIS_TOKEN")
 
-    # GASTAT Construction Cost Index (CSV/Excel export)
-    GASTAT_CCI_CSV_URL: str | None = os.getenv("GASTAT_CCI_CSV_URL")
-
     # SAMA rates (open-data JSON endpoint)
     SAMA_OPEN_JSON: str | None = os.getenv("SAMA_OPEN_JSON")
 

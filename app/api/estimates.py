@@ -15,7 +15,6 @@ from app.services.explain import (
 )
 from app.services.pdf import build_memo_pdf
 from app.services.pricing import price_from_kaggle_hedonic, price_from_aqar
-from app.services.costs import latest_cci_scalar
 from app.services.indicators import (
     latest_rega_residential_rent_per_m2,
     latest_re_price_index_scalar,
@@ -326,10 +325,6 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         except (TypeError, ValueError):
             pass
 
-        cci_scalar = latest_cci_scalar(db, asof)
-        excel_inputs["cci_scalar"] = cci_scalar
-        excel_inputs["cci_asof_date"] = asof.isoformat()
-
         # New: GASTAT real estate price index scalar (2014=1.0)
         re_scalar = latest_re_price_index_scalar(db, asset_type="Residential")
         excel_inputs["re_price_index_scalar"] = re_scalar
@@ -462,7 +457,6 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "excel_inputs_keys": list(excel_inputs.keys()),
                 "excel_breakdown": excel,
                 "cost_breakdown": cost_breakdown,
-                "cci_scalar": cci_scalar,
                 "re_price_index_scalar": re_scalar,
                 "transaction_tax": excel_inputs.get("transaction_tax_metadata"),
                 "rent_source_metadata": excel_inputs.get("rent_source_metadata"),

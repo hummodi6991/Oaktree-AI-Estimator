@@ -1,14 +1,6 @@
 from datetime import date
 from app.db.session import SessionLocal
-from app.models.tables import CostIndexMonthly, Rate, SaleComp
-
-def upsert_cost(db, month, sector, idx, url=None):
-    obj = db.query(CostIndexMonthly).filter_by(month=month, sector=sector).first()
-    if obj:
-        obj.cci_index = idx
-        obj.source_url = url
-    else:
-        db.add(CostIndexMonthly(month=month, sector=sector, cci_index=idx, source_url=url))
+from app.models.tables import Rate, SaleComp
 
 def upsert_rate(db, date_, tenor, rate_type, value, url=None):
     obj = db.query(Rate).filter_by(date=date_, tenor=tenor, rate_type=rate_type).first()
@@ -29,7 +21,6 @@ def upsert_sale_comp(db, data):
 def main():
     db = SessionLocal()
     try:
-        upsert_cost(db, date.fromisoformat("2025-06-01"), "construction", 108.9, "https://example-cci")
         upsert_rate(db, date.fromisoformat("2025-06-01"), "overnight", "SAMA_base", 6.00, "https://example-sama")
         upsert_rate(db, date.fromisoformat("2025-06-01"), "1M", "SAIBOR", 6.10, "https://example-sama")
         upsert_sale_comp(db, {

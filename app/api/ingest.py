@@ -15,7 +15,6 @@ from shapely.geometry import shape as shapely_shape
 
 from app.db.deps import get_db
 from app.models.tables import (
-    CostIndexMonthly,
     Rate,
     MarketIndicator,
     RentComp,
@@ -86,44 +85,6 @@ def _coerce_float(value):
 
 if multipart_available:
     from fastapi import File, UploadFile
-
-    @router.post("/cci")
-    def ingest_cci(
-        file: UploadFile = File(...),
-        sector: str = "construction",
-        db: Session = Depends(get_db),
-    ):
-        """
-        Columns expected: month (YYYY-MM or YYYY-MM-DD), cci_index, [source_url]
-        """
-        df = _read_table(file)
-        required = {"month", "cci_index"}
-        if not required.issubset({c.lower() for c in df.columns}):
-            raise HTTPException(400, f"Missing columns; need {required}")
-        # normalize
-        df.columns = [c.lower() for c in df.columns]
-        upserted = 0
-        for _, r in df.iterrows():
-            m = str(r["month"])[:10]
-            d = date.fromisoformat(m[:7] + "-01") if len(m) >= 7 else None
-            if not d:
-                continue
-            obj = db.query(CostIndexMonthly).filter_by(month=d, sector=sector).first()
-            if obj:
-                obj.cci_index = float(r["cci_index"])
-                obj.source_url = r.get("source_url")
-            else:
-                db.add(
-                    CostIndexMonthly(
-                        month=d,
-                        sector=sector,
-                        cci_index=float(r["cci_index"]),
-                        source_url=r.get("source_url"),
-                    )
-                )
-            upserted += 1
-        db.commit()
-        return {"status": "ok", "rows": int(upserted)}
 
 
     @router.post("/comps")
@@ -597,11 +558,6 @@ if multipart_available:
         return {"status": "ok", "rows": int(upserted)}
 
 else:
-
-    @router.post("/cci")
-    async def ingest_cci_unavailable():
-        _multipart_not_installed()
-
     @router.post("/comps")
     async def ingest_comps_unavailable():
         _multipart_not_installed()

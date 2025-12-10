@@ -4,17 +4,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 from app.models.base import Base
 
 
-class CostIndexMonthly(Base):
-    __tablename__ = "cost_index_monthly"
-
-    id = Column(Integer, primary_key=True)
-    month = Column(Date, nullable=False)
-    sector = Column(String(64), nullable=False)
-    cci_index = Column(Numeric(8, 2), nullable=False)
-    source_url = Column(String(512))
-    asof_date = Column(Date)
-
-
 class Rate(Base):
     __tablename__ = "rates"
 
