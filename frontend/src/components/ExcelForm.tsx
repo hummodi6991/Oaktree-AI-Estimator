@@ -108,6 +108,7 @@ type ExcelFormProps = {
 export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [provider, setProvider] = useState<"aqar">("aqar");
   const [price, setPrice] = useState<number | null>(null);
+  const [suggestedPrice, setSuggestedPrice] = useState<number | null>(null);
   const [inputs, setInputs] = useState<any>(DEFAULT_EXCEL_INPUTS);
   const [error, setError] = useState<string | null>(null);
   const [excelResult, setExcelResult] = useState<ExcelResult | null>(null);
@@ -129,6 +130,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         centroid?.[1],
       );
       setPrice(res.sar_per_m2);
+      setSuggestedPrice(res.sar_per_m2);
       setInputs((current: any) => ({ ...current, land_price_sar_m2: res.sar_per_m2 }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -300,20 +302,54 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const calcColumnStyle = { ...noteStyle, paddingLeft: "0.75rem" } as const;
   const amountHeaderStyle = { ...amountColumnStyle, fontWeight: 600 } as const;
   const calcHeaderStyle = { textAlign: "left", fontWeight: 600, paddingLeft: "0.75rem" } as const;
+  const revenueItems = Object.keys(incomeComponents || {}).map((key) => {
+    const nlaVal = nla[key] ?? 0;
+    const efficiencyVal = efficiency[key] ?? null;
+    const baseArea = builtArea[key] ?? null;
+    const efficiencyText =
+      efficiencyVal != null && baseArea != null
+        ? `NLA ${nlaVal.toLocaleString()} m² (built area ${baseArea.toLocaleString()} m² × efficiency ${(efficiencyVal * 100).toFixed(0)}%)`
+        : `NLA ${nlaVal.toLocaleString()} m²`;
+    const rent = rentRates[key] ?? 0;
+    return {
+      key,
+      amount: incomeComponents[key] ?? 0,
+      note: `${efficiencyText} × ${rent.toLocaleString()} SAR/m²/yr`,
+    };
+  });
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <span>Provider:</span>
-        <select value={provider} onChange={(event) => setProvider(event.target.value as any)}>
-          {PROVIDERS.map((item) => (
-            <option key={item.value} value={item.value}>
-              {item.label}
-            </option>
-          ))}
-        </select>
-        <button onClick={fetchPrice}>Fetch land price</button>
-        {price != null && <strong>SAR/m²: {price}</strong>}
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span>Provider:</span>
+          <select value={provider} onChange={(event) => setProvider(event.target.value as any)}>
+            {PROVIDERS.map((item) => (
+              <option key={item.value} value={item.value}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+          <button onClick={fetchPrice}>Fetch land price</button>
+          {price != null && <strong>Suggested SAR/m²: {price}</strong>}
+        </div>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, color: "white" }}>
+          <span>Override land price (SAR/m², optional)</span>
+          <input
+            type="number"
+            value={inputs.land_price_sar_m2 ?? ""}
+            onChange={(event) =>
+              setInputs((current: any) => ({
+                ...current,
+                land_price_sar_m2: event.target.value === "" ? 0 : Number(event.target.value),
+              }))
+            }
+            style={{ padding: "4px 6px", borderRadius: 4, border: "1px solid rgba(255,255,255,0.2)" }}
+          />
+          <span style={{ fontSize: "0.8rem", color: "#cbd5f5" }}>
+            Suggested from fetch: {suggestedPrice != null ? `${suggestedPrice.toLocaleString()} SAR/m²` : "Not fetched yet"}
+          </span>
+        </label>
       </div>
 
       <button onClick={runEstimate} style={{ marginTop: 12 }}>
@@ -334,151 +370,172 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             borderRadius: "0.5rem",
             background: "rgba(0,0,0,0.3)",
             color: "white",
-            maxWidth: "720px",
+            maxWidth: "100%",
             fontSize: "0.9rem",
           }}
         >
           <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>
-            Cost breakdown
+            Financial breakdown
           </h3>
 
           <p style={{ marginTop: 0, marginBottom: "0.75rem" }}>
-            {excelResult.summary ||
-              `Unlevered ROI: ${(excelResult.roi * 100).toFixed(1)}%`}
+            {excelResult.summary || `Unlevered ROI: ${(excelResult.roi * 100).toFixed(1)}%`}
           </p>
 
-          {rentMeta?.provider === "REGA" && residentialRentMo != null && (
-            <p style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.8rem", color: "#cbd5f5" }}>
-              Base rent uses the <strong>REGA residential rent benchmark</strong> for
-              {" "}
-              {rentMeta.district || rentMeta.city || "the selected city"}: {" "}
-              {residentialRentMo.toLocaleString("en-US", {
-                maximumFractionDigits: 0,
-              })}{" "}
-              SAR/m²/month (
-              {residentialRentYr!.toLocaleString("en-US", {
-                maximumFractionDigits: 0,
-              })}{" "}
-              SAR/m²/year). This rent fully overrides any manual rent inputs.
-            </p>
-          )}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+              gap: "1rem",
+              alignItems: "start",
+            }}
+          >
+            <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "0.75rem" }}>
+              <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Cost breakdown</h4>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left", fontWeight: 600 }}>Item</th>
+                    <th style={amountHeaderStyle}>Amount</th>
+                    <th style={calcHeaderStyle}>How we calculated it</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Residential BUA</td>
+                    <td style={amountColumnStyle}>{formatArea(builtArea.residential)}</td>
+                    <td style={calcColumnStyle}>{buaNote("residential")}</td>
+                  </tr>
+                  <tr>
+                    <td>Basement BUA</td>
+                    <td style={amountColumnStyle}>{formatArea(builtArea.basement)}</td>
+                    <td style={calcColumnStyle}>{buaNote("basement")}</td>
+                  </tr>
+                  <tr>
+                    <td>Land cost</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.land_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {landNote}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Construction (direct)</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.construction_direct_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {explanations.construction_direct
+                        ? directNote
+                        : directNote
+                        ? `${directNote}; sums to construction subtotal of ${constructionSubtotal.toLocaleString()} SAR before fit-out`
+                        : "Sum of built area × unit cost for each use"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Fit-out</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.fitout_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {fitoutNote}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Contingency</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.contingency_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {contingencyNote}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Consultants</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.consultants_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {consultantsNote}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Feasibility fee</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.feasibility_fee.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      Fixed allowance from inputs: {(usedInputs.feasibility_fee ?? 0).toLocaleString()} SAR
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Transaction costs</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.transaction_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {transactionNote}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><strong>Total capex</strong></td>
+                    <td style={amountColumnStyle}>
+                      <strong>{excelResult.costs.grand_total_capex.toLocaleString()} SAR</strong>
+                    </td>
+                    <td style={calcColumnStyle}>
+                      Land + construction + fit-out + contingency + consultants + feasibility + transaction costs
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
 
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left", fontWeight: 600 }}>Item</th>
-                <th style={amountHeaderStyle}>Amount</th>
-                <th style={calcHeaderStyle}>How we calculated it</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Residential BUA</td>
-                <td style={amountColumnStyle}>{formatArea(builtArea.residential)}</td>
-                <td style={calcColumnStyle}>{buaNote("residential")}</td>
-              </tr>
-              <tr>
-                <td>Basement BUA</td>
-                <td style={amountColumnStyle}>{formatArea(builtArea.basement)}</td>
-                <td style={calcColumnStyle}>{buaNote("basement")}</td>
-              </tr>
-              <tr>
-                <td>Land cost</td>
-                <td style={amountColumnStyle}>
-                  {excelResult.costs.land_cost.toLocaleString()} SAR
-                </td>
-                <td style={calcColumnStyle}>
-                  {landNote}
-                </td>
-              </tr>
-              <tr>
-                <td>Construction (direct)</td>
-                <td style={amountColumnStyle}>
-                  {excelResult.costs.construction_direct_cost.toLocaleString()} SAR
-                </td>
-                <td style={calcColumnStyle}>
-                  {explanations.construction_direct
-                    ? directNote
-                    : directNote
-                    ? `${directNote}; sums to construction subtotal of ${constructionSubtotal.toLocaleString()} SAR before fit-out`
-                    : "Sum of built area × unit cost for each use"}
-                </td>
-              </tr>
-              <tr>
-                <td>Fit-out</td>
-                <td style={amountColumnStyle}>
-                  {excelResult.costs.fitout_cost.toLocaleString()} SAR
-                </td>
-                <td style={calcColumnStyle}>
-                  {fitoutNote}
-                </td>
-              </tr>
-              <tr>
-                <td>Contingency</td>
-                <td style={amountColumnStyle}>
-                  {excelResult.costs.contingency_cost.toLocaleString()} SAR
-                </td>
-                <td style={calcColumnStyle}>
-                  {contingencyNote}
-                </td>
-              </tr>
-              <tr>
-                <td>Consultants</td>
-                <td style={amountColumnStyle}>
-                  {excelResult.costs.consultants_cost.toLocaleString()} SAR
-                </td>
-                <td style={calcColumnStyle}>
-                  {consultantsNote}
-                </td>
-              </tr>
-              <tr>
-                <td>Feasibility fee</td>
-                <td style={amountColumnStyle}>
-                  {excelResult.costs.feasibility_fee.toLocaleString()} SAR
-                </td>
-                <td style={calcColumnStyle}>
-                  Fixed allowance from inputs: {(usedInputs.feasibility_fee ?? 0).toLocaleString()} SAR
-                </td>
-              </tr>
-              <tr>
-                <td>Transaction costs</td>
-                <td style={amountColumnStyle}>
-                  {excelResult.costs.transaction_cost.toLocaleString()} SAR
-                </td>
-                <td style={calcColumnStyle}>
-                  {transactionNote}
-                </td>
-              </tr>
-              <tr>
-                <td><strong>Total capex</strong></td>
-                <td style={amountColumnStyle}>
-                  <strong>{excelResult.costs.grand_total_capex.toLocaleString()} SAR</strong>
-                </td>
-                <td style={calcColumnStyle}>
-                  Land + construction + fit-out + contingency + consultants + feasibility + transaction costs
-                </td>
-              </tr>
-              <tr>
-                <td>Year 1 net income</td>
-                <td style={amountColumnStyle}>
-                  {excelResult.costs.y1_income.toLocaleString()} SAR
-                </td>
-                <td style={calcColumnStyle}>
-                  {incomeNote ||
-                    "Net leasable area per use × rent rate (SAR/m²/yr), using efficiency to convert built area to NLA"}
-                </td>
-              </tr>
-              <tr>
-                <td><strong>Unlevered ROI</strong></td>
-                <td style={amountColumnStyle}>
-                  <strong>{(excelResult.roi * 100).toFixed(1)}%</strong>
-                </td>
-                <td style={calcColumnStyle}>
-                  Year 1 net income ÷ total capex
-                </td>
-              </tr>
-            </tbody>
-          </table>
+            <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "0.75rem" }}>
+              <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Revenue breakdown</h4>
+              {rentMeta?.provider === "REGA" && residentialRentMo != null && (
+                <p style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.8rem", color: "#cbd5f5" }}>
+                  Base rent uses the <strong>REGA residential rent benchmark</strong> for {rentMeta.district || rentMeta.city || "the selected city"}: {" "}
+                  {residentialRentMo.toLocaleString("en-US", { maximumFractionDigits: 0 })} SAR/m²/month ({residentialRentYr!.toLocaleString("en-US", { maximumFractionDigits: 0 })} SAR/m²/year). This rent fully overrides any manual rent inputs.
+                </p>
+              )}
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left", fontWeight: 600 }}>Item</th>
+                    <th style={amountHeaderStyle}>Amount</th>
+                    <th style={calcHeaderStyle}>How we calculated it</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {revenueItems.map((item) => (
+                    <tr key={item.key}>
+                      <td>{item.key.replace(/_/g, " ")}</td>
+                      <td style={amountColumnStyle}>{Number(item.amount || 0).toLocaleString()} SAR</td>
+                      <td style={calcColumnStyle}>{item.note}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td>Year 1 net income</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.y1_income.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {incomeNote ||
+                        "Net leasable area per use × rent rate (SAR/m²/yr), using efficiency to convert built area to NLA"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><strong>Unlevered ROI</strong></td>
+                    <td style={amountColumnStyle}>
+                      <strong>{(excelResult.roi * 100).toFixed(1)}%</strong>
+                    </td>
+                    <td style={calcColumnStyle}>Year 1 net income ÷ total capex</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
     </div>
