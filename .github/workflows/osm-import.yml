@@ -86,27 +86,27 @@ jobs:
 
           # Generate tiles from the BBOX using TILE_DEG sized cells
           python - <<'PY'
-import os
+          import os
 
-south, west, north, east = map(float, os.environ["BBOX"].split(","))
-tile = float(os.getenv("TILE_DEG", "0.10") or 0.10)
-tiles = []
+          south, west, north, east = map(float, os.environ["BBOX"].split(","))
+          tile = float(os.getenv("TILE_DEG", "0.10") or 0.10)
+          tiles = []
 
-lat = south
-while lat < north - 1e-9:
-    lat2 = min(lat + tile, north)
-    lon = west
-    while lon < east - 1e-9:
-        lon2 = min(lon + tile, east)
-        tiles.append((lat, lon, lat2, lon2))
-        lon = lon2
-    lat = lat2
+          lat = south
+          while lat < north - 1e-9:
+              lat2 = min(lat + tile, north)
+              lon = west
+              while lon < east - 1e-9:
+                  lon2 = min(lon + tile, east)
+                  tiles.append((lat, lon, lat2, lon2))
+                  lon = lon2
+              lat = lat2
 
-os.makedirs("data/osm", exist_ok=True)
-with open("data/osm/tiles.list", "w", encoding="utf-8") as f:
-    for t in tiles:
-        f.write("{:.6f},{:.6f},{:.6f},{:.6f}\n".format(*t))
-PY
+          os.makedirs("data/osm", exist_ok=True)
+          with open("data/osm/tiles.list", "w", encoding="utf-8") as f:
+              for t in tiles:
+                  f.write("{:.6f},{:.6f},{:.6f},{:.6f}\n".format(*t))
+          PY
 
           if [ ! -s data/osm/tiles.list ]; then
             echo "No tiles were generated; check BBOX/TILE_DEG" >&2
