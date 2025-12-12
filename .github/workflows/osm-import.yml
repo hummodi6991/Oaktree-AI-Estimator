@@ -7,12 +7,17 @@ on:
         description: "Force 'create' or 'append' (leave empty for auto)"
         required: false
         default: ""
+      tile_deg:
+        description: "Tile size in degrees (smaller = more Overpass calls)"
+        required: false
+        default: "0.10"
 
 env:
   # south,west,north,east (Overpass ordering) — Riyadh metro
   BBOX: "24.20,46.20,25.10,47.30"
   OVERPASS_MAIN: "https://overpass-api.de/api/interpreter"
   OVERPASS_FALLBACK: "https://overpass.kumi.systems/api/interpreter"
+  TILE_DEG: ${{ github.event.inputs.tile_deg || '0.10' }}
 
 jobs:
   import:
@@ -46,12 +51,13 @@ jobs:
             echo "PGSSLMODE=require"
           } >> "$GITHUB_ENV"
 
-      - name: Prepare Overpass query + download (with fallback)
+      - name: Prepare Overpass query + download (with fallback + tiling)
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p data/osm
-          # Write a tiny Overpass script with a placeholder {{bbox}}
+          mkdir -p data/osm/tiles
+
+          # Write an Overpass template with a placeholder {{bbox}}
           cat > data/osm/riyadh.overpass <<'Q'
           [out:xml][timeout:180];
           (
@@ -59,24 +65,95 @@ jobs:
             relation["building"]({{bbox}});
             way["landuse"]({{bbox}});
             relation["landuse"]({{bbox}});
+            way["amenity"]({{bbox}});
+            relation["amenity"]({{bbox}});
+            way["leisure"]({{bbox}});
+            relation["leisure"]({{bbox}});
+            way["shop"]({{bbox}});
+            relation["shop"]({{bbox}});
+            way["tourism"]({{bbox}});
+            relation["tourism"]({{bbox}});
+            way["natural"]({{bbox}});
+            relation["natural"]({{bbox}});
+            way["landcover"]({{bbox}});
+            relation["landcover"]({{bbox}});
+            way["man_made"]({{bbox}});
+            relation["man_made"]({{bbox}});
           );
           (._;>;);
           out body;
           Q
 
-          # Fill the bbox and POST it (URL-encoded) to Overpass
-          QUERY="$(sed "s/{{bbox}}/${BBOX}/g" data/osm/riyadh.overpass)"
-          for URL in "$OVERPASS_MAIN" "$OVERPASS_FALLBACK"; do
-            if curl --fail --silent --show-error --retry 6 --retry-all-errors \
-                 --max-time 120 --data-urlencode "data=$QUERY" \
-                 "$URL" -o data/osm/riyadh.osm.xml; then
-              break
-            fi
-          done
+          # Generate tiles from the BBOX using TILE_DEG sized cells
+          python - <<'PY'
+import os
 
-          # Quick sanity checks
-          test -s data/osm/riyadh.osm.xml
-          head -n1 data/osm/riyadh.osm.xml | grep -q '<?xml'
+south, west, north, east = map(float, os.environ["BBOX"].split(","))
+tile = float(os.getenv("TILE_DEG", "0.10") or 0.10)
+tiles = []
+
+lat = south
+while lat < north - 1e-9:
+    lat2 = min(lat + tile, north)
+    lon = west
+    while lon < east - 1e-9:
+        lon2 = min(lon + tile, east)
+        tiles.append((lat, lon, lat2, lon2))
+        lon = lon2
+    lat = lat2
+
+os.makedirs("data/osm", exist_ok=True)
+with open("data/osm/tiles.list", "w", encoding="utf-8") as f:
+    for t in tiles:
+        f.write("{:.6f},{:.6f},{:.6f},{:.6f}\n".format(*t))
+PY
+
+          if [ ! -s data/osm/tiles.list ]; then
+            echo "No tiles were generated; check BBOX/TILE_DEG" >&2
+            exit 1
+          fi
+
+          TILE_IDX=0
+          while IFS= read -r TILE_BBOX; do
+            TILE_IDX=$((TILE_IDX+1))
+            TILE_PATH="data/osm/tiles/tile_${TILE_IDX}.osm.xml"
+            QUERY="$(sed "s/{{bbox}}/${TILE_BBOX}/g" data/osm/riyadh.overpass)"
+            echo "Fetching tile #${TILE_IDX} (${TILE_BBOX})"
+            SUCCESS=0
+            for URL in "$OVERPASS_MAIN" "$OVERPASS_FALLBACK"; do
+              if curl --fail --silent --show-error --retry 6 --retry-all-errors \
+                   --max-time 120 --data-urlencode "data=$QUERY" \
+                   "$URL" -o "$TILE_PATH"; then
+                SUCCESS=1
+                break
+              fi
+            done
+            if [ "$SUCCESS" -ne 1 ]; then
+              echo "Tile #${TILE_IDX} failed to download" >&2
+              exit 1
+            fi
+
+            if ! test -s "$TILE_PATH"; then
+              echo "Tile #${TILE_IDX} is empty" >&2
+              exit 1
+            fi
+
+            if ! head -n1 "$TILE_PATH" | grep -q '<?xml'; then
+              echo "Tile #${TILE_IDX} is not XML" >&2
+              exit 1
+            fi
+
+            if grep -qi "<remark>.*runtime error" "$TILE_PATH"; then
+              echo "Tile #${TILE_IDX} contains a runtime error remark" >&2
+              exit 1
+            fi
+
+            if grep -qi "<html" "$TILE_PATH"; then
+              echo "Tile #${TILE_IDX} appears to be an HTML response (rate limit?)" >&2
+              exit 1
+            fi
+
+          done < data/osm/tiles.list
 
       - name: Enable PostGIS + hstore + helper function (id extractor)
         run: |
@@ -138,21 +215,33 @@ jobs:
       - name: Import with osm2pgsql (${{ steps.mode.outputs.value }})
         run: |
           set -euo pipefail
-          if [ "${{ steps.mode.outputs.value }}" = "create" ]; then
-            osm2pgsql --create --slim --latlong --hstore \
-              --style /usr/share/osm2pgsql/default.style \
-              --number-processes 1 \
-              --prefix planet_osm \
-              -d "$PGDATABASE" -H "$PGHOST" -P "$PGPORT" -U "$PGUSER" \
-              data/osm/riyadh.osm.xml
-          else
-            osm2pgsql --append --slim --latlong --hstore \
-              --style /usr/share/osm2pgsql/default.style \
-              --number-processes 1 \
-              --prefix planet_osm \
-              -d "$PGDATABASE" -H "$PGHOST" -P "$PGPORT" -U "$PGUSER" \
-              data/osm/riyadh.osm.xml
+          if [ ! -s data/osm/tiles.list ]; then
+            echo "No tiles to import" >&2
+            exit 1
           fi
+
+          TILE_IDX=0
+          while IFS= read -r TILE_BBOX; do
+            TILE_IDX=$((TILE_IDX+1))
+            TILE_PATH="data/osm/tiles/tile_${TILE_IDX}.osm.xml"
+            if [ ! -s "$TILE_PATH" ]; then
+              echo "Missing tile file $TILE_PATH" >&2
+              exit 1
+            fi
+
+            ACTION="--append"
+            if [ "${{ steps.mode.outputs.value }}" = "create" ] && [ "$TILE_IDX" -eq 1 ]; then
+              ACTION="--create"
+            fi
+
+            echo "Importing tile #${TILE_IDX} (${ACTION#--})"
+            osm2pgsql $ACTION --slim --latlong --hstore \
+              --style /usr/share/osm2pgsql/default.style \
+              --number-processes 1 \
+              --prefix planet_osm \
+              -d "$PGDATABASE" -H "$PGHOST" -P "$PGPORT" -U "$PGUSER" \
+              "$TILE_PATH"
+          done < data/osm/tiles.list
 
       - name: Touch-up indexes (fast intersects + tag filters)
         run: |
@@ -166,6 +255,65 @@ jobs:
           ANALYZE planet_osm_polygon;
           SQL
 
+      - name: Rebuild osm_parcels_proxy
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DROP TABLE IF EXISTS osm_parcels_proxy;
+
+          CREATE TABLE osm_parcels_proxy AS
+          WITH candidates AS (
+            SELECT
+              *,
+              CASE
+                WHEN landuse IN ('residential') THEN 1
+                WHEN building IN ('residential','apartments','house','detached','terrace','semidetached') THEN 1
+                ELSE 0
+              END AS is_res,
+              CASE
+                WHEN landuse IN ('commercial','retail') THEN 1
+                WHEN building IN ('retail','commercial','office','shop') THEN 1
+                ELSE 0
+              END AS is_com,
+              coalesce(landuse, building, amenity, leisure, shop, tourism, "natural", tags->>'landcover', tags->>'man_made') AS any_tag
+            FROM planet_osm_polygon
+            WHERE landuse IS NOT NULL
+              OR building IS NOT NULL
+              OR amenity IS NOT NULL
+              OR leisure IS NOT NULL
+              OR shop IS NOT NULL
+              OR tourism IS NOT NULL
+              OR "natural" IS NOT NULL
+              OR (tags ? 'landcover')
+              OR (tags ? 'man_made')
+          )
+          SELECT
+            CASE WHEN osm_id < 0 THEN 'rel' || abs(osm_id)::text ELSE 'way' || osm_id::text END AS id,
+            CASE
+              WHEN is_res = 1 AND is_com = 1 THEN 'mixed'
+              WHEN is_res = 1 THEN 'residential'
+              WHEN is_com = 1 THEN 'commercial'
+              ELSE any_tag
+            END AS landuse,
+            CASE
+              WHEN landuse IS NOT NULL THEN 'landuse'
+              WHEN building IS NOT NULL THEN 'building'
+              WHEN amenity IS NOT NULL THEN 'amenity'
+              WHEN leisure IS NOT NULL THEN 'leisure'
+              WHEN shop IS NOT NULL THEN 'shop'
+              WHEN tourism IS NOT NULL THEN 'tourism'
+              WHEN "natural" IS NOT NULL THEN 'natural'
+              WHEN tags ? 'landcover' THEN 'landcover'
+              WHEN tags ? 'man_made' THEN 'man_made'
+            END AS classification,
+            ST_SetSRID(ST_Transform(way, 32638), 32638) AS geom
+          FROM candidates;
+
+          CREATE INDEX IF NOT EXISTS osm_parcels_proxy_geom_gix ON osm_parcels_proxy USING GIST (geom);
+          CREATE INDEX IF NOT EXISTS osm_parcels_proxy_id_idx ON osm_parcels_proxy (id);
+          ANALYZE osm_parcels_proxy;
+          SQL
+
       - name: Smoke test
         run: |
           psql -XtAc "SELECT to_char(NOW(),'YYYY-MM-DD HH24:MI'), count(*) FROM planet_osm_polygon;"
+          psql -XtAc "SELECT to_char(NOW(),'YYYY-MM-DD HH24:MI'), count(*) FROM osm_parcels_proxy;"
