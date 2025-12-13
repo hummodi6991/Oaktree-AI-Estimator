@@ -220,6 +220,31 @@ jobs:
             exit 1
           fi
 
+          psql -v ON_ERROR_STOP=1 <<SQL
+          CREATE TABLE IF NOT EXISTS public.osm_import_state (
+            id int PRIMARY KEY,
+            bbox text NOT NULL,
+            tile_deg text NOT NULL,
+            last_tile int NOT NULL DEFAULT 0,
+            updated_at timestamptz NOT NULL DEFAULT now()
+          );
+
+          INSERT INTO public.osm_import_state (id, bbox, tile_deg, last_tile)
+          VALUES (1, '${BBOX}', '${TILE_DEG}', 0)
+          ON CONFLICT (id) DO NOTHING;
+
+          UPDATE public.osm_import_state
+            SET bbox='${BBOX}', tile_deg='${TILE_DEG}', last_tile=0, updated_at=now()
+          WHERE id=1 AND (bbox <> '${BBOX}' OR tile_deg <> '${TILE_DEG}');
+          SQL
+
+          LAST_IMPORTED=$(psql -Atc "SELECT last_tile FROM public.osm_import_state WHERE id=1;")
+
+          if [ "${{ steps.mode.outputs.value }}" = "create" ]; then
+            LAST_IMPORTED=0
+            psql -v ON_ERROR_STOP=1 -c "UPDATE public.osm_import_state SET bbox='${BBOX}', tile_deg='${TILE_DEG}', last_tile=0, updated_at=now() WHERE id=1;"
+          fi
+
           TILE_IDX=0
           while IFS= read -r TILE_BBOX; do
             TILE_IDX=$((TILE_IDX+1))
@@ -227,6 +252,11 @@ jobs:
             if [ ! -s "$TILE_PATH" ]; then
               echo "Missing tile file $TILE_PATH" >&2
               exit 1
+            fi
+
+            if [ "$TILE_IDX" -le "$LAST_IMPORTED" ]; then
+              echo "Skipping tile #${TILE_IDX} (already imported)"
+              continue
             fi
 
             ACTION="--append"
@@ -241,6 +271,8 @@ jobs:
               --prefix planet_osm \
               -d "$PGDATABASE" -H "$PGHOST" -P "$PGPORT" -U "$PGUSER" \
               "$TILE_PATH"
+
+            psql -v ON_ERROR_STOP=1 -c "UPDATE public.osm_import_state SET last_tile=${TILE_IDX}, updated_at=now() WHERE id=1;"
           done < data/osm/tiles.list
 
       - name: Touch-up indexes (fast intersects + tag filters)
@@ -317,3 +349,4 @@ jobs:
         run: |
           psql -XtAc "SELECT to_char(NOW(),'YYYY-MM-DD HH24:MI'), count(*) FROM planet_osm_polygon;"
           psql -XtAc "SELECT to_char(NOW(),'YYYY-MM-DD HH24:MI'), count(*) FROM osm_parcels_proxy;"
+          psql -XtAc "SELECT id,bbox,tile_deg,last_tile,updated_at FROM osm_import_state;"
