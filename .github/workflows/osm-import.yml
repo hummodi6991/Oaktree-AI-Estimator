@@ -7,6 +7,10 @@ on:
         description: "Force 'create' or 'append' (leave empty for auto)"
         required: false
         default: ""
+      force_resume_from:
+        description: "Set last imported tile index before resuming (leave empty to skip)"
+        required: false
+        default: ""
       tile_deg:
         description: "Tile size in degrees (smaller = more Overpass calls)"
         required: false
@@ -220,6 +224,8 @@ jobs:
             exit 1
           fi
 
+          FORCE_RESUME="${{ github.event.inputs.force_resume_from }}"
+
           psql -v ON_ERROR_STOP=1 <<SQL
           CREATE TABLE IF NOT EXISTS public.osm_import_state (
             id int PRIMARY KEY,
@@ -237,6 +243,26 @@ jobs:
             SET bbox='${BBOX}', tile_deg='${TILE_DEG}', last_tile=0, updated_at=now()
           WHERE id=1 AND (bbox <> '${BBOX}' OR tile_deg <> '${TILE_DEG}');
           SQL
+
+          if [ -n "$FORCE_RESUME" ]; then
+            psql -v ON_ERROR_STOP=1 <<SQL
+            CREATE TABLE IF NOT EXISTS public.osm_import_state (
+              id int PRIMARY KEY,
+              bbox text NOT NULL,
+              tile_deg text NOT NULL,
+              last_tile int NOT NULL DEFAULT 0,
+              updated_at timestamptz NOT NULL DEFAULT now()
+            );
+
+            INSERT INTO public.osm_import_state (id, bbox, tile_deg, last_tile)
+            VALUES (1, '${BBOX}', '${TILE_DEG}', 0)
+            ON CONFLICT (id) DO NOTHING;
+
+            UPDATE public.osm_import_state
+              SET last_tile=${FORCE_RESUME}, updated_at=now()
+            WHERE id=1;
+            SQL
+          fi
 
           LAST_IMPORTED=$(psql -Atc "SELECT last_tile FROM public.osm_import_state WHERE id=1;")
 
