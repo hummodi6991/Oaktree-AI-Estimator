@@ -1,0 +1,118 @@
+name: Import Overture Buildings (Riyadh → RDS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Overture release tag"
+        required: false
+        default: "2025-11-19.0"
+      bbox:
+        description: "BBox as minLon,minLat,maxLon,maxLat"
+        required: false
+        default: "46.20,24.20,47.30,25.10"
+      mode:
+        description: "Import mode"
+        required: false
+        default: "create"
+        type: choice
+        options:
+          - create
+          - append
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client python3 python3-pip
+          python3 -m pip install --upgrade pip
+          python3 -m pip install duckdb
+
+      - name: Configure DB env (managed RDS with SSL)
+        env:
+          PGHOST_S: ${{ secrets.POSTGRES_HOST }}
+          PGPORT_S: ${{ secrets.POSTGRES_PORT }}
+          PGDB_S:   ${{ secrets.POSTGRES_DB }}
+          PGUSER_S: ${{ secrets.POSTGRES_USER }}
+          PGPASS_S: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          {
+            echo "PGHOST=${PGHOST_S}"
+            echo "PGPORT=${PGPORT_S}"
+            echo "PGDATABASE=${PGDB_S}"
+            echo "PGUSER=${PGUSER_S}"
+            echo "PGPASSWORD=${PGPASS_S}"
+            echo "PGSSLMODE=require"
+          } >> "$GITHUB_ENV"
+
+      - name: Extract Overture buildings (bbox filter)
+        env:
+          RELEASE: ${{ github.event.inputs.release || '2025-11-19.0' }}
+          BBOX: ${{ github.event.inputs.bbox || '46.20,24.20,47.30,25.10' }}
+        run: |
+          set -euo pipefail
+          mkdir -p data/overture
+          python3 scripts/overture_extract_buildings.py \
+            --release "$RELEASE" \
+            --bbox "$BBOX" \
+            --out data/overture/buildings.tsv.gz
+          ls -lh data/overture
+
+      - name: Prepare tables (mode-aware)
+        env:
+          MODE: ${{ github.event.inputs.mode || 'create' }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = "create" ]; then
+            psql -v ON_ERROR_STOP=1 -c "DROP TABLE IF EXISTS overture_buildings;"
+          fi
+
+          psql -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+
+          psql -v ON_ERROR_STOP=1 -c "DROP TABLE IF EXISTS overture_buildings_stage;"
+          psql -v ON_ERROR_STOP=1 -c "CREATE TABLE overture_buildings_stage (id text, subtype text, class text, height double precision, num_floors int, geom_wkb_hex text);"
+
+          psql -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS overture_buildings (id text primary key, subtype text, class text, height double precision, num_floors int, geom geometry(MultiPolygon,32638));"
+
+      - name: Load staged TSV
+        run: |
+          set -euo pipefail
+          if [ ! -s data/overture/buildings.tsv.gz ]; then
+            echo "TSV is missing" >&2
+            exit 1
+          fi
+          psql -v ON_ERROR_STOP=1 -c "\copy overture_buildings_stage FROM PROGRAM 'gzip -dc data/overture/buildings.tsv.gz' WITH (FORMAT csv, DELIMITER E'\t', HEADER true);"
+
+      - name: Upsert into overture_buildings
+        env:
+          MODE: ${{ github.event.inputs.mode || 'create' }}
+        run: |
+          set -euo pipefail
+          if [ "$MODE" = "create" ]; then
+            psql -v ON_ERROR_STOP=1 -c "TRUNCATE overture_buildings;"
+          fi
+
+          psql -v ON_ERROR_STOP=1 -c "INSERT INTO overture_buildings (id, subtype, class, height, num_floors, geom) SELECT id, subtype, class, height, num_floors, ST_Multi(ST_Transform(ST_SetSRID(ST_GeomFromWKB(decode(geom_wkb_hex,'hex')),4326),32638)) FROM overture_buildings_stage ON CONFLICT (id) DO UPDATE SET subtype = EXCLUDED.subtype, class = EXCLUDED.class, height = EXCLUDED.height, num_floors = EXCLUDED.num_floors, geom = EXCLUDED.geom;"
+
+      - name: Index + analyze
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "CREATE INDEX IF NOT EXISTS overture_buildings_geom_gix ON overture_buildings USING GIST (geom);"
+          psql -v ON_ERROR_STOP=1 -c "ANALYZE overture_buildings;"
+
+      - name: Rebuild osm_parcels_proxy
+        run: |
+          psql -v ON_ERROR_STOP=1 -f sql/rebuild_osm_parcels_proxy.sql
+
+      - name: Smoke test
+        run: |
+          psql -XtAc "SELECT to_char(NOW(),'YYYY-MM-DD HH24:MI'), count(*) FROM overture_buildings;"
+          psql -XtAc "SELECT to_char(NOW(),'YYYY-MM-DD HH24:MI'), count(*) FROM osm_parcels_proxy;"

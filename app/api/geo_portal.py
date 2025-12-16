@@ -47,17 +47,38 @@ _IDENTIFY_SQL = text(
     f"""
   WITH q AS (
     SELECT ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid) AS pt
+  ),
+  scored AS (
+    SELECT
+      id,
+      landuse,
+      classification,
+      {_PARCEL_GEOM_COLUMN} AS geom,
+      ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
+      ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
+      ST_Distance({_PARCEL_GEOM_COLUMN}, q.pt)    AS distance_m,
+      CASE WHEN ST_Intersects({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS hits,
+      CASE WHEN ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol_m) THEN 1 ELSE 0 END AS near,
+      CASE WHEN classification = 'overture_building' THEN 1 ELSE 0 END AS is_ovt
+    FROM {_PARCEL_TABLE}, q
   )
   SELECT
     id,
     landuse,
     classification,
-    ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
-    ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
-    ST_AsGeoJSON({_PARCEL_GEOM_COLUMN})         AS geom,
-    ST_Distance({_PARCEL_GEOM_COLUMN}, q.pt)    AS distance_m
-  FROM {_PARCEL_TABLE}, q
-  ORDER BY {_PARCEL_GEOM_COLUMN} <-> q.pt
+    area_m2,
+    perimeter_m,
+    ST_AsGeoJSON(geom) AS geom,
+    distance_m,
+    hits,
+    near,
+    is_ovt
+  FROM scored
+  ORDER BY
+    CASE WHEN hits = 1 THEN 3 WHEN near = 1 THEN 2 ELSE 1 END DESC,
+    is_ovt DESC,
+    area_m2 ASC,
+    distance_m ASC
   LIMIT 1;
   """
 )
@@ -226,7 +247,7 @@ class IdentifyPoint(BaseModel):
 
 
 def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Optional[Dict[str, Any]]:
-    params = {"lng": lng, "lat": lat, "srid": _TARGET_SRID}
+    params = {"lng": lng, "lat": lat, "srid": _TARGET_SRID, "tol_m": tol_m}
     try:
         row = db.execute(_IDENTIFY_SQL, params).mappings().first()
     except SQLAlchemyError as exc:
@@ -239,16 +260,6 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
             "tolerance_m": tol_m,
             "source": "postgis",
             "message": "No parcels table/row returned.",
-        }
-
-    # Enforce tolerance in Python
-    if row.get("distance_m") is not None and float(row["distance_m"]) > tol_m:
-        return {
-            "found": False,
-            "tolerance_m": tol_m,
-            "source": "postgis",
-            "message": "Nearest polygon is outside tolerance.",
-            "distance_m": float(row["distance_m"]),
         }
 
     geom_json = row.get("geom")
