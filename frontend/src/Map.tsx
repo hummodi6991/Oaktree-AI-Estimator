@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { Map as MapLibreMap, NavigationControl } from "maplibre-gl";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import type { Feature, Polygon } from "geojson";
@@ -6,6 +6,7 @@ import type { IControl, LngLatLike } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import "./Map.css";
+import { buildApiUrl } from "./api";
 
 type MapProps = { polygon?: Polygon | null; onPolygon: (geometry: Polygon | null) => void; };
 
@@ -13,6 +14,8 @@ type ToolbarState = { isDrawing: boolean; hasPolygon: boolean };
 type ToolbarControl = IControl & { setState: (state: ToolbarState) => void };
 
 const SITE_FEATURE_ID = "site";
+const OVERTURE_SOURCE_ID = "overture-footprints";
+const OVERTURE_LAYER_ID = "overture-footprints-outline";
 
 const DEFAULT_MAP_STYLE = "https://demotiles.maplibre.org/style.json";
 
@@ -169,6 +172,9 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   const suppressDeleteRef = useRef(false);
   const finishDrawingRef = useRef<() => void>(() => undefined);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [showOverture, setShowOverture] = useState(true);
+  const showOvertureRef = useRef(showOverture);
+  const overtureTileUrl = useMemo(() => buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf"), []);
 
   const deleteAll = (suppressCallback = false) => {
     if (!drawRef.current) return;
@@ -218,6 +224,44 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         }
       }
     });
+
+    const ensureOvertureOverlay = () => {
+      if (!overtureTileUrl) return;
+      if (!map.getSource(OVERTURE_SOURCE_ID)) {
+        map.addSource(OVERTURE_SOURCE_ID, {
+          type: "vector",
+          tiles: [overtureTileUrl],
+          minzoom: 12,
+          maxzoom: 22,
+        });
+      }
+      if (!map.getLayer(OVERTURE_LAYER_ID)) {
+        map.addLayer({
+          id: OVERTURE_LAYER_ID,
+          type: "line",
+          source: OVERTURE_SOURCE_ID,
+          "source-layer": "buildings",
+          minzoom: 16,
+          layout: {
+            visibility: showOvertureRef.current ? "visible" : "none",
+          },
+          paint: {
+            "line-color": "#d5b16a",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 16, 0.6, 20, 2.0],
+            "line-opacity": 0.7,
+          },
+        });
+      } else {
+        map.setLayoutProperty(
+          OVERTURE_LAYER_ID,
+          "visibility",
+          showOvertureRef.current ? "visible" : "none"
+        );
+      }
+    };
+
+    map.on("load", ensureOvertureOverlay);
+    map.on("style.load", ensureOvertureOverlay);
 
     const draw = new MapboxDraw({
       displayControlsDefault: false,
@@ -371,11 +415,13 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       finishDrawingRef.current = () => undefined;
       toolbarRef.current = null;
       map.doubleClickZoom.enable();
+      map.off("load", ensureOvertureOverlay);
+      map.off("style.load", ensureOvertureOverlay);
       map.remove();
       drawRef.current = null;
       mapRef.current = null;
     };
-  }, []);
+  }, [overtureTileUrl]);
 
   useEffect(() => {
     if (!drawRef.current) return;
@@ -419,6 +465,19 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     }
   }, [polygon]);
 
+  useEffect(() => {
+    showOvertureRef.current = showOverture;
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    if (map.getLayer(OVERTURE_LAYER_ID)) {
+      map.setLayoutProperty(
+        OVERTURE_LAYER_ID,
+        "visibility",
+        showOverture ? "visible" : "none"
+      );
+    }
+  }, [showOverture]);
+
   return (
     <div className="map-wrapper">
       <div ref={containerRef} className="map-canvas" />
@@ -428,6 +487,14 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
           Click to add vertices. Double-click or press Finish shape to close the polygon, then drag
           vertices to adjust the parcel or press Clear to remove it.
         </p>
+        <label className="map-overlay__toggle">
+          <input
+            type="checkbox"
+            checked={showOverture}
+            onChange={(event) => setShowOverture(event.target.checked)}
+          />
+          Show building outlines
+        </label>
         {isDrawing && (
           <button type="button" className="map-overlay__finish" onClick={() => finishDrawingRef.current()}>
             Finish shape

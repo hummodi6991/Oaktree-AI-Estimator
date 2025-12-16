@@ -17,6 +17,8 @@ function withBase(path: string): string {
   return `${API_BASE}${normalized}`;
 }
 
+export const buildApiUrl = withBase;
+
 async function readJson<T = any>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => "");

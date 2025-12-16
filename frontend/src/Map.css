@@ -109,6 +109,21 @@
   color: rgba(238, 225, 206, 0.85);
 }
 
+.map-overlay__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 0.86rem;
+  color: rgba(238, 225, 206, 0.9);
+}
+
+.map-overlay__toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--gold-400);
+}
+
 .map-overlay__finish {
   margin-top: 14px;
   font: inherit;

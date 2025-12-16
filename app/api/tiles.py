@@ -1,6 +1,10 @@
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 import os, pathlib
 import httpx
+
+from app.db.deps import get_db
 
 router = APIRouter(tags=["map"])
 
@@ -11,6 +15,24 @@ OFFLINE_ONLY = os.getenv("TILE_OFFLINE_ONLY", "false").lower() in {"1","true","y
 
 def _tile_path(z: int, x: int, y: int) -> pathlib.Path:
     return pathlib.Path(CACHE_DIR) / str(z) / str(x) / f"{y}.png"
+
+
+_OVT_TILE_SQL = text(
+    """
+    WITH bounds AS (
+      SELECT ST_Transform(ST_TileEnvelope(:z,:x,:y), 32638) AS geom
+    ),
+    mvtgeom AS (
+      SELECT
+        'ovt:' || id AS id,
+        ST_AsMVTGeom(geom, bounds.geom, 4096, 64, true) AS geom
+      FROM overture_buildings, bounds
+      WHERE geom && bounds.geom
+    )
+    SELECT ST_AsMVT(mvtgeom, 'buildings', 4096, 'geom') AS tile
+    FROM mvtgeom;
+    """
+)
 
 @router.get("/tiles/{z}/{x}/{y}.png")
 def tile(z: int, x: int, y: int):
@@ -43,3 +65,18 @@ def tile(z: int, x: int, y: int):
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"tile upstream error: {exc}")
+
+
+@router.get("/v1/tiles/ovt/{z}/{x}/{y}.pbf")
+def overture_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
+    try:
+        tile_bytes = db.execute(_OVT_TILE_SQL, {"z": z, "x": x, "y": y}).scalar()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"failed to render overture tile: {exc}")
+
+    payload = bytes(tile_bytes or b"")
+    return Response(
+        payload,
+        media_type="application/x-protobuf",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
