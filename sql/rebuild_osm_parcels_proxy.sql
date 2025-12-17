@@ -11,13 +11,16 @@ DROP TABLE IF EXISTS osm_parcels_proxy;
 
 CREATE TABLE osm_parcels_proxy AS
 SELECT
+  'ovt' AS source,
   ('ovt:' || id) AS id,
   COALESCE(class, subtype, 'building') AS landuse,
   'overture_building' AS classification,
+  ST_Area(geom) AS area_m2,
   geom
 FROM overture_buildings
 UNION ALL
 SELECT
+  'osm' AS source,
   CASE WHEN osm_id < 0 THEN 'rel' || abs(osm_id)::text ELSE 'way' || osm_id::text END AS id,
   CASE
     WHEN is_res = 1 AND is_com = 1 THEN 'mixed'
@@ -36,9 +39,11 @@ SELECT
     WHEN tags ? 'landcover' THEN 'landcover'
     WHEN tags ? 'man_made' THEN 'man_made'
   END AS classification,
-  ST_SetSRID(ST_Transform(way, 32638), 32638) AS geom
+  ST_Area(geom_32638) AS area_m2,
+  geom_32638 AS geom
 FROM (
   SELECT
+    ST_SetSRID(ST_Transform(way, 32638), 32638) AS geom_32638,
     *,
     CASE
       WHEN landuse IN ('residential') THEN 1
@@ -64,6 +69,7 @@ FROM (
     OR (tags ? 'man_made')
 ) candidates;
 
+CREATE INDEX IF NOT EXISTS overture_buildings_geom_gix ON overture_buildings USING GIST (geom);
 CREATE INDEX IF NOT EXISTS osm_parcels_proxy_geom_gix ON osm_parcels_proxy USING GIST (geom);
 CREATE INDEX IF NOT EXISTS osm_parcels_proxy_id_idx ON osm_parcels_proxy (id);
 ANALYZE osm_parcels_proxy;

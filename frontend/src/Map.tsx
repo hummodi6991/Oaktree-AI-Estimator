@@ -16,6 +16,9 @@ type ToolbarControl = IControl & { setState: (state: ToolbarState) => void };
 const SITE_FEATURE_ID = "site";
 const OVERTURE_SOURCE_ID = "overture-footprints";
 const OVERTURE_LAYER_ID = "overture-footprints-outline";
+const PARCEL_SOURCE_ID = "parcel-outlines";
+const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
+const PARCEL_FILL_LAYER_ID = "parcel-outlines-fill";
 
 const DEFAULT_MAP_STYLE = "https://demotiles.maplibre.org/style.json";
 
@@ -172,9 +175,10 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   const suppressDeleteRef = useRef(false);
   const finishDrawingRef = useRef<() => void>(() => undefined);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [showOverture, setShowOverture] = useState(true);
-  const showOvertureRef = useRef(showOverture);
+  const [showParcelOutlines, setShowParcelOutlines] = useState(true);
+  const showParcelOutlinesRef = useRef(showParcelOutlines);
   const overtureTileUrl = useMemo(() => buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf"), []);
+  const parcelTileUrl = useMemo(() => buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf"), []);
 
   const deleteAll = (suppressCallback = false) => {
     if (!drawRef.current) return;
@@ -225,6 +229,9 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       }
     });
 
+    const getBeforeLayerId = () =>
+      map.getStyle()?.layers?.find((layer) => layer.id.startsWith("gl-draw"))?.id;
+
     const ensureOvertureOverlay = () => {
       if (!overtureTileUrl) return;
       if (!map.getSource(OVERTURE_SOURCE_ID)) {
@@ -235,33 +242,117 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
           maxzoom: 22,
         });
       }
+      const beforeLayerId = getBeforeLayerId();
       if (!map.getLayer(OVERTURE_LAYER_ID)) {
-        map.addLayer({
-          id: OVERTURE_LAYER_ID,
-          type: "line",
-          source: OVERTURE_SOURCE_ID,
-          "source-layer": "buildings",
-          minzoom: 16,
-          layout: {
-            visibility: showOvertureRef.current ? "visible" : "none",
+        map.addLayer(
+          {
+            id: OVERTURE_LAYER_ID,
+            type: "line",
+            source: OVERTURE_SOURCE_ID,
+            "source-layer": "buildings",
+            minzoom: 16,
+            layout: {
+              visibility: showParcelOutlinesRef.current ? "visible" : "none",
+            },
+            paint: {
+              "line-color": "#d5b16a",
+              "line-width": ["interpolate", ["linear"], ["zoom"], 16, 0.6, 20, 2.0],
+              "line-opacity": 0.7,
+            },
           },
-          paint: {
-            "line-color": "#d5b16a",
-            "line-width": ["interpolate", ["linear"], ["zoom"], 16, 0.6, 20, 2.0],
-            "line-opacity": 0.7,
-          },
-        });
+          beforeLayerId
+        );
       } else {
         map.setLayoutProperty(
           OVERTURE_LAYER_ID,
           "visibility",
-          showOvertureRef.current ? "visible" : "none"
+          showParcelOutlinesRef.current ? "visible" : "none"
         );
+        if (beforeLayerId) {
+          map.moveLayer(OVERTURE_LAYER_ID, beforeLayerId);
+        }
+      }
+    };
+
+    const ensureParcelOverlay = () => {
+      if (!parcelTileUrl) return;
+      if (!map.getSource(PARCEL_SOURCE_ID)) {
+        map.addSource(PARCEL_SOURCE_ID, {
+          type: "vector",
+          tiles: [parcelTileUrl],
+          minzoom: 10,
+          maxzoom: 22,
+        });
+      }
+
+      const beforeLayerId = getBeforeLayerId();
+      if (!map.getLayer(PARCEL_FILL_LAYER_ID)) {
+        map.addLayer(
+          {
+            id: PARCEL_FILL_LAYER_ID,
+            type: "fill",
+            source: PARCEL_SOURCE_ID,
+            "source-layer": "parcels",
+            minzoom: 15,
+            layout: { visibility: showParcelOutlinesRef.current ? "visible" : "none" },
+            paint: {
+              "fill-color": "#a18af5",
+              "fill-opacity": 0.06,
+            },
+          },
+          beforeLayerId
+        );
+      } else {
+        map.setLayoutProperty(
+          PARCEL_FILL_LAYER_ID,
+          "visibility",
+          showParcelOutlinesRef.current ? "visible" : "none"
+        );
+        if (beforeLayerId) {
+          map.moveLayer(PARCEL_FILL_LAYER_ID, beforeLayerId);
+        }
+      }
+
+      if (!map.getLayer(PARCEL_LINE_LAYER_ID)) {
+        map.addLayer(
+          {
+            id: PARCEL_LINE_LAYER_ID,
+            type: "line",
+            source: PARCEL_SOURCE_ID,
+            "source-layer": "parcels",
+            minzoom: 15,
+            layout: { visibility: showParcelOutlinesRef.current ? "visible" : "none" },
+            paint: {
+              "line-color": "#8a5dff",
+              "line-width": ["interpolate", ["linear"], ["zoom"], 15, 0.7, 20, 2.0],
+              "line-opacity": 0.85,
+            },
+          },
+          beforeLayerId
+        );
+      } else {
+        map.setLayoutProperty(
+          PARCEL_LINE_LAYER_ID,
+          "visibility",
+          showParcelOutlinesRef.current ? "visible" : "none"
+        );
+        if (beforeLayerId) {
+          map.moveLayer(PARCEL_LINE_LAYER_ID, beforeLayerId);
+        }
+      }
+    };
+
+    const logParcelTilesLoaded = (event: any) => {
+      if (event?.sourceId === PARCEL_SOURCE_ID && event?.isSourceLoaded) {
+        console.debug("Parcels vector tiles loaded", { tileId: event?.tile?.id, dataType: event?.dataType });
       }
     };
 
     map.on("load", ensureOvertureOverlay);
+    map.on("load", ensureParcelOverlay);
     map.on("style.load", ensureOvertureOverlay);
+    map.on("style.load", ensureParcelOverlay);
+    map.on("sourcedata", logParcelTilesLoaded);
 
     const draw = new MapboxDraw({
       displayControlsDefault: false,
@@ -416,12 +507,15 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       toolbarRef.current = null;
       map.doubleClickZoom.enable();
       map.off("load", ensureOvertureOverlay);
+      map.off("load", ensureParcelOverlay);
       map.off("style.load", ensureOvertureOverlay);
+      map.off("style.load", ensureParcelOverlay);
+      map.off("sourcedata", logParcelTilesLoaded);
       map.remove();
       drawRef.current = null;
       mapRef.current = null;
     };
-  }, [overtureTileUrl]);
+  }, [overtureTileUrl, parcelTileUrl]);
 
   useEffect(() => {
     if (!drawRef.current) return;
@@ -466,17 +560,16 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   }, [polygon]);
 
   useEffect(() => {
-    showOvertureRef.current = showOverture;
+    showParcelOutlinesRef.current = showParcelOutlines;
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
-    if (map.getLayer(OVERTURE_LAYER_ID)) {
-      map.setLayoutProperty(
-        OVERTURE_LAYER_ID,
-        "visibility",
-        showOverture ? "visible" : "none"
-      );
-    }
-  }, [showOverture]);
+    const visibility = showParcelOutlines ? "visible" : "none";
+    [OVERTURE_LAYER_ID, PARCEL_FILL_LAYER_ID, PARCEL_LINE_LAYER_ID].forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", visibility);
+      }
+    });
+  }, [showParcelOutlines]);
 
   return (
     <div className="map-wrapper">
@@ -490,10 +583,10 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         <label className="map-overlay__toggle">
           <input
             type="checkbox"
-            checked={showOverture}
-            onChange={(event) => setShowOverture(event.target.checked)}
+            checked={showParcelOutlines}
+            onChange={(event) => setShowParcelOutlines(event.target.checked)}
           />
-          Show building outlines
+          Show parcel outlines
         </label>
         {isDrawing && (
           <button type="button" className="map-overlay__finish" onClick={() => finishDrawingRef.current()}>
