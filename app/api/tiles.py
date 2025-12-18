@@ -26,9 +26,10 @@ _OVT_TILE_SQL = text(
     mvtgeom AS (
       SELECT
         'ovt:' || id AS id,
-        ST_AsMVTGeom(geom, bounds.geom, 4096, 64, true) AS geom
-      FROM overture_buildings, bounds
-      WHERE geom && bounds.geom
+        ST_AsMVTGeom(ovt.geom, b.geom, 4096, 64, true) AS geom
+      FROM overture_buildings AS ovt
+      CROSS JOIN bounds AS b
+      WHERE ovt.geom && b.geom
     )
     SELECT ST_AsMVT(mvtgeom, 'buildings', 4096, 'geom') AS tile
     FROM mvtgeom;
