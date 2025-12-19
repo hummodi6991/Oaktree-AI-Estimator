@@ -89,6 +89,23 @@
   border: 1px solid rgba(213, 177, 106, 0.24);
 }
 
+.map-zoom-hud {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  background: rgba(5, 24, 21, 0.9);
+  color: rgba(238, 225, 206, 0.9);
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  border: 1px solid rgba(213, 177, 106, 0.28);
+  box-shadow: 0 24px 40px rgba(2, 12, 10, 0.55);
+  pointer-events: none;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .map-overlay__badge {
   display: inline-block;
   font-size: 0.7rem;
@@ -154,5 +171,10 @@
     left: 14px;
     bottom: 14px;
     padding: 14px 16px;
+  }
+
+  .map-zoom-hud {
+    right: 14px;
+    bottom: 14px;
   }
 }

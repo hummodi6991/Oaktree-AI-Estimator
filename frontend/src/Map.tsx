@@ -175,9 +175,8 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   const suppressDeleteRef = useRef(false);
   const finishDrawingRef = useRef<() => void>(() => undefined);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(15);
   const [showParcelOutlines, setShowParcelOutlines] = useState(true);
-  // Default-on to avoid parcels staying invisible until the first click/toggle.
-  const showParcelOutlinesRef = useRef(true);
   const overtureTileUrl = useMemo(() => buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf"), []);
   const parcelTileUrl = useMemo(() => buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf"), []);
 
@@ -253,7 +252,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             "source-layer": "buildings",
             minzoom: 16,
             layout: {
-              visibility: showParcelOutlinesRef.current ? "visible" : "none",
+              visibility: "visible",
             },
             paint: {
               "line-color": "#d5b16a",
@@ -263,17 +262,8 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
           },
           beforeLayerId
         );
-        map.setLayoutProperty(
-          OVERTURE_LAYER_ID,
-          "visibility",
-          showParcelOutlinesRef.current ? "visible" : "none"
-        );
       } else {
-        map.setLayoutProperty(
-          OVERTURE_LAYER_ID,
-          "visibility",
-          showParcelOutlinesRef.current ? "visible" : "none"
-        );
+        map.setLayoutProperty(OVERTURE_LAYER_ID, "visibility", "visible");
         if (beforeLayerId) {
           map.moveLayer(OVERTURE_LAYER_ID, beforeLayerId);
         }
@@ -300,7 +290,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             source: PARCEL_SOURCE_ID,
             "source-layer": "parcels",
             minzoom: 15,
-            layout: { visibility: showParcelOutlinesRef.current ? "visible" : "none" },
+            layout: { visibility: showParcelOutlines ? "visible" : "none" },
             paint: {
               "fill-color": "#a18af5",
               "fill-opacity": 0.06,
@@ -312,7 +302,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         map.setLayoutProperty(
           PARCEL_FILL_LAYER_ID,
           "visibility",
-          showParcelOutlinesRef.current ? "visible" : "none"
+          showParcelOutlines ? "visible" : "none"
         );
         if (beforeLayerId) {
           map.moveLayer(PARCEL_FILL_LAYER_ID, beforeLayerId);
@@ -327,7 +317,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             source: PARCEL_SOURCE_ID,
             "source-layer": "parcels",
             minzoom: 15,
-            layout: { visibility: showParcelOutlinesRef.current ? "visible" : "none" },
+            layout: { visibility: showParcelOutlines ? "visible" : "none" },
             paint: {
               "line-color": "#8a5dff",
               "line-width": ["interpolate", ["linear"], ["zoom"], 15, 0.7, 20, 2.0],
@@ -340,11 +330,15 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         map.setLayoutProperty(
           PARCEL_LINE_LAYER_ID,
           "visibility",
-          showParcelOutlinesRef.current ? "visible" : "none"
+          showParcelOutlines ? "visible" : "none"
         );
         if (beforeLayerId) {
           map.moveLayer(PARCEL_LINE_LAYER_ID, beforeLayerId);
         }
+      }
+
+      if (map.getLayer(OVERTURE_LAYER_ID)) {
+        map.moveLayer(OVERTURE_LAYER_ID, beforeLayerId);
       }
     };
 
@@ -368,6 +362,12 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     drawRef.current = draw;
     map.addControl(draw as unknown as IControl);
     map.addControl(new NavigationControl({ showCompass: false }), "top-left");
+
+    const updateZoomHud = () => {
+      setZoomLevel(map.getZoom());
+    };
+    updateZoomHud();
+    map.on("zoom", updateZoomHud);
 
     const updateDrawingState = (value: boolean) => {
       isDrawingRef.current = value;
@@ -517,6 +517,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       map.off("style.load", ensureOvertureOverlay);
       map.off("style.load", ensureParcelOverlay);
       map.off("sourcedata", logParcelTilesLoaded);
+      map.off("zoom", updateZoomHud);
       map.remove();
       drawRef.current = null;
       mapRef.current = null;
@@ -566,11 +567,10 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   }, [polygon]);
 
   useEffect(() => {
-    showParcelOutlinesRef.current = showParcelOutlines;
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     const visibility = showParcelOutlines ? "visible" : "none";
-    [OVERTURE_LAYER_ID, PARCEL_FILL_LAYER_ID, PARCEL_LINE_LAYER_ID].forEach((layerId) => {
+    [PARCEL_FILL_LAYER_ID, PARCEL_LINE_LAYER_ID].forEach((layerId) => {
       if (map.getLayer(layerId)) {
         map.setLayoutProperty(layerId, "visibility", visibility);
       }
@@ -580,6 +580,10 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   return (
     <div className="map-wrapper">
       <div ref={containerRef} className="map-canvas" />
+      <div className="map-zoom-hud">
+        <div>Zoom: {zoomLevel.toFixed(2)}</div>
+        <div>Overture: {zoomLevel >= 16 ? "visible" : "hidden"}</div>
+      </div>
       <div className="map-overlay">
         <span className="map-overlay__badge">Guidance</span>
         <p>
