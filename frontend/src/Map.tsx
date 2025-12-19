@@ -176,7 +176,8 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   const finishDrawingRef = useRef<() => void>(() => undefined);
   const [isDrawing, setIsDrawing] = useState(false);
   const [showParcelOutlines, setShowParcelOutlines] = useState(true);
-  const showParcelOutlinesRef = useRef(showParcelOutlines);
+  // Default-on to avoid parcels staying invisible until the first click/toggle.
+  const showParcelOutlinesRef = useRef(true);
   const overtureTileUrl = useMemo(() => buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf"), []);
   const parcelTileUrl = useMemo(() => buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf"), []);
 
@@ -261,6 +262,11 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             },
           },
           beforeLayerId
+        );
+        map.setLayoutProperty(
+          OVERTURE_LAYER_ID,
+          "visibility",
+          showParcelOutlinesRef.current ? "visible" : "none"
         );
       } else {
         map.setLayoutProperty(
