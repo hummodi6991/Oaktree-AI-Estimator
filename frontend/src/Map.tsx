@@ -233,6 +233,16 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     const getBeforeLayerId = () =>
       map.getStyle()?.layers?.find((layer) => layer.id.startsWith("gl-draw"))?.id;
 
+    const reorderOverlayLayers = () => {
+      if (!map.getLayer(OVERTURE_LAYER_ID)) return;
+      const selectedLayerId = getBeforeLayerId();
+      if (selectedLayerId && map.getLayer(selectedLayerId)) {
+        map.moveLayer(OVERTURE_LAYER_ID, selectedLayerId);
+      } else {
+        map.moveLayer(OVERTURE_LAYER_ID);
+      }
+    };
+
     const ensureOvertureOverlay = () => {
       if (!overtureTileUrl) return;
       if (!map.getSource(OVERTURE_SOURCE_ID)) {
@@ -269,6 +279,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
           map.moveLayer(OVERTURE_LAYER_ID, beforeLayerId);
         }
       }
+      reorderOverlayLayers();
     };
 
     const ensureParcelOverlay = () => {
@@ -341,6 +352,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       if (map.getLayer(OVERTURE_LAYER_ID)) {
         map.moveLayer(OVERTURE_LAYER_ID, beforeLayerId);
       }
+      reorderOverlayLayers();
     };
 
     const logParcelTilesLoaded = (event: any) => {
@@ -354,6 +366,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     map.on("style.load", ensureOvertureOverlay);
     map.on("style.load", ensureParcelOverlay);
     map.on("sourcedata", logParcelTilesLoaded);
+    map.on("idle", reorderOverlayLayers);
 
     const draw = new MapboxDraw({
       displayControlsDefault: false,
@@ -520,6 +533,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       map.off("style.load", ensureOvertureOverlay);
       map.off("style.load", ensureParcelOverlay);
       map.off("sourcedata", logParcelTilesLoaded);
+      map.off("idle", reorderOverlayLayers);
       map.off("move", updateZoomHud);
       cancelAnimationFrame(raf);
       map.remove();
