@@ -19,6 +19,7 @@ const OVERTURE_LAYER_ID = "overture-footprints-outline";
 const PARCEL_SOURCE_ID = "parcel-outlines";
 const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
 const PARCEL_FILL_LAYER_ID = "parcel-outlines-fill";
+const OVT_MIN_ZOOM = 16;
 
 const DEFAULT_MAP_STYLE = "https://demotiles.maplibre.org/style.json";
 
@@ -175,7 +176,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   const suppressDeleteRef = useRef(false);
   const finishDrawingRef = useRef<() => void>(() => undefined);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState(15);
+  const [zoomLevel, setZoomLevel] = useState(0);
   const [showParcelOutlines, setShowParcelOutlines] = useState(true);
   const overtureTileUrl = useMemo(() => buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf"), []);
   const parcelTileUrl = useMemo(() => buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf"), []);
@@ -363,11 +364,13 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     map.addControl(draw as unknown as IControl);
     map.addControl(new NavigationControl({ showCompass: false }), "top-left");
 
+    let raf = 0;
     const updateZoomHud = () => {
-      setZoomLevel(map.getZoom());
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => setZoomLevel(map.getZoom()));
     };
     updateZoomHud();
-    map.on("zoom", updateZoomHud);
+    map.on("move", updateZoomHud);
 
     const updateDrawingState = (value: boolean) => {
       isDrawingRef.current = value;
@@ -517,7 +520,8 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       map.off("style.load", ensureOvertureOverlay);
       map.off("style.load", ensureParcelOverlay);
       map.off("sourcedata", logParcelTilesLoaded);
-      map.off("zoom", updateZoomHud);
+      map.off("move", updateZoomHud);
+      cancelAnimationFrame(raf);
       map.remove();
       drawRef.current = null;
       mapRef.current = null;
@@ -581,8 +585,13 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     <div className="map-wrapper">
       <div ref={containerRef} className="map-canvas" />
       <div className="map-zoom-hud">
-        <div>Zoom: {zoomLevel.toFixed(2)}</div>
-        <div>Overture: {zoomLevel >= 16 ? "visible" : "hidden"}</div>
+        <div>
+          <b>Zoom:</b> {zoomLevel.toFixed(2)}
+        </div>
+        <div>
+          <b>Overture outlines:</b>{" "}
+          {zoomLevel >= OVT_MIN_ZOOM ? "VISIBLE" : `hidden (needs ≥ ${OVT_MIN_ZOOM})`}
+        </div>
       </div>
       <div className="map-overlay">
         <span className="map-overlay__badge">Guidance</span>
