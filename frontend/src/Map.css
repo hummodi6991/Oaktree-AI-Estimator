@@ -91,19 +91,18 @@
 
 .map-zoom-hud {
   position: absolute;
-  right: 20px;
-  bottom: 20px;
-  background: rgba(5, 24, 21, 0.9);
-  color: rgba(238, 225, 206, 0.9);
-  padding: 10px 12px;
-  border-radius: 12px;
-  font-size: 0.78rem;
-  line-height: 1.4;
-  border: 1px solid rgba(213, 177, 106, 0.28);
-  box-shadow: 0 24px 40px rgba(2, 12, 10, 0.55);
+  right: 10px;
+  top: 10px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  line-height: 1.35;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 16px 28px rgba(2, 12, 10, 0.35);
   pointer-events: none;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 
 .map-overlay__badge {
@@ -174,7 +173,7 @@
   }
 
   .map-zoom-hud {
-    right: 14px;
-    bottom: 14px;
+    right: 10px;
+    top: 10px;
   }
 }
