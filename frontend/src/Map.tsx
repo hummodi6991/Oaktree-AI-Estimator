@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { Map as MapLibreMap, NavigationControl } from "maplibre-gl";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
+import type { DataDrivenPropertyValueSpecification } from "@maplibre/maplibre-gl-style-spec";
 import type { Feature, Polygon } from "geojson";
 import type { IControl, LngLatLike } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -20,7 +21,15 @@ const PARCEL_SOURCE_ID = "parcel-outlines";
 const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
 const PARCEL_FILL_LAYER_ID = "parcel-outlines-fill";
 const OVT_MIN_ZOOM = 16;
-const OVT_LINE_WIDTH = ["interpolate", ["linear"], ["zoom"], 16, 1.2, 20, 3.0];
+const OVT_LINE_WIDTH: DataDrivenPropertyValueSpecification<number> = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  16,
+  1.2,
+  20,
+  3,
+];
 
 const DEFAULT_MAP_STYLE = "https://demotiles.maplibre.org/style.json";
 
