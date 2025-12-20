@@ -20,6 +20,7 @@ const PARCEL_SOURCE_ID = "parcel-outlines";
 const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
 const PARCEL_FILL_LAYER_ID = "parcel-outlines-fill";
 const OVT_MIN_ZOOM = 16;
+const OVT_LINE_WIDTH = ["interpolate", ["linear"], ["zoom"], 16, 1.2, 20, 3.0] as const;
 
 const DEFAULT_MAP_STYLE = "https://demotiles.maplibre.org/style.json";
 
@@ -249,7 +250,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         map.addSource(OVERTURE_SOURCE_ID, {
           type: "vector",
           tiles: [overtureTileUrl],
-          minzoom: 12,
+          minzoom: OVT_MIN_ZOOM,
           maxzoom: 22,
         });
       }
@@ -261,14 +262,16 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             type: "line",
             source: OVERTURE_SOURCE_ID,
             "source-layer": "buildings",
-            minzoom: 16,
+            minzoom: OVT_MIN_ZOOM,
             layout: {
               visibility: "visible",
+              "line-join": "round",
+              "line-cap": "round",
             },
             paint: {
-              "line-color": "#d5b16a",
-              "line-width": ["interpolate", ["linear"], ["zoom"], 16, 0.6, 20, 2.0],
-              "line-opacity": 0.7,
+              "line-color": "#2b6cb0",
+              "line-width": OVT_LINE_WIDTH,
+              "line-opacity": 0.85,
             },
           },
           beforeLayerId
@@ -350,7 +353,11 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       }
 
       if (map.getLayer(OVERTURE_LAYER_ID)) {
-        map.moveLayer(OVERTURE_LAYER_ID, beforeLayerId);
+        if (beforeLayerId && map.getLayer(beforeLayerId)) {
+          map.moveLayer(OVERTURE_LAYER_ID, beforeLayerId);
+        } else {
+          map.moveLayer(OVERTURE_LAYER_ID);
+        }
       }
       reorderOverlayLayers();
     };
@@ -384,6 +391,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     };
     updateZoomHud();
     map.on("move", updateZoomHud);
+    map.on("zoom", updateZoomHud);
 
     const updateDrawingState = (value: boolean) => {
       isDrawingRef.current = value;
@@ -535,6 +543,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       map.off("sourcedata", logParcelTilesLoaded);
       map.off("idle", reorderOverlayLayers);
       map.off("move", updateZoomHud);
+      map.off("zoom", updateZoomHud);
       cancelAnimationFrame(raf);
       map.remove();
       drawRef.current = null;
@@ -599,13 +608,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     <div className="map-wrapper">
       <div ref={containerRef} className="map-canvas" />
       <div className="map-zoom-hud">
-        <div>
-          <b>Zoom:</b> {zoomLevel.toFixed(2)}
-        </div>
-        <div>
-          <b>Overture outlines:</b>{" "}
-          {zoomLevel >= OVT_MIN_ZOOM ? "VISIBLE" : `hidden (needs ≥ ${OVT_MIN_ZOOM})`}
-        </div>
+        z {zoomLevel.toFixed(2)}
       </div>
       <div className="map-overlay">
         <span className="map-overlay__badge">Guidance</span>
