@@ -20,7 +20,7 @@ const PARCEL_SOURCE_ID = "parcel-outlines";
 const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
 const PARCEL_FILL_LAYER_ID = "parcel-outlines-fill";
 const OVT_MIN_ZOOM = 16;
-const OVT_LINE_WIDTH = ["interpolate", ["linear"], ["zoom"], 16, 1.2, 20, 3.0] as const;
+const OVT_LINE_WIDTH = ["interpolate", ["linear"], ["zoom"], 16, 1.2, 20, 3.0];
 
 const DEFAULT_MAP_STYLE = "https://demotiles.maplibre.org/style.json";
 
