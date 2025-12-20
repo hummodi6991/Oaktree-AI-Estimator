@@ -103,6 +103,13 @@
   border: 1px solid rgba(255, 255, 255, 0.15);
   box-shadow: 0 16px 28px rgba(2, 12, 10, 0.35);
   pointer-events: none;
+  min-width: 160px;
+}
+
+.map-zoom-hud__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .map-overlay__badge {

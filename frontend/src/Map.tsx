@@ -13,6 +13,14 @@ type MapProps = { polygon?: Polygon | null; onPolygon: (geometry: Polygon | null
 
 type ToolbarState = { isDrawing: boolean; hasPolygon: boolean };
 type ToolbarControl = IControl & { setState: (state: ToolbarState) => void };
+type OvertureDiagnostics = {
+  zoom: number;
+  maxZoom: number;
+  layerExists: boolean;
+  sourceExists: boolean;
+  visibility: string;
+  renderedCount: number | null;
+};
 
 const SITE_FEATURE_ID = "site";
 const OVERTURE_SOURCE_ID = "overture-footprints";
@@ -188,6 +196,14 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   const [isDrawing, setIsDrawing] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(0);
   const [showParcelOutlines, setShowParcelOutlines] = useState(true);
+  const [overtureDiagnostics, setOvertureDiagnostics] = useState<OvertureDiagnostics>({
+    zoom: 0,
+    maxZoom: 0,
+    layerExists: false,
+    sourceExists: false,
+    visibility: "unknown",
+    renderedCount: null,
+  });
   const overtureTileUrl = useMemo(() => buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf"), []);
   const parcelTileUrl = useMemo(() => buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf"), []);
 
@@ -219,12 +235,18 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       style: configuredStyle,
       center: [46.675, 24.713],
       zoom: 15,
-      maxZoom: 19,
+      maxZoom: 22,
     });
 
     mapRef.current = map;
 
     map.on("error", (event) => {
+      if (event?.error) {
+        console.warn("Map error", event.error, {
+          sourceId: (event as any)?.sourceId,
+          tile: (event as any)?.tile,
+        });
+      }
       const message = String((event as any)?.error?.message || "");
       if (
         message.includes("Failed to load") ||
@@ -371,17 +393,57 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       reorderOverlayLayers();
     };
 
-    const logParcelTilesLoaded = (event: any) => {
+    const logVectorTilesLoaded = (event: any) => {
       if (event?.sourceId === PARCEL_SOURCE_ID && event?.isSourceLoaded) {
         console.debug("Parcels vector tiles loaded", { tileId: event?.tile?.id, dataType: event?.dataType });
       }
+      if (event?.sourceId === OVERTURE_SOURCE_ID && event?.isSourceLoaded) {
+        console.debug("Overture vector tiles loaded", { tileId: event?.tile?.id, dataType: event?.dataType });
+      }
     };
+
+    const updateOvertureDiagnostics = (reason: string) => {
+      const zoom = map.getZoom();
+      const maxZoom = map.getMaxZoom();
+      const layerExists = Boolean(map.getLayer(OVERTURE_LAYER_ID));
+      const sourceExists = Boolean(map.getSource(OVERTURE_SOURCE_ID));
+      const visibility = layerExists
+        ? String(map.getLayoutProperty(OVERTURE_LAYER_ID, "visibility"))
+        : "missing";
+      let renderedCount: number | null = null;
+      if (layerExists && zoom >= OVT_MIN_ZOOM) {
+        try {
+          renderedCount = map.queryRenderedFeatures({ layers: [OVERTURE_LAYER_ID] }).length;
+        } catch (err) {
+          console.warn("Overture queryRenderedFeatures failed", err);
+        }
+      }
+      const diagnostics = {
+        zoom,
+        maxZoom,
+        layerExists,
+        sourceExists,
+        visibility,
+        renderedCount,
+      };
+      setOvertureDiagnostics(diagnostics);
+      console.info("Overture diagnostics", { reason, ...diagnostics });
+    };
+
+    const handleDiagnosticsLoad = () => updateOvertureDiagnostics("load");
+    const handleDiagnosticsStyleLoad = () => updateOvertureDiagnostics("style.load");
+    const handleDiagnosticsZoom = () => updateOvertureDiagnostics("zoomend");
+    const handleDiagnosticsMove = () => updateOvertureDiagnostics("moveend");
 
     map.on("load", ensureOvertureOverlay);
     map.on("load", ensureParcelOverlay);
+    map.on("load", handleDiagnosticsLoad);
     map.on("style.load", ensureOvertureOverlay);
     map.on("style.load", ensureParcelOverlay);
-    map.on("sourcedata", logParcelTilesLoaded);
+    map.on("style.load", handleDiagnosticsStyleLoad);
+    map.on("sourcedata", logVectorTilesLoaded);
+    map.on("zoomend", handleDiagnosticsZoom);
+    map.on("moveend", handleDiagnosticsMove);
     map.on("idle", reorderOverlayLayers);
 
     const draw = new MapboxDraw({
@@ -547,9 +609,13 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       map.doubleClickZoom.enable();
       map.off("load", ensureOvertureOverlay);
       map.off("load", ensureParcelOverlay);
+      map.off("load", handleDiagnosticsLoad);
       map.off("style.load", ensureOvertureOverlay);
       map.off("style.load", ensureParcelOverlay);
-      map.off("sourcedata", logParcelTilesLoaded);
+      map.off("style.load", handleDiagnosticsStyleLoad);
+      map.off("sourcedata", logVectorTilesLoaded);
+      map.off("zoomend", handleDiagnosticsZoom);
+      map.off("moveend", handleDiagnosticsMove);
       map.off("idle", reorderOverlayLayers);
       map.off("move", updateZoomHud);
       map.off("zoom", updateZoomHud);
@@ -617,7 +683,18 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     <div className="map-wrapper">
       <div ref={containerRef} className="map-canvas" />
       <div className="map-zoom-hud">
-        z {zoomLevel.toFixed(2)}
+        <div className="map-zoom-hud__row">Zoom: {zoomLevel.toFixed(2)}</div>
+        <div className="map-zoom-hud__row">Max: {overtureDiagnostics.maxZoom.toFixed(2)}</div>
+        <div className="map-zoom-hud__row">
+          OVT:{" "}
+          {zoomLevel >= OVT_MIN_ZOOM && overtureDiagnostics.visibility === "visible" ? "ON" : "OFF"}
+        </div>
+        <div className="map-zoom-hud__row">Layer: {overtureDiagnostics.layerExists ? "yes" : "no"}</div>
+        <div className="map-zoom-hud__row">Source: {overtureDiagnostics.sourceExists ? "yes" : "no"}</div>
+        <div className="map-zoom-hud__row">Visibility: {overtureDiagnostics.visibility}</div>
+        {overtureDiagnostics.renderedCount !== null && (
+          <div className="map-zoom-hud__row">Rendered: {overtureDiagnostics.renderedCount}</div>
+        )}
       </div>
       <div className="map-overlay">
         <span className="map-overlay__badge">Guidance</span>
