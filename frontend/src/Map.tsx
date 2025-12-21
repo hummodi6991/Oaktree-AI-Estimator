@@ -263,7 +263,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     });
 
     const getBeforeLayerId = () =>
-      map.getStyle()?.layers?.find((layer) => layer.id.startsWith("gl-draw"))?.id;
+      map.getStyle()?.layers?.find((layer) => layer.type === "symbol")?.id;
 
     const reorderOverlayLayers = () => {
       if (!map.getLayer(OVERTURE_LAYER_ID)) return;
@@ -402,6 +402,21 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       }
     };
 
+    const logOvertureOverlayStatus = (reason: string) => {
+      const layerExists = Boolean(map.getLayer(OVERTURE_LAYER_ID));
+      const visibility = layerExists
+        ? String(map.getLayoutProperty(OVERTURE_LAYER_ID, "visibility"))
+        : "missing";
+      console.info("Overture overlay status", {
+        reason,
+        zoom: map.getZoom(),
+        maxZoom: map.getMaxZoom(),
+        sourceExists: Boolean(map.getSource(OVERTURE_SOURCE_ID)),
+        layerExists,
+        visibility,
+      });
+    };
+
     const updateOvertureDiagnostics = (reason: string) => {
       const zoom = map.getZoom();
       const maxZoom = map.getMaxZoom();
@@ -430,7 +445,10 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       console.info("Overture diagnostics", { reason, ...diagnostics });
     };
 
-    const handleDiagnosticsLoad = () => updateOvertureDiagnostics("load");
+    const handleDiagnosticsLoad = () => {
+      logOvertureOverlayStatus("load");
+      updateOvertureDiagnostics("load");
+    };
     const handleDiagnosticsStyleLoad = () => updateOvertureDiagnostics("style.load");
     const handleDiagnosticsZoom = () => updateOvertureDiagnostics("zoomend");
     const handleDiagnosticsMove = () => updateOvertureDiagnostics("moveend");
