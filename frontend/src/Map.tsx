@@ -26,6 +26,7 @@ const SITE_FEATURE_ID = "site";
 const OVERTURE_SOURCE_ID = "overture-footprints";
 const OVERTURE_LAYER_ID = "overture-footprints-outline";
 const PARCEL_SOURCE_ID = "parcel-outlines";
+const PARCEL_LINE_BASE_LAYER_ID = "parcels-line-base";
 const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
 const PARCEL_FILL_LAYER_ID = "parcel-outlines-fill";
 const OVT_MIN_ZOOM = 16;
@@ -336,6 +337,33 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       }
 
       const beforeLayerId = getBeforeLayerId();
+      if (!map.getLayer(PARCEL_LINE_BASE_LAYER_ID)) {
+        map.addLayer(
+          {
+            id: PARCEL_LINE_BASE_LAYER_ID,
+            type: "line",
+            source: PARCEL_SOURCE_ID,
+            "source-layer": parcelSourceLayer,
+            minzoom: 15,
+            layout: { visibility: showParcelOutlines ? "visible" : "none" },
+            paint: {
+              "line-color": "#00AEEF",
+              "line-width": 1,
+              "line-opacity": 0.35,
+            },
+          },
+          beforeLayerId
+        );
+      } else {
+        map.setLayoutProperty(
+          PARCEL_LINE_BASE_LAYER_ID,
+          "visibility",
+          showParcelOutlines ? "visible" : "none"
+        );
+        if (beforeLayerId) {
+          map.moveLayer(PARCEL_LINE_BASE_LAYER_ID, beforeLayerId);
+        }
+      }
       if (!map.getLayer(PARCEL_FILL_LAYER_ID)) {
         map.addLayer(
           {
@@ -389,6 +417,10 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         if (beforeLayerId) {
           map.moveLayer(PARCEL_LINE_LAYER_ID, beforeLayerId);
         }
+      }
+
+      if (map.getLayer(PARCEL_LINE_BASE_LAYER_ID) && map.getLayer(PARCEL_FILL_LAYER_ID)) {
+        map.moveLayer(PARCEL_LINE_BASE_LAYER_ID, PARCEL_FILL_LAYER_ID);
       }
 
       if (map.getLayer(OVERTURE_LAYER_ID)) {
@@ -713,7 +745,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     const visibility = showParcelOutlines ? "visible" : "none";
-    [PARCEL_FILL_LAYER_ID, PARCEL_LINE_LAYER_ID].forEach((layerId) => {
+    [PARCEL_LINE_BASE_LAYER_ID, PARCEL_FILL_LAYER_ID, PARCEL_LINE_LAYER_ID].forEach((layerId) => {
       if (map.getLayer(layerId)) {
         map.setLayoutProperty(layerId, "visibility", visibility);
       }
