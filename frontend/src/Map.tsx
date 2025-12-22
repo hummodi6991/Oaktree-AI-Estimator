@@ -460,6 +460,12 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     const handleDiagnosticsStyleLoad = () => updateOvertureDiagnostics("style.load");
     const handleDiagnosticsZoom = () => updateOvertureDiagnostics("zoomend");
     const handleDiagnosticsMove = () => updateOvertureDiagnostics("moveend");
+    const ensureOvertureAboveFills = () => {
+      const firstSymbolId = map.getStyle().layers?.find((layer) => layer.type === "symbol")?.id;
+      if (firstSymbolId && map.getLayer(OVERTURE_LAYER_ID)) {
+        map.moveLayer(OVERTURE_LAYER_ID, firstSymbolId);
+      }
+    };
     const forceOvertureVisibility = () => {
       if (map.getLayer(OVERTURE_LAYER_ID)) {
         map.setLayoutProperty(OVERTURE_LAYER_ID, "visibility", "visible");
@@ -468,10 +474,12 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
 
     map.on("load", ensureOvertureOverlay);
     map.on("load", ensureParcelOverlay);
+    map.on("load", ensureOvertureAboveFills);
     map.on("load", forceOvertureVisibility);
     map.on("load", handleDiagnosticsLoad);
     map.on("style.load", ensureOvertureOverlay);
     map.on("style.load", ensureParcelOverlay);
+    map.on("style.load", ensureOvertureAboveFills);
     map.on("style.load", handleDiagnosticsStyleLoad);
     map.on("sourcedata", logVectorTilesLoaded);
     map.on("zoomend", handleDiagnosticsZoom);
