@@ -5,7 +5,7 @@ import type { FeatureCollection, Geometry, GeoJsonProperties, Polygon, MultiPoly
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { identify } from "../api";
+import { buildApiUrl, identify } from "../api";
 import type { IdentifyResponse, ParcelSummary } from "../api";
 
 type MapProps = {
@@ -18,6 +18,12 @@ const NOT_FOUND_HINT =
 const SELECT_SOURCE_ID = "selected-parcel-src";
 const SELECT_FILL_LAYER_ID = "selected-parcel-fill";
 const SELECT_LINE_LAYER_ID = "selected-parcel-line";
+const OVERTURE_SOURCE_ID = "overture-footprints";
+const OVERTURE_LAYER_ID = "overture-footprints-outline";
+const PARCEL_SOURCE_ID = "parcel-outlines";
+const PARCEL_LINE_BASE_LAYER_ID = "parcels-line-base";
+const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
+const OVT_MIN_ZOOM = 16;
 
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
@@ -73,6 +79,103 @@ function ensureSelectionLayers(map: maplibregl.Map) {
   }
 }
 
+function getBeforeLayerId(map: maplibregl.Map) {
+  return map.getStyle()?.layers?.find((layer) => layer.type === "symbol")?.id;
+}
+
+function ensureOvertureOverlay(map: maplibregl.Map) {
+  const overtureTileUrl = buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf");
+  if (!map.getSource(OVERTURE_SOURCE_ID)) {
+    map.addSource(OVERTURE_SOURCE_ID, {
+      type: "vector",
+      tiles: [overtureTileUrl],
+      minzoom: OVT_MIN_ZOOM,
+      maxzoom: 22,
+    });
+  }
+
+  const beforeLayerId = getBeforeLayerId(map);
+  if (!map.getLayer(OVERTURE_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: OVERTURE_LAYER_ID,
+        type: "line",
+        source: OVERTURE_SOURCE_ID,
+        "source-layer": "buildings",
+        minzoom: OVT_MIN_ZOOM,
+        layout: {
+          visibility: "visible",
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": "#2b6cb0",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 16, 1.2, 20, 3],
+          "line-opacity": 0.9,
+        },
+      },
+      beforeLayerId
+    );
+  } else {
+    map.setLayoutProperty(OVERTURE_LAYER_ID, "visibility", "visible");
+  }
+}
+
+function ensureParcelOverlay(map: maplibregl.Map) {
+  const parcelTileUrl = buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf");
+  if (!map.getSource(PARCEL_SOURCE_ID)) {
+    map.addSource(PARCEL_SOURCE_ID, {
+      type: "vector",
+      tiles: [parcelTileUrl],
+      minzoom: 10,
+      maxzoom: 22,
+    });
+  }
+
+  const beforeLayerId = getBeforeLayerId(map);
+  if (!map.getLayer(PARCEL_LINE_BASE_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: PARCEL_LINE_BASE_LAYER_ID,
+        type: "line",
+        source: PARCEL_SOURCE_ID,
+        "source-layer": "parcels",
+        minzoom: 15,
+        layout: { visibility: "visible" },
+        paint: {
+          "line-color": "#00AEEF",
+          "line-width": 1,
+          "line-opacity": 0.35,
+        },
+      },
+      beforeLayerId
+    );
+  } else {
+    map.setLayoutProperty(PARCEL_LINE_BASE_LAYER_ID, "visibility", "visible");
+  }
+
+  if (!map.getLayer(PARCEL_LINE_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: PARCEL_LINE_LAYER_ID,
+        type: "line",
+        source: PARCEL_SOURCE_ID,
+        "source-layer": "parcels",
+        minzoom: 15,
+        layout: { visibility: "visible" },
+        paint: {
+          "line-color": "#8a5dff",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 15, 0.7, 20, 2.0],
+          "line-opacity": 0.85,
+        },
+      },
+      beforeLayerId
+    );
+  } else {
+    map.setLayoutProperty(PARCEL_LINE_LAYER_ID, "visibility", "visible");
+  }
+}
+
 export default function Map({ onParcel }: MapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<string | null>(
@@ -97,6 +200,14 @@ export default function Map({ onParcel }: MapProps) {
     let disposed = false;
 
     map.on("load", () => {
+      ensureOvertureOverlay(map);
+      ensureParcelOverlay(map);
+      ensureSelectionLayers(map);
+    });
+
+    map.on("style.load", () => {
+      ensureOvertureOverlay(map);
+      ensureParcelOverlay(map);
       ensureSelectionLayers(map);
     });
 
