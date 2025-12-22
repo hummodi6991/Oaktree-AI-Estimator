@@ -47,6 +47,7 @@ const OVT_LINE_WIDTH: DataDrivenPropertyValueSpecification<number> = [
   20,
   3,
 ];
+const PARCEL_LINE_WIDTH: any = ["interpolate", ["linear"], ["zoom"], 15, 0.7, 20, 2.0];
 
 const DEFAULT_MAP_STYLE = "https://demotiles.maplibre.org/style.json";
 
@@ -378,7 +379,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             source: PARCEL_SOURCE_ID,
             "source-layer": parcelSourceLayer,
             minzoom: 15,
-            layout: { visibility: showParcelOutlines ? "visible" : "none" },
+            layout: { visibility: "visible" },
             paint: {
               "line-color": "#00AEEF",
               "line-width": 1,
@@ -388,11 +389,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
           beforeLayerId
         );
       } else {
-        map.setLayoutProperty(
-          PARCEL_LINE_BASE_LAYER_ID,
-          "visibility",
-          showParcelOutlines ? "visible" : "none"
-        );
+        map.setLayoutProperty(PARCEL_LINE_BASE_LAYER_ID, "visibility", "visible");
         if (beforeLayerId) {
           map.moveLayer(PARCEL_LINE_BASE_LAYER_ID, beforeLayerId);
         }
@@ -405,7 +402,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             source: PARCEL_SOURCE_ID,
             "source-layer": parcelSourceLayer,
             minzoom: 15,
-            layout: { visibility: showParcelOutlines ? "visible" : "none" },
+            layout: { visibility: "visible" },
             paint: {
               "fill-color": "#a18af5",
               "fill-opacity": 0.06,
@@ -414,11 +411,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
           beforeLayerId
         );
       } else {
-        map.setLayoutProperty(
-          PARCEL_FILL_LAYER_ID,
-          "visibility",
-          showParcelOutlines ? "visible" : "none"
-        );
+        map.setLayoutProperty(PARCEL_FILL_LAYER_ID, "visibility", "visible");
         if (beforeLayerId) {
           map.moveLayer(PARCEL_FILL_LAYER_ID, beforeLayerId);
         }
@@ -432,21 +425,17 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             source: PARCEL_SOURCE_ID,
             "source-layer": parcelSourceLayer,
             minzoom: 15,
-            layout: { visibility: showParcelOutlines ? "visible" : "none" },
+            layout: { visibility: "visible" },
             paint: {
               "line-color": "#8a5dff",
-              "line-width": ["interpolate", ["linear"], ["zoom"], 15, 0.7, 20, 2.0],
+              "line-width": PARCEL_LINE_WIDTH,
               "line-opacity": 0.85,
             },
           },
           beforeLayerId
         );
       } else {
-        map.setLayoutProperty(
-          PARCEL_LINE_LAYER_ID,
-          "visibility",
-          showParcelOutlines ? "visible" : "none"
-        );
+        map.setLayoutProperty(PARCEL_LINE_LAYER_ID, "visibility", "visible");
         if (beforeLayerId) {
           map.moveLayer(PARCEL_LINE_LAYER_ID, beforeLayerId);
         }
@@ -468,11 +457,11 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       }
     };
 
-    const logOvertureOverlayStatus = (reason: string) => {
-      const layerExists = Boolean(map.getLayer(OVERTURE_LAYER_ID));
-      const visibility = layerExists
-        ? String(map.getLayoutProperty(OVERTURE_LAYER_ID, "visibility"))
-        : "missing";
+  const logOvertureOverlayStatus = (reason: string) => {
+    const layerExists = Boolean(map.getLayer(OVERTURE_LAYER_ID));
+    const visibility = layerExists
+      ? String(map.getLayoutProperty(OVERTURE_LAYER_ID, "visibility"))
+      : "missing";
       console.info("Overture overlay status", {
         reason,
         zoom: map.getZoom(),
@@ -480,6 +469,28 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         sourceExists: Boolean(map.getSource(OVERTURE_SOURCE_ID)),
         layerExists,
         visibility,
+    });
+  };
+
+    const logOverlayStatus = (reason: string) => {
+      const overtureLayerExists = Boolean(map.getLayer(OVERTURE_LAYER_ID));
+      const parcelLayerExists = Boolean(map.getLayer(PARCEL_LINE_BASE_LAYER_ID));
+      console.info("Overlay status", {
+        reason,
+        overture: {
+          sourceExists: Boolean(map.getSource(OVERTURE_SOURCE_ID)),
+          layerExists: overtureLayerExists,
+          visibility: overtureLayerExists
+            ? String(map.getLayoutProperty(OVERTURE_LAYER_ID, "visibility"))
+            : "missing",
+        },
+        parcel: {
+          sourceExists: Boolean(map.getSource(PARCEL_SOURCE_ID)),
+          layerExists: parcelLayerExists,
+          visibility: parcelLayerExists
+            ? String(map.getLayoutProperty(PARCEL_LINE_BASE_LAYER_ID, "visibility"))
+            : "missing",
+        },
       });
     };
 
@@ -536,6 +547,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
 
     const handleDiagnosticsLoad = () => {
       logOvertureOverlayStatus("load");
+      logOverlayStatus("load");
       updateOvertureDiagnostics("load");
     };
     const handleDiagnosticsStyleLoad = () => updateOvertureDiagnostics("style.load");
@@ -804,41 +816,25 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     });
   }, [showParcelOutlines]);
 
+  const outlinesEligible = zoomLevel >= OVT_MIN_ZOOM;
+  const outlinesOn =
+    outlinesEligible &&
+    overlayDiagnostics.overture.visibility === "visible" &&
+    overlayDiagnostics.parcelBase.visibility === "visible";
+
   return (
     <div className="map-wrapper">
       <div ref={containerRef} className="map-canvas" />
       <div className="map-zoom-hud">
-        <div className="map-zoom-hud__row">Zoom: {zoomLevel.toFixed(2)}</div>
-        <div className="map-zoom-hud__row">Zoom≥15: {zoomLevel >= 15 ? "yes" : "no"}</div>
-        <div className="map-zoom-hud__row">Zoom≥16: {zoomLevel >= OVT_MIN_ZOOM ? "yes" : "no"}</div>
-        <div className="map-zoom-hud__row">Max: {overlayDiagnostics.maxZoom.toFixed(2)}</div>
         <div className="map-zoom-hud__row">
-          OVT: {zoomLevel >= OVT_MIN_ZOOM && overlayDiagnostics.overture.visibility === "visible" ? "ON" : "OFF"}
+          <span>Zoom</span>
+          <span>{zoomLevel.toFixed(2)}</span>
         </div>
         <div className="map-zoom-hud__row">
-          OVT layer/source: {overlayDiagnostics.overture.layerExists ? "yes" : "no"} /{" "}
-          {overlayDiagnostics.overture.sourceExists ? "yes" : "no"}
-        </div>
-        <div className="map-zoom-hud__row">OVT visibility: {overlayDiagnostics.overture.visibility}</div>
-        <div className="map-zoom-hud__row">
-          OVT rendered:{" "}
-          {overlayDiagnostics.overture.renderedCount === null
-            ? "n/a"
-            : overlayDiagnostics.overture.renderedCount}
-        </div>
-        <div className="map-zoom-hud__row">
-          Parcels: {zoomLevel >= 15 && overlayDiagnostics.parcelBase.visibility === "visible" ? "ON" : "OFF"}
-        </div>
-        <div className="map-zoom-hud__row">
-          Parcels layer/source: {overlayDiagnostics.parcelBase.layerExists ? "yes" : "no"} /{" "}
-          {overlayDiagnostics.parcelBase.sourceExists ? "yes" : "no"}
-        </div>
-        <div className="map-zoom-hud__row">Parcels visibility: {overlayDiagnostics.parcelBase.visibility}</div>
-        <div className="map-zoom-hud__row">
-          Parcels rendered:{" "}
-          {overlayDiagnostics.parcelBase.renderedCount === null
-            ? "n/a"
-            : overlayDiagnostics.parcelBase.renderedCount}
+          <span>Outlines</span>
+          <span>
+            {outlinesOn ? "ON" : "OFF"} ({outlinesEligible ? ">=16" : "<16"})
+          </span>
         </div>
       </div>
       <div className="map-overlay">
