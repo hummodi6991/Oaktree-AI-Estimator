@@ -23,7 +23,7 @@ const OVERTURE_LAYER_ID = "overture-footprints-outline";
 const PARCEL_SOURCE_ID = "parcel-outlines";
 const PARCEL_LINE_BASE_LAYER_ID = "parcels-line-base";
 const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
-const OVT_MIN_ZOOM = 15;
+const OVT_MIN_ZOOM = 16;
 
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
@@ -110,7 +110,7 @@ function ensureOvertureOverlay(map: maplibregl.Map) {
         },
         paint: {
           "line-color": "#2b6cb0",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 15, 1.2, 20, 3],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 16, 1.2, 20, 3],
           "line-opacity": 0.9,
         },
       },
@@ -140,7 +140,7 @@ function ensureParcelOverlay(map: maplibregl.Map) {
         type: "line",
         source: PARCEL_SOURCE_ID,
         "source-layer": "parcels",
-        minzoom: 15,
+        minzoom: 16,
         layout: { visibility: "visible" },
         paint: {
           "line-color": "#00AEEF",
@@ -161,11 +161,11 @@ function ensureParcelOverlay(map: maplibregl.Map) {
         type: "line",
         source: PARCEL_SOURCE_ID,
         "source-layer": "parcels",
-        minzoom: 15,
+        minzoom: 16,
         layout: { visibility: "visible" },
         paint: {
           "line-color": "#8a5dff",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 15, 0.7, 20, 2.0],
+          "line-width": ["interpolate", ["linear"], ["zoom"], 16, 0.7, 20, 2.0],
           "line-opacity": 0.85,
         },
       },
