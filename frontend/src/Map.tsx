@@ -206,6 +206,14 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   });
   const overtureTileUrl = useMemo(() => buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf"), []);
   const parcelTileUrl = useMemo(() => buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf"), []);
+  const sourceLayerForTiles = (tilesUrl: string | null | undefined, fallback: string) => {
+    if (!tilesUrl) return fallback;
+    if (tilesUrl.includes("/v1/tiles/ovt/")) return "buildings";
+    if (tilesUrl.includes("/v1/tiles/parcels/")) return "parcels";
+    return fallback;
+  };
+  const overtureSourceLayer = sourceLayerForTiles(overtureTileUrl, "buildings");
+  const parcelSourceLayer = sourceLayerForTiles(parcelTileUrl, "parcels");
 
   const deleteAll = (suppressCallback = false) => {
     if (!drawRef.current) return;
@@ -292,7 +300,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             id: OVERTURE_LAYER_ID,
             type: "line",
             source: OVERTURE_SOURCE_ID,
-            "source-layer": "buildings",
+            "source-layer": overtureSourceLayer,
             minzoom: OVT_MIN_ZOOM,
             layout: {
               visibility: "visible",
@@ -334,7 +342,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             id: PARCEL_FILL_LAYER_ID,
             type: "fill",
             source: PARCEL_SOURCE_ID,
-            "source-layer": "parcels",
+            "source-layer": parcelSourceLayer,
             minzoom: 15,
             layout: { visibility: showParcelOutlines ? "visible" : "none" },
             paint: {
@@ -361,7 +369,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             id: PARCEL_LINE_LAYER_ID,
             type: "line",
             source: PARCEL_SOURCE_ID,
-            "source-layer": "parcels",
+            "source-layer": parcelSourceLayer,
             minzoom: 15,
             layout: { visibility: showParcelOutlines ? "visible" : "none" },
             paint: {
@@ -452,9 +460,15 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     const handleDiagnosticsStyleLoad = () => updateOvertureDiagnostics("style.load");
     const handleDiagnosticsZoom = () => updateOvertureDiagnostics("zoomend");
     const handleDiagnosticsMove = () => updateOvertureDiagnostics("moveend");
+    const forceOvertureVisibility = () => {
+      if (map.getLayer(OVERTURE_LAYER_ID)) {
+        map.setLayoutProperty(OVERTURE_LAYER_ID, "visibility", "visible");
+      }
+    };
 
     map.on("load", ensureOvertureOverlay);
     map.on("load", ensureParcelOverlay);
+    map.on("load", forceOvertureVisibility);
     map.on("load", handleDiagnosticsLoad);
     map.on("style.load", ensureOvertureOverlay);
     map.on("style.load", ensureParcelOverlay);
@@ -627,6 +641,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       map.doubleClickZoom.enable();
       map.off("load", ensureOvertureOverlay);
       map.off("load", ensureParcelOverlay);
+      map.off("load", forceOvertureVisibility);
       map.off("load", handleDiagnosticsLoad);
       map.off("style.load", ensureOvertureOverlay);
       map.off("style.load", ensureParcelOverlay);
@@ -702,6 +717,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       <div ref={containerRef} className="map-canvas" />
       <div className="map-zoom-hud">
         <div className="map-zoom-hud__row">Zoom: {zoomLevel.toFixed(2)}</div>
+        <div className="map-zoom-hud__row">Zoom≥16: {zoomLevel >= OVT_MIN_ZOOM ? "yes" : "no"}</div>
         <div className="map-zoom-hud__row">Max: {overtureDiagnostics.maxZoom.toFixed(2)}</div>
         <div className="map-zoom-hud__row">
           OVT:{" "}
