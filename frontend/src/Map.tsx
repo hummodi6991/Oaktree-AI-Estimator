@@ -37,12 +37,12 @@ const PARCEL_SOURCE_ID = "parcel-outlines";
 const PARCEL_LINE_BASE_LAYER_ID = "parcels-line-base";
 const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
 const PARCEL_FILL_LAYER_ID = "parcel-outlines-fill";
-const OVT_MIN_ZOOM = 16;
+const OVT_MIN_ZOOM = 15;
 const OVT_LINE_WIDTH: DataDrivenPropertyValueSpecification<number> = [
   "interpolate",
   ["linear"],
   ["zoom"],
-  16,
+  15,
   1.2,
   20,
   3,
@@ -833,7 +833,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         <div className="map-zoom-hud__row">
           <span>Outlines</span>
           <span>
-            {outlinesOn ? "ON" : "OFF"} ({outlinesEligible ? ">=16" : "<16"})
+            {outlinesOn ? "ON" : "OFF"} ({outlinesEligible ? ">=15" : "<15"})
           </span>
         </div>
       </div>
