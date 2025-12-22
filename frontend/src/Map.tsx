@@ -13,13 +13,21 @@ type MapProps = { polygon?: Polygon | null; onPolygon: (geometry: Polygon | null
 
 type ToolbarState = { isDrawing: boolean; hasPolygon: boolean };
 type ToolbarControl = IControl & { setState: (state: ToolbarState) => void };
-type OvertureDiagnostics = {
+type OverlayDiagnostics = {
   zoom: number;
   maxZoom: number;
-  layerExists: boolean;
-  sourceExists: boolean;
-  visibility: string;
-  renderedCount: number | null;
+  overture: {
+    layerExists: boolean;
+    sourceExists: boolean;
+    visibility: string;
+    renderedCount: number | null;
+  };
+  parcelBase: {
+    layerExists: boolean;
+    sourceExists: boolean;
+    visibility: string;
+    renderedCount: number | null;
+  };
 };
 
 const SITE_FEATURE_ID = "site";
@@ -197,13 +205,21 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   const [isDrawing, setIsDrawing] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(0);
   const [showParcelOutlines, setShowParcelOutlines] = useState(true);
-  const [overtureDiagnostics, setOvertureDiagnostics] = useState<OvertureDiagnostics>({
+  const [overlayDiagnostics, setOverlayDiagnostics] = useState<OverlayDiagnostics>({
     zoom: 0,
     maxZoom: 0,
-    layerExists: false,
-    sourceExists: false,
-    visibility: "unknown",
-    renderedCount: null,
+    overture: {
+      layerExists: false,
+      sourceExists: false,
+      visibility: "unknown",
+      renderedCount: null,
+    },
+    parcelBase: {
+      layerExists: false,
+      sourceExists: false,
+      visibility: "unknown",
+      renderedCount: null,
+    },
   });
   const overtureTileUrl = useMemo(() => buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf"), []);
   const parcelTileUrl = useMemo(() => buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf"), []);
@@ -275,13 +291,29 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       map.getStyle()?.layers?.find((layer) => layer.type === "symbol")?.id;
 
     const reorderOverlayLayers = () => {
-      if (!map.getLayer(OVERTURE_LAYER_ID)) return;
-      const selectedLayerId = getBeforeLayerId();
-      if (selectedLayerId && map.getLayer(selectedLayerId)) {
-        map.moveLayer(OVERTURE_LAYER_ID, selectedLayerId);
-      } else {
-        map.moveLayer(OVERTURE_LAYER_ID);
+      const beforeLayerId = getBeforeLayerId();
+      const outlineLayerIds = [OVERTURE_LAYER_ID, PARCEL_LINE_BASE_LAYER_ID, PARCEL_LINE_LAYER_ID];
+      outlineLayerIds.forEach((layerId) => {
+        if (!map.getLayer(layerId)) return;
+        if (beforeLayerId && map.getLayer(beforeLayerId)) {
+          map.moveLayer(layerId, beforeLayerId);
+        } else {
+          map.moveLayer(layerId);
+        }
+      });
+
+      if (map.getLayer(PARCEL_FILL_LAYER_ID) && map.getLayer(PARCEL_LINE_BASE_LAYER_ID)) {
+        map.moveLayer(PARCEL_FILL_LAYER_ID, PARCEL_LINE_BASE_LAYER_ID);
       }
+    };
+
+    const forceOutlineVisibility = () => {
+      const ids = [OVERTURE_LAYER_ID, PARCEL_LINE_BASE_LAYER_ID, PARCEL_LINE_LAYER_ID, PARCEL_FILL_LAYER_ID];
+      ids.forEach((id) => {
+        if (map.getLayer(id)) {
+          map.setLayoutProperty(id, "visibility", "visible");
+        }
+      });
     };
 
     const ensureOvertureOverlay = () => {
@@ -322,6 +354,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
           map.moveLayer(OVERTURE_LAYER_ID, beforeLayerId);
         }
       }
+      forceOutlineVisibility();
       reorderOverlayLayers();
     };
 
@@ -419,17 +452,10 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         }
       }
 
-      if (map.getLayer(PARCEL_LINE_BASE_LAYER_ID) && map.getLayer(PARCEL_FILL_LAYER_ID)) {
-        map.moveLayer(PARCEL_LINE_BASE_LAYER_ID, PARCEL_FILL_LAYER_ID);
+      if (map.getLayer(PARCEL_FILL_LAYER_ID) && map.getLayer(PARCEL_LINE_BASE_LAYER_ID)) {
+        map.moveLayer(PARCEL_FILL_LAYER_ID, PARCEL_LINE_BASE_LAYER_ID);
       }
-
-      if (map.getLayer(OVERTURE_LAYER_ID)) {
-        if (beforeLayerId && map.getLayer(beforeLayerId)) {
-          map.moveLayer(OVERTURE_LAYER_ID, beforeLayerId);
-        } else {
-          map.moveLayer(OVERTURE_LAYER_ID);
-        }
-      }
+      forceOutlineVisibility();
       reorderOverlayLayers();
     };
 
@@ -460,28 +486,51 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     const updateOvertureDiagnostics = (reason: string) => {
       const zoom = map.getZoom();
       const maxZoom = map.getMaxZoom();
-      const layerExists = Boolean(map.getLayer(OVERTURE_LAYER_ID));
-      const sourceExists = Boolean(map.getSource(OVERTURE_SOURCE_ID));
-      const visibility = layerExists
+      const overtureLayerExists = Boolean(map.getLayer(OVERTURE_LAYER_ID));
+      const overtureSourceExists = Boolean(map.getSource(OVERTURE_SOURCE_ID));
+      const overtureVisibility = overtureLayerExists
         ? String(map.getLayoutProperty(OVERTURE_LAYER_ID, "visibility"))
         : "missing";
-      let renderedCount: number | null = null;
-      if (layerExists && zoom >= OVT_MIN_ZOOM) {
+      let overtureRenderedCount: number | null = null;
+      if (overtureLayerExists && zoom >= OVT_MIN_ZOOM) {
         try {
-          renderedCount = map.queryRenderedFeatures({ layers: [OVERTURE_LAYER_ID] }).length;
+          overtureRenderedCount = map.queryRenderedFeatures({ layers: [OVERTURE_LAYER_ID] }).length;
         } catch (err) {
           console.warn("Overture queryRenderedFeatures failed", err);
         }
       }
+
+      const parcelLayerExists = Boolean(map.getLayer(PARCEL_LINE_BASE_LAYER_ID));
+      const parcelSourceExists = Boolean(map.getSource(PARCEL_SOURCE_ID));
+      const parcelVisibility = parcelLayerExists
+        ? String(map.getLayoutProperty(PARCEL_LINE_BASE_LAYER_ID, "visibility"))
+        : "missing";
+      let parcelRenderedCount: number | null = null;
+      if (parcelLayerExists && zoom >= 15) {
+        try {
+          parcelRenderedCount = map.queryRenderedFeatures({ layers: [PARCEL_LINE_BASE_LAYER_ID] }).length;
+        } catch (err) {
+          console.warn("Parcel base queryRenderedFeatures failed", err);
+        }
+      }
+
       const diagnostics = {
         zoom,
         maxZoom,
-        layerExists,
-        sourceExists,
-        visibility,
-        renderedCount,
+        overture: {
+          layerExists: overtureLayerExists,
+          sourceExists: overtureSourceExists,
+          visibility: overtureVisibility,
+          renderedCount: overtureRenderedCount,
+        },
+        parcelBase: {
+          layerExists: parcelLayerExists,
+          sourceExists: parcelSourceExists,
+          visibility: parcelVisibility,
+          renderedCount: parcelRenderedCount,
+        },
       };
-      setOvertureDiagnostics(diagnostics);
+      setOverlayDiagnostics(diagnostics);
       console.info("Overture diagnostics", { reason, ...diagnostics });
     };
 
@@ -498,16 +547,11 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         map.moveLayer(OVERTURE_LAYER_ID, firstSymbolId);
       }
     };
-    const forceOvertureVisibility = () => {
-      if (map.getLayer(OVERTURE_LAYER_ID)) {
-        map.setLayoutProperty(OVERTURE_LAYER_ID, "visibility", "visible");
-      }
-    };
 
     map.on("load", ensureOvertureOverlay);
     map.on("load", ensureParcelOverlay);
     map.on("load", ensureOvertureAboveFills);
-    map.on("load", forceOvertureVisibility);
+    map.on("load", forceOutlineVisibility);
     map.on("load", handleDiagnosticsLoad);
     map.on("style.load", ensureOvertureOverlay);
     map.on("style.load", ensureParcelOverlay);
@@ -516,7 +560,14 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     map.on("sourcedata", logVectorTilesLoaded);
     map.on("zoomend", handleDiagnosticsZoom);
     map.on("moveend", handleDiagnosticsMove);
+    let forced = false;
+    const handleIdleForce = () => {
+      if (forced) return;
+      forced = true;
+      forceOutlineVisibility();
+    };
     map.on("idle", reorderOverlayLayers);
+    map.on("idle", handleIdleForce);
 
     const draw = new MapboxDraw({
       displayControlsDefault: false,
@@ -681,7 +732,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       map.doubleClickZoom.enable();
       map.off("load", ensureOvertureOverlay);
       map.off("load", ensureParcelOverlay);
-      map.off("load", forceOvertureVisibility);
+      map.off("load", forceOutlineVisibility);
       map.off("load", handleDiagnosticsLoad);
       map.off("style.load", ensureOvertureOverlay);
       map.off("style.load", ensureParcelOverlay);
@@ -690,6 +741,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       map.off("zoomend", handleDiagnosticsZoom);
       map.off("moveend", handleDiagnosticsMove);
       map.off("idle", reorderOverlayLayers);
+      map.off("idle", handleIdleForce);
       map.off("move", updateZoomHud);
       map.off("zoom", updateZoomHud);
       cancelAnimationFrame(raf);
@@ -757,18 +809,37 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       <div ref={containerRef} className="map-canvas" />
       <div className="map-zoom-hud">
         <div className="map-zoom-hud__row">Zoom: {zoomLevel.toFixed(2)}</div>
+        <div className="map-zoom-hud__row">Zoom≥15: {zoomLevel >= 15 ? "yes" : "no"}</div>
         <div className="map-zoom-hud__row">Zoom≥16: {zoomLevel >= OVT_MIN_ZOOM ? "yes" : "no"}</div>
-        <div className="map-zoom-hud__row">Max: {overtureDiagnostics.maxZoom.toFixed(2)}</div>
+        <div className="map-zoom-hud__row">Max: {overlayDiagnostics.maxZoom.toFixed(2)}</div>
         <div className="map-zoom-hud__row">
-          OVT:{" "}
-          {zoomLevel >= OVT_MIN_ZOOM && overtureDiagnostics.visibility === "visible" ? "ON" : "OFF"}
+          OVT: {zoomLevel >= OVT_MIN_ZOOM && overlayDiagnostics.overture.visibility === "visible" ? "ON" : "OFF"}
         </div>
-        <div className="map-zoom-hud__row">Layer: {overtureDiagnostics.layerExists ? "yes" : "no"}</div>
-        <div className="map-zoom-hud__row">Source: {overtureDiagnostics.sourceExists ? "yes" : "no"}</div>
-        <div className="map-zoom-hud__row">Visibility: {overtureDiagnostics.visibility}</div>
-        {overtureDiagnostics.renderedCount !== null && (
-          <div className="map-zoom-hud__row">Rendered: {overtureDiagnostics.renderedCount}</div>
-        )}
+        <div className="map-zoom-hud__row">
+          OVT layer/source: {overlayDiagnostics.overture.layerExists ? "yes" : "no"} /{" "}
+          {overlayDiagnostics.overture.sourceExists ? "yes" : "no"}
+        </div>
+        <div className="map-zoom-hud__row">OVT visibility: {overlayDiagnostics.overture.visibility}</div>
+        <div className="map-zoom-hud__row">
+          OVT rendered:{" "}
+          {overlayDiagnostics.overture.renderedCount === null
+            ? "n/a"
+            : overlayDiagnostics.overture.renderedCount}
+        </div>
+        <div className="map-zoom-hud__row">
+          Parcels: {zoomLevel >= 15 && overlayDiagnostics.parcelBase.visibility === "visible" ? "ON" : "OFF"}
+        </div>
+        <div className="map-zoom-hud__row">
+          Parcels layer/source: {overlayDiagnostics.parcelBase.layerExists ? "yes" : "no"} /{" "}
+          {overlayDiagnostics.parcelBase.sourceExists ? "yes" : "no"}
+        </div>
+        <div className="map-zoom-hud__row">Parcels visibility: {overlayDiagnostics.parcelBase.visibility}</div>
+        <div className="map-zoom-hud__row">
+          Parcels rendered:{" "}
+          {overlayDiagnostics.parcelBase.renderedCount === null
+            ? "n/a"
+            : overlayDiagnostics.parcelBase.renderedCount}
+        </div>
       </div>
       <div className="map-overlay">
         <span className="map-overlay__badge">Guidance</span>
