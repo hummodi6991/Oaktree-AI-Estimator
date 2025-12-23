@@ -68,7 +68,7 @@ _IDENTIFY_SQL = text(
     classification,
     area_m2,
     perimeter_m,
-    ST_AsGeoJSON(geom) AS geom,
+    ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geom,
     distance_m,
     hits,
     near,
