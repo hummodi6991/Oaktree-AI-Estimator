@@ -80,8 +80,9 @@ function ensureSelectionLayers(map: maplibregl.Map) {
       type: "fill",
       source: SELECT_SOURCE_ID,
       paint: {
-        "fill-color": "#4da3ff",
-        "fill-opacity": 0.25,
+        "fill-color": "#2f7bff",
+        "fill-opacity": 0.35,
+        "fill-outline-color": "#1f5fd6",
       },
     });
 
@@ -90,8 +91,9 @@ function ensureSelectionLayers(map: maplibregl.Map) {
       type: "line",
       source: SELECT_SOURCE_ID,
       paint: {
-        "line-color": "#1d6fd8",
-        "line-width": 2,
+        "line-color": "#1f5fd6",
+        "line-width": 2.5,
+        "line-opacity": 0.9,
       },
     });
   }
