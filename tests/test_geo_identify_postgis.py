@@ -49,11 +49,11 @@ def _geom_json():
     return json.dumps(geometry)
 
 
-def _identify_row():
+def _identify_row(landuse=None, classification="overture_building"):
     return {
         "id": "ovt:build2",
-        "landuse": None,
-        "classification": "overture_building",
+        "landuse": landuse,
+        "classification": classification,
         "area_m2": 120,
         "perimeter_m": 45,
         "geom": _geom_json(),
@@ -69,6 +69,8 @@ def test_identify_postgis_overture_attr_sets_landuse():
         {
             "identify": _identify_row(),
             "attr": {"subtype": "residential", "class": None},
+            "ovt_overlay": {"res_share": 0.1, "com_share": 0.1},
+            "osm_overlay": {"res_share": 0.1, "com_share": 0.1},
         }
     )
     result = _identify_postgis(46.675, 24.713, 25.0, db)
@@ -78,17 +80,35 @@ def test_identify_postgis_overture_attr_sets_landuse():
     assert parcel["landuse_raw"] == "residential"
 
 
-def test_identify_postgis_overture_overlay_sets_landuse():
+def test_identify_postgis_overture_overlay_wins_when_osm_weak():
     db = _DummyDB(
         {
-            "identify": _identify_row(),
+            "identify": _identify_row(landuse="building", classification="parcel"),
             "attr": None,
-            "ovt_overlay": {"res_share": 0.6, "com_share": 0.1},
+            "ovt_overlay": {"res_share": 0.1, "com_share": 0.7},
+            "osm_overlay": {"res_share": 0.2, "com_share": 0.1},
+        }
+    )
+    result = _identify_postgis(46.675, 24.713, 25.0, db)
+    parcel = result["parcel"]
+    assert parcel["landuse_code"] == "m"
+    assert parcel["landuse_method"] == "overture_overlay"
+    assert parcel["residential_share"] == 0.1
+    assert parcel["commercial_share"] == 0.7
+
+
+def test_identify_postgis_osm_overlay_wins_when_strong():
+    db = _DummyDB(
+        {
+            "identify": _identify_row(landuse="building", classification="parcel"),
+            "attr": None,
+            "ovt_overlay": {"res_share": 0.2, "com_share": 0.4},
+            "osm_overlay": {"res_share": 0.65, "com_share": 0.1},
         }
     )
     result = _identify_postgis(46.675, 24.713, 25.0, db)
     parcel = result["parcel"]
     assert parcel["landuse_code"] == "s"
-    assert parcel["landuse_method"] == "overture_overlay"
-    assert parcel["residential_share"] == 0.6
+    assert parcel["landuse_method"] == "osm_overlay"
+    assert parcel["residential_share"] == 0.65
     assert parcel["commercial_share"] == 0.1
