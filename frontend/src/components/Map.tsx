@@ -36,8 +36,26 @@ function transformPolygonCoords(coords: number[][][]) {
   return coords.map((ring) => ring.map((coord) => toWgs84(coord as [number, number])));
 }
 
+function isLikelyWgs84(coord: [number, number]) {
+  const [lng, lat] = coord;
+  return Math.abs(lng) <= 180 && Math.abs(lat) <= 90;
+}
+
+function geometryAlreadyWgs84(geometry: Geometry) {
+  if (geometry.type === "Polygon") {
+    const first = geometry.coordinates?.[0]?.[0] as [number, number] | undefined;
+    return first ? isLikelyWgs84(first) : false;
+  }
+  if (geometry.type === "MultiPolygon") {
+    const first = geometry.coordinates?.[0]?.[0]?.[0] as [number, number] | undefined;
+    return first ? isLikelyWgs84(first) : false;
+  }
+  return false;
+}
+
 function transformGeometryToWgs84(geometry?: Geometry | null): Geometry | null {
   if (!geometry) return null;
+  if (geometryAlreadyWgs84(geometry)) return geometry;
   if (geometry.type === "Polygon") {
     return { type: "Polygon", coordinates: transformPolygonCoords(geometry.coordinates as number[][][]) } as Polygon;
   }
