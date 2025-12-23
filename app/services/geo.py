@@ -130,13 +130,48 @@ def _landuse_code_from_label(label: str) -> str | None:
 
     # Residential signals
     if ("سكن" in t) or any(k in tl for k in [
-        "residential", "residence", "housing", "house", "apart", "apartment", "villa", "dwelling"
+        "residential",
+        "residence",
+        "housing",
+        "house",
+        "apart",
+        "apartment",
+        "villa",
+        "dwelling",
+        "detached",
+        "semidetached",
+        "terrace",
+        "bungalow",
+        "dormitory",
     ]):
         return "s"
 
     # Mixed/commercial signals
     if ("تجاري" in t) or ("مختلط" in t) or any(k in tl for k in [
-        "mixed", "mixed-use", "mixed use", "commercial", "retail", "office", "shop", "mall"
+        "mixed",
+        "mixed-use",
+        "mixed use",
+        "commercial",
+        "retail",
+        "office",
+        "shop",
+        "mall",
+        "industrial",
+        "warehouse",
+        "factory",
+        "supermarket",
+        "hotel",
+        "hospital",
+        "school",
+        "university",
+        "college",
+        "civic",
+        "education",
+        "medical",
+        "religious",
+        "transportation",
+        "service",
+        "entertainment",
     ]):
         return "m"
 
