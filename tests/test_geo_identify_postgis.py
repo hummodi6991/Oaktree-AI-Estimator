@@ -1,0 +1,94 @@
+import json
+
+from app.api.geo_portal import _identify_postgis
+
+
+class _DummyResult:
+    def __init__(self, row):
+        self._row = row
+
+    def mappings(self):
+        return self
+
+    def first(self):
+        return self._row
+
+
+class _DummyDB:
+    def __init__(self, responses):
+        self.responses = responses
+        self.calls = []
+
+    def execute(self, statement, params=None):
+        sql = str(statement)
+        self.calls.append(sql)
+        if "WITH q AS" in sql:
+            return _DummyResult(self.responses.get("identify"))
+        if "FROM overture_buildings WHERE id" in sql:
+            return _DummyResult(self.responses.get("attr"))
+        if "FROM overture_buildings o" in sql:
+            return _DummyResult(self.responses.get("ovt_overlay"))
+        if "planet_osm_polygon" in sql:
+            return _DummyResult(self.responses.get("osm_overlay"))
+        raise AssertionError(f"Unexpected SQL: {sql}")
+
+
+def _geom_json():
+    geometry = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [46.675, 24.713],
+                [46.676, 24.713],
+                [46.676, 24.714],
+                [46.675, 24.714],
+                [46.675, 24.713],
+            ]
+        ],
+    }
+    return json.dumps(geometry)
+
+
+def _identify_row():
+    return {
+        "id": "ovt:build2",
+        "landuse": None,
+        "classification": "overture_building",
+        "area_m2": 120,
+        "perimeter_m": 45,
+        "geom": _geom_json(),
+        "distance_m": 0,
+        "hits": 1,
+        "near": 1,
+        "is_ovt": 1,
+    }
+
+
+def test_identify_postgis_overture_attr_sets_landuse():
+    db = _DummyDB(
+        {
+            "identify": _identify_row(),
+            "attr": {"subtype": "residential", "class": None},
+        }
+    )
+    result = _identify_postgis(46.675, 24.713, 25.0, db)
+    parcel = result["parcel"]
+    assert parcel["landuse_code"] == "s"
+    assert parcel["landuse_method"] == "overture_building_attr"
+    assert parcel["landuse_raw"] == "residential"
+
+
+def test_identify_postgis_overture_overlay_sets_landuse():
+    db = _DummyDB(
+        {
+            "identify": _identify_row(),
+            "attr": None,
+            "ovt_overlay": {"res_share": 0.6, "com_share": 0.1},
+        }
+    )
+    result = _identify_postgis(46.675, 24.713, 25.0, db)
+    parcel = result["parcel"]
+    assert parcel["landuse_code"] == "s"
+    assert parcel["landuse_method"] == "overture_overlay"
+    assert parcel["residential_share"] == 0.6
+    assert parcel["commercial_share"] == 0.1
