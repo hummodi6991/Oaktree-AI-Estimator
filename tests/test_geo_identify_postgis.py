@@ -103,12 +103,27 @@ def test_identify_postgis_osm_overlay_wins_when_strong():
             "identify": _identify_row(landuse="building", classification="parcel"),
             "attr": None,
             "ovt_overlay": {"res_share": 0.2, "com_share": 0.4},
-            "osm_overlay": {"res_share": 0.65, "com_share": 0.1},
+            "osm_overlay": {"res_share": 0.75, "com_share": 0.1},
         }
     )
     result = _identify_postgis(46.675, 24.713, 25.0, db)
     parcel = result["parcel"]
     assert parcel["landuse_code"] == "s"
     assert parcel["landuse_method"] == "osm_overlay"
-    assert parcel["residential_share"] == 0.65
+    assert parcel["residential_share"] == 0.75
     assert parcel["commercial_share"] == 0.1
+
+
+def test_identify_postgis_overture_overlay_wins_when_osm_not_strong():
+    db = _DummyDB(
+        {
+            "identify": _identify_row(landuse="building", classification="parcel"),
+            "attr": None,
+            "ovt_overlay": {"res_share": 0.5, "com_share": 0.1},
+            "osm_overlay": {"res_share": 0.45, "com_share": 0.15},
+        }
+    )
+    result = _identify_postgis(46.675, 24.713, 25.0, db)
+    parcel = result["parcel"]
+    assert parcel["landuse_code"] == "s"
+    assert parcel["landuse_method"] == "overture_overlay"

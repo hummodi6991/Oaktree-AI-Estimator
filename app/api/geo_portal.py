@@ -197,18 +197,18 @@ def _osm_fallback_code(geometry: dict, db) -> tuple[str | None, float, float, fl
     com = float(row["com_share"] or 0.0)
     code: str | None = None
     conf = 0.0
-    if res >= 0.60 and com <= 0.15:
+    if res >= 0.70 and com <= 0.15:
         code = "s"
-        conf = 0.90
-    elif com >= 0.60:
+        conf = 0.85
+    elif com >= 0.70:
         code = "m"
-        conf = 0.90
-    elif res >= 0.30 and com >= 0.30:
+        conf = 0.85
+    elif res >= 0.35 and com >= 0.25:
         code = "m"
-        conf = 0.75
-    elif max(res, com) >= 0.35:
+        conf = 0.55
+    elif max(res, com) >= 0.40:
         code = "s" if res >= com else "m"
-        conf = 0.60
+        conf = 0.45
     return code, res, com, conf
 
 
@@ -222,18 +222,15 @@ def _ovt_overlay_code(geometry: dict, db) -> tuple[str | None, float, float, flo
     com = float(row["com_share"] or 0.0)
     code: str | None = None
     conf = 0.0
-    if res >= 0.65 and com <= 0.15:
+    if res >= 0.40 and com <= 0.25:
         code = "s"
-        conf = 0.80
-    elif com >= 0.65:
-        code = "m"
-        conf = 0.80
-    elif res >= 0.35 and com >= 0.25:
+        conf = 0.70
+    elif com >= 0.40:
         code = "m"
         conf = 0.70
-    elif max(res, com) >= 0.40:
-        code = "s" if res >= com else "m"
-        conf = 0.55
+    elif res >= 0.30 and com >= 0.25:
+        code = "m"
+        conf = 0.60
     return code, res, com, conf
 
 
@@ -243,20 +240,24 @@ def _pick_landuse(
     ovt_attr_code: str | None,
     ovt_attr_conf: float,
     osm_code: str | None,
+    osm_res: float,
+    osm_com: float,
     osm_conf: float,
     ovt_code: str | None,
     ovt_conf: float,
 ) -> tuple[str | None, str | None]:
-    if osm_conf >= 0.80 and osm_code:
-        if ovt_conf >= 0.75 and ovt_code and ovt_code != osm_code:
-            return ovt_code, "overture_overlay"
-        return osm_code, "osm_overlay"
-    if ovt_conf >= 0.60 and ovt_code:
-        return ovt_code, "overture_overlay"
-    if ovt_attr_conf >= 0.90 and ovt_attr_code:
+    osm_strong = bool(
+        osm_code
+        and ((osm_res >= 0.70 and osm_com <= 0.15) or (osm_com >= 0.70))
+    )
+    if ovt_attr_code and not osm_strong:
         return ovt_attr_code, "overture_building_attr"
-    if label_code and label_is_signal:
-        return label_code, "label"
+    if osm_strong:
+        return osm_code, "osm_overlay"
+    if ovt_code:
+        return ovt_code, "overture_overlay"
+    if osm_code:
+        return osm_code, "osm_overlay"
     return None, None
 
 
@@ -445,6 +446,8 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         ovt_attr_code,
         ovt_attr_conf,
         osm_code,
+        osm_res,
+        osm_com,
         osm_conf,
         ovt_code,
         ovt_conf,
@@ -475,6 +478,8 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         "residential_share_ovt": ovt_res,
         "commercial_share_ovt": ovt_com,
         "ovt_attr_conf": ovt_attr_conf,
+        "osm_conf": osm_conf,
+        "ovt_conf": ovt_conf,
         "source_url": f"postgis/{_PARCEL_TABLE}",
     }
 
