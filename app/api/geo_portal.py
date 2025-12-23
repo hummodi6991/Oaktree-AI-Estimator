@@ -136,6 +136,7 @@ _OVT_CLASSIFY_SQL = text(
           o.subtype = 'residential'
           OR o.class IN (
             'apartments',
+            'apartment',
             'house',
             'detached_house',
             'semidetached_house',
@@ -164,7 +165,8 @@ _OVT_CLASSIFY_SQL = text(
             'school',
             'university',
             'hotel',
-            'supermarket'
+            'supermarket',
+            'mall'
           )
         )
     )

@@ -128,6 +128,9 @@ def _landuse_code_from_label(label: str) -> str | None:
     if tl in {"yes", "true", "1", "y"}:
         return None
 
+    if any(k in tl for k in ["mixed", "mixed-use", "mixed use"]) or "مختلط" in t:
+        return None
+
     # Residential signals
     if ("سكن" in t) or any(k in tl for k in [
         "residential",
@@ -136,6 +139,7 @@ def _landuse_code_from_label(label: str) -> str | None:
         "house",
         "apart",
         "apartment",
+        "apartments",
         "villa",
         "dwelling",
         "detached",
@@ -147,10 +151,7 @@ def _landuse_code_from_label(label: str) -> str | None:
         return "s"
 
     # Mixed/commercial signals
-    if ("تجاري" in t) or ("مختلط" in t) or any(k in tl for k in [
-        "mixed",
-        "mixed-use",
-        "mixed use",
+    if ("تجاري" in t) or any(k in tl for k in [
         "commercial",
         "retail",
         "office",
