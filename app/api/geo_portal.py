@@ -220,17 +220,30 @@ def _ovt_overlay_code(geometry: dict, db) -> tuple[str | None, float, float, flo
         return None, 0.0, 0.0, 0.0
     res = float(row["res_share"] or 0.0)
     com = float(row["com_share"] or 0.0)
-    code: str | None = None
-    conf = 0.0
-    if res >= 0.40 and com <= 0.25:
-        code = "s"
-        conf = 0.70
-    elif com >= 0.40:
+    # NOTE: _OVT_CLASSIFY_SQL returns residential/commercial *shares of parcel area*
+    # covered by Overture building footprints. Building footprints often cover only a
+    # small fraction of the parcel, so infer land-use from ratios within building area
+    # and use footprint coverage as a confidence multiplier.
+    coverage = res + com
+    if coverage <= 0.0:
+        return None, res, com, 0.0
+    if coverage < 0.01:
+        return None, res, com, 0.0
+
+    res_ratio = res / coverage
+    com_ratio = com / coverage
+    dominance = max(res_ratio, com_ratio)
+
+    code: str | None = "s" if res_ratio >= com_ratio else "m"
+    if min(res_ratio, com_ratio) >= 0.25 and coverage >= 0.03:
         code = "m"
-        conf = 0.70
-    elif res >= 0.30 and com >= 0.25:
-        code = "m"
-        conf = 0.60
+
+    cov_score = min(coverage / 0.15, 1.0)
+    conf = (0.45 + 0.55 * dominance) * (0.65 + 0.35 * cov_score)
+    conf = min(conf, 0.95)
+
+    if dominance < 0.60:
+        conf *= 0.85
     return code, res, com, conf
 
 
@@ -254,7 +267,7 @@ def _pick_landuse(
         return ovt_attr_code, "overture_building_attr"
     if osm_strong:
         return osm_code, "osm_overlay"
-    if ovt_code:
+    if ovt_code and ovt_conf >= 0.55:
         return ovt_code, "overture_overlay"
     if osm_code:
         return osm_code, "osm_overlay"
