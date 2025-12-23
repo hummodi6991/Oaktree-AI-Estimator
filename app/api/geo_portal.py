@@ -119,11 +119,83 @@ _OSM_CLASSIFY_SQL = text(
     """
 )
 
+_OVT_CLASSIFY_SQL = text(
+    """
+    WITH g AS (
+      SELECT ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(:gj), 4326), 32638) AS geom
+    ),
+    total AS (
+      SELECT ST_Area(geom) AS a FROM g
+    ),
+    res_poly AS (
+      SELECT SUM(ST_Area(ST_Intersection(o.geom, g.geom))) AS a
+      FROM overture_buildings o, g
+      WHERE o.geom && g.geom
+        AND ST_Intersects(o.geom, g.geom)
+        AND (
+          o.subtype = 'residential'
+          OR o.class IN (
+            'apartments',
+            'house',
+            'detached_house',
+            'semidetached_house',
+            'terrace',
+            'dwelling_house',
+            'bungalow',
+            'dormitory'
+          )
+        )
+    ),
+    nonres_poly AS (
+      SELECT SUM(ST_Area(ST_Intersection(o.geom, g.geom))) AS a
+      FROM overture_buildings o, g
+      WHERE o.geom && g.geom
+        AND ST_Intersects(o.geom, g.geom)
+        AND (
+          (o.subtype IS NOT NULL AND o.subtype <> 'residential')
+          OR o.class IN (
+            'commercial',
+            'office',
+            'retail',
+            'industrial',
+            'warehouse',
+            'factory',
+            'hospital',
+            'school',
+            'university',
+            'hotel',
+            'supermarket'
+          )
+        )
+    )
+    SELECT
+      COALESCE(res_poly.a,0) / NULLIF(total.a,0) AS res_share,
+      COALESCE(nonres_poly.a,0) / NULLIF(total.a,0) AS com_share
+    FROM total LEFT JOIN res_poly ON TRUE LEFT JOIN nonres_poly ON TRUE;
+    """
+)
+
 
 def _osm_fallback_code(geometry: dict, db) -> tuple[str | None, float, float]:
     if not geometry:
         return None, 0.0, 0.0
     row = db.execute(_OSM_CLASSIFY_SQL, {"gj": json.dumps(geometry)}).mappings().first()
+    if not row:
+        return None, 0.0, 0.0
+    res = float(row["res_share"] or 0.0)
+    com = float(row["com_share"] or 0.0)
+    code: str | None = None
+    if res >= 0.50 and com < 0.25:
+        code = "s"
+    elif (res >= 0.25 and com >= 0.25) or com >= 0.50:
+        code = "m"
+    return code, res, com
+
+
+def _overture_fallback_code(geometry: dict, db) -> tuple[str | None, float, float]:
+    if not geometry:
+        return None, 0.0, 0.0
+    row = db.execute(_OVT_CLASSIFY_SQL, {"gj": json.dumps(geometry)}).mappings().first()
     if not row:
         return None, 0.0, 0.0
     res = float(row["res_share"] or 0.0)
@@ -322,16 +394,23 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         _TARGET_SRID,
     )
 
-    # If ambiguous (None or boolean-like), fall back to OSM overlay
+    # If ambiguous (None or boolean-like), fall back to overlays
     raw_l = (str(landuse_raw) or "").strip().lower()
     if (parcel["landuse_code"] is None) or (raw_l in {"", "yes", "true", "1", "y"}):
         try:
-            code, rsh, csh = _osm_fallback_code(geometry, db)
+            code, rsh, csh = _overture_fallback_code(geometry, db)
             if code:
                 parcel["landuse_code"] = code
-                parcel["landuse_method"] = "osm_overlay"
+                parcel["landuse_method"] = "overture_overlay"
                 parcel["residential_share"] = rsh
                 parcel["commercial_share"] = csh
+            else:
+                code, rsh, csh = _osm_fallback_code(geometry, db)
+                if code:
+                    parcel["landuse_code"] = code
+                    parcel["landuse_method"] = "osm_overlay"
+                    parcel["residential_share"] = rsh
+                    parcel["commercial_share"] = csh
         except Exception:
             pass
 
