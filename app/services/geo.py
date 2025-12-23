@@ -110,7 +110,7 @@ def infer_far_from_features(db, geom, layer: str = "rydpolygons") -> float | Non
     return max(candidates) if candidates else None
 
 
-def _landuse_code_from_label(label: str) -> str | None:
+def _landuse_code_from_label(label: str | None) -> str | None:
     """
     Normalize any upstream land-use/zone label to { 's', 'm' } or None.
     - 's': residential / housing (سكني, house, apartments, residential, …)
@@ -125,7 +125,7 @@ def _landuse_code_from_label(label: str) -> str | None:
         return tl
 
     # Ambiguous boolean-ish values from OSM tags (e.g., building=yes)
-    if tl in {"yes", "true", "1", "y"}:
+    if tl in {"building", "yes", "true", "1", "0", "unknown", "none", "y"}:
         return None
 
     if any(k in tl for k in ["mixed", "mixed-use", "mixed use"]) or "مختلط" in t:
@@ -136,10 +136,10 @@ def _landuse_code_from_label(label: str) -> str | None:
         "residential",
         "residence",
         "housing",
+        "apartments",
+        "apartment",
         "house",
         "apart",
-        "apartment",
-        "apartments",
         "villa",
         "dwelling",
         "detached",
@@ -156,13 +156,12 @@ def _landuse_code_from_label(label: str) -> str | None:
         "retail",
         "office",
         "shop",
-        "mall",
         "industrial",
         "warehouse",
         "factory",
-        "supermarket",
         "hotel",
         "hospital",
+        "clinic",
         "school",
         "university",
         "college",
@@ -173,6 +172,8 @@ def _landuse_code_from_label(label: str) -> str | None:
         "transportation",
         "service",
         "entertainment",
+        "supermarket",
+        "mall",
     ]):
         return "m"
 

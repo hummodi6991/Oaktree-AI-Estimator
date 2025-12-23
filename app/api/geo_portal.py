@@ -20,6 +20,15 @@ logger = logging.getLogger(__name__)
 
 Transformer = None  # no local transform; we use ST_Transform on the server
 
+_NO_SIGNAL_LABELS = {"", "building", "yes", "true", "1", "0", "unknown", "none"}
+
+
+def _label_is_signal(label: str | None, code: str | None) -> bool:
+    if not code:
+        return False
+    tl = (label or "").strip().lower()
+    return tl not in _NO_SIGNAL_LABELS
+
 
 def _safe_identifier(value: str | None, fallback: str) -> str:
     candidate = (value or "").strip()
@@ -141,7 +150,6 @@ _OVT_CLASSIFY_SQL = text(
             'detached_house',
             'semidetached_house',
             'terrace',
-            'dwelling_house',
             'bungalow',
             'dormitory'
           )
@@ -161,10 +169,11 @@ _OVT_CLASSIFY_SQL = text(
             'industrial',
             'warehouse',
             'factory',
+            'hotel',
             'hospital',
+            'clinic',
             'school',
             'university',
-            'hotel',
             'supermarket',
             'mall'
           )
@@ -178,36 +187,77 @@ _OVT_CLASSIFY_SQL = text(
 )
 
 
-def _osm_fallback_code(geometry: dict, db) -> tuple[str | None, float, float]:
+def _osm_fallback_code(geometry: dict, db) -> tuple[str | None, float, float, float]:
     if not geometry:
-        return None, 0.0, 0.0
+        return None, 0.0, 0.0, 0.0
     row = db.execute(_OSM_CLASSIFY_SQL, {"gj": json.dumps(geometry)}).mappings().first()
     if not row:
-        return None, 0.0, 0.0
+        return None, 0.0, 0.0, 0.0
     res = float(row["res_share"] or 0.0)
     com = float(row["com_share"] or 0.0)
     code: str | None = None
-    if res >= 0.50 and com < 0.25:
+    conf = 0.0
+    if res >= 0.60 and com <= 0.15:
         code = "s"
-    elif (res >= 0.25 and com >= 0.25) or com >= 0.50:
+        conf = 0.90
+    elif com >= 0.60:
         code = "m"
-    return code, res, com
+        conf = 0.90
+    elif res >= 0.30 and com >= 0.30:
+        code = "m"
+        conf = 0.75
+    elif max(res, com) >= 0.35:
+        code = "s" if res >= com else "m"
+        conf = 0.60
+    return code, res, com, conf
 
 
-def _overture_fallback_code(geometry: dict, db) -> tuple[str | None, float, float]:
+def _ovt_overlay_code(geometry: dict, db) -> tuple[str | None, float, float, float]:
     if not geometry:
-        return None, 0.0, 0.0
+        return None, 0.0, 0.0, 0.0
     row = db.execute(_OVT_CLASSIFY_SQL, {"gj": json.dumps(geometry)}).mappings().first()
     if not row:
-        return None, 0.0, 0.0
+        return None, 0.0, 0.0, 0.0
     res = float(row["res_share"] or 0.0)
     com = float(row["com_share"] or 0.0)
     code: str | None = None
-    if res >= 0.50 and com < 0.25:
+    conf = 0.0
+    if res >= 0.65 and com <= 0.15:
         code = "s"
-    elif (res >= 0.25 and com >= 0.25) or com >= 0.50:
+        conf = 0.80
+    elif com >= 0.65:
         code = "m"
-    return code, res, com
+        conf = 0.80
+    elif res >= 0.35 and com >= 0.25:
+        code = "m"
+        conf = 0.70
+    elif max(res, com) >= 0.40:
+        code = "s" if res >= com else "m"
+        conf = 0.55
+    return code, res, com, conf
+
+
+def _pick_landuse(
+    label_code: str | None,
+    label_is_signal: bool,
+    ovt_attr_code: str | None,
+    ovt_attr_conf: float,
+    osm_code: str | None,
+    osm_conf: float,
+    ovt_code: str | None,
+    ovt_conf: float,
+) -> tuple[str | None, str | None]:
+    if osm_conf >= 0.80 and osm_code:
+        if ovt_conf >= 0.75 and ovt_code and ovt_code != osm_code:
+            return ovt_code, "overture_overlay"
+        return osm_code, "osm_overlay"
+    if ovt_conf >= 0.60 and ovt_code:
+        return ovt_code, "overture_overlay"
+    if ovt_attr_conf >= 0.90 and ovt_attr_code:
+        return ovt_attr_code, "overture_building_attr"
+    if label_code and label_is_signal:
+        return label_code, "label"
+    return None, None
 
 
 class ParcelQuery(BaseModel):
@@ -345,21 +395,12 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
             geometry = None
 
     landuse_raw = row.get("landuse") or row.get("classification") or ""
-    parcel = {
-        "parcel_id": row.get("id"),
-        "geometry": geometry,
-        "area_m2": row.get("area_m2"),
-        "perimeter_m": row.get("perimeter_m"),
-        "landuse_raw": landuse_raw,
-        "classification_raw": row.get("classification"),
-        "landuse_code": _landuse_code_from_label(str(landuse_raw)),
-        "landuse_method": "label",
-        "residential_share": None,
-        "commercial_share": None,
-        "source_url": f"postgis/{_PARCEL_TABLE}",
-    }
-    if parcel["landuse_code"] is None and parcel["classification_raw"] == "overture_building":
-        parcel_id = parcel.get("parcel_id") or ""
+    label_code = _landuse_code_from_label(str(landuse_raw))
+    label_is_signal = _label_is_signal(str(landuse_raw), label_code)
+    ovt_attr_code: str | None = None
+    ovt_attr_conf = 0.0
+    if row.get("classification") == "overture_building":
+        parcel_id = row.get("id") or ""
         ovt_id = parcel_id[4:] if parcel_id.startswith("ovt:") else parcel_id
         try:
             record = (
@@ -377,16 +418,65 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
             record = None
 
         if record:
-            code = _landuse_code_from_label(str(record.get("subtype") or ""))
-            if not code:
-                code = _landuse_code_from_label(str(record.get("class") or ""))
+            ovt_attr_code = _landuse_code_from_label(str(record.get("subtype") or ""))
+            if not ovt_attr_code:
+                ovt_attr_code = _landuse_code_from_label(str(record.get("class") or ""))
 
-            if code:
-                parcel["landuse_code"] = code
-                parcel["landuse_method"] = "overture_building_attr"
-                parcel["landuse_raw"] = (
-                    record.get("subtype") or record.get("class") or parcel["landuse_raw"]
-                )
+            if ovt_attr_code:
+                landuse_raw = record.get("subtype") or record.get("class") or landuse_raw
+                ovt_attr_conf = 0.90
+
+    osm_code = None
+    ovt_code = None
+    osm_res = osm_com = ovt_res = ovt_com = 0.0
+    osm_conf = ovt_conf = 0.0
+    try:
+        osm_code, osm_res, osm_com, osm_conf = _osm_fallback_code(geometry, db)
+    except Exception as exc:
+        logger.warning("OSM overlay classification failed: %s", exc)
+    try:
+        ovt_code, ovt_res, ovt_com, ovt_conf = _ovt_overlay_code(geometry, db)
+    except Exception as exc:
+        logger.warning("Overture overlay classification failed: %s", exc)
+
+    landuse_code, landuse_method = _pick_landuse(
+        label_code,
+        label_is_signal,
+        ovt_attr_code,
+        ovt_attr_conf,
+        osm_code,
+        osm_conf,
+        ovt_code,
+        ovt_conf,
+    )
+
+    residential_share = None
+    commercial_share = None
+    if landuse_method == "osm_overlay":
+        residential_share = osm_res
+        commercial_share = osm_com
+    elif landuse_method == "overture_overlay":
+        residential_share = ovt_res
+        commercial_share = ovt_com
+
+    parcel = {
+        "parcel_id": row.get("id"),
+        "geometry": geometry,
+        "area_m2": row.get("area_m2"),
+        "perimeter_m": row.get("perimeter_m"),
+        "landuse_raw": landuse_raw,
+        "classification_raw": row.get("classification"),
+        "landuse_code": landuse_code,
+        "landuse_method": landuse_method,
+        "residential_share": residential_share,
+        "commercial_share": commercial_share,
+        "residential_share_osm": osm_res,
+        "commercial_share_osm": osm_com,
+        "residential_share_ovt": ovt_res,
+        "commercial_share_ovt": ovt_com,
+        "ovt_attr_conf": ovt_attr_conf,
+        "source_url": f"postgis/{_PARCEL_TABLE}",
+    }
 
     logger.debug(
         "Identify point %.6f, %.6f (tol=%.1fm, srid=%s)",
@@ -395,26 +485,6 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         tol_m,
         _TARGET_SRID,
     )
-
-    # If ambiguous (None or boolean-like), fall back to overlays
-    raw_l = (str(landuse_raw) or "").strip().lower()
-    if (parcel["landuse_code"] is None) or (raw_l in {"", "yes", "true", "1", "y"}):
-        try:
-            code, rsh, csh = _overture_fallback_code(geometry, db)
-            if code:
-                parcel["landuse_code"] = code
-                parcel["landuse_method"] = "overture_overlay"
-                parcel["residential_share"] = rsh
-                parcel["commercial_share"] = csh
-            else:
-                code, rsh, csh = _osm_fallback_code(geometry, db)
-                if code:
-                    parcel["landuse_code"] = code
-                    parcel["landuse_method"] = "osm_overlay"
-                    parcel["residential_share"] = rsh
-                    parcel["commercial_share"] = csh
-        except Exception:
-            pass
 
     return {
         "found": True,
