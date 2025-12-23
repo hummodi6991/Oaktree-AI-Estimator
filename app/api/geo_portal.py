@@ -284,6 +284,35 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         "commercial_share": None,
         "source_url": f"postgis/{_PARCEL_TABLE}",
     }
+    if parcel["landuse_code"] is None and parcel["classification_raw"] == "overture_building":
+        parcel_id = parcel.get("parcel_id") or ""
+        ovt_id = parcel_id[4:] if parcel_id.startswith("ovt:") else parcel_id
+        try:
+            record = (
+                db.execute(
+                    text(
+                        "SELECT subtype, class FROM overture_buildings WHERE id=:id"
+                    ),
+                    {"id": ovt_id},
+                )
+                .mappings()
+                .first()
+            )
+        except SQLAlchemyError as exc:
+            logger.warning("Overture building attribute lookup failed: %s", exc)
+            record = None
+
+        if record:
+            code = _landuse_code_from_label(str(record.get("subtype") or ""))
+            if not code:
+                code = _landuse_code_from_label(str(record.get("class") or ""))
+
+            if code:
+                parcel["landuse_code"] = code
+                parcel["landuse_method"] = "overture_building_attr"
+                parcel["landuse_raw"] = (
+                    record.get("subtype") or record.get("class") or parcel["landuse_raw"]
+                )
 
     logger.debug(
         "Identify point %.6f, %.6f (tol=%.1fm, srid=%s)",
