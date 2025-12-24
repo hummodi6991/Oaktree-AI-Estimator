@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app.api.geo_portal import BuildingMetricsRequest
 from app.db.deps import get_db
 from app.main import app
-from app.services.overture_buildings_metrics import floors_proxy
+from app.services.overture_buildings_metrics import compute_building_metrics, floors_proxy
 
 
 def test_floors_proxy_prefers_num_floors_and_clamps_height():
@@ -89,3 +89,24 @@ def test_building_metrics_endpoint_returns_metrics(monkeypatch):
     assert data["building_count"] == 12
     assert data["floors_mean"] == 4.0
     app.dependency_overrides.pop(get_db, None)
+
+
+class _FailingSession:
+    def __init__(self):
+        self.rollback_calls = 0
+
+    def execute(self, *_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    def rollback(self):
+        self.rollback_calls += 1
+
+
+def test_compute_building_metrics_rolls_back_on_execute_failure():
+    session = _FailingSession()
+    result = compute_building_metrics(
+        session,
+        {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]},
+    )
+    assert result == {}
+    assert session.rollback_calls == 1

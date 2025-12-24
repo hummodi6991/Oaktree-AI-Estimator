@@ -9,14 +9,16 @@ logger = logging.getLogger(__name__)
 _OVERTURE_BUILDING_METRICS_SQL = text(
     """
     WITH input_geom AS (
-      SELECT ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(:gj), 4326), 32638) AS geom
+      SELECT ST_MakeValid(ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(:gj), 4326), 32638)) AS geom
     ),
     buffered AS (
       SELECT
-        CASE
-          WHEN :buffer_m IS NOT NULL THEN ST_Buffer(geom, :buffer_m)
-          ELSE geom
-        END AS geom
+        ST_MakeValid(
+          CASE
+            WHEN :buffer_m IS NOT NULL THEN ST_Buffer(geom, :buffer_m)
+            ELSE geom
+          END
+        ) AS geom
       FROM input_geom
     ),
     site AS (
@@ -24,11 +26,14 @@ _OVERTURE_BUILDING_METRICS_SQL = text(
     ),
     buildings AS (
       SELECT
-        ST_Area(ST_Intersection(o.geom, s.geom)) AS footprint_area_m2,
+        ST_Area(ST_Intersection(valid.geom, s.geom)) AS footprint_area_m2,
         o.num_floors::float AS num_floors,
         o.height::float AS height
       FROM overture_buildings o
-      JOIN site s ON o.geom && s.geom AND ST_Intersects(o.geom, s.geom)
+      CROSS JOIN LATERAL (
+        SELECT CASE WHEN ST_IsValid(o.geom) THEN o.geom ELSE ST_MakeValid(o.geom) END AS geom
+      ) valid
+      JOIN site s ON valid.geom && s.geom AND ST_Intersects(valid.geom, s.geom)
     ),
     floors AS (
       SELECT
@@ -40,14 +45,23 @@ _OVERTURE_BUILDING_METRICS_SQL = text(
         END AS floors_proxy
       FROM buildings
     ),
+    floors_stats AS (
+      SELECT
+        COUNT(floors_proxy) AS floors_count,
+        AVG(floors_proxy) AS floors_mean,
+        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY floors_proxy) AS floors_median
+      FROM floors
+      WHERE floors_proxy IS NOT NULL
+    ),
     agg AS (
       SELECT
         COALESCE(SUM(footprint_area_m2), 0) AS footprint_area_m2,
         COUNT(*) AS building_count,
-        COUNT(floors_proxy) AS floors_count,
-        AVG(floors_proxy) FILTER (WHERE floors_proxy IS NOT NULL) AS floors_mean,
-        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY floors_proxy) AS floors_median
+        floors_stats.floors_count,
+        floors_stats.floors_mean,
+        floors_stats.floors_median
       FROM floors
+      CROSS JOIN floors_stats
     ),
     bua AS (
       SELECT
@@ -138,6 +152,11 @@ def compute_building_metrics(
         )
     except Exception as exc:
         logger.warning("Overture building metrics query failed: %s", exc)
+        if hasattr(db, "rollback"):
+            try:
+                db.rollback()
+            except Exception as rollback_exc:
+                logger.debug("compute_building_metrics: rollback failed: %s", rollback_exc)
         return {}
 
     if not row:
