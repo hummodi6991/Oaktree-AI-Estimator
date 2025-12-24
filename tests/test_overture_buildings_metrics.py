@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from app.api.geo_portal import BuildingMetricsRequest
 from app.db.deps import get_db
 from app.main import app
+from app.services import overture_buildings_metrics as obm
 from app.services.overture_buildings_metrics import compute_building_metrics, floors_proxy
 
 
@@ -14,6 +15,17 @@ def test_floors_proxy_prefers_num_floors_and_clamps_height():
     assert floors_proxy(None, 1.0) == 1  # clamp minimum
     assert floors_proxy(None, 500.0) == 60  # clamp maximum
     assert floors_proxy(None, None) is None
+
+
+def test_floors_proxy_never_zero():
+    assert floors_proxy(0.2, None) == 1
+    assert floors_proxy(None, 0.5) == 1  # 0.5 / 3.2 → 0.16 → round to 0, clamp to 1
+    assert floors_proxy("0.9", -10) == 1
+
+
+def test_sql_contains_num_floors_guard():
+    sql_str = str(obm._OVERTURE_BUILDING_METRICS_SQL)
+    assert "num_floors IS NOT NULL AND num_floors > 0" in sql_str
 
 
 class _FakeResult:
@@ -88,6 +100,45 @@ def test_building_metrics_endpoint_returns_metrics(monkeypatch):
     assert data["footprint_area_m2"] == 300.0
     assert data["building_count"] == 12
     assert data["floors_mean"] == 4.0
+    app.dependency_overrides.pop(get_db, None)
+
+
+def test_building_metrics_accepts_geojson_feature(monkeypatch):
+    app.dependency_overrides[get_db] = _override_get_db
+    client = TestClient(app)
+    feature_payload = {
+        "type": "Feature",
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+                [
+                    [46.675, 24.713],
+                    [46.676, 24.713],
+                    [46.676, 24.714],
+                    [46.675, 24.714],
+                    [46.675, 24.713],
+                ]
+            ],
+        },
+        "properties": {"name": "test feature"},
+    }
+    resp = client.post("/v1/geo/building-metrics", json={"geojson": feature_payload, "buffer_m": 5.0})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["buffer_m"] == 5.0
+    assert data["building_count"] == 12
+    app.dependency_overrides.pop(get_db, None)
+
+
+def test_building_metrics_rejects_non_polygon(monkeypatch):
+    app.dependency_overrides[get_db] = _override_get_db
+    client = TestClient(app)
+    resp = client.post(
+        "/v1/geo/building-metrics",
+        json={"geojson": {"type": "Point", "coordinates": [0.0, 0.0]}},
+    )
+    assert resp.status_code == 400
+    assert "Polygon or MultiPolygon" in resp.json()["detail"]
     app.dependency_overrides.pop(get_db, None)
 
 

@@ -30,17 +30,18 @@ _OVERTURE_BUILDING_METRICS_SQL = text(
         o.num_floors::float AS num_floors,
         o.height::float AS height
       FROM overture_buildings o
+      JOIN site s ON o.geom && s.geom
       CROSS JOIN LATERAL (
         SELECT CASE WHEN ST_IsValid(o.geom) THEN o.geom ELSE ST_MakeValid(o.geom) END AS geom
       ) valid
-      JOIN site s ON valid.geom && s.geom AND ST_Intersects(valid.geom, s.geom)
+      WHERE valid.geom && s.geom AND ST_Intersects(valid.geom, s.geom)
     ),
     floors AS (
       SELECT
         footprint_area_m2,
         CASE
-          WHEN num_floors IS NOT NULL THEN num_floors
-          WHEN height IS NOT NULL THEN GREATEST(1, LEAST(60, round(height / 3.2)))
+          WHEN num_floors IS NOT NULL AND num_floors > 0 THEN GREATEST(1, LEAST(60, round(num_floors)))::int
+          WHEN height IS NOT NULL AND height > 0 THEN GREATEST(1, LEAST(60, round(height / 3.2)))::int
           ELSE NULL
         END AS floors_proxy
       FROM buildings
@@ -114,19 +115,22 @@ def floors_proxy(num_floors: Any, height: Any) -> Optional[int]:
       - else height / 3.2, rounded, clamped to [1, 60]
       - else None
     """
+    def _clamp(val: float) -> int:
+        return max(1, min(60, int(round(val))))
+
     try:
         if num_floors is not None:
             val = float(num_floors)
             if val > 0:
-                return int(round(val))
+                return _clamp(val)
     except Exception:
         pass
 
     try:
         if height is not None:
             height_val = float(height)
-            proxy = int(round(height_val / 3.2))
-            return max(1, min(60, proxy))
+            if height_val > 0:
+                return _clamp(height_val / 3.2)
     except Exception:
         pass
     return None
