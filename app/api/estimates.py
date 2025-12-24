@@ -238,6 +238,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     far_explicit = hasattr(req, "model_fields_set") and "far" in req.model_fields_set
     far_max = None
     far_max_source = None
+    typical_source = None
     try:
         far_max = far_rules.lookup_far(db, req.city, district)
         if far_max is not None:
@@ -253,8 +254,10 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             far_max = None
 
     typical_far_proxy = overture_context_metrics.get("far_proxy_existing")
+    typical_source = "overture_proxy" if typical_far_proxy is not None else None
     if overture_context_metrics.get("building_count") == 0:
         typical_far_proxy = None
+        typical_source = None
     typical_far_clamped = max(0.3, float(typical_far_proxy)) if typical_far_proxy is not None else None
     suggested_far = None
     if far_max is not None and typical_far_clamped is not None:
@@ -266,11 +269,31 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     else:
         suggested_far = req.far
 
+    method = "default_far"
+    source_label = None
+    if far_explicit:
+        method = "explicit_far"
+        source_label = "explicit"
+    elif far_max is not None and typical_far_clamped is not None:
+        method = "min_far_max_and_typical"
+        source_label = far_max_source if float(far_max) <= float(typical_far_clamped) else typical_source
+    elif far_max is not None:
+        method = "far_max_only"
+        source_label = far_max_source
+    elif typical_far_clamped is not None:
+        method = "overture_typical"
+        source_label = typical_source
+    else:
+        source_label = None
+
     far_used = req.far if far_explicit else float(suggested_far or req.far)
     far_inference_notes = {
         "suggested_far": float(suggested_far or 0.0) if suggested_far is not None else None,
         "far_max": float(far_max) if far_max is not None else None,
-        "source": far_max_source or ("overture_proxy" if typical_far_proxy is not None else None),
+        "source": source_label,
+        "far_max_source": far_max_source,
+        "typical_source": typical_source,
+        "method": method,
         "buffer_m": overture_context_metrics.get("buffer_m"),
         "typical_far_proxy": float(typical_far_proxy or 0.0) if typical_far_proxy is not None else None,
         "district": district,

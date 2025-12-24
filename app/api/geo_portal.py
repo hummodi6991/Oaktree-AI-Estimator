@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from shapely.geometry import MultiPolygon, Polygon, shape
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -119,6 +120,36 @@ class BuildingMetricsResponse(BaseModel):
     buffer_m: float | None = None
 
 
+def _normalize_building_geojson(obj: dict) -> dict:
+    if not isinstance(obj, dict):
+        raise HTTPException(status_code=400, detail="GeoJSON payload must be an object")
+
+    geom = obj
+    if obj.get("type") == "Feature":
+        geom = obj.get("geometry")
+        if geom is None:
+            raise HTTPException(status_code=400, detail="Feature must include a geometry")
+
+    if not isinstance(geom, dict):
+        raise HTTPException(status_code=400, detail="Geometry must be an object")
+
+    gtype = (geom.get("type") or "").lower()
+    if gtype not in {"polygon", "multipolygon"}:
+        raise HTTPException(status_code=400, detail="Geometry must be a Polygon or MultiPolygon")
+
+    try:
+        parsed = shape(geom)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid GeoJSON geometry: {exc}") from exc
+
+    if not isinstance(parsed, (Polygon, MultiPolygon)):
+        raise HTTPException(status_code=400, detail="Geometry must be a Polygon or MultiPolygon")
+    if parsed.is_empty:
+        raise HTTPException(status_code=400, detail="Geometry is empty")
+
+    return geom
+
+
 @router.post(
     "/building-metrics",
     response_model=BuildingMetricsResponse,
@@ -126,7 +157,8 @@ class BuildingMetricsResponse(BaseModel):
     description="Returns coverage, floors proxy stats, and built-up area using Overture buildings in SRID 32638.",
 )
 def building_metrics(payload: BuildingMetricsRequest, db: Session = Depends(get_db)) -> BuildingMetricsResponse:
-    metrics = compute_building_metrics(db, payload.geojson, buffer_m=payload.buffer_m)
+    geom = _normalize_building_geojson(payload.geojson)
+    metrics = compute_building_metrics(db, geom, buffer_m=payload.buffer_m)
     return BuildingMetricsResponse(**metrics)
 
 
