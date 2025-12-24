@@ -393,13 +393,18 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 target_far = None
 
         if (target_far is None or target_far <= 0) and suggested_far is not None:
-            try:
-                sf = float(suggested_far)
-            except Exception:
-                sf = 0.0
-            if sf > 0:
-                target_far = sf
-                target_far_source = str(method or "far")
+            # Only auto-scale placeholder ratios when FAR is actually inferred
+            # (Overture / rules). If we fell back to the request default FAR
+            # (method == "default_far"), keep template ratios unchanged.
+            far_method_norm = str(method or "").strip().lower()
+            if far_method_norm and far_method_norm != "default_far":
+                try:
+                    sf = float(suggested_far)
+                except Exception:
+                    sf = 0.0
+                if sf > 0:
+                    target_far = sf
+                    target_far_source = str(method or "far")
 
         excel_inputs = scale_placeholder_area_ratio(
             excel_inputs, target_far=target_far, target_far_source=target_far_source

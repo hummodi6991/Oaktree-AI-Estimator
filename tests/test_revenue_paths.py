@@ -102,10 +102,9 @@ def test_sale_revenue_formula_mvp(monkeypatch, client):
     assert response.status_code == 200
     data = response.json()
 
-    excel_scaled_inputs = scale_placeholder_area_ratio(
-        excel_inputs, target_far=payload["far"], target_far_source="explicit_far"
-    )
-    excel = compute_excel_estimate(2362.0, excel_scaled_inputs)
+    # With FAR falling back to the request default (method == "default_far"),
+    # placeholder ratios should NOT auto-scale.
+    excel = compute_excel_estimate(2362.0, excel_inputs)
     assert data["totals"]["land_value"] == pytest.approx(excel["land_cost"], rel=1e-6)
     assert data["totals"]["hard_costs"] == pytest.approx(excel["sub_total"], rel=1e-6)
     assert data["totals"]["revenues"] == pytest.approx(excel["y1_income"], rel=1e-6)
@@ -134,10 +133,9 @@ def test_btr_value_mvp(monkeypatch, client):
     assert response.status_code == 200
     data = response.json()
 
-    excel_scaled_inputs = scale_placeholder_area_ratio(
-        excel_inputs, target_far=payload["far"], target_far_source="explicit_far"
-    )
-    excel = compute_excel_estimate(5731.0, excel_scaled_inputs)
+    # With FAR falling back to the request default (method == "default_far"),
+    # placeholder ratios should NOT auto-scale.
+    excel = compute_excel_estimate(5731.0, excel_inputs)
     assert data["totals"]["revenues"] == pytest.approx(excel["y1_income"], rel=1e-6)
     assert data["totals"]["excel_roi"] == pytest.approx(excel["roi"], rel=1e-6)
 

@@ -65,6 +65,14 @@ def scale_placeholder_area_ratio(
     area_ratio = result.get("area_ratio") if isinstance(result, dict) else {}
     placeholder_area_ratio = _is_placeholder_area_ratio(area_ratio)
 
+    # Guardrail:
+    # If FAR is coming only from the API default fallback (method == "default_far"),
+    # do NOT scale the template ratios. Otherwise every parcel becomes FAR=2.0
+    # (e.g., 1.6 -> 2.0 scale 1.25).
+    src_norm = (target_far_source or "").strip().lower()
+    if src_norm in {"default_far", "default"}:
+        return result
+
     should_scale_area_ratio = placeholder_area_ratio and target_far is not None and float(target_far) > 0
     if not should_scale_area_ratio:
         return result
