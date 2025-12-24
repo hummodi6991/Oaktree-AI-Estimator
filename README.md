@@ -57,7 +57,8 @@ Only `district` and `far_max` are required. When an estimate runs, the API first
 - `GET /v1/indices/cci`
 - `GET /v1/indices/rates`
 - `GET /v1/comps`
-- `POST /v1/estimates` (returns placeholder P50 pro-forma)
+- `POST /v1/geo/building-metrics` (coverage, floors proxy stats, BUA from Overture buildings)
+- `POST /v1/estimates` (uses Overture-built FAR defaults + Excel-style outputs)
 
 ## Frontend dev
 

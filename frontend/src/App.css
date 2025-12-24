@@ -296,6 +296,46 @@
   background: rgba(15, 54, 48, 0.6);
 }
 
+.tertiary-button {
+  margin-top: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(230, 214, 189, 0.9);
+  border: 1px dashed rgba(213, 177, 106, 0.35);
+  border-radius: 12px;
+  padding: 8px 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.tertiary-button:hover {
+  border-color: rgba(213, 177, 106, 0.7);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.far-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid rgba(213, 177, 106, 0.4);
+}
+
+.auto-pill {
+  background: rgba(8, 36, 31, 0.65);
+  color: var(--gold-300);
+}
+
 .scenario-panel {
   display: flex;
   flex-direction: column;

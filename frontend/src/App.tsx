@@ -19,6 +19,20 @@ const DEFAULT_POLY: Polygon = {
   ]
 };
 
+const DEFAULT_EXCEL_INPUTS = {
+  area_ratio: {},
+  unit_cost: { residential: 2200, basement: 1200 },
+  efficiency: { residential: 0.82 },
+  cp_sqm_per_space: { basement: 30 },
+  rent_sar_m2_yr: { residential: 2400 },
+  fitout_rate: 400,
+  contingency_pct: 0.1,
+  consultants_pct: 0.06,
+  feasibility_fee: 1500000,
+  transaction_pct: 0.03,
+  land_price_sar_m2: 2800,
+};
+
 type PolygonStats = {
   areaSqm: number;
   perimeterMeters: number;
@@ -71,6 +85,9 @@ export default function App() {
   const [freshness, setFreshness] = useState<any>(null);
   const [city, setCity] = useState("Riyadh");
   const [far, setFar] = useState(2.0);
+  const [farAuto, setFarAuto] = useState<number | null>(null);
+  const [farManuallySet, setFarManuallySet] = useState(false);
+  const [farSourceLabel, setFarSourceLabel] = useState<string | null>(null);
   const [months, setMonths] = useState(18);
   const [geom, setGeom] = useState(JSON.stringify(DEFAULT_POLY, null, 2));
   const [geomVer, setGeomVer] = useState(0);
@@ -112,6 +129,18 @@ export default function App() {
   const rentHasDrivers = rentDrivers.length > 0;
   const rentHasComps = rentComps.length > 0;
   const strategy = estimate?.strategy ?? "build_to_sell";
+  const farNotes = (estimate?.notes as any)?.far_inference ?? {};
+  const farUsed = Number.isFinite(farNotes?.far_used) ? farNotes.far_used : null;
+  const farMax = Number.isFinite(farNotes?.far_max) ? farNotes.far_max : null;
+  const typicalFar = Number.isFinite(farNotes?.typical_far_proxy) ? farNotes.typical_far_proxy : null;
+  const overtureSite = (estimate?.notes as any)?.overture_buildings?.site_metrics ?? {};
+  const overtureContext = (estimate?.notes as any)?.overture_buildings?.context_metrics ?? {};
+  const existingFootprint =
+    (estimate?.notes as any)?.existing_footprint_area_m2 ?? overtureSite.footprint_area_m2 ?? null;
+  const existingBua = (estimate?.notes as any)?.existing_bua_m2 ?? overtureSite.existing_bua_m2 ?? null;
+  const potentialBua = (estimate?.notes as any)?.potential_bua_m2 ?? null;
+  const coveragePct =
+    typeof overtureSite.coverage_ratio === "number" ? overtureSite.coverage_ratio * 100 : null;
 
   const handlePolygon = useCallback(
     (geometry: Polygon | null) => {
@@ -163,9 +192,20 @@ export default function App() {
         city,
         far,
         efficiency: 0.82,
+        excel_inputs: DEFAULT_EXCEL_INPUTS,
       };
       const res = (await createEstimate(payload)) as EstimateResponse;
       setEstimate(res);
+      const farInfo = (res as any)?.notes?.far_inference ?? {};
+      const inferredFarRaw = Number.isFinite(farInfo.far_used) ? farInfo.far_used : farInfo.suggested_far;
+      const inferredFar = Number.isFinite(inferredFarRaw) ? inferredFarRaw : null;
+      setFarAuto(inferredFar);
+      if (!farManuallySet && inferredFar != null) {
+        setFar(inferredFar);
+        setFarSourceLabel("Auto (Overture)");
+      } else if (farManuallySet) {
+        setFarSourceLabel(null);
+      }
       const since = new Date();
       since.setMonth(since.getMonth() - 12);
       const compsRes = await getComps({ city, type: "land", since: since.toISOString().slice(0, 10) });
@@ -244,14 +284,35 @@ export default function App() {
                 <input id="city-input" value={city} onChange={(e) => setCity(e.target.value)} />
               </label>
               <label className="form-field" htmlFor="far-input">
-                <span>Floor Area Ratio (FAR)</span>
+                <span className="far-label">
+                  Floor Area Ratio (FAR)
+                  {farSourceLabel && <span className="pill auto-pill">{farSourceLabel}</span>}
+                </span>
                 <input
                   id="far-input"
                   type="number"
                   step="0.1"
                   value={far}
-                  onChange={(e) => setFar(parseFloat(e.target.value))}
+                  onChange={(e) => {
+                    const next = parseFloat(e.target.value);
+                    setFar(Number.isFinite(next) ? next : 0);
+                    setFarManuallySet(true);
+                    setFarSourceLabel(null);
+                  }}
                 />
+                {farAuto != null && (
+                  <button
+                    type="button"
+                    className="tertiary-button"
+                    onClick={() => {
+                      setFar(farAuto);
+                      setFarManuallySet(false);
+                      setFarSourceLabel("Auto (Overture)");
+                    }}
+                  >
+                    Use auto FAR ({farAuto.toFixed(2)})
+                  </button>
+                )}
               </label>
               <label className="form-field" htmlFor="timeline-input">
                 <span>Development Timeline (months)</span>
@@ -344,6 +405,64 @@ export default function App() {
           </section>
         </div>
       </div>
+
+      {estimate && (existingFootprint || farUsed || typicalFar || overtureContext?.far_proxy_existing) && (
+        <section className="card full-width" aria-labelledby="built-form-heading">
+          <div className="card-header">
+            <div>
+              <h2 id="built-form-heading" className="card-title">Existing Built Form (Overture)</h2>
+              <p className="card-subtitle">
+                Footprints, floors proxies, and FAR defaults inferred from Overture buildings (buffer{" "}
+                {overtureContext?.buffer_m ?? 500} m).
+              </p>
+            </div>
+          </div>
+          <dl className="metrics-grid">
+            <div>
+              <dt>Built-up footprint</dt>
+              <dd>{existingFootprint != null ? `${fmt(existingFootprint)} m²` : "—"}</dd>
+            </div>
+            <div>
+              <dt>Coverage ratio</dt>
+              <dd>{coveragePct != null ? `${fmt(coveragePct, 1)}%` : "—"}</dd>
+            </div>
+            <div>
+              <dt>Floors proxy (median/avg)</dt>
+              <dd>
+                {overtureSite?.floors_median != null || overtureSite?.floors_mean != null
+                  ? `${fmt(overtureSite?.floors_median, 1)} median / ${fmt(overtureSite?.floors_mean, 1)} avg`
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt>Existing BUA</dt>
+              <dd>{existingBua != null ? `${fmt(existingBua)} m²` : "—"}</dd>
+            </div>
+            <div>
+              <dt>Built density</dt>
+              <dd>
+                {overtureSite?.built_density_m2_per_ha != null
+                  ? `${fmt(overtureSite?.built_density_m2_per_ha, 1)} m²/ha`
+                  : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt>Suggested FAR / FAR max</dt>
+              <dd>
+                {farUsed != null ? fmt(farUsed, 2) : "—"}
+                {farMax != null ? ` (max ${fmt(farMax, 2)})` : ""}
+                {typicalFar != null ? ` · context proxy ${fmt(typicalFar, 2)}` : ""}
+              </dd>
+            </div>
+            {potentialBua != null && (
+              <div>
+                <dt>Potential BUA (at FAR max)</dt>
+                <dd>{`${fmt(potentialBua)} m²`}</dd>
+              </div>
+            )}
+          </dl>
+        </section>
+      )}
 
       {totals && (
         <section className="card full-width" aria-labelledby="financial-summary-heading">

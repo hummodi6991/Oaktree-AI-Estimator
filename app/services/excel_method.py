@@ -28,6 +28,8 @@ def build_excel_explanations(
     re_scalar = float(inputs.get("re_price_index_scalar") or 1.0)
 
     explanations: Dict[str, str] = {}
+    if inputs.get("area_ratio_note"):
+        explanations["area_ratio_override"] = str(inputs.get("area_ratio_note"))
 
     land_price = float(inputs.get("land_price_sar_m2", 0.0) or 0.0)
     explanations["land_cost"] = (

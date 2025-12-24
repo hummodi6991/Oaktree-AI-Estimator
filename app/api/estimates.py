@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
 from app.services import geo as geo_svc
+from app.services import far_rules
 from app.services.excel_method import compute_excel_estimate
 from app.services.explain import (
     top_sale_comps,
@@ -20,6 +21,7 @@ from app.services.indicators import (
     latest_re_price_index_scalar,
     latest_sale_price_per_m2,
 )
+from app.services.overture_buildings_metrics import compute_building_metrics
 from app.services.tax import latest_tax_rate
 from app.models.tables import EstimateHeader, EstimateLine
 
@@ -217,7 +219,61 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         pass
     if geom.is_empty:
         raise HTTPException(status_code=400, detail="Empty geometry provided")
+    geom_geojson = geo_svc.to_geojson(geom)
     site_area_m2 = geo_svc.area_m2(geom)
+
+    overture_site_metrics: dict[str, Any] = {}
+    overture_context_metrics: dict[str, Any] = {}
+    try:
+        overture_site_metrics = compute_building_metrics(db, geom_geojson)
+        if overture_site_metrics.get("site_area_m2"):
+            site_area_m2 = float(overture_site_metrics["site_area_m2"])
+    except Exception:
+        overture_site_metrics = {}
+    try:
+        overture_context_metrics = compute_building_metrics(db, geom_geojson, buffer_m=500.0)
+    except Exception:
+        overture_context_metrics = {}
+
+    far_explicit = hasattr(req, "model_fields_set") and "far" in req.model_fields_set
+    far_max = None
+    far_max_source = None
+    try:
+        far_max = far_rules.lookup_far(db, req.city, district)
+        if far_max is not None:
+            far_max_source = "far_rules"
+    except Exception:
+        far_max = None
+    if far_max is None:
+        try:
+            far_max = geo_svc.infer_far_from_features(db, geom, layer="rydpolygons")
+            if far_max is not None:
+                far_max_source = "feature_layer"
+        except Exception:
+            far_max = None
+
+    typical_far_proxy = overture_context_metrics.get("far_proxy_existing")
+    typical_far_clamped = max(0.3, float(typical_far_proxy)) if typical_far_proxy is not None else None
+    suggested_far = None
+    if far_max is not None and typical_far_clamped is not None:
+        suggested_far = min(float(far_max), typical_far_clamped)
+    elif far_max is not None:
+        suggested_far = float(far_max)
+    elif typical_far_clamped is not None:
+        suggested_far = typical_far_clamped
+    else:
+        suggested_far = req.far
+
+    far_used = req.far if far_explicit else float(suggested_far or req.far)
+    far_inference_notes = {
+        "suggested_far": float(suggested_far or 0.0) if suggested_far is not None else None,
+        "far_max": float(far_max) if far_max is not None else None,
+        "source": far_max_source or ("overture_proxy" if typical_far_proxy is not None else None),
+        "buffer_m": overture_context_metrics.get("buffer_m"),
+        "typical_far_proxy": float(typical_far_proxy or 0.0) if typical_far_proxy is not None else None,
+        "district": district,
+        "explicit_far": far_explicit,
+    }
 
     def _finalize_result(
         result: dict[str, Any], bands: dict[str, Any] | None = None
@@ -288,6 +344,61 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     if req.excel_inputs:
         # Copy inputs and enrich land price if caller didn't provide one (or provided 0/None)
         excel_inputs = dict(req.excel_inputs)
+
+        def _area_ratio_positive_sum(ar: Any) -> float:
+            if not isinstance(ar, dict):
+                return 0.0
+            total = 0.0
+            for v in ar.values():
+                try:
+                    fv = float(v)
+                    if fv > 0:
+                        total += fv
+                except Exception:
+                    continue
+            return total
+
+        def _is_placeholder_area_ratio(ar: Any) -> bool:
+            if not isinstance(ar, dict) or not ar:
+                return True
+            positive = []
+            for v in ar.values():
+                try:
+                    fv = float(v)
+                    if fv > 0:
+                        positive.append(fv)
+                except Exception:
+                    continue
+            if not positive:
+                return True
+            if all(abs(v - 2.7) < 1e-6 for v in positive):
+                return True
+            return False
+
+        area_ratio = excel_inputs.get("area_ratio") if isinstance(excel_inputs, dict) else {}
+        should_autofill_far = (
+            not far_explicit
+            and suggested_far is not None
+            and suggested_far > 0
+            and _is_placeholder_area_ratio(area_ratio)
+        )
+        if should_autofill_far:
+            base_sum = _area_ratio_positive_sum(area_ratio)
+            if base_sum > 0:
+                scale = float(suggested_far) / base_sum
+                scaled = {}
+                for key, val in area_ratio.items():
+                    try:
+                        scaled[key] = float(val or 0.0) * scale
+                    except Exception:
+                        scaled[key] = 0.0
+            else:
+                scaled = {"residential": float(suggested_far)}
+            excel_inputs["area_ratio"] = scaled
+            excel_inputs["area_ratio_note"] = (
+                f"Auto-derived FAR {float(suggested_far):.2f} from Overture buildings"
+                + (f" (max {float(far_max):.2f})" if far_max is not None else "")
+            )
         ppm2_val: float = 0.0
         ppm2_src: str = "Manual"
         try:
@@ -452,6 +563,12 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                     "unit": "2014=1.0",
                     "source_type": "GASTAT",
                 },
+                {
+                    "key": "far",
+                    "value": float(far_used),
+                    "unit": None,
+                    "source_type": "Manual" if far_explicit else (far_max_source or "Overture"),
+                },
             ],
             "notes": {
                 "excel_inputs_keys": list(excel_inputs.keys()),
@@ -472,6 +589,16 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                     "rent_source_metadata": excel_inputs.get("rent_source_metadata"),
                 },
                 "excel_roi": excel["roi"],
+                "far_inference": {**far_inference_notes, "far_used": float(far_used)},
+                "overture_buildings": {
+                    "site_metrics": overture_site_metrics,
+                    "context_metrics": overture_context_metrics,
+                },
+                "existing_footprint_area_m2": overture_site_metrics.get("footprint_area_m2"),
+                "existing_bua_m2": overture_site_metrics.get("existing_bua_m2"),
+                "potential_bua_m2": float(far_max * site_area_m2) if far_max is not None else None,
+                "suggested_far": float(suggested_far or 0.0) if suggested_far is not None else None,
+                "far_max": float(far_max) if far_max is not None else None,
             },
             "rent": {},
             "explainability": {},
