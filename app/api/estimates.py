@@ -253,6 +253,8 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             far_max = None
 
     typical_far_proxy = overture_context_metrics.get("far_proxy_existing")
+    if overture_context_metrics.get("building_count") == 0:
+        typical_far_proxy = None
     typical_far_clamped = max(0.3, float(typical_far_proxy)) if typical_far_proxy is not None else None
     suggested_far = None
     if far_max is not None and typical_far_clamped is not None:
