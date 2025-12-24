@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.db.deps import get_db
 from app.models.tables import Parcel
 from app.services.geo import _landuse_code_from_label
+from app.services.overture_buildings_metrics import compute_building_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,39 @@ _IDENTIFY_SQL = text(
 
 # Keep router local to "geo"; main.py mounts routers at "/v1".
 router = APIRouter(prefix="/geo", tags=["geo"])
+
+
+class BuildingMetricsRequest(BaseModel):
+    geojson: dict = Field(..., description="GeoJSON Polygon or MultiPolygon (WGS84)")
+    buffer_m: float | None = Field(
+        default=None,
+        description="Optional buffer distance in meters applied before computing metrics.",
+    )
+
+
+class BuildingMetricsResponse(BaseModel):
+    site_area_m2: float | None = None
+    footprint_area_m2: float | None = None
+    coverage_ratio: float | None = None
+    floors_mean: float | None = None
+    floors_median: float | None = None
+    existing_bua_m2: float | None = None
+    far_proxy_existing: float | None = None
+    built_density_m2_per_ha: float | None = None
+    building_count: int = 0
+    pct_buildings_with_floors_data: float | None = None
+    buffer_m: float | None = None
+
+
+@router.post(
+    "/building-metrics",
+    response_model=BuildingMetricsResponse,
+    summary="Compute Overture building metrics inside a polygon",
+    description="Returns coverage, floors proxy stats, and built-up area using Overture buildings in SRID 32638.",
+)
+def building_metrics(payload: BuildingMetricsRequest, db: Session = Depends(get_db)) -> BuildingMetricsResponse:
+    metrics = compute_building_metrics(db, payload.geojson, buffer_m=payload.buffer_m)
+    return BuildingMetricsResponse(**metrics)
 
 
 _OSM_CLASSIFY_SQL = text(
