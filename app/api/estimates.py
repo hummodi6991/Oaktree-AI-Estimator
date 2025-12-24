@@ -235,7 +235,20 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     except Exception:
         overture_context_metrics = {}
 
-    far_explicit = hasattr(req, "model_fields_set") and "far" in req.model_fields_set
+    # IMPORTANT: The frontend often sends FAR even when the user didn't explicitly override it
+    # (e.g., default 2.0 from the request schema). We only treat FAR as "explicit" when the
+    # client set it AND it differs from the model default.
+    far_default = 2.0
+    try:
+        # Pydantic v2
+        default_val = getattr(getattr(req.__class__, "model_fields", {}).get("far"), "default", None)
+        if default_val is not None:
+            far_default = float(default_val)
+    except Exception:
+        far_default = 2.0
+
+    far_in_fields_set = hasattr(req, "model_fields_set") and "far" in req.model_fields_set
+    far_explicit = bool(far_in_fields_set and abs(float(req.far) - float(far_default)) > 1e-9)
     far_max = None
     far_max_source = None
     typical_source = None
@@ -370,11 +383,19 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         # Copy inputs and enrich land price if caller didn't provide one (or provided 0/None)
         excel_inputs = dict(req.excel_inputs)
 
-        def _area_ratio_positive_sum(ar: Any) -> float:
+        def _is_basement_key(key: Any) -> bool:
+            try:
+                return str(key).strip().lower().startswith("basement")
+            except Exception:
+                return False
+
+        def _area_ratio_positive_sum(ar: Any, *, exclude_basement: bool = False) -> float:
             if not isinstance(ar, dict):
                 return 0.0
             total = 0.0
-            for v in ar.values():
+            for k, v in ar.items():
+                if exclude_basement and _is_basement_key(k):
+                    continue
                 try:
                     fv = float(v)
                     if fv > 0:
@@ -398,6 +419,19 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 return True
             if all(abs(v - 2.7) < 1e-6 for v in positive):
                 return True
+            # Current UI template default (residential_midrise example):
+            #   area_ratio: {residential: 1.6, basement: 0.5}
+            # Treat this as a placeholder so Overture FAR can drive BUA.
+            try:
+                lower = {str(k).strip().lower(): v for k, v in ar.items()}
+                r = float(lower.get("residential")) if "residential" in lower else None
+                b = float(lower.get("basement")) if "basement" in lower else None
+                if r is not None and abs(r - 1.6) < 1e-6:
+                    # Only treat as placeholder when it's the simple default (<=2 positive ratios).
+                    if len(positive) <= 2 and (b is None or abs(b - 0.5) < 1e-6):
+                        return True
+            except Exception:
+                pass
             return False
 
         area_ratio = excel_inputs.get("area_ratio") if isinstance(excel_inputs, dict) else {}
@@ -406,23 +440,41 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             and suggested_far is not None
             and suggested_far > 0
             and _is_placeholder_area_ratio(area_ratio)
+            and (far_max is not None or typical_far_clamped is not None)
         )
         if should_autofill_far:
-            base_sum = _area_ratio_positive_sum(area_ratio)
-            if base_sum > 0:
-                scale = float(suggested_far) / base_sum
-                scaled = {}
-                for key, val in area_ratio.items():
-                    try:
-                        scaled[key] = float(val or 0.0) * scale
-                    except Exception:
-                        scaled[key] = 0.0
+            # suggested_far is an *above-ground* FAR proxy (Overture buildings won't include basements).
+            # So: scale only non-basement ratios; keep any basement ratios unchanged.
+            base_sum = _area_ratio_positive_sum(area_ratio, exclude_basement=True)
+            scaled: Dict[str, Any] = {}
+            if isinstance(area_ratio, dict):
+                if base_sum > 0:
+                    scale = float(suggested_far) / base_sum
+                    for key, val in area_ratio.items():
+                        try:
+                            fv = float(val or 0.0)
+                        except Exception:
+                            fv = 0.0
+                        if _is_basement_key(key):
+                            scaled[key] = fv
+                        else:
+                            scaled[key] = fv * scale
+                else:
+                    # No usable above-ground ratios provided; inject a reasonable default.
+                    scaled = {}
+                    for key, val in area_ratio.items():
+                        try:
+                            scaled[key] = float(val or 0.0)
+                        except Exception:
+                            scaled[key] = 0.0
+                    scaled["residential"] = float(suggested_far)
             else:
                 scaled = {"residential": float(suggested_far)}
             excel_inputs["area_ratio"] = scaled
             excel_inputs["area_ratio_note"] = (
-                f"Auto-derived FAR {float(suggested_far):.2f} from Overture buildings"
+                f"Auto-derived above-ground FAR {float(suggested_far):.2f} from Overture buildings"
                 + (f" (max {float(far_max):.2f})" if far_max is not None else "")
+                + "; non-basement area ratios scaled to match FAR; basement ratios unchanged."
             )
         ppm2_val: float = 0.0
         ppm2_src: str = "Manual"
