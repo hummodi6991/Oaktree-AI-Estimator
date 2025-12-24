@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.deps import get_db
 from app.services import geo as geo_svc
 from app.services import far_rules
-from app.services.excel_method import compute_excel_estimate
+from app.services.excel_method import compute_excel_estimate, scale_placeholder_area_ratio
 from app.services.explain import (
     top_sale_comps,
     to_comp_dict,
@@ -379,100 +379,31 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         # Copy inputs and enrich land price if caller didn't provide one (or provided 0/None)
         excel_inputs = dict(req.excel_inputs)
 
-        def _is_basement_key(key: str) -> bool:
-            k = (key or "").strip().lower()
-            if k in {"basement", "underground"}:
-                return True
-            if "basement" in k:
-                return True
-            return False
+        # In Excel-mode, BUA is computed from `area_ratio`. To avoid it getting stuck on
+        # template placeholders (e.g. residential 1.60), scale placeholder area ratios to
+        # match the best available FAR (explicit > inferred > default).
+        target_far: float | None = None
+        target_far_source: str = ""
+        if far_explicit:
+            try:
+                target_far = float(req.far)
+                if target_far > 0:
+                    target_far_source = "explicit_far"
+            except Exception:
+                target_far = None
 
-        def _area_ratio_positive_sum(ar: Any, exclude_basement: bool = False) -> float:
-            if not isinstance(ar, dict):
-                return 0.0
-            total = 0.0
-            for k, v in ar.items():
-                if exclude_basement and _is_basement_key(str(k)):
-                    continue
-                try:
-                    fv = float(v)
-                    if fv > 0:
-                        total += fv
-                except Exception:
-                    continue
-            return total
+        if (target_far is None or target_far <= 0) and suggested_far is not None:
+            try:
+                sf = float(suggested_far)
+            except Exception:
+                sf = 0.0
+            if sf > 0:
+                target_far = sf
+                target_far_source = str(method or "far")
 
-        def _is_placeholder_area_ratio(ar: Any) -> bool:
-            if not isinstance(ar, dict) or not ar:
-                return True
-            positive: dict[str, float] = {}
-            for k, v in ar.items():
-                try:
-                    fv = float(v)
-                    if fv > 0:
-                        positive[str(k).strip().lower()] = fv
-                except Exception:
-                    continue
-            if not positive:
-                return True
-            # Legacy placeholder: 2.7 everywhere
-            if all(abs(v - 2.7) < 1e-6 for v in positive.values()):
-                return True
-            # Current residential template placeholder: residential 1.6 + basement 0.5
-            r = positive.get("residential")
-            b = positive.get("basement")
-            if (
-                r is not None
-                and b is not None
-                and abs(r - 1.6) < 1e-6
-                and abs(b - 0.5) < 1e-6
-                and len(positive) <= 2
-            ):
-                return True
-            return False
-
-        area_ratio = excel_inputs.get("area_ratio") if isinstance(excel_inputs, dict) else {}
-        should_autofill_far = (
-            not far_explicit
-            and suggested_far is not None
-            and float(suggested_far) > 0
-            and _is_placeholder_area_ratio(area_ratio)
-            and (far_max is not None or typical_far_clamped is not None)
+        excel_inputs = scale_placeholder_area_ratio(
+            excel_inputs, target_far=target_far, target_far_source=target_far_source
         )
-        if should_autofill_far:
-            # Match above-ground FAR only; basement stays as-is
-            base_sum = _area_ratio_positive_sum(area_ratio, exclude_basement=True)
-            scaled = None
-            if base_sum > 0 and isinstance(area_ratio, dict):
-                scale = float(suggested_far) / base_sum
-                scaled = {}
-                for key, val in area_ratio.items():
-                    try:
-                        fv = float(val or 0.0)
-                    except Exception:
-                        fv = 0.0
-                    if fv <= 0:
-                        scaled[key] = fv
-                    elif _is_basement_key(str(key)):
-                        scaled[key] = fv
-                    else:
-                        scaled[key] = fv * scale
-            elif isinstance(area_ratio, dict):
-                scaled = {}
-                for key, val in area_ratio.items():
-                    try:
-                        scaled[key] = float(val or 0.0)
-                    except Exception:
-                        scaled[key] = 0.0
-                scaled["residential"] = float(suggested_far)
-            else:
-                scaled = {"residential": float(suggested_far)}
-
-            excel_inputs["area_ratio"] = scaled
-            excel_inputs["area_ratio_note"] = (
-                f"Auto-derived above-ground FAR from Overture context: {float(suggested_far):.2f} "
-                "(basement ratio unchanged)"
-            )
         ppm2_val: float = 0.0
         ppm2_src: str = "Manual"
         try:

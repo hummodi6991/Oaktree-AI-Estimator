@@ -1,6 +1,113 @@
 from typing import Any, Dict
 
 
+def _is_basement_key(key: str) -> bool:
+    k = (key or "").strip().lower()
+    if k in {"basement", "underground"}:
+        return True
+    if "basement" in k:
+        return True
+    return False
+
+
+def _area_ratio_positive_sum(ar: Any, exclude_basement: bool = False) -> float:
+    if not isinstance(ar, dict):
+        return 0.0
+    total = 0.0
+    for k, v in ar.items():
+        if exclude_basement and _is_basement_key(str(k)):
+            continue
+        try:
+            fv = float(v)
+            if fv > 0:
+                total += fv
+        except Exception:
+            continue
+    return total
+
+
+def _is_placeholder_area_ratio(ar: Any) -> bool:
+    if not isinstance(ar, dict) or not ar:
+        return True
+    positive: dict[str, float] = {}
+    for k, v in ar.items():
+        try:
+            fv = float(v)
+            if fv > 0:
+                positive[str(k).strip().lower()] = fv
+        except Exception:
+            continue
+    if not positive:
+        return True
+    # Legacy placeholder: 2.7 everywhere
+    if all(abs(v - 2.7) < 1e-6 for v in positive.values()):
+        return True
+    # Current residential template placeholder: residential 1.6 + basement 0.5
+    r = positive.get("residential")
+    b = positive.get("basement")
+    if (
+        r is not None
+        and b is not None
+        and abs(r - 1.6) < 1e-6
+        and abs(b - 0.5) < 1e-6
+        and len(positive) <= 2
+    ):
+        return True
+    return False
+
+
+def scale_placeholder_area_ratio(
+    excel_inputs: Dict[str, Any], target_far: float | None, target_far_source: str | None = None
+) -> Dict[str, Any]:
+    """Scale Excel area ratios to match a target FAR if the ratios are template placeholders."""
+
+    result = dict(excel_inputs or {})
+    area_ratio = result.get("area_ratio") if isinstance(result, dict) else {}
+    placeholder_area_ratio = _is_placeholder_area_ratio(area_ratio)
+
+    should_scale_area_ratio = placeholder_area_ratio and target_far is not None and float(target_far) > 0
+    if not should_scale_area_ratio:
+        return result
+
+    # Match above-ground FAR only; basement stays as-is
+    base_sum = _area_ratio_positive_sum(area_ratio, exclude_basement=True)
+    scaled = None
+    scale_str = "n/a"
+    if base_sum > 0 and isinstance(area_ratio, dict):
+        scale = float(target_far) / base_sum
+        scale_str = f"{scale:.3f}"
+        scaled = {}
+        for key, val in area_ratio.items():
+            try:
+                fv = float(val or 0.0)
+            except Exception:
+                fv = 0.0
+            if fv <= 0:
+                scaled[key] = fv
+            elif _is_basement_key(str(key)):
+                scaled[key] = fv
+            else:
+                scaled[key] = fv * scale
+    elif isinstance(area_ratio, dict):
+        scaled = {}
+        for key, val in area_ratio.items():
+            try:
+                scaled[key] = float(val or 0.0)
+            except Exception:
+                scaled[key] = 0.0
+        scaled["residential"] = float(target_far)
+    else:
+        scaled = {"residential": float(target_far)}
+
+    result["area_ratio"] = scaled
+    result["area_ratio_note"] = (
+        f"Auto-scaled above-ground area ratios: baseline FAR {base_sum:.2f} → "
+        f"target FAR {float(target_far):.2f} (scale {scale_str}; source {target_far_source or 'far'}); "
+        "basement ratio unchanged"
+    )
+    return result
+
+
 def _fmt_amount(value: float | int | str | None, decimals: int = 3) -> str:
     try:
         return f"{float(value):,.{decimals}f}"
@@ -28,21 +135,27 @@ def build_excel_explanations(
     re_scalar = float(inputs.get("re_price_index_scalar") or 1.0)
 
     explanations: Dict[str, str] = {}
-    if inputs.get("area_ratio_note"):
-        explanations["area_ratio_override"] = str(inputs.get("area_ratio_note"))
+    area_ratio_note = str(inputs.get("area_ratio_note") or "").strip()
+    if area_ratio_note:
+        explanations["area_ratio_override"] = area_ratio_note
 
     land_price = float(inputs.get("land_price_sar_m2", 0.0) or 0.0)
     explanations["land_cost"] = (
         f"Site area {_fmt_amount(site_area_m2)} m² × {land_price:,.0f} SAR/m²"
     )
 
+    note_appended = False
     for key, area in built_area.items():
         ratio = float(area_ratio.get(key, 0.0) or 0.0)
-        explanations[f"{key}_bua"] = (
-            f"Site area {_fmt_amount(site_area_m2)} m² × area ratio {ratio:.2f}"
-            if ratio
-            else f"Built-up area {_fmt_amount(area)} m²"
-        )
+        if ratio:
+            exp = f"Site area {_fmt_amount(site_area_m2)} m² × area ratio {ratio:.3f}"
+            # Surface FAR/area-ratio auto-scaling in the same place the UI already shows BUA math.
+            if area_ratio_note and not note_appended and not str(key).lower().startswith("basement"):
+                exp = f"{exp} ({area_ratio_note})"
+                note_appended = True
+            explanations[f"{key}_bua"] = exp
+        else:
+            explanations[f"{key}_bua"] = f"Built-up area {_fmt_amount(area)} m²"
 
     sub_total = float(breakdown.get("sub_total", 0.0) or 0.0)
     construction_parts = []
