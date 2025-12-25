@@ -298,10 +298,19 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       .join("; ");
 
   const noteStyle = { fontSize: "0.8rem", color: "#cbd5f5" } as const;
-  const amountColumnStyle = { textAlign: "right", paddingRight: "1.5rem" } as const;
-  const calcColumnStyle = { ...noteStyle, paddingLeft: "0.75rem" } as const;
-  const amountHeaderStyle = { ...amountColumnStyle, fontWeight: 600 } as const;
-  const calcHeaderStyle = { textAlign: "left", fontWeight: 600, paddingLeft: "0.75rem" } as const;
+  const baseCellStyle = { padding: "0.65rem 0.75rem", verticalAlign: "top" } as const;
+  const itemColumnStyle = { ...baseCellStyle, paddingLeft: 0 } as const;
+  const amountColumnStyle = { ...baseCellStyle, textAlign: "right", paddingRight: "1.5rem" } as const;
+  const calcColumnStyle = {
+    ...baseCellStyle,
+    ...noteStyle,
+    paddingLeft: "1rem",
+    lineHeight: 1.5,
+    wordBreak: "break-word",
+  } as const;
+  const itemHeaderStyle = { ...itemColumnStyle, fontWeight: 600 } as const;
+  const amountHeaderStyle = { ...baseCellStyle, textAlign: "right", paddingRight: "1.5rem", fontWeight: 600 } as const;
+  const calcHeaderStyle = { ...baseCellStyle, textAlign: "left", fontWeight: 600, paddingLeft: "1rem" } as const;
   const revenueItems = Object.keys(incomeComponents || {}).map((key) => {
     const nlaVal = nla[key] ?? 0;
     const efficiencyVal = efficiency[key] ?? null;
@@ -391,24 +400,24 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    <th style={{ textAlign: "left", fontWeight: 600 }}>Item</th>
+                    <th style={itemHeaderStyle}>Item</th>
                     <th style={amountHeaderStyle}>Amount</th>
                     <th style={calcHeaderStyle}>How we calculated it</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
-                    <td>Residential BUA</td>
+                    <td style={itemColumnStyle}>Residential BUA</td>
                     <td style={amountColumnStyle}>{formatArea(builtArea.residential)}</td>
                     <td style={calcColumnStyle}>{buaNote("residential")}</td>
                   </tr>
                   <tr>
-                    <td>Basement BUA</td>
+                    <td style={itemColumnStyle}>Basement BUA</td>
                     <td style={amountColumnStyle}>{formatArea(builtArea.basement)}</td>
                     <td style={calcColumnStyle}>{buaNote("basement")}</td>
                   </tr>
                   <tr>
-                    <td>Land cost</td>
+                    <td style={itemColumnStyle}>Land cost</td>
                     <td style={amountColumnStyle}>
                       {excelResult.costs.land_cost.toLocaleString()} SAR
                     </td>
@@ -417,7 +426,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td>Construction (direct)</td>
+                    <td style={itemColumnStyle}>Construction (direct)</td>
                     <td style={amountColumnStyle}>
                       {excelResult.costs.construction_direct_cost.toLocaleString()} SAR
                     </td>
@@ -430,7 +439,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td>Fit-out</td>
+                    <td style={itemColumnStyle}>Fit-out</td>
                     <td style={amountColumnStyle}>
                       {excelResult.costs.fitout_cost.toLocaleString()} SAR
                     </td>
@@ -439,7 +448,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td>Contingency</td>
+                    <td style={itemColumnStyle}>Contingency</td>
                     <td style={amountColumnStyle}>
                       {excelResult.costs.contingency_cost.toLocaleString()} SAR
                     </td>
@@ -448,7 +457,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td>Consultants</td>
+                    <td style={itemColumnStyle}>Consultants</td>
                     <td style={amountColumnStyle}>
                       {excelResult.costs.consultants_cost.toLocaleString()} SAR
                     </td>
@@ -457,7 +466,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td>Feasibility fee</td>
+                    <td style={itemColumnStyle}>Feasibility fee</td>
                     <td style={amountColumnStyle}>
                       {excelResult.costs.feasibility_fee.toLocaleString()} SAR
                     </td>
@@ -466,7 +475,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td>Transaction costs</td>
+                    <td style={itemColumnStyle}>Transaction costs</td>
                     <td style={amountColumnStyle}>
                       {excelResult.costs.transaction_cost.toLocaleString()} SAR
                     </td>
@@ -475,7 +484,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td><strong>Total capex</strong></td>
+                    <td style={itemColumnStyle}>
+                      <strong>Total capex</strong>
+                    </td>
                     <td style={amountColumnStyle}>
                       <strong>{excelResult.costs.grand_total_capex.toLocaleString()} SAR</strong>
                     </td>
@@ -498,7 +509,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    <th style={{ textAlign: "left", fontWeight: 600 }}>Item</th>
+                    <th style={itemHeaderStyle}>Item</th>
                     <th style={amountHeaderStyle}>Amount</th>
                     <th style={calcHeaderStyle}>How we calculated it</th>
                   </tr>
@@ -506,13 +517,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                 <tbody>
                   {revenueItems.map((item) => (
                     <tr key={item.key}>
-                      <td>{item.key.replace(/_/g, " ")}</td>
+                      <td style={itemColumnStyle}>{item.key.replace(/_/g, " ")}</td>
                       <td style={amountColumnStyle}>{Number(item.amount || 0).toLocaleString()} SAR</td>
                       <td style={calcColumnStyle}>{item.note}</td>
                     </tr>
                   ))}
                   <tr>
-                    <td>Year 1 net income</td>
+                    <td style={itemColumnStyle}>Year 1 net income</td>
                     <td style={amountColumnStyle}>
                       {excelResult.costs.y1_income.toLocaleString()} SAR
                     </td>
@@ -522,7 +533,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td><strong>Unlevered ROI</strong></td>
+                    <td style={itemColumnStyle}>
+                      <strong>Unlevered ROI</strong>
+                    </td>
                     <td style={amountColumnStyle}>
                       <strong>{(excelResult.roi * 100).toFixed(1)}%</strong>
                     </td>
