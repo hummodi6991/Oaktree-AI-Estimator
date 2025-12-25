@@ -139,6 +139,7 @@ def build_excel_explanations(
     built_area = breakdown.get("built_area", {}) or {}
     nla = breakdown.get("nla", {}) or {}
     y1_income_components = breakdown.get("y1_income_components", {}) or {}
+    direct_cost = breakdown.get("direct_cost", {}) or {}
 
     re_scalar = float(inputs.get("re_price_index_scalar") or 1.0)
 
@@ -148,62 +149,81 @@ def build_excel_explanations(
         explanations["area_ratio_override"] = area_ratio_note
 
     land_price = float(inputs.get("land_price_sar_m2", 0.0) or 0.0)
+    land_cost_total = float(breakdown.get("land_cost", site_area_m2 * land_price) or 0.0)
     explanations["land_cost"] = (
-        f"Site area {_fmt_amount(site_area_m2)} m² × {land_price:,.0f} SAR/m²"
+        f"{_fmt_amount(site_area_m2)} m² × {land_price:,.0f} SAR/m² = {_fmt_amount(land_cost_total)} SAR. "
+        "Land price is estimated using a hedonic model calibrated on comparable transactions."
     )
 
     note_appended = False
     for key, area in built_area.items():
         ratio = float(area_ratio.get(key, 0.0) or 0.0)
         if ratio:
-            exp = f"Site area {_fmt_amount(site_area_m2)} m² × area ratio {ratio:.3f}"
-            # Surface FAR/area-ratio auto-scaling in the same place the UI already shows BUA math.
-            if area_ratio_note and not note_appended and not str(key).lower().startswith("basement"):
-                exp = f"{exp} ({area_ratio_note})"
+            key_lower = str(key).lower()
+            if key == "residential":
+                explanations[f"{key}_bua"] = (
+                    f"{_fmt_amount(site_area_m2)} m² × FAR {ratio:.3f} = {_fmt_amount(area)} m². "
+                    "FAR reflects observed surrounding development density inferred from Overture building data."
+                )
+            elif key_lower.startswith("basement"):
+                explanations[f"{key}_bua"] = (
+                    f"{_fmt_amount(site_area_m2)} m² × basement ratio {ratio:.3f} = {_fmt_amount(area)} m². "
+                    "Basement area is estimated separately and excluded from FAR calculations."
+                )
+            else:
+                explanations[f"{key}_bua"] = (
+                    f"{_fmt_amount(site_area_m2)} m² × area ratio {ratio:.3f} = {_fmt_amount(area)} m²."
+                )
+            if area_ratio_note and not note_appended and not key_lower.startswith("basement"):
+                explanations[f"{key}_bua"] = f"{explanations[f'{key}_bua']} {area_ratio_note}"
                 note_appended = True
-            explanations[f"{key}_bua"] = exp
         else:
-            explanations[f"{key}_bua"] = f"Built-up area {_fmt_amount(area)} m²"
+            explanations[f"{key}_bua"] = f"Built-up area {_fmt_amount(area)} m²."
 
     sub_total = float(breakdown.get("sub_total", 0.0) or 0.0)
+    direct_total = sum(direct_cost.values())
     construction_parts = []
     for key, area in built_area.items():
         base_unit = unit_cost.get("basement") if key.lower().startswith("basement") else unit_cost.get(key, 0.0)
         construction_parts.append(
-            f"{key}: {_fmt_amount(area)} m² × {float(base_unit):,.0f} SAR/m²"
+            f"{key}: {_fmt_amount(area)} m² × {float(base_unit):,.0f} SAR/m² = "
+            f"{_fmt_amount(float(direct_cost.get(key, 0.0)))} SAR"
         )
     if construction_parts:
-        construction_parts.append(
-            f"sums to construction subtotal of {_fmt_amount(sub_total)} SAR before fit-out"
+        explanations["construction_direct"] = (
+            "; ".join(construction_parts) + f". Total construction cost: {_fmt_amount(direct_total)} SAR."
         )
-        explanations["construction_direct"] = "; ".join(construction_parts)
 
     fitout_area = sum(
         value for key, value in built_area.items() if not key.lower().startswith("basement")
     )
     fitout_rate = float(inputs.get("fitout_rate") or 0.0)
+    fitout_cost = float(breakdown.get("fitout_cost", 0.0) or 0.0)
     explanations["fitout"] = (
-        f"Non-basement area {_fmt_amount(fitout_area)} m² × {fitout_rate:,.0f} SAR/m²"
+        f"{_fmt_amount(fitout_area)} m² × {fitout_rate:,.0f} SAR/m² = {_fmt_amount(fitout_cost)} SAR. "
+        "Applied to above-ground built-up area only."
     )
 
     contingency_pct = float(inputs.get("contingency_pct") or 0.0)
+    contingency_cost = float(breakdown.get("contingency_cost", 0.0) or 0.0)
     explanations["contingency"] = (
-        f"Subtotal {_fmt_amount(sub_total)} SAR × contingency {contingency_pct:.1%}"
+        f"{contingency_pct * 100:.1f}% × {_fmt_amount(sub_total)} SAR = {_fmt_amount(contingency_cost)} SAR. "
+        "Allowance for design development and execution risk."
     )
 
-    contingency_cost = float(breakdown.get("contingency_cost", 0.0) or 0.0)
     consultants_pct = float(inputs.get("consultants_pct") or 0.0)
     consultants_base = sub_total + contingency_cost
     explanations["consultants"] = (
-        f"Subtotal + contingency {_fmt_amount(consultants_base)} SAR "
-        f"× consultants {consultants_pct:.1%}"
+        f"{consultants_pct * 100:.1f}% × (construction + contingency) {_fmt_amount(consultants_base)} SAR "
+        f"= {_fmt_amount(float(breakdown.get('consultants_cost', 0.0) or 0.0))} SAR."
     )
 
     transaction_pct = float(inputs.get("transaction_pct") or 0.0)
     tx_label = inputs.get("transaction_label") or "transaction"
     explanations["transaction_cost"] = (
-        f"Land cost {float(breakdown.get('land_cost') or 0.0):,.0f} SAR "
-        f"× {tx_label} {transaction_pct:.1%}"
+        f"{transaction_pct * 100:.1f}% × {_fmt_amount(land_cost_total)} SAR = "
+        f"{_fmt_amount(float(breakdown.get('transaction_cost', 0.0) or 0.0))} SAR. "
+        "Calculated in accordance with Saudi RETT regulations."
     )
 
     income_parts = []
@@ -212,15 +232,21 @@ def build_excel_explanations(
         base_area = float(built_area.get(key, 0.0) or 0.0)
         eff = float(efficiency.get(key, 0.0) or 0.0)
         base_rent = float(rent_rates.get(key, 0.0) or 0.0)
-        nla_text = f"{_fmt_amount(nla_val, decimals=2)} m²"
-        if eff > 0 and base_area > 0:
-            nla_text += f" (built area {_fmt_amount(base_area)} m² × efficiency {eff:.0%})"
+        effective_rent = base_rent * re_scalar
         income_parts.append(
-            f"{key} NLA {nla_text} × base rent {base_rent:,.0f} SAR/m²/yr "
-            f"× rent index scalar {re_scalar:.3f} from real_estate_indices"
+            f"{key} net lettable area {_fmt_amount(nla_val, decimals=2)} m² × {effective_rent:,.0f} SAR/m²/year "
+            f"= {_fmt_amount(component)} SAR/year. Rent benchmark sourced from REGA."
         )
     if income_parts:
         explanations["y1_income"] = "; ".join(income_parts)
+
+    y1_income_total = float(breakdown.get("y1_income", 0.0) or 0.0)
+    grand_total_capex = float(breakdown.get("grand_total_capex", 0.0) or 0.0)
+    roi = float(breakdown.get("roi", 0.0) or 0.0)
+    explanations["roi"] = (
+        f"Year-1 net income {_fmt_amount(y1_income_total)} SAR ÷ total development cost "
+        f"{_fmt_amount(grand_total_capex)} SAR = {roi * 100:,.2f}%."
+    )
 
     return explanations
 
