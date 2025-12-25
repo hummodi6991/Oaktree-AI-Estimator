@@ -58,11 +58,10 @@ _OVERTURE_BUILDING_METRICS_SQL = text(
       SELECT
         COALESCE(SUM(footprint_area_m2), 0) AS footprint_area_m2,
         COUNT(*) AS building_count,
-        floors_stats.floors_count,
-        floors_stats.floors_mean,
-        floors_stats.floors_median
+        (SELECT floors_count FROM floors_stats) AS floors_count,
+        (SELECT floors_mean FROM floors_stats) AS floors_mean,
+        (SELECT floors_median FROM floors_stats) AS floors_median
       FROM floors
-      CROSS JOIN floors_stats
     ),
     bua AS (
       SELECT
