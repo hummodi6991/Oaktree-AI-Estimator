@@ -235,8 +235,9 @@ def build_excel_explanations(
         eff = float(efficiency.get(key, 0.0) or 0.0)
         base_rent = float(rent_rates.get(key, 0.0) or 0.0)
         effective_rent = base_rent * re_scalar
+        rent_used = (component / nla_val) if nla_val else effective_rent
         income_parts.append(
-            f"{key} net lettable area {_fmt_amount(nla_val, decimals=2)} m² × {effective_rent:,.0f} SAR/m²/year "
+            f"{key} net lettable area {_fmt_amount(nla_val, decimals=2)} m² × {rent_used:,.0f} SAR/m²/year "
             f"= {_fmt_amount(component)} SAR/year. Rent benchmark sourced from {rent_label}."
         )
     if income_parts:
