@@ -71,6 +71,9 @@ def infer_district_from_kaggle(
     sql = base_sql
     if where_clauses:
         sql += " AND " + " AND ".join(where_clauses)
+    # Pull the closest 500 listings by naive planar distance to keep the client-side
+    # haversine search focused on nearby evidence (avoids returning a random slice).
+    sql += " ORDER BY ((lon - :lon) * (lon - :lon) + (lat - :lat) * (lat - :lat)) ASC"
     sql += " LIMIT 500"
 
     try:
