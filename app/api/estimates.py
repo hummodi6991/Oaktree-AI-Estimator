@@ -232,12 +232,14 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     except Exception as exc:
         # Give a precise, user-friendly 400 instead of a cryptic 422
         raise HTTPException(status_code=400, detail=f"Invalid GeoJSON for 'geometry': {exc}")
+    district_inference: dict[str, Any] | None = None
     district = None
     try:
         district = geo_svc.infer_district_from_features(db, geom, layer="rydpolygons")
+        if district:
+            district_inference = {"method": "feature_layer", "layer": "rydpolygons"}
     except Exception:
         pass
-    district_inference: dict[str, Any] | None = None
     if geom.is_empty:
         raise HTTPException(status_code=400, detail="Empty geometry provided")
     geom_geojson = geo_svc.to_geojson(geom)
@@ -517,6 +519,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "district": district,
             "city_normalized": city_norm or None,
             "district_used_for_aqar_query": district_norm or None,
+            "district_normalized": district_norm or None,
             "aqar_district_median_monthly": float(aqar_district_median) if aqar_district_median is not None else None,
             "aqar_city_median_monthly": float(aqar_city_median) if aqar_city_median is not None else None,
             "aqar_district_samples": int(aqar_n_district),
@@ -586,6 +589,8 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
         rent_debug_metadata = {
             **rent_meta_common,
+            "district_inferred": district,
+            "district_normalized": district_norm or None,
             "rent_strategy": rent_strategy,
         }
 
@@ -620,6 +625,22 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             }
 
         excel = compute_excel_estimate(site_area_m2, excel_inputs)
+        rent_applied_sar_m2_yr = excel.get("rent_applied_sar_m2_yr") or excel_inputs.get("rent_sar_m2_yr") or {}
+        rent_input_sar_m2_yr = excel_inputs.get("rent_sar_m2_yr") or {}
+        try:
+            rent_debug_metadata.update(
+                {
+                    "rent_applied_sar_m2_yr": {
+                        k: float(v) for k, v in (rent_applied_sar_m2_yr.items() if isinstance(rent_applied_sar_m2_yr, dict) else [])
+                    },
+                    "rent_input_sar_m2_yr": {
+                        k: float(v) for k, v in (rent_input_sar_m2_yr.items() if isinstance(rent_input_sar_m2_yr, dict) else [])
+                    },
+                    "rent_re_price_index_scalar": float(re_scalar),
+                }
+            )
+        except Exception:
+            pass
         totals = {
             "land_value": float(excel["land_cost"]),
             "hard_costs": float(excel["sub_total"]),
@@ -671,9 +692,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
         # If rent came from a benchmark, append an explicit explanation.
         rent_meta = excel_inputs.get("rent_source_metadata")
-        if rent_meta and excel_inputs.get("rent_sar_m2_yr"):
+        if rent_meta and rent_applied_sar_m2_yr:
             # We currently have a single residential rent band
-            rent_map = excel_inputs.get("rent_sar_m2_yr") or {}
+            rent_map = rent_applied_sar_m2_yr or {}
             base_annual = float(next(iter(rent_map.values())))
             base_monthly = base_annual / 12.0
             method_label = rent_meta.get("method") or rent_meta.get("provider") or "the rent benchmark"
@@ -740,8 +761,10 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                     "source_type": ppm2_src,
                 },
                 "excel_rent": {
-                    "rent_sar_m2_yr": excel_inputs.get("rent_sar_m2_yr"),
+                    "rent_sar_m2_yr": rent_applied_sar_m2_yr,
+                    "rent_inputs_sar_m2_yr": rent_input_sar_m2_yr,
                     "rent_source_metadata": excel_inputs.get("rent_source_metadata"),
+                    "re_price_index_scalar": float(re_scalar),
                 },
                 "rent_debug_metadata": rent_debug_metadata,
                 "excel_roi": excel["roi"],

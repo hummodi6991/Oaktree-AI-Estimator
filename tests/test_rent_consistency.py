@@ -199,3 +199,36 @@ def test_kaggle_district_fallback(monkeypatch, client):
     rent_meta = body["notes"]["rent_debug_metadata"]
     assert rent_meta["district"] == "gamma"
     assert rent_meta["district_inference"] == {"method": "kaggle_nearest_listing", "distance_m": 123.4}
+
+
+def test_rent_scalar_and_applied_rent_logging(monkeypatch, client):
+    monkeypatch.setattr(estimates_api.geo_svc, "infer_district_from_features", lambda *args, **kwargs: " Alpha ")
+    monkeypatch.setattr(
+        estimates_api,
+        "latest_rega_residential_rent_per_m2",
+        lambda *args, **kwargs: (90.0, "SAR/m²/month", date(2024, 6, 1), "https://rega.example"),
+    )
+    monkeypatch.setattr(estimates_api, "latest_re_price_index_scalar", lambda *args, **kwargs: 1.1)
+    monkeypatch.setattr(
+        estimates_api,
+        "aqar_rent_median",
+        lambda *args, **kwargs: (100.0, 80.0, 5, 12),
+    )
+
+    response = client.post("/v1/estimates", json=_payload())
+    assert response.status_code == 200
+    body = response.json()
+
+    rent_rates = body["notes"]["excel_rent"]["rent_sar_m2_yr"]
+    breakdown = body["notes"]["excel_breakdown"]
+    rent_applied = rent_rates["residential"]
+    income_component = breakdown["y1_income_components"]["residential"]
+    nla = breakdown["nla"]["residential"]
+
+    rent_debug = body["notes"]["rent_debug_metadata"]
+
+    assert rent_applied == pytest.approx(1485.0)  # 90 * 100 / 80 * 12 * 1.1
+    assert income_component / nla == pytest.approx(rent_applied)
+    assert rent_debug["district_normalized"] == "alpha"
+    assert rent_debug["district_inference"] == {"method": "feature_layer", "layer": "rydpolygons"}
+    assert rent_debug["rent_applied_sar_m2_yr"]["residential"] == pytest.approx(rent_applied)
