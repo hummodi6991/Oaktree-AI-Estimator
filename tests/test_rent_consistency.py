@@ -94,9 +94,7 @@ def test_kaggle_district_inference_differs(monkeypatch, client):
         {"lon": 46.685, "lat": 24.723, "district": "Beta"},
     ]
 
-    def _infer(db, city, geom_geojson, max_radius_m=2000.0):
-        coords = geom_geojson["coordinates"][0][0]
-        lon, lat = coords
+    def _infer(db, city, lon, lat, max_radius_m=2000.0, geom_geojson=None):
         # Simple nearest-neighbour based on squared distance
         best = min(listings, key=lambda r: (r["lon"] - lon) ** 2 + (r["lat"] - lat) ** 2)
         return {
@@ -125,22 +123,22 @@ def test_kaggle_district_inference_differs(monkeypatch, client):
     body_alpha = resp_alpha.json()
     body_beta = resp_beta.json()
 
-    assert body_alpha["notes"]["district"] == "Alpha"
-    assert body_beta["notes"]["district"] == "Beta"
+    assert body_alpha["notes"]["district"] == "alpha"
+    assert body_beta["notes"]["district"] == "beta"
     assert body_alpha["notes"]["district_inference"]["district_raw"] == "Alpha"
     assert body_beta["notes"]["district_inference"]["district_raw"] == "Beta"
     assert body_alpha["notes"]["rent_debug_metadata"]["district_normalized_used"] == "alpha"
     assert body_beta["notes"]["rent_debug_metadata"]["district_normalized_used"] == "beta"
+    assert body_alpha["notes"]["rent_debug_metadata"]["district_inference_method"] == "kaggle_nearest_listing"
+    assert body_beta["notes"]["rent_debug_metadata"]["district_inference_method"] == "kaggle_nearest_listing"
 
 
 def test_rent_differs_by_district(monkeypatch, client, db_session):
     today = date.today()
     rents = []
-    for i in range(5):
+    for i in range(12):
         rents.append(("Riyadh", "Alpha", 100.0))
         rents.append(("Riyadh", "Beta", 200.0))
-    for i in range(5):
-        rents.append(("Riyadh", "Gamma", 150.0))
 
     for idx, (city, district, rent) in enumerate(rents, start=1):
         db_session.add(
@@ -164,12 +162,20 @@ def test_rent_differs_by_district(monkeypatch, client, db_session):
     monkeypatch.setattr(estimates_api, "latest_rega_residential_rent_per_m2", lambda *args, **kwargs: None)
     monkeypatch.setattr(estimates_api, "latest_re_price_index_scalar", lambda *args, **kwargs: 1.0)
 
-    current_district = {"value": "Alpha"}
+    district_points = {
+        "Alpha": (46.6755, 24.7135),
+        "Beta": (46.6855, 24.7235),
+    }
 
-    def _infer(db, city, geom_geojson, max_radius_m=2000.0):
+    def _infer(db, city, lon, lat, max_radius_m=2000.0, geom_geojson=None):
+        nearest = min(
+            district_points.items(),
+            key=lambda item: (item[1][0] - lon) ** 2 + (item[1][1] - lat) ** 2,
+        )
+        district_name = nearest[0]
         return {
-            "district_raw": current_district["value"],
-            "district_normalized": current_district["value"].lower(),
+            "district_raw": district_name,
+            "district_normalized": district_name.lower(),
             "method": "kaggle_nearest_listing",
             "distance_m": 5.0,
             "evidence_count": 2,
@@ -178,17 +184,47 @@ def test_rent_differs_by_district(monkeypatch, client, db_session):
 
     monkeypatch.setattr(estimates_api, "infer_district_from_kaggle", _infer)
 
-    def _run():
-        response = client.post("/v1/estimates", json=_payload())
+    payload_alpha = {
+        **_payload(),
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+                [
+                    [46.675, 24.713],
+                    [46.676, 24.713],
+                    [46.676, 24.714],
+                    [46.675, 24.714],
+                    [46.675, 24.713],
+                ]
+            ],
+        },
+    }
+    payload_beta = {
+        **_payload(),
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [
+                [
+                    [46.685, 24.723],
+                    [46.686, 24.723],
+                    [46.686, 24.724],
+                    [46.685, 24.724],
+                    [46.685, 24.723],
+                ]
+            ],
+        },
+    }
+
+    def _run(payload):
+        response = client.post("/v1/estimates", json=payload)
         assert response.status_code == 200
         data = response.json()
         rent_val = data["notes"]["excel_rent"]["rent_sar_m2_yr"]["residential"]
         rent_meta = data["notes"]["rent_debug_metadata"]
         return rent_val, rent_meta
 
-    rent_alpha, meta_alpha = _run()
-    current_district["value"] = "Beta"
-    rent_beta, meta_beta = _run()
+    rent_alpha, meta_alpha = _run(payload_alpha)
+    rent_beta, meta_beta = _run(payload_beta)
 
     assert rent_alpha == pytest.approx(1200.0)
     assert rent_beta == pytest.approx(2400.0)
@@ -197,6 +233,8 @@ def test_rent_differs_by_district(monkeypatch, client, db_session):
     assert meta_beta["rent_strategy"] == "aqar_district_median"
     assert meta_alpha["district_normalized_used"] == "alpha"
     assert meta_beta["district_normalized_used"] == "beta"
+    assert meta_alpha["aqar_district_samples"] > 0
+    assert meta_beta["aqar_district_samples"] > 0
 
 
 def test_rent_scalar_and_applied_rent_logging(monkeypatch, client):
@@ -209,7 +247,7 @@ def test_rent_scalar_and_applied_rent_logging(monkeypatch, client):
     monkeypatch.setattr(
         estimates_api,
         "aqar_rent_median",
-        lambda *args, **kwargs: (110.0, 90.0, 6, 12),
+        lambda *args, **kwargs: (110.0, 90.0, 12, 12),
     )
     monkeypatch.setattr(
         estimates_api,

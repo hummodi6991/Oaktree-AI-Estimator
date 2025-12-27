@@ -35,23 +35,6 @@ _INMEM_HEADERS: dict[str, dict[str, Any]] = {}
 _INMEM_LINES: dict[str, list[dict[str, Any]]] = {}
 
 
-def _centroid_lon_lat(geom_geojson: dict[str, Any] | None) -> tuple[float, float] | None:
-    try:
-        if not geom_geojson:
-            return None
-        coords = geom_geojson.get("coordinates") or []
-        ring = coords[0] if coords else []
-        if len(ring) >= 2 and ring[0] == ring[-1]:
-            ring = ring[:-1]
-        if not ring:
-            return None
-        lon = sum(pt[0] for pt in ring) / len(ring)
-        lat = sum(pt[1] for pt in ring) / len(ring)
-        return lon, lat
-    except Exception:
-        return None
-
-
 def _supports_sqlalchemy(db: Any) -> bool:
     """Return True when the dependency looks like a SQLAlchemy session."""
 
@@ -234,19 +217,44 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         raise HTTPException(status_code=400, detail=f"Invalid GeoJSON for 'geometry': {exc}")
     district_inference: dict[str, Any] | None = None
     district = None
+    district_raw = None
+    district_normalized = None
+    city_for_district = req.city or "Riyadh"
+    city_norm = norm_city(city_for_district)
     if geom.is_empty:
         raise HTTPException(status_code=400, detail="Empty geometry provided")
     geom_geojson = geo_svc.to_geojson(geom)
     site_area_m2 = geo_svc.area_m2(geom)
 
-    if district is None and geom_geojson:
+    lon = lat = None
+    try:
+        centroid = geom.centroid
+        lon = float(centroid.x)
+        lat = float(centroid.y)
+    except Exception:
+        lon = lat = None
+
+    if district is None and lon is not None and lat is not None:
         try:
-            kaggle_result = infer_district_from_kaggle(db, req.city, geom_geojson)
-            if kaggle_result.get("district_raw"):
-                district = kaggle_result.get("district_raw")
-            district_inference = kaggle_result
+            kaggle_result = infer_district_from_kaggle(db, city=city_for_district, lon=lon, lat=lat)
+            district_raw = kaggle_result.get("district_raw")
+            district_normalized = norm_district(city_norm, district_raw) if district_raw else None
+            kaggle_normalized = kaggle_result.get("district_normalized")
+            if district_normalized is None and kaggle_normalized:
+                district_normalized = kaggle_normalized
+            if district_raw:
+                district = district_raw
+            if district_normalized:
+                district = district_normalized
+            district_inference = {
+                **kaggle_result,
+                "district_raw": district_raw,
+                "district_normalized": district_normalized,
+            }
         except Exception:
             district_inference = {"method": "kaggle_nearest_listing", "error": "inference_failed"}
+
+    district_norm = district_normalized or (norm_district(city_norm, district) if district else "")
 
     overture_site_metrics: dict[str, Any] = {}
     overture_context_metrics: dict[str, Any] = {}
@@ -275,7 +283,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     far_max_source = None
     typical_source = None
     try:
-        far_max = far_rules.lookup_far(db, req.city, district)
+        far_max = far_rules.lookup_far(db, req.city, district_norm or district)
         if far_max is not None:
             far_max_source = "far_rules"
     except Exception:
@@ -324,7 +332,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         "method": method,
         "buffer_m": overture_context_metrics.get("buffer_m"),
         "typical_far_proxy": float(typical_far_proxy or 0.0) if typical_far_proxy is not None else None,
-        "district": district,
+        "district": district_norm or district,
         "explicit_far": far_explicit,
     }
 
@@ -442,7 +450,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 city=req.city or "Riyadh",
                 lon=None,
                 lat=None,
-                district=district,
+                district=district_norm or district,
             )
             if value is not None:
                 ppm2_val = float(value)
@@ -450,7 +458,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 excel_inputs["land_price_sar_m2"] = ppm2_val
             else:
                 # Fallback: previous Kaggle median logic (aqar.mv_city_price_per_sqm / aqar.listings)
-                aqar = price_from_aqar(db, req.city or "Riyadh", district)
+                aqar = price_from_aqar(db, req.city or "Riyadh", district_norm or district)
                 if aqar:
                     ppm2_val, ppm2_src = float(aqar[0]), aqar[1]
                     excel_inputs["land_price_sar_m2"] = ppm2_val
@@ -470,10 +478,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         excel_inputs["re_price_index_scalar"] = re_scalar
 
         # NEW: Prefer REGA rent benchmarks blended with Kaggle Aqar district medians when available.
-        city_for_rent = req.city or "Riyadh"
-        city_norm = norm_city(city_for_rent)
-        district_norm = norm_district(city_norm, district) if district else ""
-        rega_result = latest_rega_residential_rent_per_m2(db, req.city, district)
+        city_for_rent = city_for_district
+        district_norm = district_norm or ""
+        rega_result = latest_rega_residential_rent_per_m2(db, req.city, district_norm or district)
         rent_rates_raw = excel_inputs.get("rent_sar_m2_yr")
         rent_rates = dict(rent_rates_raw) if isinstance(rent_rates_raw, dict) else {}
 
@@ -499,9 +506,13 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         rent_meta_common: dict[str, Any] = {
             "city": req.city,
             "district": district,
-            "district_raw_inferred": (district_inference or {}).get("district_raw") or district,
+            "district_raw": district_raw or district,
+            "district_normalized": district_norm or None,
+            "district_raw_inferred": (district_raw or (district_inference or {}).get("district_raw")) or district,
             "district_normalized_used": district_norm or None,
             "district_inference": district_inference,
+            "district_inference_method": (district_inference or {}).get("method"),
+            "district_inference_distance_m": (district_inference or {}).get("distance_m"),
             "aqar_district_median_monthly": float(aqar_district_median) if aqar_district_median is not None else None,
             "aqar_city_median_monthly": float(aqar_city_median) if aqar_city_median is not None else None,
             "aqar_district_samples": int(aqar_n_district),
@@ -514,8 +525,13 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             rega_rent_monthly = rent_date = rent_source_url = None
             rega_unit = "SAR/m²/month"
 
-        AQAR_MIN_DISTRICT_SAMPLES = 3
-        if aqar_district_median is not None and aqar_n_district >= AQAR_MIN_DISTRICT_SAMPLES:
+        AQAR_MIN_DISTRICT_SAMPLES = 10
+        district_benchmark_available = (
+            bool(district_norm)
+            and aqar_district_median is not None
+            and aqar_n_district >= AQAR_MIN_DISTRICT_SAMPLES
+        )
+        if district_benchmark_available:
             rent_benchmark_monthly = float(aqar_district_median)
             rent_strategy = "aqar_district_median"
             rent_source_metadata = {
@@ -529,7 +545,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
                 "rega_anchor_monthly": float(rega_rent_monthly) if rega_rent_monthly is not None else None,
             }
-        elif aqar_city_median is not None and aqar_city_median > 0:
+        elif aqar_city_median is not None and aqar_city_median > 0 and (
+            not district_norm or aqar_n_district < AQAR_MIN_DISTRICT_SAMPLES or aqar_district_median is None
+        ):
             rent_benchmark_monthly = float(aqar_city_median)
             rent_strategy = "aqar_city_median"
             rent_source_metadata = {
@@ -650,9 +668,10 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         else:
             land_source_label = ppm2_src or "the configured land price source"
 
+        district_display = district_raw or district or (req.city or "the selected city")
         summary_text = (
             f"For a site of {site_area_m2:,.0f} m² in "
-            f"{district or (req.city or 'the selected city')}, "
+            f"{district_display}, "
             f"land is valued at {excel['land_cost']:,.0f} SAR based on {land_source_label}. "
             f"Construction and fit-out total "
             f"{excel['sub_total']:,.0f} SAR, with contingency, "

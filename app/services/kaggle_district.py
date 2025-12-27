@@ -24,7 +24,9 @@ def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
 def infer_district_from_kaggle(
     db: Session,
     city: Optional[str],
-    geom_geojson: Dict[str, Any],
+    lon: Optional[float] = None,
+    lat: Optional[float] = None,
+    geom_geojson: Optional[Dict[str, Any]] = None,
     max_radius_m: float = 2000.0,
 ) -> Dict[str, Any]:
     """
@@ -39,9 +41,16 @@ def infer_district_from_kaggle(
     - confidence (0..1)
     """
 
-    try:
-        centroid = shape(geom_geojson).centroid
-    except Exception:
+    if lon is None or lat is None:
+        try:
+            centroid = shape(geom_geojson).centroid if geom_geojson else None
+        except Exception:
+            centroid = None
+        if centroid:
+            lon = float(centroid.x)
+            lat = float(centroid.y)
+
+    if lon is None or lat is None:
         return {
             "district_raw": None,
             "district_normalized": None,
@@ -50,9 +59,6 @@ def infer_district_from_kaggle(
             "evidence_count": 0,
             "confidence": 0.0,
         }
-
-    lon = float(centroid.x)
-    lat = float(centroid.y)
 
     params = {"lon": lon, "lat": lat}
     base_sql = """
