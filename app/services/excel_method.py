@@ -133,6 +133,7 @@ def build_excel_explanations(
 
     unit_cost = inputs.get("unit_cost", {}) or {}
     rent_rates = inputs.get("rent_sar_m2_yr", {}) or {}
+    rent_applied = breakdown.get("rent_applied_sar_m2_yr", {}) or {}
     efficiency = inputs.get("efficiency", {}) or {}
     area_ratio = inputs.get("area_ratio", {}) or {}
 
@@ -231,14 +232,16 @@ def build_excel_explanations(
     rent_label = rent_meta.get("method") or rent_meta.get("provider") or "the supplied rent benchmark"
     for key, component in y1_income_components.items():
         nla_val = float(nla.get(key, 0.0) or 0.0)
-        base_area = float(built_area.get(key, 0.0) or 0.0)
-        eff = float(efficiency.get(key, 0.0) or 0.0)
         base_rent = float(rent_rates.get(key, 0.0) or 0.0)
-        effective_rent = base_rent * re_scalar
+        applied_rent = float(rent_applied.get(key, 0.0) or 0.0)
+        effective_rent = applied_rent if applied_rent > 0 else base_rent * re_scalar
         rent_used = (component / nla_val) if nla_val else effective_rent
+        note = ""
+        if applied_rent and abs(applied_rent - base_rent) > 1e-9 and re_scalar not in (0.0, 1.0):
+            note = f" (includes real estate price index scalar {re_scalar:,.3f})"
         income_parts.append(
             f"{key} net lettable area {_fmt_amount(nla_val, decimals=2)} m² × {rent_used:,.0f} SAR/m²/year "
-            f"= {_fmt_amount(component)} SAR/year. Rent benchmark sourced from {rent_label}."
+            f"= {_fmt_amount(component)} SAR/year. Rent benchmark sourced from {rent_label}.{note}"
         )
     if income_parts:
         explanations["y1_income"] = "; ".join(income_parts)
@@ -307,10 +310,11 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     )
 
     nla = {key: built_area.get(key, 0.0) * float(efficiency.get(key, 0.0)) for key in area_ratio.keys()}
-    y1_income_components = {
-        key: nla.get(key, 0.0) * float(rent_rates.get(key, 0.0)) * re_scalar
-        for key in area_ratio.keys()
+    rent_applied = {
+        key: float(rent_rates.get(key, 0.0)) * re_scalar
+        for key in set(rent_rates.keys()) | set(area_ratio.keys())
     }
+    y1_income_components = {key: nla.get(key, 0.0) * rent_applied.get(key, 0.0) for key in area_ratio.keys()}
     y1_income = sum(y1_income_components.values())
 
     roi = (y1_income / grand_total_capex) if grand_total_capex > 0 else 0.0
@@ -330,6 +334,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "nla": nla,
         "y1_income_components": y1_income_components,
         "y1_income": y1_income,
+        "rent_applied_sar_m2_yr": rent_applied,
         "roi": roi,
     }
 
