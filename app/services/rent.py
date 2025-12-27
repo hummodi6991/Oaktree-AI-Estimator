@@ -38,7 +38,9 @@ def _clip(values: Iterable[float], low: Optional[float], high: Optional[float]) 
 def aqar_rent_median(
     db: Session,
     city: str,
-    district: Optional[str],
+    district: Optional[str] = None,
+    city_norm: Optional[str] = None,
+    district_norm: Optional[str] = None,
     asset_type: str = "residential",
     unit_type: Optional[str] = None,
     since_days: int = 365,
@@ -50,11 +52,14 @@ def aqar_rent_median(
     the rows that remained after clipping.
     """
 
-    city_norm = norm_city(city)
-    district_norm = norm_district(city_norm, district) if district else ""
+    if not city:
+        return None, None, 0, 0
 
+    city_norm = city_norm or norm_city(city)
     if not city_norm:
         return None, None, 0, 0
+
+    district_norm = district_norm or (norm_district(city_norm, district) if district else "")
 
     since_date = date.today() - timedelta(days=since_days) if since_days else None
 
@@ -68,7 +73,10 @@ def aqar_rent_median(
             q = q.filter(func.lower(RentComp.city) == city_norm.lower())
         if since_date:
             q = q.filter(RentComp.date >= since_date)
-        if scope_district and district_norm:
+        if scope_district:
+            # If no district was supplied, avoid "faking" a district median by returning city stats.
+            if not district_norm:
+                return []
             q = q.filter(func.lower(RentComp.district) == district_norm.lower())
         return [float(row[0]) for row in q.all() if row[0] is not None]
 

@@ -22,6 +22,7 @@ from app.services.indicators import (
     latest_sale_price_per_m2,
 )
 from app.services.rent import aqar_rent_median
+from app.services.kaggle_district import infer_district_from_kaggle
 from app.services.overture_buildings_metrics import compute_building_metrics
 from app.services.tax import latest_tax_rate
 from app.models.tables import EstimateHeader, EstimateLine
@@ -32,6 +33,23 @@ router = APIRouter(tags=["estimates"])
 
 _INMEM_HEADERS: dict[str, dict[str, Any]] = {}
 _INMEM_LINES: dict[str, list[dict[str, Any]]] = {}
+
+
+def _centroid_lon_lat(geom_geojson: dict[str, Any] | None) -> tuple[float, float] | None:
+    try:
+        if not geom_geojson:
+            return None
+        coords = geom_geojson.get("coordinates") or []
+        ring = coords[0] if coords else []
+        if len(ring) >= 2 and ring[0] == ring[-1]:
+            ring = ring[:-1]
+        if not ring:
+            return None
+        lon = sum(pt[0] for pt in ring) / len(ring)
+        lat = sum(pt[1] for pt in ring) / len(ring)
+        return lon, lat
+    except Exception:
+        return None
 
 
 def _supports_sqlalchemy(db: Any) -> bool:
@@ -219,10 +237,25 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         district = geo_svc.infer_district_from_features(db, geom, layer="rydpolygons")
     except Exception:
         pass
+    district_inference: dict[str, Any] | None = None
     if geom.is_empty:
         raise HTTPException(status_code=400, detail="Empty geometry provided")
     geom_geojson = geo_svc.to_geojson(geom)
     site_area_m2 = geo_svc.area_m2(geom)
+
+    if district is None and req.geometry:
+        centroid = _centroid_lon_lat(req.geometry if isinstance(req.geometry, dict) else geom_geojson)
+        if centroid is None:
+            centroid = _centroid_lon_lat(geom_geojson)
+        if centroid:
+            lon, lat = centroid
+            try:
+                inferred_district, inferred_distance = infer_district_from_kaggle(db, lon=lon, lat=lat, city=req.city)
+                if inferred_district:
+                    district = inferred_district
+                    district_inference = {"method": "kaggle_nearest_listing", "distance_m": inferred_distance}
+            except Exception:
+                pass
 
     overture_site_metrics: dict[str, Any] = {}
     overture_context_metrics: dict[str, Any] = {}
@@ -488,6 +521,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "aqar_city_median_monthly": float(aqar_city_median) if aqar_city_median is not None else None,
             "aqar_district_samples": int(aqar_n_district),
             "aqar_city_samples": int(aqar_n_city),
+            "district_inference": district_inference,
         }
 
         if rega_result is not None:

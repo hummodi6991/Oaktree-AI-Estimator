@@ -106,10 +106,12 @@ def test_revenue_rent_matches_noi(monkeypatch, client):
     rent_used = rent_rates["residential"]
     income_component = excel_breakdown["y1_income_components"]["residential"]
     nla = excel_breakdown["nla"]["residential"]
+    explanation = excel_breakdown["explanations"]["y1_income"]
 
     assert nla > 0
     assert income_component / nla == pytest.approx(rent_used)
     assert body["notes"]["rent_debug_metadata"]["rent_strategy"] == "rega_x_aqar_ratio"
+    assert "1,800 SAR/m²/year" in explanation
 
 
 def test_rent_differs_by_district(monkeypatch, client, db_session):
@@ -173,3 +175,27 @@ def test_rent_differs_by_district(monkeypatch, client, db_session):
     assert meta_beta["rent_strategy"] == "rega_x_aqar_ratio"
     assert meta_alpha["district_used_for_aqar_query"] == "alpha"
     assert meta_beta["district_used_for_aqar_query"] == "beta"
+
+
+def test_kaggle_district_fallback(monkeypatch, client):
+    monkeypatch.setattr(estimates_api.geo_svc, "infer_district_from_features", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        estimates_api,
+        "infer_district_from_kaggle",
+        lambda db, lon, lat, city=None: ("gamma", 123.4),
+    )
+    monkeypatch.setattr(
+        estimates_api,
+        "latest_rega_residential_rent_per_m2",
+        lambda *args, **kwargs: (90.0, "SAR/m²/month", date(2024, 1, 1), "https://rega.example"),
+    )
+    monkeypatch.setattr(estimates_api, "aqar_rent_median", lambda *args, **kwargs: (100.0, 80.0, 5, 10))
+    monkeypatch.setattr(estimates_api, "latest_re_price_index_scalar", lambda *args, **kwargs: 1.0)
+
+    response = client.post("/v1/estimates", json=_payload())
+    assert response.status_code == 200
+    body = response.json()
+
+    rent_meta = body["notes"]["rent_debug_metadata"]
+    assert rent_meta["district"] == "gamma"
+    assert rent_meta["district_inference"] == {"method": "kaggle_nearest_listing", "distance_m": 123.4}

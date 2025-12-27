@@ -75,3 +75,42 @@ def test_aqar_rent_median_clips_outliers():
         assert n_district == 5
         assert district_median == pytest.approx(13)
         assert city_median == pytest.approx(14)
+
+
+def test_aqar_rent_median_ignores_district_when_missing():
+    Session = _session()
+    today = date.today()
+    rents = [
+        ("riyadh", "alpha", 10),
+        ("riyadh", "beta", 20),
+        ("riyadh", "beta", 30),
+    ]
+
+    with Session() as session:
+        for idx, (city, district, rent) in enumerate(rents, start=1):
+            session.add(
+                RentComp(
+                    id=f"r{idx}",
+                    date=today,
+                    asof_date=today,
+                    city=city,
+                    district=district,
+                    asset_type="residential",
+                    unit_type="apartment",
+                    lease_term_months=12,
+                    rent_per_unit=None,
+                    rent_per_m2=rent,
+                    source="test",
+                    source_url=None,
+                )
+            )
+        session.commit()
+
+        district_median, city_median, n_district, n_city = aqar_rent_median(
+            session, city="Riyadh", district=None, asset_type="residential", unit_type="apartment"
+        )
+
+        assert n_city == 3
+        assert n_district == 0
+        assert district_median is None
+        assert city_median == pytest.approx(20)
