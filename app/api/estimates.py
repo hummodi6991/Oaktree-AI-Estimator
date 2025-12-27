@@ -254,7 +254,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         except Exception:
             district_inference = {"method": "kaggle_nearest_listing", "error": "inference_failed"}
 
-    district_norm = district_normalized or (norm_district(city_norm, district) if district else "")
+    district_norm = district_normalized or (norm_district(city_norm, district) if district else None)
+    district_normalized_used = district_norm or None
+    district = district_normalized_used
 
     overture_site_metrics: dict[str, Any] = {}
     overture_context_metrics: dict[str, Any] = {}
