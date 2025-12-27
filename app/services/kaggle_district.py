@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 
 from shapely.geometry import shape
+from collections import Counter
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -72,52 +73,71 @@ def infer_district_from_kaggle(
 
     where_clauses = []
     if city:
+        # Keep the city predicate first for precision, but we will retry without it
+        # if it returns no evidence (this happens when listings use Arabic names
+        # while req.city is English, or vice versa).
         where_clauses.append("lower(city) = lower(:city)")
 
-    sql = base_sql
-    if where_clauses:
-        sql += " AND " + " AND ".join(where_clauses)
-    # Pull the closest 500 listings by naive planar distance to keep the client-side
-    # haversine search focused on nearby evidence (avoids returning a random slice).
-    sql += " ORDER BY ((lon - :lon) * (lon - :lon) + (lat - :lat) * (lat - :lat)) ASC"
-    sql += " LIMIT 500"
-
-    try:
-        rows = list(db.execute(text(sql), {**params, "city": city}).all())
-    except Exception:
-        rows = []
-
-    best_row = None
-    best_distance = None
-    for row in rows:
+    def _fetch_rows(use_city: bool) -> list[tuple]:
+        sql = base_sql
+        clauses = list(where_clauses) if use_city else []
+        if clauses:
+            sql += " AND " + " AND ".join(clauses)
+        # Pull the closest 500 listings by naive planar distance to keep the client-side
+        # haversine search focused on nearby evidence (avoids returning a random slice).
+        sql += " ORDER BY ((lon - :lon) * (lon - :lon) + (lat - :lat) * (lat - :lat)) ASC"
+        sql += " LIMIT 500"
         try:
-            r_lon = float(row.lon)
-            r_lat = float(row.lat)
+            return list(db.execute(text(sql), {**params, "city": city}).all())
         except Exception:
+            return []
+
+    # 1) Try city-filtered for accuracy
+    rows = _fetch_rows(use_city=bool(city))
+    # 2) If no evidence, retry without city filter for coverage
+    if not rows and city:
+        rows = _fetch_rows(use_city=False)
+
+    best = None
+    best_d = None
+    for (d_raw, c_raw, lon2, lat2) in rows:
+        d_m = _haversine_m(lon, lat, float(lon2), float(lat2))
+        if max_radius_m is not None and d_m > max_radius_m:
             continue
-        d = _haversine_m(lon, lat, r_lon, r_lat)
-        if best_distance is None or d < best_distance:
-            best_row = row
-            best_distance = d
+        if best_d is None or d_m < best_d:
+            best = (d_raw, c_raw, float(lon2), float(lat2))
+            best_d = d_m
 
-    city_norm = norm_city(city) if city else None
-    district_raw = getattr(best_row, "district", None) if best_row else None
-    district_norm = norm_district(city_norm, district_raw) if district_raw else None
+    if not best:
+        return {
+            "district_raw": None,
+            "district_normalized": None,
+            "method": "kaggle_nearest_listing",
+            "distance_m": None,
+            "evidence_count": 0,
+            "confidence": 0.0,
+        }
 
-    if max_radius_m is not None and best_distance is not None and best_distance > max_radius_m:
-        district_raw = None
-        district_norm = None
+    district_raw = str(best[0]).strip() if best else None
+    # Normalize using the caller-provided city when possible; if city is missing,
+    # fall back to the listing city for normalization.
+    norm_city_input = norm_city(city) if city else None
+    if not norm_city_input:
+        norm_city_input = norm_city(best[1]) if best and best[1] else None
+    district_norm = norm_district(norm_city_input, district_raw) if (norm_city_input and district_raw) else None
 
-    # Simple confidence heuristic: 1.0 at distance 0, decays linearly to 0 at max_radius_m
-    confidence = 0.0
-    if best_distance is not None and max_radius_m:
-        confidence = max(0.0, min(1.0, 1.0 - float(best_distance) / float(max_radius_m)))
+    # Optional: compute a simple confidence based on how many nearby points agree on the district.
+    # This helps debugging and future thresholding.
+    nearby = [str(r[0]).strip() for r in rows[:50] if r and r[0]]
+    counts = Counter(nearby)
+    top = counts.most_common(1)[0][1] if counts else 0
+    conf = min(0.95, 0.25 + (top / 50.0) * 0.70) if nearby else 0.0
 
     return {
         "district_raw": district_raw,
         "district_normalized": district_norm,
         "method": "kaggle_nearest_listing",
-        "distance_m": float(best_distance) if best_distance is not None else None,
+        "distance_m": float(best_d) if best_d is not None else None,
         "evidence_count": len(rows),
-        "confidence": confidence,
+        "confidence": conf,
     }

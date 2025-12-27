@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Literal, Optional
 from datetime import date
 import json, uuid, csv, io
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, ConfigDict
@@ -29,6 +30,8 @@ from app.models.tables import EstimateHeader, EstimateLine
 from app.ml.name_normalization import norm_city, norm_district
 
 router = APIRouter(tags=["estimates"])
+logger = logging.getLogger(__name__)
+
 
 
 _INMEM_HEADERS: dict[str, dict[str, Any]] = {}
@@ -220,7 +223,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     district_raw = None
     district_normalized = None
     city_for_district = req.city or "Riyadh"
-    city_norm = norm_city(city_for_district)
+    city_norm = norm_city(city_for_district) or city_for_district
     if geom.is_empty:
         raise HTTPException(status_code=400, detail="Empty geometry provided")
     geom_geojson = geo_svc.to_geojson(geom)
@@ -236,7 +239,11 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
     if district is None and lon is not None and lat is not None:
         try:
-            kaggle_result = infer_district_from_kaggle(db, city=city_for_district, lon=lon, lat=lat)
+            # IMPORTANT:
+            # aqar.listings.city is often normalized (e.g. "riyadh") or Arabic.
+            # Using req.city ("Riyadh") can cause the city-filtered query to return 0 rows,
+            # leading to district=None → aqar_city_median fallback → constant rent.
+            kaggle_result = infer_district_from_kaggle(db, city=city_norm, lon=lon, lat=lat)
             district_raw = kaggle_result.get("district_raw")
             district_normalized = norm_district(city_norm, district_raw) if district_raw else None
             kaggle_normalized = kaggle_result.get("district_normalized")
@@ -252,6 +259,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "district_normalized": district_normalized,
             }
         except Exception:
+            logger.exception("Kaggle district inference failed")
             district_inference = {"method": "kaggle_nearest_listing", "error": "inference_failed"}
 
     district_norm = district_normalized or (norm_district(city_norm, district) if district else None)
