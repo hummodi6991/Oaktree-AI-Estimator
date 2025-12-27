@@ -91,6 +91,14 @@ def aqar_rent_median(
     city_filtered = _clip(city_values, city_low, city_high)
     city_median = _percentile_disc(city_filtered, 0.5) if city_filtered else None
 
+    if not district_norm:
+        return (
+            None,
+            float(city_median) if city_median is not None else None,
+            0,
+            len(city_filtered),
+        )
+
     district_median = None
     district_filtered: list[float] = []
     if district_values:
