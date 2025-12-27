@@ -8,6 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.tables import RentComp
+from app.ml.name_normalization import norm_city, norm_district
 
 
 def _percentile_disc(values: Iterable[float], percentile: float) -> Optional[float]:
@@ -49,7 +50,10 @@ def aqar_rent_median(
     the rows that remained after clipping.
     """
 
-    if not city:
+    city_norm = norm_city(city)
+    district_norm = norm_district(city_norm, district) if district else ""
+
+    if not city_norm:
         return None, None, 0, 0
 
     since_date = date.today() - timedelta(days=since_days) if since_days else None
@@ -60,12 +64,12 @@ def aqar_rent_median(
             q = q.filter(func.lower(RentComp.asset_type) == asset_type.lower())
         if unit_type:
             q = q.filter(RentComp.unit_type.ilike(unit_type))
-        if city:
-            q = q.filter(func.lower(RentComp.city) == city.lower())
+        if city_norm:
+            q = q.filter(func.lower(RentComp.city) == city_norm.lower())
         if since_date:
             q = q.filter(RentComp.date >= since_date)
-        if scope_district and district:
-            q = q.filter(func.lower(RentComp.district) == district.lower())
+        if scope_district and district_norm:
+            q = q.filter(func.lower(RentComp.district) == district_norm.lower())
         return [float(row[0]) for row in q.all() if row[0] is not None]
 
     city_values = _values(scope_district=False)
