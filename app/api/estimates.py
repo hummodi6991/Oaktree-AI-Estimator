@@ -234,30 +234,19 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         raise HTTPException(status_code=400, detail=f"Invalid GeoJSON for 'geometry': {exc}")
     district_inference: dict[str, Any] | None = None
     district = None
-    try:
-        district = geo_svc.infer_district_from_features(db, geom, layer="rydpolygons")
-        if district:
-            district_inference = {"method": "feature_layer", "layer": "rydpolygons"}
-    except Exception:
-        pass
     if geom.is_empty:
         raise HTTPException(status_code=400, detail="Empty geometry provided")
     geom_geojson = geo_svc.to_geojson(geom)
     site_area_m2 = geo_svc.area_m2(geom)
 
-    if district is None and req.geometry:
-        centroid = _centroid_lon_lat(req.geometry if isinstance(req.geometry, dict) else geom_geojson)
-        if centroid is None:
-            centroid = _centroid_lon_lat(geom_geojson)
-        if centroid:
-            lon, lat = centroid
-            try:
-                inferred_district, inferred_distance = infer_district_from_kaggle(db, lon=lon, lat=lat, city=req.city)
-                if inferred_district:
-                    district = inferred_district
-                    district_inference = {"method": "kaggle_nearest_listing", "distance_m": inferred_distance}
-            except Exception:
-                pass
+    if district is None and geom_geojson:
+        try:
+            kaggle_result = infer_district_from_kaggle(db, req.city, geom_geojson)
+            if kaggle_result.get("district_raw"):
+                district = kaggle_result.get("district_raw")
+            district_inference = kaggle_result
+        except Exception:
+            district_inference = {"method": "kaggle_nearest_listing", "error": "inference_failed"}
 
     overture_site_metrics: dict[str, Any] = {}
     overture_context_metrics: dict[str, Any] = {}
@@ -291,13 +280,6 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             far_max_source = "far_rules"
     except Exception:
         far_max = None
-    if far_max is None:
-        try:
-            far_max = geo_svc.infer_far_from_features(db, geom, layer="rydpolygons")
-            if far_max is not None:
-                far_max_source = "feature_layer"
-        except Exception:
-            far_max = None
 
     typical_far_proxy = overture_context_metrics.get("far_proxy_existing")
     typical_source = "overture_proxy" if typical_far_proxy is not None else None
@@ -517,14 +499,13 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         rent_meta_common: dict[str, Any] = {
             "city": req.city,
             "district": district,
-            "city_normalized": city_norm or None,
-            "district_used_for_aqar_query": district_norm or None,
-            "district_normalized": district_norm or None,
+            "district_raw_inferred": (district_inference or {}).get("district_raw") or district,
+            "district_normalized_used": district_norm or None,
+            "district_inference": district_inference,
             "aqar_district_median_monthly": float(aqar_district_median) if aqar_district_median is not None else None,
             "aqar_city_median_monthly": float(aqar_city_median) if aqar_city_median is not None else None,
             "aqar_district_samples": int(aqar_n_district),
             "aqar_city_samples": int(aqar_n_city),
-            "district_inference": district_inference,
         }
 
         if rega_result is not None:
@@ -534,31 +515,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             rega_unit = "SAR/m²/month"
 
         AQAR_MIN_DISTRICT_SAMPLES = 3
-        if (
-            rega_rent_monthly is not None
-            and aqar_district_median is not None
-            and aqar_city_median
-            and float(aqar_city_median) > 0
-            and aqar_n_district >= AQAR_MIN_DISTRICT_SAMPLES
-        ):
-            rent_benchmark_monthly = float(rega_rent_monthly) * float(aqar_district_median) / float(aqar_city_median)
-            rent_strategy = "rega_x_aqar_ratio"
-            rent_source_metadata = {
-                **rent_meta_common,
-                "provider": "REGA × Kaggle Aqar",
-                "method": "rega_city_scaled_by_aqar_ratio",
-                "unit": "SAR/m²/month",
-                "benchmark_per_m2_month": rent_benchmark_monthly,
-                "benchmark_per_m2_year": rent_benchmark_monthly * 12.0,
-                "as_of_date": rent_date.isoformat() if rent_date else None,
-                "source_url": rent_source_url,
-                "aqar_sample_sizes": {"district": aqar_n_district, "city": aqar_n_city},
-                "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
-                "rega_city_monthly": float(rega_rent_monthly),
-            }
-        elif aqar_district_median is not None and aqar_n_district >= AQAR_MIN_DISTRICT_SAMPLES:
+        if aqar_district_median is not None and aqar_n_district >= AQAR_MIN_DISTRICT_SAMPLES:
             rent_benchmark_monthly = float(aqar_district_median)
-            rent_strategy = "aqar_only"
+            rent_strategy = "aqar_district_median"
             rent_source_metadata = {
                 **rent_meta_common,
                 "provider": "Kaggle Aqar rent comps",
@@ -568,10 +527,25 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "benchmark_per_m2_year": rent_benchmark_monthly * 12.0,
                 "aqar_sample_sizes": {"district": aqar_n_district, "city": aqar_n_city},
                 "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
+                "rega_anchor_monthly": float(rega_rent_monthly) if rega_rent_monthly is not None else None,
+            }
+        elif aqar_city_median is not None and aqar_city_median > 0:
+            rent_benchmark_monthly = float(aqar_city_median)
+            rent_strategy = "aqar_city_median"
+            rent_source_metadata = {
+                **rent_meta_common,
+                "provider": "Kaggle Aqar rent comps",
+                "method": "aqar_city_median",
+                "unit": "SAR/m²/month",
+                "benchmark_per_m2_month": rent_benchmark_monthly,
+                "benchmark_per_m2_year": rent_benchmark_monthly * 12.0,
+                "aqar_sample_sizes": {"district": aqar_n_district, "city": aqar_n_city},
+                "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
+                "rega_anchor_monthly": float(rega_rent_monthly) if rega_rent_monthly is not None else None,
             }
         elif rega_rent_monthly is not None:
             rent_benchmark_monthly = float(rega_rent_monthly)
-            rent_strategy = "rega_only"
+            rent_strategy = "rega_city_rent"
             rent_source_metadata = {
                 **rent_meta_common,
                 "provider": "REGA (Real Estate General Authority)",
@@ -589,8 +563,6 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
         rent_debug_metadata = {
             **rent_meta_common,
-            "district_inferred": district,
-            "district_normalized": district_norm or None,
             "rent_strategy": rent_strategy,
         }
 
@@ -753,6 +725,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "re_price_index_scalar": re_scalar,
                 "transaction_tax": excel_inputs.get("transaction_tax_metadata"),
                 "rent_source_metadata": excel_inputs.get("rent_source_metadata"),
+                "district_inference": district_inference,
                 "summary": summary_text,
                 "site_area_m2": site_area_m2,
                 "district": district,
