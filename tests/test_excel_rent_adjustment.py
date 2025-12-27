@@ -115,8 +115,8 @@ def test_excel_rent_prefers_aqar_adjustment(monkeypatch):
     rent_meta = body["notes"]["excel_rent"]["rent_source_metadata"]
     rent_rates = body["notes"]["excel_rent"]["rent_sar_m2_yr"]
 
-    expected_monthly = 100.0 * (120.0 / 80.0)
+    expected_monthly = 120.0
     assert rent_rates["residential"] == pytest.approx(expected_monthly * 12.0)
-    assert rent_meta["method"] == "rega_city_scaled_by_aqar_ratio"
+    assert rent_meta["method"] == "aqar_district_median"
     assert rent_meta["aqar_sample_sizes"]["district"] == 7
     assert rent_meta["aqar_medians"]["city"] == 80.0

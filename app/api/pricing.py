@@ -1,9 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from shapely.geometry import Point
-
 from app.db.deps import get_db
-from app.services import geo as geo_svc
 from app.services.pricing import price_from_kaggle_hedonic, store_quote
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
@@ -23,22 +20,6 @@ def land_price(
     lat: float | None = Query(default=None, description="Centroid latitude (WGS84)"),
     db: Session = Depends(get_db),
 ):
-    geom = None
-    if lng is not None and lat is not None:
-        geom = Point(lng, lat)
-
-    # 1) Try polygons, if you ever load rydpolygons in future
-    if (district is None) and geom is not None:
-        try:
-            inferred = geo_svc.infer_district_from_features(
-                db, geom, layer="rydpolygons"
-            )
-            if inferred:
-                district = inferred
-        except Exception:
-            # Missing layer etc. → ignore and fall back to Kaggle-based inference
-            pass
-
     value, method, meta = price_from_kaggle_hedonic(
         db,
         city=city,

@@ -124,9 +124,11 @@ def price_from_kaggle_hedonic(
     # Try to infer a district from Kaggle listings when we only have coords
     if district is None and lon is not None and lat is not None:
         try:
-            inferred_district, inferred_distance = infer_district_from_kaggle(
-                db, lon=lon, lat=lat, city=city
+            kaggle_result = infer_district_from_kaggle(
+                db, city=city, geom_geojson={"type": "Point", "coordinates": [lon, lat]}
             )
+            inferred_district = kaggle_result.get("district_raw")
+            inferred_distance = kaggle_result.get("distance_m")
             if inferred_district:
                 district = inferred_district
         except Exception as exc:  # noqa: BLE001 - Keep the API robust
