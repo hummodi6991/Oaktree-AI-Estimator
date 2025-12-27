@@ -197,6 +197,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const excelRent = excelResult?.excelRent;
   const rentMeta = excelRent?.rent_source_metadata as any;
   const rentRatesFromNotes = excelRent?.rent_sar_m2_yr as Record<string, number> | undefined;
+  const appliedRentRates =
+    rentRatesFromNotes && typeof rentRatesFromNotes === "object" ? rentRatesFromNotes : rentRates;
 
   let residentialRentYr: number | null = null;
   if (rentRatesFromNotes && typeof rentRatesFromNotes === "object") {
@@ -291,7 +293,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           efficiencyVal != null && baseArea != null
             ? `NLA ${nlaVal.toLocaleString()} m² (built area ${baseArea.toLocaleString()} m² × efficiency ${(efficiencyVal * 100).toFixed(0)}%)`
             : `NLA ${nlaVal.toLocaleString()} m²`;
-        const rent = rentRates[key] ?? 0;
+        const rent = appliedRentRates[key] ?? 0;
         return `${key}: ${efficiencyText} × ${rent.toLocaleString()} SAR/m²/yr`;
       })
       .filter(Boolean)
@@ -319,7 +321,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       efficiencyVal != null && baseArea != null
         ? `NLA ${nlaVal.toLocaleString()} m² (built area ${baseArea.toLocaleString()} m² × efficiency ${(efficiencyVal * 100).toFixed(0)}%)`
         : `NLA ${nlaVal.toLocaleString()} m²`;
-    const rent = rentRates[key] ?? 0;
+    const rent = appliedRentRates[key] ?? 0;
     return {
       key,
       amount: incomeComponents[key] ?? 0,
