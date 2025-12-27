@@ -229,6 +229,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     geom_geojson = geo_svc.to_geojson(geom)
     site_area_m2 = geo_svc.area_m2(geom)
 
+    # Compute centroid early so both rent + land pricing can use it.
+    # IMPORTANT: Passing lon/lat to price_from_kaggle_hedonic enables district inference fallback
+    # and avoids "citywide constant ppm2" behavior when district is missing.
     lon = lat = None
     try:
         centroid = geom.centroid
@@ -458,9 +461,11 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             value, method, meta = price_from_kaggle_hedonic(
                 db,
                 city=req.city or "Riyadh",
-                lon=None,
-                lat=None,
-                district=district_norm or district,
+                # FIX: pass centroid so hedonic can infer district when needed
+                lon=lon,
+                lat=lat,
+                # Use normalized district if available; otherwise let hedonic infer from lon/lat
+                district=(district_norm or district) if (district_norm or district) else None,
             )
             if value is not None:
                 ppm2_val = float(value)
