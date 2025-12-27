@@ -60,6 +60,10 @@ Only `district` and `far_max` are required. When an estimate runs, the API first
 - `POST /v1/geo/building-metrics` (coverage, floors proxy stats, BUA from Overture buildings)
 - `POST /v1/estimates` (uses Overture-built FAR defaults + Excel-style outputs)
 
+### Rent benchmarks (Excel mode)
+
+The Excel pathway blends data sources for rent: if REGA city-level rents exist and Kaggle Aqar district medians are available, the API scales REGA by the district/city ratio from Aqar. When only Aqar rents exist, it falls back to the district median; otherwise the REGA city benchmark (or manual/template rents) is used. Load Kaggle-derived rent comps via `app/ingest/aqar_rent_comps.py` to enable the blend.
+
 ## Frontend dev
 
 Start the API by following the Quick start above (or `make db-up && make db-init && make api`). Then run the Vite dev server:

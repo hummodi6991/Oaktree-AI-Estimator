@@ -21,6 +21,7 @@ from app.services.indicators import (
     latest_re_price_index_scalar,
     latest_sale_price_per_m2,
 )
+from app.services.rent import aqar_rent_median
 from app.services.overture_buildings_metrics import compute_building_metrics
 from app.services.tax import latest_tax_rate
 from app.models.tables import EstimateHeader, EstimateLine
@@ -450,35 +451,97 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         re_scalar = latest_re_price_index_scalar(db, asset_type="Residential")
         excel_inputs["re_price_index_scalar"] = re_scalar
 
-        # NEW: Always drive Excel rent assumptions from REGA residential rent_per_m2 when available.
-        # Any manual rent inputs are ignored if we have a REGA benchmark.
+        # NEW: Prefer REGA rent benchmarks blended with Kaggle Aqar district medians when available.
         rega_result = latest_rega_residential_rent_per_m2(db, req.city, district)
         rent_rates = excel_inputs.get("rent_sar_m2_yr") or {}
 
-        if rega_result is not None:
-            rega_rent_monthly, _rent_unit, rent_date, rent_source_url = rega_result
-            annual_rent = float(rega_rent_monthly) * 12.0  # convert to SAR/m²/year
-            # For now we only have residential REGA indicators in the attached CSV.
-            rent_rates = {"residential": annual_rent}
-            excel_inputs["rent_sar_m2_yr"] = rent_rates
+        aqar_district_median = aqar_city_median = None
+        aqar_n_district = aqar_n_city = 0
+        try:
+            aqar_district_median, aqar_city_median, aqar_n_district, aqar_n_city = aqar_rent_median(
+                db,
+                req.city or "Riyadh",
+                district,
+                asset_type="residential",
+                unit_type=None,
+                since_days=365,
+            )
+        except Exception:
+            # Keep Excel-mode robust if the backing table/view isn't present
+            aqar_district_median = aqar_city_median = None
+            aqar_n_district = aqar_n_city = 0
 
-            # Keep a simple note so the UI / PDF can explain the assumption source.
-            excel_inputs["rent_source_metadata"] = {
+        rent_benchmark_monthly: float | None = None
+        rent_source_metadata: dict[str, Any] | None = None
+
+        if rega_result is not None:
+            rega_rent_monthly, rega_unit, rent_date, rent_source_url = rega_result
+        else:
+            rega_rent_monthly = rent_date = rent_source_url = None
+            rega_unit = "SAR/m²/month"
+
+        if (
+            rega_rent_monthly is not None
+            and aqar_district_median
+            and aqar_city_median
+            and float(aqar_city_median) > 0
+        ):
+            rent_benchmark_monthly = float(rega_rent_monthly) * float(aqar_district_median) / float(aqar_city_median)
+            rent_source_metadata = {
+                "provider": "REGA × Kaggle Aqar",
+                "method": "rega_city_scaled_by_aqar_ratio",
+                "city": req.city,
+                "district": district,
+                "unit": "SAR/m²/month",
+                "benchmark_per_m2_month": rent_benchmark_monthly,
+                "benchmark_per_m2_year": rent_benchmark_monthly * 12.0,
+                "as_of_date": rent_date.isoformat() if rent_date else None,
+                "source_url": rent_source_url,
+                "aqar_sample_sizes": {"district": aqar_n_district, "city": aqar_n_city},
+                "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
+                "rega_city_monthly": float(rega_rent_monthly),
+            }
+        elif aqar_district_median:
+            rent_benchmark_monthly = float(aqar_district_median)
+            rent_source_metadata = {
+                "provider": "Kaggle Aqar rent comps",
+                "method": "aqar_district_median",
+                "city": req.city,
+                "district": district,
+                "unit": "SAR/m²/month",
+                "benchmark_per_m2_month": rent_benchmark_monthly,
+                "benchmark_per_m2_year": rent_benchmark_monthly * 12.0,
+                "aqar_sample_sizes": {"district": aqar_n_district, "city": aqar_n_city},
+                "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
+            }
+        elif rega_rent_monthly is not None:
+            rent_benchmark_monthly = float(rega_rent_monthly)
+            rent_source_metadata = {
                 "provider": "REGA (Real Estate General Authority)",
+                "method": "rega_city_rent",
                 "indicator_type": "rent_per_m2",
                 "asset_type": "Residential",
                 "city": req.city,
                 "district": district,
-                "unit": "SAR/m²/month",
+                "unit": rega_unit or "SAR/m²/month",
                 "benchmark_per_m2_month": float(rega_rent_monthly),
-                "benchmark_per_m2_year": annual_rent,
+                "benchmark_per_m2_year": float(rega_rent_monthly) * 12.0,
                 "as_of_date": rent_date.isoformat() if rent_date else None,
                 "source_url": rent_source_url,
+                "aqar_sample_sizes": {"district": aqar_n_district, "city": aqar_n_city},
+                "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
             }
+
+        if rent_benchmark_monthly is not None:
+            annual_rent = float(rent_benchmark_monthly) * 12.0  # convert to SAR/m²/year
+            rent_rates = {"residential": annual_rent}
+            excel_inputs["rent_sar_m2_yr"] = rent_rates
+            excel_inputs["rent_source_metadata"] = rent_source_metadata
         else:
             # Fallback: use whatever rent_sar_m2_yr was passed in (manual or template)
             excel_inputs["rent_sar_m2_yr"] = rent_rates
-            # Do NOT set rent_source_metadata in this case – it wasn't driven by REGA.
+            excel_inputs.pop("rent_source_metadata", None)
+            # Do NOT set rent_source_metadata in this case – it wasn't driven by data.
 
         rett = latest_tax_rate(db, tax_type="RETT")
         if rett:
@@ -547,20 +610,43 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             f"{excel['roi']*100:,.1f}%."
         )
 
-        # If rent came from REGA, append an explicit explanation.
+        # If rent came from a benchmark, append an explicit explanation.
         rent_meta = excel_inputs.get("rent_source_metadata")
         if rent_meta and excel_inputs.get("rent_sar_m2_yr"):
             # We currently have a single residential rent band
             rent_map = excel_inputs.get("rent_sar_m2_yr") or {}
             base_annual = float(next(iter(rent_map.values())))
             base_monthly = base_annual / 12.0
+            method_label = rent_meta.get("method") or rent_meta.get("provider") or "the rent benchmark"
+            provider_label = rent_meta.get("provider")
 
             summary_text += (
-                " Base rent uses the REGA residential rent "
-                f"benchmark for {rent_meta.get('city') or 'Riyadh'}: "
-                f"{base_monthly:,.0f} SAR/m²/month ({base_annual:,.0f} SAR/m²/year). "
-                "This rent fully overrides any manual rent inputs."
+                f" Base rent uses {method_label}"
+                f"{f' ({provider_label})' if provider_label else ''}"
+                f" for {rent_meta.get('city') or 'Riyadh'}: "
+                f"{base_monthly:,.0f} SAR/m²/month ({base_annual:,.0f} SAR/m²/year)."
             )
+            aqar_meta = rent_meta.get("aqar_medians") or {}
+            aqar_counts = rent_meta.get("aqar_sample_sizes") or {}
+            if aqar_meta or aqar_counts:
+                details: list[str] = []
+                if aqar_meta.get("district") is not None:
+                    details.append(f"district={aqar_meta.get('district')}")
+                if aqar_meta.get("city") is not None:
+                    details.append(f"city={aqar_meta.get('city')}")
+
+                count_details: list[str] = []
+                if aqar_counts:
+                    count_details.append(f"district={aqar_counts.get('district', 0)}")
+                    count_details.append(f"city={aqar_counts.get('city', 0)}")
+
+                summary_text += " Aqar rent medians"
+                if details:
+                    summary_text += f" ({', '.join(details)})"
+                if count_details:
+                    summary_text += f"; samples: {', '.join(count_details)}"
+                summary_text += "."
+            summary_text += " This rent overrides manual/template rent inputs when a benchmark is present."
         result = {
             "totals": totals,
             "assumptions": [

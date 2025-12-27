@@ -227,6 +227,8 @@ def build_excel_explanations(
     )
 
     income_parts = []
+    rent_meta = inputs.get("rent_source_metadata") or {}
+    rent_label = rent_meta.get("method") or rent_meta.get("provider") or "the supplied rent benchmark"
     for key, component in y1_income_components.items():
         nla_val = float(nla.get(key, 0.0) or 0.0)
         base_area = float(built_area.get(key, 0.0) or 0.0)
@@ -235,7 +237,7 @@ def build_excel_explanations(
         effective_rent = base_rent * re_scalar
         income_parts.append(
             f"{key} net lettable area {_fmt_amount(nla_val, decimals=2)} m² × {effective_rent:,.0f} SAR/m²/year "
-            f"= {_fmt_amount(component)} SAR/year. Rent benchmark sourced from REGA."
+            f"= {_fmt_amount(component)} SAR/year. Rent benchmark sourced from {rent_label}."
         )
     if income_parts:
         explanations["y1_income"] = "; ".join(income_parts)
