@@ -25,6 +25,7 @@ from app.services.rent import aqar_rent_median
 from app.services.overture_buildings_metrics import compute_building_metrics
 from app.services.tax import latest_tax_rate
 from app.models.tables import EstimateHeader, EstimateLine
+from app.ml.name_normalization import norm_city, norm_district
 
 router = APIRouter(tags=["estimates"])
 
@@ -452,16 +453,20 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         excel_inputs["re_price_index_scalar"] = re_scalar
 
         # NEW: Prefer REGA rent benchmarks blended with Kaggle Aqar district medians when available.
+        city_for_rent = req.city or "Riyadh"
+        city_norm = norm_city(city_for_rent)
+        district_norm = norm_district(city_norm, district) if district else ""
         rega_result = latest_rega_residential_rent_per_m2(db, req.city, district)
-        rent_rates = excel_inputs.get("rent_sar_m2_yr") or {}
+        rent_rates_raw = excel_inputs.get("rent_sar_m2_yr")
+        rent_rates = dict(rent_rates_raw) if isinstance(rent_rates_raw, dict) else {}
 
         aqar_district_median = aqar_city_median = None
         aqar_n_district = aqar_n_city = 0
         try:
             aqar_district_median, aqar_city_median, aqar_n_district, aqar_n_city = aqar_rent_median(
                 db,
-                req.city or "Riyadh",
-                district,
+                city_norm,
+                district_norm or None,
                 asset_type="residential",
                 unit_type=None,
                 since_days=365,
@@ -473,6 +478,17 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
         rent_benchmark_monthly: float | None = None
         rent_source_metadata: dict[str, Any] | None = None
+        rent_strategy: str = "manual_or_template"
+        rent_meta_common: dict[str, Any] = {
+            "city": req.city,
+            "district": district,
+            "city_normalized": city_norm or None,
+            "district_used_for_aqar_query": district_norm or None,
+            "aqar_district_median_monthly": float(aqar_district_median) if aqar_district_median is not None else None,
+            "aqar_city_median_monthly": float(aqar_city_median) if aqar_city_median is not None else None,
+            "aqar_district_samples": int(aqar_n_district),
+            "aqar_city_samples": int(aqar_n_city),
+        }
 
         if rega_result is not None:
             rega_rent_monthly, rega_unit, rent_date, rent_source_url = rega_result
@@ -480,18 +496,20 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             rega_rent_monthly = rent_date = rent_source_url = None
             rega_unit = "SAR/m²/month"
 
+        AQAR_MIN_DISTRICT_SAMPLES = 3
         if (
             rega_rent_monthly is not None
-            and aqar_district_median
+            and aqar_district_median is not None
             and aqar_city_median
             and float(aqar_city_median) > 0
+            and aqar_n_district >= AQAR_MIN_DISTRICT_SAMPLES
         ):
             rent_benchmark_monthly = float(rega_rent_monthly) * float(aqar_district_median) / float(aqar_city_median)
+            rent_strategy = "rega_x_aqar_ratio"
             rent_source_metadata = {
+                **rent_meta_common,
                 "provider": "REGA × Kaggle Aqar",
                 "method": "rega_city_scaled_by_aqar_ratio",
-                "city": req.city,
-                "district": district,
                 "unit": "SAR/m²/month",
                 "benchmark_per_m2_month": rent_benchmark_monthly,
                 "benchmark_per_m2_year": rent_benchmark_monthly * 12.0,
@@ -501,13 +519,13 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
                 "rega_city_monthly": float(rega_rent_monthly),
             }
-        elif aqar_district_median:
+        elif aqar_district_median is not None and aqar_n_district >= AQAR_MIN_DISTRICT_SAMPLES:
             rent_benchmark_monthly = float(aqar_district_median)
+            rent_strategy = "aqar_only"
             rent_source_metadata = {
+                **rent_meta_common,
                 "provider": "Kaggle Aqar rent comps",
                 "method": "aqar_district_median",
-                "city": req.city,
-                "district": district,
                 "unit": "SAR/m²/month",
                 "benchmark_per_m2_month": rent_benchmark_monthly,
                 "benchmark_per_m2_year": rent_benchmark_monthly * 12.0,
@@ -516,13 +534,13 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             }
         elif rega_rent_monthly is not None:
             rent_benchmark_monthly = float(rega_rent_monthly)
+            rent_strategy = "rega_only"
             rent_source_metadata = {
+                **rent_meta_common,
                 "provider": "REGA (Real Estate General Authority)",
                 "method": "rega_city_rent",
                 "indicator_type": "rent_per_m2",
                 "asset_type": "Residential",
-                "city": req.city,
-                "district": district,
                 "unit": rega_unit or "SAR/m²/month",
                 "benchmark_per_m2_month": float(rega_rent_monthly),
                 "benchmark_per_m2_year": float(rega_rent_monthly) * 12.0,
@@ -532,11 +550,18 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
             }
 
+        rent_debug_metadata = {
+            **rent_meta_common,
+            "rent_strategy": rent_strategy,
+        }
+
         if rent_benchmark_monthly is not None:
             annual_rent = float(rent_benchmark_monthly) * 12.0  # convert to SAR/m²/year
-            rent_rates = {"residential": annual_rent}
+            rent_rates["residential"] = annual_rent
             excel_inputs["rent_sar_m2_yr"] = rent_rates
-            excel_inputs["rent_source_metadata"] = rent_source_metadata
+            if rent_source_metadata is not None:
+                rent_source_metadata["rent_strategy"] = rent_strategy
+                excel_inputs["rent_source_metadata"] = rent_source_metadata
         else:
             # Fallback: use whatever rent_sar_m2_yr was passed in (manual or template)
             excel_inputs["rent_sar_m2_yr"] = rent_rates
@@ -684,6 +709,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                     "rent_sar_m2_yr": excel_inputs.get("rent_sar_m2_yr"),
                     "rent_source_metadata": excel_inputs.get("rent_source_metadata"),
                 },
+                "rent_debug_metadata": rent_debug_metadata,
                 "excel_roi": excel["roi"],
                 "far_inference": {**far_inference_notes, "far_used": float(far_used)},
                 "overture_buildings": {
