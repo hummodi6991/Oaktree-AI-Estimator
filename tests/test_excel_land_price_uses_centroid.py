@@ -88,7 +88,7 @@ def test_excel_land_price_calls_hedonic_with_lon_lat(monkeypatch, client):
             "coordinates": [[[46.675, 24.713], [46.676, 24.713], [46.676, 24.714], [46.675, 24.714], [46.675, 24.713]]],
         },
         "excel_inputs": {
-            "area_ratio": {"residential": 1.6, "basement": 0.5},
+            "area_ratio": {"residential": 1.6, "basement": 1},
             "unit_cost": {"residential": 2200, "basement": 1200},
             "efficiency": {"residential": 0.82},
             "cp_sqm_per_space": {"basement": 30},

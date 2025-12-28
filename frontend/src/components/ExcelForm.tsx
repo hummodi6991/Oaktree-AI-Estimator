@@ -11,7 +11,7 @@ const PROVIDERS = [
 ];
 
 const DEFAULT_EXCEL_INPUTS = {
-  area_ratio: { residential: 1.6, basement: 0.5 },
+  area_ratio: { residential: 1.6, basement: 1 },
   unit_cost: { residential: 2200, basement: 1200 },
   efficiency: { residential: 0.82 },
   cp_sqm_per_space: { basement: 30 },
