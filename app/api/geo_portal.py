@@ -1,5 +1,6 @@
 """Endpoints for parcel queries via external GIS."""
 
+import hashlib
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -7,7 +8,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from shapely.geometry import MultiPolygon, Polygon, shape
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -92,6 +93,43 @@ _IDENTIFY_SQL = text(
     distance_m ASC
   LIMIT 1;
   """
+)
+
+_COLLATE_META_SQL = (
+    text(
+        f"""
+        SELECT
+          id::text AS id,
+          landuse,
+          classification,
+          ST_Area({_PARCEL_GEOM_COLUMN})::bigint AS area_m2
+        FROM {_PARCEL_TABLE}
+        WHERE id::text IN :ids
+        """
+    )
+    .bindparams(bindparam("ids", expanding=True))
+)
+
+_COLLATE_UNION_SQL = (
+    text(
+        f"""
+        WITH sel AS (
+          SELECT {_PARCEL_GEOM_COLUMN} AS geom
+          FROM {_PARCEL_TABLE}
+          WHERE id::text IN :ids
+        ),
+        u AS (
+          SELECT ST_MakeValid(ST_UnaryUnion(ST_Collect(geom))) AS geom
+          FROM sel
+        )
+        SELECT
+          ST_AsGeoJSON(ST_Transform(u.geom, 4326)) AS geom,
+          ST_Area(u.geom)::bigint AS area_m2,
+          ST_Perimeter(u.geom)::bigint AS perimeter_m
+        FROM u;
+        """
+    )
+    .bindparams(bindparam("ids", expanding=True))
 )
 
 # Keep router local to "geo"; main.py mounts routers at "/v1".
@@ -450,6 +488,186 @@ class IdentifyPoint(BaseModel):
     )
 
 
+class CollateParcelsRequest(BaseModel):
+    parcel_ids: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=200,
+        description="Parcel IDs to collate/union into a single site geometry (manual multi-select).",
+    )
+
+
+def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, Any]]:
+    # De-dupe while preserving order
+    ids_raw = [str(pid).strip() for pid in (parcel_ids or []) if str(pid).strip()]
+    seen: set[str] = set()
+    ids: list[str] = []
+    for pid in ids_raw:
+        if pid in seen:
+            continue
+        seen.add(pid)
+        ids.append(pid)
+
+    if not ids:
+        return {
+            "found": False,
+            "source": "postgis",
+            "message": "No parcel_ids provided.",
+            "parcel_ids": [],
+            "missing_ids": [],
+        }
+
+    try:
+        rows = db.execute(_COLLATE_META_SQL, {"ids": ids}).mappings().all()
+    except SQLAlchemyError as exc:
+        logger.warning("PostGIS collate meta query failed: %s", exc)
+        return None
+
+    found_set = {str(r.get("id")) for r in rows if r.get("id") is not None}
+    found_ids: list[str] = [pid for pid in ids if pid in found_set]  # preserve input order
+    missing_ids: list[str] = [pid for pid in ids if pid not in found_set]
+
+    if not rows or not found_ids:
+        return {
+            "found": False,
+            "source": "postgis",
+            "message": "No matching parcels found for provided parcel_ids.",
+            "parcel_ids": [],
+            "missing_ids": ids,
+        }
+
+    # Pick the "dominant" label/classification as the largest parcel by area
+    dominant = max(rows, key=lambda r: int(r.get("area_m2") or 0))
+    landuse_raw = dominant.get("landuse") or ""
+    classification_raw = dominant.get("classification")
+
+    component_area_m2_sum = sum(int(r.get("area_m2") or 0) for r in rows)
+
+    try:
+        urow = db.execute(_COLLATE_UNION_SQL, {"ids": found_ids}).mappings().first()
+    except SQLAlchemyError as exc:
+        logger.warning("PostGIS collate union query failed: %s", exc)
+        return None
+
+    if not urow or not urow.get("geom"):
+        return {
+            "found": False,
+            "source": "postgis",
+            "message": "Union geometry could not be computed.",
+            "parcel_ids": found_ids,
+            "missing_ids": missing_ids,
+        }
+
+    geom_val = urow.get("geom")
+    geometry: dict | None = None
+    if isinstance(geom_val, str):
+        try:
+            geometry = json.loads(geom_val)
+        except Exception:
+            geometry = None
+    elif isinstance(geom_val, dict):
+        geometry = geom_val
+
+    if not geometry:
+        return {
+            "found": False,
+            "source": "postgis",
+            "message": "Union geometry could not be parsed.",
+            "parcel_ids": found_ids,
+            "missing_ids": missing_ids,
+        }
+
+    # Reuse same landuse selection logic as /identify
+    label_code = _landuse_code_from_label(str(landuse_raw))
+    label_is_signal = _label_is_signal(str(landuse_raw), label_code)
+
+    ovt_attr_code: str | None = None
+    ovt_attr_conf = 0.0
+    # Only attempt overture building attribute lookup when it's a single Overture "parcel"
+    if classification_raw == "overture_building" and len(found_ids) == 1:
+        parcel_id = found_ids[0]
+        ovt_id = parcel_id[4:] if parcel_id.startswith("ovt:") else parcel_id
+        try:
+            record = (
+                db.execute(
+                    text("SELECT subtype, class FROM overture_buildings WHERE id=:id"),
+                    {"id": ovt_id},
+                )
+                .mappings()
+                .first()
+            )
+        except Exception as exc:
+            logger.warning("Overture building attribute lookup failed: %s", exc)
+            record = None
+
+        if record:
+            ovt_attr_code = _landuse_code_from_label(str(record.get("subtype") or ""))
+            if not ovt_attr_code:
+                ovt_attr_code = _landuse_code_from_label(str(record.get("class") or ""))
+            if ovt_attr_code:
+                landuse_raw = record.get("subtype") or record.get("class") or landuse_raw
+                ovt_attr_conf = 0.90
+
+    osm_code, osm_res, osm_com, osm_conf = _osm_fallback_code(geometry, db)
+    ovt_code, ovt_res, ovt_com, ovt_conf = _ovt_overlay_code(geometry, db)
+
+    landuse_code, landuse_method = _pick_landuse(
+        label_code,
+        label_is_signal,
+        ovt_attr_code,
+        ovt_attr_conf,
+        osm_code,
+        osm_res,
+        osm_com,
+        osm_conf,
+        ovt_code,
+        ovt_conf,
+    )
+
+    residential_share = None
+    commercial_share = None
+    if landuse_method == "osm_overlay":
+        residential_share = osm_res
+        commercial_share = osm_com
+    elif landuse_method == "overture_overlay":
+        residential_share = ovt_res
+        commercial_share = ovt_com
+
+    # Stable (deterministic) collated id for UX/caching
+    collated_id = hashlib.sha1("|".join(sorted(found_ids)).encode("utf-8")).hexdigest()[:12]
+
+    parcel = {
+        "parcel_id": f"collated:{collated_id}",
+        "geometry": geometry,
+        "area_m2": urow.get("area_m2"),
+        "perimeter_m": urow.get("perimeter_m"),
+        "landuse_raw": landuse_raw,
+        "classification_raw": classification_raw,
+        "landuse_code": landuse_code,
+        "landuse_method": landuse_method,
+        "residential_share": residential_share,
+        "commercial_share": commercial_share,
+        "residential_share_osm": osm_res,
+        "commercial_share_osm": osm_com,
+        "residential_share_ovt": ovt_res,
+        "commercial_share_ovt": ovt_com,
+        "ovt_attr_conf": ovt_attr_conf,
+        "osm_conf": osm_conf,
+        "ovt_conf": ovt_conf,
+        "source_url": f"postgis/{_PARCEL_TABLE}",
+        "component_count": len(found_ids),
+        "component_area_m2_sum": component_area_m2_sum,
+    }
+
+    return {
+        "found": True,
+        "source": "postgis",
+        "parcel_ids": found_ids,
+        "missing_ids": missing_ids,
+        "parcel": parcel,
+    }
+
+
 def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Optional[Dict[str, Any]]:
     params = {"lng": lng, "lat": lat, "srid": _TARGET_SRID, "tol_m": tol_m}
     try:
@@ -597,7 +815,26 @@ def identify_post(pt: IdentifyPoint, db: Session = Depends(get_db)):
         # If PostGIS is misconfigured, return an explicit server error
         raise HTTPException(
             status_code=500,
-            detail="PostGIS identify unavailable (check parcels table & SRID)",
+            detail="PostGIS identify unavailable (check parcels table, geom column, and SRID config).",
+        )
+    return postgis_result
+
+
+@router.post(
+    "/collate",
+    summary="Union multiple parcels into a single site geometry",
+    description="Takes manually multi-selected parcel IDs and returns a single unioned GeoJSON geometry + area/perimeter + landuse classification.",
+)
+def collate_parcels(req: CollateParcelsRequest, db: Session = Depends(get_db)):
+    ids = req.parcel_ids or []
+    if len(ids) > 200:
+        raise HTTPException(status_code=400, detail="Too many parcel_ids (max 200).")
+
+    postgis_result = _collate_postgis(ids, db)
+    if postgis_result is None:
+        raise HTTPException(
+            status_code=500,
+            detail="PostGIS collate unavailable (check parcels table, geom column, and SRID config).",
         )
     return postgis_result
 
@@ -614,7 +851,7 @@ def identify_get(
     if postgis_result is None:
         raise HTTPException(
             status_code=500,
-            detail="PostGIS identify unavailable (check parcels table & SRID)",
+            detail="PostGIS identify unavailable (check parcels table, geom column, and SRID config).",
         )
     return postgis_result
 
