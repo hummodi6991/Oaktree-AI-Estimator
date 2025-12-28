@@ -47,6 +47,15 @@ export type ParcelSummary = {
   landuse_method?: string | null;
   residential_share?: number | null;
   commercial_share?: number | null;
+  residential_share_osm?: number | null;
+  commercial_share_osm?: number | null;
+  residential_share_ovt?: number | null;
+  commercial_share_ovt?: number | null;
+  ovt_attr_conf?: number | null;
+  osm_conf?: number | null;
+  ovt_conf?: number | null;
+  component_count?: number | null;
+  component_area_m2_sum?: number | null;
   source_url?: string | null;
 };
 
@@ -58,6 +67,15 @@ export type IdentifyResponse = {
   parcel?: ParcelSummary | null;
 };
 
+export type CollateResponse = {
+  found: boolean;
+  source?: string;
+  message?: string;
+  parcel_ids?: string[];
+  missing_ids?: string[];
+  parcel?: ParcelSummary | null;
+};
+
 export async function identify(lng: number, lat: number) {
   const res = await fetch(withBase("/v1/geo/identify"), {
     method: "POST",
@@ -65,6 +83,15 @@ export async function identify(lng: number, lat: number) {
     body: JSON.stringify({ lng, lat }),
   });
   return readJson<IdentifyResponse>(res);
+}
+
+export async function collateParcels(parcelIds: string[]) {
+  const res = await fetch(withBase("/v1/geo/collate"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ parcel_ids: parcelIds }),
+  });
+  return readJson<CollateResponse>(res);
 }
 
 export async function landPrice(

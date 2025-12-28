@@ -1,15 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import proj4 from "proj4";
-import type { FeatureCollection, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from "geojson";
+import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from "geojson";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { buildApiUrl, identify } from "../api";
-import type { IdentifyResponse, ParcelSummary } from "../api";
+import { buildApiUrl, collateParcels, identify } from "../api";
+import type { CollateResponse, IdentifyResponse, ParcelSummary } from "../api";
 
 type MapProps = {
-  onParcel: (parcel: ParcelSummary) => void;
+  onParcel: (parcel: ParcelSummary | null) => void;
 };
 
 const NOT_FOUND_HINT =
@@ -51,6 +51,18 @@ function geometryAlreadyWgs84(geometry: Geometry) {
     return first ? isLikelyWgs84(first) : false;
   }
   return false;
+}
+
+function featureFromParcel(parcel: ParcelSummary): Feature<Geometry> | null {
+  const geometry = parcel.geometry as Geometry | null | undefined;
+  if (!geometry) return null;
+  return {
+    type: "Feature",
+    geometry,
+    properties: {
+      id: parcel.parcel_id || undefined,
+    },
+  };
 }
 
 function transformGeometryToWgs84(geometry?: Geometry | null): Geometry | null {
@@ -198,14 +210,32 @@ function ensureParcelOverlay(map: maplibregl.Map) {
 
 export default function Map({ onParcel }: MapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
   const [status, setStatus] = useState<string | null>(
     "انقر على الخريطة لتحديد قطعة أرض.",
   );
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedParcelIds, setSelectedParcelIds] = useState<string[]>([]);
+  const [selectedParcelsGeojson, setSelectedParcelsGeojson] = useState<
+    FeatureCollection<Geometry, GeoJsonProperties>
+  >({ type: "FeatureCollection", features: [] });
+  const [collateStatus, setCollateStatus] = useState<string | null>(null);
+  const [collating, setCollating] = useState(false);
   const onParcelRef = useRef(onParcel);
+  const multiSelectModeRef = useRef(multiSelectMode);
+  const selectedParcelIdsRef = useRef(selectedParcelIds);
 
   useEffect(() => {
     onParcelRef.current = onParcel;
   }, [onParcel]);
+
+  useEffect(() => {
+    multiSelectModeRef.current = multiSelectMode;
+  }, [multiSelectMode]);
+
+  useEffect(() => {
+    selectedParcelIdsRef.current = selectedParcelIds;
+  }, [selectedParcelIds]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -216,6 +246,7 @@ export default function Map({ onParcel }: MapProps) {
       center: [46.675, 24.713],
       zoom: 15,
     });
+    mapRef.current = map;
 
     let disposed = false;
 
@@ -233,6 +264,7 @@ export default function Map({ onParcel }: MapProps) {
 
     map.on("click", async (e) => {
       setStatus("جارٍ التحقق من القطعة…");
+      setCollateStatus(null);
       try {
         const data: IdentifyResponse = await identify(e.lngLat.lng, e.lngLat.lat);
         if (disposed) return;
@@ -254,26 +286,52 @@ export default function Map({ onParcel }: MapProps) {
           return;
         }
 
-        const featureCollection: FeatureCollection<Geometry, GeoJsonProperties> = {
-          type: "FeatureCollection",
-          features: [
-            {
-              type: "Feature",
-              geometry: geometry as Geometry,
-              properties: {},
-            },
-          ],
-        };
+        if (multiSelectModeRef.current) {
+          if (!nextParcel.parcel_id) {
+            setStatus("لا يمكن إضافة القطعة بدون معرف إلى التحديد المتعدد.");
+            return;
+          }
+          setSelectedParcelsGeojson((current) => {
+            const currentIds = selectedParcelIdsRef.current;
+            const alreadySelected = currentIds.includes(nextParcel.parcel_id as string);
+            const nextIds = alreadySelected
+              ? currentIds.filter((id) => id !== nextParcel.parcel_id)
+              : [...currentIds, nextParcel.parcel_id as string];
+            setSelectedParcelIds(nextIds);
 
-        ensureSelectionLayers(map);
-        (map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource).setData(
-          featureCollection,
-        );
+            if (alreadySelected) {
+              setStatus(`تمت إزالة القطعة ${nextParcel.parcel_id} من التحديد.`);
+              return {
+                type: "FeatureCollection",
+                features: current.features.filter(
+                  (f) => (f.properties as any)?.id !== nextParcel.parcel_id,
+                ),
+              };
+            }
 
-        if (parcel.parcel_id) {
-          setStatus(`تم تحديد القطعة ${parcel.parcel_id}.`);
+            const nextFeature = featureFromParcel(nextParcel);
+            setStatus(`تمت إضافة القطعة ${nextParcel.parcel_id} إلى التحديد (${nextIds.length}).`);
+            if (!nextFeature) {
+              return current;
+            }
+            return {
+              type: "FeatureCollection",
+              features: [...current.features, nextFeature],
+            };
+          });
         } else {
-          setStatus("تم تحديد القطعة.");
+          const nextFeature = featureFromParcel(nextParcel);
+          setSelectedParcelIds(nextParcel.parcel_id ? [nextParcel.parcel_id] : []);
+          setSelectedParcelsGeojson(
+            nextFeature
+              ? { type: "FeatureCollection", features: [nextFeature] }
+              : { type: "FeatureCollection", features: [] },
+          );
+          if (parcel.parcel_id) {
+            setStatus(`تم تحديد القطعة ${parcel.parcel_id}.`);
+          } else {
+            setStatus("تم تحديد القطعة.");
+          }
         }
       } catch (err) {
         if (disposed) return;
@@ -284,9 +342,60 @@ export default function Map({ onParcel }: MapProps) {
 
     return () => {
       disposed = true;
+      mapRef.current = null;
       map.remove();
     };
   }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    if (source) {
+      source.setData(selectedParcelsGeojson);
+    }
+  }, [selectedParcelsGeojson]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+    source?.setData(selectedParcelsGeojson);
+  }, [multiSelectMode, selectedParcelsGeojson]);
+
+  const handleClearSelection = () => {
+    setSelectedParcelIds([]);
+    setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
+    onParcelRef.current(null);
+    setStatus("تم مسح التحديد.");
+    setCollateStatus(null);
+  };
+
+  const handleCollate = async () => {
+    if (selectedParcelIds.length < 2) return;
+    setCollating(true);
+    setCollateStatus("جارٍ دمج القطع المحددة…");
+    try {
+      const res: CollateResponse = await collateParcels(selectedParcelIds);
+      if (!res?.found || !res.parcel || !res.parcel.geometry) {
+        setCollateStatus(res?.message || "تعذر دمج القطع المحددة.");
+        return;
+      }
+      const geometry = transformGeometryToWgs84(res.parcel.geometry as Geometry | null);
+      const mergedParcel = geometry ? { ...res.parcel, geometry } : res.parcel;
+      onParcelRef.current(mergedParcel);
+      setStatus("تم تطبيق الموقع المدمج كحدود الموقع.");
+      setCollateStatus("تم الدمج بنجاح.");
+      // Optionally clear selection after successful collate
+      setSelectedParcelIds([]);
+      setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error || "تعذر دمج القطع المحددة.");
+      setCollateStatus(message);
+    } finally {
+      setCollating(false);
+    }
+  };
 
   return (
     <div>
@@ -315,6 +424,60 @@ export default function Map({ onParcel }: MapProps) {
           }}
         >
           {status}
+        </div>
+      )}
+      <div
+        style={{
+          marginTop: 12,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 10,
+          alignItems: "center",
+        }}
+      >
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={multiSelectMode}
+            onChange={(event) => {
+              setMultiSelectMode(event.target.checked);
+              setCollateStatus(null);
+              if (!event.target.checked && selectedParcelIds.length > 1) {
+                // When leaving multi-select, keep only the most recent selection if available
+                const lastId = selectedParcelIds[selectedParcelIds.length - 1];
+                const lastFeature = selectedParcelsGeojson.features.find(
+                  (f) => (f.properties as any)?.id === lastId,
+                );
+                setSelectedParcelIds(lastId ? [lastId] : []);
+                setSelectedParcelsGeojson(
+                  lastFeature
+                    ? { type: "FeatureCollection", features: [lastFeature] }
+                    : { type: "FeatureCollection", features: [] },
+                );
+              }
+            }}
+          />
+          <span>تحديد متعدد للقطع</span>
+        </label>
+        <button type="button" onClick={handleClearSelection} disabled={!selectedParcelIds.length}>
+          مسح التحديد
+        </button>
+        <button
+          type="button"
+          onClick={handleCollate}
+          disabled={selectedParcelIds.length < 2 || collating}
+        >
+          {collating ? "جارٍ الدمج…" : "دمج القطع"}
+        </button>
+        <span style={{ fontSize: "0.9rem", color: "#475467" }}>
+          {selectedParcelIds.length
+            ? `القطع المحددة: ${selectedParcelIds.join(", ")}`
+            : "لم يتم تحديد أي قطع بعد."}
+        </span>
+      </div>
+      {collateStatus && (
+        <div style={{ marginTop: 8, color: "#475467", fontSize: "0.95rem" }}>
+          {collateStatus}
         </div>
       )}
     </div>
