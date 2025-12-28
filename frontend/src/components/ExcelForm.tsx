@@ -221,8 +221,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     (siteArea && siteArea > 0 && landCost != null && landCost > 0
       ? landCost / siteArea
       : null);
-  const fitoutArea = Object.entries(builtArea).reduce(
-    (acc, [key, value]) => {
+  const fitoutEntries = Object.entries(builtArea ?? {}) as Array<[string, number | string]>;
+  const fitoutArea = fitoutEntries.reduce(
+    (acc: number, [key, value]) => {
       const numericValue = typeof value === "number" ? value : Number(value) || 0;
       return key.toLowerCase().startsWith("basement") ? acc : acc + numericValue;
     },
@@ -231,7 +232,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const constructionSubtotal = typeof breakdown.sub_total === "number" ? breakdown.sub_total : 0;
   const contingencyAmount = typeof breakdown.contingency_cost === "number" ? breakdown.contingency_cost : 0;
   const consultantsBase = constructionSubtotal + contingencyAmount;
-  const constructionDirectTotal = Object.values(directCost).reduce((acc, value) => {
+  const constructionDirectValues = Object.values(directCost ?? {}) as Array<number | string>;
+  const constructionDirectTotal = constructionDirectValues.reduce((acc: number, value) => {
     const numericValue = typeof value === "number" ? value : Number(value) || 0;
     return acc + numericValue;
   }, 0);
@@ -268,7 +270,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const contingencyNote =
     explanations.contingency ||
-    `Contingency calculated as ${formatPercent(contingencyPct)} × (construction direct cost ${constructionDirectTotal.toLocaleString()} SAR + fit-out ${fitoutTotal.toLocaleString()} SAR). This applies to total hard construction scope including above-ground fit-out.`;
+    `Contingency is calculated as ${formatPercent(contingencyPct)} × (construction direct cost + fit-out cost). For this estimate: ${formatPercent(contingencyPct)} × (${constructionDirectTotal.toLocaleString()} SAR + ${fitoutTotal.toLocaleString()} SAR). This applies to total hard construction scope including above-ground fit-out.`;
 
   const consultantsNote =
     explanations.consultants ||
