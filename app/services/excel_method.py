@@ -42,14 +42,14 @@ def _is_placeholder_area_ratio(ar: Any) -> bool:
     # Legacy placeholder: 2.7 everywhere
     if all(abs(v - 2.7) < 1e-6 for v in positive.values()):
         return True
-    # Current residential template placeholder: residential 1.6 + basement 0.5
+    # Current residential template placeholder: residential 1.6 + basement 1.0
     r = positive.get("residential")
     b = positive.get("basement")
     if (
         r is not None
         and b is not None
         and abs(r - 1.6) < 1e-6
-        and abs(b - 0.5) < 1e-6
+        and abs(b - 1.0) < 1e-6
         and len(positive) <= 2
     ):
         return True
