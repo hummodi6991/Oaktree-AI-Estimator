@@ -208,8 +208,10 @@ def build_excel_explanations(
     contingency_pct = float(inputs.get("contingency_pct") or 0.0)
     contingency_cost = float(breakdown.get("contingency_cost", 0.0) or 0.0)
     explanations["contingency"] = (
-        f"{contingency_pct * 100:.1f}% × {_fmt_amount(sub_total)} SAR = {_fmt_amount(contingency_cost)} SAR. "
-        "Allowance for design development and execution risk."
+        f"{contingency_pct * 100:.1f}% × (construction direct cost {_fmt_amount(direct_total)} SAR + "
+        f"fit-out {_fmt_amount(fitout_cost)} SAR) = {_fmt_amount(contingency_cost)} SAR. "
+        "This applies contingency to total hard construction scope, including above-ground fit-out, as an allowance "
+        "for design development and execution risk."
     )
 
     consultants_pct = float(inputs.get("consultants_pct") or 0.0)

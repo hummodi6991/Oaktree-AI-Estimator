@@ -231,6 +231,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const constructionSubtotal = typeof breakdown.sub_total === "number" ? breakdown.sub_total : 0;
   const contingencyAmount = typeof breakdown.contingency_cost === "number" ? breakdown.contingency_cost : 0;
   const consultantsBase = constructionSubtotal + contingencyAmount;
+  const constructionDirectTotal = Object.values(directCost).reduce((acc, value) => {
+    const numericValue = typeof value === "number" ? value : Number(value) || 0;
+    return acc + numericValue;
+  }, 0);
+  const fitoutTotalFromBreakdown = typeof breakdown.fitout_cost === "number" ? breakdown.fitout_cost : null;
+  const fitoutTotal =
+    fitoutTotalFromBreakdown ?? (typeof excelResult?.costs?.fitout_cost === "number" ? excelResult.costs.fitout_cost : 0);
 
   const formatArea = (value: number | null | undefined) => {
     if (value == null || Number.isNaN(Number(value))) return "";
@@ -261,7 +268,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const contingencyNote =
     explanations.contingency ||
-    `Subtotal ${constructionSubtotal.toLocaleString()} SAR × contingency ${formatPercent(contingencyPct)}`;
+    `Contingency calculated as ${formatPercent(contingencyPct)} × (construction direct cost ${constructionDirectTotal.toLocaleString()} SAR + fit-out ${fitoutTotal.toLocaleString()} SAR). This applies to total hard construction scope including above-ground fit-out.`;
 
   const consultantsNote =
     explanations.consultants ||
