@@ -210,6 +210,58 @@ class EstimateRequest(BaseModel):
         }
     )
 
+
+def _infer_landuse_code_from_excel_inputs(excel_inputs: dict | None) -> str | None:
+    """
+    Best-effort land-use inference for FAR caps.
+    We prefer explicit fields if the frontend provides them, otherwise infer from area_ratio keys.
+    """
+    if not isinstance(excel_inputs, dict):
+        return None
+
+    # 1) Explicit override fields (if frontend passes them)
+    for k in ("land_use_code", "landuse_code", "land_use", "landuse"):
+        v = excel_inputs.get(k)
+        if v is None:
+            continue
+        s = str(v).strip().lower()
+        if s in {"s", "m", "c"}:
+            return s
+        # common labels
+        if s in {"residential", "housing"}:
+            return "s"
+        if s in {"mixed", "mixed-use", "mixed_use"}:
+            return "m"
+        if s in {"commercial", "retail", "office"}:
+            return "c"
+
+    # 2) Infer from area_ratio keys (template-driven)
+    ar = excel_inputs.get("area_ratio")
+    if not isinstance(ar, dict) or not ar:
+        return None
+
+    keys = {str(k).strip().lower() for k in ar.keys()}
+
+    # Heuristic buckets
+    has_res = any("res" in k or k == "residential" for k in keys)
+    has_com = any(
+        ("com" in k)
+        or ("retail" in k)
+        or ("office" in k)
+        or ("shop" in k)
+        or ("commercial" in k)
+        for k in keys
+    )
+
+    if has_res and has_com:
+        return "m"
+    if has_com:
+        return "c"
+    if has_res:
+        return "s"
+    return None
+
+
 @router.post("/estimates", response_model=EstimateResponseModel)
 def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> EstimateResponseModel:
     # Geometry → area
@@ -318,6 +370,24 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     else:
         suggested_far = req.far
 
+    # --- NEW: cap inferred FAR by land-use class to avoid absurd outliers (e.g., FAR=30) ---
+    landuse_for_cap = _infer_landuse_code_from_excel_inputs(
+        dict(req.excel_inputs) if isinstance(req.excel_inputs, dict) else None
+    )
+    far_cap_meta: dict[str, Any] | None = None
+    if not far_explicit:
+        # Only cap non-explicit FAR (i.e., inferred from Overture/rules)
+        capped, meta = far_rules.cap_far_by_landuse(
+            float(suggested_far) if suggested_far is not None else None,
+            landuse_for_cap,
+        )
+        far_cap_meta = meta
+        if capped is not None:
+            # Keep source_label intact; this is a post-processing safety clamp
+            suggested_far = capped
+    else:
+        far_cap_meta = {"applied": False, "reason": "explicit_far"}
+
     method = "default_far"
     source_label = None
     if far_explicit:
@@ -347,6 +417,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         "typical_far_proxy": float(typical_far_proxy or 0.0) if typical_far_proxy is not None else None,
         "district": district_norm or district,
         "explicit_far": far_explicit,
+        "far_cap": far_cap_meta,
     }
 
     def _finalize_result(
@@ -776,6 +847,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "rent_debug_metadata": rent_debug_metadata,
                 "excel_roi": excel["roi"],
                 "far_inference": {**far_inference_notes, "far_used": float(far_used)},
+                "landuse_for_far_cap": landuse_for_cap,
                 "overture_buildings": {
                     "site_metrics": overture_site_metrics,
                     "context_metrics": overture_context_metrics,

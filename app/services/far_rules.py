@@ -52,3 +52,61 @@ def lookup_far(
 
     row = q.first()
     return float(row.far_max) if row and row.far_max is not None else None
+
+
+def cap_far_by_landuse(
+    far_value: float | None,
+    landuse_code: str | None,
+    *,
+    caps: dict[str, float] | None = None,
+) -> tuple[float | None, dict]:
+    """
+    Clamp inferred FAR to a reasonable maximum based on land-use class.
+
+    landuse_code:
+      - 's' = residential
+      - 'm' = mixed-use
+      - 'c' = commercial (optional; UI sometimes uses 'm' only)
+
+    Returns (clamped_far, meta) where meta includes whether a clamp occurred.
+    """
+    if far_value is None:
+        return None, {"applied": False, "reason": "far_none"}
+    try:
+        far_f = float(far_value)
+    except Exception:
+        return far_value, {"applied": False, "reason": "far_not_float"}
+    if far_f <= 0:
+        return far_value, {"applied": False, "reason": "far_nonpositive"}
+
+    # Defaults tuned to avoid absurd "observed density" outliers from Overture.
+    # You can refine these caps later using official zoning data.
+    default_caps = {"s": 4.0, "m": 6.0, "c": 10.0}
+    cap_map = dict(default_caps)
+    if isinstance(caps, dict):
+        for k, v in caps.items():
+            try:
+                cap_map[str(k).strip().lower()] = float(v)
+            except Exception:
+                continue
+
+    code = (landuse_code or "").strip().lower()
+    if code not in cap_map:
+        # Unknown / missing: choose a conservative mixed cap
+        code = "m"
+
+    cap_val = float(cap_map[code])
+    if far_f > cap_val:
+        return cap_val, {
+            "applied": True,
+            "landuse_code": code,
+            "cap": cap_val,
+            "original": far_f,
+        }
+
+    return far_f, {
+        "applied": False,
+        "landuse_code": code,
+        "cap": cap_val,
+        "original": far_f,
+    }
