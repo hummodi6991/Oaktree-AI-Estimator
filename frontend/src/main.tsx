@@ -28,6 +28,12 @@ function App() {
         }}
       />
       <div style={{ padding: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, color: "var(--sand-200)", marginBottom: 10 }}>
+          {!parcel && <em>Click a parcel on the map to begin…</em>}
+          <span style={{ fontSize: "0.95rem", color: "rgba(247, 241, 230, 0.85)" }}>
+            <strong>Tip:</strong> Some parcel outlines appear only when you zoom in. If parcels look missing, zoom closer to reveal the blue parcel boundaries.
+          </span>
+        </div>
         {parcel ? (
           <>
             <div>
@@ -53,14 +59,7 @@ function App() {
             </div>
             <ExcelForm parcel={parcel} landUseOverride={landUseOverride.trim() || undefined} />
           </>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, color: "var(--sand-200)" }}>
-            <em>Click a parcel on the map to begin…</em>
-            <span style={{ fontSize: "0.95rem", color: "rgba(247, 241, 230, 0.85)" }}>
-              <strong>Tip:</strong> Some parcel outlines appear only when you zoom in. If parcels look missing, zoom closer to reveal the blue parcel boundaries.
-            </span>
-          </div>
-        )}
+        ) : null}
       </div>
     </>
   );
