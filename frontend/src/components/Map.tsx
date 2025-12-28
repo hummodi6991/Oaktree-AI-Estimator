@@ -386,9 +386,13 @@ export default function Map({ onParcel }: MapProps) {
       onParcelRef.current(mergedParcel);
       setStatus("تم تطبيق الموقع المدمج كحدود الموقع.");
       setCollateStatus("تم الدمج بنجاح.");
-      // Optionally clear selection after successful collate
-      setSelectedParcelIds([]);
-      setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
+      const mergedFeature = featureFromParcel(mergedParcel);
+      setSelectedParcelIds(mergedParcel.parcel_id ? [mergedParcel.parcel_id] : []);
+      setSelectedParcelsGeojson(
+        mergedFeature
+          ? { type: "FeatureCollection", features: [mergedFeature] }
+          : { type: "FeatureCollection", features: [] },
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error || "تعذر دمج القطع المحددة.");
       setCollateStatus(message);
