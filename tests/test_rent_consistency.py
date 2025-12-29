@@ -108,7 +108,11 @@ def test_kaggle_district_inference_differs(monkeypatch, client):
 
     monkeypatch.setattr(estimates_api, "infer_district_from_kaggle", _infer)
     monkeypatch.setattr(estimates_api, "latest_re_price_index_scalar", lambda *args, **kwargs: 1.0)
-    monkeypatch.setattr(estimates_api, "aqar_rent_median", lambda *args, **kwargs: (100.0, 90.0, 5, 12))
+    monkeypatch.setattr(
+        estimates_api,
+        "aqar_rent_median",
+        lambda *args, **kwargs: estimates_api.RentMedianResult(100.0, 90.0, 5, 12, 90.0, 12, "district", 100.0, 5),
+    )
     monkeypatch.setattr(estimates_api, "latest_rega_residential_rent_per_m2", lambda *args, **kwargs: None)
 
     base_payload = _payload()
@@ -229,12 +233,14 @@ def test_rent_differs_by_district(monkeypatch, client, db_session):
     assert rent_alpha == pytest.approx(1200.0)
     assert rent_beta == pytest.approx(2400.0)
     assert rent_alpha != rent_beta
-    assert meta_alpha["rent_strategy"] == "aqar_district_median"
-    assert meta_beta["rent_strategy"] == "aqar_district_median"
+    assert meta_alpha["rent_strategy"] in ("aqar_district_median", "component_aqar_median")
+    assert meta_beta["rent_strategy"] in ("aqar_district_median", "component_aqar_median")
     assert meta_alpha["district_normalized_used"] == "alpha"
     assert meta_beta["district_normalized_used"] == "beta"
     assert meta_alpha["aqar_district_samples"] > 0
     assert meta_beta["aqar_district_samples"] > 0
+    assert meta_alpha["aqar_components"]["residential"]["method"] == "aqar_district_median"
+    assert meta_beta["aqar_components"]["residential"]["method"] == "aqar_district_median"
 
 
 def test_rent_scalar_and_applied_rent_logging(monkeypatch, client):
@@ -247,7 +253,7 @@ def test_rent_scalar_and_applied_rent_logging(monkeypatch, client):
     monkeypatch.setattr(
         estimates_api,
         "aqar_rent_median",
-        lambda *args, **kwargs: (110.0, 90.0, 12, 12),
+        lambda *args, **kwargs: estimates_api.RentMedianResult(110.0, 90.0, 12, 12, 90.0, 12, "district", 110.0, 12),
     )
     monkeypatch.setattr(
         estimates_api,
@@ -280,3 +286,78 @@ def test_rent_scalar_and_applied_rent_logging(monkeypatch, client):
     assert rent_debug["district_raw_inferred"] == "Alpha"
     assert rent_debug["rent_applied_sar_m2_yr"]["residential"] == pytest.approx(rent_applied)
     assert "Alpha" in rent_debug["district_raw_inferred"]
+
+
+def test_multi_component_aqar_rents(monkeypatch, client, db_session):
+    # Seed district-level comps for retail and office to hit the district median path
+    today = date.today()
+    for idx in range(30):
+        db_session.add(
+            RentComp(
+                id=f"retail_{idx}",
+                date=today,
+                city="riyadh",
+                district="alpha",
+                asset_type="commercial",
+                unit_type="retail",
+                lease_term_months=12,
+                rent_per_unit=0,
+                rent_per_m2=400,
+                source="kaggle_aqar",
+                source_url=None,
+                asof_date=today,
+            )
+        )
+        db_session.add(
+            RentComp(
+                id=f"office_{idx}",
+                date=today,
+                city="riyadh",
+                district="alpha",
+                asset_type="commercial",
+                unit_type="office",
+                lease_term_months=12,
+                rent_per_unit=0,
+                rent_per_m2=300,
+                source="kaggle_aqar",
+                source_url=None,
+                asof_date=today,
+            )
+        )
+    db_session.commit()
+
+    monkeypatch.setattr(
+        estimates_api,
+        "infer_district_from_kaggle",
+        lambda *args, **kwargs: {
+            "district_raw": "Alpha",
+            "district_normalized": "alpha",
+            "method": "kaggle_nearest_listing",
+            "distance_m": 10.0,
+            "evidence_count": 2,
+            "confidence": 0.9,
+        },
+    )
+    monkeypatch.setattr(estimates_api, "latest_re_price_index_scalar", lambda *args, **kwargs: 1.0)
+    monkeypatch.setattr(estimates_api, "latest_rega_residential_rent_per_m2", lambda *args, **kwargs: None)
+
+    payload = _payload()
+    excel_inputs = payload["excel_inputs"]
+    excel_inputs["area_ratio"].update({"retail": 0.4, "office": 0.6})
+    excel_inputs["efficiency"].update({"retail": 0.9, "office": 0.85})
+    excel_inputs["rent_sar_m2_yr"].update({"retail": 3500, "office": 3000})
+
+    response = client.post("/v1/estimates", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+
+    rent_rates = body["notes"]["excel_rent"]["rent_sar_m2_yr"]
+    assert rent_rates["retail"] == pytest.approx(400 * 12)
+    assert rent_rates["office"] == pytest.approx(300 * 12)
+    assert rent_rates["retail"] != rent_rates["office"]
+
+    rent_meta = body["notes"]["excel_rent"]["rent_source_metadata"]["components"]
+    assert rent_meta["retail"]["method"] == "aqar_district_median"
+    assert rent_meta["office"]["method"] == "aqar_district_median"
+    assert rent_meta["retail"]["sample_count"] == 30
+    assert rent_meta["office"]["sample_count"] == 30

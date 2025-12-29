@@ -9,7 +9,8 @@ from app.db.session import SessionLocal
 from app.ml.name_normalization import norm_city, norm_district
 from app.models.tables import RentComp
 
-SOURCE = "kaggle_aqar_rent"
+SOURCE = "kaggle_aqar"
+LEGACY_SOURCES = ("kaggle_aqar_rent", "kaggle_aqar")
 
 # Conservative rent keywords for heuristics when the dataset lacks an explicit rent/sale flag
 _RENT_PATTERNS = ("rent", "for rent", "lease", "إيجار", "ايجار", "استئجار", "للإيجار", "لللايجار")
@@ -54,21 +55,24 @@ def _looks_like_rent(row: Dict[str, Any], rent_flag_cols: Set[str]) -> bool:
     return _has_pattern(text_blob, _RENT_PATTERNS)
 
 
-def _asset_and_unit(property_type: str) -> tuple[str, str | None]:
-    pt = (property_type or "").lower()
-    if any(k in pt for k in ["apartment", "flat", "شقة"]):
-        return "residential", "apartment"
-    if any(k in pt for k in ["villa", "house", "بيت"]):
-        return "residential", "villa"
-    if any(k in pt for k in ["office", "retail", "shop", "store", "commercial", "مكتب", "تجاري"]):
-        return "commercial", None
-    return "residential", None
+def _asset_and_unit(text_blob: str) -> tuple[str, str | None]:
+    txt = (text_blob or "").lower()
+    if any(keyword in txt for keyword in ["مكتب", "office"]):
+        return "commercial", "office"
+    if any(keyword in txt for keyword in ["محل", "تجاري", "shop", "retail", "store"]):
+        return "commercial", "retail"
+    if any(keyword in txt for keyword in ["شقة", "فيلا", "دور", "apartment", "villa"]):
+        return "residential", None
+    return "commercial", None
 
 
 def main() -> None:
     db = SessionLocal()
     try:
-        db.execute(text("DELETE FROM rent_comp WHERE source = :src"), {"src": SOURCE})
+        db.execute(
+            text("DELETE FROM rent_comp WHERE source = :src OR source = :legacy_src"),
+            {"src": SOURCE, "legacy_src": LEGACY_SOURCES[0]},
+        )
         db.commit()
 
         available_cols = _available_columns(db)
@@ -109,7 +113,10 @@ def main() -> None:
             district_raw = r.get("district") or ""
             city_norm = norm_city(city_raw) or "riyadh"
             district_norm = norm_district(city_norm, district_raw) or None
-            asset_type, unit_type = _asset_and_unit(r.get("property_type") or "")
+            text_blob = " ".join(
+                str(r.get(col) or "") for col in ("property_type", "title", "description")
+            )
+            asset_type, unit_type = _asset_and_unit(text_blob)
 
             comp = RentComp(
                 id=f"{SOURCE}_{idx}",
