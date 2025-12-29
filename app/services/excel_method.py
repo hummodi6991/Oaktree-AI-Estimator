@@ -116,6 +116,108 @@ def scale_placeholder_area_ratio(
     return result
 
 
+def _is_basement_area_ratio_key(key: str) -> bool:
+    """True if this `area_ratio` key represents below-grade area (not scaled by above-ground floors)."""
+    k = (key or "").strip().lower()
+    return ("basement" in k) or ("underground" in k) or ("below" in k)
+
+
+def scale_area_ratio_by_floors(
+    inputs: Dict[str, Any],
+    *,
+    desired_floors_above_ground: float | int | str | None,
+    baseline_floors_above_ground: float | int | str | None,
+    desired_floors_source: str | None = None,
+    baseline_floors_source: str | None = None,
+) -> Dict[str, Any]:
+    """
+    Option B — Use floors (stories) to scale `area_ratio`.
+
+    We treat the *current* above-ground `area_ratio` values as representing a baseline FAR at
+    `baseline_floors_above_ground`. To reflect a different allowed floors count, we scale all
+    above-ground area_ratio entries by:
+
+        factor = desired_floors_above_ground / baseline_floors_above_ground
+
+    Basement / underground ratios are left unchanged.
+    """
+    if desired_floors_above_ground is None or baseline_floors_above_ground is None:
+        return inputs
+
+    try:
+        desired = float(desired_floors_above_ground)
+        baseline = float(baseline_floors_above_ground)
+    except Exception:
+        return inputs
+
+    if desired <= 0 or baseline <= 0:
+        return inputs
+
+    factor = desired / baseline
+
+    area_ratio = inputs.get("area_ratio")
+    if not isinstance(area_ratio, dict):
+        return inputs
+
+    # No-op factor: still record metadata for transparency.
+    if abs(factor - 1.0) < 1e-9:
+        inputs.setdefault("floors_above_ground", desired)
+        inputs.setdefault("baseline_floors_above_ground", baseline)
+        if desired_floors_source is not None:
+            inputs.setdefault("floors_above_ground_source", desired_floors_source)
+        if baseline_floors_source is not None:
+            inputs.setdefault("baseline_floors_above_ground_source", baseline_floors_source)
+        return inputs
+
+    new_area_ratio: Dict[str, Any] = {}
+    scaled_keys: list[str] = []
+    for k, v in area_ratio.items():
+        # Preserve non-numeric values verbatim.
+        try:
+            r = float(v or 0)
+        except Exception:
+            new_area_ratio[k] = v
+            continue
+
+        if isinstance(k, str) and _is_basement_area_ratio_key(k):
+            new_area_ratio[k] = r
+            continue
+
+        new_area_ratio[k] = r * factor
+        if isinstance(k, str):
+            scaled_keys.append(k)
+
+    inputs["area_ratio"] = new_area_ratio
+
+    note_parts: list[str] = [
+        f"Floors scaling applied: above-ground area ratios × {factor:.3f} "
+        f"(baseline floors {baseline:g} → desired floors {desired:g}; basement unchanged)."
+    ]
+    if baseline_floors_source or desired_floors_source:
+        sources: list[str] = []
+        if baseline_floors_source:
+            sources.append(f"baseline={baseline_floors_source}")
+        if desired_floors_source:
+            sources.append(f"desired={desired_floors_source}")
+        note_parts.append(f"Sources: {', '.join(sources)}.")
+    if scaled_keys:
+        note_parts.append(f"Scaled keys: {', '.join(scaled_keys)}.")
+
+    existing_note = str(inputs.get("area_ratio_note") or "").strip()
+    appended_note = " ".join(note_parts).strip()
+    inputs["area_ratio_note"] = (existing_note + " " + appended_note).strip() if existing_note else appended_note
+
+    # Helpful metadata for UI/debugging (ignored by estimator math).
+    inputs["floors_above_ground"] = desired
+    inputs["baseline_floors_above_ground"] = baseline
+    if desired_floors_source is not None:
+        inputs["floors_above_ground_source"] = desired_floors_source
+    if baseline_floors_source is not None:
+        inputs["baseline_floors_above_ground_source"] = baseline_floors_source
+
+    return inputs
+
+
 def _fmt_amount(value: float | int | str | None, decimals: int = 3) -> str:
     try:
         return f"{float(value):,.{decimals}f}"

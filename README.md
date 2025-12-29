@@ -59,6 +59,8 @@ Only `district` and `far_max` are required. When an estimate runs, the API first
 - `GET /v1/comps`
 - `POST /v1/geo/building-metrics` (coverage, floors proxy stats, BUA from Overture buildings)
 - `POST /v1/estimates` (uses Overture-built FAR defaults + Excel-style outputs)
+  - Mixed-use (`m`) inputs: the API assumes **3.5 above-ground floors** and applies **Option B**
+    (scales above-ground `area_ratio` by `3.5 / baseline_floors`) so BUA/FAR reflect that.
 
 ### Rent benchmarks (Excel mode)
 
