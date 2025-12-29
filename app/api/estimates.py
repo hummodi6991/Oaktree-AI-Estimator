@@ -33,6 +33,44 @@ router = APIRouter(tags=["estimates"])
 logger = logging.getLogger(__name__)
 
 
+def _annual_to_monthly(v_year: float) -> float:
+    try:
+        return float(v_year or 0.0) / 12.0
+    except Exception:
+        return 0.0
+
+
+def _fmt0(x: float) -> str:
+    try:
+        return f"{float(x):,.0f}"
+    except Exception:
+        return "0"
+
+
+def _component_rent_source_label(comp_meta: dict | None) -> str:
+    """
+    Return a human label for rent source per component.
+    Expected comp_meta keys (when present):
+      - method (e.g., aqar_district_median, manual_or_template)
+      - scope (district/city/None)
+      - provider
+    """
+    if not isinstance(comp_meta, dict):
+        return "template default"
+    method = (comp_meta.get("method") or "").strip()
+    scope = (comp_meta.get("scope") or "").strip()
+    provider = (comp_meta.get("provider") or "").strip()
+
+    if method.startswith("aqar") and scope:
+        # e.g. "Aqar district median"
+        s = f"Aqar {scope} median"
+        return f"{s}{f' ({provider})' if provider else ''}"
+
+    if method and method not in ("manual", "manual_or_template"):
+        return f"{method}{f' ({provider})' if provider else ''}"
+
+    return "template default"
+
 
 def _pick_base_annual_rent_sar_m2(rent_map: dict) -> float:
     """
@@ -852,6 +890,35 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             )
         except Exception:
             pass
+        # Ensure rent_source_metadata.components includes entries for all income-bearing components
+        # (retail/office often fall back to template defaults when no Aqar commercial comps exist).
+        try:
+            rmeta = excel_inputs.get("rent_source_metadata")
+            if isinstance(rmeta, dict):
+                comps = rmeta.get("components")
+                if not isinstance(comps, dict):
+                    comps = {}
+                    rmeta["components"] = comps
+
+                # Ensure per-component meta exists at least for keys present in rent_applied_sar_m2_yr
+                if isinstance(rent_applied_sar_m2_yr, dict):
+                    for k, v_year in rent_applied_sar_m2_yr.items():
+                        if k in comps:
+                            continue
+                        # If we didn't record aqar medians for this component, mark as template default
+                        comps[k] = {
+                            "method": "manual_or_template",
+                            "provider": "template",
+                            "scope": None,
+                            "unit": "SAR/m²/month",
+                            "median_rent_per_m2_month": None,
+                            "sample_count": 0,
+                            "benchmark_per_m2_month": _annual_to_monthly(float(v_year or 0.0)),
+                            "benchmark_per_m2_year": float(v_year or 0.0),
+                        }
+        except Exception:
+            pass
+
         totals = {
             "land_value": float(excel["land_cost"]),
             "hard_costs": float(excel["sub_total"]),
@@ -902,49 +969,27 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             f"{excel['roi']*100:,.1f}%."
         )
 
-        # If rent came from a benchmark, append an explicit explanation.
-        rent_meta = excel_inputs.get("rent_source_metadata")
-        base_rent_items = _base_rent_items(rent_applied_sar_m2_yr)
-        if rent_meta and base_rent_items:
-            components_meta = rent_meta.get("components") if isinstance(rent_meta, dict) else None
-            provider_label = rent_meta.get("provider") if isinstance(rent_meta, dict) else None
-            city_label = (rent_meta.get("city") or req.city or "Riyadh") if isinstance(rent_meta, dict) else (req.city or "Riyadh")
-            method_labels = set()
-            if isinstance(components_meta, dict):
-                method_labels = {meta.get("method") for meta in components_meta.values() if isinstance(meta, dict) and meta.get("method")}
-            scope_label = None
-            if method_labels and all(str(m).startswith("aqar") for m in method_labels):
-                if "aqar_district_median" in method_labels:
-                    scope_label = "Aqar district medians"
-                else:
-                    scope_label = "Aqar medians"
-            elif method_labels and "rega_city_rent" in method_labels:
-                scope_label = "REGA city rent"
-            header_parts = ["Base rents"]
-            if scope_label or city_label:
-                header_details = []
-                if scope_label:
-                    header_details.append(scope_label)
-                if city_label:
-                    header_details.append(city_label)
-                header_parts.append(f"({', '.join(header_details)})")
-            base_parts = [f"{comp} {annual/12.0:,.0f} SAR/m²/month" for comp, annual in base_rent_items]
-            summary_text += f" {' '.join(header_parts)}: {', '.join(base_parts)}."
+        # Summary footer: show per-component rents AND correctly label their sources.
+        try:
+            rmeta = excel_inputs.get("rent_source_metadata") or {}
+            comps_meta = rmeta.get("components") if isinstance(rmeta, dict) else {}
+            if not isinstance(comps_meta, dict):
+                comps_meta = {}
 
-            if isinstance(components_meta, dict) and components_meta:
-                details: list[str] = []
-                for comp, meta in components_meta.items():
-                    if not isinstance(meta, dict):
-                        continue
-                    scope = meta.get("scope") or meta.get("method")
-                    samples = meta.get("sample_count")
-                    if scope and samples is not None:
-                        details.append(f"{comp} {scope} samples={samples}")
-                if details:
-                    summary_text += f" Rent benchmark detail: {', '.join(details)}."
-            if provider_label:
-                summary_text += f" Source: {provider_label}."
-            summary_text += " This rent overrides manual/template rent inputs when a benchmark is present."
+            # only show meaningful components
+            show_keys = [k for k in ("residential", "retail", "office") if k in rent_applied_sar_m2_yr]
+            parts: list[str] = []
+            for k in show_keys:
+                y = float(rent_applied_sar_m2_yr.get(k) or 0.0)
+                m = _annual_to_monthly(y)
+                label = _component_rent_source_label(comps_meta.get(k) if isinstance(comps_meta, dict) else None)
+                parts.append(f"{k} {_fmt0(m)} SAR/m²/month ({label})")
+
+            if parts:
+                # Replace any misleading "Aqar district medians" phrasing with a truthful line
+                summary_text += " Base rents: " + ", ".join(parts) + "."
+        except Exception:
+            pass
         result = {
             "totals": totals,
             "assumptions": [
