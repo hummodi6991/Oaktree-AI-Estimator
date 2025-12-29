@@ -466,6 +466,20 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     <td style={amountColumnStyle}>{formatArea(builtArea.residential)}</td>
                     <td style={calcColumnStyle}>{buaNote("residential")}</td>
                   </tr>
+                  {effectiveLandUse === "m" && builtArea.retail !== undefined && (
+                    <tr>
+                      <td style={itemColumnStyle}>Retail BUA</td>
+                      <td style={amountColumnStyle}>{formatArea(builtArea.retail)}</td>
+                      <td style={calcColumnStyle}>{buaNote("retail")}</td>
+                    </tr>
+                  )}
+                  {effectiveLandUse === "m" && builtArea.office !== undefined && (
+                    <tr>
+                      <td style={itemColumnStyle}>Office BUA</td>
+                      <td style={amountColumnStyle}>{formatArea(builtArea.office)}</td>
+                      <td style={calcColumnStyle}>{buaNote("office")}</td>
+                    </tr>
+                  )}
                   <tr>
                     <td style={itemColumnStyle}>Basement BUA</td>
                     <td style={amountColumnStyle}>{formatArea(builtArea.basement)}</td>
