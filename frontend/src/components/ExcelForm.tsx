@@ -1,7 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Geometry } from "geojson";
 
 import { landPrice, makeEstimate } from "../api";
+import {
+  cloneTemplate,
+  ExcelInputs,
+  LandUseCode,
+  templateForLandUse,
+} from "../lib/excelTemplates";
 
 const PROVIDERS = [
   {
@@ -9,20 +15,6 @@ const PROVIDERS = [
     label: "Hedonic model (trained partly on Kaggle data)",
   },
 ];
-
-const DEFAULT_EXCEL_INPUTS = {
-  area_ratio: { residential: 1.6, basement: 1 },
-  unit_cost: { residential: 2200, basement: 1200 },
-  efficiency: { residential: 0.82 },
-  cp_sqm_per_space: { basement: 30 },
-  rent_sar_m2_yr: { residential: 2400 },
-  fitout_rate: 400,
-  contingency_pct: 0.1,
-  consultants_pct: 0.06,
-  feasibility_fee: 1500000,
-  transaction_pct: 0.03,
-  land_price_sar_m2: 0,
-};
 
 const formatPercent = (value?: number | null) =>
   value != null ? `${(value * 100).toFixed(1)}%` : "n/a";
@@ -105,17 +97,45 @@ type ExcelFormProps = {
   landUseOverride?: string;
 };
 
+const normalizeLandUse = (value?: string | null): LandUseCode | null => {
+  const v = (value || "").trim().toLowerCase();
+  return v === "m" ? "m" : v === "s" ? "s" : null;
+};
+
 export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [provider, setProvider] = useState<"aqar">("aqar");
   const [price, setPrice] = useState<number | null>(null);
   const [suggestedPrice, setSuggestedPrice] = useState<number | null>(null);
-  const [inputs, setInputs] = useState<any>(DEFAULT_EXCEL_INPUTS);
+  const normalizedParcelLandUse = normalizeLandUse(parcel?.landuse_code);
+  const normalizedPropLandUse = normalizeLandUse(landUseOverride);
+  const initialLandUse = normalizedPropLandUse ?? normalizedParcelLandUse ?? "s";
+
+  // User override from dropdown; null means "use inferred"
+  const [overrideLandUse, setOverrideLandUse] = useState<LandUseCode | null>(normalizedPropLandUse);
+  const effectiveLandUse: LandUseCode = overrideLandUse ?? normalizedParcelLandUse ?? "s";
+
+  // Excel inputs state (drives payload). Seed from template.
+  const [inputs, setInputs] = useState<ExcelInputs>(() => cloneTemplate(templateForLandUse(initialLandUse)));
   const [error, setError] = useState<string | null>(null);
   const [excelResult, setExcelResult] = useState<ExcelResult | null>(null);
 
-  const selectedLandUse = landUseOverride || parcel?.landuse_code || "";
+  useEffect(() => {
+    setOverrideLandUse(normalizedPropLandUse);
+  }, [normalizedPropLandUse]);
+
+  useEffect(() => {
+    setInputs((prev) => {
+      const next = cloneTemplate(templateForLandUse(effectiveLandUse));
+      const prevPrice = Number(prev?.land_price_sar_m2 ?? 0);
+      if (prevPrice > 0) {
+        next.land_price_sar_m2 = prevPrice;
+      }
+      return next;
+    });
+  }, [effectiveLandUse]);
+
   const assetProgram =
-    selectedLandUse === "m" ? "mixed_use_midrise" : "residential_midrise";
+    effectiveLandUse === "m" ? "mixed_use_midrise" : "residential_midrise";
 
   async function fetchPrice() {
     setError(null);
@@ -131,7 +151,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       );
       setPrice(res.sar_per_m2);
       setSuggestedPrice(res.sar_per_m2);
-      setInputs((current: any) => ({ ...current, land_price_sar_m2: res.sar_per_m2 }));
+      setInputs((current) => ({ ...current, land_price_sar_m2: res.sar_per_m2 }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
@@ -143,16 +163,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     setError(null);
     setExcelResult(null);
     try {
-      const currentInputs = inputs;
+      const excelInputs = { ...inputs, land_use_code: effectiveLandUse };
       const result = await makeEstimate({
         geometry: parcel.geometry,
-        excelInputs: currentInputs,
+        excelInputs,
         assetProgram,
         strategy: "build_to_sell",
         city: "Riyadh",
         far: 2.0,
         efficiency: 0.82,
-        landUseOverride,
+        landUseOverride: overrideLandUse ?? undefined,
       });
       const notes = result?.notes || {};
       const costs = notes.cost_breakdown || {};
@@ -171,7 +191,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           y1_income: costs.y1_income ?? 0,
         },
         breakdown: notes.excel_breakdown || {},
-        inputs: currentInputs,
+        inputs: excelInputs,
         siteArea: notes.site_area_m2,
         landPrice: notes.excel_land_price,
         summary: notes.summary ?? "",
@@ -353,13 +373,37 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           <button onClick={fetchPrice}>Fetch land price</button>
           {price != null && <strong>Suggested SAR/m²: {price}</strong>}
         </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <label style={{ opacity: 0.85 }}>Override land use (optional):</label>
+          <select
+            value={overrideLandUse ?? ""}
+            onChange={(event) => {
+              const value = (event.target.value || "").trim().toLowerCase();
+              if (!value) {
+                setOverrideLandUse(null);
+                return;
+              }
+              if (value === "s" || value === "m") {
+                setOverrideLandUse(value as LandUseCode);
+              }
+            }}
+            title="If empty, we use the automatically inferred land use from the parcel."
+          >
+            <option value="">(auto: use parcel)</option>
+            <option value="s">s — Residential</option>
+            <option value="m">m — Mixed/Commercial</option>
+          </select>
+          <span style={{ opacity: 0.75, fontSize: "0.8rem" }}>
+            Active template: <strong>{effectiveLandUse}</strong>
+          </span>
+        </div>
         <label style={{ display: "flex", flexDirection: "column", gap: 4, color: "white" }}>
           <span>Override land price (SAR/m², optional)</span>
           <input
             type="number"
             value={inputs.land_price_sar_m2 ?? ""}
             onChange={(event) =>
-              setInputs((current: any) => ({
+              setInputs((current) => ({
                 ...current,
                 land_price_sar_m2: event.target.value === "" ? 0 : Number(event.target.value),
               }))
