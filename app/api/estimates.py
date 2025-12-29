@@ -34,6 +34,42 @@ logger = logging.getLogger(__name__)
 
 
 
+def _pick_base_annual_rent_sar_m2(rent_map: dict) -> float:
+    """
+    Pick a representative base annual rent (SAR/m²/year) for summary text.
+
+    Why: rent_applied_sar_m2_yr may include non-income lines (e.g. basement=0),
+    and dict iteration order can cause us to accidentally pick 0 as the "base rent".
+    """
+    if not isinstance(rent_map, dict) or not rent_map:
+        return 0.0
+
+    # 1) Prefer explicit residential (Excel-mode currently uses residential as the primary rent band).
+    try:
+        v = rent_map.get("residential")
+        if v is not None:
+            f = float(v)
+            if f > 0:
+                return f
+    except Exception:
+        pass
+
+    # 2) Otherwise, pick the first positive rent.
+    try:
+        for _k, _v in rent_map.items():
+            f = float(_v or 0.0)
+            if f > 0:
+                return f
+    except Exception:
+        pass
+
+    # 3) Last resort: preserve previous behavior (may be 0, but avoids crashing).
+    try:
+        return float(next(iter(rent_map.values())))
+    except Exception:
+        return 0.0
+
+
 _INMEM_HEADERS: dict[str, dict[str, Any]] = {}
 _INMEM_LINES: dict[str, list[dict[str, Any]]] = {}
 
@@ -825,7 +861,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         if rent_meta and rent_applied_sar_m2_yr:
             # We currently have a single residential rent band
             rent_map = rent_applied_sar_m2_yr or {}
-            base_annual = float(next(iter(rent_map.values())))
+            base_annual = _pick_base_annual_rent_sar_m2(rent_map)
             base_monthly = base_annual / 12.0
             method_label = rent_meta.get("method") or rent_meta.get("provider") or "the rent benchmark"
             provider_label = rent_meta.get("provider")
