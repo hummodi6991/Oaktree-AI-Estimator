@@ -1,3 +1,4 @@
+import math
 from typing import Any, Dict
 
 
@@ -441,14 +442,64 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         elif key.lower().startswith("basement"):
             unit_rate = float(basement_unit)
         direct_cost[key] = built_area.get(key, 0.0) * unit_rate
-    parking_required = {
-        key: (
-            (built_area.get(key, 0.0) / float(cp_density.get(key, 1.0)))
-            if float(cp_density.get(key, 0.0)) > 0
-            else 0.0
+
+    # --- Parking (required + provided) ---
+    # parking_required_* can be overridden upstream (e.g., using Riyadh municipal minimums).
+    parking_required_by_component: Dict[str, int] = {}
+    parking_required_by_component_override = inputs.get("parking_required_by_component_override")
+    if isinstance(parking_required_by_component_override, dict):
+        for k, v in parking_required_by_component_override.items():
+            try:
+                parking_required_by_component[str(k)] = int(float(v or 0.0))
+            except Exception:
+                parking_required_by_component[str(k)] = 0
+    else:
+        # Fallback: interpret cp_sqm_per_space as "m² GFA per required space" for above-ground components.
+        for key in area_ratio.keys():
+            if isinstance(key, str):
+                kk = key.strip().lower()
+                if _is_basement_area_ratio_key(kk) or ("parking" in kk) or ("carpark" in kk) or ("car_park" in kk):
+                    continue
+            cp = float(cp_density.get(key, 0.0) or 0.0)
+            if cp > 0:
+                raw = float(built_area.get(key, 0.0) or 0.0) / cp
+                parking_required_by_component[str(key)] = int(math.ceil(raw - 1e-9))
+            else:
+                parking_required_by_component[str(key)] = 0
+
+    parking_required_spaces_override = inputs.get("parking_required_spaces_override")
+    if parking_required_spaces_override is not None:
+        try:
+            parking_required_spaces_raw = float(parking_required_spaces_override)
+        except Exception:
+            parking_required_spaces_raw = float(sum(parking_required_by_component.values()))
+    else:
+        parking_required_spaces_raw = float(sum(parking_required_by_component.values()))
+    parking_required_spaces = int(math.ceil(parking_required_spaces_raw - 1e-9))
+
+    # Parking supply: derive provided stalls from below-grade + explicit parking areas.
+    parking_supply_gross_m2_per_space = float(inputs.get("parking_supply_gross_m2_per_space") or 30.0)
+    parking_supply_layout_efficiency = float(inputs.get("parking_supply_layout_efficiency") or 1.0)
+    parking_area_m2 = 0.0
+    parking_area_by_key: Dict[str, float] = {}
+    for key, area in built_area.items():
+        if not isinstance(key, str):
+            continue
+        kk = key.strip().lower()
+        if _is_basement_area_ratio_key(kk) or ("parking" in kk) or ("carpark" in kk) or ("car_park" in kk):
+            a = float(area or 0.0)
+            if a > 0:
+                parking_area_by_key[key] = a
+                parking_area_m2 += a
+    if parking_supply_gross_m2_per_space > 0:
+        parking_provided_raw = (
+            parking_area_m2 * max(parking_supply_layout_efficiency, 0.0) / parking_supply_gross_m2_per_space
         )
-        for key in area_ratio.keys()
-    }
+    else:
+        parking_provided_raw = 0.0
+    parking_provided_spaces = int(math.floor(parking_provided_raw + 1e-9))
+    parking_deficit_spaces = max(0, parking_required_spaces - parking_provided_spaces)
+    parking_compliant = parking_deficit_spaces == 0
 
     fitout_area = sum(
         value for key, value in built_area.items() if not key.lower().startswith("basement")
@@ -486,7 +537,17 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "built_area": built_area,
         "direct_cost": direct_cost,
         "fitout_cost": fitout_cost,
-        "parking_required_spaces": sum(parking_required.values()),
+        "parking_required_spaces": parking_required_spaces,
+        "parking_required_spaces_raw": parking_required_spaces_raw,
+        "parking_required_by_component": parking_required_by_component,
+        "parking_provided_spaces": parking_provided_spaces,
+        "parking_provided_spaces_raw": parking_provided_raw,
+        "parking_deficit_spaces": parking_deficit_spaces,
+        "parking_compliant": parking_compliant,
+        "parking_area_m2": parking_area_m2,
+        "parking_area_by_key": parking_area_by_key,
+        "parking_supply_gross_m2_per_space": parking_supply_gross_m2_per_space,
+        "parking_supply_layout_efficiency": parking_supply_layout_efficiency,
         "sub_total": sub_total,
         "contingency_cost": contingency_cost,
         "consultants_cost": consultants_cost,

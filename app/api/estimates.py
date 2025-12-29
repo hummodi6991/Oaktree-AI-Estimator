@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.deps import get_db
 from app.services import geo as geo_svc
 from app.services import far_rules
+from app.services import parking as parking_svc
 from app.services.excel_method import compute_excel_estimate, scale_placeholder_area_ratio, scale_area_ratio_by_floors
 from app.services.explain import (
     top_sale_comps,
@@ -666,6 +667,18 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 floors_adjustment["far_above_ground_after"] = far_above_ground
             except Exception:
                 pass
+
+        # --- Parking minimums (Riyadh) ---
+        parking_meta: dict[str, Any] = {"applied": False}
+        try:
+            excel_inputs, parking_meta = parking_svc.ensure_parking_minimums(
+                excel_inputs=excel_inputs,
+                site_area_m2=site_area_m2,
+                unit_mix=req.unit_mix,
+                city=req.city or "Riyadh",
+            )
+        except Exception as e:
+            parking_meta = {"applied": False, "error": str(e)}
         ppm2_val: float = 0.0
         ppm2_src: str = "Manual"
         try:
@@ -874,6 +887,18 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             }
 
         excel = compute_excel_estimate(site_area_m2, excel_inputs)
+
+        # Attach final parking status (after any auto-adjustment)
+        try:
+            if isinstance(parking_meta, dict):
+                parking_meta = dict(parking_meta)
+                parking_meta["required_spaces_final"] = int(excel.get("parking_required_spaces") or 0)
+                parking_meta["provided_spaces_final"] = int(excel.get("parking_provided_spaces") or 0)
+                parking_meta["deficit_spaces_final"] = int(excel.get("parking_deficit_spaces") or 0)
+                parking_meta["compliant"] = bool(excel.get("parking_compliant"))
+                parking_meta["parking_area_m2_final"] = float(excel.get("parking_area_m2") or 0.0)
+        except Exception:
+            pass
         rent_applied_sar_m2_yr = excel.get("rent_applied_sar_m2_yr") or excel_inputs.get("rent_sar_m2_yr") or {}
         rent_input_sar_m2_yr = excel_inputs.get("rent_sar_m2_yr") or {}
         try:
@@ -933,6 +958,10 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "p50_profit": float(excel["y1_income"] - excel["grand_total_capex"]),
             # Echo ROI for the UI dialog:
             "excel_roi": float(excel["roi"]),
+            "parking_required_spaces": int(excel.get("parking_required_spaces") or 0),
+            "parking_provided_spaces": int(excel.get("parking_provided_spaces") or 0),
+            "parking_deficit_spaces": int(excel.get("parking_deficit_spaces") or 0),
+            "parking_compliant": bool(excel.get("parking_compliant")),
         }
         direct_cost_total = float(sum(excel.get("direct_cost", {}).values()))
         cost_breakdown = {
@@ -1008,6 +1037,24 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                     "unit": None,
                     "source_type": "Manual" if far_explicit else (far_max_source or "Overture"),
                 },
+                {
+                    "key": "parking_required_spaces",
+                    "value": float(excel.get("parking_required_spaces") or 0),
+                    "unit": "spaces",
+                    "source_type": "Riyadh Municipality",
+                },
+                {
+                    "key": "parking_provided_spaces",
+                    "value": float(excel.get("parking_provided_spaces") or 0),
+                    "unit": "spaces",
+                    "source_type": "Derived",
+                },
+                {
+                    "key": "parking_supply_gross_m2_per_space",
+                    "value": float(excel_inputs.get("parking_supply_gross_m2_per_space") or 30.0),
+                    "unit": "m²/space",
+                    "source_type": "Assumption",
+                },
             ],
             "notes": {
                 "excel_inputs_keys": list(excel_inputs.keys()),
@@ -1035,6 +1082,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "far_inference": {**far_inference_notes, "far_used": float(far_used)},
                 "landuse_for_far_cap": landuse_for_cap,
                 "floors_adjustment": floors_adjustment,
+                "parking": parking_meta,
                 "overture_buildings": {
                     "site_metrics": overture_site_metrics,
                     "context_metrics": overture_context_metrics,
