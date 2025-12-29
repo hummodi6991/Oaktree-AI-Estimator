@@ -341,13 +341,16 @@ def build_excel_explanations(
         effective_rent = applied_rent if applied_rent > 0 else base_rent * re_scalar
         rent_used = (component / nla_val) if nla_val else effective_rent
         comp_meta = rent_components_meta.get(key) if isinstance(rent_components_meta, dict) else {}
-        rent_label = (
-            (comp_meta.get("method") if isinstance(comp_meta, dict) else None)
-            or (comp_meta.get("provider") if isinstance(comp_meta, dict) else None)
-            or (rent_meta.get("method") if isinstance(rent_meta, dict) else None)
-            or (rent_meta.get("provider") if isinstance(rent_meta, dict) else None)
-            or "the supplied rent benchmark"
-        )
+        # More precise label when a component fell back to template defaults
+        rent_label = "template default"
+        if isinstance(comp_meta, dict):
+            rent_label = comp_meta.get("method") or comp_meta.get("provider") or rent_label
+        if rent_label == "template default" and isinstance(rent_meta, dict):
+            rent_label = (
+                rent_meta.get("method")
+                or rent_meta.get("provider")
+                or rent_label
+            )
         note = ""
         if applied_rent and abs(applied_rent - base_rent) > 1e-9 and re_scalar not in (0.0, 1.0):
             note = f" (includes real estate price index scalar {re_scalar:,.3f})"
