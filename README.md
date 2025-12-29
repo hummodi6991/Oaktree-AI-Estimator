@@ -101,3 +101,38 @@ VITE_API_BASE_URL=https://<your-loadbalancer-dns-or-ip>
 4. (Preferred, once available) Switch back to GitHub OIDC by providing `ALIBABA_CLOUD_RAM_ROLE_ARN` and `ALIBABA_CLOUD_RAM_OIDC_ARN` secrets and removing the AK/SK credentials.
 
 No secrets are committed. For production, switch the database to HA and add RBAC/SSO per the roadmap.  [oai_citation:5‡AI App Blueprint .docx](file-service://file-ALgZg1S1QWVEsFVxeedqkv)
+
+## Parking minimums (Riyadh)
+
+The API now enforces **minimum parking requirements for Riyadh** using the municipal guide
+(see `GET /v1/metadata/parking-rules` for the exact ruleset and source URL).
+
+### How it works
+- **Required spaces** are computed from the project program:
+  - Residential: uses `unit_mix` (1 space/unit if <180 m², 2 spaces/unit if ≥180 m²).
+  - Retail: 1 space per 45 m² GFA.
+  - Office: 1 space per 40 m² GFA.
+- **Provided spaces** are derived from below‑grade + explicit parking area using a gross
+  “m² per stall” conversion.
+- If there is a deficit and `parking_minimum_policy="auto_add_basement"` (default), the engine
+  **automatically increases `area_ratio.basement`** to eliminate the deficit (basement is excluded
+  from FAR scaling).
+
+### Inputs (excel_inputs)
+You can control the behavior with these optional keys:
+- `parking_apply` (bool, default `true`)
+- `parking_minimum_policy` (`"auto_add_basement"` | `"flag_only"` | `"disabled"`)
+- `parking_supply_gross_m2_per_space` (float, default `30`)
+- `parking_supply_layout_efficiency` (float, default `1.0`)
+- `parking_assumed_avg_apartment_m2` (float, default `120`) – only used if `unit_mix` is missing/empty.
+
+### Outputs
+Parking fields are available in:
+- `totals.*` (high-level) and
+- `notes.excel_breakdown.*` and `notes.parking.*` (detailed).
+
+Key fields:
+- `parking_required_spaces`
+- `parking_provided_spaces`
+- `parking_deficit_spaces`
+- `parking_compliant`
