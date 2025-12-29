@@ -69,24 +69,54 @@ def build_memo_pdf(
                 explanations.get("residential_bua"),
                 "m²",
             ),
-            (
-                "Basement BUA",
-                built_area.get("basement"),
-                explanations.get("basement_bua"),
-                "m²",
-            ),
-            ("Land cost", excel_breakdown.get("land_cost"), explanations.get("land_cost")),
-            (
-                "Construction (direct)",
-                direct_cost_total,
-                explanations.get("construction_direct"),
-            ),
-            ("Fit-out", excel_breakdown.get("fitout_cost"), explanations.get("fitout")),
-            ("Contingency", excel_breakdown.get("contingency_cost"), explanations.get("contingency")),
-            ("Consultants", excel_breakdown.get("consultants_cost"), explanations.get("consultants")),
-            ("Transaction costs", excel_breakdown.get("transaction_cost"), explanations.get("transaction_cost")),
-            ("Year 1 net income", excel_breakdown.get("y1_income"), explanations.get("y1_income")),
         ]
+
+        # Mixed-use (template "m") includes retail/office components.
+        # Only show these lines when the component exists to avoid empty rows for resi templates.
+        if "retail" in built_area:
+            rows.append(
+                (
+                    "Retail BUA",
+                    built_area.get("retail"),
+                    explanations.get("retail_bua"),
+                    "m²",
+                )
+            )
+        if "office" in built_area:
+            rows.append(
+                (
+                    "Office BUA",
+                    built_area.get("office"),
+                    explanations.get("office_bua"),
+                    "m²",
+                )
+            )
+
+        rows.extend(
+            [
+                (
+                    "Basement BUA",
+                    built_area.get("basement"),
+                    explanations.get("basement_bua"),
+                    "m²",
+                ),
+                ("Land cost", excel_breakdown.get("land_cost"), explanations.get("land_cost")),
+                (
+                    "Construction (direct)",
+                    direct_cost_total,
+                    explanations.get("construction_direct"),
+                ),
+                ("Fit-out", excel_breakdown.get("fitout_cost"), explanations.get("fitout")),
+                ("Contingency", excel_breakdown.get("contingency_cost"), explanations.get("contingency")),
+                ("Consultants", excel_breakdown.get("consultants_cost"), explanations.get("consultants")),
+                (
+                    "Transaction costs",
+                    excel_breakdown.get("transaction_cost"),
+                    explanations.get("transaction_cost"),
+                ),
+                ("Year 1 net income", excel_breakdown.get("y1_income"), explanations.get("y1_income")),
+            ]
+        )
 
         for label, amount, note, *unit in rows:
             pdf.cell(60, 6, f"{label}:", ln=False)
