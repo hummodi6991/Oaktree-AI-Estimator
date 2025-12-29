@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { Geometry } from "geojson";
 
 import { landPrice, makeEstimate } from "../api";
@@ -21,13 +21,6 @@ const formatPercent = (value?: number | null) =>
 
 type Centroid = [number, number];
 
-type CostBreakdownRow = {
-  label?: string;
-  value?: number | string | null;
-  unit?: string | null;
-  note?: string | null;
-};
-
 type ExcelResult = {
   roi: number;
   costs: {
@@ -41,7 +34,7 @@ type ExcelResult = {
     grand_total_capex: number;
     y1_income: number;
   };
-  breakdown: Record<string, any> & { cost_breakdown_rows?: CostBreakdownRow[] };
+  breakdown: Record<string, any>;
   inputs: any;
   siteArea?: number;
   landPrice?: { ppm2?: number; source_type?: string };
@@ -226,7 +219,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const rentRatesFromNotes = excelRent?.rent_sar_m2_yr as Record<string, number> | undefined;
   const appliedRentRates =
     rentRatesFromNotes && typeof rentRatesFromNotes === "object" ? rentRatesFromNotes : rentRates;
-  const rawCostBreakdownRows = breakdown.cost_breakdown_rows as CostBreakdownRow[] | undefined;
 
   let residentialRentYr: number | null = null;
   if (rentRatesFromNotes && typeof rentRatesFromNotes === "object") {
@@ -272,43 +264,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const formatArea = (value: number | null | undefined) => {
     if (value == null || Number.isNaN(Number(value))) return "";
     return `${Number(value).toLocaleString()} m²`;
-  };
-
-  const costBreakdownRows = useMemo(() => {
-    if (!Array.isArray(rawCostBreakdownRows)) return [] as Array<{ label: string; value: number; unit: string; note: string }>;
-    return rawCostBreakdownRows
-      .map((row) => {
-        if (!row || row.value == null) return null;
-        const numericValue = Number(row.value);
-        if (Number.isNaN(numericValue)) return null;
-        return {
-          label: row.label ?? "",
-          value: numericValue,
-          unit: row.unit ?? "",
-          note: row.note ?? "",
-        };
-      })
-      .filter((row): row is { label: string; value: number; unit: string; note: string } => Boolean(row));
-  }, [rawCostBreakdownRows]);
-
-  useEffect(() => {
-    if (import.meta.env.DEV && costBreakdownRows.length > 0) {
-      // Useful during development to verify payload shape
-      console.log("Cost breakdown rows:", costBreakdownRows);
-    }
-  }, [costBreakdownRows]);
-
-  const formatCostBreakdownValue = (value: number, unit?: string) => {
-    const normalizedUnit = unit ?? "";
-    let formattedValue: string;
-    if (normalizedUnit === "m²") {
-      formattedValue = Number(value).toLocaleString(undefined, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-    } else if (normalizedUnit.toUpperCase() === "SAR") {
-      formattedValue = Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 });
-    } else {
-      formattedValue = Number(value).toLocaleString();
-    }
-    return `${formattedValue}${normalizedUnit ? ` ${normalizedUnit}` : ""}`;
   };
 
   const buaNote = (key: string) => {
@@ -506,106 +461,94 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {costBreakdownRows.length > 0 ? (
-                    costBreakdownRows.map((row, index) => (
-                      <tr key={`${row.label}-${index}`}>
-                        <td style={itemColumnStyle}>{row.label}</td>
-                        <td style={amountColumnStyle}>{formatCostBreakdownValue(row.value, row.unit)}</td>
-                        <td style={calcColumnStyle}>{row.note}</td>
-                      </tr>
-                    ))
-                  ) : (
-                    <>
-                      <tr>
-                        <td style={itemColumnStyle}>Residential BUA</td>
-                        <td style={amountColumnStyle}>{formatArea(builtArea.residential)}</td>
-                        <td style={calcColumnStyle}>{buaNote("residential")}</td>
-                      </tr>
-                      <tr>
-                        <td style={itemColumnStyle}>Basement BUA</td>
-                        <td style={amountColumnStyle}>{formatArea(builtArea.basement)}</td>
-                        <td style={calcColumnStyle}>{buaNote("basement")}</td>
-                      </tr>
-                      <tr>
-                        <td style={itemColumnStyle}>Land cost</td>
-                        <td style={amountColumnStyle}>
-                          {excelResult.costs.land_cost.toLocaleString()} SAR
-                        </td>
-                        <td style={calcColumnStyle}>
-                          {landNote}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style={itemColumnStyle}>Construction (direct)</td>
-                        <td style={amountColumnStyle}>
-                          {excelResult.costs.construction_direct_cost.toLocaleString()} SAR
-                        </td>
-                        <td style={calcColumnStyle}>
-                          {explanations.construction_direct
-                            ? directNote
-                            : directNote
-                            ? `${directNote}; sums to construction subtotal of ${constructionSubtotal.toLocaleString()} SAR before fit-out`
-                            : "Sum of built area × unit cost for each use"}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style={itemColumnStyle}>Fit-out</td>
-                        <td style={amountColumnStyle}>
-                          {excelResult.costs.fitout_cost.toLocaleString()} SAR
-                        </td>
-                        <td style={calcColumnStyle}>
-                          {fitoutNote}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style={itemColumnStyle}>Contingency</td>
-                        <td style={amountColumnStyle}>
-                          {excelResult.costs.contingency_cost.toLocaleString()} SAR
-                        </td>
-                        <td style={calcColumnStyle}>
-                          {contingencyNote}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style={itemColumnStyle}>Consultants</td>
-                        <td style={amountColumnStyle}>
-                          {excelResult.costs.consultants_cost.toLocaleString()} SAR
-                        </td>
-                        <td style={calcColumnStyle}>
-                          {consultantsNote}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style={itemColumnStyle}>Feasibility fee</td>
-                        <td style={amountColumnStyle}>
-                          {excelResult.costs.feasibility_fee.toLocaleString()} SAR
-                        </td>
-                        <td style={calcColumnStyle}>
-                          Fixed allowance from inputs: {(usedInputs.feasibility_fee ?? 0).toLocaleString()} SAR
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style={itemColumnStyle}>Transaction costs</td>
-                        <td style={amountColumnStyle}>
-                          {excelResult.costs.transaction_cost.toLocaleString()} SAR
-                        </td>
-                        <td style={calcColumnStyle}>
-                          {transactionNote}
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style={itemColumnStyle}>
-                          <strong>Total capex</strong>
-                        </td>
-                        <td style={amountColumnStyle}>
-                          <strong>{excelResult.costs.grand_total_capex.toLocaleString()} SAR</strong>
-                        </td>
-                        <td style={calcColumnStyle}>
-                          Land + construction + fit-out + contingency + consultants + feasibility + transaction costs
-                        </td>
-                      </tr>
-                    </>
-                  )}
+                  <tr>
+                    <td style={itemColumnStyle}>Residential BUA</td>
+                    <td style={amountColumnStyle}>{formatArea(builtArea.residential)}</td>
+                    <td style={calcColumnStyle}>{buaNote("residential")}</td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>Basement BUA</td>
+                    <td style={amountColumnStyle}>{formatArea(builtArea.basement)}</td>
+                    <td style={calcColumnStyle}>{buaNote("basement")}</td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>Land cost</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.land_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {landNote}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>Construction (direct)</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.construction_direct_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {explanations.construction_direct
+                        ? directNote
+                        : directNote
+                        ? `${directNote}; sums to construction subtotal of ${constructionSubtotal.toLocaleString()} SAR before fit-out`
+                        : "Sum of built area × unit cost for each use"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>Fit-out</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.fitout_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {fitoutNote}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>Contingency</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.contingency_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {contingencyNote}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>Consultants</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.consultants_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {consultantsNote}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>Feasibility fee</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.feasibility_fee.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      Fixed allowance from inputs: {(usedInputs.feasibility_fee ?? 0).toLocaleString()} SAR
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>Transaction costs</td>
+                    <td style={amountColumnStyle}>
+                      {excelResult.costs.transaction_cost.toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {transactionNote}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>
+                      <strong>Total capex</strong>
+                    </td>
+                    <td style={amountColumnStyle}>
+                      <strong>{excelResult.costs.grand_total_capex.toLocaleString()} SAR</strong>
+                    </td>
+                    <td style={calcColumnStyle}>
+                      Land + construction + fit-out + contingency + consultants + feasibility + transaction costs
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
