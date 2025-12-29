@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.deps import get_db
 from app.services import geo as geo_svc
 from app.services import far_rules
-from app.services.excel_method import compute_excel_estimate, scale_placeholder_area_ratio
+from app.services.excel_method import compute_excel_estimate, scale_placeholder_area_ratio, scale_area_ratio_by_floors
 from app.services.explain import (
     top_sale_comps,
     to_comp_dict,
@@ -520,6 +520,59 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         excel_inputs = scale_placeholder_area_ratio(
             excel_inputs, target_far=target_far, target_far_source=target_far_source
         )
+
+        # Option B — Use floors to scale area_ratio.
+        # Force mixed-use ("m") to 3.5 floors above ground and reflect that on FAR/BUA.
+        floors_adjustment: dict[str, Any] | None = None
+        if landuse_for_cap == "m":
+            desired_floors_above_ground = 3.5
+
+            baseline_floors_above_ground: float | None = None
+            baseline_source: str | None = None
+            for source_name, metrics in (
+                ("overture_context_metrics", overture_context_metrics),
+                ("overture_site_metrics", overture_site_metrics),
+            ):
+                if isinstance(metrics, dict):
+                    v = metrics.get("floors_median") or metrics.get("floors_mean")
+                    if isinstance(v, (int, float)) and v > 0:
+                        baseline_floors_above_ground = float(v)
+                        baseline_source = source_name
+                        break
+
+            if baseline_floors_above_ground is None:
+                baseline_floors_above_ground = 2.0
+                baseline_source = "default_assumption"
+
+            excel_inputs = scale_area_ratio_by_floors(
+                excel_inputs,
+                desired_floors_above_ground=desired_floors_above_ground,
+                baseline_floors_above_ground=baseline_floors_above_ground,
+                desired_floors_source="fixed_mixed_use_rule",
+                baseline_floors_source=baseline_source,
+            )
+
+            floors_adjustment = {
+                "landuse": "m",
+                "desired_floors_above_ground": desired_floors_above_ground,
+                "baseline_floors_above_ground": baseline_floors_above_ground,
+                "baseline_source": baseline_source,
+                "scale_factor": desired_floors_above_ground / baseline_floors_above_ground
+                if baseline_floors_above_ground > 0
+                else None,
+            }
+
+            # Convenience: computed above-ground FAR after floors scaling.
+            try:
+                ar = excel_inputs.get("area_ratio") or {}
+                far_above_ground = 0.0
+                for k, v in ar.items():
+                    if isinstance(k, str) and ("basement" in k.lower() or "underground" in k.lower()):
+                        continue
+                    far_above_ground += float(v or 0)
+                floors_adjustment["far_above_ground_after"] = far_above_ground
+            except Exception:
+                pass
         ppm2_val: float = 0.0
         ppm2_src: str = "Manual"
         try:
@@ -848,6 +901,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "excel_roi": excel["roi"],
                 "far_inference": {**far_inference_notes, "far_used": float(far_used)},
                 "landuse_for_far_cap": landuse_for_cap,
+                "floors_adjustment": floors_adjustment,
                 "overture_buildings": {
                     "site_metrics": overture_site_metrics,
                     "context_metrics": overture_context_metrics,
