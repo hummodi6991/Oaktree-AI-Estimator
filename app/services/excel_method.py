@@ -372,6 +372,54 @@ def build_excel_explanations(
     return explanations
 
 
+def _build_cost_breakdown_rows(
+    built_area: Dict[str, float],
+    area_ratio: Dict[str, Any],
+    inputs: Dict[str, Any],
+    explanations: Dict[str, str],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    def _norm_land_use() -> str:
+        lu = (inputs.get("land_use_code") or inputs.get("land_use") or "").strip().lower()
+        if lu:
+            return lu
+        keys = {str(k).strip().lower() for k in area_ratio.keys()}
+        if {"retail", "office"} & keys:
+            return "m"
+        return ""
+
+    land_use = _norm_land_use()
+
+    def _append_bua_row(key: str, label: str, *, require_mixed_use: bool = False) -> None:
+        if require_mixed_use and land_use != "m":
+            return
+        if key in {"retail", "office"}:
+            if key not in area_ratio or built_area.get(key, 0.0) <= 0:
+                return
+            # Retail and Office BUA are surfaced for mixed-use clarity; values already existed but were previously implicit.
+        value = built_area.get(key)
+        if value is None:
+            return
+        rows.append(
+            {
+                "category": "cost",
+                "key": f"{key}_bua",
+                "label": label,
+                "unit": "m²",
+                "value": value,
+                "note": explanations.get(f"{key}_bua"),
+            }
+        )
+
+    _append_bua_row("residential", "Residential BUA")
+    _append_bua_row("retail", "Retail BUA", require_mixed_use=True)
+    _append_bua_row("office", "Office BUA", require_mixed_use=True)
+    _append_bua_row("basement", "Basement BUA")
+
+    return rows
+
+
 def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[str, Any]:
     """Compute an Excel-style estimate using caller-provided parameters."""
 
@@ -453,6 +501,8 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "roi": roi,
     }
 
-    result["explanations"] = build_excel_explanations(site_area_m2, inputs, result)
+    explanations = build_excel_explanations(site_area_m2, inputs, result)
+    result["explanations"] = explanations
+    result["cost_breakdown_rows"] = _build_cost_breakdown_rows(built_area, area_ratio, inputs, explanations)
 
     return result
