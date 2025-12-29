@@ -10,7 +10,12 @@ from sqlalchemy.orm import Session
 from app.db.deps import get_db
 from app.services import geo as geo_svc
 from app.services import far_rules
-from app.services.excel_method import compute_excel_estimate, scale_placeholder_area_ratio, scale_area_ratio_by_floors
+from app.services.excel_method import (
+    allocate_mixed_use_area_ratio,
+    compute_excel_estimate,
+    scale_placeholder_area_ratio,
+    scale_area_ratio_by_floors,
+)
 from app.services.explain import (
     top_sale_comps,
     to_comp_dict,
@@ -31,6 +36,10 @@ from app.ml.name_normalization import norm_city, norm_district
 
 router = APIRouter(tags=["estimates"])
 logger = logging.getLogger(__name__)
+
+MIXED_USE_TEMPLATE_AREA_RATIO = {"residential": 1.2, "retail": 0.6, "office": 0.4}
+MIXED_USE_TEMPLATE_BASEMENT = 1.0
+MIXED_USE_AREA_RATIO_TOLERANCE = 1e-3
 
 
 def _annual_to_monthly(v_year: float) -> float:
@@ -355,6 +364,39 @@ def _infer_landuse_code_from_excel_inputs(excel_inputs: dict | None) -> str | No
     return None
 
 
+def _float_or_zero(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _is_template_mixed_use_area_ratio(area_ratio: Any, tolerance: float = MIXED_USE_AREA_RATIO_TOLERANCE) -> bool:
+    """Return True when area_ratio is still at the default mixed-use template values (option C trigger)."""
+    if not isinstance(area_ratio, dict):
+        return False
+
+    allowed_keys = set(MIXED_USE_TEMPLATE_AREA_RATIO.keys()) | {"basement"}
+    for key, value in area_ratio.items():
+        key_norm = str(key).strip().lower()
+        if key_norm not in allowed_keys:
+            try:
+                if float(value or 0.0) != 0.0:
+                    return False
+            except Exception:
+                return False
+
+    for key, expected in MIXED_USE_TEMPLATE_AREA_RATIO.items():
+        if abs(_float_or_zero(area_ratio.get(key)) - expected) > tolerance:
+            return False
+
+    if "basement" in area_ratio:
+        if abs(_float_or_zero(area_ratio.get("basement")) - MIXED_USE_TEMPLATE_BASEMENT) > tolerance:
+            return False
+
+    return True
+
+
 @router.post("/estimates", response_model=EstimateResponseModel)
 def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> EstimateResponseModel:
     # Geometry → area
@@ -614,10 +656,21 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             excel_inputs, target_far=target_far, target_far_source=target_far_source
         )
 
+        program_allocator_meta: dict[str, Any] | None = None
+        if landuse_for_cap == "m" and target_far is not None and float(target_far) > 0:
+            area_ratio_note = str(excel_inputs.get("area_ratio_note") or "").strip()
+            if not area_ratio_note and _is_template_mixed_use_area_ratio(excel_inputs.get("area_ratio")):
+                excel_inputs, program_allocator_meta = allocate_mixed_use_area_ratio(float(target_far), excel_inputs)
+                allocator_note = "Mixed-use program mix auto-allocated based on rent/cost/efficiency."
+                area_ratio_note = str(excel_inputs.get("area_ratio_note") or "").strip()
+                excel_inputs["area_ratio_note"] = (
+                    f"{area_ratio_note} {allocator_note}".strip() if area_ratio_note else allocator_note
+                )
+
         # Option B — Use floors to scale area_ratio.
         # Force mixed-use ("m") to 3.5 floors above ground and reflect that on FAR/BUA.
         floors_adjustment: dict[str, Any] | None = None
-        if landuse_for_cap == "m":
+        if landuse_for_cap == "m" and program_allocator_meta is None:
             desired_floors_above_ground = 3.5
 
             baseline_floors_above_ground: float | None = None
@@ -1034,6 +1087,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "excel_roi": excel["roi"],
                 "far_inference": {**far_inference_notes, "far_used": float(far_used)},
                 "landuse_for_far_cap": landuse_for_cap,
+                "program_allocator": program_allocator_meta,
                 "floors_adjustment": floors_adjustment,
                 "overture_buildings": {
                     "site_metrics": overture_site_metrics,
