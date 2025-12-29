@@ -333,13 +333,21 @@ def build_excel_explanations(
 
     income_parts = []
     rent_meta = inputs.get("rent_source_metadata") or {}
-    rent_label = rent_meta.get("method") or rent_meta.get("provider") or "the supplied rent benchmark"
+    rent_components_meta = rent_meta.get("components") if isinstance(rent_meta, dict) else {}
     for key, component in y1_income_components.items():
         nla_val = float(nla.get(key, 0.0) or 0.0)
         base_rent = float(rent_rates.get(key, 0.0) or 0.0)
         applied_rent = float(rent_applied.get(key, 0.0) or 0.0)
         effective_rent = applied_rent if applied_rent > 0 else base_rent * re_scalar
         rent_used = (component / nla_val) if nla_val else effective_rent
+        comp_meta = rent_components_meta.get(key) if isinstance(rent_components_meta, dict) else {}
+        rent_label = (
+            (comp_meta.get("method") if isinstance(comp_meta, dict) else None)
+            or (comp_meta.get("provider") if isinstance(comp_meta, dict) else None)
+            or (rent_meta.get("method") if isinstance(rent_meta, dict) else None)
+            or (rent_meta.get("provider") if isinstance(rent_meta, dict) else None)
+            or "the supplied rent benchmark"
+        )
         note = ""
         if applied_rent and abs(applied_rent - base_rent) > 1e-9 and re_scalar not in (0.0, 1.0):
             note = f" (includes real estate price index scalar {re_scalar:,.3f})"

@@ -36,7 +36,7 @@ def test_aqar_rent_median_returns_city_when_no_district(db_session):
         lease_term_months=12,
         rent_per_unit=10000,
         rent_per_m2=200,
-        source="kaggle_aqar_rent",
+        source="kaggle_aqar",
         source_url=None,
         asof_date=today,
     ))
@@ -59,7 +59,7 @@ def test_aqar_rent_median_hits_district_when_district_present(db_session):
         lease_term_months=12,
         rent_per_unit=10000,
         rent_per_m2=300,
-        source="kaggle_aqar_rent",
+        source="kaggle_aqar",
         source_url=None,
         asof_date=today,
     ))

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, timedelta
 from math import ceil
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.tables import RentComp
 from app.ml.name_normalization import norm_city, norm_district
+from app.models.tables import RentComp
 
 
 def _percentile_disc(values: Iterable[float], percentile: float) -> Optional[float]:
@@ -35,6 +36,26 @@ def _clip(values: Iterable[float], low: Optional[float], high: Optional[float]) 
     return clipped
 
 
+@dataclass
+class RentMedianResult:
+    district_median: Optional[float]
+    city_median: Optional[float]
+    n_district: int
+    n_city: int
+    city_asset_median: Optional[float]
+    n_city_asset: int
+    scope: Optional[str]
+    median_rent_per_m2_month: Optional[float]
+    sample_count: int
+
+    def __iter__(self):
+        # Preserve backward compatibility with legacy unpacking (district, city, n_district, n_city).
+        yield self.district_median
+        yield self.city_median
+        yield self.n_district
+        yield self.n_city
+
+
 def aqar_rent_median(
     db: Session,
     city: str,
@@ -44,30 +65,30 @@ def aqar_rent_median(
     asset_type: str = "residential",
     unit_type: Optional[str] = None,
     since_days: int = 365,
-) -> Tuple[Optional[float], Optional[float], int, int]:
+) -> RentMedianResult:
     """
     Median rent_per_m2 (SAR/month) from rent_comp, clipped to the p05–p95 band.
 
-    Returns (district_median, city_median, n_district, n_city), where n_* counts
-    the rows that remained after clipping.
+    Returns medians, sample counts, and the scope used for downstream selection.
+    Selection (performed by callers) should try district → city (asset+unit) → city (asset only).
     """
 
     if not city:
-        return None, None, 0, 0
+        return RentMedianResult(None, None, 0, 0, None, 0, None, None, 0)
 
     city_norm = city_norm or norm_city(city)
     if not city_norm:
-        return None, None, 0, 0
+        return RentMedianResult(None, None, 0, 0, None, 0, None, None, 0)
 
     district_norm = district_norm or (norm_district(city_norm, district) if district else "")
 
     since_date = date.today() - timedelta(days=since_days) if since_days else None
 
-    def _values(scope_district: bool) -> list[float]:
+    def _values(scope_district: bool, apply_unit: bool = True) -> list[float]:
         q = db.query(RentComp.rent_per_m2).filter(RentComp.rent_per_m2.isnot(None))
         if asset_type:
             q = q.filter(func.lower(RentComp.asset_type) == asset_type.lower())
-        if unit_type:
+        if unit_type and apply_unit:
             q = q.filter(RentComp.unit_type.ilike(unit_type))
         if city_norm:
             q = q.filter(func.lower(RentComp.city) == city_norm.lower())
@@ -80,24 +101,17 @@ def aqar_rent_median(
             q = q.filter(func.lower(RentComp.district) == district_norm.lower())
         return [float(row[0]) for row in q.all() if row[0] is not None]
 
-    city_values = _values(scope_district=False)
-    district_values = _values(scope_district=True)
+    city_values = _values(scope_district=False, apply_unit=True)
+    city_asset_values = _values(scope_district=False, apply_unit=False)
+    district_values = _values(scope_district=True, apply_unit=True)
 
-    if not city_values:
-        return None, None, 0, 0
+    if not city_values and not city_asset_values:
+        return RentMedianResult(None, None, 0, 0, None, 0, None, None, 0)
 
-    city_low = _percentile_disc(city_values, 0.05)
-    city_high = _percentile_disc(city_values, 0.95)
-    city_filtered = _clip(city_values, city_low, city_high)
+    city_low = _percentile_disc(city_values, 0.05) if city_values else None
+    city_high = _percentile_disc(city_values, 0.95) if city_values else None
+    city_filtered = _clip(city_values, city_low, city_high) if city_values else []
     city_median = _percentile_disc(city_filtered, 0.5) if city_filtered else None
-
-    if not district_norm:
-        return (
-            None,
-            float(city_median) if city_median is not None else None,
-            0,
-            len(city_filtered),
-        )
 
     district_median = None
     district_filtered: list[float] = []
@@ -109,9 +123,36 @@ def aqar_rent_median(
         district_filtered = _clip(district_filtered, city_low, city_high)
         district_median = _percentile_disc(district_filtered, 0.5) if district_filtered else None
 
-    return (
+    city_asset_low = _percentile_disc(city_asset_values, 0.05) if city_asset_values else None
+    city_asset_high = _percentile_disc(city_asset_values, 0.95) if city_asset_values else None
+    city_asset_filtered = _clip(city_asset_values, city_asset_low, city_asset_high) if city_asset_values else []
+    city_asset_median = _percentile_disc(city_asset_filtered, 0.5) if city_asset_filtered else None
+
+    # Decide the best scope and median (for reporting only; selection happens upstream).
+    scope = None
+    median_used = None
+    sample_count = 0
+    if district_norm and district_median is not None and len(district_filtered) > 0:
+        scope = "district"
+        median_used = float(district_median)
+        sample_count = len(district_filtered)
+    elif city_median is not None and len(city_filtered) > 0:
+        scope = "city_unit_type" if unit_type else "city_asset_type"
+        median_used = float(city_median)
+        sample_count = len(city_filtered)
+    elif city_asset_median is not None and len(city_asset_filtered) > 0:
+        scope = "city_asset_type"
+        median_used = float(city_asset_median)
+        sample_count = len(city_asset_filtered)
+
+    return RentMedianResult(
         float(district_median) if district_median is not None else None,
         float(city_median) if city_median is not None else None,
         len(district_filtered),
         len(city_filtered),
+        float(city_asset_median) if city_asset_median is not None else None,
+        len(city_asset_filtered),
+        scope,
+        median_used if median_used is not None else None,
+        sample_count,
     )

@@ -83,7 +83,7 @@ def test_excel_rent_prefers_aqar_adjustment(monkeypatch):
     monkeypatch.setattr(
         estimates_api,
         "aqar_rent_median",
-        lambda *args, **kwargs: (120.0, 80.0, 12, 21),
+        lambda *args, **kwargs: estimates_api.RentMedianResult(120.0, 80.0, 12, 21, 80.0, 21, "district", 120.0, 12),
     )
     monkeypatch.setattr(
         estimates_api,
@@ -129,6 +129,7 @@ def test_excel_rent_prefers_aqar_adjustment(monkeypatch):
 
     expected_monthly = 120.0
     assert rent_rates["residential"] == pytest.approx(expected_monthly * 12.0)
-    assert rent_meta["method"] == "aqar_district_median"
-    assert rent_meta["aqar_sample_sizes"]["district"] == 12
-    assert rent_meta["aqar_medians"]["city"] == 80.0
+    comp_meta = rent_meta["components"]["residential"]
+    assert comp_meta["method"] == "aqar_district_median"
+    assert comp_meta["aqar_sample_sizes"]["district"] == 12
+    assert comp_meta["aqar_medians"]["city"] == 80.0

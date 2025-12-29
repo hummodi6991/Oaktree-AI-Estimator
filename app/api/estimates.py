@@ -22,7 +22,7 @@ from app.services.indicators import (
     latest_re_price_index_scalar,
     latest_sale_price_per_m2,
 )
-from app.services.rent import aqar_rent_median
+from app.services.rent import RentMedianResult, aqar_rent_median
 from app.services.kaggle_district import infer_district_from_kaggle
 from app.services.overture_buildings_metrics import compute_building_metrics
 from app.services.tax import latest_tax_rate
@@ -68,6 +68,25 @@ def _pick_base_annual_rent_sar_m2(rent_map: dict) -> float:
         return float(next(iter(rent_map.values())))
     except Exception:
         return 0.0
+
+
+def _base_rent_items(rent_map: dict) -> list[tuple[str, float]]:
+    """Return non-zero base rents excluding basement-like components."""
+    items: list[tuple[str, float]] = []
+    if not isinstance(rent_map, dict):
+        return items
+    for key, value in rent_map.items():
+        key_lower = str(key).lower()
+        if key_lower.startswith("basement") or key_lower.startswith("parking"):
+            continue
+        try:
+            v = float(value or 0.0)
+        except Exception:
+            continue
+        if v <= 0:
+            continue
+        items.append((str(key), v))
+    return items
 
 
 _INMEM_HEADERS: dict[str, dict[str, Any]] = {}
@@ -656,26 +675,15 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         city_for_rent = city_for_district
         district_norm = district_norm or ""
         rega_result = latest_rega_residential_rent_per_m2(db, req.city, district_norm or district)
+        if rega_result is not None:
+            rega_rent_monthly, rega_unit, rent_date, rent_source_url = rega_result
+        else:
+            rega_rent_monthly = rent_date = rent_source_url = None
+            rega_unit = "SAR/m²/month"
+
         rent_rates_raw = excel_inputs.get("rent_sar_m2_yr")
         rent_rates = dict(rent_rates_raw) if isinstance(rent_rates_raw, dict) else {}
 
-        aqar_district_median = aqar_city_median = None
-        aqar_n_district = aqar_n_city = 0
-        try:
-            aqar_district_median, aqar_city_median, aqar_n_district, aqar_n_city = aqar_rent_median(
-                db,
-                city_norm,
-                district_norm or None,
-                asset_type="residential",
-                unit_type=None,
-                since_days=365,
-            )
-        except Exception:
-            # Keep Excel-mode robust if the backing table/view isn't present
-            aqar_district_median = aqar_city_median = None
-            aqar_n_district = aqar_n_city = 0
-
-        rent_benchmark_monthly: float | None = None
         rent_source_metadata: dict[str, Any] | None = None
         rent_strategy: str = "manual_or_template"
         rent_meta_common: dict[str, Any] = {
@@ -688,89 +696,127 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "district_inference": district_inference,
             "district_inference_method": (district_inference or {}).get("method"),
             "district_inference_distance_m": (district_inference or {}).get("distance_m"),
-            "aqar_district_median_monthly": float(aqar_district_median) if aqar_district_median is not None else None,
-            "aqar_city_median_monthly": float(aqar_city_median) if aqar_city_median is not None else None,
-            "aqar_district_samples": int(aqar_n_district),
-            "aqar_city_samples": int(aqar_n_city),
         }
 
-        if rega_result is not None:
-            rega_rent_monthly, rega_unit, rent_date, rent_source_url = rega_result
-        else:
-            rega_rent_monthly = rent_date = rent_source_url = None
-            rega_unit = "SAR/m²/month"
+        COMPONENT_TO_AQAR = {
+            "residential": ("residential", None),
+            "retail": ("commercial", "retail"),
+            "office": ("commercial", "office"),
+        }
+        AQAR_MIN_SAMPLES = 10
+        component_candidates: set[str] = set()
+        for mapping in (rent_rates, excel_inputs.get("efficiency") or {}, excel_inputs.get("area_ratio") or {}):
+            if isinstance(mapping, dict):
+                component_candidates.update(mapping.keys())
 
-        AQAR_MIN_DISTRICT_SAMPLES = 10
-        district_benchmark_available = (
-            bool(district_norm)
-            and aqar_district_median is not None
-            and aqar_n_district >= AQAR_MIN_DISTRICT_SAMPLES
-        )
-        if district_benchmark_available:
-            rent_benchmark_monthly = float(aqar_district_median)
-            rent_strategy = "aqar_district_median"
-            rent_source_metadata = {
+        component_meta: dict[str, Any] = {}
+        for component in sorted(component_candidates):
+            if component not in COMPONENT_TO_AQAR:
+                continue
+            asset_type_for_comp, unit_type_for_comp = COMPONENT_TO_AQAR[component]
+            try:
+                result = aqar_rent_median(
+                    db,
+                    city_norm,
+                    district_norm or None,
+                    asset_type=asset_type_for_comp,
+                    unit_type=unit_type_for_comp,
+                    since_days=365,
+                )
+            except Exception:
+                # Keep Excel-mode robust if the backing table/view isn't present
+                result = RentMedianResult(None, None, 0, 0, None, 0, None, None, 0)
+
+            applied_scope = None
+            applied_sample = 0
+            applied_monthly = None
+            method_label = None
+            if result.district_median is not None and result.n_district >= AQAR_MIN_SAMPLES:
+                applied_scope = "district"
+                applied_sample = result.n_district
+                applied_monthly = float(result.district_median)
+                method_label = "aqar_district_median"
+            elif result.city_median is not None and result.n_city >= AQAR_MIN_SAMPLES:
+                applied_scope = "city_unit_type"
+                applied_sample = result.n_city
+                applied_monthly = float(result.city_median)
+                method_label = "aqar_city_median"
+            elif result.city_asset_median is not None and result.n_city_asset >= AQAR_MIN_SAMPLES:
+                applied_scope = "city_asset_type"
+                applied_sample = result.n_city_asset
+                applied_monthly = float(result.city_asset_median)
+                method_label = "aqar_city_median"
+            elif component == "residential" and rega_rent_monthly is not None:
+                applied_scope = "city_rega"
+                applied_sample = 0
+                applied_monthly = float(rega_rent_monthly)
+                method_label = "rega_city_rent"
+
+            provider_label = "manual"
+            if method_label and method_label.startswith("aqar"):
+                provider_label = "Kaggle Aqar rent comps"
+            elif method_label == "rega_city_rent":
+                provider_label = "REGA (Real Estate General Authority)"
+
+            component_meta[component] = {
                 **rent_meta_common,
-                "provider": "Kaggle Aqar rent comps",
-                "method": "aqar_district_median",
+                "asset_type": asset_type_for_comp,
+                "unit_type": unit_type_for_comp,
+                "scope": applied_scope or result.scope,
+                "median_rent_per_m2_month": applied_monthly or result.median_rent_per_m2_month,
+                "sample_count": applied_sample or result.sample_count,
+                "aqar_sample_sizes": {
+                    "district": int(result.n_district),
+                    "city": int(result.n_city),
+                    "city_asset": int(result.n_city_asset),
+                },
+                "aqar_medians": {
+                    "district": result.district_median,
+                    "city": result.city_median,
+                    "city_asset": result.city_asset_median,
+                },
+                "method": method_label or result.scope or "manual_or_template",
+                "provider": provider_label,
                 "unit": "SAR/m²/month",
-                "benchmark_per_m2_month": rent_benchmark_monthly,
-                "benchmark_per_m2_year": rent_benchmark_monthly * 12.0,
-                "aqar_sample_sizes": {"district": aqar_n_district, "city": aqar_n_city},
-                "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
-                "rega_anchor_monthly": float(rega_rent_monthly) if rega_rent_monthly is not None else None,
             }
-        elif aqar_city_median is not None and aqar_city_median > 0 and (
-            not district_norm or aqar_n_district < AQAR_MIN_DISTRICT_SAMPLES or aqar_district_median is None
-        ):
-            rent_benchmark_monthly = float(aqar_city_median)
-            rent_strategy = "aqar_city_median"
-            rent_source_metadata = {
-                **rent_meta_common,
-                "provider": "Kaggle Aqar rent comps",
-                "method": "aqar_city_median",
-                "unit": "SAR/m²/month",
-                "benchmark_per_m2_month": rent_benchmark_monthly,
-                "benchmark_per_m2_year": rent_benchmark_monthly * 12.0,
-                "aqar_sample_sizes": {"district": aqar_n_district, "city": aqar_n_city},
-                "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
-                "rega_anchor_monthly": float(rega_rent_monthly) if rega_rent_monthly is not None else None,
-            }
-        elif rega_rent_monthly is not None:
-            rent_benchmark_monthly = float(rega_rent_monthly)
-            rent_strategy = "rega_city_rent"
-            rent_source_metadata = {
-                **rent_meta_common,
-                "provider": "REGA (Real Estate General Authority)",
-                "method": "rega_city_rent",
-                "indicator_type": "rent_per_m2",
-                "asset_type": "Residential",
-                "unit": rega_unit or "SAR/m²/month",
-                "benchmark_per_m2_month": float(rega_rent_monthly),
-                "benchmark_per_m2_year": float(rega_rent_monthly) * 12.0,
-                "as_of_date": rent_date.isoformat() if rent_date else None,
-                "source_url": rent_source_url,
-                "aqar_sample_sizes": {"district": aqar_n_district, "city": aqar_n_city},
-                "aqar_medians": {"district": aqar_district_median, "city": aqar_city_median},
-            }
+            if applied_monthly is not None:
+                rent_rates[component] = applied_monthly * 12.0
+                rent_strategy = "component_aqar_median"
+                if rent_source_metadata is None:
+                    rent_source_metadata = {
+                        **rent_meta_common,
+                        "provider": provider_label,
+                        "method": "component_aqar_medians",
+                        "components": {},
+                    }
+                elif rent_source_metadata.get("provider") != provider_label:
+                    rent_source_metadata["provider"] = "mixed"
+                rent_source_metadata["components"][component] = {
+                    **component_meta[component],
+                    "benchmark_per_m2_month": applied_monthly,
+                    "benchmark_per_m2_year": applied_monthly * 12.0,
+                }
+
+        excel_inputs["rent_sar_m2_yr"] = rent_rates
+        if rent_source_metadata is not None and rent_source_metadata.get("components"):
+            rent_source_metadata["rent_strategy"] = rent_strategy
+            excel_inputs["rent_source_metadata"] = rent_source_metadata
+        else:
+            excel_inputs.pop("rent_source_metadata", None)
 
         rent_debug_metadata = {
             **rent_meta_common,
             "rent_strategy": rent_strategy,
+            "aqar_components": component_meta,
         }
-
-        if rent_benchmark_monthly is not None:
-            annual_rent = float(rent_benchmark_monthly) * 12.0  # convert to SAR/m²/year
-            rent_rates["residential"] = annual_rent
-            excel_inputs["rent_sar_m2_yr"] = rent_rates
-            if rent_source_metadata is not None:
-                rent_source_metadata["rent_strategy"] = rent_strategy
-                excel_inputs["rent_source_metadata"] = rent_source_metadata
-        else:
-            # Fallback: use whatever rent_sar_m2_yr was passed in (manual or template)
-            excel_inputs["rent_sar_m2_yr"] = rent_rates
-            excel_inputs.pop("rent_source_metadata", None)
-            # Do NOT set rent_source_metadata in this case – it wasn't driven by data.
+        res_meta = component_meta.get("residential") if isinstance(component_meta.get("residential"), dict) else {}
+        if res_meta:
+            samples = res_meta.get("aqar_sample_sizes") or {}
+            try:
+                rent_debug_metadata["aqar_district_samples"] = int(samples.get("district", 0))
+                rent_debug_metadata["aqar_city_samples"] = int(samples.get("city", 0))
+            except Exception:
+                pass
 
         rett = latest_tax_rate(db, tax_type="RETT")
         if rett:
@@ -858,40 +904,46 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
         # If rent came from a benchmark, append an explicit explanation.
         rent_meta = excel_inputs.get("rent_source_metadata")
-        if rent_meta and rent_applied_sar_m2_yr:
-            # We currently have a single residential rent band
-            rent_map = rent_applied_sar_m2_yr or {}
-            base_annual = _pick_base_annual_rent_sar_m2(rent_map)
-            base_monthly = base_annual / 12.0
-            method_label = rent_meta.get("method") or rent_meta.get("provider") or "the rent benchmark"
-            provider_label = rent_meta.get("provider")
+        base_rent_items = _base_rent_items(rent_applied_sar_m2_yr)
+        if rent_meta and base_rent_items:
+            components_meta = rent_meta.get("components") if isinstance(rent_meta, dict) else None
+            provider_label = rent_meta.get("provider") if isinstance(rent_meta, dict) else None
+            city_label = (rent_meta.get("city") or req.city or "Riyadh") if isinstance(rent_meta, dict) else (req.city or "Riyadh")
+            method_labels = set()
+            if isinstance(components_meta, dict):
+                method_labels = {meta.get("method") for meta in components_meta.values() if isinstance(meta, dict) and meta.get("method")}
+            scope_label = None
+            if method_labels and all(str(m).startswith("aqar") for m in method_labels):
+                if "aqar_district_median" in method_labels:
+                    scope_label = "Aqar district medians"
+                else:
+                    scope_label = "Aqar medians"
+            elif method_labels and "rega_city_rent" in method_labels:
+                scope_label = "REGA city rent"
+            header_parts = ["Base rents"]
+            if scope_label or city_label:
+                header_details = []
+                if scope_label:
+                    header_details.append(scope_label)
+                if city_label:
+                    header_details.append(city_label)
+                header_parts.append(f"({', '.join(header_details)})")
+            base_parts = [f"{comp} {annual/12.0:,.0f} SAR/m²/month" for comp, annual in base_rent_items]
+            summary_text += f" {' '.join(header_parts)}: {', '.join(base_parts)}."
 
-            summary_text += (
-                f" Base rent uses {method_label}"
-                f"{f' ({provider_label})' if provider_label else ''}"
-                f" for {rent_meta.get('city') or 'Riyadh'}: "
-                f"{base_monthly:,.0f} SAR/m²/month ({base_annual:,.0f} SAR/m²/year)."
-            )
-            aqar_meta = rent_meta.get("aqar_medians") or {}
-            aqar_counts = rent_meta.get("aqar_sample_sizes") or {}
-            if aqar_meta or aqar_counts:
+            if isinstance(components_meta, dict) and components_meta:
                 details: list[str] = []
-                if aqar_meta.get("district") is not None:
-                    details.append(f"district={aqar_meta.get('district')}")
-                if aqar_meta.get("city") is not None:
-                    details.append(f"city={aqar_meta.get('city')}")
-
-                count_details: list[str] = []
-                if aqar_counts:
-                    count_details.append(f"district={aqar_counts.get('district', 0)}")
-                    count_details.append(f"city={aqar_counts.get('city', 0)}")
-
-                summary_text += " Aqar rent medians"
+                for comp, meta in components_meta.items():
+                    if not isinstance(meta, dict):
+                        continue
+                    scope = meta.get("scope") or meta.get("method")
+                    samples = meta.get("sample_count")
+                    if scope and samples is not None:
+                        details.append(f"{comp} {scope} samples={samples}")
                 if details:
-                    summary_text += f" ({', '.join(details)})"
-                if count_details:
-                    summary_text += f"; samples: {', '.join(count_details)}"
-                summary_text += "."
+                    summary_text += f" Rent benchmark detail: {', '.join(details)}."
+            if provider_label:
+                summary_text += f" Source: {provider_label}."
             summary_text += " This rent overrides manual/template rent inputs when a benchmark is present."
         result = {
             "totals": totals,
