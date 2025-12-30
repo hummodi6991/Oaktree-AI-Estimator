@@ -557,21 +557,28 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             )
 
         if _supports_sqlalchemy(db):
-            orm_lines = [EstimateLine(**entry) for entry in line_dicts]
-            header = EstimateHeader(
-                id=est_id,
-                strategy=req.strategy,
-                input_json=json.dumps(req.model_dump()),
-                totals_json=json.dumps(totals),
-                notes_json=json.dumps(notes_payload),
-            )
-            db.add(header)
-            db.add_all(orm_lines)
+            # Persist to DB if possible. Any failure here should not break the user flow
+            # (we'll fall back to an in-memory store so the UI can still show results).
             try:
+                orm_lines = [EstimateLine(**entry) for entry in line_dicts]
+                header = EstimateHeader(
+                    id=est_id,
+                    strategy=req.strategy,
+                    input_json=json.dumps(req.model_dump(), default=str),
+                    totals_json=json.dumps(totals, default=str),
+                    notes_json=json.dumps(notes_payload, default=str),
+                )
+                db.add(header)
+                db.add_all(orm_lines)
                 db.commit()
             except Exception:
                 db.rollback()
-                raise
+                logger.exception(
+                    "Failed to persist estimate to DB; falling back to in-memory store"
+                )
+                _persist_inmemory(
+                    est_id, req.strategy, totals, notes_payload, assumptions, line_dicts
+                )
         else:
             _persist_inmemory(est_id, req.strategy, totals, notes_payload, assumptions, line_dicts)
 
@@ -719,13 +726,31 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             pass
 
         # New: GASTAT real estate price index scalar (2014=1.0)
-        re_scalar = latest_re_price_index_scalar(db, asset_type="Residential")
+        # Optional: if indicators aren't available yet, default to 1.0 (no indexation).
+        try:
+            re_scalar = latest_re_price_index_scalar(db, asset_type="Residential")
+        except Exception:
+            logger.warning(
+                "Failed to fetch real estate price index scalar; defaulting to 1.0",
+                exc_info=True,
+            )
+            re_scalar = None
+        re_scalar = float(re_scalar) if re_scalar else 1.0
         excel_inputs["re_price_index_scalar"] = re_scalar
 
         # NEW: Prefer REGA rent benchmarks blended with Kaggle Aqar district medians when available.
         city_for_rent = city_for_district
         district_norm = district_norm or ""
-        rega_result = latest_rega_residential_rent_per_m2(db, req.city, district_norm or district)
+        try:
+            rega_result = latest_rega_residential_rent_per_m2(
+                db, req.city, district_norm or district
+            )
+        except Exception:
+            logger.warning(
+                "REGA rent-per-m2 lookup failed; continuing without it",
+                exc_info=True,
+            )
+            rega_result = None
         if rega_result is not None:
             rega_rent_monthly, rega_unit, rent_date, rent_source_url = rega_result
         else:
