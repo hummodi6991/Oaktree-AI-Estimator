@@ -245,6 +245,13 @@
   color: rgba(236, 224, 203, 0.45);
 }
 
+.form-helper-text {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: rgba(230, 214, 189, 0.75);
+}
+
 .action-panel {
   display: flex;
   flex-direction: column;
