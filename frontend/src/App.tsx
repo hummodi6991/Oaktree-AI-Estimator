@@ -337,24 +337,6 @@ export default function App() {
                   onChange={(e) => setMonths(parseInt(e.target.value || "18", 10))}
                 />
               </label>
-              <label className="form-field" htmlFor="avg-apartment-size-input">
-                <span>Avg apartment size (m²)</span>
-                <input
-                  id="avg-apartment-size-input"
-                  type="number"
-                  min={20}
-                  max={600}
-                  step="1"
-                  value={avgApartmentSize}
-                  onChange={(e) => {
-                    const next = parseFloat(e.target.value);
-                    setAvgApartmentSize(Number.isFinite(next) ? next : 0);
-                  }}
-                />
-                <p className="form-helper-text">
-                  Used for parking minimums when Unit Mix is empty; apartments under 180 m² assume 1 space, otherwise 2.
-                </p>
-              </label>
             </div>
 
             <div className="action-panel">
@@ -387,6 +369,35 @@ export default function App() {
               )}
             </div>
             {error && <p className="error-text">{error}</p>}
+          </section>
+
+          <section className="card" aria-labelledby="parking-inputs-heading">
+            <div className="card-header">
+              <div>
+                <h2 id="parking-inputs-heading" className="card-title">Parking</h2>
+                <p className="card-subtitle">Provide details to refine parking minimum calculations.</p>
+              </div>
+            </div>
+            <div className="form-grid">
+              <label className="form-field" htmlFor="avg-apartment-size-input">
+                <span>Apartment size for parking (m²)</span>
+                <input
+                  id="avg-apartment-size-input"
+                  type="number"
+                  min={20}
+                  max={600}
+                  step="1"
+                  value={avgApartmentSize}
+                  onChange={(e) => {
+                    const next = parseFloat(e.target.value);
+                    setAvgApartmentSize(Number.isFinite(next) ? next : 0);
+                  }}
+                />
+                <p className="form-helper-text">
+                  Used for parking minimums when Unit Mix is empty; apartments under 180 m² assume 1 space, otherwise 2.
+                </p>
+              </label>
+            </div>
           </section>
 
           <section className="card" aria-labelledby="geometry-heading">
