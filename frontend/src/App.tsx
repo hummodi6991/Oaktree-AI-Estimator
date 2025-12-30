@@ -4,6 +4,7 @@ import type { Polygon } from "geojson";
 import Map from "./Map";
 import { createEstimate, getFreshness, memoPdfUrl, runScenario, getComps, exportCsvUrl } from "./api";
 import "./App.css";
+import ParkingSummary from "./components/ParkingSummary";
 import type { EstimateResponse, RentBlock } from "./lib/types";
 
 const DEFAULT_POLY: Polygon = {
@@ -472,8 +473,9 @@ export default function App() {
               <p className="card-subtitle">Values are denominated in Saudi Riyal (SAR).</p>
             </div>
           </div>
+          <ParkingSummary totals={estimate?.totals} notes={estimate?.notes} />
           <dl className="stat-grid">
-            {["land_value", "hard_costs", "soft_costs", "financing", "revenues"].map((key) => (
+            {(["land_value", "hard_costs", "soft_costs", "financing", "revenues"] as const).map((key) => (
               <div key={key} className="stat">
                 <dt>{
                   key === "land_value"
