@@ -557,21 +557,23 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             )
 
         if _supports_sqlalchemy(db):
-            orm_lines = [EstimateLine(**entry) for entry in line_dicts]
-            header = EstimateHeader(
-                id=est_id,
-                strategy=req.strategy,
-                input_json=json.dumps(req.model_dump()),
-                totals_json=json.dumps(totals),
-                notes_json=json.dumps(notes_payload),
-            )
-            db.add(header)
-            db.add_all(orm_lines)
             try:
+                orm_lines = [EstimateLine(**entry) for entry in line_dicts]
+                header = EstimateHeader(
+                    id=est_id,
+                    strategy=req.strategy,
+                    input_json=json.dumps(req.model_dump(), default=str),
+                    totals_json=json.dumps(totals, default=str),
+                    notes_json=json.dumps(notes_payload, default=str),
+                )
+                db.add(header)
+                db.add_all(orm_lines)
                 db.commit()
             except Exception:
+                # Never fail the user flow; fall back to in-memory storage
                 db.rollback()
-                raise
+                logger.exception("Failed to persist estimate; falling back to in-memory store")
+                _persist_inmemory(est_id, req.strategy, totals, notes_payload, assumptions, line_dicts)
         else:
             _persist_inmemory(est_id, req.strategy, totals, notes_payload, assumptions, line_dicts)
 
