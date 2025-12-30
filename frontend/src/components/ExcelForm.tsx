@@ -8,6 +8,8 @@ import {
   LandUseCode,
   templateForLandUse,
 } from "../lib/excelTemplates";
+import ParkingSummary from "./ParkingSummary";
+import type { EstimateNotes, EstimateTotals } from "../lib/types";
 
 const PROVIDERS = [
   {
@@ -43,6 +45,8 @@ type ExcelResult = {
     rent_sar_m2_yr?: Record<string, number>;
     rent_source_metadata?: Record<string, any>;
   };
+  totals?: EstimateTotals;
+  notes?: EstimateNotes;
 };
 
 function polygonCentroidAndArea(coords: number[][][]): { area: number; centroid: Centroid } | null {
@@ -196,6 +200,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         landPrice: notes.excel_land_price,
         summary: notes.summary ?? "",
         excelRent: notes.excel_rent,
+        totals: result?.totals,
+        notes: result?.notes,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -441,6 +447,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>
             Financial breakdown
           </h3>
+          <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
 
           <div
             style={{

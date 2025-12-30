@@ -26,12 +26,37 @@ export type RentBlock = {
   rent_growth_pct?: number | null;
 };
 
+export type EstimateStrategy = "build_to_sell" | "build_to_rent";
+
+export interface EstimateTotals {
+  land_value: number;
+  hard_costs: number;
+  soft_costs: number;
+  financing: number;
+  revenues: number;
+  p50_profit: number;
+  excel_roi?: number;
+
+  parking_required_spaces?: number;
+  parking_provided_spaces?: number;
+  parking_deficit_spaces?: number;
+  parking_compliant?: boolean;
+
+  [key: string]: number | boolean | undefined;
+}
+
+export interface EstimateNotes {
+  [key: string]: any;
+  parking?: any;
+  notes?: any;
+}
+
 export type EstimateResponse = Record<string, any> & {
   id: string;
-  strategy: "build_to_sell" | "build_to_rent";
-  totals: Record<string, number>;
+  strategy: EstimateStrategy;
+  totals: EstimateTotals;
   assumptions: Array<Record<string, any>>;
-  notes: Record<string, any>;
+  notes: EstimateNotes;
   rent: RentBlock;
   metrics?: { irr_annual?: number };
   confidence_bands?: { p5?: number; p50?: number; p95?: number };
