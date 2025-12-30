@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Dict, Iterable, Set
+from typing import Any, Dict, Iterable, Optional, Set
 
 from sqlalchemy import text
 
@@ -15,6 +15,91 @@ LEGACY_SOURCES = ("kaggle_aqar_rent", "kaggle_aqar")
 # Conservative rent keywords for heuristics when the dataset lacks an explicit rent/sale flag
 _RENT_PATTERNS = ("rent", "for rent", "lease", "إيجار", "ايجار", "استئجار", "للإيجار", "لللايجار")
 _SALE_PATTERNS = ("sale", "for sale", "buy", "بيع", "للبيع")
+
+# Price frequency hints to normalize listing prices to a *monthly* basis.
+# Many KSA rental listings are posted as an annual rent (e.g., "ريال/سنوي").
+_YEARLY_PATTERNS = (
+    "year",
+    "yearly",
+    "annual",
+    "per year",
+    "/year",
+    "yr",
+    "سنوي",
+    "سنوياً",
+    "سنويا",
+    "بالسنة",
+    "بالسنه",
+    "ريال/سنوي",
+)
+_MONTHLY_PATTERNS = (
+    "month",
+    "monthly",
+    "per month",
+    "/month",
+    "mo",
+    "شهري",
+    "شهرياً",
+    "شهريا",
+    "بالشهر",
+    "ريال/شهري",
+)
+_DAILY_PATTERNS = (
+    "day",
+    "daily",
+    "per day",
+    "/day",
+    "يومي",
+    "يومياً",
+    "يوميا",
+    "ريال/يومي",
+)
+
+
+def _infer_rent_period_months(row: Dict[str, Any]) -> Optional[int]:
+    """
+    Return the rent pricing period in months when it can be inferred:
+      - 12 for yearly prices
+      - 1 for monthly prices
+      - 0 for daily/unsupported prices
+      - None when unknown
+    """
+
+    # Prefer explicit encoded rent period when present (common in Kaggle/Aqar scrapes)
+    rp = row.get("rent_period")
+    if rp is not None and str(rp).strip() != "":
+        try:
+            rp_i = int(float(rp))
+            if rp_i in (0, 3):  # yearly (some sources use 3 as yearly)
+                return 12
+            if rp_i == 2:  # monthly
+                return 1
+            if rp_i == 1:  # daily
+                return 0
+        except Exception:
+            pass
+
+    # Next best: scan text fields for frequency hints
+    blob = " ".join(
+        str(row.get(col) or "")
+        for col in (
+            "price_frequency",
+            "listing_type",
+            "purpose",
+            "ad_type",
+            "title",
+            "description",
+            "property_type",
+        )
+    )
+    if _has_pattern(blob, _YEARLY_PATTERNS):
+        return 12
+    if _has_pattern(blob, _MONTHLY_PATTERNS):
+        return 1
+    if _has_pattern(blob, _DAILY_PATTERNS):
+        return 0
+
+    return None
 
 
 def _available_columns(db) -> Set[str]:
@@ -83,6 +168,7 @@ def main() -> None:
             "description",
             "listing_type",
             "price_frequency",
+            "rent_period",
             "ad_type",
             "purpose",
         ]
@@ -118,6 +204,22 @@ def main() -> None:
             )
             asset_type, unit_type = _asset_and_unit(text_blob)
 
+            # Normalize price to a monthly basis when possible (Aqar often lists annual rents).
+            period_months = _infer_rent_period_months(r)
+            if period_months == 0:
+                # Skip daily/short-stay listings for feasibility benchmarking
+                continue
+
+            if period_months is None:
+                # Last-resort inference based on magnitude (values here are SAR per m² *per period*)
+                per_m2_raw = price / area
+                if asset_type.lower() == "residential":
+                    period_months = 12 if per_m2_raw > 300 else 1
+                else:
+                    period_months = 12 if per_m2_raw > 800 else 1
+
+            price_monthly = price / float(period_months) if period_months and period_months > 1 else price
+
             comp = RentComp(
                 id=f"{SOURCE}_{idx}",
                 date=today,
@@ -127,8 +229,8 @@ def main() -> None:
                 asset_type=asset_type,
                 unit_type=unit_type,
                 lease_term_months=12,
-                rent_per_unit=price,
-                rent_per_m2=price / area,
+                rent_per_unit=price_monthly,
+                rent_per_m2=price_monthly / area,
                 source=SOURCE,
                 source_url=None,
             )

@@ -12,6 +12,24 @@ from app.ml.name_normalization import norm_city, norm_district
 from app.models.tables import RentComp
 
 
+# Kaggle/Aqar scrapes frequently encode *annual* rents (SAR/year) even when the
+# app expects SAR/month. We defensively normalize implausibly-high values.
+_KAGGLE_AQAR_SOURCES = {"kaggle_aqar", "kaggle_aqar_rent"}
+
+
+def _normalize_kaggle_rent_per_m2_month(value: float, source: Optional[str], asset_type: str) -> float:
+    src = (source or "").lower()
+    if src not in _KAGGLE_AQAR_SOURCES:
+        return value
+
+    at = (asset_type or "").lower()
+    # Thresholds are intentionally conservative to avoid scaling legitimate monthly postings.
+    threshold = 300.0 if at == "residential" else 800.0
+    if value > threshold:
+        return value / 12.0
+    return value
+
+
 def _percentile_disc(values: Iterable[float], percentile: float) -> Optional[float]:
     """
     Mirror PostgreSQL's percentile_disc: pick the smallest value with cumulative
@@ -85,7 +103,7 @@ def aqar_rent_median(
     since_date = date.today() - timedelta(days=since_days) if since_days else None
 
     def _values(scope_district: bool, apply_unit: bool = True) -> list[float]:
-        q = db.query(RentComp.rent_per_m2).filter(RentComp.rent_per_m2.isnot(None))
+        q = db.query(RentComp.rent_per_m2, RentComp.source).filter(RentComp.rent_per_m2.isnot(None))
         if asset_type:
             q = q.filter(func.lower(RentComp.asset_type) == asset_type.lower())
         if unit_type and apply_unit:
@@ -99,7 +117,11 @@ def aqar_rent_median(
             if not district_norm:
                 return []
             q = q.filter(func.lower(RentComp.district) == district_norm.lower())
-        return [float(row[0]) for row in q.all() if row[0] is not None]
+        return [
+            _normalize_kaggle_rent_per_m2_month(float(rent_per_m2), source, asset_type)
+            for rent_per_m2, source in q.all()
+            if rent_per_m2 is not None
+        ]
 
     city_values = _values(scope_district=False, apply_unit=True)
     city_asset_values = _values(scope_district=False, apply_unit=False)
