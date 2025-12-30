@@ -40,6 +40,11 @@ type PolygonStats = {
   vertexCount: number;
 };
 
+function clampNumber(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
 function computePolygonStats(polygon: Polygon | null | undefined): PolygonStats | null {
   if (!polygon?.coordinates?.[0]) return null;
   const ring = polygon.coordinates[0];
@@ -97,6 +102,7 @@ export default function App() {
   const [estimate, setEstimate] = useState<EstimateResponse | null>(null);
   const [comps, setComps] = useState<any[]>([]);
   const [uplift, setUplift] = useState(0);
+  const [avgApartmentSize, setAvgApartmentSize] = useState(120);
 
   const parsedGeom = useMemo(() => {
     try {
@@ -109,6 +115,13 @@ export default function App() {
 
   const polygonForMap = parsedGeom ?? DEFAULT_POLY;
   const polygonStats = useMemo(() => computePolygonStats(polygonForMap), [polygonForMap]);
+  const excelInputs = useMemo(
+    () => ({
+      ...DEFAULT_EXCEL_INPUTS,
+      parking_assumed_avg_apartment_m2: clampNumber(avgApartmentSize, 20, 600),
+    }),
+    [avgApartmentSize],
+  );
 
   useEffect(() => {
     getFreshness().then(setFreshness).catch(() => {});
@@ -193,7 +206,7 @@ export default function App() {
         city,
         far,
         efficiency: 0.82,
-        excel_inputs: DEFAULT_EXCEL_INPUTS,
+        excel_inputs: excelInputs,
       };
       const res = (await createEstimate(payload)) as EstimateResponse;
       setEstimate(res);
@@ -323,6 +336,24 @@ export default function App() {
                   value={months}
                   onChange={(e) => setMonths(parseInt(e.target.value || "18", 10))}
                 />
+              </label>
+              <label className="form-field" htmlFor="avg-apartment-size-input">
+                <span>Avg apartment size (m²)</span>
+                <input
+                  id="avg-apartment-size-input"
+                  type="number"
+                  min={20}
+                  max={600}
+                  step="1"
+                  value={avgApartmentSize}
+                  onChange={(e) => {
+                    const next = parseFloat(e.target.value);
+                    setAvgApartmentSize(Number.isFinite(next) ? next : 0);
+                  }}
+                />
+                <p className="form-helper-text">
+                  Used for parking minimums when Unit Mix is empty; apartments under 180 m² assume 1 space, otherwise 2.
+                </p>
               </label>
             </div>
 
