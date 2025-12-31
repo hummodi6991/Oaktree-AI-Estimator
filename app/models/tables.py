@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, Text, Index
+from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, Text, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.base import Base
@@ -128,6 +128,44 @@ class LandUseResidentialShare(Base):
     city = Column(String(64), primary_key=True)
     sub_municipality = Column(String(128), primary_key=True)
     residential_share = Column(Numeric(18, 6))
+
+
+class SuhailLandMetric(Base):
+    __tablename__ = "suhail_land_metrics"
+
+    id = Column(Integer, primary_key=True)
+    as_of_date = Column(Date, nullable=False)
+    observed_at = Column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    region_id = Column(Integer, nullable=False)
+    province_id = Column(Integer)
+    province_name = Column(String(128))
+    neighborhood_id = Column(Integer, nullable=False)
+    neighborhood_name = Column(String(256), nullable=False)
+    district_norm = Column(String(256))
+    land_use_group = Column(String(128), nullable=False)
+    median_ppm2 = Column(Numeric(12, 2))
+    last_price_ppm2 = Column(Numeric(12, 2))
+    last_txn_date = Column(Date)
+    raw = Column(JSONB)
+
+    __table_args__ = (
+        Index(
+            "ux_suhail_land_metrics_as_of_region_neighborhood_land_use",
+            "as_of_date",
+            "region_id",
+            "neighborhood_id",
+            "land_use_group",
+            unique=True,
+        ),
+        Index(
+            "ix_suhail_land_metrics_district_norm",
+            "district_norm",
+        ),
+    )
 
 
 class EstimateHeader(Base):
