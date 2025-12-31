@@ -18,8 +18,11 @@ OSM_DISTRICT_SQL = text(
         place,
         ST_AsGeoJSON(way) AS geometry
     FROM planet_osm_polygon
-    WHERE place = 'neighbourhood'
-      AND name IS NOT NULL
+    WHERE name IS NOT NULL
+      AND (
+        place IN ('neighbourhood', 'quarter', 'suburb')
+        OR (boundary = 'administrative' AND admin_level IN ('9','10','11'))
+      )
     """
 )
 
