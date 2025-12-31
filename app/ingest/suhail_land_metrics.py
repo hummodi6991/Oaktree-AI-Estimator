@@ -60,14 +60,19 @@ def _page_items(payload: Any) -> tuple[list[dict[str, Any]], int]:
     if not isinstance(payload, dict):
         return [], 0
 
-    for key in ("items", "data", "result", "results", "neighborhoods", "records"):
-        items = payload.get(key)
-        if isinstance(items, list):
-            break
-    else:
-        items = []
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    items = data.get("items")
+    if not isinstance(items, list):
+        for key in ("items", "result", "results", "neighborhoods", "records"):
+            items = payload.get(key)
+            if isinstance(items, list):
+                break
+        else:
+            items = []
 
-    total_count = payload.get("totalCount") or payload.get("total") or payload.get("count")
+    total_count = data.get("totalCount") if isinstance(data, dict) else None
+    if total_count is None:
+        total_count = payload.get("totalCount") or payload.get("total") or payload.get("count")
     if total_count is None:
         total_count = len(items)
 
@@ -147,6 +152,7 @@ def ingest(
     limit: int,
     apply_province_filter: bool,
     api_url: str,
+    debug: bool = False,
 ) -> tuple[int, int, dt.date | None]:
     headers = {}
     if settings.SUHAIL_API_KEY:
@@ -165,9 +171,23 @@ def ingest(
                 api_url,
                 params={"regionId": region_id, "offset": offset, "limit": limit},
             )
-            resp.raise_for_status()
-            payload = resp.json()
+            if debug:
+                print(f"Fetching URL: {resp.url}")
+
+            try:
+                resp.raise_for_status()
+                payload = resp.json()
+            except ValueError:
+                body_preview = resp.text[:200]
+                print(
+                    f"Failed to decode JSON from {resp.url} (status {resp.status_code}). "
+                    f"First 200 chars: {body_preview}"
+                )
+                raise
+
             items, total_count = _page_items(payload)
+            if debug:
+                print(f"Page received: {len(items)} items, totalCount={total_count}")
 
             for item in items:
                 rows = list(
@@ -214,6 +234,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable province filter (ingest all provinces in region)",
     )
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     return parser.parse_args()
 
 
@@ -229,6 +250,7 @@ def main() -> None:
         limit=args.limit,
         apply_province_filter=not args.no_province_filter,
         api_url=api_url,
+        debug=args.debug,
     )
 
     print(f"Neighborhoods processed: {neighborhoods}")
