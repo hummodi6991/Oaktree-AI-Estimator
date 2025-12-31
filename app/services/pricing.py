@@ -12,8 +12,11 @@ from app.models.tables import PriceQuote
 from app.services.comps import fetch_sale_comps, summarize_ppm2
 from app.services.hedonic import land_price_per_m2
 from app.services.kaggle_district import infer_district_from_kaggle
+from app.ml.name_normalization import norm_city, norm_district
 
 logger = logging.getLogger(__name__)
+
+SUHAIL_RIYADH_PROVINCE_ID = 101000
 
 
 def price_from_srem(db: Session, city: str, district: Optional[str]) -> Optional[Tuple[float, str]]:
@@ -27,7 +30,65 @@ def price_from_srem(db: Session, city: str, district: Optional[str]) -> Optional
 
 
 def price_from_suhail(db: Session, city: str, district: Optional[str]) -> Optional[Tuple[float, str]]:
-    """Placeholder for the Suhail provider until the API is wired."""
+    """Return SAR/m² estimate from the Suhail land metrics table."""
+
+    if not city:
+        return None
+
+    city_norm = norm_city(city)
+    district_norm = norm_district(city_norm, district) if district else ""
+
+    # 1) Prefer district-level median for the latest date.
+    if district_norm:
+        params = {"district_norm": district_norm}
+        conditions = [
+            "land_use_group = 'الكل'",
+            "district_norm = :district_norm",
+        ]
+        if city_norm == "riyadh":
+            conditions.append("province_id = :province_id")
+            params["province_id"] = SUHAIL_RIYADH_PROVINCE_ID
+        query = f"""
+            SELECT median_ppm2
+            FROM suhail_land_metrics
+            WHERE {' AND '.join(conditions)}
+            ORDER BY as_of_date DESC
+            LIMIT 1
+        """
+        try:
+            val = db.execute(text(query), params).scalar()
+        except SQLAlchemyError as exc:
+            logger.warning("suhail_land_metrics district lookup failed: %s", exc)
+            val = None
+        if val is not None:
+            return float(val), "suhail_land_metrics_median"
+
+    # 2) Fallback: citywide median for Riyadh using latest snapshot.
+    if city_norm == "riyadh":
+        try:
+            val = db.execute(
+                text(
+                    """
+                    WITH latest AS (
+                        SELECT max(as_of_date) AS max_date
+                        FROM suhail_land_metrics
+                        WHERE land_use_group = 'الكل'
+                          AND province_id = :province_id
+                    )
+                    SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY median_ppm2)
+                    FROM suhail_land_metrics s
+                    JOIN latest l ON s.as_of_date = l.max_date
+                    WHERE s.land_use_group = 'الكل'
+                      AND s.province_id = :province_id
+                    """
+                ),
+                {"province_id": SUHAIL_RIYADH_PROVINCE_ID},
+            ).scalar()
+        except SQLAlchemyError as exc:
+            logger.warning("suhail_land_metrics Riyadh median lookup failed: %s", exc)
+            val = None
+        if val is not None:
+            return float(val), "suhail_land_metrics_median"
 
     return None
 
