@@ -14,6 +14,7 @@ from app.services.hedonic import land_price_per_m2
 from app.services.district_resolver import DistrictResolution, resolve_district
 from app.services.district_resolver import DistrictResolution, resolve_district, resolution_meta
 from app.ml.name_normalization import norm_city
+from app.services.aqar_utils import norm_city_for_aqar
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,8 @@ def price_from_aqar(db: Session, city: str | None, district: str | None):
     if not city:
         return None
 
+    aqar_city = norm_city_for_aqar(city)
+
     # 1) Try district-level median in the materialized view
     try:
         val = db.execute(
@@ -141,7 +144,7 @@ def price_from_aqar(db: Session, city: str | None, district: str | None):
                 LIMIT 1
                 """
             ),
-            {"city": city, "district": district},
+            {"city": aqar_city, "district": district},
         ).scalar()
     except SQLAlchemyError as exc:
         logger.warning("aqar.mv_city_price_per_sqm query failed: %s", exc)
@@ -166,7 +169,7 @@ def price_from_aqar(db: Session, city: str | None, district: str | None):
                   )
                 """
             ),
-            {"city": city},
+            {"city": aqar_city},
         ).scalar()
     except SQLAlchemyError as exc:
         logger.warning("aqar.listings median query failed: %s", exc)

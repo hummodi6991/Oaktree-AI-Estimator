@@ -8,6 +8,7 @@ from shapely.geometry import shape as _shape
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.aqar_utils import norm_city_for_aqar
 logger = logging.getLogger(__name__)
 
 
@@ -185,6 +186,8 @@ def infer_district_from_aqar_listings(
 ) -> str | None:
     """Infer a district name from the nearest Kaggle Aqar listing."""
 
+    aqar_city = norm_city_for_aqar(city)
+
     row = db.execute(
         text(
             """
@@ -201,7 +204,7 @@ def infer_district_from_aqar_listings(
             LIMIT 1
             """
         ),
-        {"lon": lon, "lat": lat, "city": city},
+        {"lon": lon, "lat": lat, "city": aqar_city},
     ).first()
 
     return row[0] if row else None
