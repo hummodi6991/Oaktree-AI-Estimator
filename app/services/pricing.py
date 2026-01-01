@@ -12,7 +12,7 @@ from app.models.tables import PriceQuote
 from app.services.comps import fetch_sale_comps, summarize_ppm2
 from app.services.hedonic import land_price_per_m2
 from app.services.district_resolver import DistrictResolution, resolve_district
-from app.services.kaggle_district import infer_district_from_kaggle
+from app.services.district_resolver import DistrictResolution, resolve_district, resolution_meta
 from app.ml.name_normalization import norm_city
 
 logger = logging.getLogger(__name__)
@@ -186,42 +186,54 @@ def price_from_kaggle_hedonic(
     lon: Optional[float] = None,
     lat: Optional[float] = None,
     district: Optional[str] = None,
+    geom_geojson: dict | None = None,
 ) -> Tuple[Optional[float], str, Dict[str, Any]]:
-    inferred_district: Optional[str] = None
-    inferred_distance: Optional[float] = None
     hedonic_meta: Optional[Dict[str, Any]] = None
+    city_for_resolution = city or ""
+    resolution = resolve_district(
+        db,
+        city=city_for_resolution,
+        geom_geojson=geom_geojson,
+        lon=lon,
+        lat=lat,
+        district=district,
+    )
+
+    district_raw = resolution.district_raw
+    district_norm = resolution.district_norm
+    district_for_model = district_norm
 
     if not city:
-        return None, "kaggle_hedonic_v0", {
+        meta: Dict[str, Any] = {
             "source": "kaggle_hedonic_v0",
-            "district": district,
-            "inferred_district": inferred_district,
-            "distance_m": inferred_distance,
+            "district": district_for_model or district_raw,
+            "district_raw": district_raw,
+            "district_norm": district_norm,
+            "district_resolution": resolution_meta(resolution),
+            "resolver_method": resolution.method,
+            "resolver_confidence": resolution.confidence,
+            "distance_m": resolution.distance_m,
             "hedonic_meta": hedonic_meta,
         }
+        return None, "kaggle_hedonic_v0", meta
 
-    # Try to infer a district from Kaggle listings when we only have coords
-    if district is None and lon is not None and lat is not None:
-        try:
-            kaggle_result = infer_district_from_kaggle(
-                db, city=city, lon=lon, lat=lat
-            )
-            inferred_district = kaggle_result.get("district_raw")
-            inferred_distance = kaggle_result.get("distance_m")
-            if inferred_district:
-                district = inferred_district
-        except Exception as exc:  # noqa: BLE001 - Keep the API robust
-            # Keep the API robust: if inference fails, just fall back to city-only
-            logger.warning("infer_district_from_kaggle failed: %s", exc)
-
-    ppm2, hedonic_meta = land_price_per_m2(db, city=city, since=None, district=district)
+    ppm2, hedonic_meta = land_price_per_m2(
+        db,
+        city=city,
+        since=None,
+        district=district_for_model,
+    )
     value = float(ppm2) if ppm2 is not None else None
 
     meta: Dict[str, Any] = {
         "source": "kaggle_hedonic_v0",
-        "district": district,
-        "inferred_district": inferred_district,
-        "distance_m": inferred_distance,
+        "district": district_for_model or district_raw,
+        "district_raw": district_raw,
+        "district_norm": district_norm,
+        "district_resolution": resolution_meta(resolution),
+        "resolver_method": resolution.method,
+        "resolver_confidence": resolution.confidence,
+        "distance_m": resolution.distance_m,
         "hedonic_meta": hedonic_meta,
     }
     return value, "kaggle_hedonic_v0", meta

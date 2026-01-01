@@ -69,7 +69,7 @@ def test_excel_land_price_calls_hedonic_with_lon_lat(monkeypatch, client):
 
     seen = {"lon": None, "lat": None, "district": "sentinel"}
 
-    def fake_price_from_kaggle_hedonic(db, *, city, lon=None, lat=None, district=None):
+    def fake_price_from_kaggle_hedonic(db, *, city, lon=None, lat=None, district=None, geom_geojson=None):
         seen["lon"] = lon
         seen["lat"] = lat
         seen["district"] = district
