@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.api import estimates as estimates_api
 from app.db.deps import get_db
 from app.main import app
+from app.services.district_resolver import DistrictResolution
 from tests.excel_inputs import sample_excel_inputs
 
 
@@ -87,15 +88,16 @@ def test_excel_rent_prefers_aqar_adjustment(monkeypatch):
     )
     monkeypatch.setattr(
         estimates_api,
-        "infer_district_from_kaggle",
-        lambda *args, **kwargs: {
-            "district_raw": "Alpha",
-            "district_normalized": "alpha",
-            "method": "kaggle_nearest_listing",
-            "distance_m": 15.0,
-            "evidence_count": 3,
-            "confidence": 0.8,
-        },
+        "resolve_district",
+        lambda *args, **kwargs: DistrictResolution(
+            city_norm="riyadh",
+            district_raw="Alpha",
+            district_norm="alpha",
+            method="kaggle_nearest_listing",
+            confidence=0.8,
+            distance_m=15.0,
+            evidence_count=3,
+        ),
     )
 
     poly = {

@@ -10,6 +10,7 @@ from app.api import estimates as estimates_api
 from app.db.deps import get_db
 from app.main import app
 from app.models.tables import RentComp
+from app.services.district_resolver import DistrictResolution
 from tests.excel_inputs import sample_excel_inputs
 
 
@@ -94,19 +95,20 @@ def test_kaggle_district_inference_differs(monkeypatch, client):
         {"lon": 46.685, "lat": 24.723, "district": "Beta"},
     ]
 
-    def _infer(db, city, lon, lat, max_radius_m=2000.0, geom_geojson=None):
+    def _resolve(db, city, geom_geojson=None, lon=None, lat=None, district=None, prefer_layers=None):
         # Simple nearest-neighbour based on squared distance
         best = min(listings, key=lambda r: (r["lon"] - lon) ** 2 + (r["lat"] - lat) ** 2)
-        return {
-            "district_raw": best["district"],
-            "district_normalized": best["district"].lower(),
-            "method": "kaggle_nearest_listing",
-            "distance_m": 10.0,
-            "evidence_count": len(listings),
-            "confidence": 0.9,
-        }
+        return DistrictResolution(
+            city_norm=city,
+            district_raw=best["district"],
+            district_norm=best["district"].lower(),
+            method="kaggle_nearest_listing",
+            confidence=0.9,
+            distance_m=10.0,
+            evidence_count=len(listings),
+        )
 
-    monkeypatch.setattr(estimates_api, "infer_district_from_kaggle", _infer)
+    monkeypatch.setattr(estimates_api, "resolve_district", _resolve)
     monkeypatch.setattr(estimates_api, "latest_re_price_index_scalar", lambda *args, **kwargs: 1.0)
     monkeypatch.setattr(
         estimates_api,
@@ -171,22 +173,23 @@ def test_rent_differs_by_district(monkeypatch, client, db_session):
         "Beta": (46.6855, 24.7235),
     }
 
-    def _infer(db, city, lon, lat, max_radius_m=2000.0, geom_geojson=None):
+    def _resolve(db, city, geom_geojson=None, lon=None, lat=None, district=None, prefer_layers=None):
         nearest = min(
             district_points.items(),
             key=lambda item: (item[1][0] - lon) ** 2 + (item[1][1] - lat) ** 2,
         )
         district_name = nearest[0]
-        return {
-            "district_raw": district_name,
-            "district_normalized": district_name.lower(),
-            "method": "kaggle_nearest_listing",
-            "distance_m": 5.0,
-            "evidence_count": 2,
-            "confidence": 0.9,
-        }
+        return DistrictResolution(
+            city_norm=city,
+            district_raw=district_name,
+            district_norm=district_name.lower(),
+            method="kaggle_nearest_listing",
+            confidence=0.9,
+            distance_m=5.0,
+            evidence_count=2,
+        )
 
-    monkeypatch.setattr(estimates_api, "infer_district_from_kaggle", _infer)
+    monkeypatch.setattr(estimates_api, "resolve_district", _resolve)
 
     payload_alpha = {
         **_payload(),
@@ -257,15 +260,16 @@ def test_rent_scalar_and_applied_rent_logging(monkeypatch, client):
     )
     monkeypatch.setattr(
         estimates_api,
-        "infer_district_from_kaggle",
-        lambda *args, **kwargs: {
-            "district_raw": "Alpha",
-            "district_normalized": "alpha",
-            "method": "kaggle_nearest_listing",
-            "distance_m": 12.0,
-            "evidence_count": 10,
-            "confidence": 0.8,
-        },
+        "resolve_district",
+        lambda *args, **kwargs: DistrictResolution(
+            city_norm="riyadh",
+            district_raw="Alpha",
+            district_norm="alpha",
+            method="kaggle_nearest_listing",
+            confidence=0.8,
+            distance_m=12.0,
+            evidence_count=10,
+        ),
     )
 
     response = client.post("/v1/estimates", json=_payload())
@@ -328,15 +332,16 @@ def test_multi_component_aqar_rents(monkeypatch, client, db_session):
 
     monkeypatch.setattr(
         estimates_api,
-        "infer_district_from_kaggle",
-        lambda *args, **kwargs: {
-            "district_raw": "Alpha",
-            "district_normalized": "alpha",
-            "method": "kaggle_nearest_listing",
-            "distance_m": 10.0,
-            "evidence_count": 2,
-            "confidence": 0.9,
-        },
+        "resolve_district",
+        lambda *args, **kwargs: DistrictResolution(
+            city_norm="riyadh",
+            district_raw="Alpha",
+            district_norm="alpha",
+            method="kaggle_nearest_listing",
+            confidence=0.9,
+            distance_m=10.0,
+            evidence_count=2,
+        ),
     )
     monkeypatch.setattr(estimates_api, "latest_re_price_index_scalar", lambda *args, **kwargs: 1.0)
     monkeypatch.setattr(estimates_api, "latest_rega_residential_rent_per_m2", lambda *args, **kwargs: None)

@@ -24,11 +24,11 @@ from app.services.indicators import (
     latest_sale_price_per_m2,
 )
 from app.services.rent import RentMedianResult, aqar_rent_median
-from app.services.kaggle_district import infer_district_from_kaggle
+from app.services.district_resolver import resolve_district, resolution_meta
 from app.services.overture_buildings_metrics import compute_building_metrics
 from app.services.tax import latest_tax_rate
 from app.models.tables import EstimateHeader, EstimateLine
-from app.ml.name_normalization import norm_city, norm_district
+from app.ml.name_normalization import norm_city
 
 router = APIRouter(tags=["estimates"])
 logger = logging.getLogger(__name__)
@@ -364,10 +364,6 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     except Exception as exc:
         # Give a precise, user-friendly 400 instead of a cryptic 422
         raise HTTPException(status_code=400, detail=f"Invalid GeoJSON for 'geometry': {exc}")
-    district_inference: dict[str, Any] | None = None
-    district = None
-    district_raw = None
-    district_normalized = None
     city_for_district = req.city or "Riyadh"
     city_norm = norm_city(city_for_district) or city_for_district
     if geom.is_empty:
@@ -385,35 +381,20 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         lat = float(centroid.y)
     except Exception:
         lon = lat = None
-
-    if district is None and lon is not None and lat is not None:
-        try:
-            # IMPORTANT:
-            # aqar.listings.city is often normalized (e.g. "riyadh") or Arabic.
-            # Using req.city ("Riyadh") can cause the city-filtered query to return 0 rows,
-            # leading to district=None → aqar_city_median fallback → constant rent.
-            kaggle_result = infer_district_from_kaggle(db, city=city_norm, lon=lon, lat=lat)
-            district_raw = kaggle_result.get("district_raw")
-            district_normalized = norm_district(city_norm, district_raw) if district_raw else None
-            kaggle_normalized = kaggle_result.get("district_normalized")
-            if district_normalized is None and kaggle_normalized:
-                district_normalized = kaggle_normalized
-            if district_raw:
-                district = district_raw
-            if district_normalized:
-                district = district_normalized
-            district_inference = {
-                **kaggle_result,
-                "district_raw": district_raw,
-                "district_normalized": district_normalized,
-            }
-        except Exception:
-            logger.exception("Kaggle district inference failed")
-            district_inference = {"method": "kaggle_nearest_listing", "error": "inference_failed"}
-
-    district_norm = district_normalized or (norm_district(city_norm, district) if district else None)
-    district_normalized_used = district_norm or None
-    district = district_normalized_used
+    district_resolution = resolve_district(
+        db,
+        city=city_norm,
+        geom_geojson=geom_geojson,
+        lon=lon,
+        lat=lat,
+        district=None,
+    )
+    city_norm = district_resolution.city_norm or city_norm
+    district_raw = district_resolution.district_raw
+    district_norm = district_resolution.district_norm
+    district = district_norm or district_raw
+    district_inference = resolution_meta(district_resolution)
+    district_inference["district_normalized"] = district_norm
 
     overture_site_metrics: dict[str, Any] = {}
     overture_context_metrics: dict[str, Any] = {}
@@ -693,6 +674,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             override_f = float(override) if override is not None else 0.0
         except Exception:
             override_f = 0.0
+        land_pricing_meta: dict[str, Any] | None = None
         if override_f <= 0.0:
             # Use Kaggle hedonic v0 model (same logic as /v1/pricing/land)
             value, method, meta = price_from_kaggle_hedonic(
@@ -703,7 +685,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 lat=lat,
                 # Use normalized district if available; otherwise let hedonic infer from lon/lat
                 district=(district_norm or district) if (district_norm or district) else None,
+                geom_geojson=geom_geojson,
             )
+            land_pricing_meta = meta if isinstance(meta, dict) else None
             if value is not None:
                 ppm2_val = float(value)
                 ppm2_src = method or (meta.get("source") if isinstance(meta, dict) else "kaggle_hedonic_v0")
@@ -714,9 +698,20 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 if aqar:
                     ppm2_val, ppm2_src = float(aqar[0]), aqar[1]
                     excel_inputs["land_price_sar_m2"] = ppm2_val
+                    land_pricing_meta = {
+                        "source": "aqar_median",
+                        "method": ppm2_src,
+                        "city": req.city or "Riyadh",
+                        "district": district_norm or district,
+                    }
 
         else:
             ppm2_val, ppm2_src = override_f, "Manual"
+            land_pricing_meta = {
+                "source": "manual_override",
+                "district": district_norm or district,
+                "city": req.city or "Riyadh",
+            }
 
         asof = date.today()
         try:
@@ -1095,6 +1090,8 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "excel_land_price": {
                     "ppm2": float(ppm2_val),
                     "source_type": ppm2_src,
+                    "meta": land_pricing_meta,
+                    "district_resolution": district_inference,
                 },
                 "excel_rent": {
                     "rent_sar_m2_yr": rent_applied_sar_m2_yr,
