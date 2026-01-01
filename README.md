@@ -61,6 +61,7 @@ Only `district` and `far_max` are required. When an estimate runs, the API first
 - `POST /v1/estimates` (uses Overture-built FAR defaults + Excel-style outputs)
   - Mixed-use (`m`) inputs: the API assumes **3.5 above-ground floors** and applies **Option B**
     (scales above-ground `area_ratio` by `3.5 / baseline_floors`) so BUA/FAR reflect that.
+  - Land pricing defaults to **blended_v1** (Suhail anchor + Kaggle Aqar median, district-resolved once via `resolve_district`), shared with `GET /v1/pricing/land`.
 
 ### Rent benchmarks (Excel mode)
 
