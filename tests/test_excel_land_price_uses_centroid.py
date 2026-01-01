@@ -76,9 +76,22 @@ def test_excel_land_price_calls_hedonic_with_lon_lat(monkeypatch, client):
         # Return any numeric value to keep the flow moving
         return 4000.0, "kaggle_hedonic_v0", {"source": "kaggle_hedonic_v0", "district": district}
 
+    def fake_blended_quote(db, city, district=None, lon=None, lat=None, geom_geojson=None, land_use_group=None):
+        # Force fallback to hedonic to assert lon/lat propagation
+        return {
+            "provider": "blended_v1",
+            "method": "blended_v1",
+            "value": None,
+            "district_norm": district,
+            "district_raw": district,
+            "district_resolution": {},
+            "meta": {},
+        }
+
     # Patch the symbol used by estimates.py
     import app.api.estimates as estimates_mod
 
+    monkeypatch.setattr(estimates_mod, "quote_land_price_blended_v1", fake_blended_quote)
     monkeypatch.setattr(estimates_mod, "price_from_kaggle_hedonic", fake_price_from_kaggle_hedonic)
 
     payload = {

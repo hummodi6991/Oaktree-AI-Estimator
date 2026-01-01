@@ -17,6 +17,7 @@ from app.services.explain import (
     to_comp_dict,
 )
 from app.services.pdf import build_memo_pdf
+from app.services.land_price_engine import quote_land_price_blended_v1
 from app.services.pricing import price_from_kaggle_hedonic, price_from_aqar
 from app.services.indicators import (
     latest_rega_residential_rent_per_m2,
@@ -676,34 +677,50 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             override_f = 0.0
         land_pricing_meta: dict[str, Any] | None = None
         if override_f <= 0.0:
-            # Use Kaggle hedonic v0 model (same logic as /v1/pricing/land)
-            value, method, meta = price_from_kaggle_hedonic(
+            quote = quote_land_price_blended_v1(
                 db,
                 city=req.city or "Riyadh",
-                # FIX: pass centroid so hedonic can infer district when needed
+                district=(district_norm or district) if (district_norm or district) else None,
                 lon=lon,
                 lat=lat,
-                # Use normalized district if available; otherwise let hedonic infer from lon/lat
-                district=(district_norm or district) if (district_norm or district) else None,
                 geom_geojson=geom_geojson,
             )
-            land_pricing_meta = meta if isinstance(meta, dict) else None
-            if value is not None:
-                ppm2_val = float(value)
-                ppm2_src = method or (meta.get("source") if isinstance(meta, dict) else "kaggle_hedonic_v0")
+            land_pricing_meta = quote.get("meta") if isinstance(quote, dict) else None
+            quoted_value = quote.get("value") if isinstance(quote, dict) else None
+            if quoted_value is not None:
+                ppm2_val = float(quoted_value)
+                ppm2_src = quote.get("method") or quote.get("provider") or "blended_v1"
                 excel_inputs["land_price_sar_m2"] = ppm2_val
             else:
-                # Fallback: previous Kaggle median logic (aqar.mv_city_price_per_sqm / aqar.listings)
-                aqar = price_from_aqar(db, req.city or "Riyadh", district_norm or district)
-                if aqar:
-                    ppm2_val, ppm2_src = float(aqar[0]), aqar[1]
+                # Fallback: Kaggle hedonic v0 model (previous default)
+                value, method, meta = price_from_kaggle_hedonic(
+                    db,
+                    city=req.city or "Riyadh",
+                    lon=lon,
+                    lat=lat,
+                    district=(district_norm or district) if (district_norm or district) else None,
+                    geom_geojson=geom_geojson,
+                )
+                land_pricing_meta = meta if isinstance(meta, dict) else land_pricing_meta
+                if isinstance(land_pricing_meta, dict):
+                    land_pricing_meta = {**land_pricing_meta, "fallback_from": "blended_v1"}
+                if value is not None:
+                    ppm2_val = float(value)
+                    ppm2_src = method or (meta.get("source") if isinstance(meta, dict) else "kaggle_hedonic_v0")
                     excel_inputs["land_price_sar_m2"] = ppm2_val
-                    land_pricing_meta = {
-                        "source": "aqar_median",
-                        "method": ppm2_src,
-                        "city": req.city or "Riyadh",
-                        "district": district_norm or district,
-                    }
+                else:
+                    # Fallback: previous Kaggle median logic (aqar.mv_city_price_per_sqm / aqar.listings)
+                    aqar = price_from_aqar(db, req.city or "Riyadh", district_norm or district)
+                    if aqar:
+                        ppm2_val, ppm2_src = float(aqar[0]), aqar[1]
+                        excel_inputs["land_price_sar_m2"] = ppm2_val
+                        land_pricing_meta = {
+                            "source": "aqar_median",
+                            "method": ppm2_src,
+                            "city": req.city or "Riyadh",
+                            "district": district_norm or district,
+                            "fallback_from": "blended_v1",
+                        }
 
         else:
             ppm2_val, ppm2_src = override_f, "Manual"
