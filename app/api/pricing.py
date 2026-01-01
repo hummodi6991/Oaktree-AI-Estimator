@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.db.deps import get_db
-from app.ml.name_normalization import norm_city, norm_district
+from app.services.district_resolver import resolution_meta
 from app.services.pricing import price_from_kaggle_hedonic, price_from_suhail, store_quote
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
@@ -24,18 +24,24 @@ def land_price(
     meta = {}
 
     if provider_key == "suhail":
-        result = price_from_suhail(db, city=city, district=district)
-        if result is None:
+        value, method, resolution = price_from_suhail(
+            db,
+            city=city,
+            district=district,
+            geom_geojson=None,
+            lon=lng,
+            lat=lat,
+        )
+        if value is None:
             raise HTTPException(
                 status_code=404,
                 detail="No land price estimate available for this location.",
             )
-        value, method = result
-        city_norm = norm_city(city)
-        district_norm = norm_district(city_norm, district) if district else None
+        district_norm = resolution.district_norm
         meta = {
             "source": "suhail_land_metrics",
             "district_norm": district_norm,
+            "district_resolution": resolution_meta(resolution),
         }
     else:
         value, method, meta = price_from_kaggle_hedonic(
