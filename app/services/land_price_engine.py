@@ -125,41 +125,31 @@ def _aqar_land_signal(
     """
     meta: Dict[str, Any] = {"source": "aqar.mv_city_price_per_sqm", "n": None, "level": None}
     if not city:
+        meta.update({"reason": "missing_city", "city_used": None, "district_used": district_raw})
         return None, meta
 
     aqar_city = norm_city_for_aqar(city)
+    meta.update({"city_used": aqar_city, "district_used": district_raw})
 
-    try:
-        row = db.execute(
-            text(
-                """
-                SELECT price_per_sqm, n, district, district_normalized
-                FROM aqar.mv_city_price_per_sqm
-                WHERE lower(city)=lower(:city)
-                  AND property_type='land'
-                  AND (
-                        (:district_norm IS NOT NULL
-                         AND lower(coalesce(district_normalized, district)) = lower(:district_norm))
-                     OR (:district_raw IS NOT NULL
-                         AND lower(district) = lower(:district_raw))
-                  )
-                ORDER BY
-                  CASE
-                    WHEN :district_norm IS NOT NULL
-                         AND lower(coalesce(district_normalized, district)) = lower(:district_norm) THEN 0
-                    WHEN :district_raw IS NOT NULL
-                         AND lower(district) = lower(:district_raw) THEN 1
-                    ELSE 2
-                  END,
-                  n DESC NULLS LAST
-                LIMIT 1
-                """
-            ),
-            {"city": aqar_city, "district_norm": district_norm, "district_raw": district_raw},
-        ).mappings().first()
-    except SQLAlchemyError as exc:
-        logger.warning("aqar.mv_city_price_per_sqm query failed: %s", exc)
-        row = None
+    row = None
+    if district_raw:
+        try:
+            row = db.execute(
+                text(
+                    """
+                    SELECT price_per_sqm, n
+                    FROM aqar.mv_city_price_per_sqm
+                    WHERE city = :aqar_city
+                      AND district = :district_raw
+                    ORDER BY n DESC
+                    LIMIT 1
+                    """
+                ),
+                {"aqar_city": aqar_city, "district_raw": district_raw},
+            ).mappings().first()
+        except SQLAlchemyError as exc:
+            logger.warning("aqar.mv_city_price_per_sqm query failed: %s", exc)
+            row = None
 
     if row and row.get("price_per_sqm") is not None:
         val = float(row["price_per_sqm"])
@@ -168,7 +158,7 @@ def _aqar_land_signal(
                 {
                     "n": int(row.get("n") or 0),
                     "level": "district",
-                    "district_match": "normalized" if district_norm else "raw",
+                    "district_match": "raw",
                     "method": "aqar_district_median",
                 }
             )
@@ -228,6 +218,7 @@ def _blend_values(
     guardrails: Dict[str, Any] = {}
     method = "blended_v1"
     value: Optional[float] = None
+    reason: str | None = None
 
     if suhail_val and suhail_val > 0:
         components["suhail"] = {"value": float(suhail_val), **suhail_meta}
@@ -245,16 +236,13 @@ def _blend_values(
         value = (weight_suhail * float(suhail_val)) + (weight_aqar * float(aqar_val))
         weights = {"suhail": weight_suhail, "aqar": weight_aqar}
         guardrails["aqar_low_evidence"] = low_evidence
-    elif "suhail" in components:
-        value = float(suhail_val)
-        method = "blended_v1_suhail_only"
-        weights = {"suhail": 1.0}
-    elif "aqar" in components:
-        value = float(aqar_val)
-        method = "blended_v1_aqar_only"
-        weights = {"aqar": 1.0}
+    else:
+        if "aqar" not in components:
+            reason = "missing_aqar"
+        elif "suhail" not in components:
+            reason = "missing_suhail"
 
-    meta = {"components": components, "weights": weights, "guardrails": guardrails}
+    meta = {"components": components, "weights": weights, "guardrails": guardrails, "reason": reason}
     return value, method, meta
 
 
@@ -289,6 +277,14 @@ def quote_land_price_blended_v1(
     aqar = _aqar_land_signal(db, city=city, district_norm=district_norm, district_raw=district_raw)
 
     value, method, meta = _blend_values(suhail, aqar)
+    meta["city_used"] = (
+        meta.get("city_used")
+        or (aqar[1].get("city_used") if isinstance(aqar, tuple) and isinstance(aqar[1], dict) else None)
+        or norm_city_for_aqar(city)
+        or city_norm
+        or city
+    )
+    meta["district_used"] = district_raw
     meta["district_resolution"] = resolution_meta(resolution)
     meta["district_norm"] = district_norm
     meta["district_raw"] = district_raw

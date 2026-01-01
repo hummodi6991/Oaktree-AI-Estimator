@@ -17,7 +17,7 @@ def test_aqar_land_signal_normalizes_city():
 
     class DummyDB:
         def execute(self, stmt, params):
-            captured["city"] = params["city"]
+            captured["city"] = params["aqar_city"]
 
             class DummyResult:
                 def mappings(self_inner):
@@ -27,8 +27,6 @@ def test_aqar_land_signal_normalizes_city():
                     return {
                         "price_per_sqm": 750,
                         "n": 10,
-                        "district": "Al Olaya",
-                        "district_normalized": "al_olaya",
                     }
 
             return DummyResult()
