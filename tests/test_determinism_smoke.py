@@ -156,6 +156,28 @@ def _extract_pricing_value(payload: dict) -> float:
     return payload.get("value_sar_m2") or payload.get("value")
 
 
+def test_pricing_defaults_city_and_returns_legacy_keys(monkeypatch, client):
+    def mock_quote_land_price_blended_v1(db, city, district, lon, lat, geom_geojson=None):
+        return {
+            "provider": "blended_v1",
+            "value": 1234.5,
+            "district_norm": "test_district",
+            "district_raw": "Test District",
+            "district_resolution": {"method": "stub"},
+            "meta": {},
+        }
+
+    monkeypatch.setattr("app.api.pricing.quote_land_price_blended_v1", mock_quote_land_price_blended_v1)
+
+    response = client.get("/v1/pricing/land", params={"lng": 1.0, "lat": 2.0})
+    assert response.status_code == 200
+
+    payload = response.json()
+    assert payload.get("value_sar_m2") is not None
+    assert payload.get("sar_per_m2") is not None
+    assert payload["value_sar_m2"] == payload["sar_per_m2"]
+    assert payload["city"] == "Riyadh"
+
 def test_pricing_deterministic(client):
     resp1 = client.get("/v1/pricing/land", params=_pricing_params())
     resp2 = client.get("/v1/pricing/land", params=_pricing_params())
