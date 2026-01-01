@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session
 from app.models.tables import PriceQuote
 from app.services.comps import fetch_sale_comps, summarize_ppm2
 from app.services.hedonic import land_price_per_m2
+from app.services.district_resolver import DistrictResolution, resolve_district
 from app.services.kaggle_district import infer_district_from_kaggle
-from app.ml.name_normalization import norm_city, norm_district
+from app.ml.name_normalization import norm_city
 
 logger = logging.getLogger(__name__)
 
@@ -29,14 +30,31 @@ def price_from_srem(db: Session, city: str, district: Optional[str]) -> Optional
     return float(ppm2), "SREM/REGA comps median"
 
 
-def price_from_suhail(db: Session, city: str, district: Optional[str]) -> Optional[Tuple[float, str]]:
+def price_from_suhail(
+    db: Session,
+    city: str,
+    district: Optional[str],
+    geom_geojson: dict | None = None,
+    lon: float | None = None,
+    lat: float | None = None,
+) -> Tuple[Optional[float], Optional[str], DistrictResolution]:
     """Return SAR/m² estimate from the Suhail land metrics table."""
 
     if not city:
-        return None
+        resolution = resolve_district(db, city=city, district=district)
+        return None, None, resolution
 
-    city_norm = norm_city(city)
-    district_norm = norm_district(city_norm, district) if district else ""
+    resolution = resolve_district(
+        db,
+        city=city,
+        geom_geojson=geom_geojson,
+        lon=lon,
+        lat=lat,
+        district=district,
+    )
+
+    city_norm = resolution.city_norm or norm_city(city)
+    district_norm = resolution.district_norm or ""
 
     # 1) Prefer district-level median for the latest date.
     if district_norm:
@@ -61,7 +79,7 @@ def price_from_suhail(db: Session, city: str, district: Optional[str]) -> Option
             logger.warning("suhail_land_metrics district lookup failed: %s", exc)
             val = None
         if val is not None:
-            return float(val), "suhail_land_metrics_median"
+            return float(val), "suhail_land_metrics_median", resolution
 
     # 2) Fallback: citywide median for Riyadh using latest snapshot.
     if city_norm == "riyadh":
@@ -88,9 +106,9 @@ def price_from_suhail(db: Session, city: str, district: Optional[str]) -> Option
             logger.warning("suhail_land_metrics Riyadh median lookup failed: %s", exc)
             val = None
         if val is not None:
-            return float(val), "suhail_land_metrics_median"
+            return float(val), "suhail_land_metrics_median", resolution
 
-    return None
+    return None, None, resolution
 
 
 def price_from_aqar(db: Session, city: str | None, district: str | None):
