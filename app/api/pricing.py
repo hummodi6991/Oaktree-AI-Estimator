@@ -4,6 +4,7 @@ from app.db.deps import get_db
 from app.services.district_resolver import resolution_meta
 from app.services.land_price_engine import quote_land_price_blended_v1
 from app.services.pricing import price_from_kaggle_hedonic, price_from_suhail, store_quote
+from app.services.pricing_response import normalize_land_price_quote
 
 router = APIRouter(prefix="/pricing", tags=["pricing"])
 
@@ -19,10 +20,8 @@ def land_price(
     db: Session = Depends(get_db),
 ):
     provider_key = (provider or "").lower()
-    meta = {}
+    raw_quote: dict = {}
     method = provider_key
-    value = None
-    district_resolution = None
 
     if provider_key == "blended_v1":
         quote = quote_land_price_blended_v1(
@@ -33,11 +32,8 @@ def land_price(
             lat=lat,
             geom_geojson=None,
         )
-        value = quote.get("value")
+        raw_quote = quote
         method = quote.get("method") or "blended_v1"
-        meta = quote.get("meta") or {}
-        district_resolution = quote.get("district_resolution")
-        district = quote.get("district_norm") or quote.get("district_raw") or district
     elif provider_key == "suhail":
         value, method, resolution = price_from_suhail(
             db,
@@ -52,14 +48,19 @@ def land_price(
                 status_code=404,
                 detail="No land price estimate available for this location.",
             )
-        district_norm = resolution.district_norm
-        meta = {
-            "source": "suhail_land_metrics",
-            "district_norm": district_norm,
+        raw_quote = {
+            "provider": "suhail",
+            "value": value,
+            "method": method,
+            "district_norm": resolution.district_norm,
+            "district_raw": resolution.district_raw or district,
             "district_resolution": resolution_meta(resolution),
+            "meta": {
+                "source": "suhail_land_metrics",
+                "district_norm": resolution.district_norm,
+                "district_resolution": resolution_meta(resolution),
+            },
         }
-        district_resolution = resolution_meta(resolution)
-        district = district_norm or district
     else:
         value, method, meta = price_from_kaggle_hedonic(
             db,
@@ -68,37 +69,32 @@ def land_price(
             lat=lat,
             district=district,
         )
-        district_resolution = meta.get("district_resolution") if isinstance(meta, dict) else None
+        raw_quote = {
+            "provider": provider_key or "kaggle_hedonic_v0",
+            "value": value,
+            "method": method,
+            "meta": meta,
+        }
 
-    if value is None:
+    normalized = normalize_land_price_quote(city, provider_key or raw_quote.get("provider"), raw_quote, method)
+
+    if normalized["value_sar_m2"] is None:
         raise HTTPException(
             status_code=404,
             detail="No land price estimate available for this location.",
         )
 
-    district = meta.get("district") or meta.get("district_norm") or district
-    district_resolution = district_resolution or meta.get("district_resolution") if isinstance(meta, dict) else district_resolution
-
     try:
         store_quote(
             db,
-            provider or "kaggle_hedonic_v0",
+            normalized["provider"] or "kaggle_hedonic_v0",
             city,
-            district,
+            normalized.get("district_norm") or normalized.get("district_raw") or district,
             parcel_id,
-            value,
-            method,
+            normalized["value_sar_m2"],
+            normalized["method"],
         )
     except Exception:
         pass
 
-    return {
-        "provider": provider or "kaggle_hedonic_v0",
-        "city": city,
-        "district": district,
-        "sar_per_m2": value,
-        "method": method,
-        "meta": meta,
-        "district_resolution": district_resolution or {},
-        "kaggle_hedonic_v0_meta": meta,
-    }
+    return normalized
