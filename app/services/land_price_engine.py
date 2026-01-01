@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.ml.name_normalization import norm_city
 from app.services.district_resolver import DistrictResolution, resolve_district, resolution_meta
 from app.services.aqar_utils import norm_city_for_aqar
+from app.services.aqar_district_match import find_aqar_mv_district_price
 from app.services.pricing import SUHAIL_RIYADH_PROVINCE_ID
 
 logger = logging.getLogger(__name__)
@@ -131,38 +132,13 @@ def _aqar_land_signal(
     aqar_city = norm_city_for_aqar(city)
     meta.update({"city_used": aqar_city, "district_used": district_raw})
 
-    row = None
     if district_raw:
-        try:
-            row = db.execute(
-                text(
-                    """
-                    SELECT price_per_sqm, n
-                    FROM aqar.mv_city_price_per_sqm
-                    WHERE city = :aqar_city
-                      AND district = :district_raw
-                    ORDER BY n DESC
-                    LIMIT 1
-                    """
-                ),
-                {"aqar_city": aqar_city, "district_raw": district_raw},
-            ).mappings().first()
-        except SQLAlchemyError as exc:
-            logger.warning("aqar.mv_city_price_per_sqm query failed: %s", exc)
-            row = None
-
-    if row and row.get("price_per_sqm") is not None:
-        val = float(row["price_per_sqm"])
-        if val > 0:
-            meta.update(
-                {
-                    "n": int(row.get("n") or 0),
-                    "level": "district",
-                    "district_match": "raw",
-                    "method": "aqar_district_median",
-                }
-            )
-            return val, meta
+        val, mv_meta = find_aqar_mv_district_price(
+            db, city_ar=aqar_city, district_raw=district_raw, property_type=None
+        )
+        meta.update(mv_meta)
+        if val is not None:
+            return float(val), meta
 
     try:
         row = db.execute(
@@ -181,7 +157,7 @@ def _aqar_land_signal(
                   )
                 """
             ),
-            {"city": aqar_city},
+            {"city": aqar_city, "aqar_city": aqar_city},
         ).mappings().first()
     except SQLAlchemyError as exc:
         logger.warning("aqar.listings city median query failed: %s", exc)

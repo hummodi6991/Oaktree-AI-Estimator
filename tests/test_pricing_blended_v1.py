@@ -72,7 +72,7 @@ def test_aqar_query_uses_raw_district(monkeypatch):
                     return self_inner
 
                 def first(self_inner):
-                    return {"price_per_sqm": 1200, "n": 7}
+                    return {"district": "الملقا", "price_per_sqm": 1200, "n": 7}
 
             return Result()
 
@@ -81,11 +81,11 @@ def test_aqar_query_uses_raw_district(monkeypatch):
         db, city="Riyadh", district_norm="ignored", district_raw="الملقا"
     )
 
-    assert "district = :district_raw" in (db.last_text or "")
-    assert "district_normalized" not in (db.last_text or "")
+    assert "FROM aqar.mv_city_price_per_sqm" in (db.last_text or "")
     assert db.last_params["aqar_city"] == "الرياض"
     assert value == pytest.approx(1200.0)
     assert meta["district_used"] == "الملقا"
+    assert meta["method"] == "aqar_mv_exact"
 
 
 class DummySession:

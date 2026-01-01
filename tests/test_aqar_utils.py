@@ -17,7 +17,7 @@ def test_aqar_land_signal_normalizes_city():
 
     class DummyDB:
         def execute(self, stmt, params):
-            captured["city"] = params["aqar_city"]
+            captured["city"] = params.get("aqar_city") or params.get("city")
 
             class DummyResult:
                 def mappings(self_inner):
@@ -25,6 +25,7 @@ def test_aqar_land_signal_normalizes_city():
 
                 def first(self_inner):
                     return {
+                        "district": "Al Olaya",
                         "price_per_sqm": 750,
                         "n": 10,
                     }
@@ -38,6 +39,7 @@ def test_aqar_land_signal_normalizes_city():
     assert captured["city"] == "الرياض"
     assert value == pytest.approx(750)
     assert meta["level"] == "district"
+    assert meta["method"] == "aqar_mv_exact"
 
 
 def test_price_from_aqar_normalizes_city():
