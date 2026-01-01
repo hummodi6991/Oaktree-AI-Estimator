@@ -13,7 +13,15 @@ import type { EstimateNotes, EstimateTotals } from "../lib/types";
 
 const PROVIDERS = [
   {
-    value: "aqar" as const,
+    value: "blended_v1" as const,
+    label: "Blended v1 (Suhail + Aqar)",
+  },
+  {
+    value: "suhail" as const,
+    label: "Suhail (district median)",
+  },
+  {
+    value: "kaggle_hedonic_v0" as const,
     label: "Hedonic model (trained partly on Kaggle data)",
   },
 ];
@@ -107,9 +115,10 @@ const normalizeLandUse = (value?: string | null): LandUseCode | null => {
 };
 
 export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
-  const [provider, setProvider] = useState<"aqar">("aqar");
+  const [provider, setProvider] = useState<(typeof PROVIDERS)[number]["value"]>("blended_v1");
   const [price, setPrice] = useState<number | null>(null);
   const [suggestedPrice, setSuggestedPrice] = useState<number | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const normalizedParcelLandUse = normalizeLandUse(parcel?.landuse_code);
   const normalizedPropLandUse = normalizeLandUse(landUseOverride);
   const initialLandUse = normalizedPropLandUse ?? normalizedParcelLandUse ?? "s";
@@ -143,6 +152,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   async function fetchPrice() {
     setError(null);
+    setFetchError(null);
+    setPrice(null);
     const centroid = centroidFromGeometry(parcel?.geometry as Geometry | null);
     try {
       const res = await landPrice(
@@ -153,12 +164,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         centroid?.[0],
         centroid?.[1],
       );
-      setPrice(res.sar_per_m2);
-      setSuggestedPrice(res.sar_per_m2);
-      setInputs((current) => ({ ...current, land_price_sar_m2: res.sar_per_m2 }));
+      const ppm2 = res.value_sar_m2 ?? res.sar_per_m2 ?? res.value;
+      if (ppm2 == null) {
+        throw new Error("No price returned from API");
+      }
+      setPrice(ppm2);
+      setSuggestedPrice(ppm2);
+      setInputs((current) => ({ ...current, land_price_sar_m2: ppm2 }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setError(message);
+      setFetchError(message);
     }
   }
 
@@ -377,7 +392,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             ))}
           </select>
           <button onClick={fetchPrice}>Fetch land price</button>
-          {price != null && <strong>Suggested SAR/m²: {price}</strong>}
+          {price != null && (
+            <strong>
+              Suggested SAR/m²: {price.toLocaleString()} ({provider})
+            </strong>
+          )}
+          {fetchError && <span style={{ color: "#fca5a5" }}>Error: {fetchError}</span>}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <label style={{ opacity: 0.85 }}>Override land use (optional):</label>
@@ -417,7 +437,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             style={{ padding: "4px 6px", borderRadius: 4, border: "1px solid rgba(255,255,255,0.2)" }}
           />
           <span style={{ fontSize: "0.8rem", color: "#cbd5f5" }}>
-            Suggested from fetch: {suggestedPrice != null ? `${suggestedPrice.toLocaleString()} SAR/m²` : "Not fetched yet"}
+            Suggested from fetch: {suggestedPrice != null ? `${suggestedPrice.toLocaleString()} SAR/m² (${provider})` : "Not fetched yet"}
           </span>
         </label>
       </div>

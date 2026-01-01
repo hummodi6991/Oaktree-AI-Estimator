@@ -11,14 +11,17 @@ router = APIRouter(prefix="/pricing", tags=["pricing"])
 
 @router.get("/land")
 def land_price(
-    city: str = Query(...),
+    city: str | None = Query(default=None, description="City name"),
     district: str | None = Query(default=None),
     provider: str = Query(default="blended_v1", description="Provider label (blended_v1, kaggle_hedonic_v0, suhail)."),
     parcel_id: str | None = Query(default=None),
     lng: float | None = Query(default=None, description="Centroid longitude (WGS84)"),
+    lon: float | None = Query(default=None, description="Alias for lng"),
     lat: float | None = Query(default=None, description="Centroid latitude (WGS84)"),
     db: Session = Depends(get_db),
 ):
+    city = city or "Riyadh"
+    effective_lng = lng if lng is not None else lon
     provider_key = (provider or "").lower()
     raw_quote: dict = {}
     method = provider_key
@@ -28,7 +31,7 @@ def land_price(
             db,
             city=city,
             district=district,
-            lon=lng,
+            lon=effective_lng,
             lat=lat,
             geom_geojson=None,
         )
@@ -40,7 +43,7 @@ def land_price(
             city=city,
             district=district,
             geom_geojson=None,
-            lon=lng,
+            lon=effective_lng,
             lat=lat,
         )
         if value is None:
@@ -65,7 +68,7 @@ def land_price(
         value, method, meta = price_from_kaggle_hedonic(
             db,
             city=city,
-            lon=lng,
+            lon=effective_lng,
             lat=lat,
             district=district,
         )
@@ -97,4 +100,9 @@ def land_price(
     except Exception:
         pass
 
-    return normalized
+    return {
+        **normalized,
+        "sar_per_m2": normalized["value_sar_m2"],
+        "value": normalized["value_sar_m2"],
+        "district": normalized.get("district_norm") or normalized.get("district_raw"),
+    }

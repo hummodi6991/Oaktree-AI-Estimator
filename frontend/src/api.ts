@@ -96,15 +96,16 @@ export async function collateParcels(parcelIds: string[]) {
 
 export async function landPrice(
   city: string,
-  district?: string,
-  provider: "aqar" = "aqar",
+  district: string | undefined,
+  provider: string,
   parcelId?: string,
   lng?: number,
   lat?: number,
 ) {
-  const params = new URLSearchParams({ city });
+  const params = new URLSearchParams();
+  if (city) params.set("city", city);
   if (district) params.set("district", district);
-  params.set("provider", provider);
+  if (provider) params.set("provider", provider);
   if (parcelId) params.set("parcel_id", parcelId);
   if (lng != null) params.set("lng", String(lng));
   if (lat != null) params.set("lat", String(lat));
