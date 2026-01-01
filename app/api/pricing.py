@@ -82,9 +82,19 @@ def land_price(
     normalized = normalize_land_price_quote(city, provider_key or raw_quote.get("provider"), raw_quote, method)
 
     if normalized["value_sar_m2"] is None:
+        meta = raw_quote.get("meta") if isinstance(raw_quote, dict) else {}
+        detail = {
+            "message": "No land price estimate available for this location.",
+            "reason": meta.get("reason"),
+            "city_used": meta.get("city_used") or city,
+            "district_used": meta.get("district_used")
+            or normalized.get("district_raw")
+            or normalized.get("district_norm")
+            or district,
+        }
         raise HTTPException(
             status_code=404,
-            detail="No land price estimate available for this location.",
+            detail=detail,
         )
 
     try:
