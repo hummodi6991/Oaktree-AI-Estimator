@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.ml.name_normalization import norm_city
 from app.services.district_resolver import DistrictResolution, resolve_district, resolution_meta
+from app.services.aqar_utils import norm_city_for_aqar
 from app.services.pricing import SUHAIL_RIYADH_PROVINCE_ID
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,8 @@ def _aqar_land_signal(
     if not city:
         return None, meta
 
+    aqar_city = norm_city_for_aqar(city)
+
     try:
         row = db.execute(
             text(
@@ -152,7 +155,7 @@ def _aqar_land_signal(
                 LIMIT 1
                 """
             ),
-            {"city": city, "district_norm": district_norm, "district_raw": district_raw},
+            {"city": aqar_city, "district_norm": district_norm, "district_raw": district_raw},
         ).mappings().first()
     except SQLAlchemyError as exc:
         logger.warning("aqar.mv_city_price_per_sqm query failed: %s", exc)
@@ -188,7 +191,7 @@ def _aqar_land_signal(
                   )
                 """
             ),
-            {"city": city},
+            {"city": aqar_city},
         ).mappings().first()
     except SQLAlchemyError as exc:
         logger.warning("aqar.listings city median query failed: %s", exc)

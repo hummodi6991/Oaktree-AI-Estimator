@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.ml.name_normalization import norm_city, norm_district
+from app.services.aqar_utils import norm_city_for_aqar
 
 
 def _haversine_m(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
@@ -62,6 +63,7 @@ def infer_district_from_kaggle(
         }
 
     params = {"lon": lon, "lat": lat}
+    aqar_city = norm_city_for_aqar(city) if city else None
     base_sql = """
         SELECT district, city, lon, lat
         FROM aqar.listings
@@ -87,8 +89,12 @@ def infer_district_from_kaggle(
         # haversine search focused on nearby evidence (avoids returning a random slice).
         sql += " ORDER BY ((lon - :lon) * (lon - :lon) + (lat - :lat) * (lat - :lat)) ASC"
         sql += " LIMIT 500"
+        params_local = dict(params)
+        city_param = aqar_city or city
+        if clauses:
+            params_local["city"] = city_param
         try:
-            return list(db.execute(text(sql), {**params, "city": city}).all())
+            return list(db.execute(text(sql), params_local).all())
         except Exception:
             return []
 
