@@ -11,7 +11,6 @@ export type ExcelInputs = {
   fitout_rate: number;
   contingency_pct: number;
   consultants_pct: number;
-  feasibility_fee: number;
   transaction_pct: number;
   land_price_sar_m2?: number;
 };
@@ -39,7 +38,6 @@ export const TEMPLATE_S: ExcelInputs = {
   fitout_rate: 400,
   contingency_pct: 0.1,
   consultants_pct: 0.06,
-  feasibility_fee: 1500000,
   transaction_pct: 0.05,
 };
 
@@ -78,7 +76,6 @@ export const TEMPLATE_M: ExcelInputs = {
   fitout_rate: 400,
   contingency_pct: 0.1,
   consultants_pct: 0.06,
-  feasibility_fee: 1500000,
   transaction_pct: 0.05,
 };
 
@@ -97,4 +94,3 @@ export function cloneTemplate(t: ExcelInputs): ExcelInputs {
     rent_sar_m2_yr: { ...t.rent_sar_m2_yr },
   };
 }
-

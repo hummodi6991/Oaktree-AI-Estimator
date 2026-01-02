@@ -252,6 +252,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     residentialRentYr != null ? residentialRentYr / 12 : null;
   const contingencyPct = usedInputs.contingency_pct ?? null;
   const consultantsPct = usedInputs.consultants_pct ?? null;
+  const breakdownFeasibilityPct =
+    typeof breakdown?.feasibility_fee_pct === "number" ? breakdown.feasibility_fee_pct : null;
+  const feasibilityPct = breakdownFeasibilityPct ?? 0.02;
   const transactionPct = usedInputs.transaction_pct ?? null;
   const fitoutRate = usedInputs.fitout_rate ?? null;
   const siteArea = excelResult?.siteArea ?? null;
@@ -567,7 +570,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       {excelResult.costs.feasibility_fee.toLocaleString()} SAR
                     </td>
                     <td style={calcColumnStyle}>
-                      Fixed allowance from inputs: {(usedInputs.feasibility_fee ?? 0).toLocaleString()} SAR
+                      {`Land cost ${landCostValue.toLocaleString()} SAR × feasibility ${formatPercent(feasibilityPct)}`}
                     </td>
                   </tr>
                   <tr>

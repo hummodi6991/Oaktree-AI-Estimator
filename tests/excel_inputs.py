@@ -11,7 +11,6 @@ def sample_excel_inputs() -> dict:
         "fitout_rate": 400,
         "contingency_pct": 0.10,
         "consultants_pct": 0.06,
-        "feasibility_fee": 1500000,
         "transaction_pct": 0.03,
         "land_price_sar_m2": 2800,
     }
