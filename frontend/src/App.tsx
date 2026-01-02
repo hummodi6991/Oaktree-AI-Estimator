@@ -27,7 +27,7 @@ const DEFAULT_EXCEL_INPUTS = {
   cp_sqm_per_space: { basement: 30 },
   rent_sar_m2_yr: { residential: 2400 },
   fitout_rate: 400,
-  contingency_pct: 0.1,
+  contingency_pct: 0.05,
   consultants_pct: 0.06,
   transaction_pct: 0.03,
   land_price_sar_m2: 2800,
