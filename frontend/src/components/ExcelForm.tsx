@@ -396,6 +396,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       note: `${efficiencyText} × ${rent.toLocaleString()} SAR/m²/yr`,
     };
   });
+  const summaryText =
+    (excelResult?.summary && excelResult.summary.trim()) ||
+    (excelResult ? `Unlevered ROI: ${(excelResult.roi * 100).toFixed(1)}%` : "");
 
   return (
     <div>
@@ -671,12 +674,23 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   </tr>
                 </tbody>
               </table>
+
+              {summaryText && (
+                <div
+                  style={{
+                    marginTop: "0.75rem",
+                    paddingTop: "0.75rem",
+                    borderTop: "1px solid rgba(255,255,255,0.08)",
+                  }}
+                >
+                  <h5 style={{ margin: "0 0 0.35rem 0", fontSize: "0.95rem" }}>
+                    Executive summary
+                  </h5>
+                  <p style={{ margin: 0, lineHeight: 1.4 }}>{summaryText}</p>
+                </div>
+              )}
             </div>
           </div>
-
-          <p style={{ marginTop: "0.75rem", marginBottom: 0 }}>
-            {excelResult.summary || `Unlevered ROI: ${(excelResult.roi * 100).toFixed(1)}%`}
-          </p>
         </div>
       )}
     </div>
