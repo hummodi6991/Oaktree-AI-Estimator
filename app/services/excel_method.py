@@ -399,6 +399,10 @@ def build_excel_explanations(
         )
         if rate_note:
             parking_line = f"{parking_line} {rate_note}"
+        # Row-level explanation hook for the UI "How we calculated it" column.
+        # The combined y1_income explanation remains as an overall summary, but the UI can
+        # now also display parking math directly on the "parking income" row.
+        explanations["parking_income"] = parking_line
         income_parts.append(parking_line)
     if income_parts:
         explanations["y1_income"] = "; ".join(income_parts)
