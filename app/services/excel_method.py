@@ -1,6 +1,8 @@
 import math
 from typing import Any, Dict
 
+from app.services.parking_income import compute_parking_income, _normalize_landuse_code
+
 
 def _is_basement_key(key: str) -> bool:
     k = (key or "").strip().lower()
@@ -333,9 +335,14 @@ def build_excel_explanations(
     )
 
     income_parts = []
+    parking_income_meta = breakdown.get("parking_income_meta") or {}
+    parking_income_component = None
     rent_meta = inputs.get("rent_source_metadata") or {}
     rent_components_meta = rent_meta.get("components") if isinstance(rent_meta, dict) else {}
     for key, component in y1_income_components.items():
+        if key == "parking_income":
+            parking_income_component = component
+            continue
         nla_val = float(nla.get(key, 0.0) or 0.0)
         base_rent = float(rent_rates.get(key, 0.0) or 0.0)
         applied_rent = float(rent_applied.get(key, 0.0) or 0.0)
@@ -359,6 +366,18 @@ def build_excel_explanations(
             f"{key} net lettable area {_fmt_amount(nla_val, decimals=2)} m² × {rent_used:,.0f} SAR/m²/year "
             f"= {_fmt_amount(component)} SAR/year. Rent benchmark sourced from {rent_label}.{note}"
         )
+    if parking_income_component:
+        extra_spaces = int(parking_income_meta.get("extra_spaces") or 0)
+        monthly_rate_used = float(parking_income_meta.get("monthly_rate_used") or 0.0)
+        occupancy_used = float(parking_income_meta.get("occupancy_used") or 0.0)
+        rate_note = str(parking_income_meta.get("rate_note") or "").strip()
+        parking_line = (
+            f"Parking income from {extra_spaces} excess spaces at {monthly_rate_used:,.0f} SAR/space/month "
+            f"× {occupancy_used:.2f} occupancy = {_fmt_amount(parking_income_component)} SAR/year."
+        )
+        if rate_note:
+            parking_line = f"{parking_line} {rate_note}"
+        income_parts.append(parking_line)
     if income_parts:
         explanations["y1_income"] = "; ".join(income_parts)
 
@@ -500,6 +519,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     parking_provided_spaces = int(math.floor(parking_provided_raw + 1e-9))
     parking_deficit_spaces = max(0, parking_required_spaces - parking_provided_spaces)
     parking_compliant = parking_deficit_spaces == 0
+    parking_extra_spaces = max(0, parking_provided_spaces - parking_required_spaces)
 
     fitout_area = sum(
         value for key, value in built_area.items() if not key.lower().startswith("basement")
@@ -530,7 +550,53 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         for key in set(rent_rates.keys()) | set(area_ratio.keys())
     }
     y1_income_components = {key: nla.get(key, 0.0) * rent_applied.get(key, 0.0) for key in area_ratio.keys()}
-    y1_income = sum(y1_income_components.values())
+    base_y1_income = sum(y1_income_components.values())
+
+    def _infer_parking_landuse_code() -> str | None:
+        explicit_keys = ("land_use_code", "landuse_code", "land_use", "landuse")
+        for k in explicit_keys:
+            code = _normalize_landuse_code(inputs.get(k))
+            if code:
+                return code
+        keys = {str(k).strip().lower() for k in area_ratio.keys()}
+        has_res = any(k.startswith("res") or k == "residential" for k in keys)
+        has_commercial = any(k in {"retail", "office", "commercial"} for k in keys)
+        if has_res and not has_commercial:
+            return "s"
+        if has_res and has_commercial:
+            return "m"
+        if has_commercial and not has_res:
+            return "c"
+        return None
+
+    monetize_extra_parking = bool(inputs.get("monetize_extra_parking"))
+    parking_public_access = bool(inputs.get("parking_public_access"))
+    override_rate_raw = inputs.get("parking_monthly_rate_sar_per_space")
+    try:
+        override_rate = float(override_rate_raw) if override_rate_raw is not None else None
+    except Exception:
+        override_rate = None
+    occupancy_override_raw = inputs.get("parking_occupancy")
+    try:
+        occupancy_override = float(occupancy_override_raw) if occupancy_override_raw is not None else None
+    except Exception:
+        occupancy_override = None
+
+    parking_income_y1, parking_income_meta = compute_parking_income(
+        parking_extra_spaces,
+        monetize=monetize_extra_parking,
+        landuse_code=_infer_parking_landuse_code(),
+        land_price_sar_m2=float(inputs.get("land_price_sar_m2", 0.0) or 0.0),
+        public_access=parking_public_access,
+        override_rate=override_rate,
+        occupancy_override=occupancy_override,
+    )
+
+    if parking_income_y1 > 0:
+        y1_income_components["parking_income"] = parking_income_y1
+    y1_income = base_y1_income + parking_income_y1
+    parking_monthly_rate_used = float(parking_income_meta.get("monthly_rate_used") or 0.0)
+    parking_occupancy_used = float(parking_income_meta.get("occupancy_used") or 0.0)
 
     roi = (y1_income / grand_total_capex) if grand_total_capex > 0 else 0.0
 
@@ -544,6 +610,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "parking_provided_spaces": parking_provided_spaces,
         "parking_provided_spaces_raw": parking_provided_raw,
         "parking_deficit_spaces": parking_deficit_spaces,
+        "parking_extra_spaces": parking_extra_spaces,
         "parking_compliant": parking_compliant,
         "parking_area_m2": parking_area_m2,
         "parking_area_by_key": parking_area_by_key,
@@ -561,6 +628,10 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "y1_income_components": y1_income_components,
         "y1_income": y1_income,
         "rent_applied_sar_m2_yr": rent_applied,
+        "parking_income_y1": parking_income_y1,
+        "parking_income_meta": parking_income_meta,
+        "parking_monthly_rate_used": parking_monthly_rate_used,
+        "parking_occupancy_used": parking_occupancy_used,
         "roi": roi,
     }
 
