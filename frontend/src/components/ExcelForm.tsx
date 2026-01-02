@@ -193,7 +193,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       setPrice(ppm2);
       setSuggestedPrice(ppm2);
       setInputs((current) => ({ ...current, land_price_sar_m2: ppm2 }));
-      setOverrideLandUse(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setFetchError(message);
