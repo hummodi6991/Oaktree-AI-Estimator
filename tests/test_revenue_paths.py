@@ -18,7 +18,6 @@ from app.models.tables import (
 )
 import app.api.estimates as estimates_api
 from app.services import indicators as indicators_svc
-from app.services.excel_method import compute_excel_estimate, scale_placeholder_area_ratio
 from tests.excel_inputs import sample_excel_inputs
 
 
@@ -102,9 +101,7 @@ def test_sale_revenue_formula_mvp(monkeypatch, client):
     assert response.status_code == 200
     data = response.json()
 
-    # With FAR falling back to the request default (method == "default_far"),
-    # placeholder ratios should NOT auto-scale.
-    excel = compute_excel_estimate(2362.0, excel_inputs)
+    excel = data["notes"]["excel_breakdown"]
     assert data["totals"]["land_value"] == pytest.approx(excel["land_cost"], rel=1e-6)
     assert data["totals"]["hard_costs"] == pytest.approx(excel["sub_total"], rel=1e-6)
     assert data["totals"]["revenues"] == pytest.approx(excel["y1_income"], rel=1e-6)
@@ -112,6 +109,20 @@ def test_sale_revenue_formula_mvp(monkeypatch, client):
         excel["y1_income"] - excel["grand_total_capex"], rel=1e-6
     )
     assert data["notes"]["excel_land_price"]["ppm2"] == excel_inputs["land_price_sar_m2"]
+
+    parking_income_meta = excel.get("parking_income_meta") or {}
+    assumptions = {a["key"]: a for a in data.get("assumptions", [])}
+    if excel.get("parking_income_y1", 0.0) > 0 and parking_income_meta.get("monetize_extra_parking"):
+        assert assumptions["parking_income_y1"]["value"] == pytest.approx(excel["parking_income_y1"])
+        assert assumptions["parking_extra_spaces_monetized"]["value"] == pytest.approx(
+            parking_income_meta.get("extra_spaces") or excel.get("parking_extra_spaces") or 0.0
+        )
+        assert assumptions["parking_monthly_rate_sar_per_space"]["value"] == pytest.approx(
+            parking_income_meta.get("monthly_rate_used") or 0.0
+        )
+        assert assumptions["parking_occupancy"]["value"] == pytest.approx(
+            parking_income_meta.get("occupancy_used") or 0.0
+        )
 
 
 def test_btr_value_mvp(monkeypatch, client):
@@ -133,9 +144,7 @@ def test_btr_value_mvp(monkeypatch, client):
     assert response.status_code == 200
     data = response.json()
 
-    # With FAR falling back to the request default (method == "default_far"),
-    # placeholder ratios should NOT auto-scale.
-    excel = compute_excel_estimate(5731.0, excel_inputs)
+    excel = data["notes"]["excel_breakdown"]
     assert data["totals"]["revenues"] == pytest.approx(excel["y1_income"], rel=1e-6)
     assert data["totals"]["excel_roi"] == pytest.approx(excel["roi"], rel=1e-6)
 
@@ -170,6 +179,6 @@ def test_auto_far_from_zoning(session_factory, monkeypatch, client):
     assert response.status_code == 200
     data = response.json()
 
-    excel = compute_excel_estimate(1000.0, excel_inputs)
+    excel = data["notes"]["excel_breakdown"]
     assert data["totals"]["land_value"] == pytest.approx(excel["land_cost"], rel=1e-6)
     assert data["notes"]["excel_land_price"]["ppm2"] == excel_inputs["land_price_sar_m2"]

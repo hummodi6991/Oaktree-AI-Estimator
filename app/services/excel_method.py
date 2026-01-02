@@ -4,6 +4,28 @@ from typing import Any, Dict
 from app.services.parking_income import compute_parking_income, _normalize_landuse_code
 
 
+def _parse_bool(value: Any) -> bool | None:
+    """
+    Best-effort bool parser.
+
+    Returns:
+        True/False if value is a recognizable boolean-like input.
+        None if value is missing or unparseable (caller can apply defaults).
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in {"1", "true", "t", "yes", "y"}:
+        return True
+    if s in {"0", "false", "f", "no", "n"}:
+        return False
+    return None
+
+
 def _is_basement_key(key: str) -> bool:
     k = (key or "").strip().lower()
     if k in {"basement", "underground"}:
@@ -569,8 +591,23 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
             return "c"
         return None
 
-    monetize_extra_parking = bool(inputs.get("monetize_extra_parking"))
-    parking_public_access = bool(inputs.get("parking_public_access"))
+    parking_landuse_code = _infer_parking_landuse_code()
+
+    monetize_raw = _parse_bool(inputs.get("monetize_extra_parking"))
+    # Frontend currently doesn't expose this; default to ON so extra spaces contribute revenue.
+    monetize_extra_parking = True if monetize_raw is None else bool(monetize_raw)
+    monetize_defaulted = monetize_raw is None
+
+    public_raw = _parse_bool(inputs.get("parking_public_access"))
+    if public_raw is None:
+        # Default: commercial/mixed projects can plausibly monetize public parking;
+        # residential is typically private/assigned.
+        parking_public_access = parking_landuse_code in {"m", "c"}
+        public_defaulted = True
+    else:
+        parking_public_access = bool(public_raw)
+        public_defaulted = False
+
     override_rate_raw = inputs.get("parking_monthly_rate_sar_per_space")
     try:
         override_rate = float(override_rate_raw) if override_rate_raw is not None else None
@@ -585,12 +622,19 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     parking_income_y1, parking_income_meta = compute_parking_income(
         parking_extra_spaces,
         monetize=monetize_extra_parking,
-        landuse_code=_infer_parking_landuse_code(),
+        landuse_code=parking_landuse_code,
         land_price_sar_m2=float(inputs.get("land_price_sar_m2", 0.0) or 0.0),
         public_access=parking_public_access,
         override_rate=override_rate,
         occupancy_override=occupancy_override,
     )
+
+    # Enrich meta for transparency (frontend doesn't yet send these toggles).
+    if isinstance(parking_income_meta, dict):
+        parking_income_meta = dict(parking_income_meta)
+        parking_income_meta.setdefault("monetize_extra_parking_defaulted", monetize_defaulted)
+        parking_income_meta.setdefault("parking_public_access_defaulted", public_defaulted)
+        parking_income_meta.setdefault("landuse_code_inferred", parking_landuse_code)
 
     if parking_income_y1 > 0:
         y1_income_components["parking_income"] = parking_income_y1
