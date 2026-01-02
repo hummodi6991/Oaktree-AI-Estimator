@@ -923,6 +923,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             }
 
         excel = compute_excel_estimate(site_area_m2, excel_inputs)
+        parking_income_meta = excel.get("parking_income_meta") or {}
 
         # Attach final parking status (after any auto-adjustment)
         try:
@@ -1000,6 +1001,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "parking_compliant": bool(excel.get("parking_compliant")),
         }
         direct_cost_total = float(sum(excel.get("direct_cost", {}).values()))
+        parking_income_y1 = float(excel.get("parking_income_y1") or 0.0)
         cost_breakdown = {
             "land_cost": float(excel["land_cost"]),
             "construction_direct_cost": direct_cost_total,
@@ -1033,6 +1035,17 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             f"{excel['y1_income']:,.0f} SAR implies an unlevered ROI of "
             f"{excel['roi']*100:,.1f}%."
         )
+        if parking_income_y1 > 0 and parking_income_meta.get("monetize_extra_parking"):
+            try:
+                extra_spaces = int(parking_income_meta.get("extra_spaces") or excel.get("parking_extra_spaces") or 0)
+            except Exception:
+                extra_spaces = int(excel.get("parking_extra_spaces") or 0)
+            monthly_rate_used = float(parking_income_meta.get("monthly_rate_used") or 0.0)
+            occupancy_used = float(parking_income_meta.get("occupancy_used") or 0.0)
+            summary_text += (
+                f" Includes optional parking income from {extra_spaces} excess spaces at "
+                f"{monthly_rate_used:,.0f} SAR/space/month × {occupancy_used:.2f} occupancy."
+            )
 
         # Summary footer: show per-component rents AND correctly label their sources.
         try:
@@ -1121,6 +1134,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "landuse_for_far_cap": landuse_for_cap,
                 "floors_adjustment": floors_adjustment,
                 "parking": parking_meta,
+                "parking_income": parking_income_meta,
                 "overture_buildings": {
                     "site_metrics": overture_site_metrics,
                     "context_metrics": overture_context_metrics,
