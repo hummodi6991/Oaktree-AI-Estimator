@@ -100,3 +100,58 @@ def test_create_estimate_basic():
     for key in ["totals", "confidence_bands", "assumptions"]:
         assert key in data
     assert data["totals"]["land_value"] > 0
+
+
+def test_land_use_override_does_not_persist_between_requests():
+    poly_mixed_use = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [46.675, 24.713],
+                [46.676, 24.713],
+                [46.676, 24.714],
+                [46.675, 24.714],
+                [46.675, 24.713],
+            ]
+        ],
+    }
+    poly_auto = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [46.677, 24.715],
+                [46.678, 24.715],
+                [46.678, 24.716],
+                [46.677, 24.716],
+                [46.677, 24.715],
+            ]
+        ],
+    }
+    base_payload = {
+        "asset_program": "residential_midrise",
+        "unit_mix": [{"type": "1BR", "count": 10}],
+        "finish_level": "mid",
+        "timeline": {"start": "2025-10-01", "months": 18},
+        "financing_params": {"margin_bps": 250, "ltv": 0.6},
+        "strategy": "build_to_sell",
+    }
+    mixed_inputs = sample_excel_inputs()
+    mixed_inputs["land_use_code"] = "m"
+    mixed_inputs["area_ratio"] = {"residential": 1.2, "retail": 0.5, "basement": 1.0}
+
+    response_mixed = client.post(
+        "/v1/estimates",
+        json={**base_payload, "geometry": poly_mixed_use, "excel_inputs": mixed_inputs},
+    )
+    assert response_mixed.status_code == 200
+    notes_mixed = response_mixed.json().get("notes") or {}
+    assert notes_mixed.get("landuse_for_far_cap") == "m"
+
+    auto_inputs = sample_excel_inputs()
+    response_auto = client.post(
+        "/v1/estimates",
+        json={**base_payload, "geometry": poly_auto, "excel_inputs": auto_inputs},
+    )
+    assert response_auto.status_code == 200
+    notes_auto = response_auto.json().get("notes") or {}
+    assert notes_auto.get("landuse_for_far_cap") == "s"
