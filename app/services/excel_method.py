@@ -510,8 +510,9 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     sub_total = sum(direct_cost.values()) + fitout_cost
     contingency_cost = sub_total * float(inputs.get("contingency_pct", 0.0))
     consultants_cost = (sub_total + contingency_cost) * float(inputs.get("consultants_pct", 0.0))
-    feasibility_fee = float(inputs.get("feasibility_fee", 0.0))
     land_cost = float(site_area_m2) * float(inputs.get("land_price_sar_m2", 0.0))
+    feasibility_fee_pct = 0.02
+    feasibility_fee = land_cost * feasibility_fee_pct
     transaction_cost = land_cost * float(inputs.get("transaction_pct", 0.0))
 
     grand_total_capex = (
@@ -552,6 +553,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "contingency_cost": contingency_cost,
         "consultants_cost": consultants_cost,
         "feasibility_fee": feasibility_fee,
+        "feasibility_fee_pct": feasibility_fee_pct,
         "land_cost": land_cost,
         "transaction_cost": transaction_cost,
         "grand_total_capex": grand_total_capex,

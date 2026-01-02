@@ -109,7 +109,6 @@ def test_excel_land_price_calls_hedonic_with_lon_lat(monkeypatch, client):
             "fitout_rate": 400,
             "contingency_pct": 0.10,
             "consultants_pct": 0.06,
-            "feasibility_fee": 1500000,
             "transaction_pct": 0.03,
             "land_price_sar_m2": 0,
         },
