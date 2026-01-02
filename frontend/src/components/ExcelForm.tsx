@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Geometry } from "geojson";
 
 import { landPrice, makeEstimate } from "../api";
@@ -127,11 +127,21 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   // User override from dropdown; null means "use inferred"
   const [overrideLandUse, setOverrideLandUse] = useState<LandUseCode | null>(normalizedPropLandUse);
   const effectiveLandUse: LandUseCode = overrideLandUse ?? normalizedParcelLandUse ?? "s";
+  const parcelIdentityRef = useRef<string | null>(null);
 
   // Excel inputs state (drives payload). Seed from template.
   const [inputs, setInputs] = useState<ExcelInputs>(() => cloneTemplate(templateForLandUse(initialLandUse)));
   const [error, setError] = useState<string | null>(null);
   const [excelResult, setExcelResult] = useState<ExcelResult | null>(null);
+
+  useEffect(() => {
+    const geometrySignature = parcel?.geometry ? JSON.stringify(parcel.geometry) : "";
+    const parcelKey = `${parcel?.parcel_id || ""}::${geometrySignature}`;
+    if (parcelIdentityRef.current !== parcelKey) {
+      parcelIdentityRef.current = parcelKey;
+      setOverrideLandUse(null);
+    }
+  }, [parcel]);
 
   useEffect(() => {
     setOverrideLandUse(normalizedPropLandUse);
@@ -183,6 +193,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       setPrice(ppm2);
       setSuggestedPrice(ppm2);
       setInputs((current) => ({ ...current, land_price_sar_m2: ppm2 }));
+      setOverrideLandUse(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setFetchError(message);
@@ -230,6 +241,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         totals: result?.totals,
         notes: result?.notes,
       });
+      setOverrideLandUse(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
