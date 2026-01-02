@@ -119,6 +119,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [price, setPrice] = useState<number | null>(null);
   const [suggestedPrice, setSuggestedPrice] = useState<number | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [includeFitout, setIncludeFitout] = useState(true);
   const normalizedParcelLandUse = normalizeLandUse(parcel?.landuse_code);
   const normalizedPropLandUse = normalizeLandUse(landUseOverride);
   const initialLandUse = normalizedPropLandUse ?? normalizedParcelLandUse ?? "s";
@@ -143,9 +144,20 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       if (prevPrice > 0) {
         next.land_price_sar_m2 = prevPrice;
       }
+      if (!includeFitout) {
+        next.fitout_rate = 0;
+      }
       return next;
     });
   }, [effectiveLandUse]);
+
+  const handleFitoutToggle = (checked: boolean) => {
+    setIncludeFitout(checked);
+    setInputs((current) => ({
+      ...current,
+      fitout_rate: checked ? templateForLandUse(effectiveLandUse).fitout_rate : 0,
+    }));
+  };
 
   const assetProgram =
     effectiveLandUse === "m" ? "mixed_use_midrise" : "residential_midrise";
@@ -284,6 +296,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const fitoutTotalFromBreakdown = typeof breakdown.fitout_cost === "number" ? breakdown.fitout_cost : null;
   const fitoutTotal =
     fitoutTotalFromBreakdown ?? (typeof excelResult?.costs?.fitout_cost === "number" ? excelResult.costs.fitout_cost : 0);
+  const fitoutExcluded = !includeFitout;
 
   const formatArea = (value: number | null | undefined) => {
     if (value == null || Number.isNaN(Number(value))) return "";
@@ -308,7 +321,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const fitoutNote =
     explanations.fitout ||
-    (fitoutRate != null
+    (fitoutExcluded
+      ? "Fit-out excluded per user selection."
+      : fitoutRate != null
       ? `Non-basement area ${fitoutArea.toLocaleString()} m² × ${fitoutRate.toLocaleString()} SAR/m²`
       : "Fit-out applied to above-ground areas");
 
@@ -441,6 +456,20 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           />
           <span style={{ fontSize: "0.8rem", color: "#cbd5f5" }}>
             Suggested from fetch: {suggestedPrice != null ? `${suggestedPrice.toLocaleString()} SAR/m² (${provider})` : "Not fetched yet"}
+          </span>
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, color: "white", maxWidth: 240 }}>
+          <span>Fit-out cost</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={includeFitout}
+              onChange={(event) => handleFitoutToggle(event.target.checked)}
+            />
+            <span>{includeFitout ? "Included" : "Removed from estimate"}</span>
+          </div>
+          <span style={{ fontSize: "0.8rem", color: "#cbd5f5" }}>
+            Uncheck to remove fit-out from construction costs. Default rates are restored when re-enabled.
           </span>
         </label>
       </div>
