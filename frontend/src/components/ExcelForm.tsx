@@ -378,6 +378,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       .filter(Boolean)
       .join("; ");
 
+  const parkingIncomeExplanation =
+    typeof explanations?.parking_income === "string" ? explanations.parking_income : null;
+
+  const resolveRevenueNote = (key: string, baseNote: string, amount: number) => {
+    if (key !== "parking_income") return baseNote;
+    const trimmedExplanation = parkingIncomeExplanation?.trim() || "";
+    if (Number(amount) > 0) {
+      return trimmedExplanation || baseNote;
+    }
+    return "—";
+  };
+
   const noteStyle = { fontSize: "0.8rem", color: "#cbd5f5" } as const;
   const baseCellStyle = { padding: "0.65rem 0.75rem", verticalAlign: "top" } as const;
   const itemColumnStyle = { ...baseCellStyle, paddingLeft: 0 } as const;
@@ -401,10 +413,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         ? `NLA ${nlaVal.toLocaleString()} m² (built area ${baseArea.toLocaleString()} m² × efficiency ${(efficiencyVal * 100).toFixed(0)}%)`
         : `NLA ${nlaVal.toLocaleString()} m²`;
     const rent = appliedRentRates[key] ?? 0;
+    const baseNote = `${efficiencyText} × ${rent.toLocaleString()} SAR/m²/yr`;
     return {
       key,
       amount: incomeComponents[key] ?? 0,
-      note: `${efficiencyText} × ${rent.toLocaleString()} SAR/m²/yr`,
+      note: resolveRevenueNote(key, baseNote, incomeComponents[key] ?? 0),
     };
   });
   const summaryText =
