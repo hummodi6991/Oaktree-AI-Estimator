@@ -1149,6 +1149,59 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "explainability": {},
             "confidence_bands": {},
         }
+
+        # Surface parking-income assumptions in the ledger without requiring new frontend inputs.
+        if parking_income_y1 > 0 and parking_income_meta.get("monetize_extra_parking"):
+            try:
+                extra_spaces_assumption = int(
+                    parking_income_meta.get("extra_spaces")
+                    or excel.get("parking_extra_spaces")
+                    or 0
+                )
+            except Exception:
+                extra_spaces_assumption = int(excel.get("parking_extra_spaces") or 0)
+
+            monthly_rate_used_assumption = float(parking_income_meta.get("monthly_rate_used") or 0.0)
+            occupancy_used_assumption = float(parking_income_meta.get("occupancy_used") or 0.0)
+            public_access_assumption = 1.0 if bool(parking_income_meta.get("public_access")) else 0.0
+
+            assumptions_list = result.get("assumptions")
+            if isinstance(assumptions_list, list):
+                assumptions_list.extend(
+                    [
+                        {
+                            "key": "parking_extra_spaces_monetized",
+                            "value": float(extra_spaces_assumption),
+                            "unit": "spaces",
+                            "source_type": "Derived",
+                        },
+                        {
+                            "key": "parking_monthly_rate_sar_per_space",
+                            "value": float(monthly_rate_used_assumption),
+                            "unit": "SAR/space/month",
+                            "source_type": "Model",
+                        },
+                        {
+                            "key": "parking_occupancy",
+                            "value": float(occupancy_used_assumption),
+                            "unit": "fraction",
+                            "source_type": "Assumption",
+                        },
+                        {
+                            "key": "parking_public_access",
+                            "value": float(public_access_assumption),
+                            "unit": "bool(1=public)",
+                            "source_type": "Assumption",
+                        },
+                        {
+                            "key": "parking_income_y1",
+                            "value": float(parking_income_y1),
+                            "unit": "SAR/year",
+                            "source_type": "Model",
+                        },
+                    ]
+                )
+
         return _finalize_result(result, {})
 
     # Defensive guard (should be unreachable because excel_inputs is required)

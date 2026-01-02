@@ -9,14 +9,20 @@ from tests.excel_inputs import sample_excel_inputs
 def test_default_off_does_not_change_y1_income():
     site_area = 1000.0
     excel = compute_excel_estimate(site_area, sample_excel_inputs())
-    assert excel["parking_income_y1"] == 0.0
-    assert "parking_income" not in excel["y1_income_components"]
-    assert excel["y1_income"] == pytest.approx(sum(excel["y1_income_components"].values()))
+    assert excel["parking_income_y1"] > 0
+    assert excel["y1_income_components"]["parking_income"] == pytest.approx(excel["parking_income_y1"])
+    meta = excel["parking_income_meta"]
+    assert meta["monetize_extra_parking"] is True
+    assert meta["monetize_extra_parking_defaulted"] is True
+    assert meta["parking_public_access_defaulted"] is True
+    assert meta["public_access"] is False
+    assert meta["landuse_code_inferred"] == "s"
 
 
 def test_monetized_adds_income_and_meta_present():
     site_area = 1000.0
     base_inputs = sample_excel_inputs()
+    base_inputs["monetize_extra_parking"] = False
     excel_off = compute_excel_estimate(site_area, base_inputs)
 
     monetized_inputs = sample_excel_inputs()
