@@ -115,6 +115,11 @@ def build_memo_pdf(
                     explanations.get("transaction_cost"),
                 ),
                 ("Year 1 net income", excel_breakdown.get("y1_income"), explanations.get("y1_income")),
+                (
+                    "Year 1 net income (90% effective)",
+                    excel_breakdown.get("y1_income_effective"),
+                    explanations.get("y1_income_effective"),
+                ),
             ]
         )
 

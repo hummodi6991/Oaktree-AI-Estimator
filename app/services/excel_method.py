@@ -1,6 +1,10 @@
 import math
 from typing import Any, Dict
 
+# Accounting/underwriting haircut: only 90% of Year-1 net income is treated as "effective"
+# for headline unlevered ROI (stabilization, downtime, leakage, collection loss, etc.).
+_Y1_INCOME_EFFECTIVE_FACTOR = 0.90
+
 from app.services.parking_income import compute_parking_income, _normalize_landuse_code
 
 
@@ -432,10 +436,17 @@ def build_excel_explanations(
         explanations["y1_income"] = "; ".join(income_parts)
 
     y1_income_total = float(breakdown.get("y1_income", 0.0) or 0.0)
+    y1_income_effective = float(
+        breakdown.get("y1_income_effective", 0.0) or (y1_income_total * _Y1_INCOME_EFFECTIVE_FACTOR)
+    )
+    explanations["y1_income_effective"] = (
+        f"Effective Year-1 income = {y1_income_total:,.0f} SAR × {(_Y1_INCOME_EFFECTIVE_FACTOR*100):.0f}% "
+        f"= {y1_income_effective:,.0f} SAR."
+    )
     grand_total_capex = float(breakdown.get("grand_total_capex", 0.0) or 0.0)
     roi = float(breakdown.get("roi", 0.0) or 0.0)
     explanations["roi"] = (
-        f"Year-1 net income {_fmt_amount(y1_income_total)} SAR ÷ total development cost "
+        f"Effective Year-1 income {_fmt_amount(y1_income_effective)} SAR ÷ total development cost "
         f"{_fmt_amount(grand_total_capex)} SAR = {roi * 100:,.2f}%."
     )
 
@@ -685,10 +696,13 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     if parking_income_y1 > 0:
         y1_income_components["parking_income"] = parking_income_y1
     y1_income = base_y1_income + parking_income_y1
+
+    # Apply accounting efficiency haircut for ROI headline
+    y1_income_effective = float(y1_income) * _Y1_INCOME_EFFECTIVE_FACTOR
     parking_monthly_rate_used = float(parking_income_meta.get("monthly_rate_used") or 0.0)
     parking_occupancy_used = float(parking_income_meta.get("occupancy_used") or 0.0)
 
-    roi = (y1_income / grand_total_capex) if grand_total_capex > 0 else 0.0
+    roi = (y1_income_effective / grand_total_capex) if grand_total_capex > 0 else 0.0
 
     far_above_ground = _area_ratio_positive_sum(area_ratio, exclude_basement=True)
     far_total_including_basement = _area_ratio_positive_sum(area_ratio, exclude_basement=False)
@@ -720,6 +734,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "nla": nla,
         "y1_income_components": y1_income_components,
         "y1_income": y1_income,
+        "y1_income_effective": y1_income_effective,
         "rent_applied_sar_m2_yr": rent_applied,
         "parking_income_y1": parking_income_y1,
         "parking_income_meta": parking_income_meta,

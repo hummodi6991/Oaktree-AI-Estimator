@@ -1052,6 +1052,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "transaction_cost": float(excel["transaction_cost"]),
             "grand_total_capex": float(excel["grand_total_capex"]),
             "y1_income": float(excel["y1_income"]),
+            "y1_income_effective": float(excel.get("y1_income_effective") or 0.0),
             "roi": float(excel["roi"]),
         }
         if ppm2_src.startswith("kaggle_hedonic"):
@@ -1064,6 +1065,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             land_source_label = ppm2_src or "the configured land price source"
 
         district_display = district_raw or district or (req.city or "the selected city")
+        y1_eff = float(excel.get("y1_income_effective") or 0.0)
         summary_text = (
             f"For a site of {site_area_m2:,.0f} m² in "
             f"{district_display}, "
@@ -1072,7 +1074,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             f"{excel['sub_total']:,.0f} SAR, with contingency, "
             f"consultants, feasibility fees and transaction costs bringing total capex to "
             f"{excel['grand_total_capex']:,.0f} SAR. Year 1 net income of "
-            f"{excel['y1_income']:,.0f} SAR implies an unlevered ROI of "
+            f"{excel['y1_income']:,.0f} SAR; using 90% effective income ({y1_eff:,.0f} SAR) implies an unlevered ROI of "
             f"{excel['roi']*100:,.1f}%."
         )
         if parking_income_y1 > 0 and parking_income_meta.get("monetize_extra_parking"):
