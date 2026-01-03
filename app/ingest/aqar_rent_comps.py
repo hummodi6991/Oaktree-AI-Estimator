@@ -133,20 +133,30 @@ def _looks_like_rent(row: Dict[str, Any], rent_flag_cols: Set[str]) -> bool:
 
     # Fallback: conservative heuristic based on the title/description/property_type text
     text_blob = " ".join(
-        str(row.get(key, "") or "") for key in ("title", "description", "property_type")
+        str(row.get(key, "") or "") for key in ("title", "description", "property_type", "category")
     ).lower()
     if _has_pattern(text_blob, _SALE_PATTERNS):
         return False
     return _has_pattern(text_blob, _RENT_PATTERNS)
 
 
-def _asset_and_unit(text_blob: str) -> tuple[str, str | None]:
-    txt = (text_blob or "").lower()
-    if any(keyword in txt for keyword in ["مكتب", "office"]):
+def _asset_and_unit(row: Dict[str, Any]) -> tuple[str, str | None]:
+    text_blob = " ".join(
+        str(row.get(col) or "")
+        for col in (
+            "property_type",
+            "title",
+            "description",
+            "category",
+            "listing_type",
+            "ad_type",
+        )
+    ).lower()
+    if any(keyword in text_blob for keyword in ["مكتب", "مكاتب", "office", "إداري", "اداري"]):
         return "commercial", "office"
-    if any(keyword in txt for keyword in ["محل", "تجاري", "shop", "retail", "store"]):
+    if any(keyword in text_blob for keyword in ["محل", "تجاري", "shop", "retail", "store", "معرض", "معارض"]):
         return "commercial", "retail"
-    if any(keyword in txt for keyword in ["شقة", "فيلا", "دور", "apartment", "villa"]):
+    if any(keyword in text_blob for keyword in ["شقة", "فيلا", "دور", "apartment", "villa", "سكني", "residential"]):
         return "residential", None
     return "commercial", None
 
@@ -171,6 +181,7 @@ def main() -> None:
             "rent_period",
             "ad_type",
             "purpose",
+            "category",
         ]
         select_cols.extend([c for c in optional_cols if c in available_cols])
         rent_flag_cols = set(c for c in optional_cols if c in available_cols)
@@ -200,9 +211,9 @@ def main() -> None:
             city_norm = norm_city(city_raw) or "riyadh"
             district_norm = norm_district(city_norm, district_raw) or None
             text_blob = " ".join(
-                str(r.get(col) or "") for col in ("property_type", "title", "description")
+                str(r.get(col) or "") for col in ("property_type", "title", "description", "category")
             )
-            asset_type, unit_type = _asset_and_unit(text_blob)
+            asset_type, unit_type = _asset_and_unit(r)
 
             # Normalize price to a monthly basis when possible (Aqar often lists annual rents).
             period_months = _infer_rent_period_months(r)
