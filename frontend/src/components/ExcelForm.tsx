@@ -43,6 +43,7 @@ type ExcelResult = {
     transaction_cost: number;
     grand_total_capex: number;
     y1_income: number;
+    y1_income_effective?: number;
   };
   breakdown: Record<string, any>;
   inputs: any;
@@ -217,6 +218,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       });
       const notes = result?.notes || {};
       const costs = notes.cost_breakdown || {};
+      const excelBreakdown = notes.excel_breakdown || {};
+      const y1IncomeEffective =
+        costs.y1_income_effective ??
+        excelBreakdown.y1_income_effective ??
+        (costs.y1_income ?? excelBreakdown.y1_income ?? 0) * 0.9;
 
       setExcelResult({
         roi: notes.excel_roi ?? result?.totals?.excel_roi ?? 0,
@@ -230,8 +236,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           transaction_cost: costs.transaction_cost ?? 0,
           grand_total_capex: costs.grand_total_capex ?? 0,
           y1_income: costs.y1_income ?? 0,
+          y1_income_effective: y1IncomeEffective,
         },
-        breakdown: notes.excel_breakdown || {},
+        breakdown: excelBreakdown,
         inputs: excelInputs,
         siteArea: notes.site_area_m2,
         landPrice: notes.excel_land_price,
@@ -382,6 +389,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const parkingIncomeExplanation =
     typeof explanations?.parking_income === "string" ? explanations.parking_income : null;
+  const y1IncomeEffectiveNote =
+    explanations?.y1_income_effective ||
+    "90% of Year 1 net income to reflect stabilization, downtime, and collection leakage.";
 
   const resolveRevenueNote = (key: string, baseNote: string, amount: number) => {
     if (key !== "parking_income") return baseNote;
@@ -702,13 +712,20 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
+                    <td style={itemColumnStyle}>Year 1 net income (90% effective)</td>
+                    <td style={amountColumnStyle}>
+                      {(excelResult.costs.y1_income_effective ?? 0).toLocaleString()} SAR
+                    </td>
+                    <td style={calcColumnStyle}>{y1IncomeEffectiveNote}</td>
+                  </tr>
+                  <tr>
                     <td style={itemColumnStyle}>
                       <strong>Unlevered ROI</strong>
                     </td>
                     <td style={amountColumnStyle}>
                       <strong>{(excelResult.roi * 100).toFixed(1)}%</strong>
                     </td>
-                    <td style={calcColumnStyle}>Year 1 net income ÷ total capex</td>
+                    <td style={calcColumnStyle}>90% of Year 1 net income ÷ total capex</td>
                   </tr>
                 </tbody>
               </table>
