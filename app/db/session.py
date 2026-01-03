@@ -14,8 +14,15 @@ DATABASE_URL = env_database_url or (
     f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
 )
 if sslmode:
-    sep = "&" if "?" in DATABASE_URL else "?"
-    DATABASE_URL = f"{DATABASE_URL}{sep}sslmode={sslmode}"
+    try:
+        parsed_url = make_url(DATABASE_URL)
+        has_sslmode = "sslmode" in (parsed_url.query or {})
+    except Exception:
+        has_sslmode = "sslmode=" in DATABASE_URL
+
+    if not has_sslmode:
+        sep = "&" if "?" in DATABASE_URL else "?"
+        DATABASE_URL = f"{DATABASE_URL}{sep}sslmode={sslmode}"
 
 if os.getenv("DB_DEBUG") == "1":
     try:
