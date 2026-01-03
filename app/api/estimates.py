@@ -771,7 +771,6 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         rent_rates_raw = excel_inputs.get("rent_sar_m2_yr")
         rent_rates = dict(rent_rates_raw) if isinstance(rent_rates_raw, dict) else {}
 
-        rent_source_metadata: dict[str, Any] | None = None
         rent_strategy: str = "manual_or_template"
         rent_meta_common: dict[str, Any] = {
             "city": req.city,
@@ -785,12 +784,25 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "district_inference_distance_m": (district_inference or {}).get("distance_m"),
         }
 
+        rent_source_metadata: dict[str, Any] = {
+            **rent_meta_common,
+            "provider": "template",
+            "method": "manual_or_template",
+            "components": {},
+            "rent_strategy": rent_strategy,
+        }
+        providers_used: set[str] = set()
+
         COMPONENT_TO_AQAR = {
             "residential": ("residential", None),
             "retail": ("commercial", "retail"),
             "office": ("commercial", "office"),
         }
-        AQAR_MIN_SAMPLES = 10
+        COMPONENT_AQAR_CONFIG = {
+            "residential": {"min_samples": 10, "since_days": 365},
+            "retail": {"min_samples": 5, "since_days": 730},
+            "office": {"min_samples": 5, "since_days": 730},
+        }
         component_candidates: set[str] = set()
         for mapping in (rent_rates, excel_inputs.get("efficiency") or {}, excel_inputs.get("area_ratio") or {}):
             if isinstance(mapping, dict):
@@ -801,6 +813,8 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             if component not in COMPONENT_TO_AQAR:
                 continue
             asset_type_for_comp, unit_type_for_comp = COMPONENT_TO_AQAR[component]
+            config = COMPONENT_AQAR_CONFIG.get(component, COMPONENT_AQAR_CONFIG["residential"])
+            min_samples = int(config.get("min_samples") or 0)
             try:
                 result = aqar_rent_median(
                     db,
@@ -808,7 +822,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                     district_norm or None,
                     asset_type=asset_type_for_comp,
                     unit_type=unit_type_for_comp,
-                    since_days=365,
+                    since_days=int(config.get("since_days") or 365),
                 )
             except Exception:
                 # Keep Excel-mode robust if the backing table/view isn't present
@@ -818,17 +832,37 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             applied_sample = 0
             applied_monthly = None
             method_label = None
-            if result.district_median is not None and result.n_district >= AQAR_MIN_SAMPLES:
+            base_city_median = None
+            base_city_sample = 0
+            if result.city_median is not None:
+                base_city_median = float(result.city_median)
+                base_city_sample = result.n_city
+            elif result.city_asset_median is not None:
+                base_city_median = float(result.city_asset_median)
+                base_city_sample = result.n_city_asset
+
+            if result.district_median is not None and result.n_district >= min_samples:
                 applied_scope = "district"
                 applied_sample = result.n_district
                 applied_monthly = float(result.district_median)
                 method_label = "aqar_district_median"
-            elif result.city_median is not None and result.n_city >= AQAR_MIN_SAMPLES:
+            elif (
+                result.district_median is not None
+                and result.n_district > 0
+                and min_samples > 0
+                and base_city_median is not None
+            ):
+                weight = min(1.0, result.n_district / float(min_samples))
+                applied_scope = "district_shrinkage"
+                applied_sample = result.n_district
+                applied_monthly = float(result.district_median) * weight + base_city_median * (1.0 - weight)
+                method_label = "aqar_district_shrinkage"
+            elif result.city_median is not None and result.n_city >= min_samples:
                 applied_scope = "city_unit_type"
                 applied_sample = result.n_city
                 applied_monthly = float(result.city_median)
                 method_label = "aqar_city_median"
-            elif result.city_asset_median is not None and result.n_city_asset >= AQAR_MIN_SAMPLES:
+            elif result.city_asset_median is not None and result.n_city_asset >= min_samples:
                 applied_scope = "city_asset_type"
                 applied_sample = result.n_city_asset
                 applied_monthly = float(result.city_asset_median)
@@ -850,6 +884,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "asset_type": asset_type_for_comp,
                 "unit_type": unit_type_for_comp,
                 "scope": applied_scope or result.scope,
+                "selected_scope": applied_scope or result.scope,
                 "median_rent_per_m2_month": applied_monthly or result.median_rent_per_m2_month,
                 "sample_count": applied_sample or result.sample_count,
                 "aqar_sample_sizes": {
@@ -857,6 +892,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                     "city": int(result.n_city),
                     "city_asset": int(result.n_city_asset),
                 },
+                "aqar_base_city_sample_count": base_city_sample,
                 "aqar_medians": {
                     "district": result.district_median,
                     "city": result.city_median,
@@ -866,30 +902,24 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "provider": provider_label,
                 "unit": "SAR/m²/month",
             }
+            component_meta[component]["benchmark_per_m2_month"] = applied_monthly
+            component_meta[component]["benchmark_per_m2_year"] = applied_monthly * 12.0 if applied_monthly is not None else None
+            providers_used.add(provider_label)
             if applied_monthly is not None:
                 rent_rates[component] = applied_monthly * 12.0
                 rent_strategy = "component_aqar_median"
-                if rent_source_metadata is None:
-                    rent_source_metadata = {
-                        **rent_meta_common,
-                        "provider": provider_label,
-                        "method": "component_aqar_medians",
-                        "components": {},
-                    }
-                elif rent_source_metadata.get("provider") != provider_label:
+                if rent_source_metadata.get("provider") not in (None, provider_label):
                     rent_source_metadata["provider"] = "mixed"
-                rent_source_metadata["components"][component] = {
-                    **component_meta[component],
-                    "benchmark_per_m2_month": applied_monthly,
-                    "benchmark_per_m2_year": applied_monthly * 12.0,
-                }
+                else:
+                    rent_source_metadata["provider"] = provider_label
+                rent_source_metadata["method"] = "component_aqar_medians"
+                rent_source_metadata.setdefault("components", {})
+                rent_source_metadata["components"][component] = dict(component_meta[component])
 
         excel_inputs["rent_sar_m2_yr"] = rent_rates
-        if rent_source_metadata is not None and rent_source_metadata.get("components"):
-            rent_source_metadata["rent_strategy"] = rent_strategy
-            excel_inputs["rent_source_metadata"] = rent_source_metadata
-        else:
-            excel_inputs.pop("rent_source_metadata", None)
+        rent_source_metadata["rent_strategy"] = rent_strategy
+        rent_source_metadata.setdefault("components", {})
+        excel_inputs["rent_source_metadata"] = rent_source_metadata
 
         rent_debug_metadata = {
             **rent_meta_common,
@@ -965,19 +995,29 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 # Ensure per-component meta exists at least for keys present in rent_applied_sar_m2_yr
                 if isinstance(rent_applied_sar_m2_yr, dict):
                     for k, v_year in rent_applied_sar_m2_yr.items():
-                        if k in comps:
-                            continue
-                        # If we didn't record aqar medians for this component, mark as template default
-                        comps[k] = {
-                            "method": "manual_or_template",
-                            "provider": "template",
-                            "scope": None,
-                            "unit": "SAR/m²/month",
-                            "median_rent_per_m2_month": None,
-                            "sample_count": 0,
-                            "benchmark_per_m2_month": _annual_to_monthly(float(v_year or 0.0)),
-                            "benchmark_per_m2_year": float(v_year or 0.0),
-                        }
+                        base_meta = component_meta.get(k) if isinstance(component_meta.get(k), dict) else {}
+                        existing_meta = comps.get(k) if isinstance(comps.get(k), dict) else {}
+                        merged_meta = {**base_meta, **existing_meta}
+
+                        scope_val = merged_meta.get("selected_scope") or merged_meta.get("scope") or merged_meta.get("method")
+                        merged_meta["selected_scope"] = scope_val
+                        merged_meta["scope"] = scope_val
+                        merged_meta.setdefault("method", "manual_or_template")
+                        merged_meta.setdefault("provider", "template")
+                        merged_meta.setdefault("unit", "SAR/m²/month")
+                        merged_meta.setdefault(
+                            "aqar_sample_sizes",
+                            (base_meta.get("aqar_sample_sizes") if isinstance(base_meta.get("aqar_sample_sizes"), dict) else {"district": 0, "city": 0, "city_asset": 0}),
+                        )
+                        merged_meta.setdefault("sample_count", base_meta.get("sample_count") or 0)
+                        merged_meta["benchmark_per_m2_year"] = float(v_year or merged_meta.get("benchmark_per_m2_year") or 0.0)
+                        merged_meta["benchmark_per_m2_month"] = _annual_to_monthly(merged_meta["benchmark_per_m2_year"])
+                        merged_meta.setdefault("median_rent_per_m2_month", merged_meta.get("benchmark_per_m2_month"))
+                        comps[k] = merged_meta
+                        providers_used.add(merged_meta.get("provider", "template"))
+
+                provider_summary = "mixed" if len(providers_used) > 1 else (next(iter(providers_used)) if providers_used else "template")
+                rmeta["provider"] = provider_summary
         except Exception:
             pass
 
