@@ -15,6 +15,8 @@ LEGACY_SOURCES = ("kaggle_aqar_rent", "kaggle_aqar")
 # Conservative rent keywords for heuristics when the dataset lacks an explicit rent/sale flag
 _RENT_PATTERNS = ("rent", "for rent", "lease", "إيجار", "ايجار", "استئجار", "للإيجار", "لللايجار")
 _SALE_PATTERNS = ("sale", "for sale", "buy", "بيع", "للبيع")
+_COMMERCIAL_OFFICE_KEYWORDS = ("مكتب", "مكاتب", "office", "إداري", "اداري")
+_COMMERCIAL_RETAIL_KEYWORDS = ("محل", "تجاري", "shop", "retail", "store", "معرض", "معارض")
 
 # Price frequency hints to normalize listing prices to a *monthly* basis.
 # Many KSA rental listings are posted as an annual rent (e.g., "ريال/سنوي").
@@ -137,6 +139,8 @@ def _looks_like_rent(row: Dict[str, Any], rent_flag_cols: Set[str]) -> bool:
     ).lower()
     if _has_pattern(text_blob, _SALE_PATTERNS):
         return False
+    if _has_pattern(text_blob, _COMMERCIAL_OFFICE_KEYWORDS + _COMMERCIAL_RETAIL_KEYWORDS):
+        return True
     return _has_pattern(text_blob, _RENT_PATTERNS)
 
 
@@ -152,9 +156,9 @@ def _asset_and_unit(row: Dict[str, Any]) -> tuple[str, str | None]:
             "ad_type",
         )
     ).lower()
-    if any(keyword in text_blob for keyword in ["مكتب", "مكاتب", "office", "إداري", "اداري"]):
+    if any(keyword in text_blob for keyword in _COMMERCIAL_OFFICE_KEYWORDS):
         return "commercial", "office"
-    if any(keyword in text_blob for keyword in ["محل", "تجاري", "shop", "retail", "store", "معرض", "معارض"]):
+    if any(keyword in text_blob for keyword in _COMMERCIAL_RETAIL_KEYWORDS):
         return "commercial", "retail"
     if any(keyword in text_blob for keyword in ["شقة", "فيلا", "دور", "apartment", "villa", "سكني", "residential"]):
         return "residential", None
