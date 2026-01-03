@@ -263,6 +263,16 @@ def build_excel_explanations(
     rent_applied = breakdown.get("rent_applied_sar_m2_yr", {}) or {}
     efficiency = inputs.get("efficiency", {}) or {}
     area_ratio = inputs.get("area_ratio", {}) or {}
+    far_above_ground = breakdown.get("far_above_ground")
+    far_total_including_basement = breakdown.get("far_total_including_basement")
+    try:
+        far_above_ground = float(far_above_ground)
+    except Exception:
+        far_above_ground = _area_ratio_positive_sum(area_ratio, exclude_basement=True)
+    try:
+        far_total_including_basement = float(far_total_including_basement)
+    except Exception:
+        far_total_including_basement = _area_ratio_positive_sum(area_ratio, exclude_basement=False)
 
     built_area = breakdown.get("built_area", {}) or {}
     nla = breakdown.get("nla", {}) or {}
@@ -288,12 +298,7 @@ def build_excel_explanations(
         ratio = float(area_ratio.get(key, 0.0) or 0.0)
         if ratio:
             key_lower = str(key).lower()
-            if key == "residential":
-                explanations[f"{key}_bua"] = (
-                    f"{_fmt_amount(site_area_m2)} m² × FAR {ratio:.3f} = {_fmt_amount(area)} m². "
-                    "FAR reflects observed surrounding development density inferred from Overture building data."
-                )
-            elif key_lower.startswith("basement"):
+            if key_lower.startswith("basement"):
                 explanations[f"{key}_bua"] = (
                     f"{_fmt_amount(site_area_m2)} m² × basement ratio {ratio:.3f} = {_fmt_amount(area)} m². "
                     "Basement area is estimated separately and excluded from FAR calculations."
@@ -307,6 +312,25 @@ def build_excel_explanations(
                 note_appended = True
         else:
             explanations[f"{key}_bua"] = f"Built-up area {_fmt_amount(area)} m²."
+
+    floors_above_ground = inputs.get("floors_above_ground")
+    baseline_floors_above_ground = inputs.get("baseline_floors_above_ground")
+    far_explanation = (
+        "Effective above-ground FAR = Σ(area ratios excluding basement) "
+        f"= {far_above_ground:.3f}."
+    )
+    try:
+        desired_floors = float(floors_above_ground)
+        baseline_floors = float(baseline_floors_above_ground)
+        if desired_floors > 0 and baseline_floors > 0:
+            scale_factor = desired_floors / baseline_floors
+            far_explanation = (
+                f"{far_explanation} Area ratios scaled for floors: desired floors {desired_floors:g} ÷ "
+                f"baseline {baseline_floors:g} = factor {scale_factor:.3f}."
+            )
+    except Exception:
+        pass
+    explanations["effective_far_above_ground"] = far_explanation
 
     sub_total = float(breakdown.get("sub_total", 0.0) or 0.0)
     direct_total = sum(direct_cost.values())
@@ -423,6 +447,8 @@ def _build_cost_breakdown_rows(
     area_ratio: Dict[str, Any],
     inputs: Dict[str, Any],
     explanations: Dict[str, str],
+    *,
+    far_above_ground: float | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
@@ -436,6 +462,22 @@ def _build_cost_breakdown_rows(
         return ""
 
     land_use = _norm_land_use()
+
+    try:
+        if far_above_ground is not None:
+            far_value = float(far_above_ground)
+            rows.append(
+                {
+                    "category": "info",
+                    "key": "effective_far_above_ground",
+                    "label": "Effective FAR (above-ground)",
+                    "unit": None,
+                    "value": far_value,
+                    "note": explanations.get("effective_far_above_ground"),
+                }
+            )
+    except Exception:
+        pass
 
     def _append_bua_row(key: str, label: str, *, require_mixed_use: bool = False) -> None:
         if require_mixed_use and land_use != "m":
@@ -648,6 +690,9 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
 
     roi = (y1_income / grand_total_capex) if grand_total_capex > 0 else 0.0
 
+    far_above_ground = _area_ratio_positive_sum(area_ratio, exclude_basement=True)
+    far_total_including_basement = _area_ratio_positive_sum(area_ratio, exclude_basement=False)
+
     result = {
         "built_area": built_area,
         "direct_cost": direct_cost,
@@ -681,10 +726,18 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "parking_monthly_rate_used": parking_monthly_rate_used,
         "parking_occupancy_used": parking_occupancy_used,
         "roi": roi,
+        "far_above_ground": far_above_ground,
+        "far_total_including_basement": far_total_including_basement,
     }
 
     explanations = build_excel_explanations(site_area_m2, inputs, result)
     result["explanations"] = explanations
-    result["cost_breakdown_rows"] = _build_cost_breakdown_rows(built_area, area_ratio, inputs, explanations)
+    result["cost_breakdown_rows"] = _build_cost_breakdown_rows(
+        built_area,
+        area_ratio,
+        inputs,
+        explanations,
+        far_above_ground=far_above_ground,
+    )
 
     return result

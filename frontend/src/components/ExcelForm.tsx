@@ -249,10 +249,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const breakdown = excelResult?.breakdown || {};
   const builtArea = breakdown.built_area || {};
+  const farAboveGround = breakdown.far_above_ground;
   const nla = breakdown.nla || {};
   const directCost = breakdown.direct_cost || {};
   const incomeComponents = breakdown.y1_income_components || {};
   const explanations = breakdown.explanations || {};
+  const farNote = explanations.effective_far_above_ground;
   const usedInputs = excelResult?.inputs || {};
   const unitCost = usedInputs.unit_cost || {};
   const rentRates = usedInputs.rent_sar_m2_yr || {};
@@ -547,6 +549,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   </tr>
                 </thead>
                 <tbody>
+                  {farAboveGround != null && (
+                    <tr>
+                      <td style={itemColumnStyle}>Effective FAR (above-ground)</td>
+                      <td style={amountColumnStyle}>
+                        {Number(farAboveGround).toLocaleString("en-US", {
+                          minimumFractionDigits: 3,
+                          maximumFractionDigits: 3,
+                        })}
+                      </td>
+                      <td style={calcColumnStyle}>{farNote || "Sum of above-ground area ratios (excludes basement)."}</td>
+                    </tr>
+                  )}
                   <tr>
                     <td style={itemColumnStyle}>Residential BUA</td>
                     <td style={amountColumnStyle}>{formatArea(builtArea.residential)}</td>
