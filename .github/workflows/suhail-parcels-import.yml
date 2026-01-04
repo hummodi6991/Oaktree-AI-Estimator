@@ -1,0 +1,103 @@
+name: Import Suhail parcels (Riyadh → RDS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      zoom:
+        description: "Tile zoom level"
+        required: false
+        default: "15"
+      layer:
+        description: "Vector tile layer"
+        required: false
+        default: "parcels-base"
+      force_resume_from:
+        description: "Override last processed tile index"
+        required: false
+        default: ""
+      bbox:
+        description: "BBox minLon,minLat,maxLon,maxLat (default: Riyadh metro)"
+        required: false
+        default: "46.20,24.20,47.30,25.10"
+      max_tiles:
+        description: "Limit tiles processed (testing)"
+        required: false
+        default: ""
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Configure DB env (managed RDS with SSL)
+        env:
+          PGHOST_S: ${{ secrets.POSTGRES_HOST }}
+          PGPORT_S: ${{ secrets.POSTGRES_PORT }}
+          PGDB_S:   ${{ secrets.POSTGRES_DB }}
+          PGUSER_S: ${{ secrets.POSTGRES_USER }}
+          PGPASS_S: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          {
+            echo "POSTGRES_HOST=${PGHOST_S}"
+            echo "POSTGRES_PORT=${PGPORT_S}"
+            echo "POSTGRES_DB=${PGDB_S}"
+            echo "POSTGRES_USER=${PGUSER_S}"
+            echo "POSTGRES_PASSWORD=${PGPASS_S}"
+            echo "PGSSLMODE=require"
+            echo "PGHOST=${PGHOST_S}"
+            echo "PGPORT=${PGPORT_S}"
+            echo "PGDATABASE=${PGDB_S}"
+            echo "PGUSER=${PGUSER_S}"
+            echo "PGPASSWORD=${PGPASS_S}"
+            echo "PGSSLMODE=require"
+          } >> "$GITHUB_ENV"
+
+      - name: Prepare PostGIS
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+
+      - name: Migrate schema
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: alembic upgrade head
+
+      - name: Run Suhail parcel ingest (resumable)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          ZOOM=${{ github.event.inputs.zoom || '15' }}
+          LAYER=${{ github.event.inputs.layer || 'parcels-base' }}
+          FORCE_RESUME=${{ github.event.inputs.force_resume_from }}
+          BBOX=${{ github.event.inputs.bbox || '46.20,24.20,47.30,25.10' }}
+          MAX_TILES=${{ github.event.inputs.max_tiles }}
+
+          ARGS=(--zoom "$ZOOM" --layer "$LAYER" --bbox "$BBOX")
+          if [ -n "$FORCE_RESUME" ]; then
+            ARGS+=(--force-resume-from "$FORCE_RESUME")
+          fi
+          if [ -n "$MAX_TILES" ]; then
+            ARGS+=(--max-tiles "$MAX_TILES")
+          fi
+
+          echo "Running ingest with args: ${ARGS[*]}"
+          python -m app.ingest.suhail_parcels_tiles "${ARGS[@]}"
+
+      - name: Show progress snapshot
+        run: |
+          psql -XtAc "SELECT id, map_name, layer_name, zoom, x_min, x_max, y_min, y_max, last_index, status, updated_at FROM suhail_tile_ingest_state;"
+          psql -XtAc "SELECT count(*) FROM suhail_parcel_raw;"

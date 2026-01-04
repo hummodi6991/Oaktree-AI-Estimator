@@ -51,6 +51,11 @@ district,far_max,city,zoning,road_class,frontage_min_m,asof_date,source_url
 ```
 Only `district` and `far_max` are required. When an estimate runs, the API first tries polygon features for FAR; if none are found, it falls back to this rules table by matching the inferred **district**.
 
+### Suhail parcel tiles import (resumable)
+- Workflow: trigger `.github/workflows/suhail-parcels-import.yml` (dispatch inputs: `zoom`, `layer`, `force_resume_from`, `max_tiles`). The job runs Alembic, ensures PostGIS, and resumes via `suhail_tile_ingest_state`.
+- Local check: `python -m app.ingest.suhail_parcels_tiles --zoom 15 --layer parcels-base --max-tiles 2`.
+- Parcel identify: set `PARCEL_IDENTIFY_TABLE=suhail_parcels_proxy` and `PARCEL_IDENTIFY_GEOM_COLUMN=geom` to route lookups through the new proxy view.
+
 ### Endpoints (MVP)
 
 - `GET /health`
