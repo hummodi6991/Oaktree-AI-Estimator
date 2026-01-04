@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import hashlib
 import math
 import sys
@@ -310,7 +311,7 @@ def _upsert_parcels(db, parcels: Iterable[tuple[str, BaseGeometry, dict]], tile_
             {
                 "id": parcel_id,
                 "geom_wkb": geom.wkb,
-                "props": props,
+                "props_json": json.dumps(props, ensure_ascii=False),
                 **tile_meta,
             }
         )
@@ -322,7 +323,7 @@ def _upsert_parcels(db, parcels: Iterable[tuple[str, BaseGeometry, dict]], tile_
         text(
             """
             INSERT INTO suhail_parcel_raw (id, geom, props, source_layer, z, x, y, observed_at)
-            VALUES (:id, ST_Multi(ST_SetSRID(ST_GeomFromWKB(:geom_wkb), 4326)), :props, :source_layer, :z, :x, :y, now())
+            VALUES (:id, ST_Multi(ST_SetSRID(ST_GeomFromWKB(:geom_wkb), 4326)), :props_json::jsonb, :source_layer, :z, :x, :y, now())
             ON CONFLICT (id) DO UPDATE
             SET geom = EXCLUDED.geom,
                 props = EXCLUDED.props,
