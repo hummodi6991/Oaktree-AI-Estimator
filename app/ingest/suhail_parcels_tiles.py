@@ -21,6 +21,7 @@ UPDATE_INTERVAL = 25
 WEB_MERCATOR_RADIUS = 6378137.0
 WORLD_SIZE = 2 * math.pi * WEB_MERCATOR_RADIUS
 BBOX_RIYADH_DEFAULT = (46.20, 24.20, 47.30, 25.10)
+SINGLE_ROW_COMMIT_INTERVAL = 50
 
 
 @dataclass
@@ -309,7 +310,9 @@ def _fetch_tile(layer: str, x: int, y: int, z: int) -> bytes:
     return resp.content
 
 
-def _upsert_parcels(db, parcels: Iterable[tuple[str, BaseGeometry, dict]], tile_meta: dict) -> int:
+def _upsert_parcels(
+    db, parcels: Iterable[tuple[str, BaseGeometry, dict]], tile_meta: dict
+) -> tuple[int, int]:
     rows = []
     for parcel_id, geom, props in parcels:
         rows.append(
@@ -322,12 +325,12 @@ def _upsert_parcels(db, parcels: Iterable[tuple[str, BaseGeometry, dict]], tile_
         )
 
     if not rows:
-        return 0
+        return 0, 0
 
     upsert_parcels_stmt = text(
         """
         INSERT INTO suhail_parcel_raw (id, geom, props, source_layer, z, x, y, observed_at)
-        VALUES (:id, ST_Multi(ST_SetSRID(ST_GeomFromWKB(:geom_wkb), 4326)), :props_json::jsonb, :source_layer, :z, :x, :y, now())
+        VALUES (:id, ST_Multi(ST_MakeValid(ST_SetSRID(ST_GeomFromWKB(:geom_wkb), 4326))), :props_json::jsonb, :source_layer, :z, :x, :y, now())
         ON CONFLICT (id) DO UPDATE
         SET geom = EXCLUDED.geom,
             props = EXCLUDED.props,
@@ -338,14 +341,47 @@ def _upsert_parcels(db, parcels: Iterable[tuple[str, BaseGeometry, dict]], tile_
             observed_at = EXCLUDED.observed_at
         """
     )
+    inserted = 0
+    skipped = 0
     try:
         print("[_upsert_parcels] Executing parcel upsert")
         db.execute(upsert_parcels_stmt, rows)
         db.commit()
-        return len(rows)
-    except Exception:
+        return len(rows), skipped
+    except Exception as batch_exc:
         db.rollback()
-        raise
+        print(
+            f"[_upsert_parcels] Batch upsert failed for tile z={tile_meta.get('z')} "
+            f"x={tile_meta.get('x')} y={tile_meta.get('y')}: {batch_exc}"
+        )
+
+    successes_since_commit = 0
+    for row in rows:
+        try:
+            db.execute(upsert_parcels_stmt, row)
+            successes_since_commit += 1
+            if successes_since_commit >= SINGLE_ROW_COMMIT_INTERVAL:
+                db.commit()
+                inserted += successes_since_commit
+                successes_since_commit = 0
+        except Exception as exc:
+            db.rollback()
+            skipped += 1
+            successes_since_commit = 0
+            print(
+                f"[_upsert_parcels] SKIP parcel id={row.get('id')} tile z={row.get('z')} "
+                f"x={row.get('x')} y={row.get('y')}: {exc}"
+            )
+
+    if successes_since_commit:
+        db.commit()
+        inserted += successes_since_commit
+
+    print(
+        f"[_upsert_parcels] tile z={tile_meta.get('z')} x={tile_meta.get('x')} y={tile_meta.get('y')}: "
+        f"batch failed; inserted={inserted}, skipped={skipped}"
+    )
+    return inserted, skipped
 
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -411,7 +447,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                 tile_bytes = _fetch_tile(args.layer, x, y, args.zoom)
                 parcels = list(_decode_tile(tile_bytes, args.layer, x, y, args.zoom))
-                inserted = _upsert_parcels(
+                inserted, skipped = _upsert_parcels(
                     db,
                     parcels,
                     {"source_layer": args.layer, "z": args.zoom, "x": x, "y": y},
@@ -423,7 +459,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     _update_progress(db, last_processed_index, status="running")
 
                 print(
-                    f"Tile {idx}/{tile_count} (x={x}, y={y}) -> {len(parcels)} features, {inserted} upserted"
+                    f"Tile {idx}/{tile_count} (x={x}, y={y}) -> {len(parcels)} features, "
+                    f"{inserted} inserted, {skipped} skipped"
                 )
         finally:
             status = "completed" if last_processed_index >= tile_count else "stopped"
