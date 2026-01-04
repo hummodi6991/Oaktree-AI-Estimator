@@ -12,7 +12,8 @@ depends_on = None
 def upgrade() -> None:
     op.execute(
         """
-        CREATE OR REPLACE VIEW suhail_parcels_proxy AS
+        DROP VIEW IF EXISTS suhail_parcels_proxy;
+        CREATE VIEW suhail_parcels_proxy AS
         SELECT
             r.id,
             'suhail' AS source,
@@ -46,7 +47,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute(
         """
-        CREATE OR REPLACE VIEW suhail_parcels_proxy AS
+        DROP VIEW IF EXISTS suhail_parcels_proxy;
+        CREATE VIEW suhail_parcels_proxy AS
         SELECT
             r.id,
             'suhail' AS source,
