@@ -210,89 +210,94 @@ def _upsert_state(
     layer_name: str,
     force_resume_from: int | None,
 ) -> int:
-    row = db.execute(
-        text(
-            """
-            SELECT id, map_name, layer_name, zoom, x_min, x_max, y_min, y_max, last_index
-            FROM suhail_tile_ingest_state WHERE id=1
-            """
-        )
-    ).mappings().one_or_none()
+    select_state_stmt = text(
+        """
+        SELECT id, map_name, layer_name, zoom, x_min, x_max, y_min, y_max, last_index
+        FROM suhail_tile_ingest_state WHERE id=1
+        """
+    )
+    insert_state_stmt = text(
+        """
+        INSERT INTO suhail_tile_ingest_state (id, map_name, layer_name, zoom, x_min, x_max, y_min, y_max, last_index, status)
+        VALUES (1, :map_name, :layer_name, :zoom, :x_min, :x_max, :y_min, :y_max, 0, 'running')
+        """
+    )
+    update_state_stmt = text(
+        """
+        UPDATE suhail_tile_ingest_state
+        SET map_name=:map_name, layer_name=:layer_name, zoom=:zoom,
+            x_min=:x_min, x_max=:x_max, y_min=:y_min, y_max=:y_max,
+            updated_at=now(), status=CASE WHEN :reset_needed THEN 'reset' ELSE 'running' END,
+            last_index=CASE WHEN :reset_needed THEN 0 ELSE last_index END
+        WHERE id=1
+        """
+    )
+    force_resume_stmt = text(
+        """
+        UPDATE suhail_tile_ingest_state
+        SET last_index=:last_index, updated_at=now(), status='forced'
+        WHERE id=1
+        """
+    )
 
-    params = {
-        "map_name": map_name,
-        "layer_name": layer_name,
-        "zoom": tile_range.zoom,
-        "x_min": tile_range.x_min,
-        "x_max": tile_range.x_max,
-        "y_min": tile_range.y_min,
-        "y_max": tile_range.y_max,
-    }
+    try:
+        print("[_upsert_state] Executing ingest state select")
+        row = db.execute(select_state_stmt).mappings().one_or_none()
 
-    if not row:
-        db.execute(
-            text(
-                """
-                INSERT INTO suhail_tile_ingest_state (id, map_name, layer_name, zoom, x_min, x_max, y_min, y_max, last_index, status)
-                VALUES (1, :map_name, :layer_name, :zoom, :x_min, :x_max, :y_min, :y_max, 0, 'running')
-                """
-            ),
-            params,
-        )
-        last_index = 0
-    else:
-        reset_needed = any(
-            row.get(key) != params[key]
-            for key in ("map_name", "layer_name", "zoom", "x_min", "x_max", "y_min", "y_max")
-        )
-        if reset_needed:
+        params = {
+            "map_name": map_name,
+            "layer_name": layer_name,
+            "zoom": tile_range.zoom,
+            "x_min": tile_range.x_min,
+            "x_max": tile_range.x_max,
+            "y_min": tile_range.y_min,
+            "y_max": tile_range.y_max,
+        }
+
+        if not row:
+            print("[_upsert_state] Executing ingest state insert")
+            db.execute(insert_state_stmt, params)
             last_index = 0
         else:
-            last_index = int(row.get("last_index") or 0)
+            reset_needed = any(
+                row.get(key) != params[key]
+                for key in ("map_name", "layer_name", "zoom", "x_min", "x_max", "y_min", "y_max")
+            )
+            if reset_needed:
+                last_index = 0
+            else:
+                last_index = int(row.get("last_index") or 0)
 
-        db.execute(
-            text(
-                """
-                UPDATE suhail_tile_ingest_state
-                SET map_name=:map_name, layer_name=:layer_name, zoom=:zoom,
-                    x_min=:x_min, x_max=:x_max, y_min=:y_min, y_max=:y_max,
-                    updated_at=now(), status=CASE WHEN :reset_needed THEN 'reset' ELSE 'running' END,
-                    last_index=CASE WHEN :reset_needed THEN 0 ELSE last_index END
-                WHERE id=1
-                """
-            ),
-            {**params, "reset_needed": reset_needed},
-        )
+            print("[_upsert_state] Executing ingest state update")
+            db.execute(update_state_stmt, {**params, "reset_needed": reset_needed})
 
-    if force_resume_from is not None:
-        last_index = max(0, force_resume_from)
-        db.execute(
-            text(
-                """
-                UPDATE suhail_tile_ingest_state
-                SET last_index=:last_index, updated_at=now(), status='forced'
-                WHERE id=1
-                """
-            ),
-            {"last_index": last_index},
-        )
+        if force_resume_from is not None:
+            last_index = max(0, force_resume_from)
+            print("[_upsert_state] Executing forced resume update")
+            db.execute(force_resume_stmt, {"last_index": last_index})
 
-    db.commit()
-    return last_index
+        db.commit()
+        return last_index
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _update_progress(db, last_index: int, status: str | None = None) -> None:
-    db.execute(
-        text(
-            """
-            UPDATE suhail_tile_ingest_state
-            SET last_index=:last_index, updated_at=now(), status=COALESCE(:status, status)
-            WHERE id=1
-            """
-        ),
-        {"last_index": last_index, "status": status},
+    progress_stmt = text(
+        """
+        UPDATE suhail_tile_ingest_state
+        SET last_index=:last_index, updated_at=now(), status=COALESCE(:status, status)
+        WHERE id=1
+        """
     )
-    db.commit()
+    try:
+        print("[_update_progress] Executing progress update")
+        db.execute(progress_stmt, {"last_index": last_index, "status": status})
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _fetch_tile(layer: str, x: int, y: int, z: int) -> bytes:
@@ -319,25 +324,28 @@ def _upsert_parcels(db, parcels: Iterable[tuple[str, BaseGeometry, dict]], tile_
     if not rows:
         return 0
 
-    db.execute(
-        text(
-            """
-            INSERT INTO suhail_parcel_raw (id, geom, props, source_layer, z, x, y, observed_at)
-            VALUES (:id, ST_Multi(ST_SetSRID(ST_GeomFromWKB(:geom_wkb), 4326)), :props_json::jsonb, :source_layer, :z, :x, :y, now())
-            ON CONFLICT (id) DO UPDATE
-            SET geom = EXCLUDED.geom,
-                props = EXCLUDED.props,
-                source_layer = EXCLUDED.source_layer,
-                z = EXCLUDED.z,
-                x = EXCLUDED.x,
-                y = EXCLUDED.y,
-                observed_at = EXCLUDED.observed_at
-            """
-        ),
-        rows,
+    upsert_parcels_stmt = text(
+        """
+        INSERT INTO suhail_parcel_raw (id, geom, props, source_layer, z, x, y, observed_at)
+        VALUES (:id, ST_Multi(ST_SetSRID(ST_GeomFromWKB(:geom_wkb), 4326)), :props_json::jsonb, :source_layer, :z, :x, :y, now())
+        ON CONFLICT (id) DO UPDATE
+        SET geom = EXCLUDED.geom,
+            props = EXCLUDED.props,
+            source_layer = EXCLUDED.source_layer,
+            z = EXCLUDED.z,
+            x = EXCLUDED.x,
+            y = EXCLUDED.y,
+            observed_at = EXCLUDED.observed_at
+        """
     )
-    db.commit()
-    return len(rows)
+    try:
+        print("[_upsert_parcels] Executing parcel upsert")
+        db.execute(upsert_parcels_stmt, rows)
+        db.commit()
+        return len(rows)
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
