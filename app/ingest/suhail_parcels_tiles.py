@@ -330,7 +330,7 @@ def _upsert_parcels(
     upsert_parcels_stmt = text(
         """
         INSERT INTO suhail_parcel_raw (id, geom, props, source_layer, z, x, y, observed_at)
-        VALUES (:id, ST_Multi(ST_MakeValid(ST_SetSRID(ST_GeomFromWKB(:geom_wkb), 4326))), :props_json::jsonb, :source_layer, :z, :x, :y, now())
+        VALUES (:id, ST_Multi(ST_MakeValid(ST_SetSRID(ST_GeomFromWKB(:geom_wkb), 4326))), CAST(:props_json AS jsonb), :source_layer, :z, :x, :y, now())
         ON CONFLICT (id) DO UPDATE
         SET geom = EXCLUDED.geom,
             props = EXCLUDED.props,
