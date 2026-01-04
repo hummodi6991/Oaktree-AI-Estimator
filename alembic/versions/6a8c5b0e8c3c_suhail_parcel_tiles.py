@@ -78,7 +78,7 @@ def upgrade() -> None:
     op.execute(
         """
         INSERT INTO suhail_tile_ingest_state (id, map_name, layer_name, zoom, x_min, x_max, y_min, y_max, last_index)
-        VALUES (1, 'riyadh', 'parcels-base', NULL, NULL, NULL, NULL, NULL, 0)
+        VALUES (1, 'riyadh', 'parcels-base', 15, NULL, NULL, NULL, NULL, 0)
         ON CONFLICT (id) DO NOTHING;
         """
     )
