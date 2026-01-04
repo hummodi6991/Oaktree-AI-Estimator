@@ -159,8 +159,27 @@ jobs:
           YAML
 
           kubectl apply -f migrate-job.yml
-          kubectl wait --for=condition=complete --timeout=600s job/oaktree-migrate
-          kubectl logs -l job-name=oaktree-migrate --tail=200
+          POD=""
+          for _ in {1..10}; do
+            POD=$(kubectl get pods -n default -l job-name=oaktree-migrate -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            if [ -n "$POD" ]; then
+              break
+            fi
+            sleep 2
+          done
+
+          kubectl wait -n default --for=condition=complete --timeout=1800s job/oaktree-migrate || true
+          kubectl describe job oaktree-migrate -n default || true
+          kubectl get pods -n default -l job-name=oaktree-migrate -o wide || true
+          if [ -n "$POD" ]; then
+            kubectl logs -n default "$POD" --all-containers --tail=400 || true
+          fi
+          kubectl describe pod -n default -l job-name=oaktree-migrate || true
+
+          JOB_COMPLETE=$(kubectl get job oaktree-migrate -n default -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)
+          if [ "$JOB_COMPLETE" != "True" ]; then
+            exit 1
+          fi
 
       # 7) Deploy to ACK (patch image and apply)
       - name: Validate manifests (dry-run)
