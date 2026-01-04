@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from app.db.deps import get_db
 from app.models.tables import Rate, MarketIndicator, SaleComp, RentComp
 from app.services import parking as parking_svc
@@ -11,6 +11,15 @@ def _max_date(db: Session, col):
     val = db.query(func.max(col)).scalar()
     return val.isoformat() if val else None
 
+
+def _max_date_from_sql(db: Session, sql: str):
+    try:
+        val = db.execute(text(sql)).scalar()
+    except Exception:
+        return None
+    return val.isoformat() if val else None
+
+
 @router.get("/metadata/freshness")
 def freshness(db: Session = Depends(get_db)):
     return {
@@ -18,6 +27,7 @@ def freshness(db: Session = Depends(get_db)):
         "market_indicator": _max_date(db, MarketIndicator.date),
         "sale_comp": _max_date(db, SaleComp.date),
         "rent_comp": _max_date(db, RentComp.date),
+        "suhail_parcels_updated": _max_date_from_sql(db, "SELECT max(observed_at) FROM suhail_parcel_raw"),
     }
 
 
