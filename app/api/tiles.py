@@ -45,6 +45,11 @@ try:
 except ValueError:
     logger.warning("Invalid PARCEL_TILE_MAX_AREA_M2; defaulting to 50000")
     SMALL_PARCEL_MAX_AREA_M2 = 50_000
+PARCEL_TILE_SOURCE_FILTER = (os.getenv("PARCEL_TILE_SOURCE_FILTER") or "").strip()
+
+_PARCEL_TILE_SOURCE_FILTER_CLAUSE = ""
+if PARCEL_TILE_SOURCE_FILTER:
+    _PARCEL_TILE_SOURCE_FILTER_CLAUSE = "  AND p.source = :source_filter"
 
 
 def _tile_path(z: int, x: int, y: int) -> pathlib.Path:
@@ -86,6 +91,7 @@ _PARCEL_TILE_SQL = text(
       WHERE p.{PARCEL_TILE_GEOM_COLUMN} && ST_Transform(t.geom3857, 4326)
         AND ST_Intersects(p.{PARCEL_TILE_GEOM_COLUMN}, ST_Transform(t.geom3857, 4326))
         AND p.area_m2 <= :max_area_m2
+{_PARCEL_TILE_SOURCE_FILTER_CLAUSE}
     ),
     mvtgeom AS (
       SELECT
@@ -159,16 +165,16 @@ def overture_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
 
 @router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
+    params = {
+        "z": z,
+        "x": x,
+        "y": y,
+        "max_area_m2": SMALL_PARCEL_MAX_AREA_M2,
+    }
+    if PARCEL_TILE_SOURCE_FILTER:
+        params["source_filter"] = PARCEL_TILE_SOURCE_FILTER
     try:
-        tile_bytes = db.execute(
-            _PARCEL_TILE_SQL,
-            {
-                "z": z,
-                "x": x,
-                "y": y,
-                "max_area_m2": SMALL_PARCEL_MAX_AREA_M2,
-            },
-        ).scalar()
+        tile_bytes = db.execute(_PARCEL_TILE_SQL, params).scalar()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to render parcel tile: {exc}")
 
