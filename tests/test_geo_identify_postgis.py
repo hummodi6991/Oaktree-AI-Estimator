@@ -67,6 +67,8 @@ def _geom_json():
 
 def _reload_geo_portal(table_name: str):
     os.environ["PARCEL_IDENTIFY_TABLE"] = table_name
+    import app.core.config as core_config
+    importlib.reload(core_config)
     importlib.reload(geo_portal)
     return geo_portal
 
@@ -161,14 +163,24 @@ def test_identify_postgis_overture_overlay_wins_when_osm_not_strong():
 
 
 def test_identify_sql_translates_suhail_geometry():
+    geo_portal = _reload_geo_portal("suhail_parcels_proxy")
+    sql = str(
+        geo_portal._build_identify_sql(
+            geo_portal._PARCEL_TABLE, geo_portal._PARCEL_GEOM_COLUMN, tuple()
+        )
+    )
+    assert "ST_Translate(ST_Transform(geom, 3857), :suhail_dx_m, :suhail_dy_m)" in sql
+
+
+def test_identify_sql_does_not_translate_non_suhail_geometry():
     geo_portal = _reload_geo_portal("parcels")
     sql = str(
         geo_portal._build_identify_sql(
             geo_portal._PARCEL_TABLE, geo_portal._PARCEL_GEOM_COLUMN, tuple()
         )
     )
-    assert "WHEN source = 'suhail'" in sql
-    assert "ST_Translate(ST_Transform(geom, 3857), :suhail_dx_m, :suhail_dy_m)" in sql
+    assert "ST_Translate(ST_Transform(geom, 3857), :suhail_dx_m, :suhail_dy_m)" not in sql
+    assert "ST_Transform(geom, 3857)" in sql
 
 
 def test_identify_default_offsets_zero():

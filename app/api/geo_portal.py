@@ -128,6 +128,13 @@ def _get_parcel_optional_columns(db: Session) -> set[str]:
 def _build_identify_sql(table: str, geom_column: str, optional_cols_key: tuple[str, ...]):
     optional_columns = set(optional_cols_key)
     optional_sql = _format_optional_columns(optional_columns)
+    _, table_name = _split_table_identifier(table)
+    translate_suhail = table_name == "suhail_parcels_proxy"
+    geom_transform = (
+        "ST_Translate(ST_Transform(geom, 3857), :suhail_dx_m, :suhail_dy_m)"
+        if translate_suhail
+        else "ST_Transform(geom, 3857)"
+    )
     return text(
         f"""
   WITH q AS (
@@ -140,7 +147,6 @@ def _build_identify_sql(table: str, geom_column: str, optional_cols_key: tuple[s
       id,
       landuse,
       classification,
-      source,
       {geom_column} AS geom,
       ST_Area(ST_Transform({geom_column}, :metric_srid))::bigint      AS area_m2,
       ST_Perimeter(ST_Transform({geom_column}, :metric_srid))::bigint AS perimeter_m,
@@ -158,11 +164,7 @@ def _build_identify_sql(table: str, geom_column: str, optional_cols_key: tuple[s
     perimeter_m,
     ST_AsGeoJSON(
       ST_Transform(
-        CASE
-          WHEN source = 'suhail'
-            THEN ST_Translate(ST_Transform(geom, 3857), :suhail_dx_m, :suhail_dy_m)
-          ELSE ST_Transform(geom, 3857)
-        END,
+        {geom_transform},
         4326
       )
     ) AS geom,
