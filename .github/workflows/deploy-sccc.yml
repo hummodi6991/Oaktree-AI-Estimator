@@ -120,6 +120,7 @@ jobs:
             --from-literal=POSTGRES_DB="${{ secrets.POSTGRES_DB }}" \
             --from-literal=POSTGRES_HOST="${{ secrets.POSTGRES_HOST }}" \
             --from-literal=POSTGRES_PORT="${{ secrets.POSTGRES_PORT }}" \
+            --from-literal=PGSSLMODE=require \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Create/Update App Secret (oaktree-app-env)
@@ -144,9 +145,11 @@ jobs:
           metadata:
             name: oaktree-migrate
           spec:
+            backoffLimit: 0
+            ttlSecondsAfterFinished: 3600
             template:
               spec:
-                restartPolicy: OnFailure
+                restartPolicy: Never
                 containers:
                   - name: migrate
                     image: ${{ steps.img.outputs.image }}
@@ -156,25 +159,24 @@ jobs:
                           name: oaktree-db-env
                       - secretRef:
                           name: oaktree-app-env
+                    env:
+                      - name: DB_DEBUG
+                        value: "1"
           YAML
 
           kubectl apply -f migrate-job.yml
-          POD=""
-          for _ in {1..10}; do
-            POD=$(kubectl get pods -n default -l job-name=oaktree-migrate -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-            if [ -n "$POD" ]; then
-              break
-            fi
-            sleep 2
-          done
 
           kubectl wait -n default --for=condition=complete --timeout=1800s job/oaktree-migrate || true
           kubectl describe job oaktree-migrate -n default || true
           kubectl get pods -n default -l job-name=oaktree-migrate -o wide || true
-          if [ -n "$POD" ]; then
+
+          PODS=$(kubectl get pods -n default -l job-name=oaktree-migrate -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
+          for POD in $PODS; do
+            echo "--- Logs for pod: $POD" || true
             kubectl logs -n default "$POD" --all-containers --tail=400 || true
-          fi
-          kubectl describe pod -n default -l job-name=oaktree-migrate || true
+            kubectl logs -n default "$POD" --previous --all-containers --tail=400 || true
+            kubectl describe pod -n default "$POD" || true
+          done
 
           JOB_COMPLETE=$(kubectl get job oaktree-migrate -n default -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)
           if [ "$JOB_COMPLETE" != "True" ]; then
