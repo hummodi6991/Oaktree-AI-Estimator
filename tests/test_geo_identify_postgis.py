@@ -162,28 +162,17 @@ def test_identify_postgis_overture_overlay_wins_when_osm_not_strong():
     assert parcel["landuse_method"] == "overture_overlay"
 
 
-def test_identify_sql_translates_suhail_geometry():
-    geo_portal = _reload_geo_portal("suhail_parcels_proxy")
-    sql = str(
-        geo_portal._build_identify_sql(
-            geo_portal._PARCEL_TABLE, geo_portal._PARCEL_GEOM_COLUMN, tuple()
-        )
-    )
-    assert "ST_Translate(ST_Transform(geom, 3857), :suhail_dx_m, :suhail_dy_m)" in sql
-
-
-def test_identify_sql_does_not_translate_non_suhail_geometry():
+def test_identify_sql_uses_raw_geometry_transform():
     geo_portal = _reload_geo_portal("parcels")
     sql = str(
         geo_portal._build_identify_sql(
             geo_portal._PARCEL_TABLE, geo_portal._PARCEL_GEOM_COLUMN, tuple()
         )
     )
-    assert "ST_Translate(ST_Transform(geom, 3857), :suhail_dx_m, :suhail_dy_m)" not in sql
-    assert "ST_Transform(geom, 3857)" in sql
+    assert "ST_AsGeoJSON(\n      ST_Transform(geom, 4326)\n    ) AS geom" in sql
 
 
-def test_identify_default_offsets_zero():
+def test_identify_default_offsets_not_in_params():
     geo_portal = _reload_geo_portal("parcels")
     db = _DummyDB(
         {
@@ -197,12 +186,10 @@ def test_identify_default_offsets_zero():
     geo_portal._identify_postgis(46.675, 24.713, 25.0, db)
     params_with_offsets = None
     for _, params in db.calls:
-        if "suhail_dx_m" in params:
+        if "suhail_dx_m" in params or "suhail_dy_m" in params:
             params_with_offsets = params
             break
-    assert params_with_offsets is not None
-    assert params_with_offsets["suhail_dx_m"] == 0.0
-    assert params_with_offsets["suhail_dy_m"] == 0.0
+    assert params_with_offsets is None
 
 
 def test_identify_postgis_suhail_includes_optional_metadata():

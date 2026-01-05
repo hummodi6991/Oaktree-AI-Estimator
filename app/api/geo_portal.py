@@ -68,8 +68,6 @@ _PARCEL_TABLE = _safe_identifier(getattr(settings, "PARCEL_IDENTIFY_TABLE", "par
 _PARCEL_GEOM_COLUMN = _safe_identifier(
     getattr(settings, "PARCEL_IDENTIFY_GEOM_COLUMN", "geom"), "geom"
 )
-_SUHAIL_OFFSET_EAST_M = getattr(settings, "SUHAIL_OFFSET_EAST_M", 0.0) or 0.0
-_SUHAIL_OFFSET_NORTH_M = getattr(settings, "SUHAIL_OFFSET_NORTH_M", 0.0) or 0.0
 
 _TRANSFORMER = None  # unused (server-side transform)
 
@@ -129,12 +127,6 @@ def _build_identify_sql(table: str, geom_column: str, optional_cols_key: tuple[s
     optional_columns = set(optional_cols_key)
     optional_sql = _format_optional_columns(optional_columns)
     _, table_name = _split_table_identifier(table)
-    translate_suhail = table_name == "suhail_parcels_proxy"
-    geom_transform = (
-        "ST_Translate(ST_Transform(geom, 3857), :suhail_dx_m, :suhail_dy_m)"
-        if translate_suhail
-        else "ST_Transform(geom, 3857)"
-    )
     return text(
         f"""
   WITH q AS (
@@ -163,10 +155,7 @@ def _build_identify_sql(table: str, geom_column: str, optional_cols_key: tuple[s
     area_m2,
     perimeter_m,
     ST_AsGeoJSON(
-      ST_Transform(
-        {geom_transform},
-        4326
-      )
+      ST_Transform(geom, 4326)
     ) AS geom,
     distance_m,
     hits,
@@ -804,8 +793,6 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         "target_srid": _TARGET_SRID,
         "metric_srid": _METRIC_SRID,
         "tol_m": tol_m,
-        "suhail_dx_m": _SUHAIL_OFFSET_EAST_M,
-        "suhail_dy_m": _SUHAIL_OFFSET_NORTH_M,
     }
     optional_columns = _get_parcel_optional_columns(db)
     identify_sql = _build_identify_sql(_PARCEL_TABLE, _PARCEL_GEOM_COLUMN, tuple(sorted(optional_columns)))
