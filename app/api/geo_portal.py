@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+from functools import lru_cache
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,6 +25,20 @@ logger = logging.getLogger(__name__)
 Transformer = None  # no local transform; we use ST_Transform on the server
 
 _NO_SIGNAL_LABELS = {"", "building", "yes", "true", "1", "0", "unknown", "none"}
+
+_PARCEL_OPTIONAL_COLUMNS = [
+    "zoning_id",
+    "municipality_name",
+    "neighborhood_name",
+    "zoning_category",
+    "zoning_subcategory",
+    "plan_number",
+    "block_number",
+    "parcel_number",
+    "street_name",
+]
+
+_PARCEL_OPTIONAL_COLUMNS_CACHE: dict[str, set[str]] = {}
 
 
 def _label_is_signal(label: str | None, code: str | None) -> bool:
@@ -55,8 +70,63 @@ _PARCEL_GEOM_COLUMN = _safe_identifier(
 
 _TRANSFORMER = None  # unused (server-side transform)
 
-_IDENTIFY_SQL = text(
-    f"""
+
+def _split_table_identifier(table: str) -> tuple[str | None, str]:
+    if "." in table:
+        schema, name = table.split(".", 1)
+        return schema or None, name
+    return None, table
+
+
+def _format_optional_columns(optional_columns: set[str]) -> str:
+    if not _PARCEL_OPTIONAL_COLUMNS:
+        return ""
+    parts = []
+    for col in _PARCEL_OPTIONAL_COLUMNS:
+        expr = col if col in optional_columns else "NULL"
+        parts.append(f"{expr} AS {col}")
+    return ",\n      " + ",\n      ".join(parts)
+
+
+def _get_parcel_optional_columns(db: Session) -> set[str]:
+    cached = _PARCEL_OPTIONAL_COLUMNS_CACHE.get(_PARCEL_TABLE)
+    if cached is not None:
+        return cached
+
+    schema, table_name = _split_table_identifier(_PARCEL_TABLE)
+    schema_filter = (
+        "AND table_schema = :schema" if schema else "AND table_schema = ANY(current_schemas(false))"
+    )
+    sql = text(
+        f"""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = :table_name
+          {schema_filter}
+        """
+    )
+    params: dict[str, Any] = {"table_name": table_name}
+    if schema:
+        params["schema"] = schema
+
+    try:
+        rows = db.execute(sql, params).scalars().all()
+        cols = {str(row) for row in rows}
+    except SQLAlchemyError as exc:
+        logger.warning("Optional parcel column discovery failed: %s", exc)
+        cols = set()
+
+    cols &= set(_PARCEL_OPTIONAL_COLUMNS)
+    _PARCEL_OPTIONAL_COLUMNS_CACHE[_PARCEL_TABLE] = cols
+    return cols
+
+
+@lru_cache(maxsize=8)
+def _build_identify_sql(table: str, geom_column: str, optional_cols_key: tuple[str, ...]):
+    optional_columns = set(optional_cols_key)
+    optional_sql = _format_optional_columns(optional_columns)
+    return text(
+        f"""
   WITH q AS (
     SELECT ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid) AS pt
   ),
@@ -65,14 +135,14 @@ _IDENTIFY_SQL = text(
       id,
       landuse,
       classification,
-      {_PARCEL_GEOM_COLUMN} AS geom,
-      ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
-      ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
-      ST_Distance({_PARCEL_GEOM_COLUMN}, q.pt)    AS distance_m,
-      CASE WHEN ST_Intersects({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS hits,
-      CASE WHEN ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol_m) THEN 1 ELSE 0 END AS near,
-      CASE WHEN classification = 'overture_building' THEN 1 ELSE 0 END AS is_ovt
-    FROM {_PARCEL_TABLE}, q
+      {geom_column} AS geom,
+      ST_Area({geom_column})::bigint      AS area_m2,
+      ST_Perimeter({geom_column})::bigint AS perimeter_m,
+      ST_Distance({geom_column}, q.pt)    AS distance_m,
+      CASE WHEN ST_Intersects({geom_column}, q.pt) THEN 1 ELSE 0 END AS hits,
+      CASE WHEN ST_DWithin({geom_column}, q.pt, :tol_m) THEN 1 ELSE 0 END AS near,
+      CASE WHEN classification = 'overture_building' THEN 1 ELSE 0 END AS is_ovt{optional_sql}
+    FROM {table}, q
   )
   SELECT
     id,
@@ -84,7 +154,7 @@ _IDENTIFY_SQL = text(
     distance_m,
     hits,
     near,
-    is_ovt
+    is_ovt{optional_sql}
   FROM scored
   ORDER BY
     CASE WHEN hits = 1 THEN 3 WHEN near = 1 THEN 2 ELSE 1 END DESC,
@@ -93,7 +163,7 @@ _IDENTIFY_SQL = text(
     distance_m ASC
   LIMIT 1;
   """
-)
+    )
 
 _COLLATE_META_SQL = (
     text(
@@ -488,6 +558,48 @@ class IdentifyPoint(BaseModel):
     )
 
 
+class ParcelMeta(BaseModel):
+    zoning_id: str | None = None
+    municipality_name: str | None = None
+    neighborhood_name: str | None = None
+    zoning_category: str | None = None
+    zoning_subcategory: str | None = None
+    plan_number: str | None = None
+    block_number: str | None = None
+    parcel_number: str | None = None
+    street_name: str | None = None
+
+
+class IdentifyParcel(BaseModel):
+    parcel_id: str | None = None
+    geometry: dict | None = None
+    area_m2: int | None = None
+    perimeter_m: int | None = None
+    landuse_raw: str | None = None
+    classification_raw: str | None = None
+    landuse_code: str | None = None
+    landuse_method: str | None = None
+    residential_share: float | None = None
+    commercial_share: float | None = None
+    residential_share_osm: float | None = None
+    commercial_share_osm: float | None = None
+    residential_share_ovt: float | None = None
+    commercial_share_ovt: float | None = None
+    ovt_attr_conf: float | None = None
+    osm_conf: float | None = None
+    ovt_conf: float | None = None
+    source_url: str | None = None
+    parcel_meta: ParcelMeta | None = None
+
+
+class IdentifyResponse(BaseModel):
+    found: bool
+    tolerance_m: float
+    source: str
+    message: str | None = None
+    parcel: IdentifyParcel | None = None
+
+
 class CollateParcelsRequest(BaseModel):
     parcel_ids: list[str] = Field(
         ...,
@@ -670,8 +782,10 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
 
 def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Optional[Dict[str, Any]]:
     params = {"lng": lng, "lat": lat, "srid": _TARGET_SRID, "tol_m": tol_m}
+    optional_columns = _get_parcel_optional_columns(db)
+    identify_sql = _build_identify_sql(_PARCEL_TABLE, _PARCEL_GEOM_COLUMN, tuple(sorted(optional_columns)))
     try:
-        row = db.execute(_IDENTIFY_SQL, params).mappings().first()
+        row = db.execute(identify_sql, params).mappings().first()
     except SQLAlchemyError as exc:
         logger.warning("PostGIS identify query failed: %s", exc)
         return None
@@ -778,6 +892,7 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         "osm_conf": osm_conf,
         "ovt_conf": ovt_conf,
         "source_url": f"postgis/{_PARCEL_TABLE}",
+        "parcel_meta": {col: row.get(col) for col in _PARCEL_OPTIONAL_COLUMNS},
     }
 
     logger.debug(
@@ -806,7 +921,7 @@ def _identify_arcgis(lng: float, lat: float, tol_m: float, db: Session) -> Dict[
     }
 
 
-@router.post("/identify")
+@router.post("/identify", response_model=IdentifyResponse)
 def identify_post(pt: IdentifyPoint, db: Session = Depends(get_db)):
     tol = pt.tol_m if pt.tol_m is not None and pt.tol_m > 0 else _DEFAULT_TOLERANCE
 
@@ -839,7 +954,7 @@ def collate_parcels(req: CollateParcelsRequest, db: Session = Depends(get_db)):
     return postgis_result
 
 
-@router.get("/identify")
+@router.get("/identify", response_model=IdentifyResponse)
 def identify_get(
     lng: float = Query(...),
     lat: float = Query(...),
