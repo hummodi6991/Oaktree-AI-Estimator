@@ -41,6 +41,7 @@ export type ParcelSummary = {
   geometry?: Geometry | null;
   area_m2?: number | null;
   perimeter_m?: number | null;
+  source?: string | null;
   landuse_raw?: string | null;
   classification_raw?: string | null;
   landuse_code?: string | null;
@@ -76,11 +77,13 @@ export type CollateResponse = {
   parcel?: ParcelSummary | null;
 };
 
-export async function identify(lng: number, lat: number) {
+export type ParcelDataset = "osm" | "suhail";
+
+export async function identify(lng: number, lat: number, source: ParcelDataset = "osm") {
   const res = await fetch(withBase("/v1/geo/identify"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ lng, lat }),
+    body: JSON.stringify({ lng, lat, source }),
   });
   return readJson<IdentifyResponse>(res);
 }

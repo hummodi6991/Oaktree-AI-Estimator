@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import proj4 from "proj4";
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from "geojson";
@@ -6,7 +6,7 @@ import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Polygon, 
 import "maplibre-gl/dist/maplibre-gl.css";
 
 import { buildApiUrl, collateParcels, identify } from "../api";
-import type { CollateResponse, IdentifyResponse, ParcelSummary } from "../api";
+import type { CollateResponse, IdentifyResponse, ParcelDataset, ParcelSummary } from "../api";
 
 type MapProps = {
   onParcel: (parcel: ParcelSummary | null) => void;
@@ -24,6 +24,7 @@ const PARCEL_SOURCE_ID = "parcel-outlines";
 const PARCEL_LINE_BASE_LAYER_ID = "parcels-line-base";
 const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
 const OVT_MIN_ZOOM = 15;
+const PARCEL_DATASET_STORAGE_KEY = "parcelDataset";
 
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
@@ -78,6 +79,12 @@ function transformGeometryToWgs84(geometry?: Geometry | null): Geometry | null {
     } as MultiPolygon;
   }
   return geometry;
+}
+
+function readStoredParcelDataset(): ParcelDataset {
+  if (typeof window === "undefined") return "osm";
+  const saved = window.localStorage.getItem(PARCEL_DATASET_STORAGE_KEY);
+  return saved === "suhail" ? "suhail" : "osm";
 }
 
 function ensureSelectionLayers(map: maplibregl.Map) {
@@ -153,8 +160,26 @@ function ensureOvertureOverlay(map: maplibregl.Map) {
   }
 }
 
-function ensureParcelOverlay(map: maplibregl.Map) {
-  const parcelTileUrl = buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf");
+function removeParcelLayers(map: maplibregl.Map) {
+  [PARCEL_LINE_LAYER_ID, PARCEL_LINE_BASE_LAYER_ID].forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+  });
+}
+
+function ensureParcelOverlay(map: maplibregl.Map, parcelTileUrl: string, refresh = false) {
+  if (!parcelTileUrl) return;
+  const existingSource = map.getSource(PARCEL_SOURCE_ID) as any;
+  if (existingSource && refresh) {
+    if (typeof existingSource.setTiles === "function") {
+      existingSource.setTiles([parcelTileUrl]);
+    } else {
+      removeParcelLayers(map);
+      map.removeSource(PARCEL_SOURCE_ID);
+    }
+  }
+
   if (!map.getSource(PARCEL_SOURCE_ID)) {
     map.addSource(PARCEL_SOURCE_ID, {
       type: "vector",
@@ -211,6 +236,14 @@ function ensureParcelOverlay(map: maplibregl.Map) {
 export default function Map({ onParcel }: MapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const [parcelDataset, setParcelDataset] = useState<ParcelDataset>(readStoredParcelDataset);
+  const parcelDatasetRef = useRef<ParcelDataset>(parcelDataset);
+  const parcelTileUrl = useMemo(
+    () => buildApiUrl(`/v1/tiles/parcels/${parcelDataset}/{z}/{x}/{y}.pbf`),
+    [parcelDataset],
+  );
+  const parcelTileUrlRef = useRef<string>(parcelTileUrl);
+  const ensureParcelOverlayRef = useRef<((refresh?: boolean) => void) | null>(null);
   const [status, setStatus] = useState<string | null>(
     "انقر على الخريطة لتحديد قطعة أرض.",
   );
@@ -238,6 +271,22 @@ export default function Map({ onParcel }: MapProps) {
   }, [selectedParcelIds]);
 
   useEffect(() => {
+    parcelDatasetRef.current = parcelDataset;
+    parcelTileUrlRef.current = parcelTileUrl;
+    try {
+      window.localStorage.setItem(PARCEL_DATASET_STORAGE_KEY, parcelDataset);
+    } catch {
+      // ignore storage errors (e.g., SSR or private mode)
+    }
+  }, [parcelDataset, parcelTileUrl]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    ensureParcelOverlayRef.current?.(true);
+  }, [parcelDataset, parcelTileUrl]);
+
+  useEffect(() => {
     if (!containerRef.current) return;
 
     const map = new maplibregl.Map({
@@ -247,18 +296,20 @@ export default function Map({ onParcel }: MapProps) {
       zoom: 15,
     });
     mapRef.current = map;
+    ensureParcelOverlayRef.current = (refresh = false) =>
+      ensureParcelOverlay(map, parcelTileUrlRef.current, refresh);
 
     let disposed = false;
 
     map.on("load", () => {
       ensureOvertureOverlay(map);
-      ensureParcelOverlay(map);
+      ensureParcelOverlay(map, parcelTileUrlRef.current);
       ensureSelectionLayers(map);
     });
 
     map.on("style.load", () => {
       ensureOvertureOverlay(map);
-      ensureParcelOverlay(map);
+      ensureParcelOverlay(map, parcelTileUrlRef.current, true);
       ensureSelectionLayers(map);
     });
 
@@ -266,7 +317,8 @@ export default function Map({ onParcel }: MapProps) {
       setStatus("جارٍ التحقق من القطعة…");
       setCollateStatus(null);
       try {
-        const data: IdentifyResponse = await identify(e.lngLat.lng, e.lngLat.lat);
+        const dataset = parcelDatasetRef.current;
+        const data: IdentifyResponse = await identify(e.lngLat.lng, e.lngLat.lat, dataset);
         if (disposed) return;
 
         if (!data?.found || !data.parcel) {
@@ -342,6 +394,7 @@ export default function Map({ onParcel }: MapProps) {
 
     return () => {
       disposed = true;
+      ensureParcelOverlayRef.current = null;
       mapRef.current = null;
       map.remove();
     };
@@ -430,6 +483,37 @@ export default function Map({ onParcel }: MapProps) {
           {status}
         </div>
       )}
+      <div
+        style={{
+          marginTop: 12,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 12,
+          alignItems: "center",
+        }}
+      >
+        <span style={{ fontWeight: 600 }}>Parcels:</span>
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="radio"
+            name="parcel-dataset"
+            value="osm"
+            checked={parcelDataset === "osm"}
+            onChange={() => setParcelDataset("osm")}
+          />
+          <span>OSM</span>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="radio"
+            name="parcel-dataset"
+            value="suhail"
+            checked={parcelDataset === "suhail"}
+            onChange={() => setParcelDataset("suhail")}
+          />
+          <span>Suhail</span>
+        </label>
+      </div>
       <div
         style={{
           marginTop: 12,
