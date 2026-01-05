@@ -131,12 +131,16 @@ jobs:
             --from-literal=PARCEL_TARGET_SRID=4326 \
             --from-literal=PARCEL_IDENTIFY_TABLE=suhail_parcels_proxy \
             --from-literal=PARCEL_IDENTIFY_GEOM_COLUMN=geom \
+            --from-literal=SUHAIL_OFFSET_EAST_M=-20 \
+            --from-literal=SUHAIL_OFFSET_NORTH_M=-20 \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Verify parcel identify secret values
         run: |
           kubectl get secret oaktree-app-env -o jsonpath='{.data.PARCEL_IDENTIFY_TABLE}' | base64 -d; echo
           kubectl get secret oaktree-app-env -o jsonpath='{.data.PARCEL_IDENTIFY_GEOM_COLUMN}' | base64 -d; echo
+          kubectl get secret oaktree-app-env -o jsonpath='{.data.SUHAIL_OFFSET_EAST_M}' | base64 -d; echo
+          kubectl get secret oaktree-app-env -o jsonpath='{.data.SUHAIL_OFFSET_NORTH_M}' | base64 -d; echo
 
       - name: Run DB migrations (alembic)
         run: |
