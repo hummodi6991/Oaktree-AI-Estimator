@@ -36,7 +36,7 @@ _OVT_TILE_SQL = text(
     """
 )
 
-_PARCEL_TILE_SQL_OSM = text(
+_PARCEL_TILE_SQL = text(
     """
     WITH tile AS (
       SELECT ST_TileEnvelope(:z,:x,:y) AS geom3857
@@ -52,44 +52,6 @@ _PARCEL_TILE_SQL_OSM = text(
       FROM osm_parcels_proxy p, tile t
       WHERE p.geom && ST_Transform(t.geom3857, 32638)
         AND p.source IN ('ovt','osm')
-        AND p.area_m2 <= :max_area_m2
-    ),
-    mvtgeom AS (
-      SELECT
-        id,
-        source,
-        landuse,
-        classification,
-        area_m2,
-        ST_AsMVTGeom(
-          ST_Transform(p.geom, 3857),
-          t.geom3857,
-          4096,
-          64,
-          true
-        ) AS geom
-      FROM parcel_candidates p, tile t
-    )
-    SELECT ST_AsMVT(mvtgeom, 'parcels', 4096, 'geom') AS tile
-    FROM mvtgeom;
-    """
-)
-
-_PARCEL_TILE_SQL_SUHAIL = text(
-    """
-    WITH tile AS (
-      SELECT ST_TileEnvelope(:z,:x,:y) AS geom3857
-    ),
-    parcel_candidates AS (
-      SELECT
-        p.id,
-        p.source,
-        p.landuse,
-        p.classification,
-        p.area_m2,
-        p.geom
-      FROM suhail_parcels_proxy p, tile t
-      WHERE p.geom && ST_Transform(t.geom3857, 32638)
         AND p.area_m2 <= :max_area_m2
     ),
     mvtgeom AS (
@@ -161,24 +123,11 @@ def overture_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     )
 
 
-def _parcel_tile_sql_for_source(source: str):
-    normalized = (source or "").strip().lower()
-    if normalized == "suhail":
-        return _PARCEL_TILE_SQL_SUHAIL
-    if normalized == "osm":
-        return _PARCEL_TILE_SQL_OSM
-    return None
-
-
-@router.get("/v1/tiles/parcels/{source}/{z}/{x}/{y}.pbf")
-def parcel_tile_source(source: str, z: int, x: int, y: int, db: Session = Depends(get_db)):
-    sql = _parcel_tile_sql_for_source(source)
-    if sql is None:
-        raise HTTPException(status_code=400, detail="invalid parcel tile source (expected osm or suhail)")
-
+@router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
+def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     try:
         tile_bytes = db.execute(
-            sql, {"z": z, "x": x, "y": y, "max_area_m2": SMALL_PARCEL_MAX_AREA_M2}
+            _PARCEL_TILE_SQL, {"z": z, "x": x, "y": y, "max_area_m2": SMALL_PARCEL_MAX_AREA_M2}
         ).scalar()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to render parcel tile: {exc}")
@@ -192,11 +141,3 @@ def parcel_tile_source(source: str, z: int, x: int, y: int, db: Session = Depend
         media_type="application/x-protobuf",
         headers={"Cache-Control": "public, max-age=3600"},
     )
-
-
-@router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
-def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
-    """
-    Backwards-compatible alias for OSM parcel tiles.
-    """
-    return parcel_tile_source("osm", z=z, x=x, y=y, db=db)

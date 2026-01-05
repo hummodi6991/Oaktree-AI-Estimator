@@ -54,9 +54,7 @@ Only `district` and `far_max` are required. When an estimate runs, the API first
 ### Suhail parcel tiles import (resumable)
 - Workflow: trigger `.github/workflows/suhail-parcels-import.yml` (dispatch inputs: `zoom`, `layer`, `force_resume_from`, `max_tiles`). The job runs Alembic, ensures PostGIS, and resumes via `suhail_tile_ingest_state`.
 - Local check: `python -m app.ingest.suhail_parcels_tiles --zoom 15 --layer parcels-base --max-tiles 2`.
-- Parcel tiles: `GET /v1/tiles/parcels/{source}/{z}/{x}/{y}.pbf` where `source` is `osm` or `suhail` (legacy `/v1/tiles/parcels/{z}/{x}/{y}.pbf` remains an OSM alias). Both sources expose the `parcels` layer with `id, source, landuse, classification, area_m2, geom`.
-- Parcel identify: `GET|POST /v1/geo/identify?lng=...&lat=...&source=osm|suhail` switches datasets at runtime while preserving the response shape; keep `suhail_parcels_proxy` and `osm_parcels_proxy` views current so both are queryable.
-- Dependency: the Suhail ingest workflow must materialize the `suhail_parcels_proxy` view with `geom` in SRID 32638 and the attributes above for tiles/identify to work.
+- Parcel identify: set `PARCEL_IDENTIFY_TABLE=suhail_parcels_proxy` and `PARCEL_IDENTIFY_GEOM_COLUMN=geom` to route lookups through the new proxy view.
 
 ### Endpoints (MVP)
 
