@@ -1,6 +1,3 @@
-import logging
-from pathlib import Path
-
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
@@ -15,10 +12,8 @@ from app.api.ingest import router as ingest_router
 from app.api.metadata import router as metadata_router
 from app.api.tiles import router as tiles_router
 from app.telemetry import setup_otel_if_configured
-from app.core.config import settings
 from app.security.auth import require as auth_require
-
-logger = logging.getLogger(__name__)
+from app.core.config import settings
 
 app = FastAPI(title="Oaktree Estimator API", version="0.1.0")
 setup_otel_if_configured(app)
@@ -55,11 +50,8 @@ app.include_router(geo_router, prefix="/v1", dependencies=deps)
 
 # Serve the compiled React app (frontend/dist) from the same container.
 # UI will be reachable at "/" on the same LoadBalancer as the API.
-dist_dir = Path("frontend/dist")
-if dist_dir.exists():
-    app.mount("/", StaticFiles(directory=dist_dir, html=True), name="web")
-elif settings.APP_ENV.lower() == "prod":
-    logger.warning(
-        "frontend/dist not found; the production UI will be blank. Ensure the frontend is built "
-        "and copied into the image."
-    )
+try:
+    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="web")
+except Exception:
+    # In dev without a build the directory may not exist; ignore.
+    pass
