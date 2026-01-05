@@ -129,8 +129,11 @@ jobs:
             --from-literal=AUTH_MODE=disabled \
             --from-literal=PARCEL_IDENTIFY_TOLERANCE_M=25 \
             --from-literal=PARCEL_TARGET_SRID=4326 \
+            --from-literal=PARCEL_METRIC_SRID=32638 \
             --from-literal=PARCEL_IDENTIFY_TABLE=suhail_parcels_proxy \
             --from-literal=PARCEL_IDENTIFY_GEOM_COLUMN=geom \
+            --from-literal=PARCEL_TILE_TABLE=suhail_parcels_proxy \
+            --from-literal=PARCEL_TILE_GEOM_COLUMN=geom \
             --from-literal=PARCEL_TILE_SOURCE_FILTER=suhail \
             --from-literal=SUHAIL_OFFSET_EAST_M=0 \
             --from-literal=SUHAIL_OFFSET_NORTH_M=0 \
@@ -142,6 +145,8 @@ jobs:
           kubectl get secret oaktree-app-env -o jsonpath='{.data.PARCEL_IDENTIFY_GEOM_COLUMN}' | base64 -d; echo
           kubectl get secret oaktree-app-env -o jsonpath='{.data.SUHAIL_OFFSET_EAST_M}' | base64 -d; echo
           kubectl get secret oaktree-app-env -o jsonpath='{.data.SUHAIL_OFFSET_NORTH_M}' | base64 -d; echo
+          kubectl get secret oaktree-app-env -o jsonpath='{.data.PARCEL_TILE_TABLE}' | base64 -d; echo
+          kubectl get secret oaktree-app-env -o jsonpath='{.data.PARCEL_TILE_SOURCE_FILTER}' | base64 -d; echo
 
       - name: Run DB migrations (alembic)
         run: |
