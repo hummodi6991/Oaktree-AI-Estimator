@@ -83,8 +83,7 @@ _PARCEL_TILE_SQL = text(
         p.area_m2,
         p.{PARCEL_TILE_GEOM_COLUMN}
       FROM {PARCEL_TILE_TABLE} p, tile t
-      WHERE p.{PARCEL_TILE_GEOM_COLUMN} && ST_Transform(t.geom3857, 4326)
-        AND ST_Intersects(p.{PARCEL_TILE_GEOM_COLUMN}, ST_Transform(t.geom3857, 4326))
+      WHERE p.{PARCEL_TILE_GEOM_COLUMN} && ST_Transform(t.geom3857, 32638)
         AND p.area_m2 <= :max_area_m2
     ),
     mvtgeom AS (

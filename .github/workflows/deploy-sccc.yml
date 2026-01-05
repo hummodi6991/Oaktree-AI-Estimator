@@ -128,7 +128,6 @@ jobs:
             --from-literal=APP_ENV=prod \
             --from-literal=AUTH_MODE=disabled \
             --from-literal=PARCEL_IDENTIFY_TOLERANCE_M=25 \
-            --from-literal=PARCEL_TARGET_SRID=4326 \
             --from-literal=PARCEL_IDENTIFY_TABLE=suhail_parcels_proxy \
             --from-literal=PARCEL_IDENTIFY_GEOM_COLUMN=geom \
             --dry-run=client -o yaml | kubectl apply -f -
