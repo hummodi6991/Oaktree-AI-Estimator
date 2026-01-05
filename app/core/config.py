@@ -35,7 +35,8 @@ class Settings:
     SUHAIL_API_KEY: str | None = os.getenv("SUHAIL_API_KEY")
 
     # Parcels identify service configuration
-    PARCEL_TARGET_SRID: int = int(os.getenv("PARCEL_TARGET_SRID", "32638"))
+    PARCEL_TARGET_SRID: int = int(os.getenv("PARCEL_TARGET_SRID", "4326"))
+    PARCEL_METRIC_SRID: int = int(os.getenv("PARCEL_METRIC_SRID", "32638"))
     PARCEL_IDENTIFY_TOLERANCE_M: float = float(
         os.getenv("PARCEL_IDENTIFY_TOLERANCE_M", "25.0")
     )
