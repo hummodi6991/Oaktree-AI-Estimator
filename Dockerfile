@@ -1,10 +1,8 @@
 ### 1) Build the React/Vite front-end
-FROM public.ecr.aws/docker/library/node:20 AS frontend-build
-WORKDIR /app/frontend
-COPY frontend/package*.json ./
-RUN npm ci
+FROM public.ecr.aws/docker/library/node:20-alpine AS webbuild
+WORKDIR /web/frontend
 COPY frontend/ .
-RUN npm run build
+RUN (npm ci || npm install) && npm run build
 
 ### 2) Build the FastAPI image and copy the static site
 FROM public.ecr.aws/docker/library/python:3.11-slim
@@ -23,9 +21,8 @@ COPY alembic.ini .
 COPY models/ ./models/
 COPY README.md .
 
-# Bring in the compiled UI and supporting public assets
-COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
-COPY --from=frontend-build /app/frontend/public /app/frontend/public
+# Bring in the compiled UI (includes public/ assets like static-tiles)
+COPY --from=webbuild /web/frontend/dist /app/frontend/dist
 
 # Serve tiles from the packaged static tiles and stay offline
 ENV TILE_CACHE_DIR=/app/frontend/dist/static-tiles
