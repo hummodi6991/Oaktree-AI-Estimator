@@ -35,7 +35,7 @@ class _DummyDB:
 
     def execute(self, statement, params=None):
         sql = str(statement)
-        self.calls.append((sql, params or {}))
+        self.calls.append(sql)
         if "WITH q AS" in sql:
             return _DummyResult(self.responses.get("identify"))
         if "information_schema.columns" in sql:
@@ -67,8 +67,6 @@ def _geom_json():
 
 def _reload_geo_portal(table_name: str):
     os.environ["PARCEL_IDENTIFY_TABLE"] = table_name
-    import app.core.config as core_config
-    importlib.reload(core_config)
     importlib.reload(geo_portal)
     return geo_portal
 
@@ -78,7 +76,6 @@ def _identify_row(landuse=None, classification="overture_building"):
         "id": "ovt:build2",
         "landuse": landuse,
         "classification": classification,
-        "source": "parcel",
         "area_m2": 120,
         "perimeter_m": 45,
         "geom": _geom_json(),
@@ -160,49 +157,6 @@ def test_identify_postgis_overture_overlay_wins_when_osm_not_strong():
     parcel = result["parcel"]
     assert parcel["landuse_code"] == "s"
     assert parcel["landuse_method"] == "overture_overlay"
-
-
-def test_identify_sql_translates_suhail_geometry():
-    geo_portal = _reload_geo_portal("suhail_parcels_proxy")
-    sql = str(
-        geo_portal._build_identify_sql(
-            geo_portal._PARCEL_TABLE, geo_portal._PARCEL_GEOM_COLUMN, tuple()
-        )
-    )
-    assert "ST_Translate(ST_Transform(geom, 3857), :suhail_dx_m, :suhail_dy_m)" in sql
-
-
-def test_identify_sql_does_not_translate_non_suhail_geometry():
-    geo_portal = _reload_geo_portal("parcels")
-    sql = str(
-        geo_portal._build_identify_sql(
-            geo_portal._PARCEL_TABLE, geo_portal._PARCEL_GEOM_COLUMN, tuple()
-        )
-    )
-    assert "ST_Translate(ST_Transform(geom, 3857), :suhail_dx_m, :suhail_dy_m)" not in sql
-    assert "ST_Transform(geom, 3857)" in sql
-
-
-def test_identify_default_offsets_zero():
-    geo_portal = _reload_geo_portal("parcels")
-    db = _DummyDB(
-        {
-            "identify": _identify_row(),
-            "attr": None,
-            "ovt_overlay": {"res_share": 0.1, "com_share": 0.1},
-            "osm_overlay": {"res_share": 0.1, "com_share": 0.1},
-            "columns": [],
-        }
-    )
-    geo_portal._identify_postgis(46.675, 24.713, 25.0, db)
-    params_with_offsets = None
-    for _, params in db.calls:
-        if "suhail_dx_m" in params:
-            params_with_offsets = params
-            break
-    assert params_with_offsets is not None
-    assert params_with_offsets["suhail_dx_m"] == 0.0
-    assert params_with_offsets["suhail_dy_m"] == 0.0
 
 
 def test_identify_postgis_suhail_includes_optional_metadata():

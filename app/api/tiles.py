@@ -45,8 +45,6 @@ try:
 except ValueError:
     logger.warning("Invalid PARCEL_TILE_MAX_AREA_M2; defaulting to 50000")
     SMALL_PARCEL_MAX_AREA_M2 = 50_000
-SUHAIL_OFFSET_EAST_M = getattr(settings, "SUHAIL_OFFSET_EAST_M", 0.0) or 0.0
-SUHAIL_OFFSET_NORTH_M = getattr(settings, "SUHAIL_OFFSET_NORTH_M", 0.0) or 0.0
 
 
 def _tile_path(z: int, x: int, y: int) -> pathlib.Path:
@@ -97,11 +95,7 @@ _PARCEL_TILE_SQL = text(
         classification,
         area_m2,
         ST_AsMVTGeom(
-          CASE
-            WHEN p.source = 'suhail'
-              THEN ST_Translate(ST_Transform(p.{PARCEL_TILE_GEOM_COLUMN}, 3857), :dx, :dy)
-            ELSE ST_Transform(p.{PARCEL_TILE_GEOM_COLUMN}, 3857)
-          END,
+          ST_Transform(p.{PARCEL_TILE_GEOM_COLUMN}, 3857),
           t.geom3857,
           4096,
           64,
@@ -167,15 +161,7 @@ def overture_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     try:
         tile_bytes = db.execute(
-            _PARCEL_TILE_SQL,
-            {
-                "z": z,
-                "x": x,
-                "y": y,
-                "max_area_m2": SMALL_PARCEL_MAX_AREA_M2,
-                "dx": SUHAIL_OFFSET_EAST_M,
-                "dy": SUHAIL_OFFSET_NORTH_M,
-            },
+            _PARCEL_TILE_SQL, {"z": z, "x": x, "y": y, "max_area_m2": SMALL_PARCEL_MAX_AREA_M2}
         ).scalar()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to render parcel tile: {exc}")
