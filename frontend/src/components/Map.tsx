@@ -24,6 +24,7 @@ const PARCEL_SOURCE_ID = "parcel-outlines";
 const PARCEL_LINE_BASE_LAYER_ID = "parcels-line-base";
 const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
 const OVT_MIN_ZOOM = 15;
+const UNSUPPORTED_PARCEL_LAYER_IDS = ["osm_parcels_proxy", "osm-parcels", "parcels-osm"];
 
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
@@ -115,7 +116,7 @@ function getBeforeLayerId(map: maplibregl.Map) {
   return map.getStyle()?.layers?.find((layer) => layer.type === "symbol")?.id;
 }
 
-function ensureOvertureOverlay(map: maplibregl.Map) {
+function ensureOvertureOverlay(map: maplibregl.Map, visible = true) {
   const overtureTileUrl = buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf");
   if (!map.getSource(OVERTURE_SOURCE_ID)) {
     map.addSource(OVERTURE_SOURCE_ID, {
@@ -136,7 +137,7 @@ function ensureOvertureOverlay(map: maplibregl.Map) {
         "source-layer": "buildings",
         minzoom: OVT_MIN_ZOOM,
         layout: {
-          visibility: "visible",
+          visibility: visible ? "visible" : "none",
           "line-join": "round",
           "line-cap": "round",
         },
@@ -149,12 +150,17 @@ function ensureOvertureOverlay(map: maplibregl.Map) {
       beforeLayerId
     );
   } else {
-    map.setLayoutProperty(OVERTURE_LAYER_ID, "visibility", "visible");
+    map.setLayoutProperty(OVERTURE_LAYER_ID, "visibility", visible ? "visible" : "none");
   }
 }
 
 function ensureParcelOverlay(map: maplibregl.Map) {
   const parcelTileUrl = buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf");
+  UNSUPPORTED_PARCEL_LAYER_IDS.forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, "visibility", "none");
+    }
+  });
   if (!map.getSource(PARCEL_SOURCE_ID)) {
     map.addSource(PARCEL_SOURCE_ID, {
       type: "vector",
@@ -214,6 +220,7 @@ export default function Map({ onParcel }: MapProps) {
   const [status, setStatus] = useState<string | null>(
     "انقر على الخريطة لتحديد قطعة أرض.",
   );
+  const [showBuildings, setShowBuildings] = useState(true);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [selectedParcelIds, setSelectedParcelIds] = useState<string[]>([]);
   const [selectedParcelsGeojson, setSelectedParcelsGeojson] = useState<
@@ -224,6 +231,7 @@ export default function Map({ onParcel }: MapProps) {
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
+  const showBuildingsRef = useRef(showBuildings);
 
   useEffect(() => {
     onParcelRef.current = onParcel;
@@ -236,6 +244,10 @@ export default function Map({ onParcel }: MapProps) {
   useEffect(() => {
     selectedParcelIdsRef.current = selectedParcelIds;
   }, [selectedParcelIds]);
+
+  useEffect(() => {
+    showBuildingsRef.current = showBuildings;
+  }, [showBuildings]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -251,13 +263,13 @@ export default function Map({ onParcel }: MapProps) {
     let disposed = false;
 
     map.on("load", () => {
-      ensureOvertureOverlay(map);
+      ensureOvertureOverlay(map, showBuildingsRef.current);
       ensureParcelOverlay(map);
       ensureSelectionLayers(map);
     });
 
     map.on("style.load", () => {
-      ensureOvertureOverlay(map);
+      ensureOvertureOverlay(map, showBuildingsRef.current);
       ensureParcelOverlay(map);
       ensureSelectionLayers(map);
     });
@@ -285,6 +297,12 @@ export default function Map({ onParcel }: MapProps) {
           setStatus("تم العثور على القطعة لكن دون بيانات هندسية.");
           return;
         }
+
+        const landUseLabel =
+          nextParcel.landuse_raw ||
+          nextParcel.landuse_code ||
+          nextParcel.classification_raw ||
+          "غير معروف";
 
         if (multiSelectModeRef.current) {
           if (!nextParcel.parcel_id) {
@@ -328,9 +346,9 @@ export default function Map({ onParcel }: MapProps) {
               : { type: "FeatureCollection", features: [] },
           );
           if (parcel.parcel_id) {
-            setStatus(`تم تحديد القطعة ${parcel.parcel_id}.`);
+            setStatus(`تم تحديد القطعة ${parcel.parcel_id}. الاستخدام: ${landUseLabel}.`);
           } else {
-            setStatus("تم تحديد القطعة.");
+            setStatus(`تم تحديد القطعة. الاستخدام: ${landUseLabel}.`);
           }
         }
       } catch (err) {
@@ -362,6 +380,15 @@ export default function Map({ onParcel }: MapProps) {
     const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     source?.setData(selectedParcelsGeojson);
   }, [multiSelectMode, selectedParcelsGeojson]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    ensureOvertureOverlay(map, showBuildings);
+    if (map.getLayer(OVERTURE_LAYER_ID)) {
+      map.setLayoutProperty(OVERTURE_LAYER_ID, "visibility", showBuildings ? "visible" : "none");
+    }
+  }, [showBuildings]);
 
   const handleClearSelection = () => {
     setSelectedParcelIds([]);
@@ -462,6 +489,16 @@ export default function Map({ onParcel }: MapProps) {
             }}
           />
           <span>تحديد متعدد للقطع</span>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={showBuildings}
+            onChange={(event) => {
+              setShowBuildings(event.target.checked);
+            }}
+          />
+          <span>Buildings (Overture)</span>
         </label>
         <button type="button" onClick={handleClearSelection} disabled={!selectedParcelIds.length}>
           مسح التحديد
