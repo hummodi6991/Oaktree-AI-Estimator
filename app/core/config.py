@@ -1,20 +1,8 @@
 import os
-import logging
 
 from dotenv import load_dotenv
 
 load_dotenv()
-
-
-def _float_env(name: str, default: float) -> float:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        logging.getLogger(__name__).warning("Invalid float for %s; using default %s", name, default)
-        return default
 
 
 class Settings:
@@ -45,8 +33,6 @@ class Settings:
     # Suhail (licensed partner API)
     SUHAIL_API_URL: str | None = os.getenv("SUHAIL_API_URL")
     SUHAIL_API_KEY: str | None = os.getenv("SUHAIL_API_KEY")
-    SUHAIL_OFFSET_EAST_M: float = _float_env("SUHAIL_OFFSET_EAST_M", 0.0)
-    SUHAIL_OFFSET_NORTH_M: float = _float_env("SUHAIL_OFFSET_NORTH_M", 0.0)
 
     # Parcels identify service configuration
     PARCEL_TARGET_SRID: int = int(os.getenv("PARCEL_TARGET_SRID", "4326"))
