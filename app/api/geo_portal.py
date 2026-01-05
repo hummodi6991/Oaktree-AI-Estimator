@@ -58,7 +58,8 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
     return fallback
 
 
-_TARGET_SRID = getattr(settings, "PARCEL_TARGET_SRID", 32638)
+_TARGET_SRID = getattr(settings, "PARCEL_TARGET_SRID", 4326)
+_METRIC_SRID = getattr(settings, "PARCEL_METRIC_SRID", 32638)
 _DEFAULT_TOLERANCE = getattr(settings, "PARCEL_IDENTIFY_TOLERANCE_M", 25.0) or 25.0
 if _DEFAULT_TOLERANCE <= 0:
     _DEFAULT_TOLERANCE = 25.0
@@ -128,7 +129,9 @@ def _build_identify_sql(table: str, geom_column: str, optional_cols_key: tuple[s
     return text(
         f"""
   WITH q AS (
-    SELECT ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid) AS pt
+    SELECT
+      ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :target_srid) AS pt_target,
+      ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :metric_srid) AS pt_metric
   ),
   scored AS (
     SELECT
@@ -136,11 +139,11 @@ def _build_identify_sql(table: str, geom_column: str, optional_cols_key: tuple[s
       landuse,
       classification,
       {geom_column} AS geom,
-      ST_Area({geom_column})::bigint      AS area_m2,
-      ST_Perimeter({geom_column})::bigint AS perimeter_m,
-      ST_Distance({geom_column}, q.pt)    AS distance_m,
-      CASE WHEN ST_Intersects({geom_column}, q.pt) THEN 1 ELSE 0 END AS hits,
-      CASE WHEN ST_DWithin({geom_column}, q.pt, :tol_m) THEN 1 ELSE 0 END AS near,
+      ST_Area(ST_Transform({geom_column}, :metric_srid))::bigint      AS area_m2,
+      ST_Perimeter(ST_Transform({geom_column}, :metric_srid))::bigint AS perimeter_m,
+      ST_Distance(ST_Transform({geom_column}, :metric_srid), q.pt_metric)    AS distance_m,
+      CASE WHEN ST_Intersects({geom_column}, q.pt_target) THEN 1 ELSE 0 END AS hits,
+      CASE WHEN ST_DWithin(ST_Transform({geom_column}, :metric_srid), q.pt_metric, :tol_m) THEN 1 ELSE 0 END AS near,
       CASE WHEN classification = 'overture_building' THEN 1 ELSE 0 END AS is_ovt{optional_sql}
     FROM {table}, q
   )
@@ -172,7 +175,7 @@ _COLLATE_META_SQL = (
           id::text AS id,
           landuse,
           classification,
-          ST_Area({_PARCEL_GEOM_COLUMN})::bigint AS area_m2
+          ST_Area(ST_Transform({_PARCEL_GEOM_COLUMN}, {_METRIC_SRID}))::bigint AS area_m2
         FROM {_PARCEL_TABLE}
         WHERE id::text IN :ids
         """
@@ -194,8 +197,8 @@ _COLLATE_UNION_SQL = (
         )
         SELECT
           ST_AsGeoJSON(ST_Transform(u.geom, 4326)) AS geom,
-          ST_Area(u.geom)::bigint AS area_m2,
-          ST_Perimeter(u.geom)::bigint AS perimeter_m
+          ST_Area(ST_Transform(u.geom, {_METRIC_SRID}))::bigint AS area_m2,
+          ST_Perimeter(ST_Transform(u.geom, {_METRIC_SRID}))::bigint AS perimeter_m
         FROM u;
         """
     )
@@ -781,7 +784,13 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
 
 
 def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Optional[Dict[str, Any]]:
-    params = {"lng": lng, "lat": lat, "srid": _TARGET_SRID, "tol_m": tol_m}
+    params = {
+        "lng": lng,
+        "lat": lat,
+        "target_srid": _TARGET_SRID,
+        "metric_srid": _METRIC_SRID,
+        "tol_m": tol_m,
+    }
     optional_columns = _get_parcel_optional_columns(db)
     identify_sql = _build_identify_sql(_PARCEL_TABLE, _PARCEL_GEOM_COLUMN, tuple(sorted(optional_columns)))
     try:
