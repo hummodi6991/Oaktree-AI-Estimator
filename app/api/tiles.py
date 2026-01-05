@@ -1,9 +1,13 @@
+import logging
+import os
+import pathlib
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-import os, pathlib
-import httpx
 
+from app.core.config import settings
 from app.db.deps import get_db
 
 router = APIRouter(tags=["map"])
@@ -11,8 +15,37 @@ router = APIRouter(tags=["map"])
 UPSTREAM = os.getenv("TILE_UPSTREAM", "https://tile.openstreetmap.org")
 UA = os.getenv("TILE_USER_AGENT", "oaktree-estimator/0.1 (contact: ops@example.com)")
 CACHE_DIR = os.getenv("TILE_CACHE_DIR", "/app/tiles_cache")
-OFFLINE_ONLY = os.getenv("TILE_OFFLINE_ONLY", "false").lower() in {"1","true","yes"}
-SMALL_PARCEL_MAX_AREA_M2 = 50_000
+OFFLINE_ONLY = os.getenv("TILE_OFFLINE_ONLY", "false").lower() in {"1", "true", "yes"}
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_identifier(value: str | None, fallback: str) -> str:
+    candidate = (value or "").strip()
+    if not candidate:
+        return fallback
+    if all(ch.isalnum() or ch in {"_", "."} for ch in candidate):
+        return candidate
+    logger.warning("Unsafe identifier %s; falling back to %s", value, fallback)
+    return fallback
+
+
+PARCEL_TILE_TABLE = _safe_identifier(
+    os.getenv("PARCEL_TILE_TABLE")
+    or getattr(settings, "PARCEL_IDENTIFY_TABLE", "osm_parcels_proxy"),
+    "osm_parcels_proxy",
+)
+PARCEL_TILE_GEOM_COLUMN = _safe_identifier(
+    os.getenv("PARCEL_TILE_GEOM_COLUMN")
+    or getattr(settings, "PARCEL_IDENTIFY_GEOM_COLUMN", "geom"),
+    "geom",
+)
+try:
+    SMALL_PARCEL_MAX_AREA_M2 = int(os.getenv("PARCEL_TILE_MAX_AREA_M2") or 50_000)
+except ValueError:
+    logger.warning("Invalid PARCEL_TILE_MAX_AREA_M2; defaulting to 50000")
+    SMALL_PARCEL_MAX_AREA_M2 = 50_000
+
 
 def _tile_path(z: int, x: int, y: int) -> pathlib.Path:
     return pathlib.Path(CACHE_DIR) / str(z) / str(x) / f"{y}.png"
@@ -37,7 +70,7 @@ _OVT_TILE_SQL = text(
 )
 
 _PARCEL_TILE_SQL = text(
-    """
+    f"""
     WITH tile AS (
       SELECT ST_TileEnvelope(:z,:x,:y) AS geom3857
     ),
@@ -48,10 +81,9 @@ _PARCEL_TILE_SQL = text(
         p.landuse,
         p.classification,
         p.area_m2,
-        p.geom
-      FROM osm_parcels_proxy p, tile t
-      WHERE p.geom && ST_Transform(t.geom3857, 32638)
-        AND p.source IN ('ovt','osm')
+        p.{PARCEL_TILE_GEOM_COLUMN}
+      FROM {PARCEL_TILE_TABLE} p, tile t
+      WHERE p.{PARCEL_TILE_GEOM_COLUMN} && ST_Transform(t.geom3857, 32638)
         AND p.area_m2 <= :max_area_m2
     ),
     mvtgeom AS (
@@ -62,7 +94,7 @@ _PARCEL_TILE_SQL = text(
         classification,
         area_m2,
         ST_AsMVTGeom(
-          ST_Transform(p.geom, 3857),
+          ST_Transform(p.{PARCEL_TILE_GEOM_COLUMN}, 3857),
           t.geom3857,
           4096,
           64,
@@ -74,6 +106,7 @@ _PARCEL_TILE_SQL = text(
     FROM mvtgeom;
     """
 )
+
 
 @router.get("/tiles/{z}/{x}/{y}.png")
 def tile(z: int, x: int, y: int):
