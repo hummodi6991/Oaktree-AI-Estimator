@@ -134,3 +134,68 @@ def test_pricing_api_returns_reason_on_missing(monkeypatch, pricing_client):
     assert detail["reason"] == "missing_suhail"
     assert detail["city_used"] == "الرياض"
     assert detail["district_used"] == "حي الاختبار"
+
+
+def test_pricing_api_passes_land_use_group(monkeypatch, pricing_client):
+    from app.api import pricing as pricing_mod
+
+    recorded: dict[str, str | None] = {}
+
+    def fake_quote_land_price_blended_v1(db, city, district=None, lon=None, lat=None, geom_geojson=None, land_use_group=None):
+        recorded["land_use_group"] = land_use_group
+        return {
+            "provider": "blended_v1",
+            "method": "blended_v1",
+            "value": 1500,
+            "district_norm": None,
+            "district_raw": "حي الاختبار",
+            "district_resolution": {},
+            "meta": {"components": {"suhail": {"value": 1500, "land_use_group": land_use_group}}},
+        }
+
+    monkeypatch.setattr(pricing_mod, "quote_land_price_blended_v1", fake_quote_land_price_blended_v1)
+
+    resp = pricing_client.get(
+        "/v1/pricing/land",
+        params={"city": "Riyadh", "district": "Test", "provider": "blended_v1", "land_use_group": "تجاري"},
+    )
+    assert resp.status_code == 200
+    assert recorded["land_use_group"] == "تجاري"
+
+
+def test_pricing_api_infers_land_use_group(monkeypatch, pricing_client):
+    from app.api import pricing as pricing_mod
+
+    recorded: dict[str, str | None] = {}
+
+    def fake_identify_postgis(lng, lat, tol_m, db):
+        return {
+            "found": True,
+            "parcel": {
+                "landuse_raw": "commercial",
+                "classification_raw": "parcel",
+                "landuse_code": "m",
+            },
+        }
+
+    def fake_quote_land_price_blended_v1(db, city, district=None, lon=None, lat=None, geom_geojson=None, land_use_group=None):
+        recorded["land_use_group"] = land_use_group
+        return {
+            "provider": "blended_v1",
+            "method": "blended_v1",
+            "value": 1750,
+            "district_norm": None,
+            "district_raw": "حي الاختبار",
+            "district_resolution": {},
+            "meta": {"components": {"suhail": {"value": 1750, "land_use_group": land_use_group}}},
+        }
+
+    monkeypatch.setattr("app.api.geo_portal._identify_postgis", fake_identify_postgis)
+    monkeypatch.setattr(pricing_mod, "quote_land_price_blended_v1", fake_quote_land_price_blended_v1)
+
+    resp = pricing_client.get(
+        "/v1/pricing/land",
+        params={"city": "Riyadh", "district": "Test", "provider": "blended_v1", "lng": 46.7, "lat": 24.7},
+    )
+    assert resp.status_code == 200
+    assert recorded["land_use_group"] == "تجاري"
