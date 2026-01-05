@@ -30,122 +30,35 @@ def _suhail_land_signal(
     Fetch Suhail land median for the district (anchor) or Riyadh-wide fallback.
     Returns (value, meta).
     """
+    land_use = land_use_group or "الكل"
     meta: Dict[str, Any] = {
         "source": "suhail_land_metrics",
         "level": None,
-        "land_use_group": None,
-        "land_use_group_requested": land_use_group,
-        "land_use_group_used": None,
-        "used_fallback": False,
+        "land_use_group": land_use,
     }
 
-    land_use_candidates: list[dict[str, Any]] = []
-    if land_use_group is not None:
-        land_use_candidates.append(
-            {"land_use_group": land_use_group, "like": False, "allow_any": False, "used_fallback": False}
-        )
-        land_use_candidates.append(
-            {"land_use_group": land_use_group, "like": True, "allow_any": False, "used_fallback": True}
-        )
-        if land_use_group != "الكل":
-            land_use_candidates.append(
-                {"land_use_group": "الكل", "like": False, "allow_any": False, "used_fallback": True}
-            )
-    else:
-        land_use_candidates.append(
-            {"land_use_group": "الكل", "like": False, "allow_any": False, "used_fallback": False}
-        )
-        land_use_candidates.append(
-            {"land_use_group": None, "like": False, "allow_any": True, "used_fallback": True}
-        )
-
-    def _district_row(
-        candidate: dict[str, Any],
-    ):
-        params: dict[str, Any] = {"district_norm": district_norm} if district_norm else {}
-        conditions: list[str] = []
-        if candidate["allow_any"]:
-            pass
-        elif candidate["like"]:
-            conditions.append("land_use_group ILIKE :land_use_group_like")
-            params["land_use_group_like"] = f"%{candidate['land_use_group']}%"
-        else:
-            conditions.append("land_use_group = :land_use_group")
-            params["land_use_group"] = candidate["land_use_group"]
-
-        if district_norm:
-            conditions.append("district_norm = :district_norm")
+    if district_norm:
+        params = {"district_norm": district_norm, "land_use_group": land_use}
+        conditions = [
+            "land_use_group = :land_use_group",
+            "district_norm = :district_norm",
+        ]
         if city_norm == "riyadh":
             conditions.append("province_id = :province_id")
             params["province_id"] = SUHAIL_RIYADH_PROVINCE_ID
-
-        if not conditions:
-            return None
-
         query = f"""
-            SELECT land_use_group, as_of_date, median_ppm2, last_price_ppm2, last_txn_date
+            SELECT as_of_date, median_ppm2, last_price_ppm2, last_txn_date
             FROM suhail_land_metrics
             WHERE {' AND '.join(conditions)}
             ORDER BY as_of_date DESC
             LIMIT 1
         """
         try:
-            return db.execute(text(query), params).mappings().first()
+            row = db.execute(text(query), params).mappings().first()
         except SQLAlchemyError as exc:
             logger.warning("suhail_land_metrics district lookup failed: %s", exc)
-            return None
-
-    def _riyadh_row(candidate: dict[str, Any]):
-        params: dict[str, Any] = {"province_id": SUHAIL_RIYADH_PROVINCE_ID}
-        conditions: list[str] = ["province_id = :province_id"]
-        land_use_group_used = candidate["land_use_group"] if not candidate["allow_any"] else "الكل"
-
-        if candidate["allow_any"]:
-            pass
-        elif candidate["like"]:
-            conditions.append("land_use_group ILIKE :land_use_group_like")
-            params["land_use_group_like"] = f"%{candidate['land_use_group']}%"
-        else:
-            conditions.append("land_use_group = :land_use_group")
-            params["land_use_group"] = candidate["land_use_group"]
-
-        where_clause = " AND ".join(conditions)
-        query = f"""
-            WITH latest AS (
-                SELECT max(as_of_date) AS max_date
-                FROM suhail_land_metrics
-                WHERE {where_clause}
-            )
-            SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY median_ppm2) AS median_ppm2,
-                   (SELECT max_date FROM latest) AS as_of_date,
-                   :land_use_group_used AS land_use_group
-            FROM suhail_land_metrics s
-            JOIN latest l ON s.as_of_date = l.max_date
-            WHERE {where_clause}
-        """
-        params["land_use_group_used"] = land_use_group_used
-        try:
-            return db.execute(text(query), params).mappings().first()
-        except SQLAlchemyError as exc:
-            logger.warning("suhail_land_metrics Riyadh median lookup failed: %s", exc)
-            return None
-
-    for candidate in land_use_candidates:
-        row = None
-        level = None
-        method_name = "suhail_land_metrics_median"
-        if district_norm:
-            row = _district_row(candidate)
-            if row:
-                level = "district"
-        if not row and city_norm == "riyadh":
-            row = _riyadh_row(candidate)
-            if row:
-                level = "city"
-                method_name = "suhail_land_metrics_median_city"
-
+            row = None
         if row and row.get("median_ppm2") is not None:
-            used_group = row.get("land_use_group") or candidate.get("land_use_group") or "الكل"
             meta.update(
                 {
                     "as_of_date": row.get("as_of_date"),
@@ -153,11 +66,44 @@ def _suhail_land_signal(
                     if row.get("last_price_ppm2") is not None
                     else None,
                     "last_txn_date": row.get("last_txn_date"),
-                    "level": level,
-                    "method": method_name,
-                    "land_use_group": used_group,
-                    "land_use_group_used": used_group,
-                    "used_fallback": candidate.get("used_fallback", False),
+                    "level": "district",
+                    "method": "suhail_land_metrics_median",
+                }
+            )
+            val = float(row["median_ppm2"])
+            if val > 0:
+                return val, meta
+
+    if city_norm == "riyadh":
+        try:
+            row = db.execute(
+                text(
+                    """
+                    WITH latest AS (
+                        SELECT max(as_of_date) AS max_date
+                        FROM suhail_land_metrics
+                        WHERE land_use_group = :land_use_group
+                          AND province_id = :province_id
+                    )
+                    SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY median_ppm2) AS median_ppm2,
+                           (SELECT max_date FROM latest) AS as_of_date
+                    FROM suhail_land_metrics s
+                    JOIN latest l ON s.as_of_date = l.max_date
+                    WHERE s.land_use_group = :land_use_group
+                      AND s.province_id = :province_id
+                    """
+                ),
+                {"province_id": SUHAIL_RIYADH_PROVINCE_ID, "land_use_group": land_use},
+            ).mappings().first()
+        except SQLAlchemyError as exc:
+            logger.warning("suhail_land_metrics Riyadh median lookup failed: %s", exc)
+            row = None
+        if row and row.get("median_ppm2") is not None:
+            meta.update(
+                {
+                    "as_of_date": row.get("as_of_date"),
+                    "level": "city",
+                    "method": "suhail_land_metrics_median_city",
                 }
             )
             val = float(row["median_ppm2"])
@@ -266,16 +212,11 @@ def _blend_values(
         value = (weight_suhail * float(suhail_val)) + (weight_aqar * float(aqar_val))
         weights = {"suhail": weight_suhail, "aqar": weight_aqar}
         guardrails["aqar_low_evidence"] = low_evidence
-    elif "suhail" in components:
-        value = float(suhail_val)
-        weights = {"suhail": 1.0}
-        reason = "missing_aqar"
-    elif "aqar" in components:
-        value = float(aqar_val)
-        weights = {"aqar": 1.0}
-        reason = "missing_suhail"
     else:
-        reason = "missing_suhail"
+        if "aqar" not in components:
+            reason = "missing_aqar"
+        elif "suhail" not in components:
+            reason = "missing_suhail"
 
     meta = {"components": components, "weights": weights, "guardrails": guardrails, "reason": reason}
     return value, method, meta

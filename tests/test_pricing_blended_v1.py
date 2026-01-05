@@ -4,64 +4,10 @@ from app.services import land_price_engine
 from app.services.district_resolver import DistrictResolution
 from app.db.deps import get_db
 from app.main import app
-from app.services.pricing import SUHAIL_RIYADH_PROVINCE_ID
 
 
 class DummyDB:
     pass
-
-
-class FakeResult:
-    def __init__(self, row):
-        self.row = row
-
-    def mappings(self):
-        return self
-
-    def first(self):
-        return self.row
-
-
-class FakeSuhailDB:
-    def __init__(self, rows):
-        self.rows = rows
-
-    def _match_rows(self, params):
-        matching = [r for r in self.rows if r.get("district_norm") == params.get("district_norm")]
-        if "province_id" in params:
-            matching = [r for r in matching if r.get("province_id") == params["province_id"]]
-        if "land_use_group" in params:
-            matching = [r for r in matching if r.get("land_use_group") == params["land_use_group"]]
-        elif "land_use_group_like" in params:
-            needle = params["land_use_group_like"].strip("%").lower()
-            matching = [r for r in matching if needle in (r.get("land_use_group") or "").lower()]
-        return matching
-
-    def execute(self, stmt, params):
-        text = stmt.text if hasattr(stmt, "text") else str(stmt)
-        if "percentile_disc" in text:
-            matching = [r for r in self.rows if r.get("province_id") == params.get("province_id")]
-            if "land_use_group" in params:
-                matching = [r for r in matching if r.get("land_use_group") == params["land_use_group"]]
-            elif "land_use_group_like" in params:
-                needle = params["land_use_group_like"].strip("%").lower()
-                matching = [r for r in matching if needle in (r.get("land_use_group") or "").lower()]
-            if not matching:
-                return FakeResult(None)
-            latest = sorted(matching, key=lambda r: r.get("as_of_date") or "")[-1]
-            return FakeResult(
-                {
-                    "median_ppm2": latest.get("median_ppm2"),
-                    "as_of_date": latest.get("as_of_date"),
-                    "land_use_group": params.get("land_use_group_used") or latest.get("land_use_group"),
-                }
-            )
-
-        matching = self._match_rows(params)
-        if not matching:
-            return FakeResult(None)
-        latest = sorted(matching, key=lambda r: r.get("as_of_date") or "")[-1]
-        return FakeResult(latest)
 
 
 def _mock_resolution():
@@ -100,58 +46,15 @@ def test_blended_guardrail_low_evidence(monkeypatch):
 def test_blended_suhail_only(monkeypatch):
     quote = _run_quote(monkeypatch, (1000, {"n": None}), (None, {"n": 0}))
     assert quote["method"] == "blended_v1"
-    assert quote["value"] == pytest.approx(1000)
+    assert quote["value"] is None
     assert quote["meta"]["reason"] == "missing_aqar"
 
 
 def test_blended_aqar_only(monkeypatch):
     quote = _run_quote(monkeypatch, (None, {"n": None}), (800, {"n": 30}))
     assert quote["method"] == "blended_v1"
-    assert quote["value"] == pytest.approx(800)
+    assert quote["value"] is None
     assert quote["meta"]["reason"] == "missing_suhail"
-
-
-def test_suhail_land_signal_fallbacks_to_all_group():
-    db = FakeSuhailDB(
-        [
-            {
-                "district_norm": "al_olaya",
-                "province_id": SUHAIL_RIYADH_PROVINCE_ID,
-                "land_use_group": "الكل",
-                "median_ppm2": 1200,
-                "as_of_date": "2024-01-01",
-            }
-        ]
-    )
-    value, meta = land_price_engine._suhail_land_signal(
-        db, city_norm="riyadh", district_norm="al_olaya", land_use_group="سكني"
-    )
-    assert value == pytest.approx(1200)
-    assert meta["land_use_group_used"] == "الكل"
-    assert meta["used_fallback"] is True
-
-
-def test_quote_prefers_requested_land_use_when_available(monkeypatch):
-    db = FakeSuhailDB(
-        [
-            {
-                "district_norm": "al_olaya",
-                "province_id": SUHAIL_RIYADH_PROVINCE_ID,
-                "land_use_group": "تجاري",
-                "median_ppm2": 1500,
-                "as_of_date": "2024-02-01",
-            }
-        ]
-    )
-    monkeypatch.setattr(land_price_engine, "resolve_district", lambda *args, **kwargs: _mock_resolution())
-    monkeypatch.setattr(land_price_engine, "_aqar_land_signal", lambda *args, **kwargs: (None, {"n": 0}))
-
-    quote = land_price_engine.quote_land_price_blended_v1(db, city="Riyadh", land_use_group="تجاري")
-
-    assert quote["value"] == pytest.approx(1500)
-    suhail_meta = quote["meta"]["components"]["suhail"]
-    assert suhail_meta["land_use_group_used"] == "تجاري"
-    assert suhail_meta["used_fallback"] is False
 
 
 def test_aqar_query_uses_raw_district(monkeypatch):
