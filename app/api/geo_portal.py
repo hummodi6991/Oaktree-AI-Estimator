@@ -39,6 +39,7 @@ _PARCEL_OPTIONAL_COLUMNS = [
 ]
 
 _PARCEL_OPTIONAL_COLUMNS_CACHE: dict[str, set[str]] = {}
+_PARCEL_SOURCE_COLUMN_CACHE: dict[str, bool] = {}
 
 
 def _label_is_signal(label: str | None, code: str | None) -> bool:
@@ -89,6 +90,12 @@ def _format_optional_columns(optional_columns: set[str]) -> str:
     return ",\n      " + ",\n      ".join(parts)
 
 
+def _format_source_column(include_source: bool) -> str:
+    if include_source:
+        return "source"
+    return "NULL AS source"
+
+
 def _get_parcel_optional_columns(db: Session) -> set[str]:
     cached = _PARCEL_OPTIONAL_COLUMNS_CACHE.get(_PARCEL_TABLE)
     if cached is not None:
@@ -122,10 +129,50 @@ def _get_parcel_optional_columns(db: Session) -> set[str]:
     return cols
 
 
+def _parcel_table_has_source(db: Session) -> bool:
+    cached = _PARCEL_SOURCE_COLUMN_CACHE.get(_PARCEL_TABLE)
+    if cached is not None:
+        return cached
+
+    if _PARCEL_TABLE.endswith("suhail_parcels_proxy") or _PARCEL_TABLE.endswith("osm_parcels_proxy"):
+        _PARCEL_SOURCE_COLUMN_CACHE[_PARCEL_TABLE] = True
+        return True
+
+    schema, table_name = _split_table_identifier(_PARCEL_TABLE)
+    schema_filter = (
+        "AND table_schema = :schema" if schema else "AND table_schema = ANY(current_schemas(false))"
+    )
+    sql = text(
+        f"""
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = :table_name
+          {schema_filter}
+          AND column_name = 'source'
+        LIMIT 1
+        """
+    )
+    params: dict[str, Any] = {"table_name": table_name}
+    if schema:
+        params["schema"] = schema
+
+    try:
+        has_source = bool(db.execute(sql, params).scalar())
+    except SQLAlchemyError as exc:
+        logger.warning("Parcel source column discovery failed: %s", exc)
+        has_source = False
+
+    _PARCEL_SOURCE_COLUMN_CACHE[_PARCEL_TABLE] = has_source
+    return has_source
+
+
 @lru_cache(maxsize=8)
-def _build_identify_sql(table: str, geom_column: str, optional_cols_key: tuple[str, ...]):
+def _build_identify_sql(
+    table: str, geom_column: str, optional_cols_key: tuple[str, ...], include_source: bool
+):
     optional_columns = set(optional_cols_key)
     optional_sql = _format_optional_columns(optional_columns)
+    source_sql = _format_source_column(include_source)
     _, table_name = _split_table_identifier(table)
     return text(
         f"""
@@ -134,11 +181,12 @@ def _build_identify_sql(table: str, geom_column: str, optional_cols_key: tuple[s
       ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :target_srid) AS pt_target,
       ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :metric_srid) AS pt_metric
   ),
-  scored AS (
+    scored AS (
     SELECT
       id,
       landuse,
       classification,
+      {source_sql},
       {geom_column} AS geom,
       ST_Area(ST_Transform({geom_column}, :metric_srid))::bigint      AS area_m2,
       ST_Perimeter(ST_Transform({geom_column}, :metric_srid))::bigint AS perimeter_m,
@@ -152,6 +200,7 @@ def _build_identify_sql(table: str, geom_column: str, optional_cols_key: tuple[s
     id,
     landuse,
     classification,
+    source,
     area_m2,
     perimeter_m,
     ST_AsGeoJSON(
@@ -581,6 +630,7 @@ class IdentifyParcel(BaseModel):
     geometry: dict | None = None
     area_m2: int | None = None
     perimeter_m: int | None = None
+    source: str | None = None
     landuse_raw: str | None = None
     classification_raw: str | None = None
     landuse_code: str | None = None
@@ -795,7 +845,10 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         "tol_m": tol_m,
     }
     optional_columns = _get_parcel_optional_columns(db)
-    identify_sql = _build_identify_sql(_PARCEL_TABLE, _PARCEL_GEOM_COLUMN, tuple(sorted(optional_columns)))
+    has_source_column = _parcel_table_has_source(db)
+    identify_sql = _build_identify_sql(
+        _PARCEL_TABLE, _PARCEL_GEOM_COLUMN, tuple(sorted(optional_columns)), has_source_column
+    )
     try:
         row = db.execute(identify_sql, params).mappings().first()
     except SQLAlchemyError as exc:
@@ -818,72 +871,83 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         except (TypeError, ValueError, json.JSONDecodeError):
             geometry = None
 
+    classification_raw = row.get("classification")
+    parcel_source = row.get("source") or (
+        "suhail" if _PARCEL_TABLE.endswith("suhail_parcels_proxy") else None
+    )
+
     landuse_raw = row.get("landuse") or row.get("classification") or ""
     label_code = _landuse_code_from_label(str(landuse_raw))
     label_is_signal = _label_is_signal(str(landuse_raw), label_code)
     ovt_attr_code: str | None = None
     ovt_attr_conf = 0.0
-    if row.get("classification") == "overture_building":
-        parcel_id = row.get("id") or ""
-        ovt_id = parcel_id[4:] if parcel_id.startswith("ovt:") else parcel_id
-        try:
-            record = (
-                db.execute(
-                    text(
-                        "SELECT subtype, class FROM overture_buildings WHERE id=:id"
-                    ),
-                    {"id": ovt_id},
-                )
-                .mappings()
-                .first()
-            )
-        except SQLAlchemyError as exc:
-            logger.warning("Overture building attribute lookup failed: %s", exc)
-            record = None
-
-        if record:
-            ovt_attr_code = _landuse_code_from_label(str(record.get("subtype") or ""))
-            if not ovt_attr_code:
-                ovt_attr_code = _landuse_code_from_label(str(record.get("class") or ""))
-
-            if ovt_attr_code:
-                landuse_raw = record.get("subtype") or record.get("class") or landuse_raw
-                ovt_attr_conf = 0.90
-
     osm_code = None
     ovt_code = None
     osm_res = osm_com = ovt_res = ovt_com = 0.0
     osm_conf = ovt_conf = 0.0
-    try:
-        osm_code, osm_res, osm_com, osm_conf = _osm_fallback_code(geometry, db)
-    except Exception as exc:
-        logger.warning("OSM overlay classification failed: %s", exc)
-    try:
-        ovt_code, ovt_res, ovt_com, ovt_conf = _ovt_overlay_code(geometry, db)
-    except Exception as exc:
-        logger.warning("Overture overlay classification failed: %s", exc)
 
-    landuse_code, landuse_method = _pick_landuse(
-        label_code,
-        label_is_signal,
-        ovt_attr_code,
-        ovt_attr_conf,
-        osm_code,
-        osm_res,
-        osm_com,
-        osm_conf,
-        ovt_code,
-        ovt_conf,
-    )
+    if parcel_source == "suhail":
+        landuse_raw = row.get("landuse") or ""
+        landuse_code = _landuse_code_from_label(str(landuse_raw))
+        landuse_method = "suhail_parcel_attr"
+        residential_share = None
+        commercial_share = None
+    else:
+        if classification_raw == "overture_building":
+            parcel_id = row.get("id") or ""
+            ovt_id = parcel_id[4:] if parcel_id.startswith("ovt:") else parcel_id
+            try:
+                record = (
+                    db.execute(
+                        text("SELECT subtype, class FROM overture_buildings WHERE id=:id"),
+                        {"id": ovt_id},
+                    )
+                    .mappings()
+                    .first()
+                )
+            except SQLAlchemyError as exc:
+                logger.warning("Overture building attribute lookup failed: %s", exc)
+                record = None
 
-    residential_share = None
-    commercial_share = None
-    if landuse_method == "osm_overlay":
-        residential_share = osm_res
-        commercial_share = osm_com
-    elif landuse_method == "overture_overlay":
-        residential_share = ovt_res
-        commercial_share = ovt_com
+            if record:
+                ovt_attr_code = _landuse_code_from_label(str(record.get("subtype") or ""))
+                if not ovt_attr_code:
+                    ovt_attr_code = _landuse_code_from_label(str(record.get("class") or ""))
+
+                if ovt_attr_code:
+                    landuse_raw = record.get("subtype") or record.get("class") or landuse_raw
+                    ovt_attr_conf = 0.90
+
+        try:
+            osm_code, osm_res, osm_com, osm_conf = _osm_fallback_code(geometry, db)
+        except Exception as exc:
+            logger.warning("OSM overlay classification failed: %s", exc)
+        try:
+            ovt_code, ovt_res, ovt_com, ovt_conf = _ovt_overlay_code(geometry, db)
+        except Exception as exc:
+            logger.warning("Overture overlay classification failed: %s", exc)
+
+        landuse_code, landuse_method = _pick_landuse(
+            label_code,
+            label_is_signal,
+            ovt_attr_code,
+            ovt_attr_conf,
+            osm_code,
+            osm_res,
+            osm_com,
+            osm_conf,
+            ovt_code,
+            ovt_conf,
+        )
+
+        residential_share = None
+        commercial_share = None
+        if landuse_method == "osm_overlay":
+            residential_share = osm_res
+            commercial_share = osm_com
+        elif landuse_method == "overture_overlay":
+            residential_share = ovt_res
+            commercial_share = ovt_com
 
     parcel = {
         "parcel_id": row.get("id"),
@@ -891,7 +955,7 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         "area_m2": row.get("area_m2"),
         "perimeter_m": row.get("perimeter_m"),
         "landuse_raw": landuse_raw,
-        "classification_raw": row.get("classification"),
+        "classification_raw": classification_raw,
         "landuse_code": landuse_code,
         "landuse_method": landuse_method,
         "residential_share": residential_share,
@@ -903,6 +967,7 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         "ovt_attr_conf": ovt_attr_conf,
         "osm_conf": osm_conf,
         "ovt_conf": ovt_conf,
+        "source": parcel_source,
         "source_url": f"postgis/{_PARCEL_TABLE}",
         "parcel_meta": {col: row.get(col) for col in _PARCEL_OPTIONAL_COLUMNS},
     }
