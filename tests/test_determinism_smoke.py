@@ -157,7 +157,7 @@ def _extract_pricing_value(payload: dict) -> float:
 
 
 def test_pricing_defaults_city_and_returns_legacy_keys(monkeypatch, client):
-    def mock_quote_land_price_blended_v1(db, city, district, lon, lat, geom_geojson=None, land_use_group=None):
+    def mock_quote_land_price_blended_v1(db, city, district, lon, lat, geom_geojson=None):
         return {
             "provider": "blended_v1",
             "value": 1234.5,
