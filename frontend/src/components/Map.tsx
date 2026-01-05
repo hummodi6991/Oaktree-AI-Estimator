@@ -25,6 +25,19 @@ const PARCEL_LINE_BASE_LAYER_ID = "parcels-line-base";
 const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
 const OVT_MIN_ZOOM = 15;
 const UNSUPPORTED_PARCEL_LAYER_IDS = ["osm_parcels_proxy", "osm-parcels", "parcels-osm"];
+const PARCEL_LAYER_BLOCKLIST = [
+  "parcel",
+  "parcels",
+  "cadastre",
+  "cadastral",
+  "boundary",
+  "boundaries",
+  "landuse",
+  "admin",
+  "grid",
+  "plot",
+];
+const AUTHORITATIVE_PARCEL_LABEL = "Parcel source: Suhail (authoritative)";
 
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
@@ -154,7 +167,7 @@ function ensureOvertureOverlay(map: maplibregl.Map, visible = true) {
   }
 }
 
-function ensureParcelOverlay(map: maplibregl.Map) {
+function ensureParcelOverlay(map: maplibregl.Map, visible = true) {
   const parcelTileUrl = buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf");
   UNSUPPORTED_PARCEL_LAYER_IDS.forEach((layerId) => {
     if (map.getLayer(layerId)) {
@@ -171,6 +184,7 @@ function ensureParcelOverlay(map: maplibregl.Map) {
   }
 
   const beforeLayerId = getBeforeLayerId(map);
+  const visibility = visible ? "visible" : "none";
   if (!map.getLayer(PARCEL_LINE_BASE_LAYER_ID)) {
     map.addLayer(
       {
@@ -179,7 +193,7 @@ function ensureParcelOverlay(map: maplibregl.Map) {
         source: PARCEL_SOURCE_ID,
         "source-layer": "parcels",
         minzoom: 15,
-        layout: { visibility: "visible" },
+        layout: { visibility },
         paint: {
           "line-color": "#00AEEF",
           "line-width": 1,
@@ -189,7 +203,7 @@ function ensureParcelOverlay(map: maplibregl.Map) {
       beforeLayerId
     );
   } else {
-    map.setLayoutProperty(PARCEL_LINE_BASE_LAYER_ID, "visibility", "visible");
+    map.setLayoutProperty(PARCEL_LINE_BASE_LAYER_ID, "visibility", visibility);
   }
 
   if (!map.getLayer(PARCEL_LINE_LAYER_ID)) {
@@ -200,7 +214,7 @@ function ensureParcelOverlay(map: maplibregl.Map) {
         source: PARCEL_SOURCE_ID,
         "source-layer": "parcels",
         minzoom: 15,
-        layout: { visibility: "visible" },
+        layout: { visibility },
         paint: {
           "line-color": "#8a5dff",
           "line-width": ["interpolate", ["linear"], ["zoom"], 15, 0.7, 20, 2.0],
@@ -210,8 +224,25 @@ function ensureParcelOverlay(map: maplibregl.Map) {
       beforeLayerId
     );
   } else {
-    map.setLayoutProperty(PARCEL_LINE_LAYER_ID, "visibility", "visible");
+    map.setLayoutProperty(PARCEL_LINE_LAYER_ID, "visibility", visibility);
   }
+}
+
+function hideParcelLikeLayers(map: maplibregl.Map) {
+  const layers = map.getStyle()?.layers;
+  if (!layers) return;
+  layers.forEach((layer) => {
+    const id = layer.id || "";
+    if (layer.type !== "line") return;
+    const idLower = id.toLowerCase();
+    if (PARCEL_LAYER_BLOCKLIST.some((token) => idLower.includes(token))) {
+      try {
+        map.setLayoutProperty(id, "visibility", "none");
+      } catch (error) {
+        console.warn("Failed to hide parcel-like base layer", id, error);
+      }
+    }
+  });
 }
 
 export default function Map({ onParcel }: MapProps) {
@@ -221,6 +252,7 @@ export default function Map({ onParcel }: MapProps) {
     "انقر على الخريطة لتحديد قطعة أرض.",
   );
   const [showBuildings, setShowBuildings] = useState(true);
+  const [showParcelOutlines, setShowParcelOutlines] = useState(true);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [selectedParcelIds, setSelectedParcelIds] = useState<string[]>([]);
   const [selectedParcelsGeojson, setSelectedParcelsGeojson] = useState<
@@ -228,10 +260,12 @@ export default function Map({ onParcel }: MapProps) {
   >({ type: "FeatureCollection", features: [] });
   const [collateStatus, setCollateStatus] = useState<string | null>(null);
   const [collating, setCollating] = useState(false);
+  const [parcelSourceLabel, setParcelSourceLabel] = useState<string>(AUTHORITATIVE_PARCEL_LABEL);
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
   const showBuildingsRef = useRef(showBuildings);
+  const showParcelOutlinesRef = useRef(showParcelOutlines);
 
   useEffect(() => {
     onParcelRef.current = onParcel;
@@ -250,6 +284,10 @@ export default function Map({ onParcel }: MapProps) {
   }, [showBuildings]);
 
   useEffect(() => {
+    showParcelOutlinesRef.current = showParcelOutlines;
+  }, [showParcelOutlines]);
+
+  useEffect(() => {
     if (!containerRef.current) return;
 
     const map = new maplibregl.Map({
@@ -263,14 +301,16 @@ export default function Map({ onParcel }: MapProps) {
     let disposed = false;
 
     map.on("load", () => {
+      hideParcelLikeLayers(map);
       ensureOvertureOverlay(map, showBuildingsRef.current);
-      ensureParcelOverlay(map);
+      ensureParcelOverlay(map, showParcelOutlinesRef.current);
       ensureSelectionLayers(map);
     });
 
     map.on("style.load", () => {
+      hideParcelLikeLayers(map);
       ensureOvertureOverlay(map, showBuildingsRef.current);
-      ensureParcelOverlay(map);
+      ensureParcelOverlay(map, showParcelOutlinesRef.current);
       ensureSelectionLayers(map);
     });
 
@@ -283,6 +323,7 @@ export default function Map({ onParcel }: MapProps) {
 
         if (!data?.found || !data.parcel) {
           setStatus(NOT_FOUND_HINT);
+          setParcelSourceLabel(AUTHORITATIVE_PARCEL_LABEL);
           const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource;
           source?.setData({ type: "FeatureCollection", features: [] });
           return;
@@ -292,6 +333,15 @@ export default function Map({ onParcel }: MapProps) {
         const geometry = transformGeometryToWgs84(parcel.geometry as Geometry | null);
         const nextParcel = geometry ? { ...parcel, geometry } : parcel;
         onParcelRef.current(nextParcel);
+        const parcelSource = (nextParcel as ParcelSummary).source;
+        const normalizedSource = parcelSource?.toLowerCase();
+        if (normalizedSource === "suhail") {
+          setParcelSourceLabel(AUTHORITATIVE_PARCEL_LABEL);
+        } else if (parcelSource) {
+          setParcelSourceLabel(`Parcel source: ${parcelSource}`);
+        } else {
+          setParcelSourceLabel(AUTHORITATIVE_PARCEL_LABEL);
+        }
 
         if (!geometry) {
           setStatus("تم العثور على القطعة لكن دون بيانات هندسية.");
@@ -390,12 +440,19 @@ export default function Map({ onParcel }: MapProps) {
     }
   }, [showBuildings]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    ensureParcelOverlay(map, showParcelOutlines);
+  }, [showParcelOutlines]);
+
   const handleClearSelection = () => {
     setSelectedParcelIds([]);
     setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
     onParcelRef.current(null);
     setStatus("تم مسح التحديد.");
     setCollateStatus(null);
+    setParcelSourceLabel(AUTHORITATIVE_PARCEL_LABEL);
   };
 
   const handleCollate = async () => {
@@ -411,6 +468,14 @@ export default function Map({ onParcel }: MapProps) {
       const geometry = transformGeometryToWgs84(res.parcel.geometry as Geometry | null);
       const mergedParcel = geometry ? { ...res.parcel, geometry } : res.parcel;
       onParcelRef.current(mergedParcel);
+      const mergedSource = mergedParcel.source;
+      if ((mergedSource || "").toLowerCase() === "suhail") {
+        setParcelSourceLabel(AUTHORITATIVE_PARCEL_LABEL);
+      } else if (mergedSource) {
+        setParcelSourceLabel(`Parcel source: ${mergedSource}`);
+      } else {
+        setParcelSourceLabel(AUTHORITATIVE_PARCEL_LABEL);
+      }
       setStatus("تم تطبيق الموقع المدمج كحدود الموقع.");
       setCollateStatus("تم الدمج بنجاح.");
       const mergedFeature = featureFromParcel(mergedParcel);
@@ -466,6 +531,22 @@ export default function Map({ onParcel }: MapProps) {
           alignItems: "center",
         }}
       >
+        <span
+          style={{
+            padding: "6px 10px",
+            borderRadius: 12,
+            background: "#eef2ff",
+            color: "#1f2937",
+            border: "1px solid #c7d2fe",
+            fontSize: "0.95rem",
+            fontWeight: 600,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          {parcelSourceLabel}
+        </span>
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"
@@ -499,6 +580,16 @@ export default function Map({ onParcel }: MapProps) {
             }}
           />
           <span>Buildings (Overture)</span>
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={showParcelOutlines}
+            onChange={(event) => {
+              setShowParcelOutlines(event.target.checked);
+            }}
+          />
+          <span>Show parcel outlines</span>
         </label>
         <button type="button" onClick={handleClearSelection} disabled={!selectedParcelIds.length}>
           مسح التحديد

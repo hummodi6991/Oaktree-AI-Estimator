@@ -20,6 +20,11 @@ class _DummyResult:
     def scalars(self):
         return self
 
+    def scalar(self):
+        if isinstance(self._row, list):
+            return self._row[0] if self._row else None
+        return self._row
+
     def all(self):
         if isinstance(self._row, list):
             return self._row
@@ -38,6 +43,8 @@ class _DummyDB:
         self.calls.append((sql, params or {}))
         if "WITH q AS" in sql:
             return _DummyResult(self.responses.get("identify"))
+        if "column_name = 'source'" in sql:
+            return _DummyResult(self.responses.get("source_column"))
         if "information_schema.columns" in sql:
             return _DummyResult(self.responses.get("columns", []))
         if "FROM overture_buildings WHERE id" in sql:
@@ -166,7 +173,7 @@ def test_identify_sql_uses_raw_geometry_transform():
     geo_portal = _reload_geo_portal("parcels")
     sql = str(
         geo_portal._build_identify_sql(
-            geo_portal._PARCEL_TABLE, geo_portal._PARCEL_GEOM_COLUMN, tuple()
+            geo_portal._PARCEL_TABLE, geo_portal._PARCEL_GEOM_COLUMN, tuple(), False
         )
     )
     assert "ST_AsGeoJSON(\n      ST_Transform(geom, 4326)\n    ) AS geom" in sql
@@ -212,6 +219,50 @@ def test_identify_postgis_suhail_includes_optional_metadata():
     assert parcel_meta["zoning_id"] == "Z-1"
     assert parcel_meta["municipality_name"] == "Test City"
     assert parcel_meta["street_name"] is None
+
+
+def test_identify_postgis_suhail_prioritizes_suhail_landuse():
+    geo_portal = _reload_geo_portal("suhail_parcels_proxy")
+    db = _DummyDB(
+        {
+            "identify": {
+                **_identify_row(landuse="residential", classification="parcel"),
+                "source": "suhail",
+            },
+            "attr": None,
+            "ovt_overlay": {"res_share": 0.9, "com_share": 0.1},
+            "osm_overlay": {"res_share": 0.2, "com_share": 0.7},
+            "columns": [],
+        }
+    )
+    result = geo_portal._identify_postgis(46.675, 24.713, 25.0, db)
+    parcel = result["parcel"]
+    assert parcel["landuse_method"] == "suhail_parcel_attr"
+    assert parcel["landuse_raw"] == "residential"
+    assert parcel["landuse_code"] == "s"
+    assert parcel["residential_share"] is None
+    overlay_calls = [sql for sql, _ in db.calls if "planet_osm_polygon" in sql or "overture_buildings o" in sql]
+    assert not overlay_calls
+
+
+def test_identify_postgis_non_suhail_keeps_overlay_fallbacks():
+    geo_portal = _reload_geo_portal("osm_parcels_proxy")
+    db = _DummyDB(
+        {
+            "identify": _identify_row(landuse="building", classification="parcel"),
+            "attr": None,
+            "ovt_overlay": {"res_share": 0.2, "com_share": 0.4},
+            "osm_overlay": {"res_share": 0.75, "com_share": 0.1},
+            "columns": [],
+            "source_column": "source",
+        }
+    )
+    result = geo_portal._identify_postgis(46.675, 24.713, 25.0, db)
+    parcel = result["parcel"]
+    assert parcel["landuse_method"] == "osm_overlay"
+    assert parcel["landuse_code"] == "s"
+    overlay_calls = [sql for sql, _ in db.calls if "planet_osm_polygon" in sql or "overture_buildings o" in sql]
+    assert overlay_calls
 
 
 def test_identify_postgis_osm_table_returns_null_optional_metadata():
