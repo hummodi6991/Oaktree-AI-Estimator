@@ -3,7 +3,7 @@
 import hashlib
 import json
 import logging
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -54,68 +54,46 @@ _PARCEL_GEOM_COLUMN = _safe_identifier(
 )
 
 _TRANSFORMER = None  # unused (server-side transform)
-ParcelSource = Literal["osm", "suhail"]
 
-def _build_identify_sql(table_name: str) -> Any:
-    return text(
-        f"""
-      WITH q AS (
-        SELECT ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid) AS pt
-      ),
-      scored AS (
-        SELECT
-          id,
-          source,
-          landuse,
-          classification,
-          {_PARCEL_GEOM_COLUMN} AS geom,
-          ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
-          ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
-          ST_Distance({_PARCEL_GEOM_COLUMN}, q.pt)    AS distance_m,
-          CASE WHEN ST_Intersects({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS hits,
-          CASE WHEN ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol_m) THEN 1 ELSE 0 END AS near,
-          CASE WHEN classification = 'overture_building' THEN 1 ELSE 0 END AS is_ovt
-        FROM {table_name}, q
-      )
-      SELECT
-        id,
-        source,
-        landuse,
-        classification,
-        area_m2,
-        perimeter_m,
-        ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geom,
-        distance_m,
-        hits,
-        near,
-        is_ovt
-      FROM scored
-      ORDER BY
-        CASE WHEN hits = 1 THEN 3 WHEN near = 1 THEN 2 ELSE 1 END DESC,
-        is_ovt DESC,
-        area_m2 ASC,
-        distance_m ASC
-      LIMIT 1;
-      """
-    )
-
-
-_IDENTIFY_SQL_BY_SOURCE = {
-    "osm": _build_identify_sql("osm_parcels_proxy"),
-    "suhail": _build_identify_sql("suhail_parcels_proxy"),
-}
-_IDENTIFY_TABLE_BY_SOURCE = {
-    "osm": "osm_parcels_proxy",
-    "suhail": "suhail_parcels_proxy",
-}
-
-
-def _validate_parcel_source(source: str | None) -> ParcelSource:
-    value = (source or "osm").strip().lower()
-    if value not in _IDENTIFY_SQL_BY_SOURCE:
-        raise HTTPException(status_code=400, detail="invalid parcel source (expected osm or suhail)")
-    return value  # type: ignore[return-value]
-
+_IDENTIFY_SQL = text(
+    f"""
+  WITH q AS (
+    SELECT ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid) AS pt
+  ),
+  scored AS (
+    SELECT
+      id,
+      landuse,
+      classification,
+      {_PARCEL_GEOM_COLUMN} AS geom,
+      ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
+      ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
+      ST_Distance({_PARCEL_GEOM_COLUMN}, q.pt)    AS distance_m,
+      CASE WHEN ST_Intersects({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS hits,
+      CASE WHEN ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol_m) THEN 1 ELSE 0 END AS near,
+      CASE WHEN classification = 'overture_building' THEN 1 ELSE 0 END AS is_ovt
+    FROM {_PARCEL_TABLE}, q
+  )
+  SELECT
+    id,
+    landuse,
+    classification,
+    area_m2,
+    perimeter_m,
+    ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geom,
+    distance_m,
+    hits,
+    near,
+    is_ovt
+  FROM scored
+  ORDER BY
+    CASE WHEN hits = 1 THEN 3 WHEN near = 1 THEN 2 ELSE 1 END DESC,
+    is_ovt DESC,
+    area_m2 ASC,
+    distance_m ASC
+  LIMIT 1;
+  """
+)
 
 _COLLATE_META_SQL = (
     text(
@@ -384,22 +362,15 @@ def _pick_landuse(
     osm_conf: float,
     ovt_code: str | None,
     ovt_conf: float,
-    *,
-    prefer_parcel_label: bool = False,
 ) -> tuple[str | None, str | None]:
-    label_method = "suhail_parcel_label" if prefer_parcel_label else "parcel_label"
     osm_strong = bool(
-        osm_code and ((osm_res >= 0.70 and osm_com <= 0.15) or (osm_com >= 0.70))
+        osm_code
+        and ((osm_res >= 0.70 and osm_com <= 0.15) or (osm_com >= 0.70))
     )
-
-    if prefer_parcel_label and label_code and label_is_signal:
-        return label_code, label_method
     if ovt_attr_code and not osm_strong:
         return ovt_attr_code, "overture_building_attr"
     if osm_strong:
         return osm_code, "osm_overlay"
-    if label_code and label_is_signal:
-        return label_code, label_method
     if ovt_code and ovt_conf >= 0.55:
         return ovt_code, "overture_overlay"
     if osm_code:
@@ -513,11 +484,7 @@ class IdentifyPoint(BaseModel):
     tol_m: Optional[float] = Field(
         default=None,
         ge=0.0,
-        description="Optional identify tolerance in metres (defaults to PARCEL_IDENTIFY_TOLERANCE_M, 25m).",
-    )
-    source: ParcelSource | None = Field(
-        default="osm",
-        description="Parcel dataset to use for identify (osm or suhail).",
+        description="Optional identify tolerance in metres (defaults to 5m).",
     )
 
 
@@ -701,17 +668,10 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
     }
 
 
-def _identify_postgis(
-    lng: float, lat: float, tol_m: float, db: Session, source: ParcelSource = "osm"
-) -> Optional[Dict[str, Any]]:
+def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Optional[Dict[str, Any]]:
     params = {"lng": lng, "lat": lat, "srid": _TARGET_SRID, "tol_m": tol_m}
-    sql = _IDENTIFY_SQL_BY_SOURCE.get(source)
-    if sql is None:
-        logger.warning("Unsupported parcel identify source: %s", source)
-        return None
-
     try:
-        row = db.execute(sql, params).mappings().first()
+        row = db.execute(_IDENTIFY_SQL, params).mappings().first()
     except SQLAlchemyError as exc:
         logger.warning("PostGIS identify query failed: %s", exc)
         return None
@@ -777,8 +737,6 @@ def _identify_postgis(
     except Exception as exc:
         logger.warning("Overture overlay classification failed: %s", exc)
 
-    prefer_parcel_label = source == "suhail" or str(row.get("source") or "").lower() == "suhail"
-    source_table = _IDENTIFY_TABLE_BY_SOURCE.get(source, _PARCEL_TABLE)
     landuse_code, landuse_method = _pick_landuse(
         label_code,
         label_is_signal,
@@ -790,7 +748,6 @@ def _identify_postgis(
         osm_conf,
         ovt_code,
         ovt_conf,
-        prefer_parcel_label=prefer_parcel_label,
     )
 
     residential_share = None
@@ -820,8 +777,7 @@ def _identify_postgis(
         "ovt_attr_conf": ovt_attr_conf,
         "osm_conf": osm_conf,
         "ovt_conf": ovt_conf,
-        "source": row.get("source") or source,
-        "source_url": f"postgis/{source_table}",
+        "source_url": f"postgis/{_PARCEL_TABLE}",
     }
 
     logger.debug(
@@ -853,9 +809,8 @@ def _identify_arcgis(lng: float, lat: float, tol_m: float, db: Session) -> Dict[
 @router.post("/identify")
 def identify_post(pt: IdentifyPoint, db: Session = Depends(get_db)):
     tol = pt.tol_m if pt.tol_m is not None and pt.tol_m > 0 else _DEFAULT_TOLERANCE
-    source = _validate_parcel_source(pt.source)
 
-    postgis_result = _identify_postgis(pt.lng, pt.lat, tol, db, source=source)
+    postgis_result = _identify_postgis(pt.lng, pt.lat, tol, db)
     if postgis_result is None:
         # If PostGIS is misconfigured, return an explicit server error
         raise HTTPException(
@@ -889,12 +844,10 @@ def identify_get(
     lng: float = Query(...),
     lat: float = Query(...),
     tol_m: float | None = Query(None, ge=0.0),
-    source: ParcelSource = Query("osm", description="Parcel dataset to use (osm or suhail)."),
     db: Session = Depends(get_db),
 ):
     tol = tol_m if tol_m is not None and tol_m > 0 else _DEFAULT_TOLERANCE
-    src = _validate_parcel_source(source)
-    postgis_result = _identify_postgis(lng, lat, tol, db, source=src)
+    postgis_result = _identify_postgis(lng, lat, tol, db)
     if postgis_result is None:
         raise HTTPException(
             status_code=500,
