@@ -1,5 +1,7 @@
 from typing import List, Dict, Any
 
+from app.services.excel_method import DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR, _normalize_y1_income_effective_factor
+
 try:  # pragma: no cover - dependency availability handled at runtime
     from fpdf import FPDF
 except ModuleNotFoundError:  # pragma: no cover
@@ -52,6 +54,10 @@ def build_memo_pdf(
         pdf.set_font("Arial", "", 10)
 
         explanations = excel_breakdown.get("explanations") or {}
+        y1_eff_factor = _normalize_y1_income_effective_factor(
+            excel_breakdown.get("y1_income_effective_factor", DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR)
+        )
+        y1_eff_label = f"Year 1 net income ({y1_eff_factor*100:.0f}% effective)"
         direct_cost_total = sum((excel_breakdown.get("direct_cost") or {}).values())
         built_area = excel_breakdown.get("built_area") or {}
 
@@ -116,7 +122,7 @@ def build_memo_pdf(
                 ),
                 ("Year 1 net income", excel_breakdown.get("y1_income"), explanations.get("y1_income")),
                 (
-                    "Year 1 net income (90% effective)",
+                    y1_eff_label,
                     excel_breakdown.get("y1_income_effective"),
                     explanations.get("y1_income_effective"),
                 ),

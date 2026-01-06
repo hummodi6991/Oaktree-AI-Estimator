@@ -129,6 +129,58 @@ def test_sale_revenue_formula_mvp(monkeypatch, client):
         )
 
 
+def test_sale_revenue_custom_effective_income(monkeypatch, client):
+    monkeypatch.setattr(estimates_api.geo_svc, "area_m2", lambda geom: 2362.0)
+    monkeypatch.setattr(estimates_api.geo_svc, "infer_far_from_features", lambda *args, **kwargs: None)
+    monkeypatch.setattr(indicators_svc, "latest_sale_price_per_m2", lambda *args, **kwargs: 6500.0)
+    monkeypatch.setattr(indicators_svc, "latest_rent_per_m2", lambda *args, **kwargs: 200.0)
+
+    excel_inputs = sample_excel_inputs()
+    excel_inputs["y1_income_effective_pct"] = 80
+    payload = {
+        "geometry": _simple_polygon(),
+        "strategy": "build_to_sell",
+        "far": 2.0,
+        "efficiency": 1.0,
+        "city": "Riyadh",
+        "excel_inputs": excel_inputs,
+    }
+    response = client.post("/v1/estimates", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    excel = data["notes"]["excel_breakdown"]
+
+    assert excel["y1_income_effective_factor"] == pytest.approx(0.8, rel=1e-6)
+    assert excel["y1_income_effective"] == pytest.approx(excel["y1_income"] * 0.8, rel=1e-6)
+    assert excel["roi"] == pytest.approx(excel["y1_income_effective"] / excel["grand_total_capex"], rel=1e-6)
+
+
+def test_sale_revenue_effective_income_defaults(monkeypatch, client):
+    monkeypatch.setattr(estimates_api.geo_svc, "area_m2", lambda geom: 2362.0)
+    monkeypatch.setattr(estimates_api.geo_svc, "infer_far_from_features", lambda *args, **kwargs: None)
+    monkeypatch.setattr(indicators_svc, "latest_sale_price_per_m2", lambda *args, **kwargs: 6500.0)
+    monkeypatch.setattr(indicators_svc, "latest_rent_per_m2", lambda *args, **kwargs: 200.0)
+
+    excel_inputs = sample_excel_inputs()
+    payload = {
+        "geometry": _simple_polygon(),
+        "strategy": "build_to_sell",
+        "far": 2.0,
+        "efficiency": 1.0,
+        "city": "Riyadh",
+        "excel_inputs": excel_inputs,
+    }
+    response = client.post("/v1/estimates", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+
+    excel = data["notes"]["excel_breakdown"]
+    cost_breakdown = data["notes"]["cost_breakdown"]
+
+    assert excel["y1_income_effective_factor"] == pytest.approx(0.9, rel=1e-6)
+    assert cost_breakdown["y1_income_effective_factor"] == pytest.approx(0.9, rel=1e-6)
+
+
 def test_btr_value_mvp(monkeypatch, client):
     monkeypatch.setattr(estimates_api.geo_svc, "area_m2", lambda geom: 5731.0)
     monkeypatch.setattr(estimates_api.geo_svc, "infer_far_from_features", lambda *args, **kwargs: None)

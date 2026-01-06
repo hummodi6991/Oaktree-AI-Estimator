@@ -11,7 +11,13 @@ from app.db.deps import get_db
 from app.services import geo as geo_svc
 from app.services import far_rules
 from app.services import parking as parking_svc
-from app.services.excel_method import compute_excel_estimate, scale_placeholder_area_ratio, scale_area_ratio_by_floors
+from app.services.excel_method import (
+    DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR,
+    _normalize_y1_income_effective_factor,
+    compute_excel_estimate,
+    scale_placeholder_area_ratio,
+    scale_area_ratio_by_floors,
+)
 from app.services.explain import (
     top_sale_comps,
     to_comp_dict,
@@ -1042,6 +1048,10 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         }
         direct_cost_total = float(sum(excel.get("direct_cost", {}).values()))
         parking_income_y1 = float(excel.get("parking_income_y1") or 0.0)
+        y1_income_effective_factor = _normalize_y1_income_effective_factor(
+            excel.get("y1_income_effective_factor", DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR)
+        )
+
         cost_breakdown = {
             "land_cost": float(excel["land_cost"]),
             "construction_direct_cost": direct_cost_total,
@@ -1053,6 +1063,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "grand_total_capex": float(excel["grand_total_capex"]),
             "y1_income": float(excel["y1_income"]),
             "y1_income_effective": float(excel.get("y1_income_effective") or 0.0),
+            "y1_income_effective_factor": y1_income_effective_factor,
             "roi": float(excel["roi"]),
         }
         if ppm2_src.startswith("kaggle_hedonic"):
@@ -1066,6 +1077,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
         district_display = district_raw or district or (req.city or "the selected city")
         y1_eff = float(excel.get("y1_income_effective") or 0.0)
+        y1_eff_factor = y1_income_effective_factor
         summary_text = (
             f"For a site of {site_area_m2:,.0f} m² in "
             f"{district_display}, "
@@ -1074,7 +1086,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             f"{excel['sub_total']:,.0f} SAR, with contingency, "
             f"consultants, feasibility fees and transaction costs bringing total capex to "
             f"{excel['grand_total_capex']:,.0f} SAR. Year 1 net income of "
-            f"{excel['y1_income']:,.0f} SAR; using 90% effective income ({y1_eff:,.0f} SAR) implies an unlevered ROI of "
+            f"{excel['y1_income']:,.0f} SAR; using {y1_eff_factor*100:.0f}% effective income ({y1_eff:,.0f} SAR) implies an unlevered ROI of "
             f"{excel['roi']*100:,.1f}%."
         )
         if parking_income_y1 > 0 and parking_income_meta.get("monetize_extra_parking"):
