@@ -44,6 +44,7 @@ type ExcelResult = {
     grand_total_capex: number;
     y1_income: number;
     y1_income_effective?: number;
+    y1_income_effective_factor?: number;
   };
   breakdown: Record<string, any>;
   inputs: any;
@@ -115,6 +116,11 @@ const normalizeLandUse = (value?: string | null): LandUseCode | null => {
   return v === "m" ? "m" : v === "s" ? "s" : null;
 };
 
+const normalizeEffectivePct = (value?: number | null) => {
+  if (value == null || Number.isNaN(value)) return 90;
+  return Math.max(0, Math.min(value, 100));
+};
+
 export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [provider, setProvider] = useState<(typeof PROVIDERS)[number]["value"]>("blended_v1");
   const [price, setPrice] = useState<number | null>(null);
@@ -132,8 +138,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   // Excel inputs state (drives payload). Seed from template.
   const [inputs, setInputs] = useState<ExcelInputs>(() => cloneTemplate(templateForLandUse(initialLandUse)));
+  const inputsRef = useRef(inputs);
+  useEffect(() => {
+    inputsRef.current = inputs;
+  }, [inputs]);
   const [error, setError] = useState<string | null>(null);
   const [excelResult, setExcelResult] = useState<ExcelResult | null>(null);
+  const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
+    String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
+  );
 
   useEffect(() => {
     const geometrySignature = parcel?.geometry ? JSON.stringify(parcel.geometry) : "";
@@ -162,19 +175,53 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     });
   }, [effectiveLandUse]);
 
+  useEffect(() => {
+    const normalized = normalizeEffectivePct(inputs?.y1_income_effective_pct as number | undefined);
+    setEffectiveIncomePctDraft(String(normalized));
+  }, [inputs?.y1_income_effective_pct]);
+
   const handleFitoutToggle = (checked: boolean) => {
     setIncludeFitout(checked);
-    setInputs((current) => {
-      const nextInputs = {
-        ...current,
-        fitout_rate: checked ? templateForLandUse(effectiveLandUse).fitout_rate : 0,
-      };
-      if (excelResult) {
-        runEstimate(nextInputs);
-      }
-      return nextInputs;
-    });
+    const nextInputs = {
+      ...inputsRef.current,
+      fitout_rate: checked ? templateForLandUse(effectiveLandUse).fitout_rate : 0,
+    };
+    setInputs(nextInputs);
+    if (excelResult) {
+      runEstimate(nextInputs);
+    }
   };
+
+  const resolveEffectivePctFromDraft = (draft: string) => {
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed)) return 90;
+    return normalizeEffectivePct(parsed);
+  };
+
+  const commitEffectiveIncomePct = (draftOverride?: string) => {
+    const pct = resolveEffectivePctFromDraft(draftOverride ?? effectiveIncomePctDraft);
+    const currentPct = normalizeEffectivePct(inputsRef.current?.y1_income_effective_pct as number | undefined);
+
+    if (pct === currentPct) {
+      setEffectiveIncomePctDraft(String(pct));
+      return;
+    }
+
+    const nextInputs = { ...inputsRef.current, y1_income_effective_pct: pct };
+    setInputs(nextInputs);
+    setEffectiveIncomePctDraft(String(pct));
+    if (excelResult) {
+      runEstimate(nextInputs);
+    }
+  };
+
+  useEffect(() => {
+    if (!excelResult) return;
+    const timer = setTimeout(() => {
+      commitEffectiveIncomePct();
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [effectiveIncomePctDraft, excelResult]);
 
   const assetProgram =
     effectiveLandUse === "m" ? "mixed_use_midrise" : "residential_midrise";
@@ -225,10 +272,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       const notes = result?.notes || {};
       const costs = notes.cost_breakdown || {};
       const excelBreakdown = notes.excel_breakdown || {};
+      const effectivePctInput = normalizeEffectivePct(
+        (currentInputs?.y1_income_effective_pct ?? inputs?.y1_income_effective_pct) as number | undefined,
+      );
+      const effectiveFactorFromInput = effectivePctInput / 100;
       const y1IncomeEffective =
         costs.y1_income_effective ??
         excelBreakdown.y1_income_effective ??
-        (costs.y1_income ?? excelBreakdown.y1_income ?? 0) * 0.9;
+        (costs.y1_income ?? excelBreakdown.y1_income ?? 0) * effectiveFactorFromInput;
+      const y1IncomeEffectiveFactor =
+        costs.y1_income_effective_factor ?? excelBreakdown.y1_income_effective_factor ?? effectiveFactorFromInput;
 
       setExcelResult({
         roi: notes.excel_roi ?? result?.totals?.excel_roi ?? 0,
@@ -243,6 +296,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           grand_total_capex: costs.grand_total_capex ?? 0,
           y1_income: costs.y1_income ?? 0,
           y1_income_effective: y1IncomeEffective,
+          y1_income_effective_factor: y1IncomeEffectiveFactor,
         },
         breakdown: excelBreakdown,
         inputs: excelInputs,
@@ -395,9 +449,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const parkingIncomeExplanation =
     typeof explanations?.parking_income === "string" ? explanations.parking_income : null;
+  const effectiveIncomePctRaw =
+    usedInputs?.y1_income_effective_pct ??
+    inputs?.y1_income_effective_pct ??
+    null;
+  const effectiveIncomePct = normalizeEffectivePct(effectiveIncomePctRaw as number | null | undefined);
+  const effectiveIncomeFactor = effectiveIncomePct / 100;
   const y1IncomeEffectiveNote =
     explanations?.y1_income_effective ||
-    "90% of Year 1 net income to reflect stabilization, downtime, and collection leakage.";
+    `${formatPercent(effectiveIncomeFactor)} of Year 1 net income to reflect stabilization, downtime, and collection leakage.`;
 
   const resolveRevenueNote = (key: string, baseNote: string, amount: number) => {
     if (key !== "parking_income") return baseNote;
@@ -730,7 +790,38 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>Year 1 net income (90% effective)</td>
+                    <td style={itemColumnStyle}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span>Year 1 net income (effective)</span>
+                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.9rem" }}>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={effectiveIncomePctDraft}
+                            onChange={(event) => setEffectiveIncomePctDraft(event.target.value)}
+                            onBlur={() => commitEffectiveIncomePct()}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                commitEffectiveIncomePct();
+                              }
+                            }}
+                            style={{
+                              width: 72,
+                              padding: "4px 6px",
+                              borderRadius: 4,
+                              border: "1px solid rgba(255,255,255,0.2)",
+                              background: "rgba(0,0,0,0.15)",
+                              color: "white",
+                            }}
+                            aria-label="Effective income percentage"
+                          />
+                          <span style={{ opacity: 0.75 }}>%</span>
+                        </label>
+                      </div>
+                    </td>
                     <td style={amountColumnStyle}>
                       {(excelResult.costs.y1_income_effective ?? 0).toLocaleString()} SAR
                     </td>
@@ -743,7 +834,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     <td style={amountColumnStyle}>
                       <strong>{(excelResult.roi * 100).toFixed(1)}%</strong>
                     </td>
-                    <td style={calcColumnStyle}>90% of Year 1 net income ÷ total capex</td>
+                    <td style={calcColumnStyle}>{`${formatPercent(effectiveIncomeFactor)} of Year 1 net income ÷ total capex`}</td>
                   </tr>
                 </tbody>
               </table>

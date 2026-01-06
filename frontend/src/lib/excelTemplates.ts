@@ -12,6 +12,7 @@ export type ExcelInputs = {
   contingency_pct: number;
   consultants_pct: number;
   transaction_pct: number;
+  y1_income_effective_pct?: number;
   land_price_sar_m2?: number;
 };
 
@@ -36,6 +37,7 @@ export const TEMPLATE_S: ExcelInputs = {
     residential: 2400,
   },
   fitout_rate: 400,
+  y1_income_effective_pct: 90,
   contingency_pct: 0.05,
   consultants_pct: 0.06,
   transaction_pct: 0.05,
@@ -74,6 +76,7 @@ export const TEMPLATE_M: ExcelInputs = {
     office: 3000,
   },
   fitout_rate: 400,
+  y1_income_effective_pct: 90,
   contingency_pct: 0.05,
   consultants_pct: 0.06,
   transaction_pct: 0.05,

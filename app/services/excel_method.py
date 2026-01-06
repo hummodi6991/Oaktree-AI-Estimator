@@ -1,9 +1,9 @@
 import math
 from typing import Any, Dict
 
-# Accounting/underwriting haircut: only 90% of Year-1 net income is treated as "effective"
+# Accounting/underwriting haircut default: only 90% of Year-1 net income is treated as "effective"
 # for headline unlevered ROI (stabilization, downtime, leakage, collection loss, etc.).
-_Y1_INCOME_EFFECTIVE_FACTOR = 0.90
+DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR = 0.90
 
 from app.services.parking_income import compute_parking_income, _normalize_landuse_code
 
@@ -28,6 +28,23 @@ def _parse_bool(value: Any) -> bool | None:
     if s in {"0", "false", "f", "no", "n"}:
         return False
     return None
+
+
+def _normalize_y1_income_effective_factor(value: Any) -> float:
+    """Normalize user-provided effective income percentage to a 0–1 factor."""
+
+    try:
+        factor = float(value)
+    except Exception:
+        return DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR
+
+    if factor < 0:
+        return 0.0
+
+    if factor > 1.0:
+        factor = factor / 100.0
+
+    return max(0.0, min(factor, 1.0))
 
 
 def _is_basement_key(key: str) -> bool:
@@ -436,11 +453,14 @@ def build_excel_explanations(
         explanations["y1_income"] = "; ".join(income_parts)
 
     y1_income_total = float(breakdown.get("y1_income", 0.0) or 0.0)
+    y1_income_effective_factor = _normalize_y1_income_effective_factor(
+        breakdown.get("y1_income_effective_factor")
+    )
     y1_income_effective = float(
-        breakdown.get("y1_income_effective", 0.0) or (y1_income_total * _Y1_INCOME_EFFECTIVE_FACTOR)
+        breakdown.get("y1_income_effective", 0.0) or (y1_income_total * y1_income_effective_factor)
     )
     explanations["y1_income_effective"] = (
-        f"Effective Year-1 income = {y1_income_total:,.0f} SAR × {(_Y1_INCOME_EFFECTIVE_FACTOR*100):.0f}% "
+        f"Effective Year-1 income = {y1_income_total:,.0f} SAR × {y1_income_effective_factor*100:.0f}% "
         f"= {y1_income_effective:,.0f} SAR."
     )
     grand_total_capex = float(breakdown.get("grand_total_capex", 0.0) or 0.0)
@@ -697,8 +717,11 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         y1_income_components["parking_income"] = parking_income_y1
     y1_income = base_y1_income + parking_income_y1
 
-    # Apply accounting efficiency haircut for ROI headline
-    y1_income_effective = float(y1_income) * _Y1_INCOME_EFFECTIVE_FACTOR
+    # Apply accounting efficiency haircut for ROI headline (user-adjustable)
+    y1_income_effective_factor = _normalize_y1_income_effective_factor(
+        inputs.get("y1_income_effective_pct") if inputs.get("y1_income_effective_pct") is not None else inputs.get("y1_income_effective_factor")
+    )
+    y1_income_effective = float(y1_income) * y1_income_effective_factor
     parking_monthly_rate_used = float(parking_income_meta.get("monthly_rate_used") or 0.0)
     parking_occupancy_used = float(parking_income_meta.get("occupancy_used") or 0.0)
 
@@ -735,6 +758,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "y1_income_components": y1_income_components,
         "y1_income": y1_income,
         "y1_income_effective": y1_income_effective,
+        "y1_income_effective_factor": y1_income_effective_factor,
         "rent_applied_sar_m2_yr": rent_applied,
         "parking_income_y1": parking_income_y1,
         "parking_income_meta": parking_income_meta,
