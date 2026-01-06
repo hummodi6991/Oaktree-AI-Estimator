@@ -215,14 +215,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     }
   };
 
-  useEffect(() => {
-    if (!excelResult) return;
-    const timer = setTimeout(() => {
-      commitEffectiveIncomePct();
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [effectiveIncomePctDraft, excelResult]);
-
   const assetProgram =
     effectiveLandUse === "m" ? "mixed_use_midrise" : "residential_midrise";
 
@@ -454,6 +446,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     inputs?.y1_income_effective_pct ??
     null;
   const effectiveIncomePct = normalizeEffectivePct(effectiveIncomePctRaw as number | null | undefined);
+  const committedEffectiveIncomePct = normalizeEffectivePct(
+    inputsRef.current?.y1_income_effective_pct as number | undefined,
+  );
+  const effectiveIncomeApplyDisabled =
+    !excelResult || resolveEffectivePctFromDraft(effectiveIncomePctDraft) === committedEffectiveIncomePct;
   const effectiveIncomeFactor = effectiveIncomePct / 100;
   const y1IncomeEffectiveNote =
     explanations?.y1_income_effective ||
@@ -801,7 +798,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                             step={1}
                             value={effectiveIncomePctDraft}
                             onChange={(event) => setEffectiveIncomePctDraft(event.target.value)}
-                            onBlur={() => commitEffectiveIncomePct()}
                             onKeyDown={(event) => {
                               if (event.key === "Enter") {
                                 event.preventDefault();
@@ -820,6 +816,22 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                           />
                           <span style={{ opacity: 0.75 }}>%</span>
                         </label>
+                        <button
+                          type="button"
+                          onClick={() => commitEffectiveIncomePct()}
+                          disabled={effectiveIncomeApplyDisabled}
+                          style={{
+                            padding: "4px 8px",
+                            borderRadius: 6,
+                            border: "1px solid rgba(255,255,255,0.2)",
+                            background: "rgba(255,255,255,0.08)",
+                            color: "white",
+                            cursor: effectiveIncomeApplyDisabled ? "not-allowed" : "pointer",
+                            opacity: effectiveIncomeApplyDisabled ? 0.6 : 1,
+                          }}
+                        >
+                          Apply
+                        </button>
                       </div>
                     </td>
                     <td style={amountColumnStyle}>
