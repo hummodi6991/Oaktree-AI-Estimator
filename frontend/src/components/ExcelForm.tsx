@@ -164,10 +164,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const handleFitoutToggle = (checked: boolean) => {
     setIncludeFitout(checked);
-    setInputs((current) => ({
-      ...current,
-      fitout_rate: checked ? templateForLandUse(effectiveLandUse).fitout_rate : 0,
-    }));
+    setInputs((current) => {
+      const nextInputs = {
+        ...current,
+        fitout_rate: checked ? templateForLandUse(effectiveLandUse).fitout_rate : 0,
+      };
+      if (excelResult) {
+        runEstimate(nextInputs);
+      }
+      return nextInputs;
+    });
   };
 
   const assetProgram =
@@ -200,12 +206,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     }
   }
 
-  async function runEstimate() {
+  async function runEstimate(currentInputs: ExcelInputs = inputs) {
     if (!parcel) return;
     setError(null);
     setExcelResult(null);
     try {
-      const excelInputs = { ...inputs, land_use_code: effectiveLandUse };
+      const excelInputs = { ...currentInputs, land_use_code: effectiveLandUse };
       const result = await makeEstimate({
         geometry: parcel.geometry,
         excelInputs,
@@ -497,23 +503,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             Suggested from fetch: {suggestedPrice != null ? `${suggestedPrice.toLocaleString()} SAR/m² (${provider})` : "Not fetched yet"}
           </span>
         </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, color: "white", maxWidth: 240 }}>
-          <span>Fit-out cost</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              type="checkbox"
-              checked={includeFitout}
-              onChange={(event) => handleFitoutToggle(event.target.checked)}
-            />
-            <span>{includeFitout ? "Included" : "Removed from estimate"}</span>
-          </div>
-          <span style={{ fontSize: "0.8rem", color: "#cbd5f5" }}>
-            Uncheck to remove fit-out from construction costs. Default rates are restored when re-enabled.
-          </span>
-        </label>
       </div>
 
-      <button onClick={runEstimate} style={{ marginTop: 12 }}>
+      <button onClick={() => runEstimate()} style={{ marginTop: 12 }}>
         Calculate estimate
       </button>
 
@@ -618,7 +610,33 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>Fit-out</td>
+                    <td style={itemColumnStyle}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "0.5rem",
+                        }}
+                      >
+                        <span>Fit-out</span>
+                        <button
+                          type="button"
+                          onClick={() => handleFitoutToggle(!includeFitout)}
+                          style={{
+                            border: "1px solid rgba(255,255,255,0.2)",
+                            background: includeFitout ? "rgba(16,185,129,0.15)" : "rgba(248,113,113,0.1)",
+                            color: "white",
+                            padding: "4px 8px",
+                            borderRadius: 999,
+                            cursor: "pointer",
+                            fontSize: "0.8rem",
+                          }}
+                        >
+                          {includeFitout ? "Included" : "Excluded"}
+                        </button>
+                      </div>
+                    </td>
                     <td style={amountColumnStyle}>
                       {excelResult.costs.fitout_cost.toLocaleString()} SAR
                     </td>
