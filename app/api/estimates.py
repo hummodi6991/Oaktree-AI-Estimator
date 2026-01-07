@@ -74,6 +74,31 @@ def _resolve_avg_unit_m2(excel_inputs: dict, key: str, fallback: float) -> float
     return fallback
 
 
+def _has_avg_unit_override(excel_inputs: dict, key: str) -> bool:
+    avg_unit_m2 = excel_inputs.get("avg_unit_m2") if isinstance(excel_inputs, dict) else None
+    if isinstance(avg_unit_m2, dict):
+        try:
+            value = float(avg_unit_m2.get(key) or 0.0)
+            if value > 0:
+                return True
+        except Exception:
+            pass
+    if key == "residential":
+        try:
+            value = float(excel_inputs.get("parking_assumed_avg_apartment_m2") or 0.0)
+            if value > 0:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _format_avg_unit_m2(value: float) -> str:
+    if abs(value - round(value)) < 0.05:
+        return f"{value:,.0f}"
+    return f"{value:,.1f}"
+
+
 def _estimate_unit_counts(
     excel: dict,
     excel_inputs: dict,
@@ -1062,6 +1087,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         avg_res = _resolve_avg_unit_m2(excel_inputs, "residential", DEFAULT_UNIT_SIZE_M2["residential"])
         avg_retail = _resolve_avg_unit_m2(excel_inputs, "retail", DEFAULT_UNIT_SIZE_M2["retail"])
         avg_office = _resolve_avg_unit_m2(excel_inputs, "office", DEFAULT_UNIT_SIZE_M2["office"])
+        res_default_label = " (default)" if not _has_avg_unit_override(excel_inputs, "residential") else ""
+        retail_default_label = " (default)" if not _has_avg_unit_override(excel_inputs, "retail") else ""
+        office_default_label = " (default)" if not _has_avg_unit_override(excel_inputs, "office") else ""
         roi_band = _roi_band(excel.get("roi", 0.0))
         summary_text = (
             "Estimated unit yield: "
@@ -1072,6 +1100,12 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         summary_text += (
             " Based on current assumptions, the unlevered Year-1 yield on cost is "
             f"{roi_band}."
+        )
+        summary_text += (
+            "\n\nAssumed average unit sizes: "
+            f"Residential ≈ {_format_avg_unit_m2(avg_res)} m²{res_default_label}, "
+            f"Retail ≈ {_format_avg_unit_m2(avg_retail)} m²{retail_default_label}, "
+            f"Office ≈ {_format_avg_unit_m2(avg_office)} m²{office_default_label}."
         )
         result = {
             "totals": totals,
