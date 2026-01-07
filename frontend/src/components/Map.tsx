@@ -254,7 +254,10 @@ export default function Map({ onParcel }: MapProps) {
     selectedParcelIdsRef.current = selectedParcelIds;
   }, [selectedParcelIds]);
 
-  const formatParcelId = (value: string) => {
+  const formatParcelId = (value?: string | null) => {
+    if (!value) {
+      return "";
+    }
     const numericValue = Number(value);
     if (Number.isFinite(numericValue)) {
       return formatNumber(numericValue, { maximumFractionDigits: 0, minimumFractionDigits: 0 }, value);
