@@ -308,7 +308,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         totals: result?.totals,
         notes: result?.notes,
       });
-      setOverrideLandUse(null);
+      // Preserve override selection on calculate; reset only when parcel identity changes.
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
