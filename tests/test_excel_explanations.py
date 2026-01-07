@@ -28,12 +28,12 @@ def test_build_excel_explanations_uses_area_ratio_label_and_effective_far_sum():
         },
     }
 
-    explanations = build_excel_explanations(site_area_m2, inputs, breakdown)
+    explanations_en, _explanations_ar = build_excel_explanations(site_area_m2, inputs, breakdown)
 
-    residential_note = explanations["residential_bua"]
+    residential_note = explanations_en["residential_bua"]
     assert "area ratio" in residential_note.lower()
     assert "far" not in residential_note
 
-    effective_far_note = explanations["effective_far_above_ground"]
+    effective_far_note = explanations_en["effective_far_above_ground"]
     assert "2.000" in effective_far_note
     assert "excluding basement" in effective_far_note

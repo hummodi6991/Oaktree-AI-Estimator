@@ -1087,25 +1087,48 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         avg_res = _resolve_avg_unit_m2(excel_inputs, "residential", DEFAULT_UNIT_SIZE_M2["residential"])
         avg_retail = _resolve_avg_unit_m2(excel_inputs, "retail", DEFAULT_UNIT_SIZE_M2["retail"])
         avg_office = _resolve_avg_unit_m2(excel_inputs, "office", DEFAULT_UNIT_SIZE_M2["office"])
-        res_default_label = " (default)" if not _has_avg_unit_override(excel_inputs, "residential") else ""
-        retail_default_label = " (default)" if not _has_avg_unit_override(excel_inputs, "retail") else ""
-        office_default_label = " (default)" if not _has_avg_unit_override(excel_inputs, "office") else ""
+        res_default = not _has_avg_unit_override(excel_inputs, "residential")
+        retail_default = not _has_avg_unit_override(excel_inputs, "retail")
+        office_default = not _has_avg_unit_override(excel_inputs, "office")
         roi_band = _roi_band(excel.get("roi", 0.0))
-        summary_text = (
+        roi_band_ar = {
+            "negative": "سلبي",
+            "low-single-digit": "منخفض (أحادي الرقم)",
+            "mid-single-digit": "متوسط (أحادي الرقم)",
+            "double-digit": "رقم مزدوج",
+            "uncertain": "غير مؤكد",
+        }.get(roi_band, roi_band)
+        summary_en = (
             "Estimated unit yield: "
             f"{unit_counts.get('residential', 0):,} apartments, "
             f"{unit_counts.get('retail', 0):,} retail units, "
             f"{unit_counts.get('office', 0):,} office units."
         )
-        summary_text += (
+        summary_en += (
             " Based on current assumptions, the unlevered Year-1 yield on cost is "
             f"{roi_band}."
         )
-        summary_text += (
+        summary_en += (
             "\n\nAssumed average unit sizes: "
-            f"Residential ≈ {_format_avg_unit_m2(avg_res)} m²{res_default_label}, "
-            f"Retail ≈ {_format_avg_unit_m2(avg_retail)} m²{retail_default_label}, "
-            f"Office ≈ {_format_avg_unit_m2(avg_office)} m²{office_default_label}."
+            f"Residential ≈ {_format_avg_unit_m2(avg_res)} m², "
+            f"Retail ≈ {_format_avg_unit_m2(avg_retail)} m², "
+            f"Office ≈ {_format_avg_unit_m2(avg_office)} m²."
+        )
+        summary_ar = (
+            "تقدير عدد الوحدات: "
+            f"{unit_counts.get('residential', 0):,} شقق سكنية، "
+            f"{unit_counts.get('retail', 0):,} وحدات تجزئة، "
+            f"{unit_counts.get('office', 0):,} وحدات مكتبية."
+        )
+        summary_ar += (
+            " استنادًا إلى الافتراضات الحالية، فإن عائد السنة الأولى غير الممول على التكلفة هو "
+            f"{roi_band_ar}."
+        )
+        summary_ar += (
+            "\n\nمتوسط مساحات الوحدات المفترضة: "
+            f"سكني ≈ {_format_avg_unit_m2(avg_res)} م²، "
+            f"تجزئة ≈ {_format_avg_unit_m2(avg_retail)} م²، "
+            f"مكاتب ≈ {_format_avg_unit_m2(avg_office)} م²."
         )
         result = {
             "totals": totals,
@@ -1170,11 +1193,26 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "transaction_tax": excel_inputs.get("transaction_tax_metadata"),
                 "rent_source_metadata": excel_inputs.get("rent_source_metadata"),
                 "district_inference": district_inference,
-                "summary": summary_text,
+                "summary": summary_en,
+                "summary_en": summary_en,
+                "summary_ar": summary_ar,
                 "unit_count_methodology": (
                     "Unit counts are derived from unit_mix when provided; otherwise estimated by "
                     "dividing net lettable area by average unit sizes."
                 ),
+                "unit_count_methodology_en": (
+                    "Unit counts are derived from unit_mix when provided; otherwise estimated by "
+                    "dividing net lettable area by average unit sizes."
+                ),
+                "unit_count_methodology_ar": (
+                    "يتم اشتقاق عدد الوحدات من مزيج الوحدات عند توفيره؛ وإلا فيتم تقديره عبر "
+                    "قسمة المساحة القابلة للتأجير على متوسط مساحات الوحدات."
+                ),
+                "avg_unit_size_defaults": {
+                    "residential": res_default,
+                    "retail": retail_default,
+                    "office": office_default,
+                },
                 "site_area_m2": site_area_m2,
                 "district": district,
                 "excel_land_price": {
