@@ -8,11 +8,11 @@ import "./i18n";
 import "./index.css";
 import type { ParcelSummary } from "./api";
 import LanguageSwitcher from "./components/LanguageSwitcher";
-import { formatNumber } from "./i18n/format";
+import { formatAreaM2 } from "./i18n/format";
 
 function App() {
   const [parcel, setParcel] = useState<ParcelSummary | null>(null);
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
 
   const codeLabel = (() => {
     const selectedLandUse = parcel?.landuse_code?.trim().toLowerCase();
@@ -53,7 +53,7 @@ function App() {
           <>
             <div>
               <b>{t("app.parcelLabel")}:</b> {parcel.parcel_id} | <b>{t("app.areaLabel")}:</b>{" "}
-              {formatNumber(parcel.area_m2?.toFixed(0), i18n.language, {}, t("common.notAvailable"))} m² | <b>{t("app.landUseLabel")}:</b>{" "}
+              {formatAreaM2(parcel.area_m2, { maximumFractionDigits: 0 }, t("common.notAvailable"))} | <b>{t("app.landUseLabel")}:</b>{" "}
               {codeLabel}
             </div>
             <ExcelForm parcel={parcel} />

@@ -1,11 +1,19 @@
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Polygon } from "geojson";
+import { useTranslation } from "react-i18next";
 import Map from "./Map";
 import { createEstimate, getFreshness, memoPdfUrl, runScenario, getComps, exportCsvUrl } from "./api";
 import "./App.css";
 import ParkingSummary from "./components/ParkingSummary";
 import type { EstimateResponse, RentBlock } from "./lib/types";
+import {
+  formatAreaM2,
+  formatCurrencySAR,
+  formatInteger,
+  formatNumber,
+  formatPercent,
+} from "./i18n/format";
 
 const DEFAULT_POLY: Polygon = {
   type: "Polygon",
@@ -87,8 +95,12 @@ function computePolygonStats(polygon: Polygon | null | undefined): PolygonStats 
 }
 
 export default function App() {
+  const { t, i18n } = useTranslation();
+  const isArabic = i18n.language.startsWith("ar");
+  const defaultCity = useMemo(() => t("ui.defaults.city"), [t]);
+  const defaultCityRef = useRef(defaultCity);
   const [freshness, setFreshness] = useState<any>(null);
-  const [city, setCity] = useState("Riyadh");
+  const [city, setCity] = useState(defaultCity);
   const [far, setFar] = useState(2.0);
   const [farAuto, setFarAuto] = useState<number | null>(null);
   const [farManuallySet, setFarManuallySet] = useState(false);
@@ -125,6 +137,13 @@ export default function App() {
   useEffect(() => {
     getFreshness().then(setFreshness).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (city === defaultCityRef.current) {
+      setCity(defaultCity);
+    }
+    defaultCityRef.current = defaultCity;
+  }, [city, defaultCity]);
 
   const totals = estimate?.totals;
   const irr = estimate?.metrics?.irr_annual;
@@ -164,12 +183,30 @@ export default function App() {
     []
   );
 
-  function fmt(value: any, digits = 0) {
-    const n = Number(value);
-    return Number.isFinite(n)
-      ? n.toLocaleString(undefined, { maximumFractionDigits: digits })
-      : String(value ?? "—");
-  }
+  const fallbackValue = t("common.notAvailable");
+
+  const formatNumberValue = (value: any, digits = 0) =>
+    formatNumber(value, { maximumFractionDigits: digits, minimumFractionDigits: digits }, fallbackValue);
+
+  const formatIntegerValue = (value: any) => formatInteger(value, fallbackValue);
+
+  const formatPercentValue = (value: number | null | undefined, digits = 1) =>
+    formatPercent(value ?? null, { maximumFractionDigits: digits, minimumFractionDigits: digits }, fallbackValue);
+
+  const formatPercentFromUnknown = (value: number | null | undefined, digits = 1) => {
+    if (value == null || !Number.isFinite(value)) return fallbackValue;
+    const normalized = Math.abs(value) <= 1 ? value : value / 100;
+    return formatPercentValue(normalized, digits);
+  };
+
+  const formatMaybeNumber = (value: any, digits = 0) => {
+    if (value == null) return fallbackValue;
+    const num = Number(value);
+    if (Number.isFinite(num)) {
+      return formatNumberValue(num, digits);
+    }
+    return String(value);
+  };
 
   function badgeStyle(kind?: string): CSSProperties {
     const k = (kind || "").toLowerCase();
@@ -215,7 +252,7 @@ export default function App() {
       setFarAuto(inferredFar);
       if (!farManuallySet && inferredFar != null) {
         setFar(inferredFar);
-        setFarSourceLabel("Auto (Overture)");
+        setFarSourceLabel("ui.projectInputs.autoPill");
       } else if (farManuallySet) {
         setFarSourceLabel(null);
       }
@@ -234,48 +271,52 @@ export default function App() {
     if (!estimate?.id) return;
     try {
       const res = await runScenario(estimate.id, { price_uplift_pct: uplift || 0 });
-      alert(`Δ Profit (Saudi Riyal - SAR): ${Math.round(res.delta.p50_profit).toLocaleString()}`);
+      alert(
+        t("ui.scenario.deltaProfitAlert", {
+          value: formatCurrencySAR(res.delta.p50_profit),
+        }),
+      );
     } catch (e: any) {
       alert(e?.message || String(e));
     }
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${isArabic ? " rtl" : ""}`}>
       <header className="page-header">
         <div className="page-hero">
           <div className="brand-block">
             <span className="brand-emblem" aria-hidden="true">
               O
             </span>
-            <span className="brand-wordmark">Oaktree Group</span>
+            <span className="brand-wordmark">{t("ui.brandName")}</span>
           </div>
           <div className="page-intro">
-            <h1 className="page-title">From Vision to Legacy</h1>
+            <h1 className="page-title">{t("ui.heroTitle")}</h1>
             <p className="page-subtitle">
-              A curated investment console to sculpt transformative developments across the Kingdom of Saudi Arabia.
+              {t("ui.heroSubtitle")}
             </p>
             <div className="page-meta">
-              <span className="version-pill">Estimator Console v0</span>
-              <span>Confidential — Strategic Planning Office</span>
+              <span className="version-pill">{t("ui.versionPill")}</span>
+              <span>{t("ui.confidentialNote")}</span>
             </div>
           </div>
         </div>
         {freshness && (
-          <section className="card freshness-card" aria-label="Data Freshness">
-            <h2 className="card-title">Data Freshness</h2>
+          <section className="card freshness-card" aria-label={t("ui.dataFreshness")}>
+            <h2 className="card-title">{t("ui.dataFreshness")}</h2>
             <dl className="freshness-grid">
               <div>
-                <dt>Financing Rates</dt>
-                <dd>{freshness.rates || "–"}</dd>
+                <dt>{t("ui.dataFreshnessLabels.financingRates")}</dt>
+                <dd>{freshness.rates || fallbackValue}</dd>
               </div>
               <div>
-                <dt>Market Indicators</dt>
-                <dd>{freshness.market_indicator || "–"}</dd>
+                <dt>{t("ui.dataFreshnessLabels.marketIndicators")}</dt>
+                <dd>{freshness.market_indicator || fallbackValue}</dd>
               </div>
               <div>
-                <dt>Sale Comparables</dt>
-                <dd>{freshness.sale_comp || "–"}</dd>
+                <dt>{t("ui.dataFreshnessLabels.saleComparables")}</dt>
+                <dd>{freshness.sale_comp || fallbackValue}</dd>
               </div>
             </dl>
           </section>
@@ -287,19 +328,19 @@ export default function App() {
           <section className="card" aria-labelledby="project-inputs-heading">
             <div className="card-header">
               <div>
-                <h2 id="project-inputs-heading" className="card-title">Project Inputs</h2>
-                <p className="card-subtitle">Define the context for the analysis.</p>
+                <h2 id="project-inputs-heading" className="card-title">{t("ui.projectInputs.title")}</h2>
+                <p className="card-subtitle">{t("ui.projectInputs.subtitle")}</p>
               </div>
             </div>
             <div className="form-grid">
               <label className="form-field" htmlFor="city-input">
-                <span>City</span>
+                <span>{t("ui.projectInputs.cityLabel")}</span>
                 <input id="city-input" value={city} onChange={(e) => setCity(e.target.value)} />
               </label>
               <label className="form-field" htmlFor="far-input">
                 <span className="far-label">
-                  Floor Area Ratio (FAR)
-                  {farSourceLabel && <span className="pill auto-pill">{farSourceLabel}</span>}
+                  {t("ui.projectInputs.farLabel")}
+                  {farSourceLabel && <span className="pill auto-pill">{t(farSourceLabel)}</span>}
                 </span>
                 <input
                   id="far-input"
@@ -320,15 +361,17 @@ export default function App() {
                     onClick={() => {
                       setFar(farAuto);
                       setFarManuallySet(false);
-                      setFarSourceLabel("Auto (Overture)");
+                      setFarSourceLabel("ui.projectInputs.autoPill");
                     }}
                   >
-                    Use auto FAR ({farAuto.toFixed(2)})
+                    {t("ui.projectInputs.useAutoFar", {
+                      value: formatNumberValue(farAuto, 2),
+                    })}
                   </button>
                 )}
               </label>
               <label className="form-field" htmlFor="timeline-input">
-                <span>Development Timeline (months)</span>
+                <span>{t("ui.projectInputs.timelineLabel")}</span>
                 <input
                   id="timeline-input"
                   type="number"
@@ -340,12 +383,12 @@ export default function App() {
 
             <div className="action-panel">
               <button className="primary-button" onClick={onEstimate} disabled={loading}>
-                {loading ? "Calculating estimate…" : "Run Estimate"}
+                {loading ? t("ui.actions.calculatingEstimate") : t("ui.actions.runEstimate")}
               </button>
               {estimate?.id && (
                 <div className="scenario-panel">
                   <label className="scenario-field" htmlFor="uplift-input">
-                    <span>Sale Price Uplift (%)</span>
+                    <span>{t("ui.scenario.salePriceUpliftLabel")}</span>
                     <input
                       id="uplift-input"
                       type="number"
@@ -354,14 +397,14 @@ export default function App() {
                     />
                   </label>
                   <button className="secondary-button" onClick={onScenario}>
-                    Apply price uplift scenario
+                    {t("ui.scenario.applyScenario")}
                   </button>
                   <div className="link-row">
                     <a className="text-link" href={memoPdfUrl(estimate.id)} target="_blank" rel="noreferrer">
-                      Open Portable Document Format (PDF) memo
+                      {t("ui.scenario.openPdfMemo")}
                     </a>
                     <a className="text-link" href={exportCsvUrl(estimate.id)} target="_blank" rel="noreferrer">
-                      Download Comma-Separated Values (CSV) export
+                      {t("ui.scenario.downloadCsvExport")}
                     </a>
                   </div>
                 </div>
@@ -373,13 +416,13 @@ export default function App() {
           <section className="card" aria-labelledby="parking-inputs-heading">
             <div className="card-header">
               <div>
-                <h2 id="parking-inputs-heading" className="card-title">Parking</h2>
-                <p className="card-subtitle">Provide details to refine parking minimum calculations.</p>
+                <h2 id="parking-inputs-heading" className="card-title">{t("ui.parking.title")}</h2>
+                <p className="card-subtitle">{t("ui.parking.subtitle")}</p>
               </div>
             </div>
             <div className="form-grid">
               <label className="form-field" htmlFor="avg-apartment-size-input">
-                <span>Apartment size for parking (m²)</span>
+                <span>{t("ui.parking.apartmentSizeLabel")}</span>
                 <input
                   id="avg-apartment-size-input"
                   type="number"
@@ -393,7 +436,7 @@ export default function App() {
                   }}
                 />
                 <p className="form-helper-text">
-                  Used for parking minimums when Unit Mix is empty; apartments under 180 m² assume 1 space, otherwise 2.
+                  {t("ui.parking.helper")}
                 </p>
               </label>
             </div>
@@ -402,8 +445,8 @@ export default function App() {
           <section className="card" aria-labelledby="geometry-heading">
             <div className="card-header">
               <div>
-                <h2 id="geometry-heading" className="card-title">Geometry (GeoJSON Polygon)</h2>
-                <p className="card-subtitle">Paste or edit the geographic coordinates that define the parcel.</p>
+                <h2 id="geometry-heading" className="card-title">{t("ui.geometry.title")}</h2>
+                <p className="card-subtitle">{t("ui.geometry.subtitle")}</p>
               </div>
             </div>
             <textarea
@@ -416,16 +459,18 @@ export default function App() {
             {polygonStats && (
               <dl className="metrics-grid">
                 <div>
-                  <dt>Approximate Area</dt>
-                  <dd>{fmt(polygonStats.areaSqm)} square meters (m²)</dd>
+                  <dt>{t("ui.geometry.approxArea")}</dt>
+                  <dd className="numeric-value">{formatAreaM2(polygonStats.areaSqm, { maximumFractionDigits: 0 }, fallbackValue)}</dd>
                 </div>
                 <div>
-                  <dt>Approximate Perimeter</dt>
-                  <dd>{fmt(polygonStats.perimeterMeters)} meters (m)</dd>
+                  <dt>{t("ui.geometry.approxPerimeter")}</dt>
+                  <dd className="numeric-value">
+                    {formatNumberValue(polygonStats.perimeterMeters, 0)} {t("ui.units.meters")}
+                  </dd>
                 </div>
                 <div>
-                  <dt>Vertices</dt>
-                  <dd>{polygonStats.vertexCount}</dd>
+                  <dt>{t("ui.geometry.vertices")}</dt>
+                  <dd className="numeric-value">{formatIntegerValue(polygonStats.vertexCount)}</dd>
                 </div>
               </dl>
             )}
@@ -436,10 +481,9 @@ export default function App() {
           <section className="card map-card" aria-labelledby="map-heading">
             <div className="card-header">
               <div>
-                <h2 id="map-heading" className="card-title">Site Boundary</h2>
+                <h2 id="map-heading" className="card-title">{t("ui.map.title")}</h2>
                 <p className="card-subtitle">
-                  Use the toolbar to draw or refine the site polygon. Click the map to add vertices and finish when the shape is
-                  closed.
+                  {t("ui.map.subtitle")}
                 </p>
               </div>
             </div>
@@ -452,54 +496,68 @@ export default function App() {
         <section className="card full-width" aria-labelledby="built-form-heading">
           <div className="card-header">
             <div>
-              <h2 id="built-form-heading" className="card-title">Existing Built Form (Overture)</h2>
+              <h2 id="built-form-heading" className="card-title">{t("ui.builtForm.title")}</h2>
               <p className="card-subtitle">
-                Footprints, floors proxies, and FAR defaults inferred from Overture buildings (buffer{" "}
-                {overtureContext?.buffer_m ?? 500} m).
+                {t("ui.builtForm.subtitle", {
+                  buffer: formatNumberValue(overtureContext?.buffer_m ?? 500, 0),
+                })}
               </p>
             </div>
           </div>
           <dl className="metrics-grid">
             <div>
-              <dt>Built-up footprint</dt>
-              <dd>{existingFootprint != null ? `${fmt(existingFootprint)} m²` : "—"}</dd>
+              <dt>{t("ui.builtForm.builtUpFootprint")}</dt>
+              <dd className="numeric-value">
+                {existingFootprint != null ? formatAreaM2(existingFootprint, { maximumFractionDigits: 0 }, fallbackValue) : fallbackValue}
+              </dd>
             </div>
             <div>
-              <dt>Coverage ratio</dt>
-              <dd>{coveragePct != null ? `${fmt(coveragePct, 1)}%` : "—"}</dd>
+              <dt>{t("ui.builtForm.coverageRatio")}</dt>
+              <dd className="numeric-value">
+                {coveragePct != null ? formatPercent(coveragePct / 100, { maximumFractionDigits: 1, minimumFractionDigits: 1 }, fallbackValue) : fallbackValue}
+              </dd>
             </div>
             <div>
-              <dt>Floors proxy (median/avg)</dt>
+              <dt>{t("ui.builtForm.floorsProxy")}</dt>
               <dd>
                 {overtureSite?.floors_median != null || overtureSite?.floors_mean != null
-                  ? `${fmt(overtureSite?.floors_median, 1)} median / ${fmt(overtureSite?.floors_mean, 1)} avg`
-                  : "—"}
+                  ? t("ui.builtForm.floorsProxyValue", {
+                    median: formatNumberValue(overtureSite?.floors_median, 1),
+                    average: formatNumberValue(overtureSite?.floors_mean, 1),
+                  })
+                  : fallbackValue}
               </dd>
             </div>
             <div>
-              <dt>Existing BUA</dt>
-              <dd>{existingBua != null ? `${fmt(existingBua)} m²` : "—"}</dd>
+              <dt>{t("ui.builtForm.existingBua")}</dt>
+              <dd className="numeric-value">
+                {existingBua != null ? formatAreaM2(existingBua, { maximumFractionDigits: 0 }, fallbackValue) : fallbackValue}
+              </dd>
             </div>
             <div>
-              <dt>Built density</dt>
+              <dt>{t("ui.builtForm.builtDensity")}</dt>
               <dd>
                 {overtureSite?.built_density_m2_per_ha != null
-                  ? `${fmt(overtureSite?.built_density_m2_per_ha, 1)} m²/ha`
-                  : "—"}
+                  ? `${formatNumberValue(overtureSite?.built_density_m2_per_ha, 1)} ${t("ui.units.m2PerHa")}`
+                  : fallbackValue}
               </dd>
             </div>
             <div>
-              <dt>Suggested FAR / FAR max</dt>
+              <dt>{t("ui.builtForm.suggestedFar")}</dt>
               <dd>
-                {farUsed != null ? fmt(farUsed, 2) : "—"}
-                {farMax != null ? ` (max ${fmt(farMax, 2)})` : ""}
-                {typicalFar != null ? ` · context proxy ${fmt(typicalFar, 2)}` : ""}
+                {farUsed != null ? formatNumberValue(farUsed, 2) : fallbackValue}
+                {farMax != null
+                  ? t("ui.builtForm.suggestedFarMax", { value: formatNumberValue(farMax, 2) })
+                  : ""}
+                {typicalFar != null
+                  ? t("ui.builtForm.contextProxy", { value: formatNumberValue(typicalFar, 2) })
+                  : ""}
               </dd>
             </div>
             {potentialBua != null && (
               <div>
-                <dt>Potential BUA (at FAR max)</dt>
-                <dd>{`${fmt(potentialBua)} m²`}</dd>
+                <dt>{t("ui.builtForm.potentialBua")}</dt>
+                <dd className="numeric-value">{formatAreaM2(potentialBua, { maximumFractionDigits: 0 }, fallbackValue)}</dd>
               </div>
             )}
           </dl>
@@ -510,78 +568,83 @@ export default function App() {
         <section className="card full-width" aria-labelledby="financial-summary-heading">
           <div className="card-header">
             <div>
-              <h2 id="financial-summary-heading" className="card-title">Financial Summary</h2>
-              <p className="card-subtitle">Values are denominated in Saudi Riyal (SAR).</p>
+              <h2 id="financial-summary-heading" className="card-title">{t("ui.financialSummary.title")}</h2>
+              <p className="card-subtitle">{t("ui.financialSummary.subtitle")}</p>
             </div>
           </div>
           <ParkingSummary totals={estimate?.totals} notes={estimate?.notes} />
           <dl className="stat-grid">
             {(["land_value", "hard_costs", "soft_costs", "financing", "revenues"] as const).map((key) => (
               <div key={key} className="stat">
-                <dt>{
-                  key === "land_value"
-                    ? "Land value"
-                    : key === "hard_costs"
-                    ? "Hard costs"
-                    : key === "soft_costs"
-                    ? "Soft costs"
-                    : key === "financing"
-                    ? "Financing"
-                    : "Revenues"
-                }</dt>
-                <dd>{Math.round(totals[key]).toLocaleString()}</dd>
+                <dt>
+                  {t(
+                    key === "land_value"
+                      ? "ui.financialSummary.statLabels.landValue"
+                      : key === "hard_costs"
+                      ? "ui.financialSummary.statLabels.hardCosts"
+                      : key === "soft_costs"
+                      ? "ui.financialSummary.statLabels.softCosts"
+                      : key === "financing"
+                      ? "ui.financialSummary.statLabels.financing"
+                      : "ui.financialSummary.statLabels.revenues",
+                  )}
+                </dt>
+                <dd className="numeric-value">{formatCurrencySAR(totals[key])}</dd>
               </div>
             ))}
             <div className="stat highlight">
-              <dt>Percentile 50 (P50) profit</dt>
-              <dd>{Math.round(totals.p50_profit).toLocaleString()}</dd>
+              <dt>{t("ui.financialSummary.p50Profit")}</dt>
+              <dd className="numeric-value">{formatCurrencySAR(totals.p50_profit)}</dd>
             </div>
           </dl>
           {typeof irr === "number" && (
-            <p className="metrics-note">Equity Internal Rate of Return (IRR): {(irr * 100).toFixed(1)}%</p>
+            <p className="metrics-note">{t("ui.financialSummary.irrNote", { value: formatPercent(irr, { maximumFractionDigits: 1, minimumFractionDigits: 1 }, fallbackValue) })}</p>
           )}
           {estimate?.confidence_bands && (
             <p className="metrics-note">
-              Percentile 5 (P5) / Percentile 50 (P50) / Percentile 95 (P95) profit: {fmt(
-                estimate.confidence_bands.p5
-              )} / {fmt(estimate.confidence_bands.p50)} / {fmt(estimate.confidence_bands.p95)}
+              {t("ui.financialSummary.confidenceNote", {
+                p5: formatCurrencySAR(estimate.confidence_bands.p5),
+                p50: formatCurrencySAR(estimate.confidence_bands.p50),
+                p95: formatCurrencySAR(estimate.confidence_bands.p95),
+              })}
             </p>
           )}
 
           {estimate?.land_value_breakdown && (
             <div className="card-subsection">
-              <h3 className="section-heading">Land Value Breakdown</h3>
+              <h3 className="section-heading">{t("ui.landValueBreakdown.title")}</h3>
               <dl className="metrics-grid">
                 <div>
-                  <dt>Hedonic estimate</dt>
-                  <dd>{fmt(estimate.land_value_breakdown.hedonic)}</dd>
+                  <dt>{t("ui.landValueBreakdown.hedonic")}</dt>
+                  <dd className="numeric-value">{formatCurrencySAR(estimate.land_value_breakdown.hedonic)}</dd>
                 </div>
                 <div>
-                  <dt>Residual estimate</dt>
-                  <dd>{fmt(estimate.land_value_breakdown.residual)}</dd>
+                  <dt>{t("ui.landValueBreakdown.residual")}</dt>
+                  <dd className="numeric-value">{formatCurrencySAR(estimate.land_value_breakdown.residual)}</dd>
                 </div>
                 <div>
-                  <dt>Combined value</dt>
-                  <dd>{fmt(estimate.land_value_breakdown.combined)}</dd>
+                  <dt>{t("ui.landValueBreakdown.combined")}</dt>
+                  <dd className="numeric-value">{formatCurrencySAR(estimate.land_value_breakdown.combined)}</dd>
                 </div>
               </dl>
               <p className="metrics-note">
-                Weights — hedonic {fmt(estimate.land_value_breakdown.weights?.hedonic, 2)}, residual {fmt(
-                  estimate.land_value_breakdown.weights?.residual,
-                  2
-                )}; comparables used: {fmt(estimate.land_value_breakdown.comps_used)}
+                {t("ui.landValueBreakdown.weightsNote", {
+                  hedonic: formatNumberValue(estimate.land_value_breakdown.weights?.hedonic, 2),
+                  residual: formatNumberValue(estimate.land_value_breakdown.weights?.residual, 2),
+                  comps: formatIntegerValue(estimate.land_value_breakdown.comps_used),
+                })}
               </p>
             </div>
           )}
 
           <div className="card-subsection">
-            <h3 className="section-heading">Key Assumptions</h3>
+            <h3 className="section-heading">{t("ui.keyAssumptions.title")}</h3>
             <table className="data-table">
               <thead>
                 <tr>
-                  <th scope="col">Key</th>
-                  <th scope="col">Value</th>
-                  <th scope="col">Source</th>
+                  <th scope="col">{t("ui.keyAssumptions.headers.key")}</th>
+                  <th scope="col">{t("ui.keyAssumptions.headers.value")}</th>
+                  <th scope="col">{t("ui.keyAssumptions.headers.source")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -589,10 +652,10 @@ export default function App() {
                   <tr key={a.key}>
                     <td>{a.key}</td>
                     <td className="numeric-cell">
-                      {fmt(a.value)} {a.unit || ""}
+                      {formatMaybeNumber(a.value)} {a.unit || ""}
                     </td>
                     <td>
-                      <span style={badgeStyle(a.source_type)}>{a.source_type || "—"}</span>
+                      <span style={badgeStyle(a.source_type)}>{a.source_type || fallbackValue}</span>
                     </td>
                   </tr>
                 ))}
@@ -600,10 +663,10 @@ export default function App() {
                   <tr key={`rev-${i}`}>
                     <td>{l.key}</td>
                     <td className="numeric-cell">
-                      {fmt(l.value)} {l.unit || ""}
+                      {formatMaybeNumber(l.value)} {l.unit || ""}
                     </td>
                     <td>
-                      <span style={badgeStyle(l.source_type)}>{l.source_type || "—"}</span>
+                      <span style={badgeStyle(l.source_type)}>{l.source_type || fallbackValue}</span>
                     </td>
                   </tr>
                 ))}
@@ -613,14 +676,14 @@ export default function App() {
 
           {(estimate?.explainability?.drivers || estimate?.explainability?.top_comps) && (
             <div className="card-subsection">
-              <h3 className="section-heading">Explainability</h3>
+              <h3 className="section-heading">{t("ui.explainability.title")}</h3>
               {Array.isArray(estimate?.explainability?.drivers) && estimate.explainability.drivers.length > 0 && (
                 <div className="drivers-block">
-                  <h4>Drivers</h4>
+                  <h4>{t("ui.explainability.drivers")}</h4>
                   <ul>
                     {estimate.explainability.drivers.map((d: any, i: number) => (
                       <li key={i}>
-                        {d.name}: {d.direction} (≈ {fmt(d.magnitude, d.unit === "ratio" ? 2 : 0)} {d.unit || ""})
+                        {d.name}: {d.direction} (≈ {formatNumberValue(d.magnitude, d.unit === "ratio" ? 2 : 0)} {d.unit || ""})
                       </li>
                     ))}
                   </ul>
@@ -628,34 +691,34 @@ export default function App() {
               )}
               {Array.isArray(estimate?.explainability?.top_comps) && estimate.explainability.top_comps.length > 0 && (
                 <div className="table-wrapper">
-                  <h4>Top Comparables</h4>
+                  <h4>{t("ui.explainability.topComparables")}</h4>
                   <table className="data-table">
                     <thead>
                       <tr>
-                        <th scope="col">Identifier</th>
-                        <th scope="col">Date</th>
-                        <th scope="col">City / District</th>
-                        <th scope="col">Saudi Riyal per square meter (SAR/m²)</th>
-                        <th scope="col">Source</th>
+                        <th scope="col">{t("ui.explainability.headers.identifier")}</th>
+                        <th scope="col">{t("ui.explainability.headers.date")}</th>
+                        <th scope="col">{t("ui.explainability.headers.cityDistrict")}</th>
+                        <th scope="col">{t("ui.explainability.headers.sarPerM2")}</th>
+                        <th scope="col">{t("ui.explainability.headers.source")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {estimate.explainability.top_comps.map((c: any) => (
                         <tr key={c.id}>
                           <td>{c.id}</td>
-                          <td>{c.date}</td>
+                          <td>{c.date || fallbackValue}</td>
                           <td>
                             {c.city}
                             {c.district ? ` / ${c.district}` : ""}
                           </td>
-                          <td className="numeric-cell">{fmt(c.price_per_m2)}</td>
+                          <td className="numeric-cell">{formatNumberValue(c.price_per_m2)}</td>
                           <td>
                             {c.source_url ? (
                               <a href={c.source_url} target="_blank" rel="noreferrer">
-                                View source
+                                {t("ui.explainability.viewSource")}
                               </a>
                             ) : (
-                              c.source || "—"
+                              c.source || fallbackValue
                             )}
                           </td>
                         </tr>
@@ -670,46 +733,44 @@ export default function App() {
           {rentBlock && (
             <div className="card-subsection">
               <h3 className="section-heading">
-                {strategy === "build_to_rent" ? "Rent Snapshot" : "Rent Snapshot (reference)"}
+                {strategy === "build_to_rent"
+                  ? t("ui.rentSnapshot.title")
+                  : t("ui.rentSnapshot.referenceTitle")}
               </h3>
               <dl className="metrics-grid">
                 <div>
-                  <dt>Headline Rent (SAR/m²/month)</dt>
-                  <dd>{rentHeadline != null ? fmt(rentHeadline) : "—"}</dd>
+                  <dt>{t("ui.rentSnapshot.headlineRent")}</dt>
+                  <dd className="numeric-value">{rentHeadline != null ? formatNumberValue(rentHeadline) : fallbackValue}</dd>
                 </div>
                 {rentUnitRate != null && (
                   <div>
-                    <dt>Average Unit Rent (SAR/unit/month)</dt>
-                    <dd>{fmt(rentUnitRate)}</dd>
+                    <dt>{t("ui.rentSnapshot.averageUnitRent")}</dt>
+                    <dd className="numeric-value">{formatNumberValue(rentUnitRate)}</dd>
                   </div>
                 )}
                 {rentVacancy != null && (
                   <div>
-                    <dt>Vacancy</dt>
-                    <dd>
-                      {`${fmt(Math.abs(rentVacancy) <= 1 ? rentVacancy * 100 : rentVacancy, 1)}%`}
-                    </dd>
+                    <dt>{t("ui.rentSnapshot.vacancy")}</dt>
+                    <dd className="numeric-value">{formatPercentFromUnknown(rentVacancy, 1)}</dd>
                   </div>
                 )}
                 {rentGrowth != null && (
                   <div>
-                    <dt>Rent Growth</dt>
-                    <dd>
-                      {`${fmt(Math.abs(rentGrowth) <= 1 ? rentGrowth * 100 : rentGrowth, 1)}%`}
-                    </dd>
+                    <dt>{t("ui.rentSnapshot.rentGrowth")}</dt>
+                    <dd className="numeric-value">{formatPercentFromUnknown(rentGrowth, 1)}</dd>
                   </div>
                 )}
               </dl>
               {rentHasDrivers && (
                 <div className="drivers-block">
-                  <h4>Drivers</h4>
+                  <h4>{t("ui.rentSnapshot.drivers")}</h4>
                   <ul>
                     {rentDrivers.map((d, i) => {
                       const unitLabel = d.unit && d.unit !== "ratio" ? d.unit : "";
                       const digits = d.unit === "ratio" ? 2 : unitLabel === "SAR/m2" ? 0 : 2;
                       return (
                         <li key={`${d.name}-${i}`}>
-                          {d.name}: {d.direction} (≈ {fmt(d.magnitude, digits)} {unitLabel})
+                          {d.name}: {d.direction} (≈ {formatNumberValue(d.magnitude, digits)} {unitLabel})
                         </li>
                       );
                     })}
@@ -718,34 +779,34 @@ export default function App() {
               )}
               {rentHasComps && (
                 <div className="table-wrapper">
-                  <h4>Top Rent Comparables</h4>
+                  <h4>{t("ui.rentSnapshot.topComparables")}</h4>
                   <table className="data-table">
                     <thead>
                       <tr>
-                        <th scope="col">Identifier</th>
-                        <th scope="col">Date</th>
-                        <th scope="col">District</th>
-                        <th scope="col">SAR/m²/month</th>
-                        <th scope="col">Source</th>
+                        <th scope="col">{t("ui.rentSnapshot.headers.identifier")}</th>
+                        <th scope="col">{t("ui.rentSnapshot.headers.date")}</th>
+                        <th scope="col">{t("ui.rentSnapshot.headers.district")}</th>
+                        <th scope="col">{t("ui.rentSnapshot.headers.sarPerM2Month")}</th>
+                        <th scope="col">{t("ui.rentSnapshot.headers.source")}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {rentComps.map((r, index) => (
                         <tr key={`${r.id}-${index}`}>
                           <td>{r.id}</td>
-                          <td>{r.date ?? "—"}</td>
+                          <td>{r.date ?? fallbackValue}</td>
                           <td>
                             {r.city}
                             {r.district ? ` / ${r.district}` : ""}
                           </td>
-                          <td className="numeric-cell">{fmt(r.sar_per_m2)}</td>
+                          <td className="numeric-cell">{formatNumberValue(r.sar_per_m2)}</td>
                           <td>
                             {r.source_url ? (
                               <a href={r.source_url} target="_blank" rel="noreferrer">
-                                View source
+                                {t("ui.rentSnapshot.viewSource")}
                               </a>
                             ) : (
-                              r.source || "—"
+                              r.source || fallbackValue
                             )}
                           </td>
                         </tr>
@@ -756,7 +817,7 @@ export default function App() {
               )}
               {!rentHasDrivers && !rentHasComps && rentHeadline == null && rentUnitRate == null &&
                 rentVacancy == null && rentGrowth == null && (
-                  <p className="metrics-note">No rent indicators available for the selected area.</p>
+                  <p className="metrics-note">{t("ui.rentSnapshot.noIndicators")}</p>
                 )}
             </div>
           )}
@@ -767,35 +828,37 @@ export default function App() {
         <section className="card full-width" aria-labelledby="recent-comps-heading">
           <div className="card-header">
             <div>
-              <h2 id="recent-comps-heading" className="card-title">Recent Land Comparables in {city}</h2>
-              <p className="card-subtitle">Recorded transactions expressed as Saudi Riyal per square meter (SAR/m²).</p>
+              <h2 id="recent-comps-heading" className="card-title">
+                {t("ui.recentComps.title", { city })}
+              </h2>
+              <p className="card-subtitle">{t("ui.recentComps.subtitle")}</p>
             </div>
           </div>
           <div className="table-wrapper">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th scope="col">Identifier</th>
-                  <th scope="col">Date</th>
-                  <th scope="col">District</th>
-                  <th scope="col">Saudi Riyal per square meter (SAR/m²)</th>
-                  <th scope="col">Source</th>
+                  <th scope="col">{t("ui.recentComps.headers.identifier")}</th>
+                  <th scope="col">{t("ui.recentComps.headers.date")}</th>
+                  <th scope="col">{t("ui.recentComps.headers.district")}</th>
+                  <th scope="col">{t("ui.recentComps.headers.sarPerM2")}</th>
+                  <th scope="col">{t("ui.recentComps.headers.source")}</th>
                 </tr>
               </thead>
               <tbody>
                 {comps.map((r) => (
                   <tr key={r.id}>
                     <td>{r.id}</td>
-                    <td>{r.date}</td>
-                    <td>{r.district || "—"}</td>
-                    <td className="numeric-cell">{fmt(r.price_per_m2)}</td>
+                    <td>{r.date || fallbackValue}</td>
+                    <td>{r.district || fallbackValue}</td>
+                    <td className="numeric-cell">{formatNumberValue(r.price_per_m2)}</td>
                     <td>
                       {r.source_url ? (
                         <a href={r.source_url} target="_blank" rel="noreferrer">
-                          View source
+                          {t("ui.recentComps.viewSource")}
                         </a>
                       ) : (
-                        r.source || "—"
+                        r.source || fallbackValue
                       )}
                     </td>
                   </tr>

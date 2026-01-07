@@ -37,6 +37,11 @@ body {
   direction: rtl;
 }
 
+:root[dir="rtl"] .numeric-value {
+  direction: ltr;
+  unicode-bidi: plaintext;
+}
+
 a {
   color: var(--gold-400);
 }

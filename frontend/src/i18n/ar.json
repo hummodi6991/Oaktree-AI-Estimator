@@ -139,5 +139,169 @@
     "ruleset": "القاعدة: {{name}}",
     "source": "المصدر:",
     "viewGuide": "عرض دليل المواقف"
+  },
+  "ui": {
+    "brandName": "مجموعة أوكتري",
+    "heroTitle": "من الرؤية إلى الإرث",
+    "heroSubtitle": "منصة استثمارية منتقاة لصياغة مشاريع تحولية في المملكة العربية السعودية.",
+    "versionPill": "منصة التقدير v0",
+    "confidentialNote": "سري — مكتب التخطيط الاستراتيجي",
+    "dataFreshness": "حداثة البيانات",
+    "dataFreshnessLabels": {
+      "financingRates": "معدلات التمويل",
+      "marketIndicators": "مؤشرات السوق",
+      "saleComparables": "مقارنات المبيعات"
+    },
+    "defaults": {
+      "city": "الرياض"
+    },
+    "projectInputs": {
+      "title": "مدخلات المشروع",
+      "subtitle": "حدّد السياق الخاص بالتحليل.",
+      "cityLabel": "المدينة",
+      "farLabel": "معامل مساحة الطابق (FAR)",
+      "autoPill": "تلقائي (Overture)",
+      "useAutoFar": "استخدم FAR التلقائي ({{value}})",
+      "timelineLabel": "الجدول الزمني للتطوير (بالأشهر)"
+    },
+    "actions": {
+      "runEstimate": "تشغيل التقدير",
+      "calculatingEstimate": "جارٍ حساب التقدير…"
+    },
+    "scenario": {
+      "salePriceUpliftLabel": "زيادة سعر البيع (%)",
+      "applyScenario": "تطبيق سيناريو زيادة السعر",
+      "openPdfMemo": "فتح مذكرة PDF",
+      "downloadCsvExport": "تنزيل تصدير CSV",
+      "deltaProfitAlert": "Δ الربح (ريال سعودي): {{value}}"
+    },
+    "parking": {
+      "title": "مواقف السيارات",
+      "subtitle": "قدّم التفاصيل لتحسين حساب الحد الأدنى للمواقف.",
+      "apartmentSizeLabel": "مساحة الشقة لحساب المواقف (م²)",
+      "helper": "تُستخدم لحساب الحد الأدنى عند خلو مزيج الوحدات؛ الشقق أقل من 180 م² تفترض موقفًا واحدًا، وإلا موقفين."
+    },
+    "geometry": {
+      "title": "الهندسة (مضلع GeoJSON)",
+      "subtitle": "الصق أو عدّل الإحداثيات الجغرافية التي تحدد القطعة.",
+      "approxArea": "المساحة التقريبية",
+      "approxPerimeter": "المحيط التقريبي",
+      "vertices": "الرؤوس"
+    },
+    "units": {
+      "meters": "م",
+      "m2PerHa": "م²/هكتار"
+    },
+    "map": {
+      "title": "حدود الموقع",
+      "subtitle": "استخدم شريط الأدوات لرسم أو تحسين مضلع الموقع. انقر الخريطة لإضافة الرؤوس وأنهِ الرسم عند إغلاق الشكل."
+    },
+    "builtForm": {
+      "title": "الكتلة المبنية القائمة (Overture)",
+      "subtitle": "بصمات، ومؤشرات الطوابق، وافتراضات FAR مستنتجة من مباني Overture (نطاق {{buffer}} م).",
+      "builtUpFootprint": "بصمة البناء",
+      "coverageRatio": "نسبة التغطية",
+      "floorsProxy": "مؤشر الطوابق (الوسيط/المتوسط)",
+      "floorsProxyValue": "{{median}} وسيط / {{average}} متوسط",
+      "existingBua": "مساحة البناء القائمة",
+      "builtDensity": "كثافة البناء",
+      "suggestedFar": "FAR المقترح / FAR الأقصى",
+      "suggestedFarMax": " (الحد الأقصى {{value}})",
+      "contextProxy": " · مؤشر السياق {{value}}",
+      "potentialBua": "مساحة البناء المحتملة (عند FAR الأقصى)"
+    },
+    "financialSummary": {
+      "title": "الملخص المالي",
+      "subtitle": "القيم بالريال السعودي.",
+      "statLabels": {
+        "landValue": "قيمة الأرض",
+        "hardCosts": "التكاليف المباشرة",
+        "softCosts": "التكاليف غير المباشرة",
+        "financing": "التمويل",
+        "revenues": "الإيرادات"
+      },
+      "p50Profit": "ربح الشريحة المئوية 50 (P50)",
+      "irrNote": "معدل العائد الداخلي على حقوق الملكية (IRR): {{value}}",
+      "confidenceNote": "ربح الشريحة المئوية 5 (P5) / 50 (P50) / 95 (P95): {{p5}} / {{p50}} / {{p95}}"
+    },
+    "landValueBreakdown": {
+      "title": "تفصيل قيمة الأرض",
+      "hedonic": "تقدير هدونيك",
+      "residual": "تقدير الباقي",
+      "combined": "القيمة المجمعة",
+      "weightsNote": "الأوزان — هدونيك {{hedonic}}، الباقي {{residual}}؛ المقارنات المستخدمة: {{comps}}"
+    },
+    "keyAssumptions": {
+      "title": "الافتراضات الرئيسية",
+      "headers": {
+        "key": "المفتاح",
+        "value": "القيمة",
+        "source": "المصدر"
+      }
+    },
+    "explainability": {
+      "title": "قابلية التفسير",
+      "drivers": "المحركات",
+      "topComparables": "أعلى المقارنات",
+      "headers": {
+        "identifier": "المعرّف",
+        "date": "التاريخ",
+        "cityDistrict": "المدينة / الحي",
+        "sarPerM2": "ريال سعودي لكل متر مربع (ر.س/م²)",
+        "source": "المصدر"
+      },
+      "viewSource": "عرض المصدر"
+    },
+    "rentSnapshot": {
+      "title": "لمحة الإيجارات",
+      "referenceTitle": "لمحة الإيجارات (مرجعية)",
+      "headlineRent": "الإيجار الرئيسي (ر.س/م²/شهر)",
+      "averageUnitRent": "متوسط إيجار الوحدة (ر.س/وحدة/شهر)",
+      "vacancy": "الشواغر",
+      "rentGrowth": "نمو الإيجار",
+      "drivers": "المحركات",
+      "topComparables": "أعلى مقارنات الإيجار",
+      "headers": {
+        "identifier": "المعرّف",
+        "date": "التاريخ",
+        "district": "الحي",
+        "sarPerM2Month": "ر.س/م²/شهر",
+        "source": "المصدر"
+      },
+      "viewSource": "عرض المصدر",
+      "noIndicators": "لا تتوفر مؤشرات إيجار للمنطقة المحددة."
+    },
+    "recentComps": {
+      "title": "أحدث مقارنات الأراضي في {{city}}",
+      "subtitle": "معاملات مسجلة معبّرة بالريال السعودي لكل متر مربع (ر.س/م²).",
+      "headers": {
+        "identifier": "المعرّف",
+        "date": "التاريخ",
+        "district": "الحي",
+        "sarPerM2": "ريال سعودي لكل متر مربع (ر.س/م²)",
+        "source": "المصدر"
+      },
+      "viewSource": "عرض المصدر"
+    }
+  },
+  "mapDraw": {
+    "toolbar": {
+      "startPolygon": "بدء رسم مضلع",
+      "finishShape": "إنهاء الشكل",
+      "clear": "مسح",
+      "hint": "انقر لإضافة الرؤوس. انقر مزدوجًا أو اضغط إنهاء الشكل لإغلاق المضلع."
+    },
+    "zoomHud": {
+      "zoomLabel": "التكبير",
+      "outlinesLabel": "الحدود",
+      "on": "تشغيل",
+      "off": "إيقاف",
+      "thresholdAbove": "≥{{value}}",
+      "thresholdBelow": "<{{value}}"
+    },
+    "guidanceBadge": "إرشادات",
+    "guidanceText": "انقر لإضافة الرؤوس. انقر مزدوجًا أو اضغط إنهاء الشكل لإغلاق المضلع، ثم اسحب الرؤوس لتعديل القطعة أو اضغط مسح لإزالتها.",
+    "toggleOutlines": "إظهار حدود القطع",
+    "finishShape": "إنهاء الشكل"
   }
 }

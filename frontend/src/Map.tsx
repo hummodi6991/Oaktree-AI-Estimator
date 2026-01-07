@@ -4,15 +4,21 @@ import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import type { DataDrivenPropertyValueSpecification } from "@maplibre/maplibre-gl-style-spec";
 import type { Feature, Polygon } from "geojson";
 import type { IControl, LngLatLike } from "maplibre-gl";
+import { useTranslation } from "react-i18next";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import "./Map.css";
 import { buildApiUrl } from "./api";
+import { formatInteger, formatNumber } from "./i18n/format";
 
 type MapProps = { polygon?: Polygon | null; onPolygon: (geometry: Polygon | null) => void; };
 
 type ToolbarState = { isDrawing: boolean; hasPolygon: boolean };
-type ToolbarControl = IControl & { setState: (state: ToolbarState) => void };
+type ToolbarLabels = { start: string; finish: string; clear: string; hint: string };
+type ToolbarControl = IControl & {
+  setState: (state: ToolbarState) => void;
+  setLabels: (labels: ToolbarLabels) => void;
+};
 type OverlayDiagnostics = {
   zoom: number;
   maxZoom: number;
@@ -119,16 +125,21 @@ export function smartFocus(map: MapLibreMap, feature: GeoJSON.Feature) {
   });
 }
 
-function createToolbarControl(actions: {
+function createToolbarControl(
+  actions: {
   onStart: () => void;
   onFinish: () => void;
   onClear: () => void;
   getState: () => ToolbarState;
-}): ToolbarControl {
+  },
+  labels: ToolbarLabels,
+): ToolbarControl {
   let container: HTMLDivElement | null = null;
   let startButton: HTMLButtonElement | null = null;
   let finishButton: HTMLButtonElement | null = null;
   let clearButton: HTMLButtonElement | null = null;
+  let hintEl: HTMLParagraphElement | null = null;
+  let currentLabels = labels;
 
   const control: ToolbarControl = {
     onAdd() {
@@ -141,28 +152,28 @@ function createToolbarControl(actions: {
       startButton = document.createElement("button");
       startButton.type = "button";
       startButton.className = "map-toolbar__button";
-      startButton.textContent = "Start polygon";
+      startButton.textContent = currentLabels.start;
       startButton.addEventListener("click", actions.onStart);
 
       finishButton = document.createElement("button");
       finishButton.type = "button";
       finishButton.className = "map-toolbar__button";
-      finishButton.textContent = "Finish shape";
+      finishButton.textContent = currentLabels.finish;
       finishButton.addEventListener("click", actions.onFinish);
 
       clearButton = document.createElement("button");
       clearButton.type = "button";
       clearButton.className = "map-toolbar__button";
-      clearButton.textContent = "Clear";
+      clearButton.textContent = currentLabels.clear;
       clearButton.addEventListener("click", actions.onClear);
 
       group.append(startButton, finishButton, clearButton);
       container.append(group);
 
-      const hint = document.createElement("p");
-      hint.className = "map-toolbar__hint";
-      hint.textContent = "Click to add vertices. Double-click or press Finish shape to close the polygon.";
-      container.append(hint);
+      hintEl = document.createElement("p");
+      hintEl.className = "map-toolbar__hint";
+      hintEl.textContent = currentLabels.hint;
+      container.append(hintEl);
 
       control.setState(actions.getState());
       return container;
@@ -189,12 +200,20 @@ function createToolbarControl(actions: {
         clearButton.disabled = !state.hasPolygon;
       }
     },
+    setLabels(nextLabels) {
+      currentLabels = nextLabels;
+      if (startButton) startButton.textContent = nextLabels.start;
+      if (finishButton) finishButton.textContent = nextLabels.finish;
+      if (clearButton) clearButton.textContent = nextLabels.clear;
+      if (hintEl) hintEl.textContent = nextLabels.hint;
+    },
   };
 
   return control;
 }
 
 export default function MapView({ polygon, onPolygon }: MapProps) {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const drawRef = useRef<MapboxDraw | null>(null);
@@ -224,6 +243,15 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   });
   const overtureTileUrl = useMemo(() => buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf"), []);
   const parcelTileUrl = useMemo(() => buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf"), []);
+  const toolbarLabels = useMemo(
+    () => ({
+      start: t("mapDraw.toolbar.startPolygon"),
+      finish: t("mapDraw.toolbar.finishShape"),
+      clear: t("mapDraw.toolbar.clear"),
+      hint: t("mapDraw.toolbar.hint"),
+    }),
+    [t],
+  );
   const sourceLayerForTiles = (tilesUrl: string | null | undefined, fallback: string) => {
     if (!tilesUrl) return fallback;
     if (tilesUrl.includes("/v1/tiles/ovt/")) return "buildings";
@@ -642,24 +670,27 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
 
     finishDrawingRef.current = finishDrawing;
 
-    const toolbar = createToolbarControl({
-      onStart: () => {
-        if (!drawRef.current) return;
-        deleteAll(true);
-        drawRef.current.changeMode("draw_polygon");
-        updateDrawingState(true);
-        toolbarRef.current?.setState({ isDrawing: true, hasPolygon: false });
+    const toolbar = createToolbarControl(
+      {
+        onStart: () => {
+          if (!drawRef.current) return;
+          deleteAll(true);
+          drawRef.current.changeMode("draw_polygon");
+          updateDrawingState(true);
+          toolbarRef.current?.setState({ isDrawing: true, hasPolygon: false });
+        },
+        onFinish: finishDrawing,
+        onClear: () => {
+          if (!drawRef.current) return;
+          deleteAll(true);
+          updateDrawingState(false);
+          toolbarRef.current?.setState({ isDrawing: false, hasPolygon: false });
+          callbackRef.current(null);
+        },
+        getState: currentState,
       },
-      onFinish: finishDrawing,
-      onClear: () => {
-        if (!drawRef.current) return;
-        deleteAll(true);
-        updateDrawingState(false);
-        toolbarRef.current?.setState({ isDrawing: false, hasPolygon: false });
-        callbackRef.current(null);
-      },
-      getState: currentState,
-    });
+      toolbarLabels,
+    );
 
     toolbarRef.current = toolbar;
     map.addControl(toolbar, "top-right");
@@ -806,6 +837,10 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   }, [polygon]);
 
   useEffect(() => {
+    toolbarRef.current?.setLabels(toolbarLabels);
+  }, [toolbarLabels]);
+
+  useEffect(() => {
     const map = mapRef.current;
     if (!map || !map.isStyleLoaded()) return;
     const visibility = showParcelOutlines ? "visible" : "none";
@@ -827,21 +862,25 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       <div ref={containerRef} className="map-canvas" />
       <div className="map-zoom-hud">
         <div className="map-zoom-hud__row">
-          <span>Zoom</span>
-          <span>{zoomLevel.toFixed(2)}</span>
+          <span>{t("mapDraw.zoomHud.zoomLabel")}</span>
+          <span className="numeric-value">{formatNumber(zoomLevel, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}</span>
         </div>
         <div className="map-zoom-hud__row">
-          <span>Outlines</span>
+          <span>{t("mapDraw.zoomHud.outlinesLabel")}</span>
           <span>
-            {outlinesOn ? "ON" : "OFF"} ({outlinesEligible ? ">=15" : "<15"})
+            {outlinesOn ? t("mapDraw.zoomHud.on") : t("mapDraw.zoomHud.off")}{" "}
+            (
+            {outlinesEligible
+              ? t("mapDraw.zoomHud.thresholdAbove", { value: formatInteger(OVT_MIN_ZOOM) })
+              : t("mapDraw.zoomHud.thresholdBelow", { value: formatInteger(OVT_MIN_ZOOM) })}
+            )
           </span>
         </div>
       </div>
       <div className="map-overlay">
-        <span className="map-overlay__badge">Guidance</span>
+        <span className="map-overlay__badge">{t("mapDraw.guidanceBadge")}</span>
         <p>
-          Click to add vertices. Double-click or press Finish shape to close the polygon, then drag
-          vertices to adjust the parcel or press Clear to remove it.
+          {t("mapDraw.guidanceText")}
         </p>
         <label className="map-overlay__toggle">
           <input
@@ -849,11 +888,11 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             checked={showParcelOutlines}
             onChange={(event) => setShowParcelOutlines(event.target.checked)}
           />
-          Show parcel outlines
+          {t("mapDraw.toggleOutlines")}
         </label>
         {isDrawing && (
           <button type="button" className="map-overlay__finish" onClick={() => finishDrawingRef.current()}>
-            Finish shape
+            {t("mapDraw.finishShape")}
           </button>
         )}
       </div>

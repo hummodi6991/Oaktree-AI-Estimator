@@ -1,6 +1,6 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { formatNumber } from "../i18n/format";
+import { formatInteger, formatNumber } from "../i18n/format";
 
 type AnyDict = Record<string, any>;
 
@@ -14,15 +14,15 @@ function unwrapNotes(notes: any): AnyDict | undefined {
 }
 
 export default function ParkingSummary(props: { totals?: AnyDict; notes?: any }) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const totals = props.totals || {};
   const notes = unwrapNotes(props.notes);
   const parking: AnyDict | undefined = notes?.parking;
   const fallback = t("common.notAvailable");
 
-  const fmtInt = (value: any) => formatNumber(value, i18n.language, { maximumFractionDigits: 0 }, fallback);
+  const fmtInt = (value: any) => formatInteger(value, fallback);
   const fmtNum = (value: any, decimals = 0) =>
-    formatNumber(value, i18n.language, { maximumFractionDigits: decimals, minimumFractionDigits: decimals }, fallback);
+    formatNumber(value, { maximumFractionDigits: decimals, minimumFractionDigits: decimals }, fallback);
 
   const yesNo = (value: any): string => {
     if (value === true) return t("common.yes");
@@ -99,17 +99,17 @@ export default function ParkingSummary(props: { totals?: AnyDict; notes?: any })
       <div style={{ display: "grid", gap: 8 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
           <div>{t("parking.requiredSpaces")}</div>
-          <div><strong>{fmtInt(required)}</strong></div>
+          <div><strong className="numeric-value">{fmtInt(required)}</strong></div>
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
           <div>{t("parking.providedSpaces")}</div>
-          <div><strong>{fmtInt(provided)}</strong></div>
+          <div><strong className="numeric-value">{fmtInt(provided)}</strong></div>
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
           <div>{t("parking.deficit")}</div>
-          <div><strong>{fmtInt(deficit)}</strong></div>
+          <div><strong className="numeric-value">{fmtInt(deficit)}</strong></div>
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
@@ -120,7 +120,7 @@ export default function ParkingSummary(props: { totals?: AnyDict; notes?: any })
         {parkingAreaM2 !== undefined && (
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
             <div>{t("parking.parkingArea")}</div>
-            <div><strong>{fmtNum(parkingAreaM2, 0)}</strong></div>
+            <div><strong className="numeric-value">{fmtNum(parkingAreaM2, 0)}</strong></div>
           </div>
         )}
 
@@ -147,7 +147,7 @@ export default function ParkingSummary(props: { totals?: AnyDict; notes?: any })
             <ul>
               {Object.entries(requiredByComponent).map(([k, v]) => (
                 <li key={k}>
-                  {k}: {fmtInt(v)}
+                  {k}: <span className="numeric-value">{fmtInt(v)}</span>
                 </li>
               ))}
             </ul>
