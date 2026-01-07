@@ -3,6 +3,7 @@ import maplibregl from "maplibre-gl";
 import proj4 from "proj4";
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from "geojson";
 import { useTranslation } from "react-i18next";
+import { formatInteger, formatNumber } from "../i18n/format";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -253,6 +254,14 @@ export default function Map({ onParcel }: MapProps) {
     selectedParcelIdsRef.current = selectedParcelIds;
   }, [selectedParcelIds]);
 
+  const formatParcelId = (value: string) => {
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue)) {
+      return formatNumber(numericValue, { maximumFractionDigits: 0, minimumFractionDigits: 0 }, value);
+    }
+    return value;
+  };
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -316,7 +325,7 @@ export default function Map({ onParcel }: MapProps) {
             setSelectedParcelIds(nextIds);
 
             if (alreadySelected) {
-              setStatus({ key: "map.status.removedSelection", options: { id: nextParcel.parcel_id } });
+              setStatus({ key: "map.status.removedSelection", options: { id: formatParcelId(nextParcel.parcel_id) } });
               return {
                 type: "FeatureCollection",
                 features: current.features.filter(
@@ -328,7 +337,7 @@ export default function Map({ onParcel }: MapProps) {
             const nextFeature = featureFromParcel(nextParcel);
             setStatus({
               key: "map.status.addedSelection",
-              options: { id: nextParcel.parcel_id, count: nextIds.length },
+              options: { id: formatParcelId(nextParcel.parcel_id), count: formatInteger(nextIds.length) },
             });
             if (!nextFeature) {
               return current;
@@ -347,7 +356,7 @@ export default function Map({ onParcel }: MapProps) {
               : { type: "FeatureCollection", features: [] },
           );
           if (parcel.parcel_id) {
-            setStatus({ key: "map.status.selectedWithId", options: { id: parcel.parcel_id } });
+            setStatus({ key: "map.status.selectedWithId", options: { id: formatParcelId(parcel.parcel_id) } });
           } else {
             setStatus({ key: "map.status.selected" });
           }
@@ -421,7 +430,7 @@ export default function Map({ onParcel }: MapProps) {
   };
 
   const selectedList = selectedParcelIds.length
-    ? t("map.status.selectedList", { list: selectedParcelIds.join(", ") })
+    ? t("map.status.selectedList", { list: selectedParcelIds.map((id) => formatParcelId(id)).join(", ") })
     : t("map.status.noneSelected");
 
   return (

@@ -139,5 +139,169 @@
     "ruleset": "Ruleset: {{name}}",
     "source": "Source:",
     "viewGuide": "View parking guide"
+  },
+  "ui": {
+    "brandName": "Oaktree Group",
+    "heroTitle": "From Vision to Legacy",
+    "heroSubtitle": "A curated investment console to sculpt transformative developments across the Kingdom of Saudi Arabia.",
+    "versionPill": "Estimator Console v0",
+    "confidentialNote": "Confidential — Strategic Planning Office",
+    "dataFreshness": "Data Freshness",
+    "dataFreshnessLabels": {
+      "financingRates": "Financing Rates",
+      "marketIndicators": "Market Indicators",
+      "saleComparables": "Sale Comparables"
+    },
+    "defaults": {
+      "city": "Riyadh"
+    },
+    "projectInputs": {
+      "title": "Project Inputs",
+      "subtitle": "Define the context for the analysis.",
+      "cityLabel": "City",
+      "farLabel": "Floor Area Ratio (FAR)",
+      "autoPill": "Auto (Overture)",
+      "useAutoFar": "Use auto FAR ({{value}})",
+      "timelineLabel": "Development Timeline (months)"
+    },
+    "actions": {
+      "runEstimate": "Run Estimate",
+      "calculatingEstimate": "Calculating estimate…"
+    },
+    "scenario": {
+      "salePriceUpliftLabel": "Sale Price Uplift (%)",
+      "applyScenario": "Apply price uplift scenario",
+      "openPdfMemo": "Open Portable Document Format (PDF) memo",
+      "downloadCsvExport": "Download Comma-Separated Values (CSV) export",
+      "deltaProfitAlert": "Δ Profit (Saudi Riyal - SAR): {{value}}"
+    },
+    "parking": {
+      "title": "Parking",
+      "subtitle": "Provide details to refine parking minimum calculations.",
+      "apartmentSizeLabel": "Apartment size for parking (m²)",
+      "helper": "Used for parking minimums when Unit Mix is empty; apartments under 180 m² assume 1 space, otherwise 2."
+    },
+    "geometry": {
+      "title": "Geometry (GeoJSON Polygon)",
+      "subtitle": "Paste or edit the geographic coordinates that define the parcel.",
+      "approxArea": "Approximate Area",
+      "approxPerimeter": "Approximate Perimeter",
+      "vertices": "Vertices"
+    },
+    "units": {
+      "meters": "m",
+      "m2PerHa": "m²/ha"
+    },
+    "map": {
+      "title": "Site Boundary",
+      "subtitle": "Use the toolbar to draw or refine the site polygon. Click the map to add vertices and finish when the shape is closed."
+    },
+    "builtForm": {
+      "title": "Existing Built Form (Overture)",
+      "subtitle": "Footprints, floors proxies, and FAR defaults inferred from Overture buildings (buffer {{buffer}} m).",
+      "builtUpFootprint": "Built-up footprint",
+      "coverageRatio": "Coverage ratio",
+      "floorsProxy": "Floors proxy (median/avg)",
+      "floorsProxyValue": "{{median}} median / {{average}} avg",
+      "existingBua": "Existing BUA",
+      "builtDensity": "Built density",
+      "suggestedFar": "Suggested FAR / FAR max",
+      "suggestedFarMax": " (max {{value}})",
+      "contextProxy": " · context proxy {{value}}",
+      "potentialBua": "Potential BUA (at FAR max)"
+    },
+    "financialSummary": {
+      "title": "Financial Summary",
+      "subtitle": "Values are denominated in Saudi Riyal (SAR).",
+      "statLabels": {
+        "landValue": "Land value",
+        "hardCosts": "Hard costs",
+        "softCosts": "Soft costs",
+        "financing": "Financing",
+        "revenues": "Revenues"
+      },
+      "p50Profit": "Percentile 50 (P50) profit",
+      "irrNote": "Equity Internal Rate of Return (IRR): {{value}}",
+      "confidenceNote": "Percentile 5 (P5) / Percentile 50 (P50) / Percentile 95 (P95) profit: {{p5}} / {{p50}} / {{p95}}"
+    },
+    "landValueBreakdown": {
+      "title": "Land Value Breakdown",
+      "hedonic": "Hedonic estimate",
+      "residual": "Residual estimate",
+      "combined": "Combined value",
+      "weightsNote": "Weights — hedonic {{hedonic}}, residual {{residual}}; comparables used: {{comps}}"
+    },
+    "keyAssumptions": {
+      "title": "Key Assumptions",
+      "headers": {
+        "key": "Key",
+        "value": "Value",
+        "source": "Source"
+      }
+    },
+    "explainability": {
+      "title": "Explainability",
+      "drivers": "Drivers",
+      "topComparables": "Top Comparables",
+      "headers": {
+        "identifier": "Identifier",
+        "date": "Date",
+        "cityDistrict": "City / District",
+        "sarPerM2": "Saudi Riyal per square meter (SAR/m²)",
+        "source": "Source"
+      },
+      "viewSource": "View source"
+    },
+    "rentSnapshot": {
+      "title": "Rent Snapshot",
+      "referenceTitle": "Rent Snapshot (reference)",
+      "headlineRent": "Headline Rent (SAR/m²/month)",
+      "averageUnitRent": "Average Unit Rent (SAR/unit/month)",
+      "vacancy": "Vacancy",
+      "rentGrowth": "Rent Growth",
+      "drivers": "Drivers",
+      "topComparables": "Top Rent Comparables",
+      "headers": {
+        "identifier": "Identifier",
+        "date": "Date",
+        "district": "District",
+        "sarPerM2Month": "SAR/m²/month",
+        "source": "Source"
+      },
+      "viewSource": "View source",
+      "noIndicators": "No rent indicators available for the selected area."
+    },
+    "recentComps": {
+      "title": "Recent Land Comparables in {{city}}",
+      "subtitle": "Recorded transactions expressed as Saudi Riyal per square meter (SAR/m²).",
+      "headers": {
+        "identifier": "Identifier",
+        "date": "Date",
+        "district": "District",
+        "sarPerM2": "Saudi Riyal per square meter (SAR/m²)",
+        "source": "Source"
+      },
+      "viewSource": "View source"
+    }
+  },
+  "mapDraw": {
+    "toolbar": {
+      "startPolygon": "Start polygon",
+      "finishShape": "Finish shape",
+      "clear": "Clear",
+      "hint": "Click to add vertices. Double-click or press Finish shape to close the polygon."
+    },
+    "zoomHud": {
+      "zoomLabel": "Zoom",
+      "outlinesLabel": "Outlines",
+      "on": "ON",
+      "off": "OFF",
+      "thresholdAbove": "≥{{value}}",
+      "thresholdBelow": "<{{value}}"
+    },
+    "guidanceBadge": "Guidance",
+    "guidanceText": "Click to add vertices. Double-click or press Finish shape to close the polygon, then drag vertices to adjust the parcel or press Clear to remove it.",
+    "toggleOutlines": "Show parcel outlines",
+    "finishShape": "Finish shape"
   }
 }

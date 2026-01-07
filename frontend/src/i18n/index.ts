@@ -26,6 +26,11 @@ const applyDocumentLocale = (locale: string) => {
   document.documentElement.dir = isArabic ? "rtl" : "ltr";
   document.documentElement.lang = isArabic ? "ar" : "en";
   document.documentElement.dataset.locale = isArabic ? "ar" : "en";
+  document.documentElement.classList.toggle("rtl", isArabic);
+  if (document.body) {
+    document.body.dir = isArabic ? "rtl" : "ltr";
+    document.body.classList.toggle("rtl", isArabic);
+  }
 };
 
 i18n

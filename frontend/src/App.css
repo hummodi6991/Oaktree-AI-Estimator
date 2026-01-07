@@ -6,6 +6,16 @@
   color: var(--sand-50);
 }
 
+.app-shell.rtl {
+  direction: rtl;
+}
+
+.app-shell.rtl .numeric-cell,
+.app-shell.rtl .numeric-value {
+  direction: ltr;
+  unicode-bidi: plaintext;
+}
+
 .app-shell::before {
   content: "";
   position: absolute;

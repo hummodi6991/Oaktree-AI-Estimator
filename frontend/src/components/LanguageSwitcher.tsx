@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { runFormatSanityCheck } from "../i18n/format";
 
 const LANGUAGE_OPTIONS = [
   { value: "en", labelKey: "language.english" },
@@ -35,6 +36,8 @@ export default function LanguageSwitcher() {
         actual: document.documentElement.dir,
       });
     }
+
+    runFormatSanityCheck(i18n.language);
   }, [i18n.language, t]);
 
   return (

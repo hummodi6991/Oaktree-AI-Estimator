@@ -11,7 +11,7 @@ import {
 } from "../lib/excelTemplates";
 import ParkingSummary from "./ParkingSummary";
 import type { EstimateNotes, EstimateTotals } from "../lib/types";
-import { formatNumber, formatPercent } from "../i18n/format";
+import { formatAreaM2, formatCurrencySAR, formatNumber, formatPercent } from "../i18n/format";
 
 const PROVIDERS = [
   {
@@ -121,7 +121,7 @@ const normalizeEffectivePct = (value?: number | null) => {
 };
 
 export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const [provider, setProvider] = useState<(typeof PROVIDERS)[number]["value"]>("blended_v1");
   const [price, setPrice] = useState<number | null>(null);
   const [suggestedPrice, setSuggestedPrice] = useState<number | null>(null);
@@ -134,10 +134,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const providerLabel = t(`excel.providers.${provider}`);
 
   const formatNumberValue = (value: number | string | null | undefined, digits = 0) =>
-    formatNumber(value, i18n.language, { maximumFractionDigits: digits, minimumFractionDigits: digits }, notAvailable);
+    formatNumber(value, { maximumFractionDigits: digits, minimumFractionDigits: digits }, notAvailable);
 
   const formatPercentValue = (value?: number | null, digits = 1) =>
-    formatPercent(value ?? null, i18n.language, { maximumFractionDigits: digits, minimumFractionDigits: digits }, notAvailable);
+    formatPercent(value ?? null, { maximumFractionDigits: digits, minimumFractionDigits: digits }, notAvailable);
 
   // User override from dropdown; null means "use inferred"
   const [overrideLandUse, setOverrideLandUse] = useState<LandUseCode | null>(normalizedPropLandUse);
@@ -378,10 +378,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     fitoutTotalFromBreakdown ?? (typeof excelResult?.costs?.fitout_cost === "number" ? excelResult.costs.fitout_cost : 0);
   const fitoutExcluded = !includeFitout;
 
-  const formatArea = (value: number | null | undefined) => {
-    if (value == null || Number.isNaN(Number(value))) return "";
-    return `${formatNumberValue(Number(value), 0)} m²`;
-  };
+  const formatArea = (value: number | null | undefined) =>
+    formatAreaM2(Number(value), { maximumFractionDigits: 0 }, "");
 
   const buaNote = (key: string) => {
     const noteKey = `${key}_bua`;
@@ -510,7 +508,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const noteStyle = { fontSize: "0.8rem", color: "#cbd5f5" } as const;
   const baseCellStyle = { padding: "0.65rem 0.75rem", verticalAlign: "top" } as const;
   const itemColumnStyle = { ...baseCellStyle, paddingLeft: 0 } as const;
-  const amountColumnStyle = { ...baseCellStyle, textAlign: "right", paddingRight: "1.5rem" } as const;
+  const amountColumnStyle = {
+    ...baseCellStyle,
+    textAlign: "right",
+    paddingRight: "1.5rem",
+    direction: "ltr",
+    unicodeBidi: "plaintext",
+  } as const;
   const calcColumnStyle = {
     ...baseCellStyle,
     ...noteStyle,
@@ -702,7 +706,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.landCost")}</td>
                     <td style={amountColumnStyle}>
-                      {formatNumberValue(excelResult.costs.land_cost, 0)} SAR
+                      {formatCurrencySAR(excelResult.costs.land_cost)}
                     </td>
                     <td style={calcColumnStyle}>
                       {landNote}
@@ -711,7 +715,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.constructionDirect")}</td>
                     <td style={amountColumnStyle}>
-                      {formatNumberValue(excelResult.costs.construction_direct_cost, 0)} SAR
+                      {formatCurrencySAR(excelResult.costs.construction_direct_cost)}
                     </td>
                     <td style={calcColumnStyle}>
                       {explanations.construction_direct
@@ -750,7 +754,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       </div>
                     </td>
                     <td style={amountColumnStyle}>
-                      {formatNumberValue(excelResult.costs.fitout_cost, 0)} SAR
+                      {formatCurrencySAR(excelResult.costs.fitout_cost)}
                     </td>
                     <td style={calcColumnStyle}>
                       {fitoutNote}
@@ -759,7 +763,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.contingency")}</td>
                     <td style={amountColumnStyle}>
-                      {formatNumberValue(excelResult.costs.contingency_cost, 0)} SAR
+                      {formatCurrencySAR(excelResult.costs.contingency_cost)}
                     </td>
                     <td style={calcColumnStyle}>
                       {contingencyNote}
@@ -768,7 +772,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.consultants")}</td>
                     <td style={amountColumnStyle}>
-                      {formatNumberValue(excelResult.costs.consultants_cost, 0)} SAR
+                      {formatCurrencySAR(excelResult.costs.consultants_cost)}
                     </td>
                     <td style={calcColumnStyle}>
                       {consultantsNote}
@@ -777,7 +781,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.feasibilityFee")}</td>
                     <td style={amountColumnStyle}>
-                      {formatNumberValue(excelResult.costs.feasibility_fee, 0)} SAR
+                      {formatCurrencySAR(excelResult.costs.feasibility_fee)}
                     </td>
                     <td style={calcColumnStyle}>
                       {t("excelNotes.feasibility", {
@@ -789,7 +793,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.transactionCosts")}</td>
                     <td style={amountColumnStyle}>
-                      {formatNumberValue(excelResult.costs.transaction_cost, 0)} SAR
+                      {formatCurrencySAR(excelResult.costs.transaction_cost)}
                     </td>
                     <td style={calcColumnStyle}>
                       {transactionNote}
@@ -800,7 +804,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       <strong>{t("excel.totalCapex")}</strong>
                     </td>
                     <td style={amountColumnStyle}>
-                      <strong>{formatNumberValue(excelResult.costs.grand_total_capex, 0)} SAR</strong>
+                      <strong>{formatCurrencySAR(excelResult.costs.grand_total_capex)}</strong>
                     </td>
                     <td style={calcColumnStyle}>
                       {t("excel.totalCapexNote")}
@@ -833,14 +837,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   {revenueItems.map((item) => (
                     <tr key={item.key}>
                       <td style={itemColumnStyle}>{item.key.replace(/_/g, " ")}</td>
-                      <td style={amountColumnStyle}>{formatNumberValue(item.amount || 0, 0)} SAR</td>
+                      <td style={amountColumnStyle}>{formatCurrencySAR(item.amount || 0)}</td>
                       <td style={calcColumnStyle}>{item.note}</td>
                     </tr>
                   ))}
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.year1Income")}</td>
                     <td style={amountColumnStyle}>
-                      {formatNumberValue(excelResult.costs.y1_income, 0)} SAR
+                      {formatCurrencySAR(excelResult.costs.y1_income)}
                     </td>
                     <td style={calcColumnStyle}>
                       {incomeNote || t("excel.year1IncomeNote")}
@@ -895,7 +899,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       </div>
                     </td>
                     <td style={amountColumnStyle}>
-                      {formatNumberValue(excelResult.costs.y1_income_effective ?? 0, 0)} SAR
+                      {formatCurrencySAR(excelResult.costs.y1_income_effective ?? 0)}
                     </td>
                     <td style={calcColumnStyle}>{y1IncomeEffectiveNote}</td>
                   </tr>
