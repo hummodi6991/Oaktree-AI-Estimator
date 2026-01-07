@@ -121,7 +121,7 @@ const normalizeEffectivePct = (value?: number | null) => {
 };
 
 export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [provider, setProvider] = useState<(typeof PROVIDERS)[number]["value"]>("blended_v1");
   const [price, setPrice] = useState<number | null>(null);
   const [suggestedPrice, setSuggestedPrice] = useState<number | null>(null);
@@ -132,6 +132,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const initialLandUse = normalizedPropLandUse ?? normalizedParcelLandUse ?? "s";
   const notAvailable = t("common.notAvailable");
   const providerLabel = t(`excel.providers.${provider}`);
+  const isArabic = i18n.language?.toLowerCase().startsWith("ar");
 
   const formatNumberValue = (value: number | string | null | undefined, digits = 0) =>
     formatNumber(value, { maximumFractionDigits: digits, minimumFractionDigits: digits }, notAvailable);
@@ -315,12 +316,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   }
 
   const breakdown = excelResult?.breakdown || {};
+  const notes = excelResult?.notes || {};
   const builtArea = breakdown.built_area || {};
   const farAboveGround = breakdown.far_above_ground;
   const nla = breakdown.nla || {};
   const directCost = breakdown.direct_cost || {};
   const incomeComponents = breakdown.y1_income_components || {};
-  const explanations = breakdown.explanations || {};
+  const explanations =
+    (isArabic
+      ? breakdown.explanations_ar ?? breakdown.explanations_en ?? breakdown.explanations
+      : breakdown.explanations_en ?? breakdown.explanations) || {};
   const farNote = explanations.effective_far_above_ground;
   const usedInputs = excelResult?.inputs || {};
   const unitCost = usedInputs.unit_cost || {};
@@ -550,8 +555,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     };
   });
   const summaryText =
-    (excelResult?.summary && excelResult.summary.trim()) ||
-    (excelResult ? t("excel.summaryRoi", { value: formatPercentValue(excelResult.roi) }) : "");
+    (isArabic
+      ? notes.summary_ar ?? notes.summary_en ?? notes.summary
+      : notes.summary_en ?? notes.summary ?? excelResult?.summary
+    )?.trim() || (excelResult ? t("excel.summaryRoi", { value: formatPercentValue(excelResult.roi) }) : "");
+  const unitCountMethodology =
+    (isArabic
+      ? notes.unit_count_methodology_ar ?? notes.unit_count_methodology_en ?? notes.unit_count_methodology
+      : notes.unit_count_methodology_en ?? notes.unit_count_methodology
+    )?.trim() || "";
 
   return (
     <div>
@@ -915,7 +927,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                 </tbody>
               </table>
 
-              {summaryText && (
+              {(summaryText || unitCountMethodology) && (
                 <div
                   style={{
                     marginTop: "0.75rem",
@@ -926,7 +938,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   <h5 style={{ margin: "0 0 0.35rem 0", fontSize: "0.95rem" }}>
                     {t("excel.executiveSummary")}
                   </h5>
-                  <p style={{ margin: 0, lineHeight: 1.4 }}>{summaryText}</p>
+                  {summaryText && <p style={{ margin: 0, lineHeight: 1.4 }}>{summaryText}</p>}
+                  {unitCountMethodology && (
+                    <p style={{ margin: "0.35rem 0 0", lineHeight: 1.4, opacity: 0.85 }}>
+                      {unitCountMethodology}
+                    </p>
+                  )}
                 </div>
               )}
             </div>

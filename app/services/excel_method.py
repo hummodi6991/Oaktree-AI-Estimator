@@ -159,6 +159,11 @@ def scale_placeholder_area_ratio(
         f"target FAR {float(target_far):.2f} (scale {scale_str}; source {target_far_source or 'far'}); "
         "basement ratio unchanged"
     )
+    result["area_ratio_note_ar"] = (
+        f"تم ضبط نسب المساحة فوق الأرض تلقائيًا: معامل البناء الأساسي {base_sum:.2f} → "
+        f"المعامل المستهدف {float(target_far):.2f} (معامل التحجيم {scale_str}؛ المصدر {target_far_source or 'far'}); "
+        "نسبة القبو دون تغيير"
+    )
     return result
 
 
@@ -273,7 +278,7 @@ def _fmt_amount(value: float | int | str | None, decimals: int = 3) -> str:
 
 def build_excel_explanations(
     site_area_m2: float, inputs: Dict[str, Any], breakdown: Dict[str, Any]
-) -> Dict[str, str]:
+) -> tuple[Dict[str, str], Dict[str, str]]:
     """Human-readable explanations for the Excel-style cost breakdown.
 
     These are used by the web UI and PDF export, so keep wording synchronized here.
@@ -302,16 +307,24 @@ def build_excel_explanations(
 
     re_scalar = float(inputs.get("re_price_index_scalar") or 1.0)
 
-    explanations: Dict[str, str] = {}
+    explanations_en: Dict[str, str] = {}
+    explanations_ar: Dict[str, str] = {}
     area_ratio_note = str(inputs.get("area_ratio_note") or "").strip()
+    area_ratio_note_ar = str(inputs.get("area_ratio_note_ar") or area_ratio_note).strip()
     if area_ratio_note:
-        explanations["area_ratio_override"] = area_ratio_note
+        explanations_en["area_ratio_override"] = area_ratio_note
+    if area_ratio_note_ar:
+        explanations_ar["area_ratio_override"] = area_ratio_note_ar
 
     land_price = float(inputs.get("land_price_sar_m2", 0.0) or 0.0)
     land_cost_total = float(breakdown.get("land_cost", site_area_m2 * land_price) or 0.0)
-    explanations["land_cost"] = (
+    explanations_en["land_cost"] = (
         f"{_fmt_amount(site_area_m2)} m² × {land_price:,.0f} SAR/m² = {_fmt_amount(land_cost_total)} SAR. "
         "Land price is estimated using a hedonic model calibrated on comparable transactions."
+    )
+    explanations_ar["land_cost"] = (
+        f"{_fmt_amount(site_area_m2)} م² × {land_price:,.0f} SAR/م² = {_fmt_amount(land_cost_total)} SAR. "
+        "تم تقدير سعر الأرض باستخدام نموذج هدوني معاير على معاملات مماثلة."
     )
 
     note_appended = False
@@ -320,24 +333,38 @@ def build_excel_explanations(
         if ratio:
             key_lower = str(key).lower()
             if key_lower.startswith("basement"):
-                explanations[f"{key}_bua"] = (
+                explanations_en[f"{key}_bua"] = (
                     f"{_fmt_amount(site_area_m2)} m² × basement ratio {ratio:.3f} = {_fmt_amount(area)} m². "
                     "Basement area is estimated separately and excluded from FAR calculations."
                 )
+                explanations_ar[f"{key}_bua"] = (
+                    f"{_fmt_amount(site_area_m2)} م² × نسبة القبو {ratio:.3f} = {_fmt_amount(area)} م². "
+                    "يتم تقدير مساحة القبو بشكل منفصل واستبعادها من حسابات معامل البناء."
+                )
             else:
-                explanations[f"{key}_bua"] = (
+                explanations_en[f"{key}_bua"] = (
                     f"{_fmt_amount(site_area_m2)} m² × area ratio {ratio:.3f} = {_fmt_amount(area)} m²."
                 )
+                explanations_ar[f"{key}_bua"] = (
+                    f"{_fmt_amount(site_area_m2)} م² × نسبة المساحة {ratio:.3f} = {_fmt_amount(area)} م²."
+                )
             if area_ratio_note and not note_appended and not key_lower.startswith("basement"):
-                explanations[f"{key}_bua"] = f"{explanations[f'{key}_bua']} {area_ratio_note}"
+                explanations_en[f"{key}_bua"] = f"{explanations_en[f'{key}_bua']} {area_ratio_note}"
+                if area_ratio_note_ar:
+                    explanations_ar[f"{key}_bua"] = f"{explanations_ar[f'{key}_bua']} {area_ratio_note_ar}"
                 note_appended = True
         else:
-            explanations[f"{key}_bua"] = f"Built-up area {_fmt_amount(area)} m²."
+            explanations_en[f"{key}_bua"] = f"Built-up area {_fmt_amount(area)} m²."
+            explanations_ar[f"{key}_bua"] = f"المساحة المبنية {_fmt_amount(area)} م²."
 
     floors_above_ground = inputs.get("floors_above_ground")
     baseline_floors_above_ground = inputs.get("baseline_floors_above_ground")
     far_explanation = (
         "Effective above-ground FAR = Σ(area ratios excluding basement) "
+        f"= {far_above_ground:.3f}."
+    )
+    far_explanation_ar = (
+        "معامل البناء الفعّال فوق الأرض = Σ(نسب المساحة باستثناء القبو) "
         f"= {far_above_ground:.3f}."
     )
     try:
@@ -349,22 +376,35 @@ def build_excel_explanations(
                 f"{far_explanation} Area ratios scaled for floors: desired floors {desired_floors:g} ÷ "
                 f"baseline {baseline_floors:g} = factor {scale_factor:.3f}."
             )
+            far_explanation_ar = (
+                f"{far_explanation_ar} تم تحجيم نسب المساحة وفق الطوابق: الطوابق المطلوبة {desired_floors:g} ÷ "
+                f"الأساس {baseline_floors:g} = معامل {scale_factor:.3f}."
+            )
     except Exception:
         pass
-    explanations["effective_far_above_ground"] = far_explanation
+    explanations_en["effective_far_above_ground"] = far_explanation
+    explanations_ar["effective_far_above_ground"] = far_explanation_ar
 
     sub_total = float(breakdown.get("sub_total", 0.0) or 0.0)
     direct_total = sum(direct_cost.values())
     construction_parts = []
+    construction_parts_ar = []
     for key, area in built_area.items():
         base_unit = unit_cost.get("basement") if key.lower().startswith("basement") else unit_cost.get(key, 0.0)
         construction_parts.append(
             f"{key}: {_fmt_amount(area)} m² × {float(base_unit):,.0f} SAR/m² = "
             f"{_fmt_amount(float(direct_cost.get(key, 0.0)))} SAR"
         )
+        construction_parts_ar.append(
+            f"{key}: {_fmt_amount(area)} م² × {float(base_unit):,.0f} SAR/م² = "
+            f"{_fmt_amount(float(direct_cost.get(key, 0.0)))} SAR"
+        )
     if construction_parts:
-        explanations["construction_direct"] = (
+        explanations_en["construction_direct"] = (
             "; ".join(construction_parts) + f". Total construction cost: {_fmt_amount(direct_total)} SAR."
+        )
+        explanations_ar["construction_direct"] = (
+            "; ".join(construction_parts_ar) + f". إجمالي تكلفة الإنشاء المباشر: {_fmt_amount(direct_total)} SAR."
         )
 
     fitout_area = sum(
@@ -372,36 +412,55 @@ def build_excel_explanations(
     )
     fitout_rate = float(inputs.get("fitout_rate") or 0.0)
     fitout_cost = float(breakdown.get("fitout_cost", 0.0) or 0.0)
-    explanations["fitout"] = (
+    explanations_en["fitout"] = (
         f"{_fmt_amount(fitout_area)} m² × {fitout_rate:,.0f} SAR/m² = {_fmt_amount(fitout_cost)} SAR. "
         "Applied to above-ground built-up area only."
+    )
+    explanations_ar["fitout"] = (
+        f"{_fmt_amount(fitout_area)} م² × {fitout_rate:,.0f} SAR/م² = {_fmt_amount(fitout_cost)} SAR. "
+        "يُطبق على المساحة المبنية فوق الأرض فقط."
     )
 
     contingency_pct = float(inputs.get("contingency_pct") or 0.0)
     contingency_cost = float(breakdown.get("contingency_cost", 0.0) or 0.0)
-    explanations["contingency"] = (
+    explanations_en["contingency"] = (
         f"{contingency_pct * 100:.1f}% × (construction direct cost {_fmt_amount(direct_total)} SAR + "
         f"fit-out {_fmt_amount(fitout_cost)} SAR) = {_fmt_amount(contingency_cost)} SAR. "
         "This applies contingency to total hard construction scope, including above-ground fit-out, as an allowance "
         "for design development and execution risk."
     )
+    explanations_ar["contingency"] = (
+        f"{contingency_pct * 100:.1f}% × (تكلفة الإنشاء المباشر {_fmt_amount(direct_total)} SAR + "
+        f"التشطيبات {_fmt_amount(fitout_cost)} SAR) = {_fmt_amount(contingency_cost)} SAR. "
+        "يتم تطبيق الاحتياطي على إجمالي نطاق الأعمال الإنشائية الصلبة، بما في ذلك تشطيبات فوق الأرض، "
+        "كبدل لمخاطر التطوير والتنفيذ."
+    )
 
     consultants_pct = float(inputs.get("consultants_pct") or 0.0)
     consultants_base = sub_total + contingency_cost
-    explanations["consultants"] = (
+    explanations_en["consultants"] = (
         f"{consultants_pct * 100:.1f}% × (construction + contingency) {_fmt_amount(consultants_base)} SAR "
+        f"= {_fmt_amount(float(breakdown.get('consultants_cost', 0.0) or 0.0))} SAR."
+    )
+    explanations_ar["consultants"] = (
+        f"{consultants_pct * 100:.1f}% × (الإنشاء + الاحتياطي) {_fmt_amount(consultants_base)} SAR "
         f"= {_fmt_amount(float(breakdown.get('consultants_cost', 0.0) or 0.0))} SAR."
     )
 
     transaction_pct = float(inputs.get("transaction_pct") or 0.0)
-    tx_label = inputs.get("transaction_label") or "transaction"
-    explanations["transaction_cost"] = (
+    explanations_en["transaction_cost"] = (
         f"{transaction_pct * 100:.1f}% × {_fmt_amount(land_cost_total)} SAR = "
         f"{_fmt_amount(float(breakdown.get('transaction_cost', 0.0) or 0.0))} SAR. "
         "Calculated in accordance with Saudi RETT regulations."
     )
+    explanations_ar["transaction_cost"] = (
+        f"{transaction_pct * 100:.1f}% × {_fmt_amount(land_cost_total)} SAR = "
+        f"{_fmt_amount(float(breakdown.get('transaction_cost', 0.0) or 0.0))} SAR. "
+        "محسوب وفق أنظمة ضريبة التصرفات العقارية (RETT) في السعودية."
+    )
 
     income_parts = []
+    income_parts_ar = []
     parking_income_meta = breakdown.get("parking_income_meta") or {}
     parking_income_component = None
     rent_meta = inputs.get("rent_source_metadata") or {}
@@ -426,12 +485,19 @@ def build_excel_explanations(
                 or rent_meta.get("provider")
                 or rent_label
             )
+        rent_label_ar = "القالب الافتراضي" if rent_label == "template default" else rent_label
         note = ""
+        note_ar = ""
         if applied_rent and abs(applied_rent - base_rent) > 1e-9 and re_scalar not in (0.0, 1.0):
             note = f" (includes real estate price index scalar {re_scalar:,.3f})"
+            note_ar = f" (يشمل معامل مؤشر أسعار العقارات {re_scalar:,.3f})"
         income_parts.append(
             f"{key} net lettable area {_fmt_amount(nla_val, decimals=2)} m² × {rent_used:,.0f} SAR/m²/year "
             f"= {_fmt_amount(component)} SAR/year. Rent benchmark sourced from {rent_label}.{note}"
+        )
+        income_parts_ar.append(
+            f"{key} المساحة القابلة للتأجير {_fmt_amount(nla_val, decimals=2)} م² × {rent_used:,.0f} SAR/م²/سنة "
+            f"= {_fmt_amount(component)} SAR/سنة. مصدر معيار الإيجار: {rent_label_ar}.{note_ar}"
         )
     if parking_income_component:
         extra_spaces = int(parking_income_meta.get("extra_spaces") or 0)
@@ -442,15 +508,24 @@ def build_excel_explanations(
             f"Parking income from {extra_spaces} excess spaces at {monthly_rate_used:,.0f} SAR/space/month "
             f"× {occupancy_used:.2f} occupancy = {_fmt_amount(parking_income_component)} SAR/year."
         )
+        parking_line_ar = (
+            f"دخل مواقف السيارات من {extra_spaces} موقفًا إضافيًا بسعر {monthly_rate_used:,.0f} SAR/موقف/شهر "
+            f"× نسبة إشغال {occupancy_used:.2f} = {_fmt_amount(parking_income_component)} SAR/سنة."
+        )
         if rate_note:
             parking_line = f"{parking_line} {rate_note}"
+            parking_line_ar = f"{parking_line_ar} {rate_note}"
         # Row-level explanation hook for the UI "How we calculated it" column.
         # The combined y1_income explanation remains as an overall summary, but the UI can
         # now also display parking math directly on the "parking income" row.
-        explanations["parking_income"] = parking_line
+        explanations_en["parking_income"] = parking_line
+        explanations_ar["parking_income"] = parking_line_ar
         income_parts.append(parking_line)
+        income_parts_ar.append(parking_line_ar)
     if income_parts:
-        explanations["y1_income"] = "; ".join(income_parts)
+        explanations_en["y1_income"] = "; ".join(income_parts)
+    if income_parts_ar:
+        explanations_ar["y1_income"] = "؛ ".join(income_parts_ar)
 
     y1_income_total = float(breakdown.get("y1_income", 0.0) or 0.0)
     y1_income_effective_factor = _normalize_y1_income_effective_factor(
@@ -459,18 +534,26 @@ def build_excel_explanations(
     y1_income_effective = float(
         breakdown.get("y1_income_effective", 0.0) or (y1_income_total * y1_income_effective_factor)
     )
-    explanations["y1_income_effective"] = (
+    explanations_en["y1_income_effective"] = (
         f"Effective Year-1 income = {y1_income_total:,.0f} SAR × {y1_income_effective_factor*100:.0f}% "
+        f"= {y1_income_effective:,.0f} SAR."
+    )
+    explanations_ar["y1_income_effective"] = (
+        f"الدخل الفعّال للسنة الأولى = {y1_income_total:,.0f} SAR × {y1_income_effective_factor*100:.0f}% "
         f"= {y1_income_effective:,.0f} SAR."
     )
     grand_total_capex = float(breakdown.get("grand_total_capex", 0.0) or 0.0)
     roi = float(breakdown.get("roi", 0.0) or 0.0)
-    explanations["roi"] = (
+    explanations_en["roi"] = (
         f"Effective Year-1 income {_fmt_amount(y1_income_effective)} SAR ÷ total development cost "
         f"{_fmt_amount(grand_total_capex)} SAR = {roi * 100:,.2f}%."
     )
+    explanations_ar["roi"] = (
+        f"الدخل الفعّال للسنة الأولى {_fmt_amount(y1_income_effective)} SAR ÷ إجمالي تكلفة التطوير "
+        f"{_fmt_amount(grand_total_capex)} SAR = {roi * 100:,.2f}%."
+    )
 
-    return explanations
+    return explanations_en, explanations_ar
 
 
 def _build_cost_breakdown_rows(
@@ -769,13 +852,15 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "far_total_including_basement": far_total_including_basement,
     }
 
-    explanations = build_excel_explanations(site_area_m2, inputs, result)
-    result["explanations"] = explanations
+    explanations_en, explanations_ar = build_excel_explanations(site_area_m2, inputs, result)
+    result["explanations"] = explanations_en
+    result["explanations_en"] = explanations_en
+    result["explanations_ar"] = explanations_ar
     result["cost_breakdown_rows"] = _build_cost_breakdown_rows(
         built_area,
         area_ratio,
         inputs,
-        explanations,
+        explanations_en,
         far_above_ground=far_above_ground,
     )
 
