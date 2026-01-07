@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Geometry } from "geojson";
+import { useTranslation } from "react-i18next";
 
 import { landPrice, makeEstimate } from "../api";
 import {
@@ -10,24 +11,22 @@ import {
 } from "../lib/excelTemplates";
 import ParkingSummary from "./ParkingSummary";
 import type { EstimateNotes, EstimateTotals } from "../lib/types";
+import { formatNumber, formatPercent } from "../i18n/format";
 
 const PROVIDERS = [
   {
     value: "blended_v1" as const,
-    label: "Blended v1 (Suhail + Aqar)",
+    labelKey: "excel.providers.blended_v1",
   },
   {
     value: "suhail" as const,
-    label: "Suhail (district median)",
+    labelKey: "excel.providers.suhail",
   },
   {
     value: "kaggle_hedonic_v0" as const,
-    label: "Hedonic model (trained partly on Kaggle data)",
+    labelKey: "excel.providers.kaggle_hedonic_v0",
   },
 ];
-
-const formatPercent = (value?: number | null) =>
-  value != null ? `${(value * 100).toFixed(1)}%` : "n/a";
 
 type Centroid = [number, number];
 
@@ -122,6 +121,7 @@ const normalizeEffectivePct = (value?: number | null) => {
 };
 
 export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
+  const { t, i18n } = useTranslation();
   const [provider, setProvider] = useState<(typeof PROVIDERS)[number]["value"]>("blended_v1");
   const [price, setPrice] = useState<number | null>(null);
   const [suggestedPrice, setSuggestedPrice] = useState<number | null>(null);
@@ -130,6 +130,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const normalizedParcelLandUse = normalizeLandUse(parcel?.landuse_code);
   const normalizedPropLandUse = normalizeLandUse(landUseOverride);
   const initialLandUse = normalizedPropLandUse ?? normalizedParcelLandUse ?? "s";
+  const notAvailable = t("common.notAvailable");
+  const providerLabel = t(`excel.providers.${provider}`);
+
+  const formatNumberValue = (value: number | string | null | undefined, digits = 0) =>
+    formatNumber(value, i18n.language, { maximumFractionDigits: digits, minimumFractionDigits: digits }, notAvailable);
+
+  const formatPercentValue = (value?: number | null, digits = 1) =>
+    formatPercent(value ?? null, i18n.language, { maximumFractionDigits: digits, minimumFractionDigits: digits }, notAvailable);
 
   // User override from dropdown; null means "use inferred"
   const [overrideLandUse, setOverrideLandUse] = useState<LandUseCode | null>(normalizedPropLandUse);
@@ -234,7 +242,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       );
       const ppm2 = res.value_sar_m2 ?? res.sar_per_m2 ?? res.value;
       if (ppm2 == null) {
-        throw new Error("No price returned from API");
+        throw new Error(t("excel.noPriceError"));
       }
       setPrice(ppm2);
       setSuggestedPrice(ppm2);
@@ -372,7 +380,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const formatArea = (value: number | null | undefined) => {
     if (value == null || Number.isNaN(Number(value))) return "";
-    return `${Number(value).toLocaleString()} m²`;
+    return `${formatNumberValue(Number(value), 0)} m²`;
   };
 
   const buaNote = (key: string) => {
@@ -380,36 +388,56 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     if (explanations[noteKey]) return explanations[noteKey];
     const ratio = areaRatio?.[key];
     if (siteArea != null && ratio != null) {
-      return `Site area ${siteArea.toLocaleString()} m² × area ratio ${Number(ratio).toFixed(2)}`;
+      return t("excelNotes.siteAreaRatio", {
+        area: formatNumberValue(siteArea, 0),
+        ratio: formatNumberValue(ratio, 2),
+      });
     }
-    return "Built-up area based on provided ratios";
+    return t("excelNotes.buaFallback");
   };
 
   const landNote =
     explanations.land_cost ||
     (siteArea && landPricePpm2
-      ? `Site area ${siteArea.toLocaleString()} m² × ${landPricePpm2.toLocaleString()} SAR/m² (${excelResult?.landPrice?.source_type || "input"})`
-      : "Site area × land price per m²");
+      ? t("excelNotes.landCost", {
+        area: formatNumberValue(siteArea, 0),
+        price: formatNumberValue(landPricePpm2, 0),
+        source: excelResult?.landPrice?.source_type || t("excel.sourceInput"),
+      })
+      : t("excelNotes.landCostFallback"));
 
   const fitoutNote =
     explanations.fitout ||
     (fitoutExcluded
-      ? "Fit-out excluded per user selection."
+      ? t("excelNotes.fitoutExcluded")
       : fitoutRate != null
-      ? `Non-basement area ${fitoutArea.toLocaleString()} m² × ${fitoutRate.toLocaleString()} SAR/m²`
-      : "Fit-out applied to above-ground areas");
+      ? t("excelNotes.fitoutApplied", {
+        area: formatNumberValue(fitoutArea, 0),
+        rate: formatNumberValue(fitoutRate, 0),
+      })
+      : t("excelNotes.fitoutFallback"));
 
   const contingencyNote =
     explanations.contingency ||
-    `Contingency is calculated as ${formatPercent(contingencyPct)} × (construction direct cost + fit-out cost). For this estimate: ${formatPercent(contingencyPct)} × (${constructionDirectTotal.toLocaleString()} SAR + ${fitoutTotal.toLocaleString()} SAR). This applies to total hard construction scope including above-ground fit-out.`;
+    t("excelNotes.contingency", {
+      pct: formatPercentValue(contingencyPct),
+      direct: formatNumberValue(constructionDirectTotal, 0),
+      fitout: formatNumberValue(fitoutTotal, 0),
+    });
 
   const consultantsNote =
     explanations.consultants ||
-    `(Subtotal + contingency) ${consultantsBase.toLocaleString()} SAR × consultants ${formatPercent(consultantsPct)}`;
+    t("excelNotes.consultants", {
+      base: formatNumberValue(consultantsBase, 0),
+      pct: formatPercentValue(consultantsPct),
+    });
 
   const transactionNote =
     explanations.transaction_cost ||
-    `Land cost ${landCostValue.toLocaleString()} SAR × transaction ${formatPercent(transactionPct)}`;
+    t("excelNotes.transaction", {
+      land: formatNumberValue(landCostValue, 0),
+      pct: formatPercentValue(transactionPct),
+    });
 
   const directNote =
     explanations.construction_direct ||
@@ -417,7 +445,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       .map((key) => {
         const area = builtArea[key] ?? 0;
         const costPerUnit = unitCost[key] ?? 0;
-        return `${key}: ${area.toLocaleString()} m² × ${costPerUnit.toLocaleString()} SAR/m²`;
+        return t("excelNotes.directItem", {
+          key,
+          area: formatNumberValue(area, 0),
+          cost: formatNumberValue(costPerUnit, 0),
+        });
       })
       .filter(Boolean)
       .join("; ");
@@ -431,10 +463,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         const baseArea = builtArea[key] ?? null;
         const efficiencyText =
           efficiencyVal != null && baseArea != null
-            ? `NLA ${nlaVal.toLocaleString()} m² (built area ${baseArea.toLocaleString()} m² × efficiency ${(efficiencyVal * 100).toFixed(0)}%)`
-            : `NLA ${nlaVal.toLocaleString()} m²`;
+            ? t("excelNotes.incomeEfficiency", {
+              nla: formatNumberValue(nlaVal, 0),
+              built: formatNumberValue(baseArea, 0),
+              efficiency: formatNumberValue((efficiencyVal as number) * 100, 0),
+            })
+            : t("excelNotes.incomeBase", { nla: formatNumberValue(nlaVal, 0) });
         const rent = appliedRentRates[key] ?? 0;
-        return `${key}: ${efficiencyText} × ${rent.toLocaleString()} SAR/m²/yr`;
+        return t("excelNotes.incomeItem", {
+          key,
+          efficiencyText,
+          rent: formatNumberValue(rent, 0),
+        });
       })
       .filter(Boolean)
       .join("; ");
@@ -454,7 +494,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const effectiveIncomeFactor = effectiveIncomePct / 100;
   const y1IncomeEffectiveNote =
     explanations?.y1_income_effective ||
-    `${formatPercent(effectiveIncomeFactor)} of Year 1 net income to reflect stabilization, downtime, and collection leakage.`;
+    t("excelNotes.effectiveIncome", {
+      pct: formatPercentValue(effectiveIncomeFactor, 0),
+    });
 
   const resolveRevenueNote = (key: string, baseNote: string, amount: number) => {
     if (key !== "parking_income") return baseNote;
@@ -462,7 +504,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     if (Number(amount) > 0) {
       return trimmedExplanation || baseNote;
     }
-    return "—";
+    return t("excelNotes.revenueNoteDash");
   };
 
   const noteStyle = { fontSize: "0.8rem", color: "#cbd5f5" } as const;
@@ -485,10 +527,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     const baseArea = builtArea[key] ?? null;
     const efficiencyText =
       efficiencyVal != null && baseArea != null
-        ? `NLA ${nlaVal.toLocaleString()} m² (built area ${baseArea.toLocaleString()} m² × efficiency ${(efficiencyVal * 100).toFixed(0)}%)`
-        : `NLA ${nlaVal.toLocaleString()} m²`;
+        ? t("excelNotes.incomeEfficiency", {
+          nla: formatNumberValue(nlaVal, 0),
+          built: formatNumberValue(baseArea, 0),
+          efficiency: formatNumberValue((efficiencyVal as number) * 100, 0),
+        })
+        : t("excelNotes.incomeBase", { nla: formatNumberValue(nlaVal, 0) });
     const rent = appliedRentRates[key] ?? 0;
-    const baseNote = `${efficiencyText} × ${rent.toLocaleString()} SAR/m²/yr`;
+    const baseNote = t("excelNotes.incomeItem", {
+      key,
+      efficiencyText,
+      rent: formatNumberValue(rent, 0),
+    });
     return {
       key,
       amount: incomeComponents[key] ?? 0,
@@ -497,30 +547,33 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   });
   const summaryText =
     (excelResult?.summary && excelResult.summary.trim()) ||
-    (excelResult ? `Unlevered ROI: ${(excelResult.roi * 100).toFixed(1)}%` : "");
+    (excelResult ? t("excel.summaryRoi", { value: formatPercentValue(excelResult.roi) }) : "");
 
   return (
     <div>
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span>Provider:</span>
+          <span>{t("excel.providerLabel")}</span>
           <select value={provider} onChange={(event) => setProvider(event.target.value as any)}>
             {PROVIDERS.map((item) => (
               <option key={item.value} value={item.value}>
-                {item.label}
+                {t(item.labelKey)}
               </option>
             ))}
           </select>
-          <button onClick={fetchPrice}>Fetch land price</button>
+          <button onClick={fetchPrice}>{t("excel.fetchPrice")}</button>
           {price != null && (
             <strong>
-              Suggested SAR/m²: {price.toLocaleString()} ({provider})
+              {t("excel.suggestedPrice", {
+                price: formatNumberValue(price, 0),
+                provider: providerLabel,
+              })}
             </strong>
           )}
-          {fetchError && <span style={{ color: "#fca5a5" }}>Error: {fetchError}</span>}
+          {fetchError && <span style={{ color: "#fca5a5" }}>{t("common.errorPrefix")} {fetchError}</span>}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label style={{ opacity: 0.85 }}>Override land use (optional):</label>
+          <label style={{ opacity: 0.85 }}>{t("excel.overrideLandUse")}</label>
           <select
             value={overrideLandUse ?? ""}
             onChange={(event) => {
@@ -533,18 +586,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                 setOverrideLandUse(value as LandUseCode);
               }
             }}
-            title="If empty, we use the automatically inferred land use from the parcel."
+            title={t("excel.overrideLandUseHint")}
           >
-            <option value="">(auto: use parcel)</option>
-            <option value="s">s — Residential</option>
-            <option value="m">m — Mixed/Commercial</option>
+            <option value="">{t("excel.autoUseParcel")}</option>
+            <option value="s">{t("excel.landUseOption", { code: "s", label: t("app.landUse.residential") })}</option>
+            <option value="m">{t("excel.landUseOption", { code: "m", label: t("app.landUse.mixed") })}</option>
           </select>
           <span style={{ opacity: 0.75, fontSize: "0.8rem" }}>
-            Active template: <strong>{effectiveLandUse}</strong>
+            {t("excel.activeTemplate")} <strong>{effectiveLandUse}</strong>
           </span>
         </div>
         <label style={{ display: "flex", flexDirection: "column", gap: 4, color: "white" }}>
-          <span>Override land price (SAR/m², optional)</span>
+          <span>{t("excel.overrideLandPrice")}</span>
           <input
             type="number"
             value={inputs.land_price_sar_m2 ?? ""}
@@ -557,18 +610,23 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             style={{ padding: "4px 6px", borderRadius: 4, border: "1px solid rgba(255,255,255,0.2)" }}
           />
           <span style={{ fontSize: "0.8rem", color: "#cbd5f5" }}>
-            Suggested from fetch: {suggestedPrice != null ? `${suggestedPrice.toLocaleString()} SAR/m² (${provider})` : "Not fetched yet"}
+            {suggestedPrice != null
+              ? t("excel.suggestedFromFetch", {
+                price: formatNumberValue(suggestedPrice, 0),
+                provider: providerLabel,
+              })
+              : t("excel.notFetched")}
           </span>
         </label>
       </div>
 
       <button onClick={() => runEstimate()} style={{ marginTop: 12 }}>
-        Calculate estimate
+        {t("excel.calculateEstimate")}
       </button>
 
       {error && (
         <div style={{ marginTop: 12, color: "#fca5a5" }}>
-          Error: {error}
+          {t("common.errorPrefix")} {error}
         </div>
       )}
 
@@ -585,7 +643,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           }}
         >
           <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>
-            Financial breakdown
+            {t("excel.financialBreakdown")}
           </h3>
           <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
 
@@ -598,72 +656,69 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             }}
           >
             <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "0.75rem" }}>
-              <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Cost breakdown</h4>
+              <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.costBreakdown")}</h4>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    <th style={itemHeaderStyle}>Item</th>
-                    <th style={amountHeaderStyle}>Amount</th>
-                    <th style={calcHeaderStyle}>How we calculated it</th>
+                    <th style={itemHeaderStyle}>{t("excel.item")}</th>
+                    <th style={amountHeaderStyle}>{t("excel.amount")}</th>
+                    <th style={calcHeaderStyle}>{t("excel.calculation")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {farAboveGround != null && (
                     <tr>
-                      <td style={itemColumnStyle}>Effective FAR (above-ground)</td>
+                      <td style={itemColumnStyle}>{t("excel.effectiveFar")}</td>
                       <td style={amountColumnStyle}>
-                        {Number(farAboveGround).toLocaleString("en-US", {
-                          minimumFractionDigits: 3,
-                          maximumFractionDigits: 3,
-                        })}
+                        {formatNumberValue(farAboveGround, 3)}
                       </td>
-                      <td style={calcColumnStyle}>{farNote || "Sum of above-ground area ratios (excludes basement)."}</td>
+                      <td style={calcColumnStyle}>{farNote || t("excel.effectiveFarDefault")}</td>
                     </tr>
                   )}
                   <tr>
-                    <td style={itemColumnStyle}>Residential BUA</td>
+                    <td style={itemColumnStyle}>{t("excel.residentialBua")}</td>
                     <td style={amountColumnStyle}>{formatArea(builtArea.residential)}</td>
                     <td style={calcColumnStyle}>{buaNote("residential")}</td>
                   </tr>
                   {effectiveLandUse === "m" && builtArea.retail !== undefined && (
                     <tr>
-                      <td style={itemColumnStyle}>Retail BUA</td>
+                      <td style={itemColumnStyle}>{t("excel.retailBua")}</td>
                       <td style={amountColumnStyle}>{formatArea(builtArea.retail)}</td>
                       <td style={calcColumnStyle}>{buaNote("retail")}</td>
                     </tr>
                   )}
                   {effectiveLandUse === "m" && builtArea.office !== undefined && (
                     <tr>
-                      <td style={itemColumnStyle}>Office BUA</td>
+                      <td style={itemColumnStyle}>{t("excel.officeBua")}</td>
                       <td style={amountColumnStyle}>{formatArea(builtArea.office)}</td>
                       <td style={calcColumnStyle}>{buaNote("office")}</td>
                     </tr>
                   )}
                   <tr>
-                    <td style={itemColumnStyle}>Basement BUA</td>
+                    <td style={itemColumnStyle}>{t("excel.basementBua")}</td>
                     <td style={amountColumnStyle}>{formatArea(builtArea.basement)}</td>
                     <td style={calcColumnStyle}>{buaNote("basement")}</td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>Land cost</td>
+                    <td style={itemColumnStyle}>{t("excel.landCost")}</td>
                     <td style={amountColumnStyle}>
-                      {excelResult.costs.land_cost.toLocaleString()} SAR
+                      {formatNumberValue(excelResult.costs.land_cost, 0)} SAR
                     </td>
                     <td style={calcColumnStyle}>
                       {landNote}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>Construction (direct)</td>
+                    <td style={itemColumnStyle}>{t("excel.constructionDirect")}</td>
                     <td style={amountColumnStyle}>
-                      {excelResult.costs.construction_direct_cost.toLocaleString()} SAR
+                      {formatNumberValue(excelResult.costs.construction_direct_cost, 0)} SAR
                     </td>
                     <td style={calcColumnStyle}>
                       {explanations.construction_direct
                         ? directNote
                         : directNote
-                        ? `${directNote}; sums to construction subtotal of ${constructionSubtotal.toLocaleString()} SAR before fit-out`
-                        : "Sum of built area × unit cost for each use"}
+                        ? `${directNote}; ${t("excel.constructionDirectDefault")}`
+                        : t("excel.constructionDirectDefault")}
                     </td>
                   </tr>
                   <tr>
@@ -676,7 +731,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                           gap: "0.5rem",
                         }}
                       >
-                        <span>Fit-out</span>
+                        <span>{t("excel.fitout")}</span>
                         <button
                           type="button"
                           onClick={() => handleFitoutToggle(!includeFitout)}
@@ -690,48 +745,51 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                             fontSize: "0.8rem",
                           }}
                         >
-                          {includeFitout ? "Included" : "Excluded"}
+                          {includeFitout ? t("excel.fitoutIncluded") : t("excel.fitoutExcluded")}
                         </button>
                       </div>
                     </td>
                     <td style={amountColumnStyle}>
-                      {excelResult.costs.fitout_cost.toLocaleString()} SAR
+                      {formatNumberValue(excelResult.costs.fitout_cost, 0)} SAR
                     </td>
                     <td style={calcColumnStyle}>
                       {fitoutNote}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>Contingency</td>
+                    <td style={itemColumnStyle}>{t("excel.contingency")}</td>
                     <td style={amountColumnStyle}>
-                      {excelResult.costs.contingency_cost.toLocaleString()} SAR
+                      {formatNumberValue(excelResult.costs.contingency_cost, 0)} SAR
                     </td>
                     <td style={calcColumnStyle}>
                       {contingencyNote}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>Consultants</td>
+                    <td style={itemColumnStyle}>{t("excel.consultants")}</td>
                     <td style={amountColumnStyle}>
-                      {excelResult.costs.consultants_cost.toLocaleString()} SAR
+                      {formatNumberValue(excelResult.costs.consultants_cost, 0)} SAR
                     </td>
                     <td style={calcColumnStyle}>
                       {consultantsNote}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>Feasibility fee</td>
+                    <td style={itemColumnStyle}>{t("excel.feasibilityFee")}</td>
                     <td style={amountColumnStyle}>
-                      {excelResult.costs.feasibility_fee.toLocaleString()} SAR
+                      {formatNumberValue(excelResult.costs.feasibility_fee, 0)} SAR
                     </td>
                     <td style={calcColumnStyle}>
-                      {`Land cost ${landCostValue.toLocaleString()} SAR × feasibility ${formatPercent(feasibilityPct)}`}
+                      {t("excelNotes.feasibility", {
+                        land: formatNumberValue(landCostValue, 0),
+                        pct: formatPercentValue(feasibilityPct, 1),
+                      })}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>Transaction costs</td>
+                    <td style={itemColumnStyle}>{t("excel.transactionCosts")}</td>
                     <td style={amountColumnStyle}>
-                      {excelResult.costs.transaction_cost.toLocaleString()} SAR
+                      {formatNumberValue(excelResult.costs.transaction_cost, 0)} SAR
                     </td>
                     <td style={calcColumnStyle}>
                       {transactionNote}
@@ -739,13 +797,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   </tr>
                   <tr>
                     <td style={itemColumnStyle}>
-                      <strong>Total capex</strong>
+                      <strong>{t("excel.totalCapex")}</strong>
                     </td>
                     <td style={amountColumnStyle}>
-                      <strong>{excelResult.costs.grand_total_capex.toLocaleString()} SAR</strong>
+                      <strong>{formatNumberValue(excelResult.costs.grand_total_capex, 0)} SAR</strong>
                     </td>
                     <td style={calcColumnStyle}>
-                      Land + construction + fit-out + contingency + consultants + feasibility + transaction costs
+                      {t("excel.totalCapexNote")}
                     </td>
                   </tr>
                 </tbody>
@@ -753,43 +811,45 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             </div>
 
             <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "0.75rem" }}>
-              <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>Revenue breakdown</h4>
+              <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.revenueBreakdown")}</h4>
               {rentMeta?.provider === "REGA" && residentialRentMo != null && (
                 <p style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.8rem", color: "#cbd5f5" }}>
-                  Base rent uses the <strong>REGA residential rent benchmark</strong> for {rentMeta.district || rentMeta.city || "the selected city"}: {" "}
-                  {residentialRentMo.toLocaleString("en-US", { maximumFractionDigits: 0 })} SAR/m²/month ({residentialRentYr!.toLocaleString("en-US", { maximumFractionDigits: 0 })} SAR/m²/year). This rent fully overrides any manual rent inputs.
+                  {t("excel.regaNote", {
+                    location: rentMeta.district || rentMeta.city || t("common.notAvailable"),
+                    monthly: formatNumberValue(residentialRentMo, 0),
+                    yearly: formatNumberValue(residentialRentYr, 0),
+                  })}
                 </p>
               )}
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    <th style={itemHeaderStyle}>Item</th>
-                    <th style={amountHeaderStyle}>Amount</th>
-                    <th style={calcHeaderStyle}>How we calculated it</th>
+                    <th style={itemHeaderStyle}>{t("excel.item")}</th>
+                    <th style={amountHeaderStyle}>{t("excel.amount")}</th>
+                    <th style={calcHeaderStyle}>{t("excel.calculation")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {revenueItems.map((item) => (
                     <tr key={item.key}>
                       <td style={itemColumnStyle}>{item.key.replace(/_/g, " ")}</td>
-                      <td style={amountColumnStyle}>{Number(item.amount || 0).toLocaleString()} SAR</td>
+                      <td style={amountColumnStyle}>{formatNumberValue(item.amount || 0, 0)} SAR</td>
                       <td style={calcColumnStyle}>{item.note}</td>
                     </tr>
                   ))}
                   <tr>
-                    <td style={itemColumnStyle}>Year 1 net income</td>
+                    <td style={itemColumnStyle}>{t("excel.year1Income")}</td>
                     <td style={amountColumnStyle}>
-                      {excelResult.costs.y1_income.toLocaleString()} SAR
+                      {formatNumberValue(excelResult.costs.y1_income, 0)} SAR
                     </td>
                     <td style={calcColumnStyle}>
-                      {incomeNote ||
-                        "Net leasable area per use × rent rate (SAR/m²/yr), using efficiency to convert built area to NLA"}
+                      {incomeNote || t("excel.year1IncomeNote")}
                     </td>
                   </tr>
                   <tr>
                     <td style={itemColumnStyle}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                        <span>Year 1 net income (effective)</span>
+                        <span>{t("excel.year1IncomeEffective")}</span>
                         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.9rem" }}>
                           <input
                             type="number"
@@ -812,7 +872,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                               background: "rgba(0,0,0,0.15)",
                               color: "white",
                             }}
-                            aria-label="Effective income percentage"
+                            aria-label={t("excel.effectiveIncomePct")}
                           />
                           <span style={{ opacity: 0.75 }}>%</span>
                         </label>
@@ -830,23 +890,23 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                             opacity: effectiveIncomeApplyDisabled ? 0.6 : 1,
                           }}
                         >
-                          Apply
+                          {t("common.apply")}
                         </button>
                       </div>
                     </td>
                     <td style={amountColumnStyle}>
-                      {(excelResult.costs.y1_income_effective ?? 0).toLocaleString()} SAR
+                      {formatNumberValue(excelResult.costs.y1_income_effective ?? 0, 0)} SAR
                     </td>
                     <td style={calcColumnStyle}>{y1IncomeEffectiveNote}</td>
                   </tr>
                   <tr>
                     <td style={itemColumnStyle}>
-                      <strong>Unlevered ROI</strong>
+                      <strong>{t("excel.unleveredRoi")}</strong>
                     </td>
                     <td style={amountColumnStyle}>
-                      <strong>{(excelResult.roi * 100).toFixed(1)}%</strong>
+                      <strong>{formatPercentValue(excelResult.roi)}</strong>
                     </td>
-                    <td style={calcColumnStyle}>{`${formatPercent(effectiveIncomeFactor)} of Year 1 net income ÷ total capex`}</td>
+                    <td style={calcColumnStyle}>{t("excelNotes.totalCapexFormula", { pct: formatPercentValue(effectiveIncomeFactor, 0) })}</td>
                   </tr>
                 </tbody>
               </table>
@@ -860,7 +920,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   }}
                 >
                   <h5 style={{ margin: "0 0 0.35rem 0", fontSize: "0.95rem" }}>
-                    Executive summary
+                    {t("excel.executiveSummary")}
                   </h5>
                   <p style={{ margin: 0, lineHeight: 1.4 }}>{summaryText}</p>
                 </div>

@@ -97,6 +97,9 @@ If the API is deployed on sccc/ACK, set:
 VITE_API_BASE_URL=https://<your-loadbalancer-dns-or-ip>
 ```
 
+### Frontend translations
+The React UI uses i18next via `frontend/src/i18n/` (`index.ts`, `en.json`, `ar.json`). Add new keys to both JSON files and reference them with `t(\"...\")` from `react-i18next`. The active locale is persisted in `localStorage` under `oaktree_locale`.
+
 ## Deploy (sccc by stc / Alibaba Cloud Riyadh, me-central-1)
 
 1. In sccc by stc (Alibaba Cloud Riyadh), provision an ACK cluster in `me-central-1` and an **Enterprise ACR instance** (the registry should expose a domain such as `oaktree-ai-estimator-registry.me-central-1.cr.aliyuncs.com`).
