@@ -1,4 +1,6 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
+import { formatNumber } from "../i18n/format";
 
 type AnyDict = Record<string, any>;
 
@@ -11,28 +13,22 @@ function unwrapNotes(notes: any): AnyDict | undefined {
   return notes as AnyDict;
 }
 
-function fmtInt(v: any): string {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "—";
-  return Math.round(n).toLocaleString();
-}
-
-function fmtNum(v: any, decimals = 0): string {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "—";
-  return n.toLocaleString(undefined, { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
-}
-
-function yesNo(v: any): string {
-  if (v === true) return "Yes";
-  if (v === false) return "No";
-  return "—";
-}
-
 export default function ParkingSummary(props: { totals?: AnyDict; notes?: any }) {
+  const { t, i18n } = useTranslation();
   const totals = props.totals || {};
   const notes = unwrapNotes(props.notes);
   const parking: AnyDict | undefined = notes?.parking;
+  const fallback = t("common.notAvailable");
+
+  const fmtInt = (value: any) => formatNumber(value, i18n.language, { maximumFractionDigits: 0 }, fallback);
+  const fmtNum = (value: any, decimals = 0) =>
+    formatNumber(value, i18n.language, { maximumFractionDigits: decimals, minimumFractionDigits: decimals }, fallback);
+
+  const yesNo = (value: any): string => {
+    if (value === true) return t("common.yes");
+    if (value === false) return t("common.no");
+    return fallback;
+  };
 
   // Prefer totals (simple), fallback to notes.parking.*_final
   const required =
@@ -91,59 +87,63 @@ export default function ParkingSummary(props: { totals?: AnyDict; notes?: any })
 
   if (!hasAnything) return null;
 
+  const ratioNote =
+    Number.isFinite(Number(basementBefore)) && Number.isFinite(Number(basementAfter))
+      ? ` (${fmtNum(basementBefore, 3)} → ${fmtNum(basementAfter, 3)})`
+      : "";
+
   return (
     <section style={{ marginTop: 16 }}>
-      <h3 style={{ margin: "8px 0" }}>Parking</h3>
+      <h3 style={{ margin: "8px 0" }}>{t("parking.title")}</h3>
 
       <div style={{ display: "grid", gap: 8 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div>Required spaces (Riyadh minimum)</div>
+          <div>{t("parking.requiredSpaces")}</div>
           <div><strong>{fmtInt(required)}</strong></div>
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div>Provided spaces (from basement/parking area)</div>
+          <div>{t("parking.providedSpaces")}</div>
           <div><strong>{fmtInt(provided)}</strong></div>
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div>Deficit</div>
+          <div>{t("parking.deficit")}</div>
           <div><strong>{fmtInt(deficit)}</strong></div>
         </div>
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-          <div>Compliant</div>
+          <div>{t("parking.compliant")}</div>
           <div><strong>{yesNo(compliant)}</strong></div>
         </div>
 
         {parkingAreaM2 !== undefined && (
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <div>Parking area counted (m²)</div>
+            <div>{t("parking.parkingArea")}</div>
             <div><strong>{fmtNum(parkingAreaM2, 0)}</strong></div>
           </div>
         )}
 
         {policy && (
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <div>Policy</div>
+            <div>{t("parking.policy")}</div>
             <div><strong>{String(policy)}</strong></div>
           </div>
         )}
 
         {Number(basementAddedM2) > 0 && (
           <div style={{ marginTop: 6, opacity: 0.9 }}>
-            Auto-adjustment applied: added <strong>{fmtNum(basementAddedM2, 0)} m²</strong> to{" "}
-            <strong>{String(basementKey || "basement")}</strong>
-            {Number.isFinite(Number(basementBefore)) && Number.isFinite(Number(basementAfter)) ? (
-              <> (ratio {fmtNum(basementBefore, 3)} → {fmtNum(basementAfter, 3)})</>
-            ) : null}
-            .
+            {t("parking.autoAdjustment", {
+              area: fmtNum(basementAddedM2, 0),
+              key: basementKey ? String(basementKey) : t("parking.basementLabel"),
+              ratio: ratioNote,
+            })}
           </div>
         )}
 
         {requiredByComponent && Object.keys(requiredByComponent).length > 0 && (
           <details style={{ marginTop: 6 }}>
-            <summary>Required by component</summary>
+            <summary>{t("parking.requiredByComponent")}</summary>
             <ul>
               {Object.entries(requiredByComponent).map(([k, v]) => (
                 <li key={k}>
@@ -156,7 +156,7 @@ export default function ParkingSummary(props: { totals?: AnyDict; notes?: any })
 
         {warnings.length > 0 && (
           <details style={{ marginTop: 6 }}>
-            <summary>Notes / warnings</summary>
+            <summary>{t("parking.notesWarnings")}</summary>
             <ul>
               {warnings.map((w, idx) => (
                 <li key={idx}>{w}</li>
@@ -167,12 +167,12 @@ export default function ParkingSummary(props: { totals?: AnyDict; notes?: any })
 
         {(rulesetName || sourceUrl) && (
           <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
-            {rulesetName ? <div>Ruleset: {String(rulesetName)}</div> : null}
+            {rulesetName ? <div>{t("parking.ruleset", { name: String(rulesetName) })}</div> : null}
             {sourceUrl ? (
               <div>
-                Source:{" "}
+                {t("parking.source")} {" "}
                 <a href={String(sourceUrl)} target="_blank" rel="noreferrer">
-                  View parking guide
+                  {t("parking.viewGuide")}
                 </a>
               </div>
             ) : null}

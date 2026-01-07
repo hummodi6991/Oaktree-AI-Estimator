@@ -1,5 +1,5 @@
 :root {
-  font-family: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: "Inter", "Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   line-height: 1.6;
   color: var(--sand-50);
 
@@ -33,6 +33,10 @@ body {
   color: var(--sand-50);
 }
 
+:root[dir="rtl"] body {
+  direction: rtl;
+}
+
 a {
   color: var(--gold-400);
 }
@@ -49,7 +53,8 @@ label {
 }
 
 input,
-textarea {
+textarea,
+select {
   font: inherit;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -60,7 +65,8 @@ textarea {
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   outline: none;
   border-color: rgba(213, 177, 106, 0.75);
   box-shadow: 0 0 0 3px rgba(213, 177, 106, 0.18);
@@ -69,4 +75,25 @@ textarea:focus {
 
 textarea {
   resize: vertical;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+}
+
+.app-header__spacer {
+  flex: 1;
+}
+
+.language-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+:root[dir="rtl"] .language-switcher {
+  flex-direction: row-reverse;
 }

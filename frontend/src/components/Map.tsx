@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import proj4 from "proj4";
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from "geojson";
+import { useTranslation } from "react-i18next";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -12,8 +13,7 @@ type MapProps = {
   onParcel: (parcel: ParcelSummary | null) => void;
 };
 
-const NOT_FOUND_HINT =
-  "لم يتم العثور على قطعة في هذا الموضع — حاول التكبير أو النقر داخل حدود القطعة.";
+type StatusMessage = { key: string; options?: Record<string, unknown> } | { raw: string };
 
 const SELECT_SOURCE_ID = "selected-parcel-src";
 const SELECT_FILL_LAYER_ID = "selected-parcel-fill";
@@ -209,21 +209,37 @@ function ensureParcelOverlay(map: maplibregl.Map) {
 }
 
 export default function Map({ onParcel }: MapProps) {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
-  const [status, setStatus] = useState<string | null>(
-    "انقر على الخريطة لتحديد قطعة أرض.",
-  );
+  const tRef = useRef(t);
+  const [status, setStatus] = useState<StatusMessage | null>({ key: "map.status.prompt" });
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [selectedParcelIds, setSelectedParcelIds] = useState<string[]>([]);
   const [selectedParcelsGeojson, setSelectedParcelsGeojson] = useState<
     FeatureCollection<Geometry, GeoJsonProperties>
   >({ type: "FeatureCollection", features: [] });
-  const [collateStatus, setCollateStatus] = useState<string | null>(null);
+  const [collateStatus, setCollateStatus] = useState<StatusMessage | null>(null);
   const [collating, setCollating] = useState(false);
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
+
+  const renderStatus = useMemo(() => {
+    if (!status) return null;
+    if ("raw" in status) return status.raw;
+    return t(status.key, status.options);
+  }, [status, t]);
+
+  const renderCollateStatus = useMemo(() => {
+    if (!collateStatus) return null;
+    if ("raw" in collateStatus) return collateStatus.raw;
+    return t(collateStatus.key, collateStatus.options);
+  }, [collateStatus, t]);
+
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
 
   useEffect(() => {
     onParcelRef.current = onParcel;
@@ -263,14 +279,14 @@ export default function Map({ onParcel }: MapProps) {
     });
 
     map.on("click", async (e) => {
-      setStatus("جارٍ التحقق من القطعة…");
+      setStatus({ key: "map.status.checking" });
       setCollateStatus(null);
       try {
         const data: IdentifyResponse = await identify(e.lngLat.lng, e.lngLat.lat);
         if (disposed) return;
 
         if (!data?.found || !data.parcel) {
-          setStatus(NOT_FOUND_HINT);
+          setStatus({ key: "map.status.notFound" });
           const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource;
           source?.setData({ type: "FeatureCollection", features: [] });
           return;
@@ -282,13 +298,13 @@ export default function Map({ onParcel }: MapProps) {
         onParcelRef.current(nextParcel);
 
         if (!geometry) {
-          setStatus("تم العثور على القطعة لكن دون بيانات هندسية.");
+          setStatus({ key: "map.status.noGeometry" });
           return;
         }
 
         if (multiSelectModeRef.current) {
           if (!nextParcel.parcel_id) {
-            setStatus("لا يمكن إضافة القطعة بدون معرف إلى التحديد المتعدد.");
+            setStatus({ key: "map.status.missingId" });
             return;
           }
           setSelectedParcelsGeojson((current) => {
@@ -300,7 +316,7 @@ export default function Map({ onParcel }: MapProps) {
             setSelectedParcelIds(nextIds);
 
             if (alreadySelected) {
-              setStatus(`تمت إزالة القطعة ${nextParcel.parcel_id} من التحديد.`);
+              setStatus({ key: "map.status.removedSelection", options: { id: nextParcel.parcel_id } });
               return {
                 type: "FeatureCollection",
                 features: current.features.filter(
@@ -310,7 +326,10 @@ export default function Map({ onParcel }: MapProps) {
             }
 
             const nextFeature = featureFromParcel(nextParcel);
-            setStatus(`تمت إضافة القطعة ${nextParcel.parcel_id} إلى التحديد (${nextIds.length}).`);
+            setStatus({
+              key: "map.status.addedSelection",
+              options: { id: nextParcel.parcel_id, count: nextIds.length },
+            });
             if (!nextFeature) {
               return current;
             }
@@ -328,15 +347,15 @@ export default function Map({ onParcel }: MapProps) {
               : { type: "FeatureCollection", features: [] },
           );
           if (parcel.parcel_id) {
-            setStatus(`تم تحديد القطعة ${parcel.parcel_id}.`);
+            setStatus({ key: "map.status.selectedWithId", options: { id: parcel.parcel_id } });
           } else {
-            setStatus("تم تحديد القطعة.");
+            setStatus({ key: "map.status.selected" });
           }
         }
       } catch (err) {
         if (disposed) return;
         console.error(err);
-        setStatus("تعذر تحميل بيانات القطعة. يرجى المحاولة مرة أخرى.");
+        setStatus({ key: "map.status.loadError" });
       }
     });
 
@@ -367,25 +386,25 @@ export default function Map({ onParcel }: MapProps) {
     setSelectedParcelIds([]);
     setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
     onParcelRef.current(null);
-    setStatus("تم مسح التحديد.");
+    setStatus({ key: "map.status.cleared" });
     setCollateStatus(null);
   };
 
   const handleCollate = async () => {
     if (selectedParcelIds.length < 2) return;
     setCollating(true);
-    setCollateStatus("جارٍ دمج القطع المحددة…");
+    setCollateStatus({ key: "map.status.collating" });
     try {
       const res: CollateResponse = await collateParcels(selectedParcelIds);
       if (!res?.found || !res.parcel || !res.parcel.geometry) {
-        setCollateStatus(res?.message || "تعذر دمج القطع المحددة.");
+        setCollateStatus(res?.message ? { raw: res.message } : { key: "map.status.collateFailed" });
         return;
       }
       const geometry = transformGeometryToWgs84(res.parcel.geometry as Geometry | null);
       const mergedParcel = geometry ? { ...res.parcel, geometry } : res.parcel;
       onParcelRef.current(mergedParcel);
-      setStatus("تم تطبيق الموقع المدمج كحدود الموقع.");
-      setCollateStatus("تم الدمج بنجاح.");
+      setStatus({ key: "map.status.mergeApplied" });
+      setCollateStatus({ key: "map.status.mergeSuccess" });
       const mergedFeature = featureFromParcel(mergedParcel);
       setSelectedParcelIds(mergedParcel.parcel_id ? [mergedParcel.parcel_id] : []);
       setSelectedParcelsGeojson(
@@ -394,12 +413,16 @@ export default function Map({ onParcel }: MapProps) {
           : { type: "FeatureCollection", features: [] },
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error || "تعذر دمج القطع المحددة.");
-      setCollateStatus(message);
+      const message = error instanceof Error ? error.message : String(error || tRef.current("map.status.collateFailed"));
+      setCollateStatus({ raw: message });
     } finally {
       setCollating(false);
     }
   };
+
+  const selectedList = selectedParcelIds.length
+    ? t("map.status.selectedList", { list: selectedParcelIds.join(", ") })
+    : t("map.status.noneSelected");
 
   return (
     <div>
@@ -414,7 +437,7 @@ export default function Map({ onParcel }: MapProps) {
           cursor: "crosshair",
         }}
       />
-      {status && (
+      {renderStatus && (
         <div
           role="status"
           aria-live="polite"
@@ -427,7 +450,7 @@ export default function Map({ onParcel }: MapProps) {
             fontSize: "0.95rem",
           }}
         >
-          {status}
+          {renderStatus}
         </div>
       )}
       <div
@@ -461,27 +484,25 @@ export default function Map({ onParcel }: MapProps) {
               }
             }}
           />
-          <span>تحديد متعدد للقطع</span>
+          <span>{t("map.controls.multiSelect")}</span>
         </label>
         <button type="button" onClick={handleClearSelection} disabled={!selectedParcelIds.length}>
-          مسح التحديد
+          {t("map.controls.clearSelection")}
         </button>
         <button
           type="button"
           onClick={handleCollate}
           disabled={selectedParcelIds.length < 2 || collating}
         >
-          {collating ? "جارٍ الدمج…" : "دمج القطع"}
+          {collating ? t("map.controls.merging") : t("map.controls.mergeParcels")}
         </button>
         <span style={{ fontSize: "0.9rem", color: "#475467" }}>
-          {selectedParcelIds.length
-            ? `القطع المحددة: ${selectedParcelIds.join(", ")}`
-            : "لم يتم تحديد أي قطع بعد."}
+          {selectedList}
         </span>
       </div>
-      {collateStatus && (
+      {renderCollateStatus && (
         <div style={{ marginTop: 8, color: "#475467", fontSize: "0.95rem" }}>
-          {collateStatus}
+          {renderCollateStatus}
         </div>
       )}
     </div>
