@@ -559,12 +559,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       ? notes.summary_ar ?? notes.summary_en ?? notes.summary
       : notes.summary_en ?? notes.summary ?? excelResult?.summary
     )?.trim() || (excelResult ? t("excel.summaryRoi", { value: formatPercentValue(excelResult.roi) }) : "");
-  const unitCountMethodology =
-    (isArabic
-      ? notes.unit_count_methodology_ar ?? notes.unit_count_methodology_en ?? notes.unit_count_methodology
-      : notes.unit_count_methodology_en ?? notes.unit_count_methodology
-    )?.trim() || "";
-
   return (
     <div>
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
@@ -927,7 +921,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                 </tbody>
               </table>
 
-              {(summaryText || unitCountMethodology) && (
+              {summaryText && (
                 <div
                   style={{
                     marginTop: "0.75rem",
@@ -938,12 +932,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   <h5 style={{ margin: "0 0 0.35rem 0", fontSize: "0.95rem" }}>
                     {t("excel.executiveSummary")}
                   </h5>
-                  {summaryText && <p style={{ margin: 0, lineHeight: 1.4 }}>{summaryText}</p>}
-                  {unitCountMethodology && (
-                    <p style={{ margin: "0.35rem 0 0", lineHeight: 1.4, opacity: 0.85 }}>
-                      {unitCountMethodology}
-                    </p>
-                  )}
+                  <p style={{ margin: 0, lineHeight: 1.4 }}>{summaryText}</p>
                 </div>
               )}
             </div>
