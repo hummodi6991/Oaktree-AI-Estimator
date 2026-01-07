@@ -48,91 +48,83 @@ def _annual_to_monthly(v_year: float) -> float:
         return 0.0
 
 
-def _fmt0(x: float) -> str:
-    try:
-        return f"{float(x):,.0f}"
-    except Exception:
-        return "0"
+DEFAULT_UNIT_SIZE_M2 = {
+    "residential": 120.0,
+    "retail": 80.0,
+    "office": 120.0,
+}
 
 
-def _component_rent_source_label(comp_meta: dict | None) -> str:
-    """
-    Return a human label for rent source per component.
-    Expected comp_meta keys (when present):
-      - method (e.g., aqar_district_median, manual_or_template)
-      - scope (district/city/None)
-      - provider
-    """
-    if not isinstance(comp_meta, dict):
-        return "template default"
-    method = (comp_meta.get("method") or "").strip()
-    scope = (comp_meta.get("scope") or "").strip()
-    provider = (comp_meta.get("provider") or "").strip()
-
-    if method.startswith("aqar") and scope:
-        # e.g. "Aqar district median"
-        s = f"Aqar {scope} median"
-        return f"{s}{f' ({provider})' if provider else ''}"
-
-    if method and method not in ("manual", "manual_or_template"):
-        return f"{method}{f' ({provider})' if provider else ''}"
-
-    return "template default"
+def _resolve_avg_unit_m2(excel_inputs: dict, key: str, fallback: float) -> float:
+    avg_unit_m2 = excel_inputs.get("avg_unit_m2") if isinstance(excel_inputs, dict) else None
+    if isinstance(avg_unit_m2, dict):
+        try:
+            value = float(avg_unit_m2.get(key) or 0.0)
+            if value > 0:
+                return value
+        except Exception:
+            pass
+    if key == "residential":
+        try:
+            value = float(excel_inputs.get("parking_assumed_avg_apartment_m2") or 0.0)
+            if value > 0:
+                return value
+        except Exception:
+            pass
+    return fallback
 
 
-def _pick_base_annual_rent_sar_m2(rent_map: dict) -> float:
-    """
-    Pick a representative base annual rent (SAR/m²/year) for summary text.
-
-    Why: rent_applied_sar_m2_yr may include non-income lines (e.g. basement=0),
-    and dict iteration order can cause us to accidentally pick 0 as the "base rent".
-    """
-    if not isinstance(rent_map, dict) or not rent_map:
-        return 0.0
-
-    # 1) Prefer explicit residential (Excel-mode currently uses residential as the primary rent band).
-    try:
-        v = rent_map.get("residential")
-        if v is not None:
-            f = float(v)
-            if f > 0:
-                return f
-    except Exception:
-        pass
-
-    # 2) Otherwise, pick the first positive rent.
-    try:
-        for _k, _v in rent_map.items():
-            f = float(_v or 0.0)
-            if f > 0:
-                return f
-    except Exception:
-        pass
-
-    # 3) Last resort: preserve previous behavior (may be 0, but avoids crashing).
-    try:
-        return float(next(iter(rent_map.values())))
-    except Exception:
-        return 0.0
-
-
-def _base_rent_items(rent_map: dict) -> list[tuple[str, float]]:
-    """Return non-zero base rents excluding basement-like components."""
-    items: list[tuple[str, float]] = []
-    if not isinstance(rent_map, dict):
-        return items
-    for key, value in rent_map.items():
-        key_lower = str(key).lower()
-        if key_lower.startswith("basement") or key_lower.startswith("parking"):
+def _estimate_unit_counts(
+    excel: dict,
+    excel_inputs: dict,
+    unit_mix: list[Any] | None,
+) -> dict[str, int]:
+    area_map = excel.get("nla") or excel.get("built_area") or {}
+    counts: dict[str, int] = {}
+    residential_units = 0
+    for unit in unit_mix or []:
+        if not isinstance(unit, dict):
             continue
         try:
-            v = float(value or 0.0)
+            residential_units += int(unit.get("count") or 0)
         except Exception:
             continue
-        if v <= 0:
-            continue
-        items.append((str(key), v))
-    return items
+
+    if residential_units <= 0:
+        residential_area = float(area_map.get("residential") or 0.0)
+        avg_apartment_m2 = _resolve_avg_unit_m2(
+            excel_inputs, "residential", DEFAULT_UNIT_SIZE_M2["residential"]
+        )
+        if residential_area > 0:
+            residential_units = int(
+                (residential_area + avg_apartment_m2 - 1) // max(avg_apartment_m2, 1.0)
+            )
+
+    counts["residential"] = residential_units
+
+    for key in ("retail", "office"):
+        area = float(area_map.get(key) or 0.0)
+        avg_unit_m2 = _resolve_avg_unit_m2(excel_inputs, key, DEFAULT_UNIT_SIZE_M2[key])
+        if area > 0:
+            counts[key] = int((area + avg_unit_m2 - 1) // max(avg_unit_m2, 1.0))
+        else:
+            counts[key] = 0
+
+    return counts
+
+
+def _roi_band(roi: float) -> str:
+    try:
+        value = float(roi)
+    except Exception:
+        return "uncertain"
+    if value < 0:
+        return "negative"
+    if value < 0.05:
+        return "low-single-digit"
+    if value < 0.1:
+        return "mid-single-digit"
+    return "double-digit"
 
 
 _INMEM_HEADERS: dict[str, dict[str, Any]] = {}
@@ -1066,62 +1058,21 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "y1_income_effective_factor": y1_income_effective_factor,
             "roi": float(excel["roi"]),
         }
-        if ppm2_src.startswith("kaggle_hedonic"):
-            land_source_label = "the Kaggle hedonic v0 land price model"
-        elif ppm2_src.startswith("aqar."):
-            land_source_label = "Kaggle aqar.fm median land price/m²"
-        elif ppm2_src == "Manual":
-            land_source_label = "a hedonic land price model"
-        else:
-            land_source_label = ppm2_src or "the configured land price source"
-
-        district_display = district_raw or district or (req.city or "the selected city")
-        y1_eff = float(excel.get("y1_income_effective") or 0.0)
-        y1_eff_factor = y1_income_effective_factor
+        unit_counts = _estimate_unit_counts(excel, excel_inputs, req.unit_mix)
+        avg_res = _resolve_avg_unit_m2(excel_inputs, "residential", DEFAULT_UNIT_SIZE_M2["residential"])
+        avg_retail = _resolve_avg_unit_m2(excel_inputs, "retail", DEFAULT_UNIT_SIZE_M2["retail"])
+        avg_office = _resolve_avg_unit_m2(excel_inputs, "office", DEFAULT_UNIT_SIZE_M2["office"])
+        roi_band = _roi_band(excel.get("roi", 0.0))
         summary_text = (
-            f"For a site of {site_area_m2:,.0f} m² in "
-            f"{district_display}, "
-            f"land is valued at {excel['land_cost']:,.0f} SAR based on {land_source_label}. "
-            f"Construction and fit-out total "
-            f"{excel['sub_total']:,.0f} SAR, with contingency, "
-            f"consultants, feasibility fees and transaction costs bringing total capex to "
-            f"{excel['grand_total_capex']:,.0f} SAR. Year 1 net income of "
-            f"{excel['y1_income']:,.0f} SAR; using {y1_eff_factor*100:.0f}% effective income ({y1_eff:,.0f} SAR) implies an unlevered ROI of "
-            f"{excel['roi']*100:,.1f}%."
+            "Estimated unit yield: "
+            f"{unit_counts.get('residential', 0):,} apartments, "
+            f"{unit_counts.get('retail', 0):,} retail units, "
+            f"{unit_counts.get('office', 0):,} office units."
         )
-        if parking_income_y1 > 0 and parking_income_meta.get("monetize_extra_parking"):
-            try:
-                extra_spaces = int(parking_income_meta.get("extra_spaces") or excel.get("parking_extra_spaces") or 0)
-            except Exception:
-                extra_spaces = int(excel.get("parking_extra_spaces") or 0)
-            monthly_rate_used = float(parking_income_meta.get("monthly_rate_used") or 0.0)
-            occupancy_used = float(parking_income_meta.get("occupancy_used") or 0.0)
-            summary_text += (
-                f" Includes optional parking income from {extra_spaces} excess spaces at "
-                f"{monthly_rate_used:,.0f} SAR/space/month × {occupancy_used:.2f} occupancy."
-            )
-
-        # Summary footer: show per-component rents AND correctly label their sources.
-        try:
-            rmeta = excel_inputs.get("rent_source_metadata") or {}
-            comps_meta = rmeta.get("components") if isinstance(rmeta, dict) else {}
-            if not isinstance(comps_meta, dict):
-                comps_meta = {}
-
-            # only show meaningful components
-            show_keys = [k for k in ("residential", "retail", "office") if k in rent_applied_sar_m2_yr]
-            parts: list[str] = []
-            for k in show_keys:
-                y = float(rent_applied_sar_m2_yr.get(k) or 0.0)
-                m = _annual_to_monthly(y)
-                label = _component_rent_source_label(comps_meta.get(k) if isinstance(comps_meta, dict) else None)
-                parts.append(f"{k} {_fmt0(m)} SAR/m²/month ({label})")
-
-            if parts:
-                # Replace any misleading "Aqar district medians" phrasing with a truthful line
-                summary_text += " Base rents: " + ", ".join(parts) + "."
-        except Exception:
-            pass
+        summary_text += (
+            " Based on current assumptions, the unlevered Year-1 yield on cost is "
+            f"{roi_band}."
+        )
         result = {
             "totals": totals,
             "assumptions": [
@@ -1158,6 +1109,24 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                     "unit": "m²/space",
                     "source_type": "Assumption",
                 },
+                {
+                    "key": "avg_unit_size_residential_m2",
+                    "value": avg_res,
+                    "unit": "m²",
+                    "source_type": "Market assumption",
+                },
+                {
+                    "key": "avg_unit_size_retail_m2",
+                    "value": avg_retail,
+                    "unit": "m²",
+                    "source_type": "Market assumption",
+                },
+                {
+                    "key": "avg_unit_size_office_m2",
+                    "value": avg_office,
+                    "unit": "m²",
+                    "source_type": "Market assumption",
+                },
             ],
             "notes": {
                 "excel_inputs_keys": list(excel_inputs.keys()),
@@ -1168,6 +1137,10 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 "rent_source_metadata": excel_inputs.get("rent_source_metadata"),
                 "district_inference": district_inference,
                 "summary": summary_text,
+                "unit_count_methodology": (
+                    "Unit counts are derived from unit_mix when provided; otherwise estimated by "
+                    "dividing net lettable area by average unit sizes."
+                ),
                 "site_area_m2": site_area_m2,
                 "district": district,
                 "excel_land_price": {
