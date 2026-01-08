@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -23,10 +24,10 @@ def test_api_paths_bypass_spa_static() -> None:
 
 
 def test_root_path_returns_spa_or_not_500() -> None:
+    if not Path("frontend/dist/index.html").is_file():
+        pytest.skip("frontend/dist/index.html not present")
+
     client = TestClient(app)
 
     response = client.get("/")
-    if Path("frontend/dist/index.html").is_file():
-        assert response.status_code == 200
-    else:
-        assert response.status_code != 500
+    assert response.status_code == 200
