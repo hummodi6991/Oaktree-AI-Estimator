@@ -86,7 +86,7 @@ app.include_router(estimates_router, prefix="/v1", dependencies=deps)
 app.include_router(pricing_router.router, prefix="/v1", dependencies=deps)
 app.include_router(metadata_router, prefix="/v1", dependencies=deps)
 app.include_router(ingest_router, dependencies=deps)
-app.include_router(tiles_router, prefix="/v1", dependencies=deps)
+app.include_router(tiles_router, prefix="", dependencies=deps)
 # Always expose geo routes; they already try PostGIS first and fall back to ArcGIS/external.
 app.include_router(geo_router, prefix="/v1", dependencies=deps)
 
