@@ -9,3 +9,13 @@ def test_parcel_target_srid_default(monkeypatch):
     config = importlib.reload(config)
 
     assert config.Settings().PARCEL_TARGET_SRID == 32638
+
+
+def test_parcel_identify_geom_column_override(monkeypatch):
+    monkeypatch.setenv("PARCEL_IDENTIFY_GEOM_COLUMN", "geom_32638")
+
+    import app.core.config as config
+
+    config = importlib.reload(config)
+
+    assert config.Settings().PARCEL_IDENTIFY_GEOM_COLUMN == "geom_32638"
