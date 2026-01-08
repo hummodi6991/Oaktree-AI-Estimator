@@ -1,9 +1,10 @@
 import logging
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 
 from app.api.comps import router as comps_router
@@ -23,6 +24,40 @@ from app.db.session import SessionLocal
 app = FastAPI(title="Oaktree Estimator API", version="0.1.0")
 setup_otel_if_configured(app)
 logger = logging.getLogger(__name__)
+_PROTECTED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc"}
+_PROTECTED_PREFIXES = ("/v1/",)
+
+
+class SpaFallbackMiddleware(BaseHTTPMiddleware):
+    def __init__(
+        self,
+        app: FastAPI,
+        static_app: StaticFiles | None,
+        protected_paths: set[str],
+        protected_prefixes: tuple[str, ...],
+    ) -> None:
+        super().__init__(app)
+        self.static_app = static_app
+        self.protected_paths = protected_paths
+        self.protected_prefixes = protected_prefixes
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if self.static_app is None:
+            return await call_next(request)
+
+        path = request.url.path
+        if path in self.protected_paths or path.startswith(self.protected_prefixes):
+            return await call_next(request)
+
+        response = await call_next(request)
+        if response.status_code != 404:
+            return response
+
+        static_response = await self.static_app.get_response(path, request.scope)
+        if static_response.status_code == 404:
+            return response
+
+        return static_response
 
 
 @app.on_event("startup")
@@ -69,6 +104,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve the compiled React app (frontend/dist) from the same container.
+# UI will be reachable at "/" on the same LoadBalancer as the API.
+spa_static_app = StaticFiles(directory="frontend/dist", html=True, check_dir=False)
+app.add_middleware(
+    SpaFallbackMiddleware,
+    static_app=spa_static_app,
+    protected_paths=_PROTECTED_PATHS,
+    protected_prefixes=_PROTECTED_PREFIXES,
+)
+
 app.include_router(health_router, prefix="")  # public
 deps: list = []  # stays empty unless AUTH_MODE != disabled (kept simple)
 try:
@@ -89,11 +134,3 @@ app.include_router(ingest_router, dependencies=deps)
 app.include_router(tiles_router, prefix="", dependencies=deps)
 # Always expose geo routes; they already try PostGIS first and fall back to ArcGIS/external.
 app.include_router(geo_router, prefix="/v1", dependencies=deps)
-
-# Serve the compiled React app (frontend/dist) from the same container.
-# UI will be reachable at "/" on the same LoadBalancer as the API.
-try:
-    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="web")
-except Exception:
-    # In dev without a build the directory may not exist; ignore.
-    pass
