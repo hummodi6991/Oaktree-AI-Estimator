@@ -26,6 +26,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -168,7 +169,10 @@ jobs:
 
           kubectl apply -f migrate-job.yml
 
-          kubectl wait -n default --for=condition=complete --timeout=1800s job/oaktree-migrate || true
+          if ! kubectl wait -n default --for=condition=complete --timeout=7200s job/oaktree-migrate; then
+            kubectl logs job/oaktree-migrate --all-containers=true --tail=200 || true
+            kubectl describe job/oaktree-migrate || true
+          fi
           kubectl describe job oaktree-migrate -n default || true
           kubectl get pods -n default -l job-name=oaktree-migrate -o wide || true
 
