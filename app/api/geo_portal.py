@@ -72,6 +72,7 @@ _IDENTIFY_SQL = text(
       CASE WHEN ST_Contains({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS contains,
       CASE WHEN ST_Intersects({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS hits,
       CASE WHEN ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol_m) THEN 1 ELSE 0 END AS near,
+      CASE WHEN classification = 'overture_building' THEN 0 ELSE 1 END AS is_non_ovt,
       CASE WHEN classification = 'overture_building' THEN 1 ELSE 0 END AS is_ovt
     FROM {_PARCEL_TABLE}, q
     WHERE ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol_m)
@@ -92,6 +93,7 @@ _IDENTIFY_SQL = text(
   ORDER BY
     contains DESC,
     hits DESC,
+    is_non_ovt DESC,
     distance_m ASC,
     area_m2 DESC,
     is_ovt DESC

@@ -6,5 +6,7 @@ def test_identify_sql_prefers_contains_and_uses_dwithin_filter():
     assert "ST_Contains" in sql
     assert "WHERE ST_DWithin" in sql
     assert "contains DESC" in sql
+    assert "is_non_ovt DESC" in sql
     assert "distance_m ASC" in sql
     assert "area_m2 DESC" in sql
+    assert sql.index("is_non_ovt DESC") < sql.index("is_ovt DESC")
