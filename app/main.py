@@ -45,6 +45,9 @@ class SpaFallbackMiddleware(BaseHTTPMiddleware):
         if self.static_app is None:
             return await call_next(request)
 
+        if request.method not in {"GET", "HEAD"}:
+            return await call_next(request)
+
         path = request.url.path
         if path in self.protected_paths or path.startswith(self.protected_prefixes):
             return await call_next(request)
@@ -53,7 +56,14 @@ class SpaFallbackMiddleware(BaseHTTPMiddleware):
         if response.status_code != 404:
             return response
 
-        static_response = await self.static_app.get_response(path, request.scope)
+        static_path = "/index.html" if path == "/" else path
+        try:
+            static_response = await self.static_app.get_response(
+                static_path, request.scope
+            )
+        except Exception as exc:
+            logger.warning("SPA fallback failed for %s: %s", static_path, exc)
+            return response
         if static_response.status_code == 404:
             return response
 
