@@ -76,6 +76,7 @@ _PARCEL_TILE_SQL = text(
 )
 
 @router.get("/tiles/{z}/{x}/{y}.png")
+@router.get("/v1/tiles/{z}/{x}/{y}.png")
 def tile(z: int, x: int, y: int):
     # 1) Serve from disk if present
     p = _tile_path(z, x, y)
@@ -109,6 +110,7 @@ def tile(z: int, x: int, y: int):
 
 
 @router.get("/tiles/ovt/{z}/{x}/{y}.pbf")
+@router.get("/v1/tiles/ovt/{z}/{x}/{y}.pbf")
 def overture_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     try:
         tile_bytes = db.execute(_OVT_TILE_SQL, {"z": z, "x": x, "y": y}).scalar()
@@ -124,6 +126,7 @@ def overture_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
 
 
 @router.get("/tiles/parcels/{z}/{x}/{y}.pbf")
+@router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     try:
         tile_bytes = db.execute(
