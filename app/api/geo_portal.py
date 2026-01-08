@@ -69,10 +69,12 @@ _IDENTIFY_SQL = text(
       ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
       ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
       ST_Distance({_PARCEL_GEOM_COLUMN}, q.pt)    AS distance_m,
+      CASE WHEN ST_Contains({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS contains,
       CASE WHEN ST_Intersects({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS hits,
       CASE WHEN ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol_m) THEN 1 ELSE 0 END AS near,
       CASE WHEN classification = 'overture_building' THEN 1 ELSE 0 END AS is_ovt
     FROM {_PARCEL_TABLE}, q
+    WHERE ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol_m)
   )
   SELECT
     id,
@@ -82,14 +84,16 @@ _IDENTIFY_SQL = text(
     perimeter_m,
     ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geom,
     distance_m,
+    contains,
     hits,
     near,
     is_ovt
   FROM scored
   ORDER BY
-    CASE WHEN hits = 1 THEN 3 WHEN near = 1 THEN 2 ELSE 1 END DESC,
+    contains DESC,
+    hits DESC,
     is_ovt DESC,
-    area_m2 ASC,
+    area_m2 DESC,
     distance_m ASC
   LIMIT 1;
   """
