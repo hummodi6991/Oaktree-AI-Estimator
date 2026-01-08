@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 import os, pathlib
 import httpx
 
+from app.core.config import settings
 from app.db.deps import get_db
 
 router = APIRouter(tags=["map"])
@@ -13,6 +14,7 @@ UA = os.getenv("TILE_USER_AGENT", "oaktree-estimator/0.1 (contact: ops@example.c
 CACHE_DIR = os.getenv("TILE_CACHE_DIR", "/app/tiles_cache")
 OFFLINE_ONLY = os.getenv("TILE_OFFLINE_ONLY", "false").lower() in {"1","true","yes"}
 SMALL_PARCEL_MAX_AREA_M2 = 50_000
+SUHAIL_PARCEL_TABLE = "public.suhail_parcels_mat"
 
 def _tile_path(z: int, x: int, y: int) -> pathlib.Path:
     return pathlib.Path(CACHE_DIR) / str(z) / str(x) / f"{y}.png"
@@ -75,6 +77,50 @@ _PARCEL_TILE_SQL = text(
     """
 )
 
+_SUHAIL_PARCEL_TILE_SQL = text(
+    f"""
+    WITH tile AS (
+      SELECT ST_TileEnvelope(:z,:x,:y) AS geom3857
+    ),
+    parcel_candidates AS (
+      SELECT
+        p.id,
+        p.landuse,
+        p.classification,
+        p.area_m2,
+        p.perimeter_m,
+        p.geom
+      FROM {SUHAIL_PARCEL_TABLE} p, tile t
+      WHERE p.geom && ST_Transform(t.geom3857, 4326)
+        AND ST_Intersects(p.geom, ST_Transform(t.geom3857, 4326))
+    ),
+    mvtgeom AS (
+      SELECT
+        id,
+        landuse,
+        classification,
+        area_m2,
+        perimeter_m,
+        ST_AsMVTGeom(
+          ST_Transform(p.geom, 3857),
+          t.geom3857,
+          4096,
+          64,
+          true
+        ) AS geom
+      FROM parcel_candidates p, tile t
+    )
+    SELECT ST_AsMVT(mvtgeom, 'parcels', 4096, 'geom') AS tile
+    FROM mvtgeom;
+    """
+)
+
+
+def _parcel_tile_sql():
+    if getattr(settings, "PARCEL_TILE_TABLE", "") == SUHAIL_PARCEL_TABLE:
+        return _SUHAIL_PARCEL_TILE_SQL
+    return _PARCEL_TILE_SQL
+
 @router.get("/tiles/{z}/{x}/{y}.png")
 @router.get("/v1/tiles/{z}/{x}/{y}.png")
 def tile(z: int, x: int, y: int):
@@ -129,9 +175,11 @@ def overture_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
 @router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     try:
-        tile_bytes = db.execute(
-            _PARCEL_TILE_SQL, {"z": z, "x": x, "y": y, "max_area_m2": SMALL_PARCEL_MAX_AREA_M2}
-        ).scalar()
+        tile_sql = _parcel_tile_sql()
+        params = {"z": z, "x": x, "y": y}
+        if tile_sql is _PARCEL_TILE_SQL:
+            params["max_area_m2"] = SMALL_PARCEL_MAX_AREA_M2
+        tile_bytes = db.execute(tile_sql, params).scalar()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to render parcel tile: {exc}")
 

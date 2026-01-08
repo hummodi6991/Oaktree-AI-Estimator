@@ -100,7 +100,7 @@ jobs:
         run: |
           IMAGE="${ACR_REG_HOST}/${ACR_NS}/${SVC_NAME}:${{ github.sha }}"
           echo "Using image: $IMAGE"
-          docker build -t "$IMAGE" .
+          docker build --build-arg VITE_PARCEL_TILE_TABLE=public.suhail_parcels_mat -t "$IMAGE" .
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
@@ -128,6 +128,7 @@ jobs:
           kubectl create secret generic oaktree-app-env \
             --from-literal=APP_ENV=prod \
             --from-literal=AUTH_MODE=disabled \
+            --from-literal=PARCEL_TILE_TABLE=public.suhail_parcels_mat \
             --from-literal=PARCEL_IDENTIFY_TOLERANCE_M=75 \
             --from-literal=PARCEL_IDENTIFY_TABLE=public.suhail_parcels_mat \
             --from-literal=PARCEL_IDENTIFY_GEOM_COLUMN=geom_32638 \

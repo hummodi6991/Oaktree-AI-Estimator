@@ -2,6 +2,8 @@
 FROM public.ecr.aws/docker/library/node:20-alpine AS webbuild
 WORKDIR /web/frontend
 COPY frontend/ .
+ARG VITE_PARCEL_TILE_TABLE
+ENV VITE_PARCEL_TILE_TABLE=$VITE_PARCEL_TILE_TABLE
 RUN (npm ci || npm install) && npm run build
 
 ### 2) Build the FastAPI image and copy the static site

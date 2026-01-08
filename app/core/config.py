@@ -41,6 +41,7 @@ class Settings:
     )
     PARCEL_IDENTIFY_TABLE: str = os.getenv("PARCEL_IDENTIFY_TABLE", "parcels")
     PARCEL_IDENTIFY_GEOM_COLUMN: str = os.getenv("PARCEL_IDENTIFY_GEOM_COLUMN", "geom")
+    PARCEL_TILE_TABLE: str = os.getenv("PARCEL_TILE_TABLE", "osm_parcels_proxy")
 
 
 settings = Settings()

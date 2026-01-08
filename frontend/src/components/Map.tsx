@@ -22,8 +22,8 @@ const SELECT_LINE_LAYER_ID = "selected-parcel-line";
 const OVERTURE_SOURCE_ID = "overture-footprints";
 const OVERTURE_LAYER_ID = "overture-footprints-outline";
 const PARCEL_SOURCE_ID = "parcel-outlines";
-const PARCEL_LINE_BASE_LAYER_ID = "parcels-line-base";
-const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
+const SUHAIL_FILL_LAYER_ID = "suhail-parcels-fill";
+const SUHAIL_OUTLINE_LAYER_ID = "suhail-parcels-outline";
 const OVT_MIN_ZOOM = 15;
 
 const SOURCE_CRS = "EPSG:32638";
@@ -166,46 +166,50 @@ function ensureParcelOverlay(map: maplibregl.Map) {
   }
 
   const beforeLayerId = getBeforeLayerId(map);
-  if (!map.getLayer(PARCEL_LINE_BASE_LAYER_ID)) {
+  if (!map.getLayer(SUHAIL_FILL_LAYER_ID)) {
     map.addLayer(
       {
-        id: PARCEL_LINE_BASE_LAYER_ID,
-        type: "line",
+        id: SUHAIL_FILL_LAYER_ID,
+        type: "fill",
         source: PARCEL_SOURCE_ID,
         "source-layer": "parcels",
-        minzoom: 15,
+        minzoom: 12,
         layout: { visibility: "visible" },
         paint: {
-          "line-color": "#00AEEF",
-          "line-width": 1,
-          "line-opacity": 0.35,
+          "fill-color": "#6c5ce7",
+          "fill-opacity": 0.08,
         },
       },
       beforeLayerId
     );
   } else {
-    map.setLayoutProperty(PARCEL_LINE_BASE_LAYER_ID, "visibility", "visible");
+    map.setLayoutProperty(SUHAIL_FILL_LAYER_ID, "visibility", "visible");
   }
 
-  if (!map.getLayer(PARCEL_LINE_LAYER_ID)) {
+  if (!map.getLayer(SUHAIL_OUTLINE_LAYER_ID)) {
     map.addLayer(
       {
-        id: PARCEL_LINE_LAYER_ID,
+        id: SUHAIL_OUTLINE_LAYER_ID,
         type: "line",
         source: PARCEL_SOURCE_ID,
         "source-layer": "parcels",
-        minzoom: 15,
-        layout: { visibility: "visible" },
+        minzoom: 12,
+        layout: {
+          visibility: "visible",
+          "line-join": "round",
+          "line-cap": "round",
+        },
         paint: {
-          "line-color": "#8a5dff",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 15, 0.7, 20, 2.0],
-          "line-opacity": 0.85,
+          "line-color": "#6c5ce7",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 14, 2.5, 18, 4.0],
+          "line-opacity": 0.35,
+          "line-dasharray": [2, 2],
         },
       },
       beforeLayerId
     );
   } else {
-    map.setLayoutProperty(PARCEL_LINE_LAYER_ID, "visibility", "visible");
+    map.setLayoutProperty(SUHAIL_OUTLINE_LAYER_ID, "visibility", "visible");
   }
 }
 
@@ -216,12 +220,16 @@ export default function Map({ onParcel }: MapProps) {
   const tRef = useRef(t);
   const [status, setStatus] = useState<StatusMessage | null>({ key: "map.status.prompt" });
   const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const defaultShowSuhailOutlines =
+    String(import.meta.env.VITE_PARCEL_TILE_TABLE || "").toLowerCase() === "public.suhail_parcels_mat";
+  const [showSuhailOutlines, setShowSuhailOutlines] = useState(defaultShowSuhailOutlines);
   const [selectedParcelIds, setSelectedParcelIds] = useState<string[]>([]);
   const [selectedParcelsGeojson, setSelectedParcelsGeojson] = useState<
     FeatureCollection<Geometry, GeoJsonProperties>
   >({ type: "FeatureCollection", features: [] });
   const [collateStatus, setCollateStatus] = useState<StatusMessage | null>(null);
   const [collating, setCollating] = useState(false);
+  const [selectionMethod, setSelectionMethod] = useState<"feature" | "identify" | null>(null);
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
@@ -265,6 +273,92 @@ export default function Map({ onParcel }: MapProps) {
     return value;
   };
 
+  const parcelFromRenderedFeature = (feature: maplibregl.MapGeoJSONFeature): ParcelSummary => {
+    const properties = (feature.properties ?? {}) as Record<string, unknown>;
+    const rawId = properties.id ?? feature.id ?? null;
+    const parcelId = rawId != null ? String(rawId) : null;
+    const landuse = properties.landuse ?? null;
+    const classification = properties.classification ?? null;
+    const area = Number(properties.area_m2);
+    const perimeter = Number(properties.perimeter_m);
+
+    return {
+      parcel_id: parcelId,
+      geometry: feature.geometry as Geometry,
+      area_m2: Number.isFinite(area) ? area : null,
+      perimeter_m: Number.isFinite(perimeter) ? perimeter : null,
+      landuse_raw: typeof landuse === "string" ? landuse : null,
+      classification_raw: typeof classification === "string" ? classification : null,
+      landuse_code: typeof landuse === "string" ? landuse : null,
+    };
+  };
+
+  const applyParcelSelection = (
+    parcel: ParcelSummary,
+    geometry: Geometry | null,
+    method: "feature" | "identify",
+  ) => {
+    const nextParcel = geometry ? { ...parcel, geometry } : parcel;
+    onParcelRef.current(nextParcel);
+    setSelectionMethod(method);
+
+    if (!geometry) {
+      setStatus({ key: "map.status.noGeometry" });
+      return;
+    }
+
+    if (multiSelectModeRef.current) {
+      if (!nextParcel.parcel_id) {
+        setStatus({ key: "map.status.missingId" });
+        return;
+      }
+      setSelectedParcelsGeojson((current) => {
+        const currentIds = selectedParcelIdsRef.current;
+        const alreadySelected = currentIds.includes(nextParcel.parcel_id as string);
+        const nextIds = alreadySelected
+          ? currentIds.filter((id) => id !== nextParcel.parcel_id)
+          : [...currentIds, nextParcel.parcel_id as string];
+        setSelectedParcelIds(nextIds);
+
+        if (alreadySelected) {
+          setStatus({ key: "map.status.removedSelection", options: { id: formatParcelId(nextParcel.parcel_id) } });
+          return {
+            type: "FeatureCollection",
+            features: current.features.filter(
+              (f) => (f.properties as any)?.id !== nextParcel.parcel_id,
+            ),
+          };
+        }
+
+        const nextFeature = featureFromParcel(nextParcel);
+        setStatus({
+          key: "map.status.addedSelection",
+          options: { id: formatParcelId(nextParcel.parcel_id), count: formatInteger(nextIds.length) },
+        });
+        if (!nextFeature) {
+          return current;
+        }
+        return {
+          type: "FeatureCollection",
+          features: [...current.features, nextFeature],
+        };
+      });
+    } else {
+      const nextFeature = featureFromParcel(nextParcel);
+      setSelectedParcelIds(nextParcel.parcel_id ? [nextParcel.parcel_id] : []);
+      setSelectedParcelsGeojson(
+        nextFeature
+          ? { type: "FeatureCollection", features: [nextFeature] }
+          : { type: "FeatureCollection", features: [] },
+      );
+      if (nextParcel.parcel_id) {
+        setStatus({ key: "map.status.selectedWithId", options: { id: formatParcelId(nextParcel.parcel_id) } });
+      } else {
+        setStatus({ key: "map.status.selected" });
+      }
+    }
+  };
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -291,8 +385,20 @@ export default function Map({ onParcel }: MapProps) {
     });
 
     map.on("click", async (e) => {
-      setStatus({ key: "map.status.checking" });
       setCollateStatus(null);
+      const parcelLayers = [SUHAIL_FILL_LAYER_ID, SUHAIL_OUTLINE_LAYER_ID].filter((layerId) =>
+        Boolean(map.getLayer(layerId)),
+      );
+      const rendered = parcelLayers.length
+        ? map.queryRenderedFeatures(e.point, { layers: parcelLayers })
+        : [];
+      const [firstFeature] = rendered;
+      if (firstFeature) {
+        const parcel = parcelFromRenderedFeature(firstFeature);
+        applyParcelSelection(parcel, parcel.geometry ?? null, "feature");
+        return;
+      }
+      setStatus({ key: "map.status.checking" });
       try {
         const data: IdentifyResponse = await identify(e.lngLat.lng, e.lngLat.lat);
         if (disposed) return;
@@ -306,64 +412,7 @@ export default function Map({ onParcel }: MapProps) {
 
         const parcel = data.parcel;
         const geometry = transformGeometryToWgs84(parcel.geometry as Geometry | null);
-        const nextParcel = geometry ? { ...parcel, geometry } : parcel;
-        onParcelRef.current(nextParcel);
-
-        if (!geometry) {
-          setStatus({ key: "map.status.noGeometry" });
-          return;
-        }
-
-        if (multiSelectModeRef.current) {
-          if (!nextParcel.parcel_id) {
-            setStatus({ key: "map.status.missingId" });
-            return;
-          }
-          setSelectedParcelsGeojson((current) => {
-            const currentIds = selectedParcelIdsRef.current;
-            const alreadySelected = currentIds.includes(nextParcel.parcel_id as string);
-            const nextIds = alreadySelected
-              ? currentIds.filter((id) => id !== nextParcel.parcel_id)
-              : [...currentIds, nextParcel.parcel_id as string];
-            setSelectedParcelIds(nextIds);
-
-            if (alreadySelected) {
-              setStatus({ key: "map.status.removedSelection", options: { id: formatParcelId(nextParcel.parcel_id) } });
-              return {
-                type: "FeatureCollection",
-                features: current.features.filter(
-                  (f) => (f.properties as any)?.id !== nextParcel.parcel_id,
-                ),
-              };
-            }
-
-            const nextFeature = featureFromParcel(nextParcel);
-            setStatus({
-              key: "map.status.addedSelection",
-              options: { id: formatParcelId(nextParcel.parcel_id), count: formatInteger(nextIds.length) },
-            });
-            if (!nextFeature) {
-              return current;
-            }
-            return {
-              type: "FeatureCollection",
-              features: [...current.features, nextFeature],
-            };
-          });
-        } else {
-          const nextFeature = featureFromParcel(nextParcel);
-          setSelectedParcelIds(nextParcel.parcel_id ? [nextParcel.parcel_id] : []);
-          setSelectedParcelsGeojson(
-            nextFeature
-              ? { type: "FeatureCollection", features: [nextFeature] }
-              : { type: "FeatureCollection", features: [] },
-          );
-          if (parcel.parcel_id) {
-            setStatus({ key: "map.status.selectedWithId", options: { id: formatParcelId(parcel.parcel_id) } });
-          } else {
-            setStatus({ key: "map.status.selected" });
-          }
-        }
+        applyParcelSelection(parcel, geometry, "identify");
       } catch (err) {
         if (disposed) return;
         console.error(err);
@@ -394,10 +443,22 @@ export default function Map({ onParcel }: MapProps) {
     source?.setData(selectedParcelsGeojson);
   }, [multiSelectMode, selectedParcelsGeojson]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const visibility = showSuhailOutlines ? "visible" : "none";
+    [SUHAIL_FILL_LAYER_ID, SUHAIL_OUTLINE_LAYER_ID].forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        map.setLayoutProperty(layerId, "visibility", visibility);
+      }
+    });
+  }, [showSuhailOutlines]);
+
   const handleClearSelection = () => {
     setSelectedParcelIds([]);
     setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
     onParcelRef.current(null);
+    setSelectionMethod(null);
     setStatus({ key: "map.status.cleared" });
     setCollateStatus(null);
   };
@@ -449,6 +510,11 @@ export default function Map({ onParcel }: MapProps) {
           cursor: "crosshair",
         }}
       />
+      {showSuhailOutlines && (
+        <div style={{ marginTop: 6, fontSize: "0.85rem", color: "rgba(71, 84, 103, 0.9)" }}>
+          {t("map.disclaimer")}
+        </div>
+      )}
       {renderStatus && (
         <div
           role="status"
@@ -474,6 +540,14 @@ export default function Map({ onParcel }: MapProps) {
           alignItems: "center",
         }}
       >
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={showSuhailOutlines}
+            onChange={(event) => setShowSuhailOutlines(event.target.checked)}
+          />
+          <span>{t("map.controls.suhailOutlines")}</span>
+        </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"

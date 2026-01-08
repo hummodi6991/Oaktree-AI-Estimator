@@ -45,11 +45,13 @@
       "noneSelected": "لم يتم تحديد أي قطع بعد."
     },
     "controls": {
+      "suhailOutlines": "حدود القطع: سهيل (معتمد)",
       "multiSelect": "تحديد متعدد للقطع",
       "clearSelection": "مسح التحديد",
       "mergeParcels": "دمج القطع",
       "merging": "جارٍ الدمج…"
-    }
+    },
+    "disclaimer": "قد لا تتطابق حدود القطع تمامًا مع خريطة الأساس."
   },
   "excel": {
     "providerLabel": "المزوّد:",

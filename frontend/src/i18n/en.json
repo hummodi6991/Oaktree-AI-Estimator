@@ -45,11 +45,13 @@
       "noneSelected": "No parcels selected yet."
     },
     "controls": {
+      "suhailOutlines": "Parcel outlines: Suhail (authoritative)",
       "multiSelect": "Multi-select parcels",
       "clearSelection": "Clear selection",
       "mergeParcels": "Merge parcels",
       "merging": "Merging…"
-    }
+    },
+    "disclaimer": "Parcel outlines may not align perfectly with the basemap."
   },
   "excel": {
     "providerLabel": "Provider:",
