@@ -28,7 +28,9 @@ setup_otel_if_configured(app)
 logger = logging.getLogger(__name__)
 _PROTECTED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc"}
 _PROTECTED_PREFIXES = ("/v1/",)
-_SPA_INDEX = Path("frontend/dist/index.html")
+BASE_DIR = Path(__file__).resolve().parent.parent
+SPA_DIR = BASE_DIR / "frontend" / "dist"
+SPA_INDEX = SPA_DIR / "index.html"
 
 
 class SpaFallbackMiddleware(BaseHTTPMiddleware):
@@ -59,7 +61,7 @@ class SpaFallbackMiddleware(BaseHTTPMiddleware):
         if response.status_code != 404:
             return response
 
-        static_path = "/index.html" if path == "/" else path
+        static_path = "index.html" if path == "/" else path.lstrip("/")
         try:
             static_response = await self.static_app.get_response(
                 static_path, request.scope
@@ -119,7 +121,7 @@ app.add_middleware(
 
 # Serve the compiled React app (frontend/dist) from the same container.
 # UI will be reachable at "/" on the same LoadBalancer as the API.
-spa_static_app = StaticFiles(directory="frontend/dist", html=True, check_dir=False)
+spa_static_app = StaticFiles(directory=str(SPA_DIR), html=True, check_dir=False)
 app.add_middleware(
     SpaFallbackMiddleware,
     static_app=spa_static_app,
@@ -128,13 +130,13 @@ app.add_middleware(
 )
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def serve_spa_root() -> Response:
-    if _SPA_INDEX.is_file():
-        return FileResponse(_SPA_INDEX, media_type="text/html")
+    if SPA_INDEX.is_file():
+        return FileResponse(str(SPA_INDEX), media_type="text/html")
     return JSONResponse(
         status_code=404,
-        content={"detail": "Frontend index not found at frontend/dist/index.html"},
+        content={"detail": f"Frontend index not found at {SPA_INDEX}"},
     )
 
 app.include_router(health_router, prefix="")  # public
