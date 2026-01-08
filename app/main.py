@@ -49,6 +49,17 @@ def log_parcel_identify_settings() -> None:
             "Parcel identify table is missing: %s", settings.PARCEL_IDENTIFY_TABLE
         )
 
+
+@app.on_event("startup")
+def log_route_counts() -> None:
+    routes = list(app.router.routes)
+    tiles_routes = [route for route in routes if "/tiles" in getattr(route, "path", "")]
+    logger.info(
+        "API route counts: total=%s tiles=%s",
+        len(routes),
+        len(tiles_routes),
+    )
+
 # Allow cross-origin requests for the API (tighten in production as needed).
 app.add_middleware(
     CORSMiddleware,
@@ -75,7 +86,7 @@ app.include_router(estimates_router, prefix="/v1", dependencies=deps)
 app.include_router(pricing_router.router, prefix="/v1", dependencies=deps)
 app.include_router(metadata_router, prefix="/v1", dependencies=deps)
 app.include_router(ingest_router, dependencies=deps)
-app.include_router(tiles_router, prefix="")  # serves /tiles/...
+app.include_router(tiles_router, prefix="/v1", dependencies=deps)
 # Always expose geo routes; they already try PostGIS first and fall back to ArcGIS/external.
 app.include_router(geo_router, prefix="/v1", dependencies=deps)
 
