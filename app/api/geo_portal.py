@@ -164,6 +164,13 @@ class BuildingMetricsResponse(BaseModel):
     buffer_m: float | None = None
 
 
+class SuhailSridDebugResponse(BaseModel):
+    srid_geom: int | None = None
+    srid_geom_32638: int | None = None
+    sample_pt_wgs84: str | None = None
+    sample_pt_utm: str | None = None
+
+
 def _normalize_building_geojson(obj: dict) -> dict:
     if not isinstance(obj, dict):
         raise HTTPException(status_code=400, detail="GeoJSON payload must be an object")
@@ -204,6 +211,37 @@ def building_metrics(payload: BuildingMetricsRequest, db: Session = Depends(get_
     geom = _normalize_building_geojson(payload.geojson)
     metrics = compute_building_metrics(db, geom, buffer_m=payload.buffer_m)
     return BuildingMetricsResponse(**metrics)
+
+
+@router.get(
+    "/debug/suhail_srid",
+    response_model=SuhailSridDebugResponse,
+    summary="Debug Suhail parcel SRIDs",
+    description="Returns SRIDs and sample point-on-surface values for Suhail parcel geometries.",
+)
+def debug_suhail_srid(db: Session = Depends(get_db)) -> SuhailSridDebugResponse:
+    row = db.execute(
+        text(
+            """
+            SELECT
+                Find_SRID('public', 'suhail_parcels_mat', 'geom') AS srid_geom,
+                Find_SRID('public', 'suhail_parcels_mat', 'geom_32638') AS srid_geom_32638,
+                (
+                    SELECT ST_AsText(ST_PointOnSurface(geom))
+                    FROM public.suhail_parcels_mat
+                    WHERE geom IS NOT NULL
+                    LIMIT 1
+                ) AS sample_pt_wgs84,
+                (
+                    SELECT ST_AsText(ST_PointOnSurface(geom_32638))
+                    FROM public.suhail_parcels_mat
+                    WHERE geom_32638 IS NOT NULL
+                    LIMIT 1
+                ) AS sample_pt_utm
+            """
+        )
+    ).mappings().one()
+    return SuhailSridDebugResponse(**row)
 
 
 _OSM_CLASSIFY_SQL = text(
