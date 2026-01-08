@@ -92,9 +92,9 @@ _IDENTIFY_SQL = text(
   ORDER BY
     contains DESC,
     hits DESC,
-    is_ovt DESC,
+    distance_m ASC,
     area_m2 DESC,
-    distance_m ASC
+    is_ovt DESC
   LIMIT 1;
   """
 )
