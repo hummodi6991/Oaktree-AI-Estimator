@@ -108,7 +108,7 @@ def tile(z: int, x: int, y: int):
         raise HTTPException(status_code=502, detail=f"tile upstream error: {exc}")
 
 
-@router.get("/v1/tiles/ovt/{z}/{x}/{y}.pbf")
+@router.get("/tiles/ovt/{z}/{x}/{y}.pbf")
 def overture_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     try:
         tile_bytes = db.execute(_OVT_TILE_SQL, {"z": z, "x": x, "y": y}).scalar()
@@ -123,7 +123,7 @@ def overture_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
+@router.get("/tiles/parcels/{z}/{x}/{y}.pbf")
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     try:
         tile_bytes = db.execute(
