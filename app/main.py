@@ -1,7 +1,9 @@
 import logging
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -26,6 +28,7 @@ setup_otel_if_configured(app)
 logger = logging.getLogger(__name__)
 _PROTECTED_PATHS = {"/health", "/openapi.json", "/docs", "/redoc"}
 _PROTECTED_PREFIXES = ("/v1/",)
+_SPA_INDEX = Path("frontend/dist/index.html")
 
 
 class SpaFallbackMiddleware(BaseHTTPMiddleware):
@@ -123,6 +126,16 @@ app.add_middleware(
     protected_paths=_PROTECTED_PATHS,
     protected_prefixes=_PROTECTED_PREFIXES,
 )
+
+
+@app.get("/")
+def serve_spa_root() -> Response:
+    if _SPA_INDEX.is_file():
+        return FileResponse(_SPA_INDEX, media_type="text/html")
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "Frontend index not found at frontend/dist/index.html"},
+    )
 
 app.include_router(health_router, prefix="")  # public
 deps: list = []  # stays empty unless AUTH_MODE != disabled (kept simple)
