@@ -130,7 +130,7 @@ jobs:
             --from-literal=AUTH_MODE=disabled \
             --from-literal=PARCEL_IDENTIFY_TOLERANCE_M=75 \
             --from-literal=PARCEL_IDENTIFY_TABLE=public.suhail_parcels_mat \
-            --from-literal=PARCEL_IDENTIFY_GEOM_COLUMN=geom \
+            --from-literal=PARCEL_IDENTIFY_GEOM_COLUMN=geom_32638 \
             --from-literal=PARCEL_TARGET_SRID=32638 \
             --dry-run=client -o yaml | kubectl apply -f -
 

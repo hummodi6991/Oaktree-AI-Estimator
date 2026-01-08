@@ -33,6 +33,13 @@ SPA_DIR = BASE_DIR / "frontend" / "dist"
 SPA_INDEX = SPA_DIR / "index.html"
 
 
+def _split_table_name(table_name: str) -> tuple[str, str]:
+    if "." in table_name:
+        schema_name, table = table_name.split(".", 1)
+        return schema_name, table
+    return "public", table_name
+
+
 class SpaFallbackMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
@@ -90,6 +97,20 @@ def log_parcel_identify_settings() -> None:
                 text("SELECT to_regclass(:table_name)"),
                 {"table_name": settings.PARCEL_IDENTIFY_TABLE},
             ).scalar()
+            if table_exists is not None:
+                schema_name, table_name = _split_table_name(
+                    settings.PARCEL_IDENTIFY_TABLE
+                )
+                srid = db.execute(
+                    text(
+                        "SELECT Find_SRID(:schema_name, :table_name, :column_name)"
+                    ),
+                    {
+                        "schema_name": schema_name,
+                        "table_name": table_name,
+                        "column_name": settings.PARCEL_IDENTIFY_GEOM_COLUMN,
+                    },
+                ).scalar()
     except SQLAlchemyError as exc:
         logger.warning("Parcel identify table check failed: %s", exc)
         return
@@ -97,6 +118,28 @@ def log_parcel_identify_settings() -> None:
     if table_exists is None:
         logger.warning(
             "Parcel identify table is missing: %s", settings.PARCEL_IDENTIFY_TABLE
+        )
+        return
+
+    if srid in (None, 0):
+        logger.warning(
+            "Parcel identify geom SRID unavailable: %s.%s (%s)",
+            settings.PARCEL_IDENTIFY_TABLE,
+            settings.PARCEL_IDENTIFY_GEOM_COLUMN,
+            settings.PARCEL_TARGET_SRID,
+        )
+        return
+
+    logger.info(
+        "Parcel identify geom SRID: %s (expected %s)",
+        srid,
+        settings.PARCEL_TARGET_SRID,
+    )
+    if srid != settings.PARCEL_TARGET_SRID:
+        logger.warning(
+            "Parcel identify geom SRID mismatch: %s (expected %s)",
+            srid,
+            settings.PARCEL_TARGET_SRID,
         )
 
 
