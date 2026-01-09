@@ -36,6 +36,7 @@ const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
 const PARCEL_FILL_LAYER_ID = "parcel-outlines-fill";
 const PARCEL_MIN_ZOOM = 15;
 const PARCEL_LINE_WIDTH: any = ["interpolate", ["linear"], ["zoom"], 15, 0.7, 20, 2.0];
+const PARCEL_OUTLINE_VISIBILITY: any = ["case", [">=", ["zoom"], 16], "visible", "none"];
 
 const DEFAULT_MAP_STYLE = "/esri-style.json";
 
@@ -306,12 +307,15 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     };
 
     const forceOutlineVisibility = () => {
-      const ids = [PARCEL_LINE_BASE_LAYER_ID, PARCEL_LINE_LAYER_ID, PARCEL_FILL_LAYER_ID];
-      ids.forEach((id) => {
+      const outlineIds = [PARCEL_LINE_BASE_LAYER_ID, PARCEL_LINE_LAYER_ID];
+      outlineIds.forEach((id) => {
         if (map.getLayer(id)) {
-          map.setLayoutProperty(id, "visibility", "visible");
+          map.setLayoutProperty(id, "visibility", PARCEL_OUTLINE_VISIBILITY);
         }
       });
+      if (map.getLayer(PARCEL_FILL_LAYER_ID)) {
+        map.setLayoutProperty(PARCEL_FILL_LAYER_ID, "visibility", "visible");
+      }
     };
 
     const ensureParcelOverlay = () => {
@@ -334,17 +338,17 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             source: PARCEL_SOURCE_ID,
             "source-layer": parcelSourceLayer,
             minzoom: PARCEL_MIN_ZOOM,
-            layout: { visibility: "visible" },
+            layout: { visibility: PARCEL_OUTLINE_VISIBILITY },
             paint: {
               "line-color": "#00AEEF",
               "line-width": 1,
-              "line-opacity": 0.35,
+              "line-opacity": ["interpolate", ["linear"], ["zoom"], 16, 0.6, 18, 0.75],
             },
           },
           beforeLayerId
         );
       } else {
-        map.setLayoutProperty(PARCEL_LINE_BASE_LAYER_ID, "visibility", "visible");
+        map.setLayoutProperty(PARCEL_LINE_BASE_LAYER_ID, "visibility", PARCEL_OUTLINE_VISIBILITY);
         if (beforeLayerId) {
           map.moveLayer(PARCEL_LINE_BASE_LAYER_ID, beforeLayerId);
         }
@@ -360,7 +364,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             layout: { visibility: "visible" },
             paint: {
               "fill-color": "#a18af5",
-              "fill-opacity": 0.06,
+              "fill-opacity": ["interpolate", ["linear"], ["zoom"], 15, 0.04, 16, 0.06, 18, 0.08],
             },
           },
           beforeLayerId
@@ -380,17 +384,17 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             source: PARCEL_SOURCE_ID,
             "source-layer": parcelSourceLayer,
             minzoom: PARCEL_MIN_ZOOM,
-            layout: { visibility: "visible" },
+            layout: { visibility: PARCEL_OUTLINE_VISIBILITY },
             paint: {
               "line-color": "#8a5dff",
               "line-width": PARCEL_LINE_WIDTH,
-              "line-opacity": 0.85,
+              "line-opacity": ["interpolate", ["linear"], ["zoom"], 16, 0.65, 18, 0.8],
             },
           },
           beforeLayerId
         );
       } else {
-        map.setLayoutProperty(PARCEL_LINE_LAYER_ID, "visibility", "visible");
+        map.setLayoutProperty(PARCEL_LINE_LAYER_ID, "visibility", PARCEL_OUTLINE_VISIBILITY);
         if (beforeLayerId) {
           map.moveLayer(PARCEL_LINE_LAYER_ID, beforeLayerId);
         }
