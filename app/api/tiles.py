@@ -21,10 +21,10 @@ _SUHAIL_PARCEL_TILE_SQL = text(
         p.classification,
         p.area_m2,
         p.perimeter_m,
-        p.geom_32638
+        p.geom
       FROM {SUHAIL_PARCEL_TABLE} p, tile t
-      WHERE p.geom_32638 && ST_Transform(t.geom3857, 32638)
-        AND ST_Intersects(p.geom_32638, ST_Transform(t.geom3857, 32638))
+      WHERE p.geom && ST_Transform(t.geom3857, 4326)
+        AND ST_Intersects(p.geom, ST_Transform(t.geom3857, 4326))
     ),
     mvtgeom AS (
       SELECT
@@ -34,7 +34,8 @@ _SUHAIL_PARCEL_TILE_SQL = text(
         area_m2,
         perimeter_m,
         ST_AsMVTGeom(
-          ST_Transform(p.geom_32638, 3857),
+          -- MVT must be generated in WebMercator (EPSG:3857).
+          ST_Transform(p.geom, 3857),
           t.geom3857,
           4096,
           64,
