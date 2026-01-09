@@ -21,7 +21,10 @@ const SELECT_FILL_LAYER_ID = "selected-parcel-fill";
 const SELECT_LINE_LAYER_ID = "selected-parcel-line";
 const OVERTURE_SOURCE_ID = "overture-footprints";
 const OVERTURE_LAYER_ID = "overture-footprints-outline";
-const PARCEL_SOURCE_ID = "parcel-outlines";
+const OSM_PARCEL_SOURCE_ID = "osm-parcel-outlines";
+const SUHAIL_PARCEL_SOURCE_ID = "suhail-parcel-outlines";
+const OSM_FILL_LAYER_ID = "osm-parcels-fill";
+const OSM_OUTLINE_LAYER_ID = "osm-parcels-outline";
 const SUHAIL_FILL_LAYER_ID = "suhail-parcels-fill";
 const SUHAIL_OUTLINE_LAYER_ID = "suhail-parcels-outline";
 const OVT_MIN_ZOOM = 15;
@@ -154,10 +157,80 @@ function ensureOvertureOverlay(map: maplibregl.Map) {
   }
 }
 
-function ensureParcelOverlay(map: maplibregl.Map) {
+function removeOverlay(map: maplibregl.Map, layerIds: string[], sourceId: string) {
+  layerIds.forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+  });
+  if (map.getSource(sourceId)) {
+    map.removeSource(sourceId);
+  }
+}
+
+function ensureOsmParcelOverlay(map: maplibregl.Map) {
   const parcelTileUrl = buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf");
-  if (!map.getSource(PARCEL_SOURCE_ID)) {
-    map.addSource(PARCEL_SOURCE_ID, {
+  if (!map.getSource(OSM_PARCEL_SOURCE_ID)) {
+    map.addSource(OSM_PARCEL_SOURCE_ID, {
+      type: "vector",
+      tiles: [parcelTileUrl],
+      minzoom: 10,
+      maxzoom: 22,
+    });
+  }
+
+  const beforeLayerId = getBeforeLayerId(map);
+  if (!map.getLayer(OSM_FILL_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: OSM_FILL_LAYER_ID,
+        type: "fill",
+        source: OSM_PARCEL_SOURCE_ID,
+        "source-layer": "parcels",
+        minzoom: 12,
+        layout: { visibility: "visible" },
+        paint: {
+          "fill-color": "#8b5cf6",
+          "fill-opacity": 0.05,
+        },
+      },
+      beforeLayerId
+    );
+  } else {
+    map.setLayoutProperty(OSM_FILL_LAYER_ID, "visibility", "visible");
+  }
+
+  if (!map.getLayer(OSM_OUTLINE_LAYER_ID)) {
+    map.addLayer(
+      {
+        id: OSM_OUTLINE_LAYER_ID,
+        type: "line",
+        source: OSM_PARCEL_SOURCE_ID,
+        "source-layer": "parcels",
+        minzoom: 12,
+        layout: {
+          visibility: "visible",
+          "line-join": "round",
+          "line-cap": "round",
+        },
+        paint: {
+          "line-color": "#8b5cf6",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 14, 1.8, 18, 3.0],
+          "line-opacity": 0.35,
+          "line-dasharray": [2, 2],
+        },
+      },
+      beforeLayerId
+    );
+  } else {
+    map.setLayoutProperty(OSM_OUTLINE_LAYER_ID, "visibility", "visible");
+  }
+}
+
+function ensureSuhailParcelOverlay(map: maplibregl.Map) {
+  const parcelTileUrl = buildApiUrl("/v1/tiles/suhail/{z}/{x}/{y}.pbf");
+  if (!map.getSource(SUHAIL_PARCEL_SOURCE_ID)) {
+    map.addSource(SUHAIL_PARCEL_SOURCE_ID, {
       type: "vector",
       tiles: [parcelTileUrl],
       minzoom: 10,
@@ -171,7 +244,7 @@ function ensureParcelOverlay(map: maplibregl.Map) {
       {
         id: SUHAIL_FILL_LAYER_ID,
         type: "fill",
-        source: PARCEL_SOURCE_ID,
+        source: SUHAIL_PARCEL_SOURCE_ID,
         "source-layer": "parcels",
         minzoom: 12,
         layout: { visibility: "visible" },
@@ -191,7 +264,7 @@ function ensureParcelOverlay(map: maplibregl.Map) {
       {
         id: SUHAIL_OUTLINE_LAYER_ID,
         type: "line",
-        source: PARCEL_SOURCE_ID,
+        source: SUHAIL_PARCEL_SOURCE_ID,
         "source-layer": "parcels",
         minzoom: 12,
         layout: {
@@ -374,21 +447,35 @@ export default function Map({ onParcel }: MapProps) {
 
     map.on("load", () => {
       ensureOvertureOverlay(map);
-      ensureParcelOverlay(map);
       ensureSelectionLayers(map);
+      if (showSuhailOutlines) {
+        removeOverlay(map, [OSM_FILL_LAYER_ID, OSM_OUTLINE_LAYER_ID], OSM_PARCEL_SOURCE_ID);
+        ensureSuhailParcelOverlay(map);
+      } else {
+        removeOverlay(map, [SUHAIL_FILL_LAYER_ID, SUHAIL_OUTLINE_LAYER_ID], SUHAIL_PARCEL_SOURCE_ID);
+        ensureOsmParcelOverlay(map);
+      }
     });
 
     map.on("style.load", () => {
       ensureOvertureOverlay(map);
-      ensureParcelOverlay(map);
       ensureSelectionLayers(map);
+      if (showSuhailOutlines) {
+        removeOverlay(map, [OSM_FILL_LAYER_ID, OSM_OUTLINE_LAYER_ID], OSM_PARCEL_SOURCE_ID);
+        ensureSuhailParcelOverlay(map);
+      } else {
+        removeOverlay(map, [SUHAIL_FILL_LAYER_ID, SUHAIL_OUTLINE_LAYER_ID], SUHAIL_PARCEL_SOURCE_ID);
+        ensureOsmParcelOverlay(map);
+      }
     });
 
     map.on("click", async (e) => {
       setCollateStatus(null);
-      const parcelLayers = [SUHAIL_FILL_LAYER_ID, SUHAIL_OUTLINE_LAYER_ID].filter((layerId) =>
-        Boolean(map.getLayer(layerId)),
-      );
+      const parcelLayers = (
+        showSuhailOutlines
+          ? [SUHAIL_FILL_LAYER_ID, SUHAIL_OUTLINE_LAYER_ID]
+          : [OSM_FILL_LAYER_ID, OSM_OUTLINE_LAYER_ID]
+      ).filter((layerId) => Boolean(map.getLayer(layerId)));
       const rendered = parcelLayers.length
         ? map.queryRenderedFeatures(e.point, { layers: parcelLayers })
         : [];
@@ -446,12 +533,14 @@ export default function Map({ onParcel }: MapProps) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const visibility = showSuhailOutlines ? "visible" : "none";
-    [SUHAIL_FILL_LAYER_ID, SUHAIL_OUTLINE_LAYER_ID].forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        map.setLayoutProperty(layerId, "visibility", visibility);
-      }
-    });
+    if (!map.isStyleLoaded()) return;
+    if (showSuhailOutlines) {
+      removeOverlay(map, [OSM_FILL_LAYER_ID, OSM_OUTLINE_LAYER_ID], OSM_PARCEL_SOURCE_ID);
+      ensureSuhailParcelOverlay(map);
+    } else {
+      removeOverlay(map, [SUHAIL_FILL_LAYER_ID, SUHAIL_OUTLINE_LAYER_ID], SUHAIL_PARCEL_SOURCE_ID);
+      ensureOsmParcelOverlay(map);
+    }
   }, [showSuhailOutlines]);
 
   const handleClearSelection = () => {
