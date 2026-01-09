@@ -10,6 +10,13 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # IMPORTANT: suhail_parcels_mat depends on suhail_parcels_proxy.
+    # Drop the materialized view first, then the proxy view, then recreate both.
+    op.execute(
+        """
+        DROP MATERIALIZED VIEW IF EXISTS public.suhail_parcels_mat;
+        """
+    )
     op.execute(
         """
         DROP VIEW IF EXISTS public.suhail_parcels_proxy;
@@ -56,7 +63,6 @@ def upgrade() -> None:
     )
     op.execute(
         """
-        DROP MATERIALIZED VIEW IF EXISTS public.suhail_parcels_mat;
         CREATE MATERIALIZED VIEW public.suhail_parcels_mat AS
         WITH base AS (
             SELECT
