@@ -43,11 +43,5 @@ class Settings:
     PARCEL_IDENTIFY_GEOM_COLUMN: str = os.getenv("PARCEL_IDENTIFY_GEOM_COLUMN", "geom")
     PARCEL_TILE_TABLE: str = os.getenv("PARCEL_TILE_TABLE", "osm_parcels_proxy")
 
-    # Suhail parcel tile tuning
-    SUHAIL_TILE_MIN_AREA_Z15: float = float(os.getenv("SUHAIL_TILE_MIN_AREA_Z15", "2000"))
-    SUHAIL_TILE_MIN_AREA_Z16: float = float(os.getenv("SUHAIL_TILE_MIN_AREA_Z16", "800"))
-    SUHAIL_TILE_SIMPLIFY_Z15: float = float(os.getenv("SUHAIL_TILE_SIMPLIFY_Z15", "2.5"))
-    SUHAIL_TILE_SIMPLIFY_Z16: float = float(os.getenv("SUHAIL_TILE_SIMPLIFY_Z16", "1.0"))
-
 
 settings = Settings()
