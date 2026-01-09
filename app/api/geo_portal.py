@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import re
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -171,6 +172,77 @@ class SuhailSridDebugResponse(BaseModel):
     sample_pt_utm: str | None = None
 
 
+class LayerBounds(BaseModel):
+    srid: int | None = None
+    bbox: list[float] | None = None
+
+
+class LayersDebugResponse(BaseModel):
+    suhail_geom: LayerBounds
+    suhail_geom_32638: LayerBounds
+    osm_geom_4326: LayerBounds
+    osm_geom_3857: LayerBounds
+    overture_geom: LayerBounds
+
+
+_BOX_RE = re.compile(r"BOX3?D?\(([-\d\.]+) ([-\d\.]+),([-\d\.]+) ([-\d\.]+)\)")
+
+
+def _parse_box2d(value: str | None) -> list[float] | None:
+    if not value:
+        return None
+    match = _BOX_RE.match(value.strip())
+    if not match:
+        return None
+    return [float(match.group(i)) for i in range(1, 5)]
+
+
+def _debug_layers(db: Session) -> LayersDebugResponse:
+    row = (
+        db.execute(
+            text(
+                """
+                SELECT
+                    (SELECT MIN(ST_SRID(geom)) FROM public.suhail_parcels_mat) AS suhail_geom_srid,
+                    (SELECT ST_Extent(geom)::text FROM public.suhail_parcels_mat) AS suhail_geom_bbox,
+                    (SELECT MIN(ST_SRID(geom_32638)) FROM public.suhail_parcels_mat) AS suhail_geom_32638_srid,
+                    (SELECT ST_Extent(geom_32638)::text FROM public.suhail_parcels_mat) AS suhail_geom_32638_bbox,
+                    (SELECT MIN(ST_SRID(geom_4326)) FROM public.osm_polygons_fixed_mat) AS osm_geom_4326_srid,
+                    (SELECT ST_Extent(geom_4326)::text FROM public.osm_polygons_fixed_mat) AS osm_geom_4326_bbox,
+                    (SELECT MIN(ST_SRID(geom_3857)) FROM public.osm_polygons_fixed_mat) AS osm_geom_3857_srid,
+                    (SELECT ST_Extent(geom_3857)::text FROM public.osm_polygons_fixed_mat) AS osm_geom_3857_bbox,
+                    (SELECT MIN(ST_SRID(geom)) FROM public.overture_buildings) AS overture_geom_srid,
+                    (SELECT ST_Extent(geom)::text FROM public.overture_buildings) AS overture_geom_bbox
+                """
+            )
+        )
+        .mappings()
+        .one()
+    )
+    return LayersDebugResponse(
+        suhail_geom=LayerBounds(
+            srid=row.get("suhail_geom_srid"),
+            bbox=_parse_box2d(row.get("suhail_geom_bbox")),
+        ),
+        suhail_geom_32638=LayerBounds(
+            srid=row.get("suhail_geom_32638_srid"),
+            bbox=_parse_box2d(row.get("suhail_geom_32638_bbox")),
+        ),
+        osm_geom_4326=LayerBounds(
+            srid=row.get("osm_geom_4326_srid"),
+            bbox=_parse_box2d(row.get("osm_geom_4326_bbox")),
+        ),
+        osm_geom_3857=LayerBounds(
+            srid=row.get("osm_geom_3857_srid"),
+            bbox=_parse_box2d(row.get("osm_geom_3857_bbox")),
+        ),
+        overture_geom=LayerBounds(
+            srid=row.get("overture_geom_srid"),
+            bbox=_parse_box2d(row.get("overture_geom_bbox")),
+        ),
+    )
+
+
 def _normalize_building_geojson(obj: dict) -> dict:
     if not isinstance(obj, dict):
         raise HTTPException(status_code=400, detail="GeoJSON payload must be an object")
@@ -242,6 +314,16 @@ def debug_suhail_srid(db: Session = Depends(get_db)) -> SuhailSridDebugResponse:
         )
     ).mappings().one()
     return SuhailSridDebugResponse(**row)
+
+
+@router.get(
+    "/debug/layers",
+    response_model=LayersDebugResponse,
+    summary="Debug map layers",
+    description="Returns SRIDs and bounding boxes for Suhail, OSM, and Overture layers.",
+)
+def debug_layers(db: Session = Depends(get_db)) -> LayersDebugResponse:
+    return _debug_layers(db)
 
 
 _OSM_CLASSIFY_SQL = text(
