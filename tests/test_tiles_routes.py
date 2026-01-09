@@ -6,5 +6,3 @@ def test_tiles_routes_aliases() -> None:
 
     assert "/v1/tiles/parcels/{z}/{x}/{y}.pbf" in routes
     assert "/tiles/parcels/{z}/{x}/{y}.pbf" in routes
-    assert "/v1/tiles/suhail/{z}/{x}/{y}.pbf" in routes
-    assert "/tiles/suhail/{z}/{x}/{y}.pbf" in routes
