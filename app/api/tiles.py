@@ -12,7 +12,7 @@ SUHAIL_PARCEL_TABLE = "public.suhail_parcels_mat"
 _SUHAIL_PARCEL_TILE_SQL = text(
     f"""
     WITH tile AS (
-      SELECT ST_TileEnvelope(:z,:x,:y, 3857) AS geom3857
+      SELECT ST_SetSRID(ST_TileEnvelope(:z,:x,:y), 3857) AS geom3857
     ),
     parcel_candidates AS (
       SELECT
