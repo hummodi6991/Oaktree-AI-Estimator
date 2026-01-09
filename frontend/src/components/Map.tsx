@@ -22,6 +22,7 @@ const SELECT_LINE_LAYER_ID = "selected-parcel-line";
 const SUHAIL_SOURCE_ID = "suhail-parcels";
 const SUHAIL_FILL_LAYER_ID = "suhail-parcels-fill";
 const SUHAIL_OUTLINE_LAYER_ID = "suhail-parcels-outline";
+const SUHAIL_OUTLINE_VISIBILITY: any = ["case", [">=", ["zoom"], 16], "visible", "none"];
 
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
@@ -136,7 +137,7 @@ function ensureSuhailOverlay(map: maplibregl.Map) {
         layout: { visibility: "visible" },
         paint: {
           "fill-color": "#6c5ce7",
-          "fill-opacity": 0.08,
+          "fill-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0.04, 15, 0.06, 17, 0.08],
         },
       },
       beforeLayerId
@@ -154,21 +155,20 @@ function ensureSuhailOverlay(map: maplibregl.Map) {
         "source-layer": "parcels",
         minzoom: 12,
         layout: {
-          visibility: "visible",
+          visibility: SUHAIL_OUTLINE_VISIBILITY,
           "line-join": "round",
           "line-cap": "round",
         },
         paint: {
           "line-color": "#6c5ce7",
           "line-width": ["interpolate", ["linear"], ["zoom"], 14, 2.5, 18, 4.0],
-          "line-opacity": 0.35,
-          "line-dasharray": [2, 2],
+          "line-opacity": ["interpolate", ["linear"], ["zoom"], 16, 0.6, 18, 0.8],
         },
       },
       beforeLayerId
     );
   } else {
-    map.setLayoutProperty(SUHAIL_OUTLINE_LAYER_ID, "visibility", "visible");
+    map.setLayoutProperty(SUHAIL_OUTLINE_LAYER_ID, "visibility", SUHAIL_OUTLINE_VISIBILITY);
   }
 }
 
