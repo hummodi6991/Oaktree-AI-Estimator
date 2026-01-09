@@ -26,9 +26,5 @@ COPY README.md .
 # Bring in the compiled UI (includes public/ assets like static-tiles)
 COPY --from=webbuild /web/frontend/dist /app/frontend/dist
 
-# Serve tiles from the packaged static tiles and stay offline
-ENV TILE_CACHE_DIR=/app/frontend/dist/static-tiles
-ENV TILE_OFFLINE_ONLY=true
-
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

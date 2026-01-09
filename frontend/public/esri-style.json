@@ -1,6 +1,6 @@
 {
   "version": 8,
-  "name": "Esri World Imagery (static)",
+  "name": "Esri World Imagery",
   "sources": {
     "esri_world_imagery": {
       "type": "raster",
@@ -12,14 +12,7 @@
     }
   },
   "layers": [
-    { "id": "bg", "type": "background", "paint": { "background-color": "#000000" } },
-    {
-      "id": "esri",
-      "type": "raster",
-      "source": "esri_world_imagery",
-      "minzoom": 0,
-      "maxzoom": 19,
-      "paint": { "raster-resampling": "nearest" }
-    }
+    { "id": "background", "type": "background", "paint": { "background-color": "#000000" } },
+    { "id": "esri", "type": "raster", "source": "esri_world_imagery", "minzoom": 0, "maxzoom": 19 }
   ]
 }
