@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { Map as MapLibreMap, NavigationControl } from "maplibre-gl";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
-import type { DataDrivenPropertyValueSpecification } from "@maplibre/maplibre-gl-style-spec";
 import type { Feature, Polygon } from "geojson";
 import type { IControl, LngLatLike } from "maplibre-gl";
 import { useTranslation } from "react-i18next";
@@ -22,12 +21,6 @@ type ToolbarControl = IControl & {
 type OverlayDiagnostics = {
   zoom: number;
   maxZoom: number;
-  overture: {
-    layerExists: boolean;
-    sourceExists: boolean;
-    visibility: string;
-    renderedCount: number | null;
-  };
   parcelBase: {
     layerExists: boolean;
     sourceExists: boolean;
@@ -37,39 +30,30 @@ type OverlayDiagnostics = {
 };
 
 const SITE_FEATURE_ID = "site";
-const OVERTURE_SOURCE_ID = "overture-footprints";
-const OVERTURE_LAYER_ID = "overture-footprints-outline";
 const PARCEL_SOURCE_ID = "parcel-outlines";
 const PARCEL_LINE_BASE_LAYER_ID = "parcels-line-base";
 const PARCEL_LINE_LAYER_ID = "parcel-outlines-line";
 const PARCEL_FILL_LAYER_ID = "parcel-outlines-fill";
-const OVT_MIN_ZOOM = 15;
-const OVT_LINE_WIDTH: DataDrivenPropertyValueSpecification<number> = [
-  "interpolate",
-  ["linear"],
-  ["zoom"],
-  15,
-  1.2,
-  20,
-  3,
-];
+const PARCEL_MIN_ZOOM = 15;
 const PARCEL_LINE_WIDTH: any = ["interpolate", ["linear"], ["zoom"], 15, 0.7, 20, 2.0];
 
-const DEFAULT_MAP_STYLE = "https://demotiles.maplibre.org/style.json";
+const DEFAULT_MAP_STYLE = "/esri-style.json";
 
 const FALLBACK_RASTER_STYLE: any = {
   version: 8,
   sources: {
-    osm: {
+    esri_world_imagery: {
       type: "raster",
-      tiles: ["/tiles/{z}/{x}/{y}.png"],
+      tiles: [
+        "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+      ],
       tileSize: 256,
-      attribution: "© OpenStreetMap contributors",
+      attribution: "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
     },
   },
   layers: [
-    { id: "bg", type: "background", paint: { "background-color": "#f8f9fb" } },
-    { id: "osm", type: "raster", source: "osm" },
+    { id: "bg", type: "background", paint: { "background-color": "#000000" } },
+    { id: "esri", type: "raster", source: "esri_world_imagery" },
   ],
 };
 
@@ -224,16 +208,9 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   const finishDrawingRef = useRef<() => void>(() => undefined);
   const [isDrawing, setIsDrawing] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(0);
-  const [showParcelOutlines, setShowParcelOutlines] = useState(true);
   const [overlayDiagnostics, setOverlayDiagnostics] = useState<OverlayDiagnostics>({
     zoom: 0,
     maxZoom: 0,
-    overture: {
-      layerExists: false,
-      sourceExists: false,
-      visibility: "unknown",
-      renderedCount: null,
-    },
     parcelBase: {
       layerExists: false,
       sourceExists: false,
@@ -241,8 +218,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       renderedCount: null,
     },
   });
-  const overtureTileUrl = useMemo(() => buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf"), []);
-  const parcelTileUrl = useMemo(() => buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf"), []);
+  const parcelTileUrl = useMemo(() => buildApiUrl("/v1/tiles/suhail/{z}/{x}/{y}.pbf"), []);
   const toolbarLabels = useMemo(
     () => ({
       start: t("mapDraw.toolbar.startPolygon"),
@@ -252,14 +228,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     }),
     [t],
   );
-  const sourceLayerForTiles = (tilesUrl: string | null | undefined, fallback: string) => {
-    if (!tilesUrl) return fallback;
-    if (tilesUrl.includes("/v1/tiles/ovt/")) return "buildings";
-    if (tilesUrl.includes("/v1/tiles/parcels/")) return "parcels";
-    return fallback;
-  };
-  const overtureSourceLayer = sourceLayerForTiles(overtureTileUrl, "buildings");
-  const parcelSourceLayer = sourceLayerForTiles(parcelTileUrl, "parcels");
+  const parcelSourceLayer = "parcels";
 
   const deleteAll = (suppressCallback = false) => {
     if (!drawRef.current) return;
@@ -321,7 +290,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
 
     const reorderOverlayLayers = () => {
       const beforeLayerId = getBeforeLayerId();
-      const outlineLayerIds = [OVERTURE_LAYER_ID, PARCEL_LINE_BASE_LAYER_ID, PARCEL_LINE_LAYER_ID];
+      const outlineLayerIds = [PARCEL_LINE_BASE_LAYER_ID, PARCEL_LINE_LAYER_ID];
       outlineLayerIds.forEach((layerId) => {
         if (!map.getLayer(layerId)) return;
         if (beforeLayerId && map.getLayer(beforeLayerId)) {
@@ -337,54 +306,12 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     };
 
     const forceOutlineVisibility = () => {
-      const ids = [OVERTURE_LAYER_ID, PARCEL_LINE_BASE_LAYER_ID, PARCEL_LINE_LAYER_ID, PARCEL_FILL_LAYER_ID];
+      const ids = [PARCEL_LINE_BASE_LAYER_ID, PARCEL_LINE_LAYER_ID, PARCEL_FILL_LAYER_ID];
       ids.forEach((id) => {
         if (map.getLayer(id)) {
           map.setLayoutProperty(id, "visibility", "visible");
         }
       });
-    };
-
-    const ensureOvertureOverlay = () => {
-      if (!overtureTileUrl) return;
-      if (!map.getSource(OVERTURE_SOURCE_ID)) {
-        map.addSource(OVERTURE_SOURCE_ID, {
-          type: "vector",
-          tiles: [overtureTileUrl],
-          minzoom: OVT_MIN_ZOOM,
-          maxzoom: 22,
-        });
-      }
-      const beforeLayerId = getBeforeLayerId();
-      if (!map.getLayer(OVERTURE_LAYER_ID)) {
-        map.addLayer(
-          {
-            id: OVERTURE_LAYER_ID,
-            type: "line",
-            source: OVERTURE_SOURCE_ID,
-            "source-layer": overtureSourceLayer,
-            minzoom: OVT_MIN_ZOOM,
-            layout: {
-              visibility: "visible",
-              "line-join": "round",
-              "line-cap": "round",
-            },
-            paint: {
-              "line-color": "#2b6cb0",
-              "line-width": OVT_LINE_WIDTH,
-              "line-opacity": 0.85,
-            },
-          },
-          beforeLayerId
-        );
-      } else {
-        map.setLayoutProperty(OVERTURE_LAYER_ID, "visibility", "visible");
-        if (beforeLayerId) {
-          map.moveLayer(OVERTURE_LAYER_ID, beforeLayerId);
-        }
-      }
-      forceOutlineVisibility();
-      reorderOverlayLayers();
     };
 
     const ensureParcelOverlay = () => {
@@ -406,7 +333,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             type: "line",
             source: PARCEL_SOURCE_ID,
             "source-layer": parcelSourceLayer,
-            minzoom: 15,
+            minzoom: PARCEL_MIN_ZOOM,
             layout: { visibility: "visible" },
             paint: {
               "line-color": "#00AEEF",
@@ -429,7 +356,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             type: "fill",
             source: PARCEL_SOURCE_ID,
             "source-layer": parcelSourceLayer,
-            minzoom: 15,
+            minzoom: PARCEL_MIN_ZOOM,
             layout: { visibility: "visible" },
             paint: {
               "fill-color": "#a18af5",
@@ -452,7 +379,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             type: "line",
             source: PARCEL_SOURCE_ID,
             "source-layer": parcelSourceLayer,
-            minzoom: 15,
+            minzoom: PARCEL_MIN_ZOOM,
             layout: { visibility: "visible" },
             paint: {
               "line-color": "#8a5dff",
@@ -480,38 +407,12 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       if (event?.sourceId === PARCEL_SOURCE_ID && event?.isSourceLoaded) {
         console.debug("Parcels vector tiles loaded", { tileId: event?.tile?.id, dataType: event?.dataType });
       }
-      if (event?.sourceId === OVERTURE_SOURCE_ID && event?.isSourceLoaded) {
-        console.debug("Overture vector tiles loaded", { tileId: event?.tile?.id, dataType: event?.dataType });
-      }
     };
 
-  const logOvertureOverlayStatus = (reason: string) => {
-    const layerExists = Boolean(map.getLayer(OVERTURE_LAYER_ID));
-    const visibility = layerExists
-      ? String(map.getLayoutProperty(OVERTURE_LAYER_ID, "visibility"))
-      : "missing";
-      console.info("Overture overlay status", {
-        reason,
-        zoom: map.getZoom(),
-        maxZoom: map.getMaxZoom(),
-        sourceExists: Boolean(map.getSource(OVERTURE_SOURCE_ID)),
-        layerExists,
-        visibility,
-    });
-  };
-
     const logOverlayStatus = (reason: string) => {
-      const overtureLayerExists = Boolean(map.getLayer(OVERTURE_LAYER_ID));
       const parcelLayerExists = Boolean(map.getLayer(PARCEL_LINE_BASE_LAYER_ID));
       console.info("Overlay status", {
         reason,
-        overture: {
-          sourceExists: Boolean(map.getSource(OVERTURE_SOURCE_ID)),
-          layerExists: overtureLayerExists,
-          visibility: overtureLayerExists
-            ? String(map.getLayoutProperty(OVERTURE_LAYER_ID, "visibility"))
-            : "missing",
-        },
         parcel: {
           sourceExists: Boolean(map.getSource(PARCEL_SOURCE_ID)),
           layerExists: parcelLayerExists,
@@ -522,30 +423,16 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       });
     };
 
-    const updateOvertureDiagnostics = (reason: string) => {
+    const updateParcelDiagnostics = (reason: string) => {
       const zoom = map.getZoom();
       const maxZoom = map.getMaxZoom();
-      const overtureLayerExists = Boolean(map.getLayer(OVERTURE_LAYER_ID));
-      const overtureSourceExists = Boolean(map.getSource(OVERTURE_SOURCE_ID));
-      const overtureVisibility = overtureLayerExists
-        ? String(map.getLayoutProperty(OVERTURE_LAYER_ID, "visibility"))
-        : "missing";
-      let overtureRenderedCount: number | null = null;
-      if (overtureLayerExists && zoom >= OVT_MIN_ZOOM) {
-        try {
-          overtureRenderedCount = map.queryRenderedFeatures({ layers: [OVERTURE_LAYER_ID] }).length;
-        } catch (err) {
-          console.warn("Overture queryRenderedFeatures failed", err);
-        }
-      }
-
       const parcelLayerExists = Boolean(map.getLayer(PARCEL_LINE_BASE_LAYER_ID));
       const parcelSourceExists = Boolean(map.getSource(PARCEL_SOURCE_ID));
       const parcelVisibility = parcelLayerExists
         ? String(map.getLayoutProperty(PARCEL_LINE_BASE_LAYER_ID, "visibility"))
         : "missing";
       let parcelRenderedCount: number | null = null;
-      if (parcelLayerExists && zoom >= 15) {
+      if (parcelLayerExists && zoom >= PARCEL_MIN_ZOOM) {
         try {
           parcelRenderedCount = map.queryRenderedFeatures({ layers: [PARCEL_LINE_BASE_LAYER_ID] }).length;
         } catch (err) {
@@ -556,12 +443,6 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       const diagnostics = {
         zoom,
         maxZoom,
-        overture: {
-          layerExists: overtureLayerExists,
-          sourceExists: overtureSourceExists,
-          visibility: overtureVisibility,
-          renderedCount: overtureRenderedCount,
-        },
         parcelBase: {
           layerExists: parcelLayerExists,
           sourceExists: parcelSourceExists,
@@ -570,32 +451,21 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         },
       };
       setOverlayDiagnostics(diagnostics);
-      console.info("Overture diagnostics", { reason, ...diagnostics });
+      console.info("Parcel diagnostics", { reason, ...diagnostics });
     };
 
     const handleDiagnosticsLoad = () => {
-      logOvertureOverlayStatus("load");
       logOverlayStatus("load");
-      updateOvertureDiagnostics("load");
+      updateParcelDiagnostics("load");
     };
-    const handleDiagnosticsStyleLoad = () => updateOvertureDiagnostics("style.load");
-    const handleDiagnosticsZoom = () => updateOvertureDiagnostics("zoomend");
-    const handleDiagnosticsMove = () => updateOvertureDiagnostics("moveend");
-    const ensureOvertureAboveFills = () => {
-      const firstSymbolId = map.getStyle().layers?.find((layer) => layer.type === "symbol")?.id;
-      if (firstSymbolId && map.getLayer(OVERTURE_LAYER_ID)) {
-        map.moveLayer(OVERTURE_LAYER_ID, firstSymbolId);
-      }
-    };
+    const handleDiagnosticsStyleLoad = () => updateParcelDiagnostics("style.load");
+    const handleDiagnosticsZoom = () => updateParcelDiagnostics("zoomend");
+    const handleDiagnosticsMove = () => updateParcelDiagnostics("moveend");
 
-    map.on("load", ensureOvertureOverlay);
     map.on("load", ensureParcelOverlay);
-    map.on("load", ensureOvertureAboveFills);
     map.on("load", forceOutlineVisibility);
     map.on("load", handleDiagnosticsLoad);
-    map.on("style.load", ensureOvertureOverlay);
     map.on("style.load", ensureParcelOverlay);
-    map.on("style.load", ensureOvertureAboveFills);
     map.on("style.load", handleDiagnosticsStyleLoad);
     map.on("sourcedata", logVectorTilesLoaded);
     map.on("zoomend", handleDiagnosticsZoom);
@@ -773,11 +643,9 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       finishDrawingRef.current = () => undefined;
       toolbarRef.current = null;
       map.doubleClickZoom.enable();
-      map.off("load", ensureOvertureOverlay);
       map.off("load", ensureParcelOverlay);
       map.off("load", forceOutlineVisibility);
       map.off("load", handleDiagnosticsLoad);
-      map.off("style.load", ensureOvertureOverlay);
       map.off("style.load", ensureParcelOverlay);
       map.off("style.load", handleDiagnosticsStyleLoad);
       map.off("sourcedata", logVectorTilesLoaded);
@@ -792,7 +660,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       drawRef.current = null;
       mapRef.current = null;
     };
-  }, [overtureTileUrl, parcelTileUrl]);
+  }, [parcelTileUrl]);
 
   useEffect(() => {
     if (!drawRef.current) return;
@@ -840,21 +708,9 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     toolbarRef.current?.setLabels(toolbarLabels);
   }, [toolbarLabels]);
 
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !map.isStyleLoaded()) return;
-    const visibility = showParcelOutlines ? "visible" : "none";
-    [PARCEL_LINE_BASE_LAYER_ID, PARCEL_FILL_LAYER_ID, PARCEL_LINE_LAYER_ID].forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        map.setLayoutProperty(layerId, "visibility", visibility);
-      }
-    });
-  }, [showParcelOutlines]);
-
-  const outlinesEligible = zoomLevel >= OVT_MIN_ZOOM;
+  const outlinesEligible = zoomLevel >= PARCEL_MIN_ZOOM;
   const outlinesOn =
     outlinesEligible &&
-    overlayDiagnostics.overture.visibility === "visible" &&
     overlayDiagnostics.parcelBase.visibility === "visible";
 
   return (
@@ -871,8 +727,8 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             {outlinesOn ? t("mapDraw.zoomHud.on") : t("mapDraw.zoomHud.off")}{" "}
             (
             {outlinesEligible
-              ? t("mapDraw.zoomHud.thresholdAbove", { value: formatInteger(OVT_MIN_ZOOM) })
-              : t("mapDraw.zoomHud.thresholdBelow", { value: formatInteger(OVT_MIN_ZOOM) })}
+              ? t("mapDraw.zoomHud.thresholdAbove", { value: formatInteger(PARCEL_MIN_ZOOM) })
+              : t("mapDraw.zoomHud.thresholdBelow", { value: formatInteger(PARCEL_MIN_ZOOM) })}
             )
           </span>
         </div>
@@ -882,14 +738,6 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
         <p>
           {t("mapDraw.guidanceText")}
         </p>
-        <label className="map-overlay__toggle">
-          <input
-            type="checkbox"
-            checked={showParcelOutlines}
-            onChange={(event) => setShowParcelOutlines(event.target.checked)}
-          />
-          {t("mapDraw.toggleOutlines")}
-        </label>
         {isDrawing && (
           <button type="button" className="map-overlay__finish" onClick={() => finishDrawingRef.current()}>
             {t("mapDraw.finishShape")}

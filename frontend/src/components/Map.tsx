@@ -19,12 +19,9 @@ type StatusMessage = { key: string; options?: Record<string, unknown> } | { raw:
 const SELECT_SOURCE_ID = "selected-parcel-src";
 const SELECT_FILL_LAYER_ID = "selected-parcel-fill";
 const SELECT_LINE_LAYER_ID = "selected-parcel-line";
-const OVERTURE_SOURCE_ID = "overture-footprints";
-const OVERTURE_LAYER_ID = "overture-footprints-outline";
-const PARCEL_SOURCE_ID = "parcel-outlines";
+const SUHAIL_SOURCE_ID = "suhail-parcels";
 const SUHAIL_FILL_LAYER_ID = "suhail-parcels-fill";
 const SUHAIL_OUTLINE_LAYER_ID = "suhail-parcels-outline";
-const OVT_MIN_ZOOM = 15;
 
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
@@ -116,48 +113,10 @@ function getBeforeLayerId(map: maplibregl.Map) {
   return map.getStyle()?.layers?.find((layer) => layer.type === "symbol")?.id;
 }
 
-function ensureOvertureOverlay(map: maplibregl.Map) {
-  const overtureTileUrl = buildApiUrl("/v1/tiles/ovt/{z}/{x}/{y}.pbf");
-  if (!map.getSource(OVERTURE_SOURCE_ID)) {
-    map.addSource(OVERTURE_SOURCE_ID, {
-      type: "vector",
-      tiles: [overtureTileUrl],
-      minzoom: OVT_MIN_ZOOM,
-      maxzoom: 22,
-    });
-  }
-
-  const beforeLayerId = getBeforeLayerId(map);
-  if (!map.getLayer(OVERTURE_LAYER_ID)) {
-    map.addLayer(
-      {
-        id: OVERTURE_LAYER_ID,
-        type: "line",
-        source: OVERTURE_SOURCE_ID,
-        "source-layer": "buildings",
-        minzoom: OVT_MIN_ZOOM,
-        layout: {
-          visibility: "visible",
-          "line-join": "round",
-          "line-cap": "round",
-        },
-        paint: {
-          "line-color": "#2b6cb0",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 15, 1.2, 20, 3],
-          "line-opacity": 0.9,
-        },
-      },
-      beforeLayerId
-    );
-  } else {
-    map.setLayoutProperty(OVERTURE_LAYER_ID, "visibility", "visible");
-  }
-}
-
-function ensureParcelOverlay(map: maplibregl.Map) {
-  const parcelTileUrl = buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf");
-  if (!map.getSource(PARCEL_SOURCE_ID)) {
-    map.addSource(PARCEL_SOURCE_ID, {
+function ensureSuhailOverlay(map: maplibregl.Map) {
+  const parcelTileUrl = buildApiUrl("/v1/tiles/suhail/{z}/{x}/{y}.pbf");
+  if (!map.getSource(SUHAIL_SOURCE_ID)) {
+    map.addSource(SUHAIL_SOURCE_ID, {
       type: "vector",
       tiles: [parcelTileUrl],
       minzoom: 10,
@@ -171,7 +130,7 @@ function ensureParcelOverlay(map: maplibregl.Map) {
       {
         id: SUHAIL_FILL_LAYER_ID,
         type: "fill",
-        source: PARCEL_SOURCE_ID,
+        source: SUHAIL_SOURCE_ID,
         "source-layer": "parcels",
         minzoom: 12,
         layout: { visibility: "visible" },
@@ -191,7 +150,7 @@ function ensureParcelOverlay(map: maplibregl.Map) {
       {
         id: SUHAIL_OUTLINE_LAYER_ID,
         type: "line",
-        source: PARCEL_SOURCE_ID,
+        source: SUHAIL_SOURCE_ID,
         "source-layer": "parcels",
         minzoom: 12,
         layout: {
@@ -220,9 +179,6 @@ export default function Map({ onParcel }: MapProps) {
   const tRef = useRef(t);
   const [status, setStatus] = useState<StatusMessage | null>({ key: "map.status.prompt" });
   const [multiSelectMode, setMultiSelectMode] = useState(false);
-  const defaultShowSuhailOutlines =
-    String(import.meta.env.VITE_PARCEL_TILE_TABLE || "").toLowerCase() === "public.suhail_parcels_mat";
-  const [showSuhailOutlines, setShowSuhailOutlines] = useState(defaultShowSuhailOutlines);
   const [selectedParcelIds, setSelectedParcelIds] = useState<string[]>([]);
   const [selectedParcelsGeojson, setSelectedParcelsGeojson] = useState<
     FeatureCollection<Geometry, GeoJsonProperties>
@@ -364,7 +320,7 @@ export default function Map({ onParcel }: MapProps) {
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: import.meta.env.VITE_MAP_STYLE || "/static-style.json",
+      style: import.meta.env.VITE_MAP_STYLE || "/esri-style.json",
       center: [46.675, 24.713],
       zoom: 15,
     });
@@ -373,14 +329,12 @@ export default function Map({ onParcel }: MapProps) {
     let disposed = false;
 
     map.on("load", () => {
-      ensureOvertureOverlay(map);
-      ensureParcelOverlay(map);
+      ensureSuhailOverlay(map);
       ensureSelectionLayers(map);
     });
 
     map.on("style.load", () => {
-      ensureOvertureOverlay(map);
-      ensureParcelOverlay(map);
+      ensureSuhailOverlay(map);
       ensureSelectionLayers(map);
     });
 
@@ -443,17 +397,6 @@ export default function Map({ onParcel }: MapProps) {
     source?.setData(selectedParcelsGeojson);
   }, [multiSelectMode, selectedParcelsGeojson]);
 
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const visibility = showSuhailOutlines ? "visible" : "none";
-    [SUHAIL_FILL_LAYER_ID, SUHAIL_OUTLINE_LAYER_ID].forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        map.setLayoutProperty(layerId, "visibility", visibility);
-      }
-    });
-  }, [showSuhailOutlines]);
-
   const handleClearSelection = () => {
     setSelectedParcelIds([]);
     setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
@@ -510,11 +453,9 @@ export default function Map({ onParcel }: MapProps) {
           cursor: "crosshair",
         }}
       />
-      {showSuhailOutlines && (
-        <div style={{ marginTop: 6, fontSize: "0.85rem", color: "rgba(71, 84, 103, 0.9)" }}>
-          {t("map.disclaimer")}
-        </div>
-      )}
+      <div style={{ marginTop: 6, fontSize: "0.85rem", color: "rgba(71, 84, 103, 0.9)" }}>
+        {t("map.disclaimer")}
+      </div>
       {renderStatus && (
         <div
           role="status"
@@ -540,14 +481,6 @@ export default function Map({ onParcel }: MapProps) {
           alignItems: "center",
         }}
       >
-        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input
-            type="checkbox"
-            checked={showSuhailOutlines}
-            onChange={(event) => setShowSuhailOutlines(event.target.checked)}
-          />
-          <span>{t("map.controls.suhailOutlines")}</span>
-        </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"
