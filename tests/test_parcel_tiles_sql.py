@@ -8,5 +8,6 @@ def test_suhail_parcel_tile_sql_contains_expected_fields():
     assert "ST_AsMVTGeom" in sql
     assert "landuse" in sql
     assert "geom_32638" in sql
-    assert "ST_TileEnvelope" in sql
+    assert "ST_SetSRID(ST_TileEnvelope(" in sql
+    assert "ST_TileEnvelope(:z,:x,:y, 3857)" not in sql
     assert "ST_Transform(t.geom3857, 32638)" in sql
