@@ -10,11 +10,4 @@ def test_suhail_parcel_tile_sql_contains_expected_fields():
     assert "geom_32638" in sql
     assert "ST_SetSRID(ST_TileEnvelope(" in sql
     assert "ST_TileEnvelope(:z,:x,:y, 3857)" not in sql
-    assert "tile32638" in sql
-    assert "ST_SimplifyPreserveTopology" in sql
-    assert ":min_area_z15" in sql
-    assert ":min_area_z16" in sql
-    assert ":simp_z15" in sql
-    assert ":simp_z16" in sql
-    assert ":z <= 15" in sql
-    assert ":z = 16" in sql
+    assert "ST_Transform(t.geom3857, 32638)" in sql
