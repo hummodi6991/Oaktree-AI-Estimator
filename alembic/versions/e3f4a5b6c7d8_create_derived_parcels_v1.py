@@ -148,7 +148,7 @@ def _derived_parcels_sql(include_roads: bool) -> str:
 
     return """
     CREATE MATERIALIZED VIEW public.derived_parcels_v1 AS
-    """ + base_ctes + roads_ctes + ";"
+    """ + base_ctes + roads_ctes + " WITH NO DATA;"
 
 
 def upgrade() -> None:
