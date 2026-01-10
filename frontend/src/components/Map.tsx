@@ -7,7 +7,7 @@ import { formatInteger, formatNumber } from "../i18n/format";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { buildApiUrl, collateParcels, identify } from "../api";
+import { collateParcels, identify } from "../api";
 import type { CollateResponse, IdentifyResponse, ParcelSummary } from "../api";
 
 type MapProps = {
@@ -19,10 +19,6 @@ type StatusMessage = { key: string; options?: Record<string, unknown> } | { raw:
 const SELECT_SOURCE_ID = "selected-parcel-src";
 const SELECT_FILL_LAYER_ID = "selected-parcel-fill";
 const SELECT_LINE_LAYER_ID = "selected-parcel-line";
-const SUHAIL_SOURCE_ID = "suhail-parcels";
-const SUHAIL_FILL_LAYER_ID = "suhail-parcels-fill";
-const SUHAIL_OUTLINE_LAYER_ID = "suhail-parcels-outline";
-
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
 
@@ -109,69 +105,6 @@ function ensureSelectionLayers(map: maplibregl.Map) {
   }
 }
 
-function getBeforeLayerId(map: maplibregl.Map) {
-  return map.getStyle()?.layers?.find((layer) => layer.type === "symbol")?.id;
-}
-
-function ensureSuhailOverlay(map: maplibregl.Map) {
-  const parcelTileUrl = buildApiUrl("/v1/tiles/suhail/{z}/{x}/{y}.pbf");
-  if (!map.getSource(SUHAIL_SOURCE_ID)) {
-    map.addSource(SUHAIL_SOURCE_ID, {
-      type: "vector",
-      tiles: [parcelTileUrl],
-      minzoom: 10,
-      maxzoom: 22,
-    });
-  }
-
-  const beforeLayerId = getBeforeLayerId(map);
-  if (!map.getLayer(SUHAIL_FILL_LAYER_ID)) {
-    map.addLayer(
-      {
-        id: SUHAIL_FILL_LAYER_ID,
-        type: "fill",
-        source: SUHAIL_SOURCE_ID,
-        "source-layer": "parcels",
-        minzoom: 12,
-        layout: { visibility: "visible" },
-        paint: {
-          "fill-color": "#6c5ce7",
-          "fill-opacity": 0.08,
-        },
-      },
-      beforeLayerId
-    );
-  } else {
-    map.setLayoutProperty(SUHAIL_FILL_LAYER_ID, "visibility", "visible");
-  }
-
-  if (!map.getLayer(SUHAIL_OUTLINE_LAYER_ID)) {
-    map.addLayer(
-      {
-        id: SUHAIL_OUTLINE_LAYER_ID,
-        type: "line",
-        source: SUHAIL_SOURCE_ID,
-        "source-layer": "parcels",
-        minzoom: 12,
-        layout: {
-          visibility: "visible",
-          "line-join": "round",
-          "line-cap": "round",
-        },
-        paint: {
-          "line-color": "#ff0000",
-          "line-width": ["interpolate", ["linear"], ["zoom"], 14, 2.5, 18, 4.0],
-          "line-opacity": 0.35,
-          "line-dasharray": [2, 2],
-        },
-      },
-      beforeLayerId
-    );
-  } else {
-    map.setLayoutProperty(SUHAIL_OUTLINE_LAYER_ID, "visibility", "visible");
-  }
-}
-
 export default function Map({ onParcel }: MapProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -227,26 +160,6 @@ export default function Map({ onParcel }: MapProps) {
       return formatNumber(numericValue, { maximumFractionDigits: 0, minimumFractionDigits: 0 }, value);
     }
     return value;
-  };
-
-  const parcelFromRenderedFeature = (feature: maplibregl.MapGeoJSONFeature): ParcelSummary => {
-    const properties = (feature.properties ?? {}) as Record<string, unknown>;
-    const rawId = properties.id ?? feature.id ?? null;
-    const parcelId = rawId != null ? String(rawId) : null;
-    const landuse = properties.landuse ?? null;
-    const classification = properties.classification ?? null;
-    const area = Number(properties.area_m2);
-    const perimeter = Number(properties.perimeter_m);
-
-    return {
-      parcel_id: parcelId,
-      geometry: feature.geometry as Geometry,
-      area_m2: Number.isFinite(area) ? area : null,
-      perimeter_m: Number.isFinite(perimeter) ? perimeter : null,
-      landuse_raw: typeof landuse === "string" ? landuse : null,
-      classification_raw: typeof classification === "string" ? classification : null,
-      landuse_code: typeof landuse === "string" ? landuse : null,
-    };
   };
 
   const applyParcelSelection = (
@@ -329,29 +242,15 @@ export default function Map({ onParcel }: MapProps) {
     let disposed = false;
 
     map.on("load", () => {
-      ensureSuhailOverlay(map);
       ensureSelectionLayers(map);
     });
 
     map.on("style.load", () => {
-      ensureSuhailOverlay(map);
       ensureSelectionLayers(map);
     });
 
     map.on("click", async (e) => {
       setCollateStatus(null);
-      const parcelLayers = [SUHAIL_FILL_LAYER_ID, SUHAIL_OUTLINE_LAYER_ID].filter((layerId) =>
-        Boolean(map.getLayer(layerId)),
-      );
-      const rendered = parcelLayers.length
-        ? map.queryRenderedFeatures(e.point, { layers: parcelLayers })
-        : [];
-      const [firstFeature] = rendered;
-      if (firstFeature) {
-        const parcel = parcelFromRenderedFeature(firstFeature);
-        applyParcelSelection(parcel, parcel.geometry ?? null, "feature");
-        return;
-      }
       setStatus({ key: "map.status.checking" });
       try {
         const data: IdentifyResponse = await identify(e.lngLat.lng, e.lngLat.lat);
