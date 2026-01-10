@@ -6,18 +6,18 @@ import json
 import math
 import tempfile
 import urllib.parse
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 import httpx
+import planetary_computer as pc
 import pyarrow.parquet as pq
+from pyarrow import fs
 from shapely import wkb
 from shapely.geometry import mapping
 
 STAC_API_URL = "https://planetarycomputer.microsoft.com/api/stac/v1"
-SAS_SIGN_URL = "https://planetarycomputer.microsoft.com/api/sas/v1/sign"
 COLLECTION_ID = "ms-buildings"
 DEFAULT_BBOX = (46.5, 24.6, 46.9, 24.9)
 DEFAULT_MAX_ITEMS = 2
@@ -59,44 +59,34 @@ def _search_items(client: httpx.Client, bbox: tuple[float, float, float, float],
     return items
 
 
-def _sign_href(client: httpx.Client, href: str) -> str:
-    encoded = urllib.parse.quote(href, safe="")
-    response = client.get(f"{SAS_SIGN_URL}?href={encoded}")
-    response.raise_for_status()
-    return response.json()["href"]
-
-
-def _container_listing_url(signed_href: str) -> tuple[str, str]:
+def _parse_signed_href(signed_href: str) -> tuple[str, str, str, str]:
     parsed = urllib.parse.urlparse(signed_href)
     path_parts = parsed.path.lstrip("/").split("/", 1)
     if len(path_parts) < 2:
         raise ValueError(f"Unexpected signed href path: {parsed.path}")
     container, prefix = path_parts
     base = f"{parsed.scheme}://{parsed.netloc}/{container}"
-    listing = (
-        f"{base}?restype=container&comp=list&prefix={urllib.parse.quote(prefix)}&{parsed.query}"
-    )
-    return listing, base
+    return container, prefix, base, parsed.query
 
 
-def _list_parquet_parts(client: httpx.Client, signed_href: str) -> list[str]:
-    listing_url, container_base = _container_listing_url(signed_href)
-    response = client.get(listing_url)
-    response.raise_for_status()
-    root = ET.fromstring(response.text)
-    blobs = root.find("Blobs")
-    if blobs is None:
-        return []
+def _list_parquet_parts(signed_href: str) -> list[str]:
+    if signed_href.endswith(".parquet"):
+        return [signed_href]
+    container, prefix, base, query = _parse_signed_href(signed_href)
+    account_name = urllib.parse.urlparse(base).netloc.split(".")[0]
+    filesystem = fs.AzureBlobFileSystem(account_name=account_name, sas_token=query)
+    selector = fs.FileSelector(f"{container}/{prefix}", recursive=True)
+    file_infos = filesystem.get_file_info(selector)
     parts: list[str] = []
-    for blob in blobs.findall("Blob"):
-        name = blob.findtext("Name")
-        if not name:
-            continue
-        if name.endswith(".parquet"):
-            parts.append(name)
+    for info in file_infos:
+        if info.type == fs.FileType.File and info.path.endswith(".parquet"):
+            parts.append(info.path)
     parts.sort()
-    query = urllib.parse.urlparse(signed_href).query
-    return [f"{container_base}/{part}?{query}" for part in parts]
+    urls: list[str] = []
+    for part in parts:
+        relative = part.split("/", 1)[1] if part.startswith(f"{container}/") else part
+        urls.append(f"{base}/{relative}?{query}")
+    return urls
 
 
 def _iter_parquet_batches(file_path: Path, batch_size: int) -> Iterable[tuple[list[bytes], list[float | None]]]:
@@ -196,19 +186,40 @@ def main() -> None:
     args = parser.parse_args()
 
     bbox = tuple(args.bbox)
+    print(f"Search bbox: {bbox}")
     with httpx.Client(timeout=60) as client:
         items = _search_items(client, bbox, args.max_items)
         if not items:
             raise SystemExit("No STAC items returned for Riyadh bbox.")
+        print(f"Collection: {COLLECTION_ID}")
+        print(f"Item ids: {[item.get('id') for item in items]}")
+        first_assets = items[0].get("assets", {})
+        asset_keys = list(first_assets.keys())
+        print(f"Available asset keys (first item): {asset_keys}")
+        if "data" in first_assets:
+            asset_key = "data"
+        else:
+            asset_key = None
+            for key, asset in first_assets.items():
+                href = asset.get("href", "")
+                if href.endswith(".parquet") or "parquet" in href:
+                    asset_key = key
+                    break
+            if asset_key is None and asset_keys:
+                asset_key = asset_keys[0]
+        if asset_key is None:
+            raise SystemExit("No assets available on first STAC item.")
 
         total_stats = DownloadStats()
         remaining = args.max_features
         for index, item in enumerate(items, start=1):
-            asset = item.get("assets", {}).get("data")
+            signed_item = pc.sign(item)
+            asset = signed_item.get("assets", {}).get(asset_key)
             if not asset or "href" not in asset:
                 continue
-            signed_href = _sign_href(client, asset["href"])
-            parquet_urls = _list_parquet_parts(client, signed_href)
+            signed_href = asset["href"]
+            print(f"Signed href: {signed_href}")
+            parquet_urls = _list_parquet_parts(signed_href)
             if not parquet_urls:
                 continue
             output_name = f"riyadh_{_sanitize_filename(item.get('id', f'item_{index}'))}.csv.gz"
