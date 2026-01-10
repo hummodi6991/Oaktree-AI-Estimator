@@ -1,0 +1,108 @@
+name: Ingest Riyadh MS Buildings (Production)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_files:
+        description: "Maximum number of files to download (0 = unlimited)"
+        required: false
+        default: "0"
+      bbox:
+        description: "Riyadh bbox: min_lon,min_lat,max_lon,max_lat"
+        required: false
+        default: "46.20,24.20,47.30,25.10"
+      run_migrations:
+        description: "Run alembic migrations before ingest"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+      PGSSLMODE: require
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Fetch Riyadh MS Buildings tiles
+        run: |
+          set -euo pipefail
+          IFS=',' read -r MIN_LON MIN_LAT MAX_LON MAX_LAT <<< "${{ inputs.bbox }}"
+          echo "Fetching tiles for bbox ${MIN_LON},${MIN_LAT},${MAX_LON},${MAX_LAT}"
+          PYTHONPATH=. python -m app.ingest.fetch_ms_buildings_dataset_links \
+            --bbox "$MIN_LON" "$MIN_LAT" "$MAX_LON" "$MAX_LAT" \
+            --max-files "${{ inputs.max_files }}" \
+            --output-dir data/ms_buildings
+
+      - name: Run DB migrations (optional)
+        if: ${{ inputs.run_migrations }}
+        env:
+          DATABASE_URL: postgresql+psycopg://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@${{ secrets.POSTGRES_HOST }}:${{ secrets.POSTGRES_PORT }}/${{ secrets.POSTGRES_DB }}?sslmode=require
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python -m alembic upgrade head
+
+      - name: Ingest into production
+        env:
+          DATABASE_URL: postgresql+psycopg://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@${{ secrets.POSTGRES_HOST }}:${{ secrets.POSTGRES_PORT }}/${{ secrets.POSTGRES_DB }}?sslmode=require
+          MS_BUILDINGS_DIR: data/ms_buildings
+          MS_BUILDINGS_BBOX: ${{ inputs.bbox }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. python -m app.ingest.ms_buildings
+
+      - name: Verify Riyadh ingest
+        env:
+          DATABASE_URL: postgresql+psycopg://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@${{ secrets.POSTGRES_HOST }}:${{ secrets.POSTGRES_PORT }}/${{ secrets.POSTGRES_DB }}?sslmode=require
+          MS_BUILDINGS_BBOX: ${{ inputs.bbox }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+
+          engine = create_engine(os.environ["DATABASE_URL"])
+          bbox = os.environ["MS_BUILDINGS_BBOX"]
+          min_lon, min_lat, max_lon, max_lat = [float(part) for part in bbox.split(",")]
+
+          with engine.connect() as conn:
+              total = conn.execute(text("SELECT COUNT(*) FROM public.ms_buildings_raw")).scalar()
+              extent = conn.execute(text("SELECT ST_Extent(geom) FROM public.ms_buildings_raw")).scalar()
+              inside = conn.execute(
+                  text(
+                      """
+                      SELECT COUNT(*)
+                      FROM public.ms_buildings_raw
+                      WHERE geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+                      """
+                  ),
+                  {
+                      "min_lon": min_lon,
+                      "min_lat": min_lat,
+                      "max_lon": max_lon,
+                      "max_lat": max_lat,
+                  },
+              ).scalar()
+
+          print(f"Total buildings: {total}")
+          print(f"Extent: {extent}")
+          print(f"Count inside Riyadh bbox: {inside}")
+          PY
