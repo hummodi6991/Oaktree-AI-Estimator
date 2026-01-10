@@ -5,15 +5,15 @@ import gzip
 import json
 import math
 import tempfile
-import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 import httpx
-from planetary_computer import sign, sign_url
+import planetary_computer as pc
+import pystac_client
+from planetary_computer import sign_url
 import pyarrow.parquet as pq
-from pyarrow import fs
 from shapely import wkb
 from shapely.geometry import mapping
 
@@ -48,62 +48,38 @@ class DownloadStats:
         self.max_lat = max(self.max_lat, maxy)
 
 
-def _search_items(client: httpx.Client, bbox: tuple[float, float, float, float], limit: int) -> list[dict]:
-    response = client.post(
-        f"{STAC_API_URL}/search",
-        json={"collections": [COLLECTION_ID], "bbox": list(bbox), "limit": limit},
-    )
-    response.raise_for_status()
-    items = response.json().get("features", [])
-    items.sort(key=lambda item: item.get("id", ""))
-    return items
-
-
-def _parse_signed_href(signed_href: str) -> tuple[str, str, str, str]:
-    parsed = urllib.parse.urlparse(signed_href)
-    path_parts = parsed.path.lstrip("/").split("/", 1)
-    if len(path_parts) < 2:
-        raise ValueError(f"Unexpected signed href path: {parsed.path}")
-    container, prefix = path_parts
-    base = f"{parsed.scheme}://{parsed.netloc}/{container}"
-    return container, prefix, base, parsed.query
-
-
-def _list_parquet_parts(signed_href: str) -> list[str]:
-    if signed_href.endswith(".parquet"):
-        return [signed_href]
-    container, prefix, base, query = _parse_signed_href(signed_href)
-    account_name = urllib.parse.urlparse(base).netloc.split(".")[0]
-    filesystem = fs.AzureFileSystem(account_name=account_name, sas_token=query)
-    selector = fs.FileSelector(f"{container}/{prefix}", recursive=True)
-    file_infos = filesystem.get_file_info(selector)
-    parts: list[str] = []
-    for info in file_infos:
-        if info.type == fs.FileType.File and info.path.endswith(".parquet"):
-            parts.append(info.path)
-    parts.sort()
-    urls: list[str] = []
-    for part in parts:
-        relative = part.split("/", 1)[1] if part.startswith(f"{container}/") else part
-        urls.append(f"{base}/{relative}?{query}")
-    return urls
-
-
 def _signed_https_href(href: str) -> str:
-    if href.startswith("abfs://"):
-        parsed = urllib.parse.urlparse(href)
-        if not parsed.netloc:
-            raise ValueError(f"Unexpected abfs href: {href}")
-        if "@" not in parsed.netloc:
-            raise ValueError(f"Unexpected abfs href netloc: {parsed.netloc}")
-        container, account_host = parsed.netloc.split("@", 1)
-        account_name = account_host.split(".", 1)[0]
-        path = parsed.path.lstrip("/")
-        https_url = f"https://{account_name}.blob.core.windows.net/{container}/{path}"
-        return sign_url(https_url)
     if href.startswith("https://"):
         return sign_url(href)
     raise ValueError(f"Unsupported asset href scheme: {href}")
+
+
+def _asset_alternates(asset: object) -> dict:
+    extra_fields = getattr(asset, "extra_fields", {})
+    alternates = extra_fields.get("alternate", {})
+    return alternates if isinstance(alternates, dict) else {}
+
+
+def _select_https_href(signed_item: object, asset_key: str) -> str | None:
+    asset = getattr(signed_item, "assets", {}).get(asset_key)
+    if asset is None:
+        return None
+    primary_href = getattr(asset, "href", "") or ""
+    if primary_href.startswith("https://"):
+        return primary_href
+    alternates = _asset_alternates(asset)
+    download_href = alternates.get("download", {}).get("href", "")
+    if download_href.startswith("https://"):
+        return download_href
+    for alt in alternates.values():
+        alt_href = alt.get("href", "")
+        if alt_href.startswith("https://"):
+            return alt_href
+    for link in getattr(signed_item, "links", []):
+        href = getattr(link, "href", "") or ""
+        if href.startswith("https://") and (href.endswith(".parquet") or "parquet" in href):
+            return href
+    return None
 
 
 def _iter_parquet_batches(file_path: Path, batch_size: int) -> Iterable[tuple[list[bytes], list[float | None]]]:
@@ -231,20 +207,38 @@ def main() -> None:
     bbox = tuple(args.bbox)
     print(f"Search bbox: {bbox}")
     with httpx.Client(timeout=60) as client:
-        items = _search_items(client, bbox, args.max_items)
+        stac_client = pystac_client.Client.open(STAC_API_URL)
+        search = stac_client.search(
+            collections=[COLLECTION_ID],
+            bbox=bbox,
+            max_items=args.max_items,
+        )
+        items = list(search.items())
+        items.sort(key=lambda item: item.id)
         if not items:
             raise SystemExit("No STAC items returned for Riyadh bbox.")
         print(f"Collection: {COLLECTION_ID}")
-        print(f"Item ids: {[item.get('id') for item in items]}")
-        first_assets = items[0].get("assets", {})
+        print(f"Item ids: {[item.id for item in items]}")
+        first_assets = items[0].assets
         asset_keys = list(first_assets.keys())
         print(f"Available asset keys (first item): {asset_keys}")
+        print("First item assets hrefs:")
+        for key, asset in first_assets.items():
+            print(f"  - {key}: {asset.href}")
+        signed_first_item = pc.sign(items[0])
+        print("First signed item assets hrefs (including alternates):")
+        for key, asset in signed_first_item.assets.items():
+            print(f"  - {key}: {asset.href}")
+            alternates = _asset_alternates(asset)
+            for alt_key, alt in alternates.items():
+                alt_href = alt.get("href")
+                print(f"    alternate {alt_key}: {alt_href}")
         if "data" in first_assets:
             asset_key = "data"
         else:
             asset_key = None
             for key, asset in first_assets.items():
-                href = asset.get("href", "")
+                href = asset.href
                 if href.endswith(".parquet") or "parquet" in href:
                     asset_key = key
                     break
@@ -256,21 +250,25 @@ def main() -> None:
         total_stats = DownloadStats()
         remaining = args.max_features
         for index, item in enumerate(items, start=1):
-            signed_item = sign(item)
-            asset = signed_item.get("assets", {}).get(asset_key)
-            if not asset or "href" not in asset:
+            signed_item = pc.sign(item)
+            signed_href = _select_https_href(signed_item, asset_key)
+            if not signed_href:
+                asset = signed_item.assets.get(asset_key)
+                asset_href = asset.href if asset else None
+                alternates = _asset_alternates(asset) if asset else {}
+                alternate_keys = list(alternates.keys())
+                print(
+                    "No HTTPS href found; "
+                    f"item_id={item.id}, asset_key={asset_key}, "
+                    f"asset_href={asset_href}, alternate_keys={alternate_keys}"
+                )
                 continue
-            signed_href = _signed_https_href(asset["href"])
+            signed_href = _signed_https_href(signed_href)
             print(f"Signed href: {signed_href}")
-            parquet_urls = _list_parquet_parts(signed_href)
-            if not parquet_urls and not signed_href.endswith(".parquet"):
-                raise SystemExit("Fetch returned non-parquet data (likely HTML error page). Aborting.")
-            if not parquet_urls:
-                continue
-            output_name = f"riyadh_{_sanitize_filename(item.get('id', f'item_{index}'))}.csv.gz"
+            output_name = f"riyadh_{_sanitize_filename(item.id or f'item_{index}')}.csv.gz"
             output_path = args.output_dir / output_name
             stats = _write_features(
-                parquet_urls,
+                [signed_href],
                 client,
                 output_path,
                 max_features=remaining,
