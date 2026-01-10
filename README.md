@@ -56,6 +56,14 @@ Only `district` and `far_max` are required. When an estimate runs, the API first
 - Local check: `python -m app.ingest.suhail_parcels_tiles --zoom 15 --layer parcels-base --max-tiles 2`.
 - Parcel identify: set `PARCEL_IDENTIFY_TABLE=suhail_parcels_proxy` and `PARCEL_IDENTIFY_GEOM_COLUMN=geom` to route lookups through the new proxy view.
 
+### Microsoft GlobalML Building Footprints (Saudi Arabia)
+- Download the Saudi Arabia `.csv.gz` files from the `dataset-links.csv` manifest in `microsoft/GlobalMLBuildingFootprints` (filter the CSV for `Saudi Arabia`).
+- Microsoft distributes building footprints as `.csv.gz`; each row/line includes a geometry (often GeoJSON), and some variants may be JSONL. The ingester auto-detects JSONL vs CSV and loads both.
+
+```bash
+MS_BUILDINGS_DIR=/path/to/saudi-arabia/files make ingest-ms-buildings
+```
+
 ### Endpoints (MVP)
 
 - `GET /health`
