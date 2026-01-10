@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Iterable
 
 import httpx
-import planetary_computer as pc
+from planetary_computer import sign, sign_url
 import pyarrow.parquet as pq
 from pyarrow import fs
 from shapely import wkb
@@ -87,6 +87,23 @@ def _list_parquet_parts(signed_href: str) -> list[str]:
         relative = part.split("/", 1)[1] if part.startswith(f"{container}/") else part
         urls.append(f"{base}/{relative}?{query}")
     return urls
+
+
+def _signed_https_href(href: str) -> str:
+    if href.startswith("abfs://"):
+        parsed = urllib.parse.urlparse(href)
+        if not parsed.netloc:
+            raise ValueError(f"Unexpected abfs href: {href}")
+        if "@" not in parsed.netloc:
+            raise ValueError(f"Unexpected abfs href netloc: {parsed.netloc}")
+        container, account_host = parsed.netloc.split("@", 1)
+        account_name = account_host.split(".", 1)[0]
+        path = parsed.path.lstrip("/")
+        https_url = f"https://{account_name}.blob.core.windows.net/{container}/{path}"
+        return sign_url(https_url)
+    if href.startswith("https://"):
+        return sign_url(href)
+    raise ValueError(f"Unsupported asset href scheme: {href}")
 
 
 def _iter_parquet_batches(file_path: Path, batch_size: int) -> Iterable[tuple[list[bytes], list[float | None]]]:
@@ -239,11 +256,11 @@ def main() -> None:
         total_stats = DownloadStats()
         remaining = args.max_features
         for index, item in enumerate(items, start=1):
-            signed_item = pc.sign(item)
+            signed_item = sign(item)
             asset = signed_item.get("assets", {}).get(asset_key)
             if not asset or "href" not in asset:
                 continue
-            signed_href = asset["href"]
+            signed_href = _signed_https_href(asset["href"])
             print(f"Signed href: {signed_href}")
             parquet_urls = _list_parquet_parts(signed_href)
             if not parquet_urls and not signed_href.endswith(".parquet"):
