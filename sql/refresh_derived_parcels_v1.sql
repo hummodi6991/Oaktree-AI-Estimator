@@ -1,4 +1,8 @@
-\set ON_ERROR_STOP off
-
-REFRESH MATERIALIZED VIEW CONCURRENTLY public.derived_parcels_v1;
-REFRESH MATERIALIZED VIEW public.derived_parcels_v1;
+DO $$
+BEGIN
+  BEGIN
+    REFRESH MATERIALIZED VIEW CONCURRENTLY public.derived_parcels_v1;
+  EXCEPTION WHEN OTHERS THEN
+    REFRESH MATERIALIZED VIEW public.derived_parcels_v1;
+  END;
+END $$;

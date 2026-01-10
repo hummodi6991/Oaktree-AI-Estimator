@@ -10,10 +10,11 @@ depends_on = None
 
 
 def _derived_parcels_sql(include_roads: bool) -> str:
-    base_ctes = """
+    do_road_cut = "true" if include_roads else "false"
+    base_ctes = f"""
     WITH params AS (
         SELECT
-            false::boolean AS do_road_cut,
+            {do_road_cut}::boolean AS do_road_cut,
             ST_MakeEnvelope(46.20, 24.20, 47.30, 25.10, 4326) AS bbox_4326,
             ST_Transform(ST_MakeEnvelope(46.20, 24.20, 47.30, 25.10, 4326), 3857) AS bbox_3857,
             500.0::double precision AS cell_size_m,
