@@ -64,6 +64,16 @@ Only `district` and `far_max` are required. When an estimate runs, the API first
 MS_BUILDINGS_DIR=/path/to/saudi-arabia/files make ingest-ms-buildings
 ```
 
+### Microsoft GlobalML Building Footprints (Riyadh-only)
+The Planetary Computer STAC API provides signed, stable links to the GlobalML footprints, which avoids the unreliable `dataset-links.csv` and direct blob URLs.
+
+```bash
+make fetch-ms-buildings-riyadh
+make ingest-ms-buildings
+```
+
+The fetch step writes Riyadh-only `.csv.gz` JSONL files into `data/ms_buildings/`, which the existing ingest pipeline loads into `public.ms_buildings_raw`.
+
 ### Endpoints (MVP)
 
 - `GET /health`

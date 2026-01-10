@@ -1,5 +1,7 @@
 .PHONY: api db-up db-down db-init test fmt lint harvest
 
+MS_BUILDINGS_DIR ?= data/ms_buildings
+
 api:
 	uvicorn app.main:app --reload --port 8000
 
@@ -35,4 +37,8 @@ ingest-rega-indicators:
 
 .PHONY: ingest-ms-buildings
 ingest-ms-buildings:
-	PYTHONPATH=. python -m app.ingest.ms_buildings
+	MS_BUILDINGS_DIR=$(MS_BUILDINGS_DIR) PYTHONPATH=. python -m app.ingest.ms_buildings
+
+.PHONY: fetch-ms-buildings-riyadh
+fetch-ms-buildings-riyadh:
+	PYTHONPATH=. python -m app.ingest.fetch_ms_buildings_riyadh
