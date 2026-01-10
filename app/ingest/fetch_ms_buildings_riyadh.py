@@ -74,7 +74,7 @@ def _list_parquet_parts(signed_href: str) -> list[str]:
         return [signed_href]
     container, prefix, base, query = _parse_signed_href(signed_href)
     account_name = urllib.parse.urlparse(base).netloc.split(".")[0]
-    filesystem = fs.AzureBlobFileSystem(account_name=account_name, sas_token=query)
+    filesystem = fs.AzureFileSystem(account_name=account_name, sas_token=query)
     selector = fs.FileSelector(f"{container}/{prefix}", recursive=True)
     file_infos = filesystem.get_file_info(selector)
     parts: list[str] = []
@@ -116,12 +116,34 @@ def _iter_parquet_batches(file_path: Path, batch_size: int) -> Iterable[tuple[li
 
 def _download_parquet(client: httpx.Client, url: str) -> Path:
     tmp = tempfile.NamedTemporaryFile(suffix=".parquet", delete=False)
-    with client.stream("GET", url, timeout=120) as response:
-        response.raise_for_status()
-        for chunk in response.iter_bytes():
-            tmp.write(chunk)
-    tmp.close()
-    return Path(tmp.name)
+    try:
+        with client.stream("GET", url, timeout=120) as response:
+            response.raise_for_status()
+            validated = False
+            buffer = bytearray()
+            for chunk in response.iter_bytes():
+                if not validated:
+                    buffer.extend(chunk)
+                    if len(buffer) < 4:
+                        continue
+                    if buffer[:4] != b"PAR1":
+                        raise SystemExit(
+                            "Fetch returned non-parquet data (likely HTML error page). Aborting."
+                        )
+                    tmp.write(buffer)
+                    validated = True
+                else:
+                    tmp.write(chunk)
+            if not validated:
+                raise SystemExit(
+                    "Fetch returned non-parquet data (likely HTML error page). Aborting."
+                )
+        tmp.close()
+        return Path(tmp.name)
+    except BaseException:
+        tmp.close()
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
 
 
 def _sanitize_filename(value: str) -> str:
@@ -138,33 +160,37 @@ def _write_features(
     stats = DownloadStats()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(suffix=output_path.suffix, delete=False) as tmp_out:
-        with gzip.open(tmp_out.name, "wt", encoding="utf-8") as handle:
-            for parquet_url in parquet_urls:
-                parquet_path = _download_parquet(client, parquet_url)
-                try:
-                    for geoms, heights in _iter_parquet_batches(parquet_path, batch_size):
-                        for geom_bytes, height in zip(geoms, heights, strict=True):
-                            geom = wkb.loads(geom_bytes)
-                            if geom.is_empty:
-                                continue
-                            stats.features += 1
-                            stats.update_bounds(geom.bounds)
-                            feature = {
-                                "type": "Feature",
-                                "geometry": mapping(geom),
-                                "properties": {},
-                            }
-                            if height is not None and not math.isnan(height):
-                                feature["properties"]["meanHeight"] = height
-                            handle.write(json.dumps(feature, separators=(",", ":")) + "\n")
+        try:
+            with gzip.open(tmp_out.name, "wt", encoding="utf-8") as handle:
+                for parquet_url in parquet_urls:
+                    parquet_path = _download_parquet(client, parquet_url)
+                    try:
+                        for geoms, heights in _iter_parquet_batches(parquet_path, batch_size):
+                            for geom_bytes, height in zip(geoms, heights, strict=True):
+                                geom = wkb.loads(geom_bytes)
+                                if geom.is_empty:
+                                    continue
+                                stats.features += 1
+                                stats.update_bounds(geom.bounds)
+                                feature = {
+                                    "type": "Feature",
+                                    "geometry": mapping(geom),
+                                    "properties": {},
+                                }
+                                if height is not None and not math.isnan(height):
+                                    feature["properties"]["meanHeight"] = height
+                                handle.write(json.dumps(feature, separators=(",", ":")) + "\n")
+                                if stats.features >= max_features:
+                                    break
                             if stats.features >= max_features:
                                 break
-                        if stats.features >= max_features:
-                            break
-                finally:
-                    parquet_path.unlink(missing_ok=True)
-                if stats.features >= max_features:
-                    break
+                    finally:
+                        parquet_path.unlink(missing_ok=True)
+                    if stats.features >= max_features:
+                        break
+        except BaseException:
+            Path(tmp_out.name).unlink(missing_ok=True)
+            raise
     Path(tmp_out.name).replace(output_path)
     return stats
 
@@ -220,6 +246,8 @@ def main() -> None:
             signed_href = asset["href"]
             print(f"Signed href: {signed_href}")
             parquet_urls = _list_parquet_parts(signed_href)
+            if not parquet_urls and not signed_href.endswith(".parquet"):
+                raise SystemExit("Fetch returned non-parquet data (likely HTML error page). Aborting.")
             if not parquet_urls:
                 continue
             output_name = f"riyadh_{_sanitize_filename(item.get('id', f'item_{index}'))}.csv.gz"
