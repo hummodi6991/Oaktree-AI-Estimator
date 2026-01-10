@@ -159,7 +159,7 @@ function ensureSuhailOverlay(map: maplibregl.Map) {
           "line-cap": "round",
         },
         paint: {
-          "line-color": "#6c5ce7",
+          "line-color": "#ff0000",
           "line-width": ["interpolate", ["linear"], ["zoom"], 14, 2.5, 18, 4.0],
           "line-opacity": 0.35,
           "line-dasharray": [2, 2],

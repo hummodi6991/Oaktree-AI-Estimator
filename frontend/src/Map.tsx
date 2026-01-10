@@ -382,7 +382,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
             minzoom: PARCEL_MIN_ZOOM,
             layout: { visibility: "visible" },
             paint: {
-              "line-color": "#8a5dff",
+              "line-color": "#ff0000",
               "line-width": PARCEL_LINE_WIDTH,
               "line-opacity": 0.85,
             },
