@@ -21,10 +21,11 @@ _SUHAIL_PARCEL_TILE_SQL = text(
         p.classification,
         p.area_m2,
         p.perimeter_m,
-        p.geom
+        -- IMPORTANT: Filter and clip in the same CRS for stable MVT output.
+        -- Transform once to WebMercator (EPSG:3857) and reuse downstream.
+        ST_Transform(p.geom, 3857) AS geom3857
       FROM {SUHAIL_PARCEL_TABLE} p, tile t
-      WHERE p.geom && ST_Transform(t.geom3857, 4326)
-        AND ST_Intersects(p.geom, ST_Transform(t.geom3857, 4326))
+      WHERE ST_Transform(p.geom, 3857) && t.geom3857
     ),
     mvtgeom AS (
       SELECT
@@ -35,7 +36,7 @@ _SUHAIL_PARCEL_TILE_SQL = text(
         perimeter_m,
         ST_AsMVTGeom(
           -- MVT must be generated in WebMercator (EPSG:3857).
-          ST_Transform(p.geom, 3857),
+          p.geom3857,
           t.geom3857,
           4096,
           64,
