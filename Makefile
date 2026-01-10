@@ -32,3 +32,7 @@ ingest-real-estate-indices:
 .PHONY: ingest-rega-indicators
 ingest-rega-indicators:
         python -m app.ingest.rega_indicators
+
+.PHONY: ingest-ms-buildings
+ingest-ms-buildings:
+	PYTHONPATH=. python -m app.ingest.ms_buildings
