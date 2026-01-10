@@ -58,7 +58,7 @@ Only `district` and `far_max` are required. When an estimate runs, the API first
 
 ### Microsoft GlobalML Building Footprints (Saudi Arabia)
 - Download the Saudi Arabia `.csv.gz` files from the `dataset-links.csv` manifest in `microsoft/GlobalMLBuildingFootprints` (filter the CSV for `Saudi Arabia`).
-- The files are gzip-compressed **GeoJSONL** (one feature per line) despite the `.csv.gz` extension.
+- Microsoft distributes building footprints as `.csv.gz`; each row/line includes a geometry (often GeoJSON), and some variants may be JSONL. The ingester auto-detects JSONL vs CSV and loads both.
 
 ```bash
 MS_BUILDINGS_DIR=/path/to/saudi-arabia/files make ingest-ms-buildings

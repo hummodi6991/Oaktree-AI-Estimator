@@ -27,11 +27,11 @@ harvest:
 
 .PHONY: ingest-real-estate-indices
 ingest-real-estate-indices:
-        poetry run python -m app.ingest.real_estate_indices
+	poetry run python -m app.ingest.real_estate_indices
 
 .PHONY: ingest-rega-indicators
 ingest-rega-indicators:
-        python -m app.ingest.rega_indicators
+	python -m app.ingest.rega_indicators
 
 .PHONY: ingest-ms-buildings
 ingest-ms-buildings:

@@ -1,3 +1,4 @@
+import csv
 import gzip
 import json
 import tempfile
@@ -80,7 +81,29 @@ def _write_geojsonl(path: Path, rows: list[dict]) -> None:
             handle.write(json.dumps(row) + "\n")
 
 
-def test_ingest_ms_buildings_inserts_geoms(db_session):
+def _assert_stats(db_session, source: str, expected_count: int) -> None:
+    stats = db_session.execute(
+        text(
+            """
+            SELECT
+                COUNT(*) AS count,
+                MIN(ST_SRID(geom)) AS srid_min,
+                MAX(ST_SRID(geom)) AS srid_max,
+                MIN(area_m2) AS area_min
+            FROM public.ms_buildings_raw
+            WHERE source = :source
+            """
+        ),
+        {"source": source},
+    ).mappings().one()
+
+    assert stats["count"] == expected_count
+    assert stats["srid_min"] == 4326
+    assert stats["srid_max"] == 4326
+    assert stats["area_min"] > 0
+
+
+def test_ingest_ms_buildings_geojsonl(db_session):
     source = "microsoft_globalml_test"
     db_session.execute(text("DELETE FROM public.ms_buildings_raw WHERE source = :source"), {"source": source})
     db_session.commit()
@@ -123,25 +146,54 @@ def test_ingest_ms_buildings_inserts_geoms(db_session):
         _write_geojsonl(path, [feature_1, feature_2, feature_1])
         ingest_ms_buildings(Path(tmpdir), country="Saudi Arabia", source=source, batch_size=2)
 
-    stats = db_session.execute(
-        text(
-            """
-            SELECT
-                COUNT(*) AS count,
-                MIN(ST_SRID(geom)) AS srid_min,
-                MAX(ST_SRID(geom)) AS srid_max,
-                MIN(area_m2) AS area_min
-            FROM public.ms_buildings_raw
-            WHERE source = :source
-            """
-        ),
-        {"source": source},
-    ).mappings().one()
+    _assert_stats(db_session, source, expected_count=2)
 
-    assert stats["count"] == 2
-    assert stats["srid_min"] == 4326
-    assert stats["srid_max"] == 4326
-    assert stats["area_min"] > 0
+    db_session.execute(text("DELETE FROM public.ms_buildings_raw WHERE source = :source"), {"source": source})
+    db_session.commit()
+
+
+def test_ingest_ms_buildings_csv_geojson(db_session):
+    source = "microsoft_globalml_test_csv"
+    db_session.execute(text("DELETE FROM public.ms_buildings_raw WHERE source = :source"), {"source": source})
+    db_session.commit()
+
+    geom_1 = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [46.681, 24.713],
+                [46.682, 24.713],
+                [46.682, 24.714],
+                [46.681, 24.714],
+                [46.681, 24.713],
+            ]
+        ],
+    }
+    geom_2 = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [46.683, 24.713],
+                [46.684, 24.713],
+                [46.684, 24.714],
+                [46.683, 24.714],
+                [46.683, 24.713],
+            ]
+        ],
+    }
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "saudi_geojson.csv.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["geometry", "name"])
+            writer.writeheader()
+            writer.writerow({"geometry": json.dumps(geom_1), "name": "A"})
+            writer.writerow({"geometry": json.dumps(geom_2), "name": "B"})
+            writer.writerow({"geometry": "{bad json}", "name": "C"})
+
+        ingest_ms_buildings(Path(tmpdir), country="Saudi Arabia", source=source, batch_size=2)
+
+    _assert_stats(db_session, source, expected_count=2)
 
     db_session.execute(text("DELETE FROM public.ms_buildings_raw WHERE source = :source"), {"source": source})
     db_session.commit()
