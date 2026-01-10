@@ -16,7 +16,9 @@ def test_suhail_parcel_tile_sql_contains_expected_fields():
     )
     assert "ST_SetSRID(ST_TileEnvelope(" in sql
     assert "ST_TileEnvelope(:z,:x,:y, 3857)" not in sql
+    # Filtering must happen in the same CRS as the tile envelope to avoid
+    # tile-boundary "patchwork" artifacts (filter + clip both in 3857).
     assert (
-        "ST_Transform(t.geom3857, 4326)" in sql
-        or "ST_Transform(t.geom3857,4326)" in sql
+        "ST_Transform(p.geom, 3857) && t.geom3857" in sql
+        or "ST_Transform(p.geom,3857) && t.geom3857" in sql
     )
