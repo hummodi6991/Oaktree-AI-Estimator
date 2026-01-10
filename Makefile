@@ -46,3 +46,7 @@ fetch-ms-buildings-riyadh:
 .PHONY: fetch-ms-buildings-riyadh-links
 fetch-ms-buildings-riyadh-links:
 	PYTHONPATH=. python -m app.ingest.fetch_ms_buildings_dataset_links --max-files 3
+
+.PHONY: refresh-derived-parcels
+refresh-derived-parcels:
+	psql "$$DATABASE_URL" -f sql/refresh_derived_parcels_v1.sql
