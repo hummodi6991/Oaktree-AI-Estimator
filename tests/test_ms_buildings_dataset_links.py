@@ -12,9 +12,9 @@ def test_latlon_to_quadkey_zoom12() -> None:
 def test_select_dataset_rows_by_prefix() -> None:
     csv_text = """Location,QuadKey,Url,Size,UploadDate
 KingdomofSaudiArabia,01234999,https://example.com/a.csv.gz,10,2024-01-01
-Saudi Arabia - test,01234000,https://example.com/b.csv.gz,11,2024-01-02
+saudiarabia-test,01234000,https://example.com/b.csv.gz,11,2024-01-02
 Canada,01234999,https://example.com/c.csv.gz,12,2024-01-03
-Saudi Arabia - test,77770000,https://example.com/d.csv.gz,13,2024-01-04
+saudiarabia-test,77770000,https://example.com/d.csv.gz,13,2024-01-04
 """
     rows = parse_dataset_links(csv_text)
     selected = select_dataset_rows(rows, {"01234"})
