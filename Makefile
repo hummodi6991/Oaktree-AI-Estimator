@@ -42,3 +42,7 @@ ingest-ms-buildings:
 .PHONY: fetch-ms-buildings-riyadh
 fetch-ms-buildings-riyadh:
 	PYTHONPATH=. python -m app.ingest.fetch_ms_buildings_riyadh
+
+.PHONY: fetch-ms-buildings-riyadh-links
+fetch-ms-buildings-riyadh-links:
+	PYTHONPATH=. python -m app.ingest.fetch_ms_buildings_dataset_links --max-files 3

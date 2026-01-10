@@ -65,10 +65,10 @@ MS_BUILDINGS_DIR=/path/to/saudi-arabia/files make ingest-ms-buildings
 ```
 
 ### Microsoft GlobalML Building Footprints (Riyadh-only)
-The Planetary Computer STAC API provides signed, stable links to the GlobalML footprints, which avoids the unreliable `dataset-links.csv` and direct blob URLs.
+Use the `dataset-links.csv` manifest to fetch only the Riyadh tiles, avoiding the blocked blob URLs and STAC `abfs://` links.
 
 ```bash
-make fetch-ms-buildings-riyadh
+make fetch-ms-buildings-riyadh-links
 make ingest-ms-buildings
 ```
 
