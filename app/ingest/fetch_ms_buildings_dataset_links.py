@@ -16,9 +16,7 @@ DATASET_LINKS_URL = (
 DEFAULT_BBOX = (46.2, 24.2, 47.3, 25.1)
 DEFAULT_MAX_FILES = 3
 DEFAULT_OUTPUT_DIR = Path("data/ms_buildings")
-DEFAULT_QUADKEY_ZOOM = 12
-DEFAULT_PREFIX_LENGTH = 9
-DEFAULT_GRID_N = 7
+DEFAULT_LOCATION_FILTER = "KingdomofSaudiArabia"
 GZIP_MAGIC = b"\x1f\x8b"
 
 
@@ -27,6 +25,8 @@ class SelectionSummary:
     candidates: int
     downloaded: list[Path]
     total_bytes: int
+    filtered_by_location: int
+    filtered_by_bbox: int
 
 
 def _clip(value: float, min_value: float, max_value: float) -> float:
@@ -56,37 +56,56 @@ def latlon_to_quadkey(lat: float, lon: float, zoom: int) -> str:
     return "".join(quadkey_digits)
 
 
-def quadkey_prefixes_for_bbox(
-    bbox: tuple[float, float, float, float],
-    zoom: int,
-    prefix_length: int,
-    grid_n: int,
-) -> set[str]:
-    min_lon, min_lat, max_lon, max_lat = bbox
-    if grid_n < 1:
-        raise ValueError("grid_n must be >= 1")
-    if grid_n == 1:
-        lats = [(min_lat + max_lat) / 2]
-        lons = [(min_lon + max_lon) / 2]
-    else:
-        lat_step = (max_lat - min_lat) / (grid_n - 1)
-        lon_step = (max_lon - min_lon) / (grid_n - 1)
-        lats = [min_lat + lat_step * i for i in range(grid_n)]
-        lons = [min_lon + lon_step * i for i in range(grid_n)]
-    prefixes = set()
-    for lat in lats:
-        for lon in lons:
-            quadkey = latlon_to_quadkey(lat, lon, zoom)
-            prefixes.add(quadkey[:prefix_length])
-    return prefixes
+def quadkey_to_tile(quadkey: str) -> tuple[int, int, int]:
+    tile_x = 0
+    tile_y = 0
+    zoom = len(quadkey)
+    for index, digit in enumerate(quadkey):
+        if digit not in {"0", "1", "2", "3"}:
+            raise ValueError(f"Invalid quadkey digit: {digit}")
+        mask = 1 << (zoom - index - 1)
+        value = int(digit)
+        if value & 1:
+            tile_x |= mask
+        if value & 2:
+            tile_y |= mask
+    return tile_x, tile_y, zoom
 
 
-def _location_matches(location: str | None) -> bool:
+def tile_to_bbox(tile_x: int, tile_y: int, zoom: int) -> tuple[float, float, float, float]:
+    n = 2**zoom
+    lon_left = tile_x / n * 360.0 - 180.0
+    lon_right = (tile_x + 1) / n * 360.0 - 180.0
+    lat_top = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * tile_y / n))))
+    lat_bottom = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (tile_y + 1) / n))))
+    return lon_left, lat_bottom, lon_right, lat_top
+
+
+def bboxes_intersect(
+    bbox_a: tuple[float, float, float, float],
+    bbox_b: tuple[float, float, float, float],
+) -> bool:
+    min_lon_a, min_lat_a, max_lon_a, max_lat_a = bbox_a
+    min_lon_b, min_lat_b, max_lon_b, max_lat_b = bbox_b
+    return not (
+        max_lon_a < min_lon_b
+        or min_lon_a > max_lon_b
+        or max_lat_a < min_lat_b
+        or min_lat_a > max_lat_b
+    )
+
+
+def _location_matches(location: str | None, location_filter: str | None) -> bool:
     if not location:
         return False
     if location == "KingdomofSaudiArabia":
         return True
-    return "saudiarabia" in location.lower()
+    location_lower = location.lower()
+    if "saudiarabia" in location_lower:
+        return True
+    if location_filter:
+        return location_filter.lower() in location_lower
+    return False
 
 
 def parse_dataset_links(csv_content: str) -> list[dict[str, str]]:
@@ -107,18 +126,31 @@ def load_dataset_links(source: str | None) -> list[dict[str, str]]:
 
 def select_dataset_rows(
     rows: Iterable[dict[str, str]],
-    quadkey_prefixes: set[str],
-) -> list[dict[str, str]]:
+    bbox: tuple[float, float, float, float],
+    location_filter: str | None,
+) -> tuple[list[dict[str, str]], int, int]:
     selected = []
+    filtered_by_location = 0
+    filtered_by_bbox = 0
     for row in rows:
-        if not _location_matches(row.get("Location")):
+        if not _location_matches(row.get("Location"), location_filter):
+            filtered_by_location += 1
             continue
         quadkey = row.get("QuadKey") or ""
         if not quadkey:
+            filtered_by_bbox += 1
             continue
-        if any(quadkey.startswith(prefix) for prefix in quadkey_prefixes):
+        try:
+            tile_x, tile_y, zoom = quadkey_to_tile(str(quadkey))
+        except ValueError:
+            filtered_by_bbox += 1
+            continue
+        tile_bbox = tile_to_bbox(tile_x, tile_y, zoom)
+        if bboxes_intersect(tile_bbox, bbox):
             selected.append(row)
-    return selected
+        else:
+            filtered_by_bbox += 1
+    return selected, filtered_by_location, filtered_by_bbox
 
 
 def _ensure_gzip(path: Path) -> bool:
@@ -168,17 +200,17 @@ def fetch_dataset_links(
     bbox: tuple[float, float, float, float],
     max_files: int,
     output_dir: Path,
-    zoom: int = DEFAULT_QUADKEY_ZOOM,
-    prefix_length: int = DEFAULT_PREFIX_LENGTH,
-    grid_n: int = DEFAULT_GRID_N,
+    location_filter: str | None = DEFAULT_LOCATION_FILTER,
 ) -> SelectionSummary:
     rows = load_dataset_links(dataset_links)
-    prefixes = quadkey_prefixes_for_bbox(bbox, zoom, prefix_length, grid_n)
-    sorted_prefixes = sorted(prefixes)
-    print(f"Generated {len(prefixes)} quadkey prefixes.")
-    print(f"First 10 prefixes: {sorted_prefixes[:10]}")
-    selected = select_dataset_rows(rows, prefixes)
+    selected, filtered_by_location, filtered_by_bbox = select_dataset_rows(
+        rows,
+        bbox,
+        location_filter,
+    )
     print(f"Selected {len(selected)} candidate rows.")
+    print(f"Filtered out by location: {filtered_by_location}")
+    print(f"Filtered out by bbox: {filtered_by_bbox}")
     downloaded: list[Path] = []
     total_bytes = 0
 
@@ -196,7 +228,13 @@ def fetch_dataset_links(
                 total_bytes += size
 
     print(f"Total bytes downloaded: {total_bytes}")
-    return SelectionSummary(candidates=len(selected), downloaded=downloaded, total_bytes=total_bytes)
+    return SelectionSummary(
+        candidates=len(selected),
+        downloaded=downloaded,
+        total_bytes=total_bytes,
+        filtered_by_location=filtered_by_location,
+        filtered_by_bbox=filtered_by_bbox,
+    )
 
 
 def main() -> None:
@@ -214,9 +252,7 @@ def main() -> None:
     parser.add_argument("--max-files", type=int, default=DEFAULT_MAX_FILES)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--dataset-links", default=None)
-    parser.add_argument("--prefix-length", type=int, default=DEFAULT_PREFIX_LENGTH)
-    parser.add_argument("--zoom", type=int, default=DEFAULT_QUADKEY_ZOOM)
-    parser.add_argument("--grid-n", type=int, default=DEFAULT_GRID_N)
+    parser.add_argument("--location-filter", default=DEFAULT_LOCATION_FILTER)
     args = parser.parse_args()
 
     bbox = tuple(args.bbox)
@@ -225,12 +261,16 @@ def main() -> None:
         bbox,
         args.max_files,
         args.output_dir,
-        zoom=args.zoom,
-        prefix_length=args.prefix_length,
-        grid_n=args.grid_n,
+        location_filter=args.location_filter,
     )
 
-    print(f"Summary: candidates={summary.candidates} downloaded={len(summary.downloaded)}")
+    print(
+        "Summary: "
+        f"candidates={summary.candidates} "
+        f"downloaded={len(summary.downloaded)} "
+        f"filtered_location={summary.filtered_by_location} "
+        f"filtered_bbox={summary.filtered_by_bbox}"
+    )
     if summary.downloaded:
         print("Downloaded files:")
         for path in summary.downloaded:

@@ -19,6 +19,7 @@ DEFAULT_SOURCE = "microsoft_globalml"
 DEFAULT_COUNTRY = "Saudi Arabia"
 DEFAULT_BATCH_SIZE = 2000
 GEOMETRY_COLUMNS = ["geometry", "geom", "wkt", "polygon", "multipolygon", "GeoJSON", "geojson"]
+DEFAULT_BBOX_ENV = "MS_BUILDINGS_BBOX"
 
 INSERT_GEOJSON_SQL = text(
     """
@@ -81,6 +82,7 @@ class FileStats:
     parsed_ok: int = 0
     inserted: int = 0
     skipped_invalid: int = 0
+    skipped_outside_bbox: int = 0
 
 
 @dataclass
@@ -109,6 +111,65 @@ def _extract_geojson(record: dict) -> dict | None:
     return None
 
 
+def _iter_geojson_coords(value):
+    if isinstance(value, (list, tuple)):
+        if len(value) >= 2 and all(isinstance(v, (int, float)) for v in value[:2]):
+            yield value[0], value[1]
+            return
+        for item in value:
+            yield from _iter_geojson_coords(item)
+
+
+def _geometry_bbox(geometry: dict) -> tuple[float, float, float, float] | None:
+    if not isinstance(geometry, dict):
+        return None
+    if geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+        return None
+    coords = geometry.get("coordinates")
+    if coords is None:
+        return None
+    min_lon = min_lat = max_lon = max_lat = None
+    for lon, lat in _iter_geojson_coords(coords):
+        if min_lon is None:
+            min_lon = max_lon = lon
+            min_lat = max_lat = lat
+            continue
+        min_lon = min(min_lon, lon)
+        max_lon = max(max_lon, lon)
+        min_lat = min(min_lat, lat)
+        max_lat = max(max_lat, lat)
+    if min_lon is None:
+        return None
+    return min_lon, min_lat, max_lon, max_lat
+
+
+def _bboxes_intersect(
+    bbox_a: tuple[float, float, float, float],
+    bbox_b: tuple[float, float, float, float],
+) -> bool:
+    min_lon_a, min_lat_a, max_lon_a, max_lat_a = bbox_a
+    min_lon_b, min_lat_b, max_lon_b, max_lat_b = bbox_b
+    return not (
+        max_lon_a < min_lon_b
+        or min_lon_a > max_lon_b
+        or max_lat_a < min_lat_b
+        or min_lat_a > max_lat_b
+    )
+
+
+def _parse_bbox(value: str) -> tuple[float, float, float, float]:
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 4:
+        raise ValueError("MS_BUILDINGS_BBOX must be min_lon,min_lat,max_lon,max_lat")
+    try:
+        min_lon, min_lat, max_lon, max_lat = (float(part) for part in parts)
+    except ValueError as exc:
+        raise ValueError("MS_BUILDINGS_BBOX must contain valid floats") from exc
+    if min_lon >= max_lon or min_lat >= max_lat:
+        raise ValueError("MS_BUILDINGS_BBOX must have min < max values")
+    return min_lon, min_lat, max_lon, max_lat
+
+
 def _geometry_column(fieldnames: list[str] | None) -> str | None:
     if not fieldnames:
         return None
@@ -119,7 +180,11 @@ def _geometry_column(fieldnames: list[str] | None) -> str | None:
     return None
 
 
-def _parse_json_line(line: str, stats: FileStats) -> ParsedRecord | None:
+def _parse_json_line(
+    line: str,
+    stats: FileStats,
+    bbox_filter: tuple[float, float, float, float] | None,
+) -> ParsedRecord | None:
     stats.read_rows += 1
     try:
         record = json.loads(line)
@@ -137,6 +202,14 @@ def _parse_json_line(line: str, stats: FileStats) -> ParsedRecord | None:
         return None
 
     source_id = hashlib.sha1(line.encode("utf-8")).hexdigest()
+    if bbox_filter is not None:
+        geom_bbox = _geometry_bbox(geom)
+        if geom_bbox is None:
+            stats.skipped_invalid += 1
+            return None
+        if not _bboxes_intersect(geom_bbox, bbox_filter):
+            stats.skipped_outside_bbox += 1
+            return None
     stats.parsed_ok += 1
     return ParsedRecord(source_id=source_id, geojson=json.dumps(geom, separators=(",", ":")))
 
@@ -150,6 +223,7 @@ def _parse_csv_row(
     fieldnames: list[str],
     geometry_column: str,
     stats: FileStats,
+    bbox_filter: tuple[float, float, float, float] | None,
 ) -> ParsedRecord | None:
     stats.read_rows += 1
     raw_value = row.get(geometry_column)
@@ -177,6 +251,14 @@ def _parse_csv_row(
         if not geometry:
             stats.skipped_invalid += 1
             return None
+        if bbox_filter is not None:
+            geom_bbox = _geometry_bbox(geometry)
+            if geom_bbox is None:
+                stats.skipped_invalid += 1
+                return None
+            if not _bboxes_intersect(geom_bbox, bbox_filter):
+                stats.skipped_outside_bbox += 1
+                return None
         stats.parsed_ok += 1
         return ParsedRecord(source_id=source_id, geojson=json.dumps(geometry, separators=(",", ":")))
 
@@ -214,6 +296,8 @@ def ingest_ms_buildings(
 ) -> int:
     if not directory.exists():
         raise FileNotFoundError(f"MS_BUILDINGS_DIR not found: {directory}")
+    bbox_filter_value = os.getenv(DEFAULT_BBOX_ENV)
+    bbox_filter = _parse_bbox(bbox_filter_value) if bbox_filter_value else None
 
     session = SessionLocal()
     total_inserted = 0
@@ -237,7 +321,7 @@ def ingest_ms_buildings(
                     continue
 
                 if first_line.lstrip().startswith("{") or first_line.lstrip().startswith("["):
-                    record = _parse_json_line(first_line.strip(), stats)
+                    record = _parse_json_line(first_line.strip(), stats, bbox_filter)
                     if record:
                         _queue_record(record, geojson_batch, wkt_batch, source, country, quadkey)
 
@@ -245,7 +329,7 @@ def ingest_ms_buildings(
                         line = line.strip()
                         if not line:
                             continue
-                        record = _parse_json_line(line, stats)
+                        record = _parse_json_line(line, stats, bbox_filter)
                         if record:
                             _queue_record(record, geojson_batch, wkt_batch, source, country, quadkey)
                         if len(geojson_batch) + len(wkt_batch) >= batch_size:
@@ -263,6 +347,7 @@ def ingest_ms_buildings(
                                 reader.fieldnames or [],
                                 geometry_column,
                                 stats,
+                                bbox_filter,
                             )
                             if record:
                                 _queue_record(record, geojson_batch, wkt_batch, source, country, quadkey)
@@ -275,15 +360,18 @@ def ingest_ms_buildings(
             total_stats.parsed_ok += stats.parsed_ok
             total_stats.inserted += stats.inserted
             total_stats.skipped_invalid += stats.skipped_invalid
+            total_stats.skipped_outside_bbox += stats.skipped_outside_bbox
             print(
                 f"{file_path.name}: read={stats.read_rows} parsed={stats.parsed_ok} "
-                f"inserted={stats.inserted} skipped={stats.skipped_invalid}"
+                f"inserted={stats.inserted} skipped={stats.skipped_invalid} "
+                f"skipped_outside_bbox={stats.skipped_outside_bbox}"
             )
 
         print(
             "total: "
             f"read={total_stats.read_rows} parsed={total_stats.parsed_ok} "
-            f"inserted={total_stats.inserted} skipped={total_stats.skipped_invalid}"
+            f"inserted={total_stats.inserted} skipped={total_stats.skipped_invalid} "
+            f"skipped_outside_bbox={total_stats.skipped_outside_bbox}"
         )
         return total_inserted
     finally:
