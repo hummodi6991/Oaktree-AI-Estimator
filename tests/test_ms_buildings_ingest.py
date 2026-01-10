@@ -189,11 +189,17 @@ def test_ingest_ms_buildings_csv_geojson(db_session):
             writer.writeheader()
             writer.writerow({"geometry": json.dumps(geom_1), "name": "A"})
             writer.writerow({"geometry": json.dumps(geom_2), "name": "B"})
-            writer.writerow({"geometry": "{bad json}", "name": "C"})
+            writer.writerow(
+                {
+                    "geometry": json.dumps({"type": "Feature", "geometry": geom_1, "properties": {}}),
+                    "name": "C",
+                }
+            )
+            writer.writerow({"geometry": "{bad json}", "name": "D"})
 
         ingest_ms_buildings(Path(tmpdir), country="Saudi Arabia", source=source, batch_size=2)
 
-    _assert_stats(db_session, source, expected_count=2)
+    _assert_stats(db_session, source, expected_count=3)
 
     db_session.execute(text("DELETE FROM public.ms_buildings_raw WHERE source = :source"), {"source": source})
     db_session.commit()

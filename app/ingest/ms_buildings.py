@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import gzip
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -172,8 +173,12 @@ def _parse_csv_row(
         if not isinstance(geom, dict):
             stats.skipped_invalid += 1
             return None
+        geometry = _extract_geojson(geom)
+        if not geometry:
+            stats.skipped_invalid += 1
+            return None
         stats.parsed_ok += 1
-        return ParsedRecord(source_id=source_id, geojson=json.dumps(geom, separators=(",", ":")))
+        return ParsedRecord(source_id=source_id, geojson=json.dumps(geometry, separators=(",", ":")))
 
     stats.parsed_ok += 1
     return ParsedRecord(source_id=source_id, wkt=raw_value)
@@ -246,14 +251,19 @@ def ingest_ms_buildings(
                         if len(geojson_batch) + len(wkt_batch) >= batch_size:
                             stats.inserted += _flush_batches(session, geojson_batch, wkt_batch)
                 else:
-                    fieldnames = [name.strip() for name in next(csv.reader([first_line]))]
-                    reader = csv.DictReader(handle, fieldnames=fieldnames)
-                    geometry_column = _geometry_column(fieldnames)
+                    lines = itertools.chain([first_line], handle)
+                    reader = csv.DictReader(lines)
+                    geometry_column = _geometry_column(reader.fieldnames)
                     if not geometry_column:
                         stats.skipped_invalid += 1
                     else:
                         for row in reader:
-                            record = _parse_csv_row(row, fieldnames, geometry_column, stats)
+                            record = _parse_csv_row(
+                                row,
+                                reader.fieldnames or [],
+                                geometry_column,
+                                stats,
+                            )
                             if record:
                                 _queue_record(record, geojson_batch, wkt_batch, source, country, quadkey)
                             if len(geojson_batch) + len(wkt_batch) >= batch_size:
