@@ -13,11 +13,12 @@ import httpx
 DATASET_LINKS_URL = (
     "https://minedbuildings.z5.web.core.windows.net/global-buildings/dataset-links.csv"
 )
-DEFAULT_BBOX = (46.5, 24.6, 46.9, 24.9)
+DEFAULT_BBOX = (46.2, 24.2, 47.3, 25.1)
 DEFAULT_MAX_FILES = 3
 DEFAULT_OUTPUT_DIR = Path("data/ms_buildings")
 DEFAULT_QUADKEY_ZOOM = 12
-DEFAULT_PREFIX_LENGTH = 6
+DEFAULT_PREFIX_LENGTH = 9
+DEFAULT_GRID_N = 7
 GZIP_MAGIC = b"\x1f\x8b"
 
 
@@ -25,6 +26,7 @@ GZIP_MAGIC = b"\x1f\x8b"
 class SelectionSummary:
     candidates: int
     downloaded: list[Path]
+    total_bytes: int
 
 
 def _clip(value: float, min_value: float, max_value: float) -> float:
@@ -58,19 +60,24 @@ def quadkey_prefixes_for_bbox(
     bbox: tuple[float, float, float, float],
     zoom: int,
     prefix_length: int,
+    grid_n: int,
 ) -> set[str]:
     min_lon, min_lat, max_lon, max_lat = bbox
-    samples = [
-        (min_lat, min_lon),
-        (min_lat, max_lon),
-        (max_lat, min_lon),
-        (max_lat, max_lon),
-        ((min_lat + max_lat) / 2, (min_lon + max_lon) / 2),
-    ]
+    if grid_n < 1:
+        raise ValueError("grid_n must be >= 1")
+    if grid_n == 1:
+        lats = [(min_lat + max_lat) / 2]
+        lons = [(min_lon + max_lon) / 2]
+    else:
+        lat_step = (max_lat - min_lat) / (grid_n - 1)
+        lon_step = (max_lon - min_lon) / (grid_n - 1)
+        lats = [min_lat + lat_step * i for i in range(grid_n)]
+        lons = [min_lon + lon_step * i for i in range(grid_n)]
     prefixes = set()
-    for lat, lon in samples:
-        quadkey = latlon_to_quadkey(lat, lon, zoom)
-        prefixes.add(quadkey[:prefix_length])
+    for lat in lats:
+        for lon in lons:
+            quadkey = latlon_to_quadkey(lat, lon, zoom)
+            prefixes.add(quadkey[:prefix_length])
     return prefixes
 
 
@@ -79,7 +86,7 @@ def _location_matches(location: str | None) -> bool:
         return False
     if location == "KingdomofSaudiArabia":
         return True
-    return "Saudi" in location
+    return "saudiarabia" in location.lower()
 
 
 def parse_dataset_links(csv_content: str) -> list[dict[str, str]]:
@@ -125,7 +132,11 @@ def _filename_from_url(url: str) -> str:
     return Path(parsed.path).name
 
 
-def _download_file(client: httpx.Client, url: str, output_dir: Path) -> Path | None:
+def _download_file(
+    client: httpx.Client,
+    url: str,
+    output_dir: Path,
+) -> tuple[Path, int] | None:
     filename = _filename_from_url(url)
     if not filename:
         print(f"Skipping URL with no filename: {url}")
@@ -136,18 +147,20 @@ def _download_file(client: httpx.Client, url: str, output_dir: Path) -> Path | N
         return None
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    total_bytes = 0
     with client.stream("GET", url, timeout=120) as response:
         response.raise_for_status()
         with destination.open("wb") as handle:
             for chunk in response.iter_bytes():
                 handle.write(chunk)
+                total_bytes += len(chunk)
 
     if not _ensure_gzip(destination):
         destination.unlink(missing_ok=True)
         print(f"Warning: {filename} was not gzip data and was deleted.")
         return None
 
-    return destination
+    return destination, total_bytes
 
 
 def fetch_dataset_links(
@@ -157,11 +170,17 @@ def fetch_dataset_links(
     output_dir: Path,
     zoom: int = DEFAULT_QUADKEY_ZOOM,
     prefix_length: int = DEFAULT_PREFIX_LENGTH,
+    grid_n: int = DEFAULT_GRID_N,
 ) -> SelectionSummary:
     rows = load_dataset_links(dataset_links)
-    prefixes = quadkey_prefixes_for_bbox(bbox, zoom, prefix_length)
+    prefixes = quadkey_prefixes_for_bbox(bbox, zoom, prefix_length, grid_n)
+    sorted_prefixes = sorted(prefixes)
+    print(f"Generated {len(prefixes)} quadkey prefixes.")
+    print(f"First 10 prefixes: {sorted_prefixes[:10]}")
     selected = select_dataset_rows(rows, prefixes)
+    print(f"Selected {len(selected)} candidate rows.")
     downloaded: list[Path] = []
+    total_bytes = 0
 
     with httpx.Client() as client:
         for row in selected:
@@ -172,9 +191,12 @@ def fetch_dataset_links(
                 continue
             result = _download_file(client, url, output_dir)
             if result is not None:
-                downloaded.append(result)
+                path, size = result
+                downloaded.append(path)
+                total_bytes += size
 
-    return SelectionSummary(candidates=len(selected), downloaded=downloaded)
+    print(f"Total bytes downloaded: {total_bytes}")
+    return SelectionSummary(candidates=len(selected), downloaded=downloaded, total_bytes=total_bytes)
 
 
 def main() -> None:
@@ -192,6 +214,9 @@ def main() -> None:
     parser.add_argument("--max-files", type=int, default=DEFAULT_MAX_FILES)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--dataset-links", default=None)
+    parser.add_argument("--prefix-length", type=int, default=DEFAULT_PREFIX_LENGTH)
+    parser.add_argument("--zoom", type=int, default=DEFAULT_QUADKEY_ZOOM)
+    parser.add_argument("--grid-n", type=int, default=DEFAULT_GRID_N)
     args = parser.parse_args()
 
     bbox = tuple(args.bbox)
@@ -200,6 +225,9 @@ def main() -> None:
         bbox,
         args.max_files,
         args.output_dir,
+        zoom=args.zoom,
+        prefix_length=args.prefix_length,
+        grid_n=args.grid_n,
     )
 
     print(f"Summary: candidates={summary.candidates} downloaded={len(summary.downloaded)}")
