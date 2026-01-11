@@ -74,8 +74,8 @@ metrics AS (
 )
 SELECT
     ROW_NUMBER() OVER (ORDER BY ST_XMin(site_32638), ST_YMin(site_32638))::bigint AS parcel_id,
-    ST_Transform(site_32638, 4326) AS geom,
-    ST_Area(site_32638) AS site_area_m2,
+    ST_Transform(site_32638, 4326)::geometry(Polygon, 4326) AS geom,
+    COALESCE(ST_Area(site_32638), 0) AS site_area_m2,
     footprint_area_m2,
     building_count
 FROM metrics;

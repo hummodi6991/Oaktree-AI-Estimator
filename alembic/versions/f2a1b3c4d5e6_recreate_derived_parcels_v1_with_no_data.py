@@ -72,7 +72,7 @@ def _derived_parcels_sql(include_roads: bool) -> str:
     roads_raw AS (
         SELECT ST_Transform(way, 32638) AS way_32638
         FROM public.planet_osm_line
-        WHERE way && ST_Transform((SELECT bbox_4326 FROM params), 3857)
+        WHERE way && (SELECT bbox_4326 FROM params)
     ),
     roads_32638 AS (
         SELECT COALESCE(
@@ -115,7 +115,7 @@ def _derived_parcels_sql(include_roads: bool) -> str:
     SELECT
         ROW_NUMBER() OVER (ORDER BY ST_XMin(site_32638), ST_YMin(site_32638))::bigint AS parcel_id,
         ST_Transform(site_32638, 4326)::geometry(Polygon, 4326) AS geom,
-        ST_Area(site_32638) AS site_area_m2,
+        COALESCE(ST_Area(site_32638), 0) AS site_area_m2,
         footprint_area_m2,
         building_count
     FROM metrics
@@ -140,7 +140,7 @@ def _derived_parcels_sql(include_roads: bool) -> str:
     SELECT
         ROW_NUMBER() OVER (ORDER BY ST_XMin(site_32638), ST_YMin(site_32638))::bigint AS parcel_id,
         ST_Transform(site_32638, 4326)::geometry(Polygon, 4326) AS geom,
-        ST_Area(site_32638) AS site_area_m2,
+        COALESCE(ST_Area(site_32638), 0) AS site_area_m2,
         footprint_area_m2,
         building_count
     FROM metrics
@@ -182,17 +182,6 @@ def upgrade() -> None:
         END $$;
         """
         % (sql_with_roads, sql_no_roads)
-    )
-
-    op.execute(
-        """
-        ALTER MATERIALIZED VIEW public.derived_parcels_v1
-            ALTER COLUMN parcel_id SET NOT NULL,
-            ALTER COLUMN geom SET NOT NULL,
-            ALTER COLUMN site_area_m2 SET NOT NULL,
-            ALTER COLUMN footprint_area_m2 SET NOT NULL,
-            ALTER COLUMN building_count SET NOT NULL;
-        """
     )
 
     op.execute(
