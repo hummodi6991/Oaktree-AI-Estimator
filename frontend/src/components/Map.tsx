@@ -217,7 +217,7 @@ export default function Map({ onParcel }: MapProps) {
   const lastSelectedIdRef = useRef<string | null>(null);
   const currentParcelRef = useRef<ParcelSummary | null>(null);
   const inferCacheRef = useRef(
-    new Map<string, { geometry: Geometry; area_m2: number | null; perimeter_m: number | null }>(),
+    new globalThis.Map<string, { geometry: Geometry; area_m2: number | null; perimeter_m: number | null }>(),
   );
 
   const renderStatus = useMemo(() => {
