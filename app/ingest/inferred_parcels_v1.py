@@ -313,7 +313,8 @@ def main(argv: list[str] | None = None) -> int:
                         concat('ms:', building_id, ':', part_index) AS parcel_id,
                         building_id,
                         part_index,
-                        ST_Transform(geom3857, 4326) AS geom,
+                        -- Enforce MultiPolygon output; PostGIS rejects Polygon into MultiPolygon column.
+                        ST_Multi(ST_Transform(geom3857, 4326)) AS geom,
                         footprint_area_m2,
                         'road_block_voronoi_v1'::text AS method,
                         :block_id AS block_id
