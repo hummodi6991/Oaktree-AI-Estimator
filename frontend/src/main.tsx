@@ -56,6 +56,12 @@ function App() {
               const footprintArea = parcel.footprint_area_m2 ?? null;
               const showFootprint =
                 footprintArea != null && Number.isFinite(footprintArea) && parcel.parcel_area_m2 != null;
+              const methodLabel =
+                parcel.parcel_method === "inferred_parcels_v1"
+                  ? t("app.methodInferred")
+                  : parcel.parcel_method === "click_fallback"
+                    ? t("app.methodClickFallback")
+                    : t("common.notAvailable");
               return (
                 <div>
                   <b>{t("app.parcelLabel")}:</b> {parcel.parcel_id} | <b>{t("app.areaLabel")}:</b>{" "}
@@ -67,7 +73,8 @@ function App() {
                         t("common.notAvailable"),
                       )})`
                     : ""}{" "}
-                  | <b>{t("app.landUseLabel")}:</b> {codeLabel}
+                  | <b>{t("app.landUseLabel")}:</b> {codeLabel} | <b>{t("app.methodLabel")}:</b>{" "}
+                  {methodLabel}
                 </div>
               );
             })()}

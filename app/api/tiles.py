@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -8,6 +10,11 @@ from app.db.deps import get_db
 router = APIRouter(tags=["map"])
 
 SUHAIL_PARCEL_TABLE = "public.suhail_parcels_mat"
+INFERRED_PARCEL_TABLE = "public.inferred_parcels_v1"
+_INFERRED_PARCEL_TABLES = {INFERRED_PARCEL_TABLE, "inferred_parcels_v1"}
+_HAS_INFERRED_PARCELS: bool | None = None
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_identifier(value: str | None, fallback: str) -> str:
@@ -20,7 +27,8 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
 
 
 PARCEL_TILE_TABLE = _safe_identifier(
-    getattr(settings, "PARCEL_TILE_TABLE", "public.ms_buildings_raw"), "public.ms_buildings_raw"
+    getattr(settings, "PARCEL_TILE_TABLE", "public.ms_buildings_raw"),
+    "public.ms_buildings_raw",
 )
 PARCEL_SIMPLIFY_TOLERANCE_M = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
 
@@ -116,7 +124,22 @@ _SUHAIL_PARCEL_ROT_TILE_SQL = text(
     """
 )
 
-def _parcel_tile_sql(simplify: bool) -> text:
+def _has_inferred_parcels(db: Session) -> bool:
+    global _HAS_INFERRED_PARCELS
+    if _HAS_INFERRED_PARCELS is not None:
+        return _HAS_INFERRED_PARCELS
+    try:
+        row = db.execute(
+            text("SELECT EXISTS (SELECT 1 FROM public.inferred_parcels_v1 LIMIT 1)")
+        ).scalar()
+        _HAS_INFERRED_PARCELS = bool(row)
+    except Exception as exc:
+        logger.warning("Failed to check inferred parcels availability: %s", exc)
+        _HAS_INFERRED_PARCELS = False
+    return _HAS_INFERRED_PARCELS
+
+
+def _ms_buildings_tile_sql(simplify: bool) -> text:
     geom_expr = "p.geom3857"
     if simplify:
         geom_expr = "ST_SimplifyPreserveTopology(p.geom3857, :simplify_tol)"
@@ -152,6 +175,7 @@ def _parcel_tile_sql(simplify: bool) -> text:
             ST_Area(d.geom4326::geography) AS area_m2,
             ST_Area(d.geom4326::geography) AS footprint_area_m2,
             ST_Perimeter(d.geom4326::geography) AS perimeter_m,
+            'ms_buildings_raw'::text AS method,
             ST_Transform(d.geom4326, 3857) AS geom3857
           FROM dumped d
         ),
@@ -163,6 +187,7 @@ def _parcel_tile_sql(simplify: bool) -> text:
             footprint_area_m2,
             area_m2,
             perimeter_m,
+            method,
             ST_AsMVTGeom(
               {geom_expr},
               t.geom3857,
@@ -178,6 +203,62 @@ def _parcel_tile_sql(simplify: bool) -> text:
     )
 
 
+def _inferred_parcel_tile_sql(simplify: bool) -> text:
+    geom_expr = "p.geom3857"
+    if simplify:
+        geom_expr = "ST_SimplifyPreserveTopology(p.geom3857, :simplify_tol)"
+    return text(
+        f"""
+        WITH tile3857 AS (
+          SELECT ST_SetSRID(ST_TileEnvelope(:z,:x,:y), 3857) AS geom3857
+        ),
+        tile4326 AS (
+          SELECT ST_Transform(t.geom3857, 4326) AS geom4326 FROM tile3857 t
+        ),
+        parcel_candidates AS (
+          SELECT
+            p.parcel_id,
+            p.building_id,
+            p.part_index,
+            p.area_m2,
+            p.perimeter_m,
+            p.footprint_area_m2,
+            p.method,
+            ST_Transform(p.geom, 3857) AS geom3857
+          FROM {INFERRED_PARCEL_TABLE} p, tile4326 t
+          WHERE p.geom && t.geom4326
+            AND ST_Intersects(p.geom, t.geom4326)
+        ),
+        mvtgeom AS (
+          SELECT
+            parcel_id,
+            building_id,
+            part_index,
+            area_m2,
+            perimeter_m,
+            footprint_area_m2,
+            method,
+            ST_AsMVTGeom(
+              {geom_expr},
+              t.geom3857,
+              4096,
+              64,
+              true
+            ) AS geom
+          FROM parcel_candidates p, tile3857 t
+        )
+        SELECT ST_AsMVT(mvtgeom, 'parcels', 4096, 'geom') AS tile
+        FROM mvtgeom;
+        """
+    )
+
+
+def _parcel_tile_sql(simplify: bool, use_inferred: bool) -> text:
+    if use_inferred:
+        return _inferred_parcel_tile_sql(simplify)
+    return _ms_buildings_tile_sql(simplify)
+
+
 @router.get("/tiles/parcels/{z}/{x}/{y}.pbf")
 @router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
@@ -186,7 +267,8 @@ def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
 
     simplify = z == 16
     try:
-        tile_sql = _parcel_tile_sql(simplify)
+        use_inferred = PARCEL_TILE_TABLE in _INFERRED_PARCEL_TABLES and _has_inferred_parcels(db)
+        tile_sql = _parcel_tile_sql(simplify, use_inferred=use_inferred)
         params = {"z": z, "x": x, "y": y}
         if simplify:
             params["simplify_tol"] = PARCEL_SIMPLIFY_TOLERANCE_M

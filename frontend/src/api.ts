@@ -45,6 +45,7 @@ export type ParcelSummary = {
   site_area_m2?: number | null;
   footprint_area_m2?: number | null;
   building_count?: number | null;
+  parcel_method?: string | null;
   landuse_raw?: string | null;
   classification_raw?: string | null;
   landuse_code?: string | null;
