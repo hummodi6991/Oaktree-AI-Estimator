@@ -16,7 +16,6 @@ def _derived_parcels_sql(include_roads: bool) -> str:
         SELECT
             {do_road_cut}::boolean AS do_road_cut,
             ST_MakeEnvelope(46.20, 24.20, 47.30, 25.10, 4326) AS bbox_4326,
-            ST_Transform(ST_MakeEnvelope(46.20, 24.20, 47.30, 25.10, 4326), 3857) AS bbox_3857,
             500.0::double precision AS cell_size_m,
             12.0::double precision AS buffer_m
     ),
@@ -72,7 +71,7 @@ def _derived_parcels_sql(include_roads: bool) -> str:
     roads_raw AS (
         SELECT way
         FROM public.planet_osm_line
-        WHERE way && (SELECT bbox_3857 FROM params)
+        WHERE way && (SELECT bbox_4326 FROM params)
     ),
     roads_32638 AS (
         SELECT COALESCE(
@@ -114,8 +113,8 @@ def _derived_parcels_sql(include_roads: bool) -> str:
     )
     SELECT
         ROW_NUMBER() OVER (ORDER BY ST_XMin(site_32638), ST_YMin(site_32638))::bigint AS parcel_id,
-        ST_Transform(site_32638, 4326) AS geom,
-        ST_Area(site_32638) AS site_area_m2,
+        ST_Transform(site_32638, 4326)::geometry(Polygon, 4326) AS geom,
+        COALESCE(ST_Area(site_32638), 0) AS site_area_m2,
         footprint_area_m2,
         building_count
     FROM metrics
@@ -139,16 +138,27 @@ def _derived_parcels_sql(include_roads: bool) -> str:
     )
     SELECT
         ROW_NUMBER() OVER (ORDER BY ST_XMin(site_32638), ST_YMin(site_32638))::bigint AS parcel_id,
-        ST_Transform(site_32638, 4326) AS geom,
-        ST_Area(site_32638) AS site_area_m2,
+        ST_Transform(site_32638, 4326)::geometry(Polygon, 4326) AS geom,
+        COALESCE(ST_Area(site_32638), 0) AS site_area_m2,
         footprint_area_m2,
         building_count
     FROM metrics
     """
 
-    return """
-    CREATE MATERIALIZED VIEW public.derived_parcels_v1 AS
-    """ + base_ctes + roads_ctes + " WITH NO DATA;"
+    return (
+        """
+    CREATE MATERIALIZED VIEW public.derived_parcels_v1 (
+        parcel_id,
+        geom,
+        site_area_m2,
+        footprint_area_m2,
+        building_count
+    ) AS
+    """
+        + base_ctes
+        + roads_ctes
+        + " WITH NO DATA;"
+    )
 
 
 def upgrade() -> None:
@@ -169,17 +179,6 @@ def upgrade() -> None:
         END $$;
         """
         % (sql_with_roads, sql_no_roads)
-    )
-
-    op.execute(
-        """
-        ALTER MATERIALIZED VIEW public.derived_parcels_v1
-            ALTER COLUMN parcel_id SET NOT NULL,
-            ALTER COLUMN geom SET NOT NULL,
-            ALTER COLUMN site_area_m2 SET NOT NULL,
-            ALTER COLUMN footprint_area_m2 SET NOT NULL,
-            ALTER COLUMN building_count SET NOT NULL;
-        """
     )
 
     op.execute(
