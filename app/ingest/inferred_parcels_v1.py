@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from typing import Iterable
 
@@ -45,17 +46,26 @@ def _table_row_count(db, table: str) -> int | None:
 
 
 def _resolve_roads_table(db) -> tuple[str, int]:
-    roads_count = _table_row_count(db, "public.planet_osm_roads")
-    if roads_count is not None and roads_count >= MIN_ROAD_COUNT:
-        return "public.planet_osm_roads", roads_count
-    line_count = _table_row_count(db, "public.planet_osm_line")
-    if line_count is not None and line_count >= MIN_ROAD_COUNT:
-        return "public.planet_osm_line", line_count
-    raise RuntimeError(
-        "OSM roads import incomplete: expected planet_osm_roads or planet_osm_line "
-        f"to have at least {MIN_ROAD_COUNT} rows "
-        f"(roads={roads_count}, line={line_count})"
-    )
+    configured_table = os.getenv("INFERRED_PARCELS_ROADS_TABLE", "public.osm_roads_line")
+    roads_count = _table_row_count(db, configured_table)
+    if roads_count is None:
+        if configured_table == "public.osm_roads_line":
+            fallback_table = "public.planet_osm_line"
+            fallback_count = _table_row_count(db, fallback_table)
+            if fallback_count is not None and fallback_count >= MIN_ROAD_COUNT:
+                return fallback_table, fallback_count
+            raise RuntimeError(
+                "OSM roads import incomplete: expected public.osm_roads_line view or "
+                f"{fallback_table} to have at least {MIN_ROAD_COUNT} rows "
+                f"(view=None, line={fallback_count})"
+            )
+        raise RuntimeError(f"OSM roads table not found: {configured_table}")
+    if roads_count < MIN_ROAD_COUNT:
+        raise RuntimeError(
+            f"OSM roads import incomplete: expected {configured_table} to have at least "
+            f"{MIN_ROAD_COUNT} rows (roads={roads_count})"
+        )
+    return configured_table, roads_count
 
 
 def _resolve_highway_expr(db, table: str, alias: str) -> str:
