@@ -26,24 +26,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Build inferred parcels
-        run: |
-          python -m app.ingest.inferred_parcels_v1 --truncate --bbox "46.20,24.20,47.30,25.10"
-      - name: Report inferred parcel stats
+      - name: Create OSM roads view
         run: |
           python - <<'PY'
           from sqlalchemy import text
           from app.db.session import SessionLocal
 
           with SessionLocal() as db:
-              row = (
-                  db.execute(
-                      text(
-                          "SELECT COUNT(*) AS count, ST_Extent(geom) AS extent FROM public.inferred_parcels_v1"
-                      )
+              db.execute(
+                  text(
+                      """
+                      CREATE OR REPLACE VIEW public.osm_roads_line AS
+                      SELECT way AS geom, highway
+                      FROM public.planet_osm_line
+                      WHERE highway IS NOT NULL;
+                      """
                   )
-                  .mappings()
-                  .one()
               )
-              print(f"count={row['count']} extent={row['extent']}")
+              db.commit()
+          PY
+      - name: Build inferred parcels
+        run: |
+          python -m app.ingest.inferred_parcels_v1 --truncate --bbox "46.20,24.20,47.30,25.10"
+      - name: Verify inferred parcel count
+        run: |
+          python - <<'PY'
+          from sqlalchemy import text
+          from app.db.session import SessionLocal
+
+          with SessionLocal() as db:
+              count = db.execute(text("SELECT COUNT(*) FROM public.inferred_parcels_v1")).scalar()
+              print(f"count={count}")
           PY
