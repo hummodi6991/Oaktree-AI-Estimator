@@ -7,7 +7,7 @@ import { formatInteger, formatNumber } from "../i18n/format";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { collateParcels, identify } from "../api";
+import { buildApiUrl, collateParcels, identify } from "../api";
 import type { CollateResponse, IdentifyResponse, ParcelSummary } from "../api";
 
 type MapProps = {
@@ -19,6 +19,9 @@ type StatusMessage = { key: string; options?: Record<string, unknown> } | { raw:
 const SELECT_SOURCE_ID = "selected-parcel-src";
 const SELECT_FILL_LAYER_ID = "selected-parcel-fill";
 const SELECT_LINE_LAYER_ID = "selected-parcel-line";
+const PARCEL_SOURCE_ID = "parcel-tiles-src";
+const PARCEL_FILL_LAYER_ID = "parcel-tiles-fill";
+const PARCEL_LINE_LAYER_ID = "parcel-tiles-line";
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
 
@@ -105,6 +108,58 @@ function ensureSelectionLayers(map: maplibregl.Map) {
   }
 }
 
+function ensureParcelLayers(map: maplibregl.Map, visible: boolean) {
+  if (!map.getSource(PARCEL_SOURCE_ID)) {
+    map.addSource(PARCEL_SOURCE_ID, {
+      type: "vector",
+      tiles: [buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf")],
+      minzoom: 12,
+      maxzoom: 18,
+    });
+  }
+
+  const visibility = visible ? "visible" : "none";
+
+  if (!map.getLayer(PARCEL_FILL_LAYER_ID)) {
+    map.addLayer({
+      id: PARCEL_FILL_LAYER_ID,
+      type: "fill",
+      source: PARCEL_SOURCE_ID,
+      "source-layer": "parcels",
+      layout: { visibility },
+      paint: {
+        "fill-color": "#2f7bff",
+        "fill-opacity": 0.08,
+      },
+    });
+  }
+
+  if (!map.getLayer(PARCEL_LINE_LAYER_ID)) {
+    map.addLayer({
+      id: PARCEL_LINE_LAYER_ID,
+      type: "line",
+      source: PARCEL_SOURCE_ID,
+      "source-layer": "parcels",
+      layout: { visibility },
+      paint: {
+        "line-color": "#2f7bff",
+        "line-width": 1.1,
+        "line-opacity": 0.8,
+      },
+    });
+  }
+}
+
+function setParcelVisibility(map: maplibregl.Map, visible: boolean) {
+  const visibility = visible ? "visible" : "none";
+  if (map.getLayer(PARCEL_FILL_LAYER_ID)) {
+    map.setLayoutProperty(PARCEL_FILL_LAYER_ID, "visibility", visibility);
+  }
+  if (map.getLayer(PARCEL_LINE_LAYER_ID)) {
+    map.setLayoutProperty(PARCEL_LINE_LAYER_ID, "visibility", visibility);
+  }
+}
+
 export default function Map({ onParcel }: MapProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -119,6 +174,7 @@ export default function Map({ onParcel }: MapProps) {
   const [collateStatus, setCollateStatus] = useState<StatusMessage | null>(null);
   const [collating, setCollating] = useState(false);
   const [selectionMethod, setSelectionMethod] = useState<"feature" | "identify" | null>(null);
+  const [showParcelOutlines, setShowParcelOutlines] = useState(true);
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
@@ -242,10 +298,12 @@ export default function Map({ onParcel }: MapProps) {
     let disposed = false;
 
     map.on("load", () => {
+      ensureParcelLayers(map, showParcelOutlines);
       ensureSelectionLayers(map);
     });
 
     map.on("style.load", () => {
+      ensureParcelLayers(map, showParcelOutlines);
       ensureSelectionLayers(map);
     });
 
@@ -279,6 +337,12 @@ export default function Map({ onParcel }: MapProps) {
       map.remove();
     };
   }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    setParcelVisibility(map, showParcelOutlines);
+  }, [showParcelOutlines]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -380,6 +444,16 @@ export default function Map({ onParcel }: MapProps) {
           alignItems: "center",
         }}
       >
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={showParcelOutlines}
+            onChange={(event) => {
+              setShowParcelOutlines(event.target.checked);
+            }}
+          />
+          <span>{t("map.controls.suhailOutlines")}</span>
+        </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"

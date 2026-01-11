@@ -52,30 +52,72 @@ _PARCEL_TABLE = _safe_identifier(getattr(settings, "PARCEL_IDENTIFY_TABLE", "par
 _PARCEL_GEOM_COLUMN = _safe_identifier(
     getattr(settings, "PARCEL_IDENTIFY_GEOM_COLUMN", "geom"), "geom"
 )
+_DERIVED_PARCEL_TABLES = {"public.derived_parcels_v1", "derived_parcels_v1"}
+_IS_DERIVED_TABLE = _PARCEL_TABLE in _DERIVED_PARCEL_TABLES
+_PARCEL_ID_COLUMN = "parcel_id" if _IS_DERIVED_TABLE else "id"
+
+if _IS_DERIVED_TABLE:
+    _PARCEL_LANDUSE_EXPR = "NULL::text AS landuse"
+    _PARCEL_CLASSIFICATION_EXPR = "NULL::text AS classification"
+    _PARCEL_CLASSIFICATION_REF = "NULL::text"
+    _PARCEL_AREA_EXPR = "site_area_m2::bigint AS area_m2"
+    _PARCEL_PERIMETER_EXPR = (
+        f"ST_Perimeter({_PARCEL_GEOM_COLUMN}::geography)::bigint AS perimeter_m"
+    )
+    _PARCEL_SITE_AREA_EXPR = "site_area_m2"
+    _PARCEL_FOOTPRINT_EXPR = "footprint_area_m2"
+    _PARCEL_BUILDING_COUNT_EXPR = "building_count"
+else:
+    _PARCEL_LANDUSE_EXPR = "landuse"
+    _PARCEL_CLASSIFICATION_EXPR = "classification"
+    _PARCEL_CLASSIFICATION_REF = "classification"
+    _PARCEL_AREA_EXPR = "area_m2::bigint AS area_m2"
+    _PARCEL_PERIMETER_EXPR = f"ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m"
+    _PARCEL_SITE_AREA_EXPR = "NULL::double precision AS site_area_m2"
+    _PARCEL_FOOTPRINT_EXPR = "NULL::double precision AS footprint_area_m2"
+    _PARCEL_BUILDING_COUNT_EXPR = "NULL::int AS building_count"
+
+if _TARGET_SRID == 4326:
+    _POINT_EXPR = "ST_SetSRID(ST_Point(:lng,:lat), 4326)"
+    _DISTANCE_EXPR = (
+        f"ST_Distance({_PARCEL_GEOM_COLUMN}::geography, q.pt::geography) AS distance_m"
+    )
+    _D_WITHIN_EXPR = f"ST_DWithin({_PARCEL_GEOM_COLUMN}::geography, q.pt::geography, :tol_m)"
+    _IDENTIFY_GEOM_OUTPUT_EXPR = "ST_AsGeoJSON(geom) AS geom"
+    _UNION_GEOM_OUTPUT_EXPR = "ST_AsGeoJSON(u.geom) AS geom"
+else:
+    _POINT_EXPR = "ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid)"
+    _DISTANCE_EXPR = f"ST_Distance({_PARCEL_GEOM_COLUMN}, q.pt) AS distance_m"
+    _D_WITHIN_EXPR = f"ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol_m)"
+    _IDENTIFY_GEOM_OUTPUT_EXPR = "ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geom"
+    _UNION_GEOM_OUTPUT_EXPR = "ST_AsGeoJSON(ST_Transform(u.geom, 4326)) AS geom"
 
 _TRANSFORMER = None  # unused (server-side transform)
 
 _IDENTIFY_SQL = text(
     f"""
   WITH q AS (
-    SELECT ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid) AS pt
+    SELECT {_POINT_EXPR} AS pt
   ),
   scored AS (
     SELECT
-      id,
-      landuse,
-      classification,
+      {_PARCEL_ID_COLUMN} AS id,
+      {_PARCEL_LANDUSE_EXPR},
+      {_PARCEL_CLASSIFICATION_EXPR},
       {_PARCEL_GEOM_COLUMN} AS geom,
-      ST_Area({_PARCEL_GEOM_COLUMN})::bigint      AS area_m2,
-      ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m,
-      ST_Distance({_PARCEL_GEOM_COLUMN}, q.pt)    AS distance_m,
+      {_PARCEL_AREA_EXPR},
+      {_PARCEL_PERIMETER_EXPR},
+      {_DISTANCE_EXPR},
+      {_PARCEL_SITE_AREA_EXPR},
+      {_PARCEL_FOOTPRINT_EXPR},
+      {_PARCEL_BUILDING_COUNT_EXPR},
       CASE WHEN ST_Contains({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS contains,
       CASE WHEN ST_Intersects({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS hits,
-      CASE WHEN ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol_m) THEN 1 ELSE 0 END AS near,
-      CASE WHEN classification = 'overture_building' THEN 0 ELSE 1 END AS is_non_ovt,
-      CASE WHEN classification = 'overture_building' THEN 1 ELSE 0 END AS is_ovt
+      CASE WHEN {_D_WITHIN_EXPR} THEN 1 ELSE 0 END AS near,
+      CASE WHEN {_PARCEL_CLASSIFICATION_REF} = 'overture_building' THEN 0 ELSE 1 END AS is_non_ovt,
+      CASE WHEN {_PARCEL_CLASSIFICATION_REF} = 'overture_building' THEN 1 ELSE 0 END AS is_ovt
     FROM {_PARCEL_TABLE}, q
-    WHERE ST_DWithin({_PARCEL_GEOM_COLUMN}, q.pt, :tol_m)
+    WHERE {_D_WITHIN_EXPR}
   )
   SELECT
     id,
@@ -83,7 +125,10 @@ _IDENTIFY_SQL = text(
     classification,
     area_m2,
     perimeter_m,
-    ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geom,
+    site_area_m2,
+    footprint_area_m2,
+    building_count,
+    {_IDENTIFY_GEOM_OUTPUT_EXPR},
     distance_m,
     contains,
     hits,
@@ -105,12 +150,12 @@ _COLLATE_META_SQL = (
     text(
         f"""
         SELECT
-          id::text AS id,
-          landuse,
-          classification,
-          ST_Area({_PARCEL_GEOM_COLUMN})::bigint AS area_m2
+          {_PARCEL_ID_COLUMN}::text AS id,
+          {_PARCEL_LANDUSE_EXPR},
+          {_PARCEL_CLASSIFICATION_EXPR},
+          {_PARCEL_AREA_EXPR}
         FROM {_PARCEL_TABLE}
-        WHERE id::text IN :ids
+        WHERE {_PARCEL_ID_COLUMN}::text IN :ids
         """
     )
     .bindparams(bindparam("ids", expanding=True))
@@ -122,16 +167,16 @@ _COLLATE_UNION_SQL = (
         WITH sel AS (
           SELECT {_PARCEL_GEOM_COLUMN} AS geom
           FROM {_PARCEL_TABLE}
-          WHERE id::text IN :ids
+          WHERE {_PARCEL_ID_COLUMN}::text IN :ids
         ),
         u AS (
           SELECT ST_MakeValid(ST_UnaryUnion(ST_Collect(geom))) AS geom
           FROM sel
         )
         SELECT
-          ST_AsGeoJSON(ST_Transform(u.geom, 4326)) AS geom,
-          ST_Area(u.geom)::bigint AS area_m2,
-          ST_Perimeter(u.geom)::bigint AS perimeter_m
+          {_UNION_GEOM_OUTPUT_EXPR},
+          {("ST_Area(u.geom::geography)" if _TARGET_SRID == 4326 else "ST_Area(u.geom)")}::bigint AS area_m2,
+          {("ST_Perimeter(u.geom::geography)" if _TARGET_SRID == 4326 else "ST_Perimeter(u.geom)")}::bigint AS perimeter_m
         FROM u;
         """
     )
@@ -808,6 +853,9 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         "geometry": geometry,
         "area_m2": row.get("area_m2"),
         "perimeter_m": row.get("perimeter_m"),
+        "site_area_m2": row.get("site_area_m2"),
+        "footprint_area_m2": row.get("footprint_area_m2"),
+        "building_count": row.get("building_count"),
         "landuse_raw": landuse_raw,
         "classification_raw": row.get("classification"),
         "landuse_code": landuse_code,
