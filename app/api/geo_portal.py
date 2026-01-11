@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 Transformer = None  # no local transform; we use ST_Transform on the server
 
 _NO_SIGNAL_LABELS = {"", "building", "yes", "true", "1", "0", "unknown", "none"}
+_HAS_OSM_ROADS: bool | None = None
 
 
 def _label_is_signal(label: str | None, code: str | None) -> bool:
@@ -44,7 +45,10 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
 
 
 def _parse_ms_building_parcel_id(value: str) -> tuple[int, int] | None:
-    parts = value.split(":", 1)
+    cleaned = value.strip()
+    if cleaned.startswith("ms:"):
+        cleaned = cleaned[3:]
+    parts = cleaned.split(":")
     if len(parts) != 2:
         return None
     try:
@@ -66,6 +70,19 @@ def _build_ms_building_parcel_payload(parcel_ids: list[str]) -> list[dict[str, i
         building_id, part_index = parsed
         payload.append({"parcel_id": pid, "building_id": building_id, "part_index": part_index})
     return payload
+
+
+def _has_osm_roads(db: Session) -> bool:
+    global _HAS_OSM_ROADS
+    if _HAS_OSM_ROADS is not None:
+        return _HAS_OSM_ROADS
+    try:
+        row = db.execute(text("SELECT to_regclass('public.planet_osm_line')")).scalar()
+        _HAS_OSM_ROADS = row is not None
+    except SQLAlchemyError as exc:
+        logger.warning("OSM roads table lookup failed: %s", exc)
+        _HAS_OSM_ROADS = False
+    return _HAS_OSM_ROADS
 
 
 _TARGET_SRID = getattr(settings, "PARCEL_TARGET_SRID", 32638)
@@ -171,6 +188,128 @@ _IDENTIFY_SQL = text(
     is_ovt DESC
   LIMIT 1;
   """
+)
+
+_DEFAULT_PARCEL_PAD_M = getattr(settings, "PARCEL_ENVELOPE_PAD_M", 5.0)
+if _DEFAULT_PARCEL_PAD_M <= 0:
+    _DEFAULT_PARCEL_PAD_M = 5.0
+
+_INFER_PARCEL_SQL = text(
+    """
+    WITH params AS (
+      SELECT ST_SetSRID(ST_Point(:lng,:lat), 4326) AS pt
+    ),
+    win AS (
+      SELECT ST_Buffer(pt::geography, :radius_m)::geometry AS geom FROM params
+    ),
+    win4326 AS (
+      SELECT ST_Envelope(geom) AS geom FROM win
+    ),
+    roads AS (
+      SELECT ST_Union(ST_Buffer(way::geography, :road_buf_m)::geometry) AS geom
+      FROM public.planet_osm_line, win4326 w
+      WHERE way && w.geom
+    ),
+    free_space AS (
+      SELECT ST_Difference(
+        (SELECT geom FROM win),
+        COALESCE((SELECT geom FROM roads), ST_GeomFromText('POLYGON EMPTY',4326))
+      ) AS geom
+    ),
+    blocks AS (
+      SELECT (ST_Dump(ST_Multi(ST_MakeValid(geom)))).geom AS geom
+      FROM free_space
+      WHERE geom IS NOT NULL
+    ),
+    block_hit AS (
+      SELECT geom
+      FROM blocks, params
+      WHERE ST_Intersects(geom, params.pt)
+      ORDER BY ST_Area(geom::geography) ASC
+      LIMIT 1
+    ),
+    target AS (
+      SELECT
+        b.id AS building_id,
+        ST_GeometryN(b.geom, :part_index) AS geom,
+        ST_PointOnSurface(ST_GeometryN(b.geom, :part_index)) AS seed
+      FROM public.ms_buildings_raw b
+      WHERE b.id = :building_id
+    ),
+    target_block AS (
+      SELECT t.*
+      FROM target t, block_hit bh
+      WHERE t.geom IS NOT NULL AND ST_Intersects(t.geom, bh.geom)
+    ),
+    neighbors AS (
+      SELECT
+        b.id,
+        ST_PointOnSurface(ST_GeometryN(b.geom, 1)) AS seed
+      FROM public.ms_buildings_raw b, win4326 w, block_hit bh, params
+      WHERE b.geom && w.geom
+        AND ST_Intersects(b.geom, bh.geom)
+      ORDER BY ST_Distance(ST_PointOnSurface(b.geom)::geography, params.pt::geography)
+      LIMIT :k
+    ),
+    seeds AS (
+      SELECT id, seed FROM neighbors
+      UNION
+      SELECT building_id AS id, seed FROM target_block
+    ),
+    seeds_unique AS (
+      SELECT DISTINCT ON (id) id, seed FROM seeds
+    ),
+    seeds3857 AS (
+      SELECT id, ST_Transform(seed, 3857) AS seed FROM seeds_unique
+    ),
+    env AS (
+      SELECT ST_Envelope(ST_Transform((SELECT geom FROM block_hit), 3857)) AS env
+    ),
+    v AS (
+      SELECT (ST_Dump(ST_VoronoiPolygons(ST_Collect(seed), 0.0, (SELECT env FROM env)))).geom AS cell
+      FROM seeds3857
+    ),
+    parcel3857 AS (
+      SELECT ST_MakeValid(
+        ST_Intersection(v.cell, ST_Transform((SELECT geom FROM block_hit), 3857))
+      ) AS geom
+      FROM v, target_block t
+      WHERE ST_Contains(v.cell, ST_Transform(t.seed, 3857))
+      LIMIT 1
+    ),
+    final AS (
+      SELECT geom
+      FROM parcel3857
+      WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom)
+    )
+    SELECT
+      ST_AsGeoJSON(ST_Transform(final.geom, 4326)) AS geom,
+      ST_Area(final.geom) AS area_m2,
+      ST_Perimeter(final.geom) AS perimeter_m,
+      (SELECT ST_Area(geom::geography) FROM block_hit) AS block_area_m2,
+      (SELECT COUNT(*) FROM seeds_unique) AS neighbor_count
+    FROM final;
+    """
+)
+
+_INFER_PARCEL_FALLBACK_SQL = text(
+    """
+    WITH target AS (
+      SELECT ST_GeometryN(geom, :part_index) AS geom
+      FROM public.ms_buildings_raw
+      WHERE id = :building_id
+    ),
+    envelope AS (
+      SELECT ST_Buffer(ST_OrientedEnvelope(ST_Transform(geom, 3857)), :pad_m) AS geom3857
+      FROM target
+      WHERE geom IS NOT NULL
+    )
+    SELECT
+      ST_AsGeoJSON(ST_Transform(geom3857, 4326)) AS geom,
+      ST_Area(geom3857) AS area_m2,
+      ST_Perimeter(geom3857) AS perimeter_m
+    FROM envelope;
+    """
 )
 
 if _IS_MS_BUILDINGS_TABLE:
@@ -625,6 +764,22 @@ class LanduseResponse(BaseModel):
     ovt_conf: float | None = None
 
 
+class InferParcelResponse(BaseModel):
+    found: bool
+    parcel_id: str | None = None
+    method: str | None = None
+    area_m2: float | None = None
+    perimeter_m: float | None = None
+    geom: dict | None = None
+    debug: dict | None = None
+
+
+def _clamp_param(value: float | None, default: float, minimum: float, maximum: float) -> float:
+    if value is None:
+        return default
+    return max(min(value, maximum), minimum)
+
+
 @router.post("/osm-classify", response_model=ClassifyResponse)
 def osm_classify(q: ParcelQuery, db: Session = Depends(get_db)):
     """
@@ -777,6 +932,154 @@ def landuse(
         commercial_share_ovt=ovt_com,
         osm_conf=osm_conf,
         ovt_conf=ovt_conf,
+    )
+
+
+def _infer_parcel_postgis(
+    lng: float,
+    lat: float,
+    building_id: int,
+    part_index: int,
+    radius_m: float,
+    road_buf_m: float,
+    k: int,
+    db: Session,
+) -> tuple[dict | None, dict | None]:
+    try:
+        row = (
+            db.execute(
+                _INFER_PARCEL_SQL,
+                {
+                    "lng": lng,
+                    "lat": lat,
+                    "building_id": building_id,
+                    "part_index": part_index,
+                    "radius_m": radius_m,
+                    "road_buf_m": road_buf_m,
+                    "k": k,
+                },
+            )
+            .mappings()
+            .first()
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("PostGIS infer-parcel query failed: %s", exc)
+        return None, None
+
+    if not row or not row.get("geom"):
+        return None, None
+
+    geom_raw = row.get("geom")
+    geometry: dict | None = None
+    if isinstance(geom_raw, str):
+        try:
+            geometry = json.loads(geom_raw)
+        except Exception:
+            geometry = None
+    elif isinstance(geom_raw, dict):
+        geometry = geom_raw
+
+    if not geometry:
+        return None, None
+
+    debug: dict[str, float | int] = {}
+    if row.get("block_area_m2") is not None:
+        debug["block_area_m2"] = float(row["block_area_m2"])
+    if row.get("neighbor_count") is not None:
+        debug["neighbor_count"] = int(row["neighbor_count"])
+    return {
+        "geom": geometry,
+        "area_m2": float(row.get("area_m2") or 0.0),
+        "perimeter_m": float(row.get("perimeter_m") or 0.0),
+    }, debug or None
+
+
+def _infer_parcel_fallback(
+    building_id: int, part_index: int, db: Session
+) -> dict | None:
+    try:
+        row = (
+            db.execute(
+                _INFER_PARCEL_FALLBACK_SQL,
+                {
+                    "building_id": building_id,
+                    "part_index": part_index,
+                    "pad_m": _DEFAULT_PARCEL_PAD_M,
+                },
+            )
+            .mappings()
+            .first()
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("PostGIS infer-parcel fallback query failed: %s", exc)
+        return None
+
+    if not row or not row.get("geom"):
+        return None
+
+    geom_raw = row.get("geom")
+    geometry: dict | None = None
+    if isinstance(geom_raw, str):
+        try:
+            geometry = json.loads(geom_raw)
+        except Exception:
+            geometry = None
+    elif isinstance(geom_raw, dict):
+        geometry = geom_raw
+
+    if not geometry:
+        return None
+
+    return {
+        "geom": geometry,
+        "area_m2": float(row.get("area_m2") or 0.0),
+        "perimeter_m": float(row.get("perimeter_m") or 0.0),
+    }
+
+
+@router.get(
+    "/infer-parcel",
+    response_model=InferParcelResponse,
+    summary="Infer a parcel around a selected MS building footprint",
+)
+def infer_parcel(
+    lng: float = Query(...),
+    lat: float = Query(...),
+    building_id: int = Query(..., ge=1),
+    part_index: int = Query(..., ge=1),
+    radius_m: float | None = Query(None),
+    road_buf_m: float | None = Query(None),
+    k: int | None = Query(None),
+    db: Session = Depends(get_db),
+) -> InferParcelResponse:
+    radius_val = _clamp_param(radius_m, 250.0, 50.0, 500.0)
+    road_buf_val = _clamp_param(road_buf_m, 9.0, 4.0, 16.0)
+    k_val = int(_clamp_param(float(k) if k is not None else None, 25.0, 5.0, 80.0))
+
+    parcel_id = f"ms:{building_id}:{part_index}"
+
+    result = None
+    debug = None
+    method = "road_block_voronoi_v1"
+    if _has_osm_roads(db):
+        result, debug = _infer_parcel_postgis(
+            lng, lat, building_id, part_index, radius_val, road_buf_val, k_val, db
+        )
+    if not result:
+        result = _infer_parcel_fallback(building_id, part_index, db)
+        method = "envelope_fallback_v1"
+
+    if not result:
+        return InferParcelResponse(found=False, parcel_id=parcel_id, method=method)
+
+    return InferParcelResponse(
+        found=True,
+        parcel_id=parcel_id,
+        method=method,
+        area_m2=result.get("area_m2"),
+        perimeter_m=result.get("perimeter_m"),
+        geom=result.get("geom"),
+        debug=debug,
     )
 
 

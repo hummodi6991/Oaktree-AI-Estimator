@@ -3,6 +3,7 @@ from app.api.geo_portal import _build_ms_building_parcel_payload, _parse_ms_buil
 
 def test_parse_ms_building_parcel_id() -> None:
     assert _parse_ms_building_parcel_id("197904:1") == (197904, 1)
+    assert _parse_ms_building_parcel_id("ms:197904:1") == (197904, 1)
     assert _parse_ms_building_parcel_id("197904:0") is None
     assert _parse_ms_building_parcel_id("197904") is None
     assert _parse_ms_building_parcel_id("abc:1") is None

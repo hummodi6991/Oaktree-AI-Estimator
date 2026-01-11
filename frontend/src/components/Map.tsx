@@ -7,8 +7,8 @@ import { formatInteger, formatNumber } from "../i18n/format";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { buildApiUrl, collateParcels, landuse } from "../api";
-import type { CollateResponse, LanduseResponse, ParcelSummary } from "../api";
+import { buildApiUrl, collateParcels, inferParcel, landuse } from "../api";
+import type { CollateResponse, InferParcelResponse, LanduseResponse, ParcelSummary } from "../api";
 
 type MapProps = {
   onParcel: (parcel: ParcelSummary | null) => void;
@@ -60,6 +60,18 @@ function featureFromParcel(parcel: ParcelSummary): Feature<Geometry> | null {
       id: parcel.parcel_id || undefined,
     },
   };
+}
+
+function parseMsParcelId(value?: string | null): { buildingId: number; partIndex: number } | null {
+  if (!value) return null;
+  const cleaned = value.startsWith("ms:") ? value.slice(3) : value;
+  const [buildingRaw, partRaw] = cleaned.split(":");
+  if (!buildingRaw || !partRaw) return null;
+  const buildingId = Number(buildingRaw);
+  const partIndex = Number(partRaw);
+  if (!Number.isFinite(buildingId) || !Number.isFinite(partIndex)) return null;
+  if (partIndex < 1) return null;
+  return { buildingId, partIndex };
 }
 
 function transformGeometryToWgs84(geometry?: Geometry | null): Geometry | null {
@@ -201,7 +213,9 @@ export default function Map({ onParcel }: MapProps) {
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
   const landuseRequestRef = useRef(0);
+  const inferRequestRef = useRef(0);
   const lastSelectedIdRef = useRef<string | null>(null);
+  const currentParcelRef = useRef<ParcelSummary | null>(null);
 
   const renderStatus = useMemo(() => {
     if (!status) return null;
@@ -244,6 +258,7 @@ export default function Map({ onParcel }: MapProps) {
 
   const applyParcelSelection = (parcel: ParcelSummary, geometry: Geometry | null, method: "feature") => {
     const nextParcel = geometry ? { ...parcel, geometry } : parcel;
+    currentParcelRef.current = nextParcel;
     onParcelRef.current(nextParcel);
     setSelectionMethod(method);
     lastSelectedIdRef.current = nextParcel.parcel_id ?? null;
@@ -360,6 +375,11 @@ export default function Map({ onParcel }: MapProps) {
         const props = feature.properties || {};
         const rawId = props.parcel_id;
         const parcelId = rawId != null ? String(rawId) : null;
+        const buildingIdRaw = props.building_id != null ? Number(props.building_id) : null;
+        const partIndexRaw = props.part_index != null ? Number(props.part_index) : null;
+        const parsedId = parcelId ? parseMsParcelId(parcelId) : null;
+        const buildingId = Number.isFinite(buildingIdRaw) ? Number(buildingIdRaw) : parsedId?.buildingId ?? null;
+        const partIndex = Number.isFinite(partIndexRaw) ? Number(partIndexRaw) : parsedId?.partIndex ?? null;
         const areaM2 = props.area_m2 != null ? Number(props.area_m2) : null;
         const parcelAreaM2 = props.parcel_area_m2 != null ? Number(props.parcel_area_m2) : null;
         const footprintAreaM2 = props.footprint_area_m2 != null ? Number(props.footprint_area_m2) : null;
@@ -381,10 +401,56 @@ export default function Map({ onParcel }: MapProps) {
           if (disposed) return;
           if (landuseRequestRef.current !== requestId) return;
           if (lastSelectedIdRef.current !== parcelId) return;
-          onParcelRef.current({ ...parcel, ...landuseData });
+          const latestParcel = currentParcelRef.current ?? parcel;
+          onParcelRef.current({ ...latestParcel, ...landuseData });
         } catch (error) {
           if (!disposed) {
             console.warn("Landuse lookup failed", error);
+          }
+        }
+
+        if (buildingId != null && partIndex != null) {
+          try {
+            const inferRequestId = ++inferRequestRef.current;
+            const inferred: InferParcelResponse = await inferParcel({
+              lng: e.lngLat.lng,
+              lat: e.lngLat.lat,
+              buildingId,
+              partIndex,
+            });
+            if (disposed) return;
+            if (inferRequestRef.current !== inferRequestId) return;
+            if (lastSelectedIdRef.current !== parcelId) return;
+            if (!inferred?.found || !inferred.geom) return;
+            const inferredGeometry = inferred.geom as Geometry;
+            const inferredArea = inferred.area_m2 ?? parcel.area_m2 ?? null;
+            const inferredPerimeter = inferred.perimeter_m ?? parcel.perimeter_m ?? null;
+            const updatedParcel: ParcelSummary = {
+              ...parcel,
+              area_m2: inferredArea,
+              parcel_area_m2: inferredArea,
+              perimeter_m: inferredPerimeter,
+              geometry: inferredGeometry,
+            };
+            if (multiSelectModeRef.current) {
+              currentParcelRef.current = updatedParcel;
+              lastSelectedIdRef.current = updatedParcel.parcel_id ?? null;
+              onParcelRef.current(updatedParcel);
+              setSelectedParcelsGeojson((current) => ({
+                type: "FeatureCollection",
+                features: current.features.map((f) =>
+                  (f.properties as any)?.id === updatedParcel.parcel_id
+                    ? { ...f, geometry: inferredGeometry }
+                    : f,
+                ),
+              }));
+            } else {
+              applyParcelSelection(updatedParcel, inferredGeometry, "feature");
+            }
+          } catch (error) {
+            if (!disposed) {
+              console.warn("Infer parcel lookup failed", error);
+            }
           }
         }
       } catch (err) {
