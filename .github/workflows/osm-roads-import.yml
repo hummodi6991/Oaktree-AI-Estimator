@@ -7,10 +7,6 @@ on:
         description: "OSM PBF URL"
         required: true
         default: "https://download.geofabrik.de/asia/saudi-arabia-latest.osm.pbf"
-      bbox:
-        description: "Optional bbox xmin,ymin,xmax,ymax to clip with osmium"
-        required: false
-        default: ""
 
 jobs:
   import:
@@ -28,11 +24,6 @@ jobs:
         run: |
           curl -L "${{ inputs.pbf_url }}" -o source.osm.pbf
 
-      - name: Optional clip
-        if: ${{ inputs.bbox != '' }}
-        run: |
-          osmium extract --bbox "${{ inputs.bbox }}" source.osm.pbf -o clipped.osm.pbf
-
       - name: Import roads into PostGIS
         env:
           POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
@@ -44,10 +35,8 @@ jobs:
           export PGPASSWORD="${POSTGRES_PASSWORD}"
           psql -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
             -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+          # Always import full PBF (CI-safe, deterministic)
           PBF_FILE="source.osm.pbf"
-          if [ -f clipped.osm.pbf ]; then
-            PBF_FILE="clipped.osm.pbf"
-          fi
           STYLE_PATH="/usr/share/osm2pgsql/default.style"
           osm2pgsql --create --slim --hstore --multi-geometry \
             --database "${POSTGRES_DB}" --host "${POSTGRES_HOST}" --port "${POSTGRES_PORT}" --username "${POSTGRES_USER}" \
