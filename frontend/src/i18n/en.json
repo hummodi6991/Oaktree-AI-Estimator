@@ -14,8 +14,8 @@
   "app": {
     "clickToStart": "Click a parcel on the map to begin…",
     "tipLabel": "Tip:",
-    "tipMessage": "Some parcel outlines appear only when you zoom in. If parcels look missing, zoom closer to reveal the blue parcel boundaries.",
-    "parcelLabel": "Parcel",
+    "tipMessage": "Some inferred parcel outlines appear only when you zoom in. If parcels look missing, zoom closer to reveal the blue parcel boundaries.",
+    "parcelLabel": "Inferred parcel",
     "areaLabel": "Area",
     "landUseLabel": "Land-use",
     "landUseCodeLabel": "{{code}} — {{label}}",
@@ -45,13 +45,13 @@
       "noneSelected": "No parcels selected yet."
     },
     "controls": {
-      "suhailOutlines": "Parcel outlines: Suhail (authoritative)",
+      "suhailOutlines": "Parcel outlines: Inferred parcels (buildings-based)",
       "multiSelect": "Multi-select parcels",
       "clearSelection": "Clear selection",
       "mergeParcels": "Merge parcels",
       "merging": "Merging…"
     },
-    "disclaimer": "Parcel outlines may not align perfectly with the basemap."
+    "disclaimer": "Inferred parcel outlines may not align perfectly with the basemap."
   },
   "excel": {
     "providerLabel": "Provider:",

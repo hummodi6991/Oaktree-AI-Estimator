@@ -56,6 +56,16 @@ Only `district` and `far_max` are required. When an estimate runs, the API first
 - Local check: `python -m app.ingest.suhail_parcels_tiles --zoom 15 --layer parcels-base --max-tiles 2`.
 - Parcel identify: set `PARCEL_IDENTIFY_TABLE=suhail_parcels_proxy` and `PARCEL_IDENTIFY_GEOM_COLUMN=geom` to route lookups through the new proxy view.
 
+### Derived parcels (default outlines + identify)
+Derived parcels are computed from building footprints (`public.derived_parcels_v1`) and are now the default parcel outlines and identify source. Suhail parcels remain available only as land-use/zoning overlays.
+
+**Smoke check (local)**
+```bash
+curl -fsS "http://127.0.0.1:8000/v1/tiles/parcels/15/20634/14062.pbf" -o /tmp/parcels.pbf
+ls -lh /tmp/parcels.pbf
+curl -fsS "http://127.0.0.1:8000/v1/geo/identify?lng=46.675&lat=24.713&tol_m=25"
+```
+
 ### Microsoft GlobalML Building Footprints (Saudi Arabia)
 - Download the Saudi Arabia `.csv.gz` files from the `dataset-links.csv` manifest in `microsoft/GlobalMLBuildingFootprints` (filter the CSV for `Saudi Arabia`).
 - Microsoft distributes building footprints as `.csv.gz`; each row/line includes a geometry (often GeoJSON), and some variants may be JSONL. The ingester auto-detects JSONL vs CSV and loads both.
