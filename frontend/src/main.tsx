@@ -51,11 +51,26 @@ function App() {
         </div>
         {parcel ? (
           <>
-            <div>
-              <b>{t("app.parcelLabel")}:</b> {parcel.parcel_id} | <b>{t("app.areaLabel")}:</b>{" "}
-              {formatAreaM2(parcel.area_m2, { maximumFractionDigits: 0 }, t("common.notAvailable"))} | <b>{t("app.landUseLabel")}:</b>{" "}
-              {codeLabel}
-            </div>
+            {(() => {
+              const primaryArea = parcel.parcel_area_m2 ?? parcel.area_m2 ?? null;
+              const footprintArea = parcel.footprint_area_m2 ?? null;
+              const showFootprint =
+                footprintArea != null && Number.isFinite(footprintArea) && parcel.parcel_area_m2 != null;
+              return (
+                <div>
+                  <b>{t("app.parcelLabel")}:</b> {parcel.parcel_id} | <b>{t("app.areaLabel")}:</b>{" "}
+                  {formatAreaM2(primaryArea, { maximumFractionDigits: 0 }, t("common.notAvailable"))}
+                  {showFootprint
+                    ? ` (${t("app.footprintLabel")}: ${formatAreaM2(
+                        footprintArea,
+                        { maximumFractionDigits: 0 },
+                        t("common.notAvailable"),
+                      )})`
+                    : ""}{" "}
+                  | <b>{t("app.landUseLabel")}:</b> {codeLabel}
+                </div>
+              );
+            })()}
             <ExcelForm parcel={parcel} />
           </>
         ) : null}

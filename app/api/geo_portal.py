@@ -43,6 +43,31 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
     return fallback
 
 
+def _parse_ms_building_parcel_id(value: str) -> tuple[int, int] | None:
+    parts = value.split(":", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        building_id = int(parts[0])
+        part_index = int(parts[1])
+    except ValueError:
+        return None
+    if part_index < 1:
+        return None
+    return building_id, part_index
+
+
+def _build_ms_building_parcel_payload(parcel_ids: list[str]) -> list[dict[str, int | str]]:
+    payload: list[dict[str, int | str]] = []
+    for pid in parcel_ids:
+        parsed = _parse_ms_building_parcel_id(pid)
+        if not parsed:
+            continue
+        building_id, part_index = parsed
+        payload.append({"parcel_id": pid, "building_id": building_id, "part_index": part_index})
+    return payload
+
+
 _TARGET_SRID = getattr(settings, "PARCEL_TARGET_SRID", 32638)
 _DEFAULT_TOLERANCE = getattr(settings, "PARCEL_IDENTIFY_TOLERANCE_M", 25.0) or 25.0
 if _DEFAULT_TOLERANCE <= 0:
@@ -148,28 +173,55 @@ _IDENTIFY_SQL = text(
   """
 )
 
-_COLLATE_META_SQL = (
-    text(
+if _IS_MS_BUILDINGS_TABLE:
+    _MS_BUILDING_AREA_EXPR = (
+        "ST_Area(ST_GeometryN(b.geom, i.part_index)::geography)"
+        if _TARGET_SRID == 4326
+        else "ST_Area(ST_GeometryN(b.geom, i.part_index))"
+    )
+    _MS_BUILDING_UNION_AREA_EXPR = (
+        "ST_Area(u.geom::geography)" if _TARGET_SRID == 4326 else "ST_Area(u.geom)"
+    )
+    _MS_BUILDING_UNION_PERIM_EXPR = (
+        "ST_Perimeter(u.geom::geography)"
+        if _TARGET_SRID == 4326
+        else "ST_Perimeter(u.geom)"
+    )
+
+    _COLLATE_META_SQL = text(
         f"""
+        WITH input AS (
+          SELECT
+            (item->>'parcel_id') AS parcel_id,
+            (item->>'building_id')::bigint AS building_id,
+            (item->>'part_index')::int AS part_index
+          FROM jsonb_array_elements(:parcel_json::jsonb) AS item
+        )
         SELECT
-          {_PARCEL_ID_COLUMN}::text AS id,
-          {_PARCEL_LANDUSE_EXPR},
-          {_PARCEL_CLASSIFICATION_EXPR},
-          {_PARCEL_AREA_EXPR}
-        FROM {_PARCEL_TABLE}
-        WHERE {_PARCEL_ID_COLUMN}::text IN :ids
+          i.parcel_id AS id,
+          NULL::text AS landuse,
+          NULL::text AS classification,
+          {_MS_BUILDING_AREA_EXPR}::bigint AS area_m2
+        FROM {_PARCEL_TABLE} b
+        JOIN input i ON b.id = i.building_id
+        WHERE ST_GeometryN(b.geom, i.part_index) IS NOT NULL
         """
     )
-    .bindparams(bindparam("ids", expanding=True))
-)
 
-_COLLATE_UNION_SQL = (
-    text(
+    _COLLATE_UNION_SQL = text(
         f"""
-        WITH sel AS (
-          SELECT {_PARCEL_GEOM_COLUMN} AS geom
-          FROM {_PARCEL_TABLE}
-          WHERE {_PARCEL_ID_COLUMN}::text IN :ids
+        WITH input AS (
+          SELECT
+            (item->>'parcel_id') AS parcel_id,
+            (item->>'building_id')::bigint AS building_id,
+            (item->>'part_index')::int AS part_index
+          FROM jsonb_array_elements(:parcel_json::jsonb) AS item
+        ),
+        sel AS (
+          SELECT ST_GeometryN(b.geom, i.part_index) AS geom
+          FROM {_PARCEL_TABLE} b
+          JOIN input i ON b.id = i.building_id
+          WHERE ST_GeometryN(b.geom, i.part_index) IS NOT NULL
         ),
         u AS (
           SELECT ST_MakeValid(ST_UnaryUnion(ST_Collect(geom))) AS geom
@@ -177,13 +229,48 @@ _COLLATE_UNION_SQL = (
         )
         SELECT
           {_UNION_GEOM_OUTPUT_EXPR},
-          {("ST_Area(u.geom::geography)" if _TARGET_SRID == 4326 else "ST_Area(u.geom)")}::bigint AS area_m2,
-          {("ST_Perimeter(u.geom::geography)" if _TARGET_SRID == 4326 else "ST_Perimeter(u.geom)")}::bigint AS perimeter_m
+          {_MS_BUILDING_UNION_AREA_EXPR}::bigint AS area_m2,
+          {_MS_BUILDING_UNION_PERIM_EXPR}::bigint AS perimeter_m
         FROM u;
         """
     )
-    .bindparams(bindparam("ids", expanding=True))
-)
+else:
+    _COLLATE_META_SQL = (
+        text(
+            f"""
+            SELECT
+              {_PARCEL_ID_COLUMN}::text AS id,
+              {_PARCEL_LANDUSE_EXPR},
+              {_PARCEL_CLASSIFICATION_EXPR},
+              {_PARCEL_AREA_EXPR}
+            FROM {_PARCEL_TABLE}
+            WHERE {_PARCEL_ID_COLUMN}::text IN :ids
+            """
+        )
+        .bindparams(bindparam("ids", expanding=True))
+    )
+
+    _COLLATE_UNION_SQL = (
+        text(
+            f"""
+            WITH sel AS (
+              SELECT {_PARCEL_GEOM_COLUMN} AS geom
+              FROM {_PARCEL_TABLE}
+              WHERE {_PARCEL_ID_COLUMN}::text IN :ids
+            ),
+            u AS (
+              SELECT ST_MakeValid(ST_UnaryUnion(ST_Collect(geom))) AS geom
+              FROM sel
+            )
+            SELECT
+              {_UNION_GEOM_OUTPUT_EXPR},
+              {("ST_Area(u.geom::geography)" if _TARGET_SRID == 4326 else "ST_Area(u.geom)")}::bigint AS area_m2,
+              {("ST_Perimeter(u.geom::geography)" if _TARGET_SRID == 4326 else "ST_Perimeter(u.geom)")}::bigint AS perimeter_m
+            FROM u;
+            """
+        )
+        .bindparams(bindparam("ids", expanding=True))
+    )
 
 # Keep router local to "geo"; main.py mounts routers at "/v1".
 router = APIRouter(prefix="/geo", tags=["geo"])
@@ -732,8 +819,22 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
             "missing_ids": [],
         }
 
+    parcel_json: str | None = None
+    if _IS_MS_BUILDINGS_TABLE:
+        payload = _build_ms_building_parcel_payload(ids)
+        if not payload:
+            return {
+                "found": False,
+                "source": "postgis",
+                "message": "No valid parcel_ids provided.",
+                "parcel_ids": [],
+                "missing_ids": ids,
+            }
+        parcel_json = json.dumps(payload)
+
     try:
-        rows = db.execute(_COLLATE_META_SQL, {"ids": ids}).mappings().all()
+        params = {"ids": ids} if not _IS_MS_BUILDINGS_TABLE else {"parcel_json": parcel_json}
+        rows = db.execute(_COLLATE_META_SQL, params).mappings().all()
     except SQLAlchemyError as exc:
         logger.warning("PostGIS collate meta query failed: %s", exc)
         return None
@@ -759,7 +860,12 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
     component_area_m2_sum = sum(int(r.get("area_m2") or 0) for r in rows)
 
     try:
-        urow = db.execute(_COLLATE_UNION_SQL, {"ids": found_ids}).mappings().first()
+        union_params = (
+            {"ids": found_ids}
+            if not _IS_MS_BUILDINGS_TABLE
+            else {"parcel_json": parcel_json}
+        )
+        urow = db.execute(_COLLATE_UNION_SQL, union_params).mappings().first()
     except SQLAlchemyError as exc:
         logger.warning("PostGIS collate union query failed: %s", exc)
         return None

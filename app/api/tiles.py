@@ -22,7 +22,8 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
 PARCEL_TILE_TABLE = _safe_identifier(
     getattr(settings, "PARCEL_TILE_TABLE", "public.ms_buildings_raw"), "public.ms_buildings_raw"
 )
-PARCEL_SIMPLIFY_TOLERANCE_M = 1.0
+PARCEL_SIMPLIFY_TOLERANCE_M = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
+PARCEL_ENVELOPE_PAD_M = getattr(settings, "PARCEL_ENVELOPE_PAD_M", 5.0)
 
 
 _SUHAIL_PARCEL_TILE_SQL = text(
@@ -117,9 +118,9 @@ _SUHAIL_PARCEL_ROT_TILE_SQL = text(
 )
 
 def _parcel_tile_sql(simplify: bool) -> text:
-    geom_expr = "p.geom3857"
+    geom_expr = "p.padded3857"
     if simplify:
-        geom_expr = "ST_SimplifyPreserveTopology(p.geom3857, :simplify_tol)"
+        geom_expr = "ST_SimplifyPreserveTopology(p.padded3857, :simplify_tol)"
     return text(
         f"""
         WITH tile3857 AS (
@@ -130,18 +131,53 @@ def _parcel_tile_sql(simplify: bool) -> text:
         ),
         parcel_candidates AS (
           SELECT
-            b.id AS parcel_id,
-            b.area_m2,
-            ST_Perimeter(b.geom::geography)::bigint AS perimeter_m,
-            ST_Transform(b.geom, 3857) AS geom3857
+            b.id AS building_id,
+            b.geom AS geom4326
           FROM {PARCEL_TILE_TABLE} b, tile4326 t
           WHERE b.geom && t.geom4326
             AND ST_Intersects(b.geom, t.geom4326)
         ),
+        dumped AS (
+          SELECT
+            c.building_id,
+            (d).path[1] AS part_index,
+            (d).geom AS geom4326
+          FROM parcel_candidates c
+          CROSS JOIN LATERAL ST_Dump(c.geom4326) AS d
+        ),
+        parcels AS (
+          SELECT
+            concat(d.building_id, ':', d.part_index) AS parcel_id,
+            d.building_id,
+            ST_Area(d.geom4326::geography) AS footprint_area_m2,
+            ST_Transform(d.geom4326, 3857) AS geom3857
+          FROM dumped d
+        ),
+        envelopes AS (
+          SELECT
+            parcel_id,
+            building_id,
+            footprint_area_m2,
+            ST_Buffer(ST_OrientedEnvelope(geom3857), :pad_m) AS padded3857
+          FROM parcels
+        ),
+        measured AS (
+          SELECT
+            parcel_id,
+            building_id,
+            footprint_area_m2,
+            ST_Area(padded3857) AS parcel_area_m2,
+            ST_Perimeter(padded3857) AS perimeter_m,
+            padded3857
+          FROM envelopes
+        ),
         mvtgeom AS (
           SELECT
             parcel_id,
-            area_m2,
+            building_id,
+            footprint_area_m2,
+            parcel_area_m2,
+            parcel_area_m2 AS area_m2,
             perimeter_m,
             ST_AsMVTGeom(
               {geom_expr},
@@ -150,7 +186,7 @@ def _parcel_tile_sql(simplify: bool) -> text:
               64,
               true
             ) AS geom
-          FROM parcel_candidates p, tile3857 t
+          FROM measured p, tile3857 t
         )
         SELECT ST_AsMVT(mvtgeom, 'parcels', 4096, 'geom') AS tile
         FROM mvtgeom;
@@ -167,7 +203,7 @@ def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     simplify = z == 16
     try:
         tile_sql = _parcel_tile_sql(simplify)
-        params = {"z": z, "x": x, "y": y}
+        params = {"z": z, "x": x, "y": y, "pad_m": PARCEL_ENVELOPE_PAD_M}
         if simplify:
             params["simplify_tol"] = PARCEL_SIMPLIFY_TOLERANCE_M
         tile_bytes = db.execute(tile_sql, params).scalar()

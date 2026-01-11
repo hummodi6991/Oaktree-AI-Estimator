@@ -136,6 +136,8 @@ jobs:
             --from-literal=PARCEL_IDENTIFY_TABLE=public.ms_buildings_raw \
             --from-literal=PARCEL_IDENTIFY_GEOM_COLUMN=geom \
             --from-literal=PARCEL_TARGET_SRID=4326 \
+            --from-literal=PARCEL_ENVELOPE_PAD_M=5 \
+            --from-literal=PARCEL_SIMPLIFY_TOLERANCE_M=1 \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Run DB migrations (alembic)
