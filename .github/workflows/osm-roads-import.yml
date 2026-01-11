@@ -32,6 +32,10 @@ jobs:
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
         run: |
+          export PGHOST="${POSTGRES_HOST}"
+          export PGPORT="${POSTGRES_PORT}"
+          export PGDATABASE="${POSTGRES_DB}"
+          export PGUSER="${POSTGRES_USER}"
           export PGPASSWORD="${POSTGRES_PASSWORD}"
           psql -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
             -c "CREATE EXTENSION IF NOT EXISTS postgis;"
@@ -39,7 +43,6 @@ jobs:
           PBF_FILE="source.osm.pbf"
           STYLE_PATH="/usr/share/osm2pgsql/default.style"
           osm2pgsql --create --slim --hstore --multi-geometry \
-            --database "${POSTGRES_DB}" --host "${POSTGRES_HOST}" --port "${POSTGRES_PORT}" --username "${POSTGRES_USER}" \
             --style "${STYLE_PATH}" \
             "${PBF_FILE}"
           psql -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
