@@ -1,8 +1,0 @@
-DO $$
-BEGIN
-  BEGIN
-    REFRESH MATERIALIZED VIEW CONCURRENTLY public.derived_parcels_v1;
-  EXCEPTION WHEN OTHERS THEN
-    REFRESH MATERIALIZED VIEW public.derived_parcels_v1;
-  END;
-END $$;

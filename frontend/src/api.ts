@@ -79,6 +79,20 @@ export type CollateResponse = {
   parcel?: ParcelSummary | null;
 };
 
+export type LanduseResponse = {
+  landuse_code?: string | null;
+  landuse_method?: string | null;
+  landuse_raw?: string | null;
+  residential_share?: number | null;
+  commercial_share?: number | null;
+  residential_share_osm?: number | null;
+  commercial_share_osm?: number | null;
+  residential_share_ovt?: number | null;
+  commercial_share_ovt?: number | null;
+  osm_conf?: number | null;
+  ovt_conf?: number | null;
+};
+
 export async function identify(lng: number, lat: number) {
   const res = await fetch(withBase("/v1/geo/identify"), {
     method: "POST",
@@ -86,6 +100,12 @@ export async function identify(lng: number, lat: number) {
     body: JSON.stringify({ lng, lat }),
   });
   return readJson<IdentifyResponse>(res);
+}
+
+export async function landuse(lng: number, lat: number) {
+  const params = new URLSearchParams({ lng: String(lng), lat: String(lat) });
+  const res = await fetch(withBase(`/v1/geo/landuse?${params.toString()}`));
+  return readJson<LanduseResponse>(res);
 }
 
 export async function collateParcels(parcelIds: string[]) {

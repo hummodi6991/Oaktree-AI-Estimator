@@ -53,20 +53,22 @@ _PARCEL_GEOM_COLUMN = _safe_identifier(
     getattr(settings, "PARCEL_IDENTIFY_GEOM_COLUMN", "geom"), "geom"
 )
 _DERIVED_PARCEL_TABLES = {"public.derived_parcels_v1", "derived_parcels_v1"}
+_MS_BUILDINGS_TABLES = {"public.ms_buildings_raw", "ms_buildings_raw"}
 _IS_DERIVED_TABLE = _PARCEL_TABLE in _DERIVED_PARCEL_TABLES
+_IS_MS_BUILDINGS_TABLE = _PARCEL_TABLE in _MS_BUILDINGS_TABLES
 _PARCEL_ID_COLUMN = "parcel_id" if _IS_DERIVED_TABLE else "id"
 
-if _IS_DERIVED_TABLE:
+if _IS_DERIVED_TABLE or _IS_MS_BUILDINGS_TABLE:
     _PARCEL_LANDUSE_EXPR = "NULL::text AS landuse"
     _PARCEL_CLASSIFICATION_EXPR = "NULL::text AS classification"
     _PARCEL_CLASSIFICATION_REF = "NULL::text"
-    _PARCEL_AREA_EXPR = "site_area_m2::bigint AS area_m2"
+    _PARCEL_AREA_EXPR = "area_m2::bigint AS area_m2" if _IS_MS_BUILDINGS_TABLE else "site_area_m2::bigint AS area_m2"
     _PARCEL_PERIMETER_EXPR = (
         f"ST_Perimeter({_PARCEL_GEOM_COLUMN}::geography)::bigint AS perimeter_m"
     )
-    _PARCEL_SITE_AREA_EXPR = "site_area_m2"
-    _PARCEL_FOOTPRINT_EXPR = "footprint_area_m2"
-    _PARCEL_BUILDING_COUNT_EXPR = "building_count"
+    _PARCEL_SITE_AREA_EXPR = "NULL::double precision AS site_area_m2" if _IS_MS_BUILDINGS_TABLE else "site_area_m2"
+    _PARCEL_FOOTPRINT_EXPR = "NULL::double precision AS footprint_area_m2" if _IS_MS_BUILDINGS_TABLE else "footprint_area_m2"
+    _PARCEL_BUILDING_COUNT_EXPR = "NULL::int AS building_count" if _IS_MS_BUILDINGS_TABLE else "building_count"
 else:
     _PARCEL_LANDUSE_EXPR = "landuse"
     _PARCEL_CLASSIFICATION_EXPR = "classification"
@@ -379,6 +381,27 @@ _OVT_CLASSIFY_SQL = text(
     """
 )
 
+_LANDUSE_BUFFER_SQL = text(
+    """
+    SELECT ST_AsGeoJSON(
+        ST_Buffer(
+            ST_SetSRID(ST_Point(:lng,:lat), 4326)::geography,
+            :buffer_m
+        )::geometry
+    ) AS geom;
+    """
+)
+
+_SUHAIL_LANDUSE_SQL = text(
+    """
+    SELECT landuse, classification
+    FROM public.suhail_parcels_mat
+    WHERE geom && ST_SetSRID(ST_Point(:lng,:lat), 4326)
+      AND ST_Intersects(geom, ST_SetSRID(ST_Point(:lng,:lat), 4326))
+    LIMIT 1;
+    """
+)
+
 
 def _osm_fallback_code(geometry: dict, db) -> tuple[str | None, float, float, float]:
     if not geometry:
@@ -501,6 +524,20 @@ class ClassifyResponse(BaseModel):
     method: str = "osm_area_share"
 
 
+class LanduseResponse(BaseModel):
+    landuse_code: str | None = None
+    landuse_method: str | None = None
+    landuse_raw: str | None = None
+    residential_share: float | None = None
+    commercial_share: float | None = None
+    residential_share_osm: float | None = None
+    commercial_share_osm: float | None = None
+    residential_share_ovt: float | None = None
+    commercial_share_ovt: float | None = None
+    osm_conf: float | None = None
+    ovt_conf: float | None = None
+
+
 @router.post("/osm-classify", response_model=ClassifyResponse)
 def osm_classify(q: ParcelQuery, db: Session = Depends(get_db)):
     """
@@ -565,6 +602,95 @@ def osm_classify(q: ParcelQuery, db: Session = Depends(get_db)):
         code = "m"
 
     return ClassifyResponse(code=code, residential_share=res, commercial_share=com)
+
+
+@router.get(
+    "/landuse",
+    response_model=LanduseResponse,
+    summary="Infer land-use classification near a point",
+    description="Returns land-use inferred from Suhail zoning, OSM overlays, and Overture overlays near the point.",
+)
+def landuse(
+    lng: float = Query(...),
+    lat: float = Query(...),
+    buffer_m: float | None = Query(None, ge=1.0, le=250.0),
+    db: Session = Depends(get_db),
+) -> LanduseResponse:
+    buffer_val = buffer_m if buffer_m and buffer_m > 0 else 25.0
+
+    try:
+        row = db.execute(
+            _LANDUSE_BUFFER_SQL,
+            {"lng": lng, "lat": lat, "buffer_m": buffer_val},
+        ).mappings().first()
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=500, detail=f"Landuse buffer failed: {exc}") from exc
+
+    geom_raw = row.get("geom") if row else None
+    geometry: dict | None = None
+    if geom_raw:
+        try:
+            geometry = json.loads(geom_raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            geometry = None
+
+    try:
+        suhail = db.execute(_SUHAIL_LANDUSE_SQL, {"lng": lng, "lat": lat}).mappings().first()
+    except SQLAlchemyError as exc:
+        logger.warning("Suhail landuse lookup failed: %s", exc)
+        suhail = None
+
+    landuse_raw = ""
+    if suhail:
+        landuse_raw = str(suhail.get("landuse") or suhail.get("classification") or "")
+
+    label_code = _landuse_code_from_label(landuse_raw)
+    label_is_signal = _label_is_signal(landuse_raw, label_code)
+
+    osm_code, osm_res, osm_com, osm_conf = _osm_fallback_code(geometry, db)
+    ovt_code, ovt_res, ovt_com, ovt_conf = _ovt_overlay_code(geometry, db)
+
+    landuse_code = None
+    landuse_method = None
+    if label_code and label_is_signal:
+        landuse_code = label_code
+        landuse_method = "suhail_overlay"
+    else:
+        landuse_code, landuse_method = _pick_landuse(
+            label_code,
+            label_is_signal,
+            None,
+            0.0,
+            osm_code,
+            osm_res,
+            osm_com,
+            osm_conf,
+            ovt_code,
+            ovt_conf,
+        )
+
+    residential_share = None
+    commercial_share = None
+    if landuse_method == "osm_overlay":
+        residential_share = osm_res
+        commercial_share = osm_com
+    elif landuse_method == "overture_overlay":
+        residential_share = ovt_res
+        commercial_share = ovt_com
+
+    return LanduseResponse(
+        landuse_code=landuse_code,
+        landuse_method=landuse_method,
+        landuse_raw=landuse_raw or None,
+        residential_share=residential_share,
+        commercial_share=commercial_share,
+        residential_share_osm=osm_res,
+        commercial_share_osm=osm_com,
+        residential_share_ovt=ovt_res,
+        commercial_share_ovt=ovt_com,
+        osm_conf=osm_conf,
+        ovt_conf=ovt_conf,
+    )
 
 
 class IdentifyPoint(BaseModel):

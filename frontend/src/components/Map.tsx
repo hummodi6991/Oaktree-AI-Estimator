@@ -7,8 +7,8 @@ import { formatInteger, formatNumber } from "../i18n/format";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { buildApiUrl, collateParcels, identify } from "../api";
-import type { CollateResponse, IdentifyResponse, ParcelSummary } from "../api";
+import { buildApiUrl, collateParcels, landuse } from "../api";
+import type { CollateResponse, LanduseResponse, ParcelSummary } from "../api";
 
 type MapProps = {
   onParcel: (parcel: ParcelSummary | null) => void;
@@ -173,11 +173,13 @@ export default function Map({ onParcel }: MapProps) {
   >({ type: "FeatureCollection", features: [] });
   const [collateStatus, setCollateStatus] = useState<StatusMessage | null>(null);
   const [collating, setCollating] = useState(false);
-  const [selectionMethod, setSelectionMethod] = useState<"feature" | "identify" | null>(null);
+  const [selectionMethod, setSelectionMethod] = useState<"feature" | null>(null);
   const [showParcelOutlines, setShowParcelOutlines] = useState(true);
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
+  const landuseRequestRef = useRef(0);
+  const lastSelectedIdRef = useRef<string | null>(null);
 
   const renderStatus = useMemo(() => {
     if (!status) return null;
@@ -218,14 +220,11 @@ export default function Map({ onParcel }: MapProps) {
     return value;
   };
 
-  const applyParcelSelection = (
-    parcel: ParcelSummary,
-    geometry: Geometry | null,
-    method: "feature" | "identify",
-  ) => {
+  const applyParcelSelection = (parcel: ParcelSummary, geometry: Geometry | null, method: "feature") => {
     const nextParcel = geometry ? { ...parcel, geometry } : parcel;
     onParcelRef.current(nextParcel);
     setSelectionMethod(method);
+    lastSelectedIdRef.current = nextParcel.parcel_id ?? null;
 
     if (!geometry) {
       setStatus({ key: "map.status.noGeometry" });
@@ -309,21 +308,50 @@ export default function Map({ onParcel }: MapProps) {
 
     map.on("click", async (e) => {
       setCollateStatus(null);
-      setStatus({ key: "map.status.checking" });
       try {
-        const data: IdentifyResponse = await identify(e.lngLat.lng, e.lngLat.lat);
-        if (disposed) return;
-
-        if (!data?.found || !data.parcel) {
+        const features = map.queryRenderedFeatures(e.point, {
+          layers: [PARCEL_FILL_LAYER_ID, PARCEL_LINE_LAYER_ID],
+        });
+        if (!features.length) {
           setStatus({ key: "map.status.notFound" });
           const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource;
           source?.setData({ type: "FeatureCollection", features: [] });
           return;
         }
 
-        const parcel = data.parcel;
-        const geometry = transformGeometryToWgs84(parcel.geometry as Geometry | null);
-        applyParcelSelection(parcel, geometry, "identify");
+        const feature = features[0];
+        const geometry = feature.geometry as Geometry | null;
+        if (!geometry) {
+          setStatus({ key: "map.status.notFound" });
+          return;
+        }
+
+        const props = feature.properties || {};
+        const rawId = props.parcel_id ?? props.id ?? feature.id;
+        const parcelId = rawId != null ? String(rawId) : null;
+        const areaM2 = props.area_m2 != null ? Number(props.area_m2) : null;
+        const perimeterM = props.perimeter_m != null ? Number(props.perimeter_m) : null;
+        const parcel: ParcelSummary = {
+          parcel_id: parcelId,
+          area_m2: Number.isFinite(areaM2) ? areaM2 : null,
+          perimeter_m: Number.isFinite(perimeterM) ? perimeterM : null,
+          geometry,
+        };
+
+        applyParcelSelection(parcel, geometry, "feature");
+
+        try {
+          const requestId = ++landuseRequestRef.current;
+          const landuseData: LanduseResponse = await landuse(e.lngLat.lng, e.lngLat.lat);
+          if (disposed) return;
+          if (landuseRequestRef.current !== requestId) return;
+          if (lastSelectedIdRef.current !== parcelId) return;
+          onParcelRef.current({ ...parcel, ...landuseData });
+        } catch (error) {
+          if (!disposed) {
+            console.warn("Landuse lookup failed", error);
+          }
+        }
       } catch (err) {
         if (disposed) return;
         console.error(err);
@@ -365,6 +393,7 @@ export default function Map({ onParcel }: MapProps) {
     setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
     onParcelRef.current(null);
     setSelectionMethod(null);
+    lastSelectedIdRef.current = null;
     setStatus({ key: "map.status.cleared" });
     setCollateStatus(null);
   };

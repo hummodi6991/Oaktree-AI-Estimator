@@ -45,7 +45,7 @@
       "noneSelected": "No parcels selected yet."
     },
     "controls": {
-      "suhailOutlines": "Parcel outlines: Inferred parcels (buildings-based)",
+      "suhailOutlines": "Parcel outlines: Building footprints",
       "multiSelect": "Multi-select parcels",
       "clearSelection": "Clear selection",
       "mergeParcels": "Merge parcels",
