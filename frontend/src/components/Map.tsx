@@ -216,6 +216,9 @@ export default function Map({ onParcel }: MapProps) {
   const inferRequestRef = useRef(0);
   const lastSelectedIdRef = useRef<string | null>(null);
   const currentParcelRef = useRef<ParcelSummary | null>(null);
+  const inferCacheRef = useRef(
+    new Map<string, { geometry: Geometry; area_m2: number | null; perimeter_m: number | null }>(),
+  );
 
   const renderStatus = useMemo(() => {
     if (!status) return null;
@@ -320,6 +323,34 @@ export default function Map({ onParcel }: MapProps) {
     }
   };
 
+  const applyInferredSelection = (
+    parcel: ParcelSummary,
+    inferredGeometry: Geometry,
+    inferredArea: number | null,
+    inferredPerimeter: number | null,
+  ) => {
+    const updatedParcel: ParcelSummary = {
+      ...parcel,
+      area_m2: inferredArea,
+      parcel_area_m2: inferredArea,
+      perimeter_m: inferredPerimeter,
+      geometry: inferredGeometry,
+    };
+    if (multiSelectModeRef.current) {
+      currentParcelRef.current = updatedParcel;
+      lastSelectedIdRef.current = updatedParcel.parcel_id ?? null;
+      onParcelRef.current(updatedParcel);
+      setSelectedParcelsGeojson((current) => ({
+        type: "FeatureCollection",
+        features: current.features.map((f) =>
+          (f.properties as any)?.id === updatedParcel.parcel_id ? { ...f, geometry: inferredGeometry } : f,
+        ),
+      }));
+    } else {
+      applyParcelSelection(updatedParcel, inferredGeometry, "feature");
+    }
+  };
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -409,6 +440,16 @@ export default function Map({ onParcel }: MapProps) {
           }
         }
 
+        if (parcelId && inferCacheRef.current.has(parcelId)) {
+          const cached = inferCacheRef.current.get(parcelId);
+          if (cached) {
+            const inferredArea = cached.area_m2 ?? parcel.area_m2 ?? null;
+            const inferredPerimeter = cached.perimeter_m ?? parcel.perimeter_m ?? null;
+            applyInferredSelection(parcel, cached.geometry, inferredArea, inferredPerimeter);
+          }
+          return;
+        }
+
         if (buildingId != null && partIndex != null) {
           try {
             const inferRequestId = ++inferRequestRef.current;
@@ -425,28 +466,14 @@ export default function Map({ onParcel }: MapProps) {
             const inferredGeometry = inferred.geom as Geometry;
             const inferredArea = inferred.area_m2 ?? parcel.area_m2 ?? null;
             const inferredPerimeter = inferred.perimeter_m ?? parcel.perimeter_m ?? null;
-            const updatedParcel: ParcelSummary = {
-              ...parcel,
-              area_m2: inferredArea,
-              parcel_area_m2: inferredArea,
-              perimeter_m: inferredPerimeter,
-              geometry: inferredGeometry,
-            };
-            if (multiSelectModeRef.current) {
-              currentParcelRef.current = updatedParcel;
-              lastSelectedIdRef.current = updatedParcel.parcel_id ?? null;
-              onParcelRef.current(updatedParcel);
-              setSelectedParcelsGeojson((current) => ({
-                type: "FeatureCollection",
-                features: current.features.map((f) =>
-                  (f.properties as any)?.id === updatedParcel.parcel_id
-                    ? { ...f, geometry: inferredGeometry }
-                    : f,
-                ),
-              }));
-            } else {
-              applyParcelSelection(updatedParcel, inferredGeometry, "feature");
+            if (parcelId) {
+              inferCacheRef.current.set(parcelId, {
+                geometry: inferredGeometry,
+                area_m2: inferredArea,
+                perimeter_m: inferredPerimeter,
+              });
             }
+            applyInferredSelection(parcel, inferredGeometry, inferredArea, inferredPerimeter);
           } catch (error) {
             if (!disposed) {
               console.warn("Infer parcel lookup failed", error);
