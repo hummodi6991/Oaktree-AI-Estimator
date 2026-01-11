@@ -1,0 +1,49 @@
+name: Refresh inferred parcels v1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+      PGSSLMODE: require
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Build inferred parcels
+        run: |
+          python -m app.ingest.inferred_parcels_v1 --truncate --bbox "46.20,24.20,47.30,25.10"
+      - name: Report inferred parcel stats
+        run: |
+          python - <<'PY'
+          from sqlalchemy import text
+          from app.db.session import SessionLocal
+
+          with SessionLocal() as db:
+              row = (
+                  db.execute(
+                      text(
+                          "SELECT COUNT(*) AS count, ST_Extent(geom) AS extent FROM public.inferred_parcels_v1"
+                      )
+                  )
+                  .mappings()
+                  .one()
+              )
+              print(f"count={row['count']} extent={row['extent']}")
+          PY

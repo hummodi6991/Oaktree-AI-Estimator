@@ -18,6 +18,9 @@
     "parcelLabel": "قطعة مستنتجة",
     "areaLabel": "المساحة",
     "footprintLabel": "بصمة المبنى",
+    "methodLabel": "طريقة الاستدلال",
+    "methodInferred": "inferred_parcels_v1",
+    "methodClickFallback": "استدلال عند النقر (احتياطي)",
     "landUseLabel": "الاستخدام",
     "landUseCodeLabel": "{{code}} — {{label}}",
     "landUse": {

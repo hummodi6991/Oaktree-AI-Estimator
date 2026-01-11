@@ -25,6 +25,7 @@ Transformer = None  # no local transform; we use ST_Transform on the server
 
 _NO_SIGNAL_LABELS = {"", "building", "yes", "true", "1", "0", "unknown", "none"}
 _HAS_OSM_ROADS: bool | None = None
+_HAS_INFERRED_PARCELS: bool | None = None
 
 
 def _label_is_signal(label: str | None, code: str | None) -> bool:
@@ -85,41 +86,118 @@ def _has_osm_roads(db: Session) -> bool:
     return _HAS_OSM_ROADS
 
 
+def _has_inferred_parcels(db: Session) -> bool:
+    global _HAS_INFERRED_PARCELS
+    if _HAS_INFERRED_PARCELS is not None:
+        return _HAS_INFERRED_PARCELS
+    try:
+        row = db.execute(
+            text("SELECT EXISTS (SELECT 1 FROM public.inferred_parcels_v1 LIMIT 1)")
+        ).scalar()
+        _HAS_INFERRED_PARCELS = bool(row)
+    except Exception as exc:
+        logger.warning("Inferred parcel table lookup failed: %s", exc)
+        _HAS_INFERRED_PARCELS = False
+    return _HAS_INFERRED_PARCELS
+
+
+def _effective_parcel_mode(db: Session) -> str:
+    if _PARCEL_MODE == "inferred" and not _has_inferred_parcels(db):
+        return "ms_buildings"
+    return _PARCEL_MODE
+
+
 _TARGET_SRID = getattr(settings, "PARCEL_TARGET_SRID", 32638)
 _DEFAULT_TOLERANCE = getattr(settings, "PARCEL_IDENTIFY_TOLERANCE_M", 25.0) or 25.0
 if _DEFAULT_TOLERANCE <= 0:
     _DEFAULT_TOLERANCE = 25.0
 
-_PARCEL_TABLE = _safe_identifier(getattr(settings, "PARCEL_IDENTIFY_TABLE", "parcels"), "parcels")
+_PARCEL_TABLE = _safe_identifier(
+    getattr(settings, "PARCEL_IDENTIFY_TABLE", "parcels"), "parcels"
+)
 _PARCEL_GEOM_COLUMN = _safe_identifier(
     getattr(settings, "PARCEL_IDENTIFY_GEOM_COLUMN", "geom"), "geom"
 )
 _DERIVED_PARCEL_TABLES = {"public.derived_parcels_v1", "derived_parcels_v1"}
 _MS_BUILDINGS_TABLES = {"public.ms_buildings_raw", "ms_buildings_raw"}
-_IS_DERIVED_TABLE = _PARCEL_TABLE in _DERIVED_PARCEL_TABLES
-_IS_MS_BUILDINGS_TABLE = _PARCEL_TABLE in _MS_BUILDINGS_TABLES
-_PARCEL_ID_COLUMN = "parcel_id" if _IS_DERIVED_TABLE else "id"
+_INFERRED_PARCEL_TABLES = {"public.inferred_parcels_v1", "inferred_parcels_v1"}
+_MS_BUILDINGS_TABLE = "public.ms_buildings_raw"
 
-if _IS_DERIVED_TABLE or _IS_MS_BUILDINGS_TABLE:
-    _PARCEL_LANDUSE_EXPR = "NULL::text AS landuse"
-    _PARCEL_CLASSIFICATION_EXPR = "NULL::text AS classification"
-    _PARCEL_CLASSIFICATION_REF = "NULL::text"
-    _PARCEL_AREA_EXPR = "area_m2::bigint AS area_m2" if _IS_MS_BUILDINGS_TABLE else "site_area_m2::bigint AS area_m2"
-    _PARCEL_PERIMETER_EXPR = (
-        f"ST_Perimeter({_PARCEL_GEOM_COLUMN}::geography)::bigint AS perimeter_m"
-    )
-    _PARCEL_SITE_AREA_EXPR = "NULL::double precision AS site_area_m2" if _IS_MS_BUILDINGS_TABLE else "site_area_m2"
-    _PARCEL_FOOTPRINT_EXPR = "NULL::double precision AS footprint_area_m2" if _IS_MS_BUILDINGS_TABLE else "footprint_area_m2"
-    _PARCEL_BUILDING_COUNT_EXPR = "NULL::int AS building_count" if _IS_MS_BUILDINGS_TABLE else "building_count"
-else:
-    _PARCEL_LANDUSE_EXPR = "landuse"
-    _PARCEL_CLASSIFICATION_EXPR = "classification"
-    _PARCEL_CLASSIFICATION_REF = "classification"
-    _PARCEL_AREA_EXPR = "area_m2::bigint AS area_m2"
-    _PARCEL_PERIMETER_EXPR = f"ST_Perimeter({_PARCEL_GEOM_COLUMN})::bigint AS perimeter_m"
-    _PARCEL_SITE_AREA_EXPR = "NULL::double precision AS site_area_m2"
-    _PARCEL_FOOTPRINT_EXPR = "NULL::double precision AS footprint_area_m2"
-    _PARCEL_BUILDING_COUNT_EXPR = "NULL::int AS building_count"
+
+def _parcel_mode(table_name: str) -> str:
+    if table_name in _INFERRED_PARCEL_TABLES:
+        return "inferred"
+    if table_name in _DERIVED_PARCEL_TABLES:
+        return "derived"
+    if table_name in _MS_BUILDINGS_TABLES:
+        return "ms_buildings"
+    return "default"
+
+
+def _parcel_id_column(mode: str) -> str:
+    return "parcel_id" if mode in {"derived", "inferred"} else "id"
+
+
+def _parcel_expressions(mode: str, geom_column: str) -> dict[str, str]:
+    if mode == "ms_buildings":
+        return {
+            "landuse_expr": "NULL::text AS landuse",
+            "classification_expr": "NULL::text AS classification",
+            "classification_ref": "NULL::text",
+            "area_expr": "area_m2::bigint AS area_m2",
+            "perimeter_expr": f"ST_Perimeter({geom_column}::geography)::bigint AS perimeter_m",
+            "site_area_expr": "NULL::double precision AS site_area_m2",
+            "footprint_expr": "NULL::double precision AS footprint_area_m2",
+            "building_count_expr": "NULL::int AS building_count",
+        }
+    if mode == "derived":
+        return {
+            "landuse_expr": "NULL::text AS landuse",
+            "classification_expr": "NULL::text AS classification",
+            "classification_ref": "NULL::text",
+            "area_expr": "site_area_m2::bigint AS area_m2",
+            "perimeter_expr": f"ST_Perimeter({geom_column}::geography)::bigint AS perimeter_m",
+            "site_area_expr": "site_area_m2",
+            "footprint_expr": "footprint_area_m2",
+            "building_count_expr": "building_count",
+        }
+    if mode == "inferred":
+        return {
+            "landuse_expr": "NULL::text AS landuse",
+            "classification_expr": "NULL::text AS classification",
+            "classification_ref": "NULL::text",
+            "area_expr": "area_m2::bigint AS area_m2",
+            "perimeter_expr": "perimeter_m::bigint AS perimeter_m",
+            "site_area_expr": "NULL::double precision AS site_area_m2",
+            "footprint_expr": "footprint_area_m2",
+            "building_count_expr": "NULL::int AS building_count",
+        }
+    return {
+        "landuse_expr": "landuse",
+        "classification_expr": "classification",
+        "classification_ref": "classification",
+        "area_expr": "area_m2::bigint AS area_m2",
+        "perimeter_expr": f"ST_Perimeter({geom_column})::bigint AS perimeter_m",
+        "site_area_expr": "NULL::double precision AS site_area_m2",
+        "footprint_expr": "NULL::double precision AS footprint_area_m2",
+        "building_count_expr": "NULL::int AS building_count",
+    }
+
+
+_PARCEL_MODE = _parcel_mode(_PARCEL_TABLE)
+_IS_DERIVED_TABLE = _PARCEL_MODE == "derived"
+_IS_MS_BUILDINGS_TABLE = _PARCEL_MODE == "ms_buildings"
+_IS_INFERRED_TABLE = _PARCEL_MODE == "inferred"
+_PARCEL_ID_COLUMN = _parcel_id_column(_PARCEL_MODE)
+_PARCEL_EXPR = _parcel_expressions(_PARCEL_MODE, _PARCEL_GEOM_COLUMN)
+_PARCEL_LANDUSE_EXPR = _PARCEL_EXPR["landuse_expr"]
+_PARCEL_CLASSIFICATION_EXPR = _PARCEL_EXPR["classification_expr"]
+_PARCEL_CLASSIFICATION_REF = _PARCEL_EXPR["classification_ref"]
+_PARCEL_AREA_EXPR = _PARCEL_EXPR["area_expr"]
+_PARCEL_PERIMETER_EXPR = _PARCEL_EXPR["perimeter_expr"]
+_PARCEL_SITE_AREA_EXPR = _PARCEL_EXPR["site_area_expr"]
+_PARCEL_FOOTPRINT_EXPR = _PARCEL_EXPR["footprint_expr"]
+_PARCEL_BUILDING_COUNT_EXPR = _PARCEL_EXPR["building_count_expr"]
 
 if _TARGET_SRID == 4326:
     _POINT_EXPR = "ST_SetSRID(ST_Point(:lng,:lat), 4326)"
@@ -138,56 +216,82 @@ else:
 
 _TRANSFORMER = None  # unused (server-side transform)
 
-_IDENTIFY_SQL = text(
-    f"""
-  WITH q AS (
-    SELECT {_POINT_EXPR} AS pt
-  ),
-  scored AS (
-    SELECT
-      {_PARCEL_ID_COLUMN} AS id,
-      {_PARCEL_LANDUSE_EXPR},
-      {_PARCEL_CLASSIFICATION_EXPR},
-      {_PARCEL_GEOM_COLUMN} AS geom,
-      {_PARCEL_AREA_EXPR},
-      {_PARCEL_PERIMETER_EXPR},
-      {_DISTANCE_EXPR},
-      {_PARCEL_SITE_AREA_EXPR},
-      {_PARCEL_FOOTPRINT_EXPR},
-      {_PARCEL_BUILDING_COUNT_EXPR},
-      CASE WHEN ST_Contains({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS contains,
-      CASE WHEN ST_Intersects({_PARCEL_GEOM_COLUMN}, q.pt) THEN 1 ELSE 0 END AS hits,
-      CASE WHEN {_D_WITHIN_EXPR} THEN 1 ELSE 0 END AS near,
-      CASE WHEN {_PARCEL_CLASSIFICATION_REF} = 'overture_building' THEN 0 ELSE 1 END AS is_non_ovt,
-      CASE WHEN {_PARCEL_CLASSIFICATION_REF} = 'overture_building' THEN 1 ELSE 0 END AS is_ovt
-    FROM {_PARCEL_TABLE}, q
-    WHERE {_D_WITHIN_EXPR}
-  )
-  SELECT
-    id,
-    landuse,
-    classification,
-    area_m2,
-    perimeter_m,
-    site_area_m2,
-    footprint_area_m2,
-    building_count,
-    {_IDENTIFY_GEOM_OUTPUT_EXPR},
-    distance_m,
-    contains,
-    hits,
-    near,
-    is_ovt
-  FROM scored
-  ORDER BY
-    contains DESC,
-    hits DESC,
-    is_non_ovt DESC,
-    distance_m ASC,
-    area_m2 DESC,
-    is_ovt DESC
-  LIMIT 1;
-  """
+def _build_identify_sql(
+    parcel_table: str,
+    geom_column: str,
+    id_column: str,
+    parcel_expr: dict[str, str],
+) -> text:
+    if _TARGET_SRID == 4326:
+        point_expr = "ST_SetSRID(ST_Point(:lng,:lat), 4326)"
+        distance_expr = f"ST_Distance({geom_column}::geography, q.pt::geography) AS distance_m"
+        d_within_expr = f"ST_DWithin({geom_column}::geography, q.pt::geography, :tol_m)"
+        identify_geom_output_expr = "ST_AsGeoJSON(geom) AS geom"
+    else:
+        point_expr = "ST_Transform(ST_SetSRID(ST_Point(:lng,:lat), 4326), :srid)"
+        distance_expr = f"ST_Distance({geom_column}, q.pt) AS distance_m"
+        d_within_expr = f"ST_DWithin({geom_column}, q.pt, :tol_m)"
+        identify_geom_output_expr = "ST_AsGeoJSON(ST_Transform(geom, 4326)) AS geom"
+
+    return text(
+        f"""
+      WITH q AS (
+        SELECT {point_expr} AS pt
+      ),
+      scored AS (
+        SELECT
+          {id_column} AS id,
+          {parcel_expr["landuse_expr"]},
+          {parcel_expr["classification_expr"]},
+          {geom_column} AS geom,
+          {parcel_expr["area_expr"]},
+          {parcel_expr["perimeter_expr"]},
+          {distance_expr},
+          {parcel_expr["site_area_expr"]},
+          {parcel_expr["footprint_expr"]},
+          {parcel_expr["building_count_expr"]},
+          CASE WHEN ST_Contains({geom_column}, q.pt) THEN 1 ELSE 0 END AS contains,
+          CASE WHEN ST_Intersects({geom_column}, q.pt) THEN 1 ELSE 0 END AS hits,
+          CASE WHEN {d_within_expr} THEN 1 ELSE 0 END AS near,
+          CASE WHEN {parcel_expr["classification_ref"]} = 'overture_building' THEN 0 ELSE 1 END AS is_non_ovt,
+          CASE WHEN {parcel_expr["classification_ref"]} = 'overture_building' THEN 1 ELSE 0 END AS is_ovt
+        FROM {parcel_table}, q
+        WHERE {d_within_expr}
+      )
+      SELECT
+        id,
+        landuse,
+        classification,
+        area_m2,
+        perimeter_m,
+        site_area_m2,
+        footprint_area_m2,
+        building_count,
+        {identify_geom_output_expr},
+        distance_m,
+        contains,
+        hits,
+        near,
+        is_ovt
+      FROM scored
+      ORDER BY
+        contains DESC,
+        hits DESC,
+        is_non_ovt DESC,
+        distance_m ASC,
+        area_m2 DESC,
+        is_ovt DESC
+      LIMIT 1;
+      """
+    )
+
+
+_IDENTIFY_SQL = _build_identify_sql(
+    _PARCEL_TABLE, _PARCEL_GEOM_COLUMN, _PARCEL_ID_COLUMN, _PARCEL_EXPR
+)
+_MS_BUILDINGS_EXPR = _parcel_expressions("ms_buildings", "geom")
+_IDENTIFY_SQL_MS_BUILDINGS = _build_identify_sql(
+    _MS_BUILDINGS_TABLE, "geom", "id", _MS_BUILDINGS_EXPR
 )
 
 _DEFAULT_PARCEL_PAD_M = getattr(settings, "PARCEL_ENVELOPE_PAD_M", 5.0)
@@ -312,22 +416,21 @@ _INFER_PARCEL_FALLBACK_SQL = text(
     """
 )
 
-if _IS_MS_BUILDINGS_TABLE:
-    _MS_BUILDING_AREA_EXPR = (
-        "ST_Area(ST_GeometryN(b.geom, i.part_index)::geography)"
-        if _TARGET_SRID == 4326
-        else "ST_Area(ST_GeometryN(b.geom, i.part_index))"
-    )
-    _MS_BUILDING_UNION_AREA_EXPR = (
-        "ST_Area(u.geom::geography)" if _TARGET_SRID == 4326 else "ST_Area(u.geom)"
-    )
-    _MS_BUILDING_UNION_PERIM_EXPR = (
-        "ST_Perimeter(u.geom::geography)"
-        if _TARGET_SRID == 4326
-        else "ST_Perimeter(u.geom)"
-    )
+_MS_BUILDING_AREA_EXPR = (
+    "ST_Area(ST_GeometryN(b.geom, i.part_index)::geography)"
+    if _TARGET_SRID == 4326
+    else "ST_Area(ST_GeometryN(b.geom, i.part_index))"
+)
+_MS_BUILDING_UNION_AREA_EXPR = (
+    "ST_Area(u.geom::geography)" if _TARGET_SRID == 4326 else "ST_Area(u.geom)"
+)
+_MS_BUILDING_UNION_PERIM_EXPR = (
+    "ST_Perimeter(u.geom::geography)" if _TARGET_SRID == 4326 else "ST_Perimeter(u.geom)"
+)
 
-    _COLLATE_META_SQL = text(
+
+def _build_ms_buildings_collate_sql(parcel_table: str) -> tuple[text, text]:
+    meta_sql = text(
         f"""
         WITH input AS (
           SELECT
@@ -341,13 +444,13 @@ if _IS_MS_BUILDINGS_TABLE:
           NULL::text AS landuse,
           NULL::text AS classification,
           {_MS_BUILDING_AREA_EXPR}::bigint AS area_m2
-        FROM {_PARCEL_TABLE} b
+        FROM {parcel_table} b
         JOIN input i ON b.id = i.building_id
         WHERE ST_GeometryN(b.geom, i.part_index) IS NOT NULL
         """
     )
 
-    _COLLATE_UNION_SQL = text(
+    union_sql = text(
         f"""
         WITH input AS (
           SELECT
@@ -358,7 +461,7 @@ if _IS_MS_BUILDINGS_TABLE:
         ),
         sel AS (
           SELECT ST_GeometryN(b.geom, i.part_index) AS geom
-          FROM {_PARCEL_TABLE} b
+          FROM {parcel_table} b
           JOIN input i ON b.id = i.building_id
           WHERE ST_GeometryN(b.geom, i.part_index) IS NOT NULL
         ),
@@ -373,29 +476,37 @@ if _IS_MS_BUILDINGS_TABLE:
         FROM u;
         """
     )
-else:
-    _COLLATE_META_SQL = (
+    return meta_sql, union_sql
+
+
+def _build_generic_collate_sql(
+    parcel_table: str,
+    geom_column: str,
+    id_column: str,
+    parcel_expr: dict[str, str],
+) -> tuple[text, text]:
+    meta_sql = (
         text(
             f"""
             SELECT
-              {_PARCEL_ID_COLUMN}::text AS id,
-              {_PARCEL_LANDUSE_EXPR},
-              {_PARCEL_CLASSIFICATION_EXPR},
-              {_PARCEL_AREA_EXPR}
-            FROM {_PARCEL_TABLE}
-            WHERE {_PARCEL_ID_COLUMN}::text IN :ids
+              {id_column}::text AS id,
+              {parcel_expr["landuse_expr"]},
+              {parcel_expr["classification_expr"]},
+              {parcel_expr["area_expr"]}
+            FROM {parcel_table}
+            WHERE {id_column}::text IN :ids
             """
         )
         .bindparams(bindparam("ids", expanding=True))
     )
 
-    _COLLATE_UNION_SQL = (
+    union_sql = (
         text(
             f"""
             WITH sel AS (
-              SELECT {_PARCEL_GEOM_COLUMN} AS geom
-              FROM {_PARCEL_TABLE}
-              WHERE {_PARCEL_ID_COLUMN}::text IN :ids
+              SELECT {geom_column} AS geom
+              FROM {parcel_table}
+              WHERE {id_column}::text IN :ids
             ),
             u AS (
               SELECT ST_MakeValid(ST_UnaryUnion(ST_Collect(geom))) AS geom
@@ -410,6 +521,19 @@ else:
         )
         .bindparams(bindparam("ids", expanding=True))
     )
+    return meta_sql, union_sql
+
+
+if _IS_MS_BUILDINGS_TABLE:
+    _COLLATE_META_SQL, _COLLATE_UNION_SQL = _build_ms_buildings_collate_sql(_PARCEL_TABLE)
+else:
+    _COLLATE_META_SQL, _COLLATE_UNION_SQL = _build_generic_collate_sql(
+        _PARCEL_TABLE, _PARCEL_GEOM_COLUMN, _PARCEL_ID_COLUMN, _PARCEL_EXPR
+    )
+
+_COLLATE_META_SQL_MS_BUILDINGS, _COLLATE_UNION_SQL_MS_BUILDINGS = (
+    _build_ms_buildings_collate_sql(_MS_BUILDINGS_TABLE)
+)
 
 # Keep router local to "geo"; main.py mounts routers at "/v1".
 router = APIRouter(prefix="/geo", tags=["geo"])
@@ -1103,6 +1227,14 @@ class CollateParcelsRequest(BaseModel):
 
 
 def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, Any]]:
+    mode = _effective_parcel_mode(db)
+    use_ms_buildings = mode == "ms_buildings"
+    collate_meta_sql = (
+        _COLLATE_META_SQL_MS_BUILDINGS if use_ms_buildings else _COLLATE_META_SQL
+    )
+    collate_union_sql = (
+        _COLLATE_UNION_SQL_MS_BUILDINGS if use_ms_buildings else _COLLATE_UNION_SQL
+    )
     # De-dupe while preserving order
     ids_raw = [str(pid).strip() for pid in (parcel_ids or []) if str(pid).strip()]
     seen: set[str] = set()
@@ -1123,7 +1255,7 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
         }
 
     parcel_json: str | None = None
-    if _IS_MS_BUILDINGS_TABLE:
+    if use_ms_buildings:
         payload = _build_ms_building_parcel_payload(ids)
         if not payload:
             return {
@@ -1136,8 +1268,8 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
         parcel_json = json.dumps(payload)
 
     try:
-        params = {"ids": ids} if not _IS_MS_BUILDINGS_TABLE else {"parcel_json": parcel_json}
-        rows = db.execute(_COLLATE_META_SQL, params).mappings().all()
+        params = {"ids": ids} if not use_ms_buildings else {"parcel_json": parcel_json}
+        rows = db.execute(collate_meta_sql, params).mappings().all()
     except SQLAlchemyError as exc:
         logger.warning("PostGIS collate meta query failed: %s", exc)
         return None
@@ -1164,11 +1296,9 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
 
     try:
         union_params = (
-            {"ids": found_ids}
-            if not _IS_MS_BUILDINGS_TABLE
-            else {"parcel_json": parcel_json}
+            {"ids": found_ids} if not use_ms_buildings else {"parcel_json": parcel_json}
         )
-        urow = db.execute(_COLLATE_UNION_SQL, union_params).mappings().first()
+        urow = db.execute(collate_union_sql, union_params).mappings().first()
     except SQLAlchemyError as exc:
         logger.warning("PostGIS collate union query failed: %s", exc)
         return None
@@ -1260,6 +1390,7 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
     # Stable (deterministic) collated id for UX/caching
     collated_id = hashlib.sha1("|".join(sorted(found_ids)).encode("utf-8")).hexdigest()[:12]
 
+    source_table = _PARCEL_TABLE if mode == _PARCEL_MODE else _MS_BUILDINGS_TABLE
     parcel = {
         "parcel_id": f"collated:{collated_id}",
         "geometry": geometry,
@@ -1278,7 +1409,7 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
         "ovt_attr_conf": ovt_attr_conf,
         "osm_conf": osm_conf,
         "ovt_conf": ovt_conf,
-        "source_url": f"postgis/{_PARCEL_TABLE}",
+        "source_url": f"postgis/{source_table}",
         "component_count": len(found_ids),
         "component_area_m2_sum": component_area_m2_sum,
     }
@@ -1294,8 +1425,11 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
 
 def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Optional[Dict[str, Any]]:
     params = {"lng": lng, "lat": lat, "srid": _TARGET_SRID, "tol_m": tol_m}
+    mode = _effective_parcel_mode(db)
+    identify_sql = _IDENTIFY_SQL if mode == _PARCEL_MODE else _IDENTIFY_SQL_MS_BUILDINGS
+    source_table = _PARCEL_TABLE if mode == _PARCEL_MODE else _MS_BUILDINGS_TABLE
     try:
-        row = db.execute(_IDENTIFY_SQL, params).mappings().first()
+        row = db.execute(identify_sql, params).mappings().first()
     except SQLAlchemyError as exc:
         logger.warning("PostGIS identify query failed: %s", exc)
         return None
@@ -1404,7 +1538,7 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         "ovt_attr_conf": ovt_attr_conf,
         "osm_conf": osm_conf,
         "ovt_conf": ovt_conf,
-        "source_url": f"postgis/{_PARCEL_TABLE}",
+        "source_url": f"postgis/{source_table}",
     }
 
     logger.debug(

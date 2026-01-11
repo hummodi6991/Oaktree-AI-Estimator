@@ -334,6 +334,7 @@ export default function Map({ onParcel }: MapProps) {
       area_m2: inferredArea,
       parcel_area_m2: inferredArea,
       perimeter_m: inferredPerimeter,
+      parcel_method: "click_fallback",
       geometry: inferredGeometry,
     };
     if (multiSelectModeRef.current) {
@@ -415,12 +416,15 @@ export default function Map({ onParcel }: MapProps) {
         const parcelAreaM2 = props.parcel_area_m2 != null ? Number(props.parcel_area_m2) : null;
         const footprintAreaM2 = props.footprint_area_m2 != null ? Number(props.footprint_area_m2) : null;
         const perimeterM = props.perimeter_m != null ? Number(props.perimeter_m) : null;
+        const methodRaw = props.method != null ? String(props.method) : null;
+        const isPrecomputedParcel = methodRaw === "road_block_voronoi_v1";
         const parcel: ParcelSummary = {
           parcel_id: parcelId,
           area_m2: Number.isFinite(areaM2) ? areaM2 : null,
           parcel_area_m2: Number.isFinite(parcelAreaM2) ? parcelAreaM2 : null,
           footprint_area_m2: Number.isFinite(footprintAreaM2) ? footprintAreaM2 : null,
           perimeter_m: Number.isFinite(perimeterM) ? perimeterM : null,
+          parcel_method: isPrecomputedParcel ? "inferred_parcels_v1" : null,
           geometry,
         };
 
@@ -440,7 +444,8 @@ export default function Map({ onParcel }: MapProps) {
           }
         }
 
-        if (parcelId && inferCacheRef.current.has(parcelId)) {
+        const shouldInfer = !isPrecomputedParcel;
+        if (shouldInfer && parcelId && inferCacheRef.current.has(parcelId)) {
           const cached = inferCacheRef.current.get(parcelId);
           if (cached) {
             const inferredArea = cached.area_m2 ?? parcel.area_m2 ?? null;
@@ -450,7 +455,7 @@ export default function Map({ onParcel }: MapProps) {
           return;
         }
 
-        if (buildingId != null && partIndex != null) {
+        if (shouldInfer && buildingId != null && partIndex != null) {
           try {
             const inferRequestId = ++inferRequestRef.current;
             const inferred: InferParcelResponse = await inferParcel({
