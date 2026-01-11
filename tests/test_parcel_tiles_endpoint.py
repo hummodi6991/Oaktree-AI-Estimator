@@ -58,6 +58,5 @@ def test_parcel_tile_high_zoom_returns_bytes() -> None:
         assert dummy.executed
         assert dummy.last_params is not None
         assert "simplify_tol" in dummy.last_params
-        assert "pad_m" in dummy.last_params
     finally:
         app.dependency_overrides.pop(get_db, None)
