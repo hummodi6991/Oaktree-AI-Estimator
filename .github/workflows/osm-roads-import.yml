@@ -1,0 +1,61 @@
+name: OSM Roads Import
+
+on:
+  workflow_dispatch:
+    inputs:
+      pbf_url:
+        description: "OSM PBF URL"
+        required: true
+        default: "https://download.geofabrik.de/asia/saudi-arabia-latest.osm.pbf"
+      bbox:
+        description: "Optional bbox xmin,ymin,xmax,ymax to clip with osmium"
+        required: false
+        default: ""
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install OSM tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osm2pgsql osmium-tool postgresql-client
+
+      - name: Download OSM PBF
+        run: |
+          curl -L "${{ inputs.pbf_url }}" -o source.osm.pbf
+
+      - name: Optional clip
+        if: ${{ inputs.bbox != '' }}
+        run: |
+          osmium extract --bbox "${{ inputs.bbox }}" source.osm.pbf -o clipped.osm.pbf
+
+      - name: Import roads into PostGIS
+        env:
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+        run: |
+          export PGPASSWORD="${POSTGRES_PASSWORD}"
+          psql -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
+            -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+          PBF_FILE="source.osm.pbf"
+          if [ -f clipped.osm.pbf ]; then
+            PBF_FILE="clipped.osm.pbf"
+          fi
+          STYLE_PATH="/usr/share/osm2pgsql/default.style"
+          osm2pgsql --create --slim --hstore --multi-geometry \
+            --database "${POSTGRES_DB}" --host "${POSTGRES_HOST}" --port "${POSTGRES_PORT}" --username "${POSTGRES_USER}" \
+            --style "${STYLE_PATH}" \
+            "${PBF_FILE}"
+          psql -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
+            -c "SELECT COUNT(*) FROM planet_osm_line;"
+          psql -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
+            -c "SELECT COUNT(*) FROM planet_osm_roads;"
+          psql -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
+            -c "SELECT COUNT(*) FROM planet_osm_polygon;"
