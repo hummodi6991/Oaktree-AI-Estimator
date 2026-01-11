@@ -46,3 +46,19 @@ fetch-ms-buildings-riyadh:
 .PHONY: fetch-ms-buildings-riyadh-links
 fetch-ms-buildings-riyadh-links:
 	PYTHONPATH=. python -m app.ingest.fetch_ms_buildings_dataset_links --max-files 3
+
+.PHONY: refresh-derived-parcels
+refresh-derived-parcels:
+	PYTHONPATH=. python - <<'PY'
+import os
+from sqlalchemy import create_engine, text
+
+url = os.environ["DATABASE_URL"]
+engine = create_engine(url)
+with engine.begin() as conn:
+    try:
+        conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY public.derived_parcels_v1"))
+    except Exception:
+        conn.execute(text("REFRESH MATERIALIZED VIEW public.derived_parcels_v1"))
+print("refreshed derived_parcels_v1")
+PY
