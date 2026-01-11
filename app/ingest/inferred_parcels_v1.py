@@ -15,6 +15,7 @@ DEFAULT_ROAD_BUF_M = 9.0
 DEFAULT_MIN_BLOCK_AREA_M2 = 5000.0
 DEFAULT_MAX_BUILDINGS_PER_BLOCK = 4000
 DEFAULT_SEED_PART_INDEX = 1
+MIN_ROAD_COUNT = 10000
 
 logger = logging.getLogger(__name__)
 
@@ -36,28 +37,54 @@ def _parse_bbox(value: str | None) -> tuple[float, float, float, float]:
     return xmin, ymin, xmax, ymax
 
 
-def _osm_roads_available(db) -> bool:
-    return db.execute(text("SELECT to_regclass('public.planet_osm_line')")).scalar() is not None
+def _table_row_count(db, table: str) -> int | None:
+    exists = db.execute(text("SELECT to_regclass(:table_name)"), {"table_name": table}).scalar()
+    if exists is None:
+        return None
+    return db.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar() or 0
 
 
-def _resolve_highway_expr(db) -> str:
+def _resolve_roads_table(db) -> tuple[str, int]:
+    roads_count = _table_row_count(db, "public.planet_osm_roads")
+    if roads_count is not None and roads_count >= MIN_ROAD_COUNT:
+        return "public.planet_osm_roads", roads_count
+    line_count = _table_row_count(db, "public.planet_osm_line")
+    if line_count is not None and line_count >= MIN_ROAD_COUNT:
+        return "public.planet_osm_line", line_count
+    raise RuntimeError(
+        "OSM roads import incomplete: expected planet_osm_roads or planet_osm_line "
+        f"to have at least {MIN_ROAD_COUNT} rows "
+        f"(roads={roads_count}, line={line_count})"
+    )
+
+
+def _resolve_highway_expr(db, table: str, alias: str) -> str:
+    table_name = table.split(".")[-1]
     rows = db.execute(
         text(
             """
-            SELECT column_name
+            SELECT column_name, data_type, udt_name
             FROM information_schema.columns
             WHERE table_schema = 'public'
-              AND table_name = 'planet_osm_line'
+              AND table_name = :table_name
               AND column_name IN ('highway', 'tags')
             """
-        )
+        ),
+        {"table_name": table_name},
     ).mappings().all()
-    columns = {row["column_name"] for row in rows}
+    columns = {row["column_name"]: row for row in rows}
     if "highway" in columns:
-        return "highway"
+        return f"{alias}.highway"
     if "tags" in columns:
-        return "tags->'highway'"
-    raise RuntimeError("planet_osm_line missing highway/tags column")
+        tags_info = columns["tags"]
+        data_type = tags_info.get("data_type")
+        udt_name = tags_info.get("udt_name")
+        if data_type == "jsonb" or udt_name == "jsonb":
+            return f"{alias}.tags->>'highway'"
+        if udt_name == "hstore" or data_type == "hstore":
+            return f"{alias}.tags->'highway'"
+        raise RuntimeError(f"{table_name}.tags column has unsupported type: {data_type}/{udt_name}")
+    raise RuntimeError(f"{table_name} missing highway/tags column")
 
 
 def _iter_blocks(db, max_blocks: int | None) -> Iterable[dict]:
@@ -93,15 +120,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     with SessionLocal() as db:
-        if not _osm_roads_available(db):
-            logger.error("Missing OSM roads table: public.planet_osm_line")
-            return 1
-
         try:
-            highway_expr = _resolve_highway_expr(db)
+            roads_table, roads_count = _resolve_roads_table(db)
+            highway_expr = _resolve_highway_expr(db, roads_table, "r")
         except RuntimeError as exc:
-            logger.error(str(exc))
+            logger.error("%s", exc)
             return 1
+        logger.info("Using %s (%s rows) for road mask", roads_table, roads_count)
 
         if args.truncate:
             logger.info("Truncating inferred_parcels_v1")
@@ -143,12 +168,11 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 road_mask AS (
                   SELECT ST_UnaryUnion(
-                    ST_Collect(ST_Buffer(way::geography, :road_buf_m)::geometry)
+                    ST_Collect(ST_Buffer(r.way::geography, :road_buf_m)::geometry)
                   ) AS geom
-                  FROM public.planet_osm_line, bbox b
-                  WHERE way && b.geom
+                  FROM {roads_table} r, bbox b
+                  WHERE r.way && b.geom
                     AND {highway_expr} IS NOT NULL
-                    AND {highway_expr} NOT IN ('footway','path','cycleway','steps')
                 ),
                 free AS (
                   SELECT ST_Difference(
@@ -199,6 +223,11 @@ def main(argv: list[str] | None = None) -> int:
                 area_row.get("min_area") or 0.0,
                 area_row.get("max_area") or 0.0,
             )
+        if len(blocks) <= 1:
+            logger.error(
+                "Road mask failed to partition bbox; check OSM import counts and highway expr"
+            )
+            return 1
         logger.info("Processing %d blocks", len(blocks))
 
         for idx, block in enumerate(blocks, start=1):
