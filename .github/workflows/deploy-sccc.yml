@@ -5,11 +5,14 @@ on:
     branches: [ "main" ]
     paths:
       - "app/**"
+      - "alembic/**"
       - "frontend/**"
       - "Dockerfile"
       - ".github/workflows/deploy-sccc.yml"
       - "k8s/**"
+      - "sql/**"
       - "models/**"
+      - "Makefile"
   workflow_dispatch:
 
 permissions:
@@ -100,6 +103,7 @@ jobs:
         run: |
           IMAGE="${ACR_REG_HOST}/${ACR_NS}/${SVC_NAME}:${{ github.sha }}"
           echo "Using image: $IMAGE"
+          # TODO: switch VITE_PARCEL_TILE_TABLE to public.derived_parcels_v1 after validation.
           docker build --build-arg VITE_PARCEL_TILE_TABLE=public.suhail_parcels_mat -t "$IMAGE" .
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
@@ -125,6 +129,7 @@ jobs:
 
       - name: Create/Update App Secret (oaktree-app-env)
         run: |
+          # TODO: switch PARCEL_TILE_TABLE to public.derived_parcels_v1 after validation.
           kubectl create secret generic oaktree-app-env \
             --from-literal=APP_ENV=prod \
             --from-literal=AUTH_MODE=disabled \
