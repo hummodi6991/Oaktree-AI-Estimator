@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from typing import Iterable
+
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -13,24 +15,9 @@ DEFAULT_ROAD_BUF_M = 9.0
 DEFAULT_MIN_BLOCK_AREA_M2 = 5000.0
 DEFAULT_MAX_BUILDINGS_PER_BLOCK = 4000
 DEFAULT_SEED_PART_INDEX = 1
+MIN_ROAD_COUNT = 10000
 
 logger = logging.getLogger(__name__)
-
-
-def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Build inferred_parcels_v1 from roads + buildings")
-    parser.add_argument(
-        "--bbox",
-        default=",".join(str(v) for v in DEFAULT_BBOX),
-        help="xmin,ymin,xmax,ymax in WGS84",
-    )
-    parser.add_argument("--road-buf-m", type=float, default=DEFAULT_ROAD_BUF_M)
-    parser.add_argument("--truncate", action="store_true")
-    parser.add_argument("--max-blocks", type=int, default=None)
-    parser.add_argument("--min-block-area-m2", type=float, default=DEFAULT_MIN_BLOCK_AREA_M2)
-    parser.add_argument("--max-buildings-per-block", type=int, default=DEFAULT_MAX_BUILDINGS_PER_BLOCK)
-    parser.add_argument("--seed-part-index", type=int, default=DEFAULT_SEED_PART_INDEX)
-    return parser
 
 
 def _parse_bbox(value: str | None) -> tuple[float, float, float, float]:
@@ -50,16 +37,78 @@ def _parse_bbox(value: str | None) -> tuple[float, float, float, float]:
     return xmin, ymin, xmax, ymax
 
 
-def _resolve_roads_source(db) -> tuple[str, str]:
-    if db.execute(text("SELECT to_regclass('public.osm_roads_line')")).scalar() is not None:
-        return "public.osm_roads_line", "geom"
-    if db.execute(text("SELECT to_regclass('public.planet_osm_line')")).scalar() is not None:
-        return "public.planet_osm_line", "way"
-    raise RuntimeError("Missing roads source: expected public.osm_roads_line or public.planet_osm_line")
+def _table_row_count(db, table: str) -> int | None:
+    exists = db.execute(text("SELECT to_regclass(:table_name)"), {"table_name": table}).scalar()
+    if exists is None:
+        return None
+    return db.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar() or 0
+
+
+def _resolve_roads_table(db) -> tuple[str, int]:
+    roads_count = _table_row_count(db, "public.planet_osm_roads")
+    if roads_count is not None and roads_count >= MIN_ROAD_COUNT:
+        return "public.planet_osm_roads", roads_count
+    line_count = _table_row_count(db, "public.planet_osm_line")
+    if line_count is not None and line_count >= MIN_ROAD_COUNT:
+        return "public.planet_osm_line", line_count
+    raise RuntimeError(
+        "OSM roads import incomplete: expected planet_osm_roads or planet_osm_line "
+        f"to have at least {MIN_ROAD_COUNT} rows "
+        f"(roads={roads_count}, line={line_count})"
+    )
+
+
+def _resolve_highway_expr(db, table: str, alias: str) -> str:
+    table_name = table.split(".")[-1]
+    rows = db.execute(
+        text(
+            """
+            SELECT column_name, data_type, udt_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = :table_name
+              AND column_name IN ('highway', 'tags')
+            """
+        ),
+        {"table_name": table_name},
+    ).mappings().all()
+    columns = {row["column_name"]: row for row in rows}
+    if "highway" in columns:
+        return f"{alias}.highway"
+    if "tags" in columns:
+        tags_info = columns["tags"]
+        data_type = tags_info.get("data_type")
+        udt_name = tags_info.get("udt_name")
+        if data_type == "jsonb" or udt_name == "jsonb":
+            return f"{alias}.tags->>'highway'"
+        if udt_name == "hstore" or data_type == "hstore":
+            return f"{alias}.tags->'highway'"
+        raise RuntimeError(f"{table_name}.tags column has unsupported type: {data_type}/{udt_name}")
+    raise RuntimeError(f"{table_name} missing highway/tags column")
+
+
+def _iter_blocks(db, max_blocks: int | None) -> Iterable[dict]:
+    sql = "SELECT block_id, ST_AsEWKB(geom) AS geom FROM tmp_blocks ORDER BY block_id"
+    params = {}
+    if max_blocks is not None:
+        sql += " LIMIT :max_blocks"
+        params["max_blocks"] = max_blocks
+    return db.execute(text(sql), params).mappings().all()
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = _build_arg_parser()
+    parser = argparse.ArgumentParser(description="Build inferred_parcels_v1 from roads + buildings")
+    parser.add_argument(
+        "--bbox",
+        default=",".join(str(v) for v in DEFAULT_BBOX),
+        help="xmin,ymin,xmax,ymax in WGS84",
+    )
+    parser.add_argument("--road-buf-m", type=float, default=DEFAULT_ROAD_BUF_M)
+    parser.add_argument("--truncate", action="store_true")
+    parser.add_argument("--max-blocks", type=int, default=None)
+    parser.add_argument("--min-block-area-m2", type=float, default=DEFAULT_MIN_BLOCK_AREA_M2)
+    parser.add_argument("--max-buildings-per-block", type=int, default=DEFAULT_MAX_BUILDINGS_PER_BLOCK)
+    parser.add_argument("--seed-part-index", type=int, default=DEFAULT_SEED_PART_INDEX)
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -72,10 +121,12 @@ def main(argv: list[str] | None = None) -> int:
 
     with SessionLocal() as db:
         try:
-            roads_table, roads_geom_col = _resolve_roads_source(db)
+            roads_table, roads_count = _resolve_roads_table(db)
+            highway_expr = _resolve_highway_expr(db, roads_table, "r")
         except RuntimeError as exc:
             logger.error("%s", exc)
             return 1
+        logger.info("Using %s (%s rows) for road mask", roads_table, roads_count)
 
         if args.truncate:
             logger.info("Truncating inferred_parcels_v1")
@@ -89,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
                 """
                 CREATE TEMP TABLE tmp_blocks (
                     block_id text,
-                    geom geometry(Polygon,3857)
+                    geom geometry(Polygon,4326)
                 );
                 """
             )
@@ -100,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
                 CREATE TEMP TABLE tmp_seeds (
                     building_id bigint,
                     part_index int,
-                    seed geometry(Point,3857),
+                    seed geometry(Point,4326),
                     footprint_area_m2 double precision
                 );
                 """
@@ -109,55 +160,24 @@ def main(argv: list[str] | None = None) -> int:
         db.execute(text("CREATE INDEX tmp_seeds_seed_gix ON tmp_seeds USING GIST (seed);"))
 
         xmin, ymin, xmax, ymax = bbox
-        highway_filter = (
-            "r.highway IS NOT NULL AND r.highway NOT IN "
-            "('footway','path','cycleway','steps')"
-        )
-        geom_expr = f"r.{roads_geom_col}"
-
-        roads_count = (
-            db.execute(
-                text(
-                    f"""
-                    WITH bbox AS (
-                      SELECT ST_Transform(ST_MakeEnvelope(:xmin, :ymin, :xmax, :ymax, 4326), 3857) AS geom
-                    )
-                    SELECT COUNT(*)
-                    FROM {roads_table} r, bbox b
-                    WHERE {geom_expr} && b.geom
-                      AND {highway_filter};
-                    """
-                ),
-                {"xmin": xmin, "ymin": ymin, "xmax": xmax, "ymax": ymax},
-            ).scalar()
-            or 0
-        )
-        logger.info("Using %s for road mask (filtered count=%s)", roads_table, roads_count)
-
         db.execute(
             text(
                 f"""
                 WITH bbox AS (
-                  SELECT
-                    ST_MakeEnvelope(:xmin, :ymin, :xmax, :ymax, 4326) AS geom4326,
-                    ST_Transform(ST_MakeEnvelope(:xmin, :ymin, :xmax, :ymax, 4326), 3857) AS geom3857
-                ),
-                roads AS (
-                  SELECT {geom_expr} AS geom
-                  FROM {roads_table} r, bbox b
-                  WHERE {geom_expr} && b.geom3857
-                    AND {highway_filter}
+                  SELECT ST_MakeEnvelope(:xmin, :ymin, :xmax, :ymax, 4326) AS geom
                 ),
                 road_mask AS (
                   SELECT ST_UnaryUnion(
-                    ST_Collect(ST_Buffer(r.geom, :road_buf_m))
+                    ST_Collect(ST_Buffer(r.way::geography, :road_buf_m)::geometry)
                   ) AS geom
-                  FROM roads r
+                  FROM {roads_table} r, bbox b
+                  WHERE r.way && b.geom
+                    AND {highway_expr} IS NOT NULL
                 ),
                 free AS (
                   SELECT ST_Difference(
-                    b.geom3857,
-                    COALESCE(r.geom, ST_GeomFromText('POLYGON EMPTY',3857))
+                    b.geom,
+                    COALESCE(r.geom, ST_GeomFromText('POLYGON EMPTY',4326))
                   ) AS geom
                   FROM bbox b
                   LEFT JOIN road_mask r ON TRUE
@@ -169,10 +189,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 INSERT INTO tmp_blocks (block_id, geom)
                 SELECT
-                  md5(ST_AsBinary(ST_SnapToGrid(geom, 1.0))) AS block_id,
+                  md5(ST_AsBinary(ST_SnapToGrid(geom, 0.000001))) AS block_id,
                   geom
                 FROM blocks
-                WHERE ST_Area(geom) >= :min_block_area_m2;
+                WHERE ST_Area(geom::geography) >= :min_block_area_m2;
                 """
             ),
             {
@@ -186,13 +206,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         db.commit()
 
-        blocks_count = db.execute(text("SELECT COUNT(*) FROM tmp_blocks")).scalar() or 0
-        if blocks_count:
+        blocks = list(_iter_blocks(db, args.max_blocks))
+        if blocks:
             area_row = (
                 db.execute(
                     text(
-                        "SELECT MIN(ST_Area(geom)) AS min_area, "
-                        "MAX(ST_Area(geom)) AS max_area FROM tmp_blocks"
+                        "SELECT MIN(ST_Area(geom::geography)) AS min_area, "
+                        "MAX(ST_Area(geom::geography)) AS max_area FROM tmp_blocks"
                     )
                 )
                 .mappings()
@@ -203,24 +223,17 @@ def main(argv: list[str] | None = None) -> int:
                 area_row.get("min_area") or 0.0,
                 area_row.get("max_area") or 0.0,
             )
-        logger.info("Blocks count: %d", blocks_count)
-        if blocks_count <= 1:
+        if len(blocks) <= 1:
             logger.error(
-                "Road mask failed to partition bbox; check OSM import and road mask inputs"
+                "Road mask failed to partition bbox; check OSM import counts and highway expr"
             )
             return 1
+        logger.info("Processing %d blocks", len(blocks))
 
-        sql_blocks = "SELECT block_id, ST_AsEWKB(geom) AS geom FROM tmp_blocks ORDER BY block_id"
-        params = {}
-        if args.max_blocks is not None:
-            sql_blocks += " LIMIT :max_blocks"
-            params["max_blocks"] = args.max_blocks
-        block_rows = db.execute(text(sql_blocks), params).mappings()
-
-        for idx, block in enumerate(block_rows, start=1):
+        for idx, block in enumerate(blocks, start=1):
             block_id = block["block_id"]
             block_geom = block["geom"]
-            logger.info("Block %d/%d (%s)", idx, blocks_count, block_id)
+            logger.info("Block %d/%d (%s)", idx, len(blocks), block_id)
 
             db.execute(text("TRUNCATE tmp_seeds"))
             db.execute(
@@ -230,12 +243,12 @@ def main(argv: list[str] | None = None) -> int:
                     SELECT
                       b.id AS building_id,
                       (d).path[1] AS part_index,
-                      ST_Transform(ST_PointOnSurface((d).geom), 3857) AS seed,
+                      ST_PointOnSurface((d).geom) AS seed,
                       ST_Area((d).geom::geography) AS footprint_area_m2
                     FROM public.ms_buildings_raw b
                     CROSS JOIN LATERAL ST_Dump(b.geom) AS d
-                    WHERE b.geom && ST_Transform(ST_GeomFromEWKB(:block_geom), 4326)
-                      AND ST_Intersects((d).geom, ST_Transform(ST_GeomFromEWKB(:block_geom), 4326))
+                    WHERE b.geom && ST_GeomFromEWKB(:block_geom)
+                      AND ST_Intersects((d).geom, ST_GeomFromEWKB(:block_geom))
                       AND (d).path[1] = :seed_part_index
                     """
                 ),
@@ -261,14 +274,14 @@ def main(argv: list[str] | None = None) -> int:
                 text(
                     """
                     WITH block AS (
-                      SELECT ST_GeomFromEWKB(:block_geom) AS geom3857,
+                      SELECT ST_Transform(ST_GeomFromEWKB(:block_geom), 3857) AS geom3857,
                              :block_id AS block_id
                     ),
                     seeds AS (
                       SELECT building_id,
                              part_index,
                              footprint_area_m2,
-                             seed AS seed3857
+                             ST_Transform(seed, 3857) AS seed3857
                       FROM tmp_seeds
                     ),
                     env AS (

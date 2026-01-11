@@ -66,24 +66,6 @@ ls -lh /tmp/parcels.pbf
 curl -fsS "http://127.0.0.1:8000/v1/geo/identify?lng=46.675&lat=24.713&tol_m=25"
 ```
 
-### Inferred parcels (road-block Voronoi)
-Build inferred parcels from OSM roads and Microsoft building footprints. This pipeline fills `public.inferred_parcels_v1` for tiles/identify when present.
-
-```sql
-CREATE OR REPLACE VIEW public.osm_roads_line AS
-SELECT way AS geom, highway
-FROM public.planet_osm_line
-WHERE highway IS NOT NULL;
-```
-
-```bash
-python -m app.ingest.inferred_parcels_v1 --truncate --bbox "46.20,24.20,47.30,25.10"
-```
-
-```sql
-SELECT COUNT(*) FROM public.inferred_parcels_v1;
-```
-
 ### Microsoft GlobalML Building Footprints (Saudi Arabia)
 - Download the Saudi Arabia `.csv.gz` files from the `dataset-links.csv` manifest in `microsoft/GlobalMLBuildingFootprints` (filter the CSV for `Saudi Arabia`).
 - Microsoft distributes building footprints as `.csv.gz`; each row/line includes a geometry (often GeoJSON), and some variants may be JSONL. The ingester auto-detects JSONL vs CSV and loads both.
