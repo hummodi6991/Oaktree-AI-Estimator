@@ -94,6 +94,16 @@ export type LanduseResponse = {
   ovt_conf?: number | null;
 };
 
+export type InferParcelResponse = {
+  found: boolean;
+  parcel_id?: string | null;
+  method?: string | null;
+  area_m2?: number | null;
+  perimeter_m?: number | null;
+  geom?: Geometry | null;
+  debug?: Record<string, unknown> | null;
+};
+
 export async function identify(lng: number, lat: number) {
   const res = await fetch(withBase("/v1/geo/identify"), {
     method: "POST",
@@ -116,6 +126,28 @@ export async function collateParcels(parcelIds: string[]) {
     body: JSON.stringify({ parcel_ids: parcelIds }),
   });
   return readJson<CollateResponse>(res);
+}
+
+export async function inferParcel(params: {
+  lng: number;
+  lat: number;
+  buildingId: number;
+  partIndex: number;
+  radiusM?: number;
+  roadBufM?: number;
+  k?: number;
+}) {
+  const search = new URLSearchParams({
+    lng: String(params.lng),
+    lat: String(params.lat),
+    building_id: String(params.buildingId),
+    part_index: String(params.partIndex),
+  });
+  if (params.radiusM != null) search.set("radius_m", String(params.radiusM));
+  if (params.roadBufM != null) search.set("road_buf_m", String(params.roadBufM));
+  if (params.k != null) search.set("k", String(params.k));
+  const res = await fetch(withBase(`/v1/geo/infer-parcel?${search.toString()}`));
+  return readJson<InferParcelResponse>(res);
 }
 
 export async function landPrice(

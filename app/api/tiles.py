@@ -147,8 +147,9 @@ def _parcel_tile_sql(simplify: bool) -> text:
         ),
         parcels AS (
           SELECT
-            concat(d.building_id, ':', d.part_index) AS parcel_id,
+            concat('ms:', d.building_id, ':', d.part_index) AS parcel_id,
             d.building_id,
+            d.part_index,
             ST_Area(d.geom4326::geography) AS footprint_area_m2,
             ST_Transform(d.geom4326, 3857) AS geom3857
           FROM dumped d
@@ -157,6 +158,7 @@ def _parcel_tile_sql(simplify: bool) -> text:
           SELECT
             parcel_id,
             building_id,
+            part_index,
             footprint_area_m2,
             ST_Buffer(ST_OrientedEnvelope(geom3857), :pad_m) AS padded3857
           FROM parcels
@@ -165,6 +167,7 @@ def _parcel_tile_sql(simplify: bool) -> text:
           SELECT
             parcel_id,
             building_id,
+            part_index,
             footprint_area_m2,
             ST_Area(padded3857) AS parcel_area_m2,
             ST_Perimeter(padded3857) AS perimeter_m,
@@ -175,6 +178,7 @@ def _parcel_tile_sql(simplify: bool) -> text:
           SELECT
             parcel_id,
             building_id,
+            part_index,
             footprint_area_m2,
             parcel_area_m2,
             parcel_area_m2 AS area_m2,
