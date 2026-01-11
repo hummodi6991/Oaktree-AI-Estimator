@@ -8,7 +8,6 @@ from app.db.deps import get_db
 router = APIRouter(tags=["map"])
 
 SUHAIL_PARCEL_TABLE = "public.suhail_parcels_mat"
-DERIVED_PARCEL_TABLES = {"public.derived_parcels_v1", "derived_parcels_v1"}
 
 
 def _safe_identifier(value: str | None, fallback: str) -> str:
@@ -21,8 +20,9 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
 
 
 PARCEL_TILE_TABLE = _safe_identifier(
-    getattr(settings, "PARCEL_TILE_TABLE", "osm_parcels_proxy"), "osm_parcels_proxy"
+    getattr(settings, "PARCEL_TILE_TABLE", "public.ms_buildings_raw"), "public.ms_buildings_raw"
 )
+PARCEL_SIMPLIFY_TOLERANCE_M = 1.0
 
 
 _SUHAIL_PARCEL_TILE_SQL = text(
@@ -116,94 +116,61 @@ _SUHAIL_PARCEL_ROT_TILE_SQL = text(
     """
 )
 
-_DERIVED_PARCEL_TILE_SQL = text(
-    f"""
-    WITH tile AS (
-      SELECT ST_SetSRID(ST_TileEnvelope(:z,:x,:y), 3857) AS geom3857
-    ),
-    tile4326 AS (
-      SELECT ST_Transform(t.geom3857, 4326) AS geom4326 FROM tile t
-    ),
-    parcel_candidates AS (
-      SELECT
-        d.parcel_id,
-        d.site_area_m2,
-        d.footprint_area_m2,
-        d.building_count,
-        ST_Transform(d.geom, 3857) AS geom3857
-      FROM {PARCEL_TILE_TABLE} d, tile4326 t
-      WHERE d.geom && t.geom4326
-    ),
-    mvtgeom AS (
-      SELECT
-        parcel_id,
-        site_area_m2,
-        footprint_area_m2,
-        building_count,
-        ST_AsMVTGeom(
-          geom3857,
-          t.geom3857,
-          4096,
-          64,
-          true
-        ) AS geom
-      FROM parcel_candidates, tile t
+def _parcel_tile_sql(simplify: bool) -> text:
+    geom_expr = "p.geom3857"
+    if simplify:
+        geom_expr = "ST_SimplifyPreserveTopology(p.geom3857, :simplify_tol)"
+    return text(
+        f"""
+        WITH tile3857 AS (
+          SELECT ST_SetSRID(ST_TileEnvelope(:z,:x,:y), 3857) AS geom3857
+        ),
+        tile4326 AS (
+          SELECT ST_Transform(t.geom3857, 4326) AS geom4326 FROM tile3857 t
+        ),
+        parcel_candidates AS (
+          SELECT
+            b.id AS parcel_id,
+            b.area_m2,
+            ST_Perimeter(b.geom::geography)::bigint AS perimeter_m,
+            ST_Transform(b.geom, 3857) AS geom3857
+          FROM {PARCEL_TILE_TABLE} b, tile4326 t
+          WHERE b.geom && t.geom4326
+            AND ST_Intersects(b.geom, t.geom4326)
+        ),
+        mvtgeom AS (
+          SELECT
+            parcel_id,
+            area_m2,
+            perimeter_m,
+            ST_AsMVTGeom(
+              {geom_expr},
+              t.geom3857,
+              4096,
+              64,
+              true
+            ) AS geom
+          FROM parcel_candidates p, tile3857 t
+        )
+        SELECT ST_AsMVT(mvtgeom, 'parcels', 4096, 'geom') AS tile
+        FROM mvtgeom;
+        """
     )
-    SELECT ST_AsMVT(mvtgeom, 'parcels', 4096, 'geom') AS tile
-    FROM mvtgeom;
-    """
-)
-
-_LEGACY_PARCEL_TILE_SQL = text(
-    f"""
-    WITH tile AS (
-      SELECT ST_SetSRID(ST_TileEnvelope(:z,:x,:y), 3857) AS geom3857
-    ),
-    parcel_candidates AS (
-      SELECT
-        p.id,
-        p.landuse,
-        p.classification,
-        p.area_m2,
-        ST_Perimeter(p.geom)::bigint AS perimeter_m,
-        ST_Transform(p.geom, 3857) AS geom3857
-      FROM {PARCEL_TILE_TABLE} p, tile t
-      WHERE ST_Transform(p.geom, 3857) && t.geom3857
-    ),
-    mvtgeom AS (
-      SELECT
-        id,
-        landuse,
-        classification,
-        area_m2,
-        perimeter_m,
-        ST_AsMVTGeom(
-          geom3857,
-          t.geom3857,
-          4096,
-          64,
-          true
-        ) AS geom
-      FROM parcel_candidates, tile t
-    )
-    SELECT ST_AsMVT(mvtgeom, 'parcels', 4096, 'geom') AS tile
-    FROM mvtgeom;
-    """
-)
-
-
-def _parcel_tile_sql() -> text:
-    if PARCEL_TILE_TABLE in DERIVED_PARCEL_TABLES:
-        return _DERIVED_PARCEL_TILE_SQL
-    return _LEGACY_PARCEL_TILE_SQL
 
 
 @router.get("/tiles/parcels/{z}/{x}/{y}.pbf")
 @router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
+    if z < 16:
+        return Response(status_code=204)
+
+    simplify = z == 16
     try:
-        tile_sql = _parcel_tile_sql()
-        tile_bytes = db.execute(tile_sql, {"z": z, "x": x, "y": y}).scalar()
+        tile_sql = _parcel_tile_sql(simplify)
+        params = {"z": z, "x": x, "y": y}
+        if simplify:
+            params["simplify_tol"] = PARCEL_SIMPLIFY_TOLERANCE_M
+        tile_bytes = db.execute(tile_sql, params).scalar()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to render parcel tile: {exc}")
 

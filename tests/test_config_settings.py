@@ -8,7 +8,7 @@ def test_parcel_target_srid_default(monkeypatch):
 
     config = importlib.reload(config)
 
-    assert config.Settings().PARCEL_TARGET_SRID == 32638
+    assert config.Settings().PARCEL_TARGET_SRID == 4326
 
 
 def test_parcel_identify_geom_column_override(monkeypatch):

@@ -45,7 +45,7 @@
       "noneSelected": "لم يتم تحديد أي قطع بعد."
     },
     "controls": {
-      "suhailOutlines": "حدود القطع: قطع مستنتجة (مبنية على المباني)",
+      "suhailOutlines": "حدود القطع: بصمات المباني",
       "multiSelect": "تحديد متعدد للقطع",
       "clearSelection": "مسح التحديد",
       "mergeParcels": "دمج القطع",
