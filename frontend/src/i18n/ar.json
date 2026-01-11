@@ -17,6 +17,7 @@
     "tipMessage": "تظهر بعض حدود القطع المستنتجة عند التكبير فقط. إذا بدت القطع مفقودة، قرّب التكبير لإظهار حدود القطع الزرقاء.",
     "parcelLabel": "قطعة مستنتجة",
     "areaLabel": "المساحة",
+    "footprintLabel": "بصمة المبنى",
     "landUseLabel": "الاستخدام",
     "landUseCodeLabel": "{{code}} — {{label}}",
     "landUse": {

@@ -17,11 +17,13 @@ class DummySession:
         self.payload = payload
         self.allow_execute = allow_execute
         self.executed = False
+        self.last_params = None
 
     def execute(self, *args, **kwargs):
         if not self.allow_execute:
             raise AssertionError("execute should not be called")
         self.executed = True
+        self.last_params = args[1] if len(args) > 1 else kwargs.get("params")
         return DummyResult(self.payload)
 
 
@@ -54,5 +56,8 @@ def test_parcel_tile_high_zoom_returns_bytes() -> None:
         assert resp.status_code == 200
         assert resp.content == b"parcels"
         assert dummy.executed
+        assert dummy.last_params is not None
+        assert "simplify_tol" in dummy.last_params
+        assert "pad_m" in dummy.last_params
     finally:
         app.dependency_overrides.pop(get_db, None)

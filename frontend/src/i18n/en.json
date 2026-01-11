@@ -17,6 +17,7 @@
     "tipMessage": "Some inferred parcel outlines appear only when you zoom in. If parcels look missing, zoom closer to reveal the blue parcel boundaries.",
     "parcelLabel": "Inferred parcel",
     "areaLabel": "Area",
+    "footprintLabel": "Footprint",
     "landUseLabel": "Land-use",
     "landUseCodeLabel": "{{code}} — {{label}}",
     "landUse": {

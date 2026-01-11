@@ -160,6 +160,28 @@ function setParcelVisibility(map: maplibregl.Map, visible: boolean) {
   }
 }
 
+function featureArea(feature: maplibregl.MapGeoJSONFeature): number | null {
+  const props = feature.properties || {};
+  const rawArea = props.parcel_area_m2 ?? props.area_m2;
+  const area = rawArea != null ? Number(rawArea) : null;
+  return Number.isFinite(area) ? area : null;
+}
+
+function pickBestFeature(features: maplibregl.MapGeoJSONFeature[]) {
+  if (!features.length) return null;
+  let best = features[0];
+  let bestArea = featureArea(best);
+  for (const feature of features.slice(1)) {
+    const area = featureArea(feature);
+    if (area == null) continue;
+    if (bestArea == null || area < bestArea) {
+      best = feature;
+      bestArea = area;
+    }
+  }
+  return best;
+}
+
 export default function Map({ onParcel }: MapProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -309,9 +331,14 @@ export default function Map({ onParcel }: MapProps) {
     map.on("click", async (e) => {
       setCollateStatus(null);
       try {
-        const features = map.queryRenderedFeatures(e.point, {
-          layers: [PARCEL_FILL_LAYER_ID, PARCEL_LINE_LAYER_ID],
+        let features = map.queryRenderedFeatures(e.point, {
+          layers: [PARCEL_FILL_LAYER_ID],
         });
+        if (!features.length && map.getLayer(PARCEL_LINE_LAYER_ID)) {
+          features = map.queryRenderedFeatures(e.point, {
+            layers: [PARCEL_LINE_LAYER_ID],
+          });
+        }
         if (!features.length) {
           setStatus({ key: "map.status.notFound" });
           const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource;
@@ -319,7 +346,11 @@ export default function Map({ onParcel }: MapProps) {
           return;
         }
 
-        const feature = features[0];
+        const feature = pickBestFeature(features);
+        if (!feature) {
+          setStatus({ key: "map.status.notFound" });
+          return;
+        }
         const geometry = feature.geometry as Geometry | null;
         if (!geometry) {
           setStatus({ key: "map.status.notFound" });
@@ -327,13 +358,17 @@ export default function Map({ onParcel }: MapProps) {
         }
 
         const props = feature.properties || {};
-        const rawId = props.parcel_id ?? props.id ?? feature.id;
+        const rawId = props.parcel_id;
         const parcelId = rawId != null ? String(rawId) : null;
         const areaM2 = props.area_m2 != null ? Number(props.area_m2) : null;
+        const parcelAreaM2 = props.parcel_area_m2 != null ? Number(props.parcel_area_m2) : null;
+        const footprintAreaM2 = props.footprint_area_m2 != null ? Number(props.footprint_area_m2) : null;
         const perimeterM = props.perimeter_m != null ? Number(props.perimeter_m) : null;
         const parcel: ParcelSummary = {
           parcel_id: parcelId,
           area_m2: Number.isFinite(areaM2) ? areaM2 : null,
+          parcel_area_m2: Number.isFinite(parcelAreaM2) ? parcelAreaM2 : null,
+          footprint_area_m2: Number.isFinite(footprintAreaM2) ? footprintAreaM2 : null,
           perimeter_m: Number.isFinite(perimeterM) ? perimeterM : null,
           geometry,
         };
