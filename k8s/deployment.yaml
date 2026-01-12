@@ -18,6 +18,12 @@ spec:
           env:
             - name: APP_ENV
               value: "prod"
+            - name: PARCEL_TILE_TABLE
+              value: "public.inferred_parcels_v1"
+            - name: PARCEL_IDENTIFY_TABLE
+              value: "public.inferred_parcels_v1"
+            - name: PARCEL_IDENTIFY_GEOM_COLUMN
+              value: "geom"
           envFrom:
             - secretRef:
                 name: oaktree-db-env
