@@ -120,7 +120,7 @@ function ensureSelectionLayers(map: maplibregl.Map) {
   }
 }
 
-function ensureParcelLayers(map: maplibregl.Map, visible: boolean) {
+function ensureParcelLayers(map: maplibregl.Map) {
   if (!map.getSource(PARCEL_SOURCE_ID)) {
     map.addSource(PARCEL_SOURCE_ID, {
       type: "vector",
@@ -130,15 +130,13 @@ function ensureParcelLayers(map: maplibregl.Map, visible: boolean) {
     });
   }
 
-  const visibility = visible ? "visible" : "none";
-
   if (!map.getLayer(PARCEL_FILL_LAYER_ID)) {
     map.addLayer({
       id: PARCEL_FILL_LAYER_ID,
       type: "fill",
       source: PARCEL_SOURCE_ID,
       "source-layer": "parcels",
-      layout: { visibility },
+      layout: { visibility: "visible" },
       paint: {
         "fill-color": "#2f7bff",
         "fill-opacity": 0.08,
@@ -152,23 +150,13 @@ function ensureParcelLayers(map: maplibregl.Map, visible: boolean) {
       type: "line",
       source: PARCEL_SOURCE_ID,
       "source-layer": "parcels",
-      layout: { visibility },
+      layout: { visibility: "visible" },
       paint: {
         "line-color": "#2f7bff",
         "line-width": 1.1,
         "line-opacity": 0.8,
       },
     });
-  }
-}
-
-function setParcelVisibility(map: maplibregl.Map, visible: boolean) {
-  const visibility = visible ? "visible" : "none";
-  if (map.getLayer(PARCEL_FILL_LAYER_ID)) {
-    map.setLayoutProperty(PARCEL_FILL_LAYER_ID, "visibility", visibility);
-  }
-  if (map.getLayer(PARCEL_LINE_LAYER_ID)) {
-    map.setLayoutProperty(PARCEL_LINE_LAYER_ID, "visibility", visibility);
   }
 }
 
@@ -208,7 +196,6 @@ export default function Map({ onParcel }: MapProps) {
   const [collateStatus, setCollateStatus] = useState<StatusMessage | null>(null);
   const [collating, setCollating] = useState(false);
   const [selectionMethod, setSelectionMethod] = useState<"feature" | null>(null);
-  const [showParcelOutlines, setShowParcelOutlines] = useState(true);
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
@@ -366,12 +353,12 @@ export default function Map({ onParcel }: MapProps) {
     let disposed = false;
 
     map.on("load", () => {
-      ensureParcelLayers(map, showParcelOutlines);
+      ensureParcelLayers(map);
       ensureSelectionLayers(map);
     });
 
     map.on("style.load", () => {
-      ensureParcelLayers(map, showParcelOutlines);
+      ensureParcelLayers(map);
       ensureSelectionLayers(map);
     });
 
@@ -502,12 +489,6 @@ export default function Map({ onParcel }: MapProps) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    setParcelVisibility(map, showParcelOutlines);
-  }, [showParcelOutlines]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
     const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     if (source) {
       source.setData(selectedParcelsGeojson);
@@ -606,16 +587,7 @@ export default function Map({ onParcel }: MapProps) {
           alignItems: "center",
         }}
       >
-        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input
-            type="checkbox"
-            checked={showParcelOutlines}
-            onChange={(event) => {
-              setShowParcelOutlines(event.target.checked);
-            }}
-          />
-          <span>{t("map.controls.suhailOutlines")}</span>
-        </label>
+        <span style={{ fontSize: "0.9rem", color: "#475467" }}>{t("map.controls.parcelOutlines")}</span>
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"

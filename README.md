@@ -56,8 +56,9 @@ Only `district` and `far_max` are required. When an estimate runs, the API first
 - Local check: `python -m app.ingest.suhail_parcels_tiles --zoom 15 --layer parcels-base --max-tiles 2`.
 - Parcel identify: set `PARCEL_IDENTIFY_TABLE=suhail_parcels_proxy` and `PARCEL_IDENTIFY_GEOM_COLUMN=geom` to route lookups through the new proxy view.
 
-### Derived parcels (default outlines + identify)
-Derived parcels are computed from building footprints (`public.derived_parcels_v1`) and are now the default parcel outlines and identify source. Suhail parcels remain available only as land-use/zoning overlays.
+### Inferred parcels (default outlines + identify)
+Inferred parcels are computed from building footprints (`public.inferred_parcels_v1`) and are now the default parcel outlines and identify source. Suhail parcels remain available only as land-use/zoning overlays.
+Set `PARCEL_TILE_TABLE=public.inferred_parcels_v1`, `PARCEL_IDENTIFY_TABLE=public.inferred_parcels_v1`, and `PARCEL_IDENTIFY_GEOM_COLUMN=geom` to align tiles + identify with inferred parcels in an environment where defaults are overridden.
 
 **Smoke check (local)**
 ```bash
@@ -65,6 +66,7 @@ curl -fsS "http://127.0.0.1:8000/v1/tiles/parcels/15/20634/14062.pbf" -o /tmp/pa
 ls -lh /tmp/parcels.pbf
 curl -fsS "http://127.0.0.1:8000/v1/geo/identify?lng=46.675&lat=24.713&tol_m=25"
 ```
+Confirm the tile output is non-empty when `public.inferred_parcels_v1` has rows and that the identify response includes a `parcel_id` from `public.inferred_parcels_v1`.
 
 ### Microsoft GlobalML Building Footprints (Saudi Arabia)
 - Download the Saudi Arabia `.csv.gz` files from the `dataset-links.csv` manifest in `microsoft/GlobalMLBuildingFootprints` (filter the CSV for `Saudi Arabia`).
