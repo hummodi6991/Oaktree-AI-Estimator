@@ -31,6 +31,7 @@ PARCEL_TILE_TABLE = _safe_identifier(
     "public.ms_buildings_raw",
 )
 PARCEL_SIMPLIFY_TOLERANCE_M = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
+PARCEL_TILE_MIN_AREA_M2 = getattr(settings, "PARCEL_TILE_MIN_AREA_M2", 40.0)
 
 
 _SUHAIL_PARCEL_TILE_SQL = text(
@@ -228,6 +229,7 @@ def _inferred_parcel_tile_sql(simplify: bool) -> text:
           FROM {INFERRED_PARCEL_TABLE} p, tile4326 t
           WHERE p.geom && t.geom4326
             AND ST_Intersects(p.geom, t.geom4326)
+            AND (:z > 16 OR p.area_m2 >= :min_area_m2)
         ),
         mvtgeom AS (
           SELECT
@@ -270,6 +272,8 @@ def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
         use_inferred = PARCEL_TILE_TABLE in _INFERRED_PARCEL_TABLES and _has_inferred_parcels(db)
         tile_sql = _parcel_tile_sql(simplify, use_inferred=use_inferred)
         params = {"z": z, "x": x, "y": y}
+        if use_inferred:
+            params["min_area_m2"] = PARCEL_TILE_MIN_AREA_M2
         if simplify:
             params["simplify_tol"] = PARCEL_SIMPLIFY_TOLERANCE_M
         tile_bytes = db.execute(tile_sql, params).scalar()

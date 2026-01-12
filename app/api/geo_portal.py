@@ -416,6 +416,21 @@ _INFER_PARCEL_FALLBACK_SQL = text(
     """
 )
 
+_INFERRED_PARCEL_LOOKUP_SQL = text(
+    """
+    SELECT
+      ST_AsGeoJSON(p.geom) AS geom,
+      p.area_m2,
+      p.perimeter_m,
+      p.method,
+      ST_Intersects(p.geom, ST_GeometryN(b.geom, :part_index)) AS intersects
+    FROM public.inferred_parcels_v1 p
+    JOIN public.ms_buildings_raw b ON b.id = :building_id
+    WHERE p.parcel_id = :parcel_id
+    LIMIT 1;
+    """
+)
+
 _MS_BUILDING_AREA_EXPR = (
     "ST_Area(ST_GeometryN(b.geom, i.part_index)::geography)"
     if _TARGET_SRID == 4326
@@ -1161,6 +1176,52 @@ def _infer_parcel_fallback(
     }
 
 
+def _lookup_inferred_parcel(
+    parcel_id: str, building_id: int, part_index: int, db: Session
+) -> dict | None:
+    if not _has_inferred_parcels(db):
+        return None
+    try:
+        row = (
+            db.execute(
+                _INFERRED_PARCEL_LOOKUP_SQL,
+                {
+                    "parcel_id": parcel_id,
+                    "building_id": building_id,
+                    "part_index": part_index,
+                },
+            )
+            .mappings()
+            .first()
+        )
+    except SQLAlchemyError as exc:
+        logger.warning("Inferred parcel lookup failed: %s", exc)
+        return None
+
+    if not row or not row.get("geom") or not row.get("intersects"):
+        return None
+
+    geom_raw = row.get("geom")
+    geometry: dict | None = None
+    if isinstance(geom_raw, str):
+        try:
+            geometry = json.loads(geom_raw)
+        except Exception:
+            geometry = None
+    elif isinstance(geom_raw, dict):
+        geometry = geom_raw
+
+    if not geometry:
+        return None
+
+    return {
+        "geom": geometry,
+        "area_m2": float(row.get("area_m2") or 0.0),
+        "perimeter_m": float(row.get("perimeter_m") or 0.0),
+        "method": row.get("method"),
+    }
+
+
 @router.get(
     "/infer-parcel",
     response_model=InferParcelResponse,
@@ -1181,6 +1242,17 @@ def infer_parcel(
     k_val = int(_clamp_param(float(k) if k is not None else None, 25.0, 5.0, 80.0))
 
     parcel_id = f"ms:{building_id}:{part_index}"
+
+    inferred = _lookup_inferred_parcel(parcel_id, building_id, part_index, db)
+    if inferred:
+        return InferParcelResponse(
+            found=True,
+            parcel_id=parcel_id,
+            method=inferred.get("method") or "inferred_parcels_v1",
+            area_m2=inferred.get("area_m2"),
+            perimeter_m=inferred.get("perimeter_m"),
+            geom=inferred.get("geom"),
+        )
 
     result = None
     debug = None
