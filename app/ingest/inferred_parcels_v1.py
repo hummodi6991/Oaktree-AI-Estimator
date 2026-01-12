@@ -481,20 +481,20 @@ def _iter_subblocks(db, block_geom: bytes, subblock_size_m: int) -> list[dict]:
                     ST_MakeEnvelope(
                       x::double precision,
                       y::double precision,
-                      (x + :cell_size::numeric)::double precision,
-                      (y + :cell_size::numeric)::double precision,
+                      (x + CAST(:cell_size AS numeric))::double precision,
+                      (y + CAST(:cell_size AS numeric))::double precision,
                       3857
                     ) AS cell
                   FROM bounds,
                   generate_series(
-                    floor(xmin / :cell_size::numeric) * :cell_size::numeric,
+                    floor(xmin / CAST(:cell_size AS numeric)) * CAST(:cell_size AS numeric),
                     xmax,
-                    :cell_size::numeric
+                    CAST(:cell_size AS numeric)
                   ) AS x,
                   generate_series(
-                    floor(ymin / :cell_size::numeric) * :cell_size::numeric,
+                    floor(ymin / CAST(:cell_size AS numeric)) * CAST(:cell_size AS numeric),
                     ymax,
-                    :cell_size::numeric
+                    CAST(:cell_size AS numeric)
                   ) AS y
                 ),
                 clipped AS (
