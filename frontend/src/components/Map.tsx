@@ -455,6 +455,9 @@ export default function Map({ onParcel }: MapProps) {
             if (inferRequestRef.current !== inferRequestId) return;
             if (lastSelectedIdRef.current !== parcelId) return;
             if (!inferred?.found || !inferred.geom) return;
+            if (inferred.method === "inferred_parcels_v1") {
+              return;
+            }
             const inferredGeometry = inferred.geom as Geometry;
             const inferredArea = inferred.area_m2 ?? parcel.area_m2 ?? null;
             const inferredPerimeter = inferred.perimeter_m ?? parcel.perimeter_m ?? null;
