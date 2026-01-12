@@ -17,6 +17,8 @@ DEFAULT_ROAD_BUF_M = 9.0
 DEFAULT_MIN_BLOCK_AREA_M2 = 5000.0
 DEFAULT_MAX_BUILDINGS_PER_BLOCK = 4000
 DEFAULT_SEED_PART_INDEX = 1
+DEFAULT_SUBBLOCK_SIZE_M = 500
+DEFAULT_SUBBLOCK_MAX_BUILDINGS = 1500
 MIN_ROAD_COUNT = 10000
 
 logger = logging.getLogger(__name__)
@@ -187,6 +189,34 @@ def _ensure_progress_tables(db) -> None:
             """
         )
     )
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.inferred_parcels_v1_skipped_blocks (
+              run_id text,
+              block_id text,
+              seed_count int,
+              reason text,
+              geom geometry(Polygon,4326),
+              created_at timestamptz default now(),
+              PRIMARY KEY (run_id, block_id)
+            );
+            """
+        )
+    )
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.inferred_parcels_v1_done_subblocks (
+              run_id text,
+              parent_block_id text,
+              sub_idx int,
+              done_at timestamptz default now(),
+              PRIMARY KEY (run_id, parent_block_id, sub_idx)
+            );
+            """
+        )
+    )
 
 
 def _upsert_progress(db, run_id: str, args, bbox_text: str) -> None:
@@ -242,6 +272,336 @@ def _touch_progress(db, run_id: str) -> None:
     )
 
 
+def _ensure_tmp_seeds(db) -> None:
+    db.execute(
+        text(
+            """
+            CREATE TEMP TABLE tmp_seeds (
+                building_id bigint,
+                part_index int,
+                seed geometry(Point,4326),
+                footprint_area_m2 double precision
+            );
+            """
+        )
+    )
+    db.execute(text("CREATE INDEX tmp_seeds_seed_gix ON tmp_seeds USING GIST (seed);"))
+
+
+def _populate_seeds(db, block_geom: bytes, seed_part_index: int) -> int:
+    db.execute(text("TRUNCATE tmp_seeds"))
+    db.execute(
+        text(
+            """
+            INSERT INTO tmp_seeds (building_id, part_index, seed, footprint_area_m2)
+            SELECT
+              b.id AS building_id,
+              (d).path[1] AS part_index,
+              ST_PointOnSurface((d).geom) AS seed,
+              ST_Area((d).geom::geography) AS footprint_area_m2
+            FROM public.ms_buildings_raw b
+            CROSS JOIN LATERAL ST_Dump(b.geom) AS d
+            WHERE b.geom && ST_GeomFromEWKB(:block_geom)
+              AND ST_Intersects((d).geom, ST_GeomFromEWKB(:block_geom))
+              AND (d).path[1] = :seed_part_index
+            """
+        ),
+        {"block_geom": block_geom, "seed_part_index": seed_part_index},
+    )
+    return db.execute(text("SELECT COUNT(*) FROM tmp_seeds")).scalar() or 0
+
+
+def _upsert_done_block(db, run_id: str, block_id: str) -> None:
+    db.execute(
+        text(
+            """
+            INSERT INTO public.inferred_parcels_v1_done_blocks (run_id, block_id)
+            VALUES (:run_id, :block_id)
+            ON CONFLICT DO NOTHING;
+            """
+        ),
+        {"run_id": run_id, "block_id": block_id},
+    )
+
+
+def _upsert_done_subblock(db, run_id: str, parent_block_id: str, sub_idx: int) -> None:
+    db.execute(
+        text(
+            """
+            INSERT INTO public.inferred_parcels_v1_done_subblocks (run_id, parent_block_id, sub_idx)
+            VALUES (:run_id, :parent_block_id, :sub_idx)
+            ON CONFLICT DO NOTHING;
+            """
+        ),
+        {"run_id": run_id, "parent_block_id": parent_block_id, "sub_idx": sub_idx},
+    )
+
+
+def _record_skipped_block(
+    db, run_id: str, block_id: str, seed_count: int, block_geom: bytes
+) -> None:
+    db.execute(
+        text(
+            """
+            INSERT INTO public.inferred_parcels_v1_skipped_blocks (
+              run_id,
+              block_id,
+              seed_count,
+              reason,
+              geom
+            )
+            VALUES (
+              :run_id,
+              :block_id,
+              :seed_count,
+              'too_many_buildings',
+              ST_GeomFromEWKB(:block_geom)
+            )
+            ON CONFLICT (run_id, block_id) DO UPDATE SET
+              seed_count = EXCLUDED.seed_count,
+              created_at = now();
+            """
+        ),
+        {
+            "run_id": run_id,
+            "block_id": block_id,
+            "seed_count": seed_count,
+            "block_geom": block_geom,
+        },
+    )
+
+
+def _insert_parcels_from_seeds(db, block_geom: bytes, block_id: str) -> None:
+    db.execute(
+        text(
+            """
+            WITH block AS (
+              SELECT ST_Transform(ST_GeomFromEWKB(:block_geom), 3857) AS geom3857,
+                     :block_id AS block_id
+            ),
+            seeds AS (
+              SELECT building_id,
+                     part_index,
+                     footprint_area_m2,
+                     ST_Transform(seed, 3857) AS seed3857
+              FROM tmp_seeds
+            ),
+            env AS (
+              SELECT ST_Envelope((SELECT geom3857 FROM block)) AS env
+            ),
+            v AS (
+              SELECT (ST_Dump(ST_VoronoiPolygons(ST_Collect(seed3857), 0.0, (SELECT env FROM env)))).geom AS cell
+              FROM seeds
+            ),
+            cells AS (
+              SELECT
+                v.cell,
+                s.building_id,
+                s.part_index,
+                s.footprint_area_m2
+              FROM v
+              JOIN seeds s ON ST_Contains(v.cell, s.seed3857)
+            ),
+            parcels AS (
+              SELECT
+                c.building_id,
+                c.part_index,
+                c.footprint_area_m2,
+                ST_MakeValid(ST_Intersection(c.cell, b.geom3857)) AS geom3857
+              FROM cells c, block b
+            ),
+            final AS (
+              SELECT
+                concat('ms:', building_id, ':', part_index) AS parcel_id,
+                building_id,
+                part_index,
+                -- Enforce MultiPolygon output; PostGIS rejects Polygon into MultiPolygon column.
+                ST_Multi(ST_Transform(geom3857, 4326)) AS geom,
+                footprint_area_m2,
+                'road_block_voronoi_v1'::text AS method,
+                :block_id AS block_id
+              FROM parcels
+              WHERE geom3857 IS NOT NULL AND NOT ST_IsEmpty(geom3857)
+            )
+            INSERT INTO public.inferred_parcels_v1 (
+              parcel_id,
+              building_id,
+              part_index,
+              geom,
+              area_m2,
+              perimeter_m,
+              footprint_area_m2,
+              method,
+              block_id
+            )
+            SELECT
+              parcel_id,
+              building_id,
+              part_index,
+              geom,
+              ST_Area(geom::geography) AS area_m2,
+              ST_Perimeter(geom::geography) AS perimeter_m,
+              footprint_area_m2,
+              method,
+              block_id
+            FROM final
+            ON CONFLICT(parcel_id) DO UPDATE SET
+              geom = EXCLUDED.geom,
+              area_m2 = EXCLUDED.area_m2,
+              perimeter_m = EXCLUDED.perimeter_m,
+              footprint_area_m2 = EXCLUDED.footprint_area_m2,
+              method = EXCLUDED.method,
+              block_id = EXCLUDED.block_id,
+              created_at = now();
+            """
+        ),
+        {"block_geom": block_geom, "block_id": block_id},
+    )
+
+
+def _iter_subblocks(db, block_geom: bytes, subblock_size_m: int) -> list[dict]:
+    return (
+        db.execute(
+            text(
+                """
+                WITH block AS (
+                  SELECT ST_Transform(ST_GeomFromEWKB(:block_geom), 3857) AS geom
+                ),
+                bounds AS (
+                  SELECT
+                    ST_XMin(geom) AS xmin,
+                    ST_YMin(geom) AS ymin,
+                    ST_XMax(geom) AS xmax,
+                    ST_YMax(geom) AS ymax
+                  FROM block
+                ),
+                grid AS (
+                  SELECT
+                    row_number() OVER () - 1 AS sub_idx,
+                    ST_MakeEnvelope(x, y, x + :cell_size, y + :cell_size, 3857) AS cell
+                  FROM bounds,
+                  generate_series(floor(xmin / :cell_size) * :cell_size, xmax, :cell_size) AS x,
+                  generate_series(floor(ymin / :cell_size) * :cell_size, ymax, :cell_size) AS y
+                ),
+                clipped AS (
+                  SELECT sub_idx, ST_Intersection(cell, geom) AS geom
+                  FROM grid, block
+                  WHERE ST_Intersects(cell, geom)
+                )
+                SELECT sub_idx, ST_AsEWKB(geom) AS geom
+                FROM clipped
+                WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom)
+                ORDER BY sub_idx
+                """
+            ),
+            {"block_geom": block_geom, "cell_size": subblock_size_m},
+        )
+        .mappings()
+        .all()
+    )
+
+
+def _process_skipped_blocks(db, args, run_id: str) -> None:
+    _ensure_tmp_seeds(db)
+    skipped_blocks = (
+        db.execute(
+            text(
+                """
+                SELECT block_id, ST_AsEWKB(geom) AS geom, seed_count
+                FROM public.inferred_parcels_v1_skipped_blocks
+                WHERE run_id = :run_id
+                  AND reason = 'too_many_buildings'
+                ORDER BY block_id
+                """
+            ),
+            {"run_id": run_id},
+        )
+        .mappings()
+        .all()
+    )
+    if not skipped_blocks:
+        logger.info("No skipped blocks to process for run %s", run_id)
+        return
+
+    total_subblocks = 0
+    processed_subblocks = 0
+    for block in skipped_blocks:
+        block_id = block["block_id"]
+        block_geom = block["geom"]
+        done_subblocks = {
+            row["sub_idx"]
+            for row in db.execute(
+                text(
+                    """
+                    SELECT sub_idx
+                    FROM public.inferred_parcels_v1_done_subblocks
+                    WHERE run_id = :run_id AND parent_block_id = :block_id
+                    """
+                ),
+                {"run_id": run_id, "block_id": block_id},
+            )
+            .mappings()
+            .all()
+        }
+        subblocks = _iter_subblocks(db, block_geom, args.subblock_size_m)
+        total_subblocks += len(subblocks)
+        logger.info(
+            "Skipped block %s: %d sub-blocks (done=%d)",
+            block_id,
+            len(subblocks),
+            len(done_subblocks),
+        )
+        for subblock in subblocks:
+            sub_idx = subblock["sub_idx"]
+            if sub_idx in done_subblocks:
+                continue
+            sub_geom = subblock["geom"]
+            seed_count = _populate_seeds(db, sub_geom, args.seed_part_index)
+            if seed_count == 0:
+                logger.debug("Skipping sub-block %s:%s: no buildings", block_id, sub_idx)
+                _upsert_done_subblock(db, run_id, block_id, sub_idx)
+                processed_subblocks += 1
+            elif seed_count > args.subblock_max_buildings:
+                logger.warning(
+                    "Skipping sub-block %s:%s: %s buildings exceeds limit %s",
+                    block_id,
+                    sub_idx,
+                    seed_count,
+                    args.subblock_max_buildings,
+                )
+                _upsert_done_subblock(db, run_id, block_id, sub_idx)
+                processed_subblocks += 1
+            else:
+                _insert_parcels_from_seeds(db, sub_geom, block_id)
+                _upsert_done_subblock(db, run_id, block_id, sub_idx)
+                processed_subblocks += 1
+
+            if processed_subblocks % args.commit_every == 0:
+                _touch_progress(db, run_id)
+                db.commit()
+                percent = (processed_subblocks / max(total_subblocks, 1)) * 100.0
+                logger.info(
+                    "Sub-block progress: %d/%d (%.1f%%)",
+                    processed_subblocks,
+                    total_subblocks,
+                    percent,
+                )
+        db.execute(
+            text(
+                """
+                UPDATE public.inferred_parcels_v1_skipped_blocks
+                SET reason = 'processed'
+                WHERE run_id = :run_id AND block_id = :block_id
+                """
+            ),
+            {"run_id": run_id, "block_id": block_id},
+        )
+
+    _touch_progress(db, run_id)
+    db.commit()
+    logger.info("Processed %d sub-blocks across %d skipped blocks", processed_subblocks, len(skipped_blocks))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build inferred_parcels_v1 from roads + buildings")
     parser.add_argument(
@@ -258,6 +618,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-block-area-m2", type=float, default=DEFAULT_MIN_BLOCK_AREA_M2)
     parser.add_argument("--max-buildings-per-block", type=int, default=DEFAULT_MAX_BUILDINGS_PER_BLOCK)
     parser.add_argument("--seed-part-index", type=int, default=DEFAULT_SEED_PART_INDEX)
+    parser.add_argument("--process-skipped", action="store_true")
+    parser.add_argument("--subblock-size-m", type=int, default=DEFAULT_SUBBLOCK_SIZE_M)
+    parser.add_argument(
+        "--subblock-max-buildings",
+        type=int,
+        default=DEFAULT_SUBBLOCK_MAX_BUILDINGS,
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -269,6 +636,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.commit_every <= 0:
         logger.error("--commit-every must be a positive integer")
+        return 2
+    if args.subblock_size_m <= 0:
+        logger.error("--subblock-size-m must be a positive integer")
+        return 2
+    if args.subblock_max_buildings <= 0:
+        logger.error("--subblock-max-buildings must be a positive integer")
         return 2
     if args.reset_run and args.resume:
         logger.error("--reset-run and --resume are mutually exclusive")
@@ -283,19 +656,20 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     with SessionLocal() as db:
-        try:
-            roads_table, roads_count = _resolve_roads_table(db)
-            highway_expr = _resolve_highway_expr(db, roads_table, "r")
-            roads_geom_col = _resolve_roads_geom_column(db, roads_table)
-        except RuntimeError as exc:
-            logger.error("%s", exc)
-            return 1
-        logger.info(
-            "Using %s (%s rows) for road mask with geometry column %s",
-            roads_table,
-            roads_count,
-            roads_geom_col,
-        )
+        if not args.process_skipped:
+            try:
+                roads_table, roads_count = _resolve_roads_table(db)
+                highway_expr = _resolve_highway_expr(db, roads_table, "r")
+                roads_geom_col = _resolve_roads_geom_column(db, roads_table)
+            except RuntimeError as exc:
+                logger.error("%s", exc)
+                return 1
+            logger.info(
+                "Using %s (%s rows) for road mask with geometry column %s",
+                roads_table,
+                roads_count,
+                roads_geom_col,
+            )
 
         _ensure_progress_tables(db)
         if args.reset_run:
@@ -305,15 +679,31 @@ def main(argv: list[str] | None = None) -> int:
                 {"run_id": run_id},
             )
             db.execute(
+                text("DELETE FROM public.inferred_parcels_v1_done_subblocks WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+            db.execute(
+                text("DELETE FROM public.inferred_parcels_v1_skipped_blocks WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+            db.execute(
                 text("DELETE FROM public.inferred_parcels_v1_progress WHERE run_id = :run_id"),
                 {"run_id": run_id},
             )
             db.execute(text("TRUNCATE TABLE public.inferred_parcels_v1"))
             db.commit()
-        elif not args.resume:
+        elif not args.resume and not args.process_skipped:
             logger.info("Clearing prior progress for run %s", run_id)
             db.execute(
                 text("DELETE FROM public.inferred_parcels_v1_done_blocks WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+            db.execute(
+                text("DELETE FROM public.inferred_parcels_v1_done_subblocks WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+            db.execute(
+                text("DELETE FROM public.inferred_parcels_v1_skipped_blocks WHERE run_id = :run_id"),
                 {"run_id": run_id},
             )
             db.execute(
@@ -324,6 +714,10 @@ def main(argv: list[str] | None = None) -> int:
 
         _upsert_progress(db, run_id, args, args.bbox)
         db.commit()
+
+        if args.process_skipped:
+            _process_skipped_blocks(db, args, run_id)
+            return 0
 
         db.execute(text("DROP TABLE IF EXISTS tmp_blocks"))
         db.execute(text("DROP TABLE IF EXISTS tmp_blocks_with_buildings"))
@@ -338,19 +732,7 @@ def main(argv: list[str] | None = None) -> int:
                 """
             )
         )
-        db.execute(
-            text(
-                """
-                CREATE TEMP TABLE tmp_seeds (
-                    building_id bigint,
-                    part_index int,
-                    seed geometry(Point,4326),
-                    footprint_area_m2 double precision
-                );
-                """
-            )
-        )
-        db.execute(text("CREATE INDEX tmp_seeds_seed_gix ON tmp_seeds USING GIST (seed);"))
+        _ensure_tmp_seeds(db)
 
         xmin, ymin, xmax, ymax = bbox
         db.execute(
@@ -484,30 +866,14 @@ def main(argv: list[str] | None = None) -> int:
             block_geom = block["geom"]
             logger.info("Block %d/%d (%s)", idx, len(blocks), block_id)
 
-            db.execute(text("TRUNCATE tmp_seeds"))
-            db.execute(
-                text(
-                    """
-                    INSERT INTO tmp_seeds (building_id, part_index, seed, footprint_area_m2)
-                    SELECT
-                      b.id AS building_id,
-                      (d).path[1] AS part_index,
-                      ST_PointOnSurface((d).geom) AS seed,
-                      ST_Area((d).geom::geography) AS footprint_area_m2
-                    FROM public.ms_buildings_raw b
-                    CROSS JOIN LATERAL ST_Dump(b.geom) AS d
-                    WHERE b.geom && ST_GeomFromEWKB(:block_geom)
-                      AND ST_Intersects((d).geom, ST_GeomFromEWKB(:block_geom))
-                      AND (d).path[1] = :seed_part_index
-                    """
-                ),
-                {"block_geom": block_geom, "seed_part_index": args.seed_part_index},
-            )
-
-            seed_count = db.execute(text("SELECT COUNT(*) FROM tmp_seeds")).scalar() or 0
+            seed_count = _populate_seeds(db, block_geom, args.seed_part_index)
             if seed_count == 0:
                 logger.debug("Skipping block %s: no buildings", block_id)
-                db.commit()
+                _upsert_done_block(db, run_id, block_id)
+                processed_blocks += 1
+                if processed_blocks % args.commit_every == 0 or processed_blocks == len(blocks):
+                    _touch_progress(db, run_id)
+                    db.commit()
                 continue
             if seed_count > args.max_buildings_per_block:
                 logger.warning(
@@ -516,104 +882,16 @@ def main(argv: list[str] | None = None) -> int:
                     seed_count,
                     args.max_buildings_per_block,
                 )
-                db.commit()
+                _record_skipped_block(db, run_id, block_id, seed_count, block_geom)
+                _upsert_done_block(db, run_id, block_id)
+                processed_blocks += 1
+                if processed_blocks % args.commit_every == 0 or processed_blocks == len(blocks):
+                    _touch_progress(db, run_id)
+                    db.commit()
                 continue
 
-            db.execute(
-                text(
-                    """
-                    WITH block AS (
-                      SELECT ST_Transform(ST_GeomFromEWKB(:block_geom), 3857) AS geom3857,
-                             :block_id AS block_id
-                    ),
-                    seeds AS (
-                      SELECT building_id,
-                             part_index,
-                             footprint_area_m2,
-                             ST_Transform(seed, 3857) AS seed3857
-                      FROM tmp_seeds
-                    ),
-                    env AS (
-                      SELECT ST_Envelope((SELECT geom3857 FROM block)) AS env
-                    ),
-                    v AS (
-                      SELECT (ST_Dump(ST_VoronoiPolygons(ST_Collect(seed3857), 0.0, (SELECT env FROM env)))).geom AS cell
-                      FROM seeds
-                    ),
-                    cells AS (
-                      SELECT
-                        v.cell,
-                        s.building_id,
-                        s.part_index,
-                        s.footprint_area_m2
-                      FROM v
-                      JOIN seeds s ON ST_Contains(v.cell, s.seed3857)
-                    ),
-                    parcels AS (
-                      SELECT
-                        c.building_id,
-                        c.part_index,
-                        c.footprint_area_m2,
-                        ST_MakeValid(ST_Intersection(c.cell, b.geom3857)) AS geom3857
-                      FROM cells c, block b
-                    ),
-                    final AS (
-                      SELECT
-                        concat('ms:', building_id, ':', part_index) AS parcel_id,
-                        building_id,
-                        part_index,
-                        -- Enforce MultiPolygon output; PostGIS rejects Polygon into MultiPolygon column.
-                        ST_Multi(ST_Transform(geom3857, 4326)) AS geom,
-                        footprint_area_m2,
-                        'road_block_voronoi_v1'::text AS method,
-                        :block_id AS block_id
-                      FROM parcels
-                      WHERE geom3857 IS NOT NULL AND NOT ST_IsEmpty(geom3857)
-                    )
-                    INSERT INTO public.inferred_parcels_v1 (
-                      parcel_id,
-                      building_id,
-                      part_index,
-                      geom,
-                      area_m2,
-                      perimeter_m,
-                      footprint_area_m2,
-                      method,
-                      block_id
-                    )
-                    SELECT
-                      parcel_id,
-                      building_id,
-                      part_index,
-                      geom,
-                      ST_Area(geom::geography) AS area_m2,
-                      ST_Perimeter(geom::geography) AS perimeter_m,
-                      footprint_area_m2,
-                      method,
-                      block_id
-                    FROM final
-                    ON CONFLICT(parcel_id) DO UPDATE SET
-                      geom = EXCLUDED.geom,
-                      area_m2 = EXCLUDED.area_m2,
-                      perimeter_m = EXCLUDED.perimeter_m,
-                      footprint_area_m2 = EXCLUDED.footprint_area_m2,
-                      method = EXCLUDED.method,
-                      block_id = EXCLUDED.block_id,
-                      created_at = now();
-                    """
-                ),
-                {"block_geom": block_geom, "block_id": block_id},
-            )
-            db.execute(
-                text(
-                    """
-                    INSERT INTO public.inferred_parcels_v1_done_blocks (run_id, block_id)
-                    VALUES (:run_id, :block_id)
-                    ON CONFLICT DO NOTHING;
-                    """
-                ),
-                {"run_id": run_id, "block_id": block_id},
-            )
+            _insert_parcels_from_seeds(db, block_geom, block_id)
+            _upsert_done_block(db, run_id, block_id)
             processed_blocks += 1
             if processed_blocks % args.commit_every == 0 or processed_blocks == len(blocks):
                 _touch_progress(db, run_id)
