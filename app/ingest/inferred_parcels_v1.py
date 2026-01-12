@@ -469,19 +469,33 @@ def _iter_subblocks(db, block_geom: bytes, subblock_size_m: int) -> list[dict]:
                 ),
                 bounds AS (
                   SELECT
-                    ST_XMin(geom) AS xmin,
-                    ST_YMin(geom) AS ymin,
-                    ST_XMax(geom) AS xmax,
-                    ST_YMax(geom) AS ymax
+                    ST_XMin(geom)::numeric AS xmin,
+                    ST_YMin(geom)::numeric AS ymin,
+                    ST_XMax(geom)::numeric AS xmax,
+                    ST_YMax(geom)::numeric AS ymax
                   FROM block
                 ),
                 grid AS (
                   SELECT
                     row_number() OVER () - 1 AS sub_idx,
-                    ST_MakeEnvelope(x, y, x + :cell_size, y + :cell_size, 3857) AS cell
+                    ST_MakeEnvelope(
+                      x::double precision,
+                      y::double precision,
+                      (x + :cell_size::numeric)::double precision,
+                      (y + :cell_size::numeric)::double precision,
+                      3857
+                    ) AS cell
                   FROM bounds,
-                  generate_series(floor(xmin / :cell_size) * :cell_size, xmax, :cell_size) AS x,
-                  generate_series(floor(ymin / :cell_size) * :cell_size, ymax, :cell_size) AS y
+                  generate_series(
+                    floor(xmin / :cell_size::numeric) * :cell_size::numeric,
+                    xmax,
+                    :cell_size::numeric
+                  ) AS x,
+                  generate_series(
+                    floor(ymin / :cell_size::numeric) * :cell_size::numeric,
+                    ymax,
+                    :cell_size::numeric
+                  ) AS y
                 ),
                 clipped AS (
                   SELECT sub_idx, ST_Intersection(cell, geom) AS geom
