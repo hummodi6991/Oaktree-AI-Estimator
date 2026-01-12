@@ -29,7 +29,10 @@ class DummySession:
         return DummyResult(row)
 
 
-def test_infer_parcel_clamps_params() -> None:
+def test_infer_parcel_clamps_params(monkeypatch) -> None:
+    import app.api.geo_portal as geo_portal
+
+    monkeypatch.setattr(geo_portal, "_has_inferred_parcels", lambda _db: False)
     dummy = DummySession(
         [
             "public.planet_osm_line",
