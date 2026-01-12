@@ -32,6 +32,7 @@ class DummySession:
 def test_infer_parcel_clamps_params(monkeypatch) -> None:
     import app.api.geo_portal as geo_portal
 
+    # Disable inferred parcels lookup for this test
     monkeypatch.setattr(geo_portal, "_has_inferred_parcels", lambda _db: False)
     dummy = DummySession(
         [
