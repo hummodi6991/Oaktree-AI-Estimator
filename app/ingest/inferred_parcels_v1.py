@@ -123,7 +123,10 @@ def _resolve_roads_geom_column(db, table: str) -> str:
 
 
 def _iter_blocks(db, max_blocks: int | None) -> Iterable[dict]:
-    sql = "SELECT block_id, ST_AsEWKB(geom) AS geom FROM tmp_blocks ORDER BY block_id"
+    sql = (
+        "SELECT block_id, ST_AsEWKB(geom) AS geom "
+        "FROM tmp_blocks_with_buildings ORDER BY block_id"
+    )
     params = {}
     if max_blocks is not None:
         sql += " LIMIT :max_blocks"
@@ -175,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
             db.commit()
 
         db.execute(text("DROP TABLE IF EXISTS tmp_blocks"))
+        db.execute(text("DROP TABLE IF EXISTS tmp_blocks_with_buildings"))
         db.execute(text("DROP TABLE IF EXISTS tmp_seeds"))
         db.execute(
             text(
@@ -254,6 +258,33 @@ def main(argv: list[str] | None = None) -> int:
         )
         db.commit()
 
+        db.execute(
+            text(
+                """
+                CREATE TEMP TABLE tmp_blocks_with_buildings AS
+                SELECT b.block_id, b.geom
+                FROM tmp_blocks b
+                WHERE EXISTS (
+                  SELECT 1
+                  FROM public.ms_buildings_raw m
+                  WHERE m.geom && b.geom
+                    AND ST_Intersects(m.geom, b.geom)
+                );
+                """
+            )
+        )
+        db.execute(
+            text("CREATE INDEX tmp_blocks_with_buildings_geom_gix ON tmp_blocks_with_buildings USING GIST (geom);")
+        )
+        db.commit()
+
+        total_blocks = db.execute(text("SELECT COUNT(*) FROM tmp_blocks")).scalar() or 0
+        blocks_with_buildings = (
+            db.execute(text("SELECT COUNT(*) FROM tmp_blocks_with_buildings")).scalar() or 0
+        )
+        logger.info("Total blocks: %d", total_blocks)
+        logger.info("Blocks with buildings: %d", blocks_with_buildings)
+
         blocks = list(_iter_blocks(db, args.max_blocks))
         if blocks:
             area_row = (
@@ -271,11 +302,14 @@ def main(argv: list[str] | None = None) -> int:
                 area_row.get("min_area") or 0.0,
                 area_row.get("max_area") or 0.0,
             )
-        if len(blocks) <= 1:
+        if total_blocks <= 1:
             logger.error(
                 "Road mask failed to partition bbox; check OSM import counts and highway expr"
             )
             return 1
+        if blocks_with_buildings == 0:
+            logger.warning("No blocks with buildings to process")
+            return 0
         logger.info("Processing %d blocks", len(blocks))
 
         for idx, block in enumerate(blocks, start=1):
@@ -305,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
 
             seed_count = db.execute(text("SELECT COUNT(*) FROM tmp_seeds")).scalar() or 0
             if seed_count == 0:
-                logger.info("Skipping block %s: no buildings", block_id)
+                logger.debug("Skipping block %s: no buildings", block_id)
                 db.commit()
                 continue
             if seed_count > args.max_buildings_per_block:
