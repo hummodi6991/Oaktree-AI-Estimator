@@ -10,14 +10,14 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     env:
-      PGHOST: ${{ secrets.PGHOST }}
-      PGPORT: ${{ secrets.PGPORT }}
-      PGDATABASE: ${{ secrets.PGDATABASE }}
-      PGUSER: ${{ secrets.PGUSER }}
-      PGPASSWORD: ${{ secrets.PGPASSWORD }}
+      PGHOST: ${{ secrets.POSTGRES_HOST }}
+      PGPORT: ${{ secrets.POSTGRES_PORT }}
+      PGDATABASE: ${{ secrets.POSTGRES_DB }}
+      PGUSER: ${{ secrets.POSTGRES_USER }}
+      PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       PGSSLMODE: require
       DATABASE_URL: >-
-        postgresql+psycopg://${{ secrets.PGUSER }}:${{ secrets.PGPASSWORD }}@${{ secrets.PGHOST }}:${{ secrets.PGPORT }}/${{ secrets.PGDATABASE }}
+        postgresql+psycopg://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@${{ secrets.POSTGRES_HOST }}:${{ secrets.POSTGRES_PORT }}/${{ secrets.POSTGRES_DB }}?sslmode=require
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
