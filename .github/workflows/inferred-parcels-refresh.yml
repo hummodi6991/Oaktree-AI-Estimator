@@ -17,6 +17,11 @@ on:
         required: false
         type: boolean
         default: false
+      process_skipped:
+        description: "Process skipped mega-blocks after main pass"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -83,7 +88,43 @@ jobs:
                   )
               )
               db.execute(
+                  text(
+                      """
+                      CREATE TABLE IF NOT EXISTS public.inferred_parcels_v1_skipped_blocks (
+                        run_id text,
+                        block_id text,
+                        seed_count int,
+                        reason text,
+                        geom geometry(Polygon,4326),
+                        created_at timestamptz default now(),
+                        PRIMARY KEY (run_id, block_id)
+                      );
+                      """
+                  )
+              )
+              db.execute(
+                  text(
+                      """
+                      CREATE TABLE IF NOT EXISTS public.inferred_parcels_v1_done_subblocks (
+                        run_id text,
+                        parent_block_id text,
+                        sub_idx int,
+                        done_at timestamptz default now(),
+                        PRIMARY KEY (run_id, parent_block_id, sub_idx)
+                      );
+                      """
+                  )
+              )
+              db.execute(
                   text("DELETE FROM public.inferred_parcels_v1_done_blocks WHERE run_id = :run_id"),
+                  {"run_id": run_id},
+              )
+              db.execute(
+                  text("DELETE FROM public.inferred_parcels_v1_done_subblocks WHERE run_id = :run_id"),
+                  {"run_id": run_id},
+              )
+              db.execute(
+                  text("DELETE FROM public.inferred_parcels_v1_skipped_blocks WHERE run_id = :run_id"),
                   {"run_id": run_id},
               )
               db.execute(
@@ -97,6 +138,10 @@ jobs:
       - name: Build inferred parcels
         run: |
           python -m app.ingest.inferred_parcels_v1 --resume --run-id "${{ inputs.run_id }}" --bbox "46.20,24.20,47.30,25.10"
+      - name: Process skipped mega-blocks
+        if: ${{ inputs.process_skipped }}
+        run: |
+          python -m app.ingest.inferred_parcels_v1 --process-skipped --resume --run-id "${{ inputs.run_id }}" --subblock-size-m 500 --subblock-max-buildings 1500
       - name: Report inferred parcel stats
         run: |
           python - <<'PY'
