@@ -2,6 +2,21 @@ name: Refresh inferred parcels v1
 
 on:
   workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run identifier for resume/reset tracking"
+        required: false
+        default: "riyadh_v1"
+      reset_run:
+        description: "Reset run progress before processing"
+        required: false
+        type: boolean
+        default: false
+      truncate_table:
+        description: "Truncate inferred_parcels_v1 table when resetting"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -28,9 +43,60 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+      - name: Reset run progress
+        if: ${{ inputs.reset_run }}
+        run: |
+          python - <<'PY'
+          from sqlalchemy import text
+          from app.db.session import SessionLocal
+
+          run_id = "${{ inputs.run_id }}"
+          truncate = "${{ inputs.truncate_table }}".lower() == "true"
+
+          with SessionLocal() as db:
+              db.execute(
+                  text(
+                      """
+                      CREATE TABLE IF NOT EXISTS public.inferred_parcels_v1_progress (
+                        run_id text PRIMARY KEY,
+                        bbox text,
+                        road_buf_m double precision,
+                        min_block_area_m2 double precision,
+                        seed_part_index int,
+                        max_buildings_per_block int,
+                        started_at timestamptz default now(),
+                        updated_at timestamptz default now()
+                      );
+                      """
+                  )
+              )
+              db.execute(
+                  text(
+                      """
+                      CREATE TABLE IF NOT EXISTS public.inferred_parcels_v1_done_blocks (
+                        run_id text,
+                        block_id text,
+                        done_at timestamptz default now(),
+                        PRIMARY KEY (run_id, block_id)
+                      );
+                      """
+                  )
+              )
+              db.execute(
+                  text("DELETE FROM public.inferred_parcels_v1_done_blocks WHERE run_id = :run_id"),
+                  {"run_id": run_id},
+              )
+              db.execute(
+                  text("DELETE FROM public.inferred_parcels_v1_progress WHERE run_id = :run_id"),
+                  {"run_id": run_id},
+              )
+              if truncate:
+                  db.execute(text("TRUNCATE TABLE public.inferred_parcels_v1"))
+              db.commit()
+          PY
       - name: Build inferred parcels
         run: |
-          python -m app.ingest.inferred_parcels_v1 --truncate --bbox "46.20,24.20,47.30,25.10"
+          python -m app.ingest.inferred_parcels_v1 --resume --run-id "${{ inputs.run_id }}" --bbox "46.20,24.20,47.30,25.10"
       - name: Report inferred parcel stats
         run: |
           python - <<'PY'
