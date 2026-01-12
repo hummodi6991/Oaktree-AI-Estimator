@@ -46,11 +46,30 @@ _SUHAIL_PARCEL_TILE_SQL = text(
         p.classification,
         p.area_m2,
         p.perimeter_m,
-        -- IMPORTANT: Filter and clip in the same CRS for stable MVT output.
-        -- Transform once to WebMercator (EPSG:3857) and reuse downstream.
         ST_Transform(p.geom, 3857) AS geom3857
       FROM {SUHAIL_PARCEL_TABLE} p, tile t
       WHERE ST_Transform(p.geom, 3857) && t.geom3857
+    ),
+    simplified AS (
+      SELECT
+        id,
+        landuse,
+        classification,
+        area_m2,
+        perimeter_m,
+        ST_SimplifyPreserveTopology(geom3857, :simplify_tol) AS geom3857
+      FROM parcel_candidates
+    ),
+    clipped AS (
+      SELECT
+        s.id,
+        s.landuse,
+        s.classification,
+        s.area_m2,
+        s.perimeter_m,
+        ST_Intersection(s.geom3857, t.geom3857) AS geom3857
+      FROM simplified s, tile t
+      WHERE ST_Intersects(s.geom3857, t.geom3857)
     ),
     mvtgeom AS (
       SELECT
@@ -60,14 +79,13 @@ _SUHAIL_PARCEL_TILE_SQL = text(
         area_m2,
         perimeter_m,
         ST_AsMVTGeom(
-          -- MVT must be generated in WebMercator (EPSG:3857).
-          p.geom3857,
+          geom3857,
           t.geom3857,
           4096,
           64,
           true
         ) AS geom
-      FROM parcel_candidates p, tile t
+      FROM clipped c, tile t
     )
     SELECT ST_AsMVT(mvtgeom, 'parcels', 4096, 'geom') AS tile
     FROM mvtgeom;
@@ -295,7 +313,10 @@ def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
 @router.get("/v1/tiles/suhail/{z}/{x}/{y}.pbf")
 def suhail_parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     try:
-        tile_bytes = db.execute(_SUHAIL_PARCEL_TILE_SQL, {"z": z, "x": x, "y": y}).scalar()
+        tile_bytes = db.execute(
+            _SUHAIL_PARCEL_TILE_SQL,
+            {"z": z, "x": x, "y": y, "simplify_tol": PARCEL_SIMPLIFY_TOLERANCE_M},
+        ).scalar()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to render suhail parcel tile: {exc}")
 
