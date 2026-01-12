@@ -97,6 +97,31 @@ def _resolve_highway_expr(db, table: str, alias: str) -> str:
     raise RuntimeError(f"{table_name} missing highway/tags column")
 
 
+def _resolve_roads_geom_column(db, table: str) -> str:
+    if "." in table:
+        table_schema, table_name = table.split(".", 1)
+    else:
+        table_schema, table_name = "public", table
+    rows = db.execute(
+        text(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = :table_schema
+              AND table_name = :table_name
+              AND column_name IN ('geom', 'way')
+            """
+        ),
+        {"table_schema": table_schema, "table_name": table_name},
+    ).mappings().all()
+    columns = {row["column_name"] for row in rows}
+    if "geom" in columns:
+        return "geom"
+    if "way" in columns:
+        return "way"
+    raise RuntimeError(f"{table} missing geom/way geometry column")
+
+
 def _iter_blocks(db, max_blocks: int | None) -> Iterable[dict]:
     sql = "SELECT block_id, ST_AsEWKB(geom) AS geom FROM tmp_blocks ORDER BY block_id"
     params = {}
@@ -133,10 +158,16 @@ def main(argv: list[str] | None = None) -> int:
         try:
             roads_table, roads_count = _resolve_roads_table(db)
             highway_expr = _resolve_highway_expr(db, roads_table, "r")
+            roads_geom_col = _resolve_roads_geom_column(db, roads_table)
         except RuntimeError as exc:
             logger.error("%s", exc)
             return 1
-        logger.info("Using %s (%s rows) for road mask", roads_table, roads_count)
+        logger.info(
+            "Using %s (%s rows) for road mask with geometry column %s",
+            roads_table,
+            roads_count,
+            roads_geom_col,
+        )
 
         if args.truncate:
             logger.info("Truncating inferred_parcels_v1")
@@ -178,10 +209,10 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 road_mask AS (
                   SELECT ST_UnaryUnion(
-                    ST_Collect(ST_Buffer(r.way::geography, :road_buf_m)::geometry)
+                    ST_Collect(ST_Buffer(r.{roads_geom_col}::geography, :road_buf_m)::geometry)
                   ) AS geom
                   FROM {roads_table} r, bbox b
-                  WHERE r.way && b.geom
+                  WHERE r.{roads_geom_col} && b.geom
                     AND {highway_expr} IS NOT NULL
                 ),
                 free AS (
