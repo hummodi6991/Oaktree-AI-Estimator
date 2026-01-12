@@ -212,8 +212,11 @@ def main(argv: list[str] | None = None) -> int:
                   FROM bbox
                 ),
                 road_mask AS (
-                  SELECT ST_UnaryUnion(
-                    ST_Collect(ST_Buffer(r.{roads_geom_col}, :road_buf_m))
+                  SELECT ST_Transform(
+                    ST_UnaryUnion(
+                      ST_Collect(ST_Buffer(r.{roads_geom_col}, :road_buf_m))
+                    ),
+                    4326
                   ) AS geom
                   FROM {roads_table} r, bbox3857 b
                   WHERE r.{roads_geom_col} && b.geom
