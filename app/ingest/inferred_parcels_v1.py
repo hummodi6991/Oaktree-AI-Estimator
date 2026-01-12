@@ -207,11 +207,15 @@ def main(argv: list[str] | None = None) -> int:
                 WITH bbox AS (
                   SELECT ST_MakeEnvelope(:xmin, :ymin, :xmax, :ymax, 4326) AS geom
                 ),
+                bbox3857 AS (
+                  SELECT ST_Transform(geom, 3857) AS geom
+                  FROM bbox
+                ),
                 road_mask AS (
                   SELECT ST_UnaryUnion(
-                    ST_Collect(ST_Buffer(r.{roads_geom_col}::geography, :road_buf_m)::geometry)
+                    ST_Collect(ST_Buffer(r.{roads_geom_col}, :road_buf_m))
                   ) AS geom
-                  FROM {roads_table} r, bbox b
+                  FROM {roads_table} r, bbox3857 b
                   WHERE r.{roads_geom_col} && b.geom
                     AND {highway_expr} IS NOT NULL
                 ),
