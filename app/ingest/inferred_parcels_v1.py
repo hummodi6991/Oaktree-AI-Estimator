@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import os
 import sys
@@ -122,16 +123,123 @@ def _resolve_roads_geom_column(db, table: str) -> str:
     raise RuntimeError(f"{table} missing geom/way geometry column")
 
 
-def _iter_blocks(db, max_blocks: int | None) -> Iterable[dict]:
+def _iter_blocks(db, run_id: str, max_blocks: int | None) -> Iterable[dict]:
     sql = (
-        "SELECT block_id, ST_AsEWKB(geom) AS geom "
-        "FROM tmp_blocks_with_buildings ORDER BY block_id"
+        "SELECT b.block_id, ST_AsEWKB(b.geom) AS geom "
+        "FROM tmp_blocks_with_buildings b "
+        "LEFT JOIN public.inferred_parcels_v1_done_blocks d "
+        "  ON d.run_id = :run_id AND d.block_id = b.block_id "
+        "WHERE d.block_id IS NULL "
+        "ORDER BY b.block_id"
     )
-    params = {}
+    params = {"run_id": run_id}
     if max_blocks is not None:
         sql += " LIMIT :max_blocks"
         params["max_blocks"] = max_blocks
     return db.execute(text(sql), params).mappings().all()
+
+
+def _run_id_from_params(
+    bbox: tuple[float, float, float, float],
+    road_buf_m: float,
+    min_block_area_m2: float,
+    seed_part_index: int,
+    max_buildings_per_block: int,
+) -> str:
+    payload = "|".join(
+        [
+            ",".join(f"{value:.6f}" for value in bbox),
+            f"{road_buf_m:.3f}",
+            f"{min_block_area_m2:.3f}",
+            str(seed_part_index),
+            str(max_buildings_per_block),
+        ]
+    )
+    return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+
+def _ensure_progress_tables(db) -> None:
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.inferred_parcels_v1_progress (
+              run_id text PRIMARY KEY,
+              bbox text,
+              road_buf_m double precision,
+              min_block_area_m2 double precision,
+              seed_part_index int,
+              max_buildings_per_block int,
+              started_at timestamptz default now(),
+              updated_at timestamptz default now()
+            );
+            """
+        )
+    )
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS public.inferred_parcels_v1_done_blocks (
+              run_id text,
+              block_id text,
+              done_at timestamptz default now(),
+              PRIMARY KEY (run_id, block_id)
+            );
+            """
+        )
+    )
+
+
+def _upsert_progress(db, run_id: str, args, bbox_text: str) -> None:
+    db.execute(
+        text(
+            """
+            INSERT INTO public.inferred_parcels_v1_progress (
+              run_id,
+              bbox,
+              road_buf_m,
+              min_block_area_m2,
+              seed_part_index,
+              max_buildings_per_block,
+              started_at,
+              updated_at
+            )
+            VALUES (
+              :run_id,
+              :bbox,
+              :road_buf_m,
+              :min_block_area_m2,
+              :seed_part_index,
+              :max_buildings_per_block,
+              now(),
+              now()
+            )
+            ON CONFLICT (run_id) DO UPDATE SET
+              bbox = EXCLUDED.bbox,
+              road_buf_m = EXCLUDED.road_buf_m,
+              min_block_area_m2 = EXCLUDED.min_block_area_m2,
+              seed_part_index = EXCLUDED.seed_part_index,
+              max_buildings_per_block = EXCLUDED.max_buildings_per_block,
+              updated_at = now();
+            """
+        ),
+        {
+            "run_id": run_id,
+            "bbox": bbox_text,
+            "road_buf_m": args.road_buf_m,
+            "min_block_area_m2": args.min_block_area_m2,
+            "seed_part_index": args.seed_part_index,
+            "max_buildings_per_block": args.max_buildings_per_block,
+        },
+    )
+
+
+def _touch_progress(db, run_id: str) -> None:
+    db.execute(
+        text(
+            "UPDATE public.inferred_parcels_v1_progress SET updated_at = now() WHERE run_id = :run_id"
+        ),
+        {"run_id": run_id},
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -142,7 +250,10 @@ def main(argv: list[str] | None = None) -> int:
         help="xmin,ymin,xmax,ymax in WGS84",
     )
     parser.add_argument("--road-buf-m", type=float, default=DEFAULT_ROAD_BUF_M)
-    parser.add_argument("--truncate", action="store_true")
+    parser.add_argument("--run-id", default=None)
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--reset-run", action="store_true")
+    parser.add_argument("--commit-every", type=int, default=25)
     parser.add_argument("--max-blocks", type=int, default=None)
     parser.add_argument("--min-block-area-m2", type=float, default=DEFAULT_MIN_BLOCK_AREA_M2)
     parser.add_argument("--max-buildings-per-block", type=int, default=DEFAULT_MAX_BUILDINGS_PER_BLOCK)
@@ -156,6 +267,20 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         logger.error("Invalid bbox: %s", exc)
         return 2
+    if args.commit_every <= 0:
+        logger.error("--commit-every must be a positive integer")
+        return 2
+    if args.reset_run and args.resume:
+        logger.error("--reset-run and --resume are mutually exclusive")
+        return 2
+
+    run_id = args.run_id or _run_id_from_params(
+        bbox,
+        args.road_buf_m,
+        args.min_block_area_m2,
+        args.seed_part_index,
+        args.max_buildings_per_block,
+    )
 
     with SessionLocal() as db:
         try:
@@ -172,10 +297,33 @@ def main(argv: list[str] | None = None) -> int:
             roads_geom_col,
         )
 
-        if args.truncate:
-            logger.info("Truncating inferred_parcels_v1")
+        _ensure_progress_tables(db)
+        if args.reset_run:
+            logger.info("Resetting run %s", run_id)
+            db.execute(
+                text("DELETE FROM public.inferred_parcels_v1_done_blocks WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+            db.execute(
+                text("DELETE FROM public.inferred_parcels_v1_progress WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
             db.execute(text("TRUNCATE TABLE public.inferred_parcels_v1"))
             db.commit()
+        elif not args.resume:
+            logger.info("Clearing prior progress for run %s", run_id)
+            db.execute(
+                text("DELETE FROM public.inferred_parcels_v1_done_blocks WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+            db.execute(
+                text("DELETE FROM public.inferred_parcels_v1_progress WHERE run_id = :run_id"),
+                {"run_id": run_id},
+            )
+            db.commit()
+
+        _upsert_progress(db, run_id, args, args.bbox)
+        db.commit()
 
         db.execute(text("DROP TABLE IF EXISTS tmp_blocks"))
         db.execute(text("DROP TABLE IF EXISTS tmp_blocks_with_buildings"))
@@ -282,10 +430,28 @@ def main(argv: list[str] | None = None) -> int:
         blocks_with_buildings = (
             db.execute(text("SELECT COUNT(*) FROM tmp_blocks_with_buildings")).scalar() or 0
         )
+        done_blocks = (
+            db.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM tmp_blocks_with_buildings b
+                    JOIN public.inferred_parcels_v1_done_blocks d
+                      ON d.run_id = :run_id
+                     AND d.block_id = b.block_id
+                    """
+                ),
+                {"run_id": run_id},
+            ).scalar()
+            or 0
+        )
+        remaining_blocks = max(blocks_with_buildings - done_blocks, 0)
         logger.info("Total blocks: %d", total_blocks)
         logger.info("Blocks with buildings: %d", blocks_with_buildings)
+        logger.info("Blocks already done for run %s: %d", run_id, done_blocks)
+        logger.info("Blocks remaining for run %s: %d", run_id, remaining_blocks)
 
-        blocks = list(_iter_blocks(db, args.max_blocks))
+        blocks = list(_iter_blocks(db, run_id, args.max_blocks))
         if blocks:
             area_row = (
                 db.execute(
@@ -312,6 +478,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         logger.info("Processing %d blocks", len(blocks))
 
+        processed_blocks = 0
         for idx, block in enumerate(blocks, start=1):
             block_id = block["block_id"]
             block_geom = block["geom"]
@@ -437,7 +604,27 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 {"block_geom": block_geom, "block_id": block_id},
             )
-            db.commit()
+            db.execute(
+                text(
+                    """
+                    INSERT INTO public.inferred_parcels_v1_done_blocks (run_id, block_id)
+                    VALUES (:run_id, :block_id)
+                    ON CONFLICT DO NOTHING;
+                    """
+                ),
+                {"run_id": run_id, "block_id": block_id},
+            )
+            processed_blocks += 1
+            if processed_blocks % args.commit_every == 0 or processed_blocks == len(blocks):
+                _touch_progress(db, run_id)
+                db.commit()
+                percent = (processed_blocks / max(len(blocks), 1)) * 100.0
+                logger.info(
+                    "Progress: %d/%d blocks (%.1f%%)",
+                    processed_blocks,
+                    len(blocks),
+                    percent,
+                )
 
         total = db.execute(text("SELECT COUNT(*) FROM public.inferred_parcels_v1")).scalar()
         logger.info("Inferred parcel total: %s", total or 0)
