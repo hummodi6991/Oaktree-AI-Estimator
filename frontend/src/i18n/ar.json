@@ -50,6 +50,8 @@
     },
     "controls": {
       "parcelOutlines": "حدود قطع ArcGIS",
+      "on": "تشغيل",
+      "off": "إيقاف",
       "multiSelect": "تحديد متعدد للقطع",
       "clearSelection": "مسح التحديد",
       "mergeParcels": "دمج القطع",

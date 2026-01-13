@@ -22,6 +22,8 @@ const SELECT_LINE_LAYER_ID = "selected-parcel-line";
 const PARCEL_SOURCE_ID = "parcel-tiles-src";
 const PARCEL_FILL_LAYER_ID = "parcel-tiles-fill";
 const PARCEL_LINE_LAYER_ID = "parcel-tiles-line";
+const ARCGIS_PARCEL_SOURCE_ID = "arcgis-parcels";
+const ARCGIS_PARCEL_OUTLINE_LAYER_ID = "arcgis-parcels-outline";
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
 
@@ -160,6 +162,32 @@ function ensureParcelLayers(map: maplibregl.Map) {
   }
 }
 
+function ensureArcgisParcelLayers(map: maplibregl.Map, visible: boolean) {
+  if (!map.getSource(ARCGIS_PARCEL_SOURCE_ID)) {
+    map.addSource(ARCGIS_PARCEL_SOURCE_ID, {
+      type: "vector",
+      tiles: [buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf")],
+      minzoom: 0,
+      maxzoom: 18,
+    });
+  }
+
+  if (!map.getLayer(ARCGIS_PARCEL_OUTLINE_LAYER_ID)) {
+    map.addLayer({
+      id: ARCGIS_PARCEL_OUTLINE_LAYER_ID,
+      type: "line",
+      source: ARCGIS_PARCEL_SOURCE_ID,
+      "source-layer": "riyadh_parcels_arcgis_proxy",
+      layout: { visibility: visible ? "visible" : "none" },
+      paint: {
+        "line-color": "#00A3FF",
+        "line-opacity": 0.8,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 14, 1, 17, 2],
+      },
+    });
+  }
+}
+
 export default function Map({ onParcel }: MapProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -175,6 +203,7 @@ export default function Map({ onParcel }: MapProps) {
   const [collating, setCollating] = useState(false);
   const [selectionMethod, setSelectionMethod] = useState<"feature" | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number | null>(null);
+  const [showArcgisOutlines, setShowArcgisOutlines] = useState(true);
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
@@ -306,12 +335,14 @@ export default function Map({ onParcel }: MapProps) {
 
     map.on("load", () => {
       ensureParcelLayers(map);
+      ensureArcgisParcelLayers(map, showArcgisOutlines);
       ensureSelectionLayers(map);
       handleZoom();
     });
 
     map.on("style.load", () => {
       ensureParcelLayers(map);
+      ensureArcgisParcelLayers(map, showArcgisOutlines);
       ensureSelectionLayers(map);
     });
 
@@ -352,6 +383,20 @@ export default function Map({ onParcel }: MapProps) {
       map.remove();
     };
   }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (map.getLayer(ARCGIS_PARCEL_OUTLINE_LAYER_ID)) {
+      map.setLayoutProperty(
+        ARCGIS_PARCEL_OUTLINE_LAYER_ID,
+        "visibility",
+        showArcgisOutlines ? "visible" : "none",
+      );
+    } else if (map.isStyleLoaded()) {
+      ensureArcgisParcelLayers(map, showArcgisOutlines);
+    }
+  }, [showArcgisOutlines]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -474,6 +519,16 @@ export default function Map({ onParcel }: MapProps) {
         }}
       >
         <span style={{ fontSize: "0.9rem", color: "#475467" }}>{t("map.controls.parcelOutlines")}</span>
+        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={showArcgisOutlines}
+            onChange={(event) => {
+              setShowArcgisOutlines(event.target.checked);
+            }}
+          />
+          <span>{showArcgisOutlines ? t("map.controls.on") : t("map.controls.off")}</span>
+        </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"
