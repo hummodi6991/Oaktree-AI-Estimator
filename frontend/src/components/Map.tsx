@@ -7,8 +7,8 @@ import { formatInteger, formatNumber } from "../i18n/format";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { buildApiUrl, collateParcels, identify, inferParcel } from "../api";
-import type { CollateResponse, InferParcelResponse, ParcelSummary } from "../api";
+import { buildApiUrl, collateParcels, identify } from "../api";
+import type { CollateResponse, ParcelSummary } from "../api";
 
 type MapProps = {
   onParcel: (parcel: ParcelSummary | null) => void;
@@ -60,18 +60,6 @@ function featureFromParcel(parcel: ParcelSummary): Feature<Geometry> | null {
       id: parcel.parcel_id || undefined,
     },
   };
-}
-
-function parseMsParcelId(value?: string | null): { buildingId: number; partIndex: number } | null {
-  if (!value) return null;
-  const cleaned = value.startsWith("ms:") ? value.slice(3) : value;
-  const [buildingRaw, partRaw] = cleaned.split(":");
-  if (!buildingRaw || !partRaw) return null;
-  const buildingId = Number(buildingRaw);
-  const partIndex = Number(partRaw);
-  if (!Number.isFinite(buildingId) || !Number.isFinite(partIndex)) return null;
-  if (partIndex < 1) return null;
-  return { buildingId, partIndex };
 }
 
 function transformGeometryToWgs84(geometry?: Geometry | null): Geometry | null {
@@ -172,28 +160,6 @@ function ensureParcelLayers(map: maplibregl.Map) {
   }
 }
 
-function featureArea(feature: maplibregl.MapGeoJSONFeature): number | null {
-  const props = feature.properties || {};
-  const rawArea = props.parcel_area_m2 ?? props.area_m2;
-  const area = rawArea != null ? Number(rawArea) : null;
-  return Number.isFinite(area) ? area : null;
-}
-
-function pickBestFeature(features: maplibregl.MapGeoJSONFeature[]) {
-  if (!features.length) return null;
-  let best = features[0];
-  let bestArea = featureArea(best);
-  for (const feature of features.slice(1)) {
-    const area = featureArea(feature);
-    if (area == null) continue;
-    if (bestArea == null || area < bestArea) {
-      best = feature;
-      bestArea = area;
-    }
-  }
-  return best;
-}
-
 export default function Map({ onParcel }: MapProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -212,12 +178,7 @@ export default function Map({ onParcel }: MapProps) {
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
-  const inferRequestRef = useRef(0);
-  const lastSelectedIdRef = useRef<string | null>(null);
   const currentParcelRef = useRef<ParcelSummary | null>(null);
-  const inferCacheRef = useRef(
-    new globalThis.Map<string, { geometry: Geometry; area_m2: number | null; perimeter_m: number | null }>(),
-  );
 
   const renderStatus = useMemo(() => {
     if (!status) return null;
@@ -263,7 +224,6 @@ export default function Map({ onParcel }: MapProps) {
     currentParcelRef.current = nextParcel;
     onParcelRef.current(nextParcel);
     setSelectionMethod(method);
-    lastSelectedIdRef.current = nextParcel.parcel_id ?? null;
 
     if (!geometry) {
       setStatus({ key: "map.status.noGeometry" });
@@ -322,33 +282,9 @@ export default function Map({ onParcel }: MapProps) {
     }
   };
 
-  const applyInferredSelection = (
-    parcel: ParcelSummary,
-    inferredGeometry: Geometry,
-    inferredArea: number | null,
-    inferredPerimeter: number | null,
-  ) => {
-    const updatedParcel: ParcelSummary = {
-      ...parcel,
-      area_m2: inferredArea,
-      parcel_area_m2: inferredArea,
-      perimeter_m: inferredPerimeter,
-      parcel_method: "click_fallback",
-      geometry: inferredGeometry,
-    };
-    if (multiSelectModeRef.current) {
-      currentParcelRef.current = updatedParcel;
-      lastSelectedIdRef.current = updatedParcel.parcel_id ?? null;
-      onParcelRef.current(updatedParcel);
-      setSelectedParcelsGeojson((current) => ({
-        type: "FeatureCollection",
-        features: current.features.map((f) =>
-          (f.properties as any)?.id === updatedParcel.parcel_id ? { ...f, geometry: inferredGeometry } : f,
-        ),
-      }));
-    } else {
-      applyParcelSelection(updatedParcel, inferredGeometry, "feature");
-    }
+  const isArcgisParcel = (parcel: ParcelSummary | null | undefined) => {
+    const sourceUrl = parcel?.source_url?.toLowerCase() ?? "";
+    return sourceUrl.includes("arcgis");
   };
 
   useEffect(() => {
@@ -384,29 +320,8 @@ export default function Map({ onParcel }: MapProps) {
     map.on("click", async (e) => {
       setCollateStatus(null);
       try {
-        let features = map.queryRenderedFeatures(e.point, {
-          layers: [PARCEL_FILL_LAYER_ID],
-        });
-        if (!features.length && map.getLayer(PARCEL_LINE_LAYER_ID)) {
-          features = map.queryRenderedFeatures(e.point, {
-            layers: [PARCEL_LINE_LAYER_ID],
-          });
-        }
-
-        const feature = pickBestFeature(features);
-        const props = feature?.properties || {};
-        const rawId = props.parcel_id;
-        const parcelIdFromFeature = rawId != null ? String(rawId) : null;
-        const buildingIdRaw = props.building_id != null ? Number(props.building_id) : null;
-        const partIndexRaw = props.part_index != null ? Number(props.part_index) : null;
-        const parsedId = parcelIdFromFeature ? parseMsParcelId(parcelIdFromFeature) : null;
-        const buildingId = Number.isFinite(buildingIdRaw) ? Number(buildingIdRaw) : parsedId?.buildingId ?? null;
-        const partIndex = Number.isFinite(partIndexRaw) ? Number(partIndexRaw) : parsedId?.partIndex ?? null;
-        const methodRaw = props.method != null ? String(props.method) : null;
-        const isPrecomputedParcel = methodRaw === "road_block_voronoi_v1";
-
         const identifyResult = await identify(e.lngLat.lng, e.lngLat.lat);
-        if (!identifyResult?.found || !identifyResult.parcel) {
+        if (!identifyResult?.found || !identifyResult.parcel || !isArcgisParcel(identifyResult.parcel)) {
           setStatus({ key: "map.status.notFound" });
           const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource;
           source?.setData({ type: "FeatureCollection", features: [] });
@@ -419,56 +334,10 @@ export default function Map({ onParcel }: MapProps) {
           ...identifyParcel,
           geometry,
           parcel_area_m2: identifyParcel.parcel_area_m2 ?? identifyParcel.area_m2 ?? null,
-          parcel_method: isPrecomputedParcel ? "inferred_parcels_v1" : identifyParcel.parcel_method ?? null,
+          parcel_method: identifyParcel.parcel_method ?? null,
         };
 
         applyParcelSelection(parcel, geometry, "feature");
-
-        const shouldInfer = !isPrecomputedParcel;
-        const parcelId = parcel.parcel_id ?? parcelIdFromFeature ?? null;
-        if (shouldInfer && parcelId && inferCacheRef.current.has(parcelId)) {
-          const cached = inferCacheRef.current.get(parcelId);
-          if (cached) {
-            const inferredArea = cached.area_m2 ?? parcel.area_m2 ?? null;
-            const inferredPerimeter = cached.perimeter_m ?? parcel.perimeter_m ?? null;
-            applyInferredSelection(parcel, cached.geometry, inferredArea, inferredPerimeter);
-          }
-          return;
-        }
-
-        if (shouldInfer && buildingId != null && partIndex != null) {
-          try {
-            const inferRequestId = ++inferRequestRef.current;
-            const inferred: InferParcelResponse = await inferParcel({
-              lng: e.lngLat.lng,
-              lat: e.lngLat.lat,
-              buildingId,
-              partIndex,
-            });
-            if (disposed) return;
-            if (inferRequestRef.current !== inferRequestId) return;
-            if (lastSelectedIdRef.current !== parcelId) return;
-            if (!inferred?.found || !inferred.geom) return;
-            if (inferred.method === "inferred_parcels_v1") {
-              return;
-            }
-            const inferredGeometry = inferred.geom as Geometry;
-            const inferredArea = inferred.area_m2 ?? parcel.area_m2 ?? null;
-            const inferredPerimeter = inferred.perimeter_m ?? parcel.perimeter_m ?? null;
-            if (parcelId) {
-              inferCacheRef.current.set(parcelId, {
-                geometry: inferredGeometry,
-                area_m2: inferredArea,
-                perimeter_m: inferredPerimeter,
-              });
-            }
-            applyInferredSelection(parcel, inferredGeometry, inferredArea, inferredPerimeter);
-          } catch (error) {
-            if (!disposed) {
-              console.warn("Infer parcel lookup failed", error);
-            }
-          }
-        }
       } catch (err) {
         if (disposed) return;
         console.error(err);
@@ -505,7 +374,6 @@ export default function Map({ onParcel }: MapProps) {
     setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
     onParcelRef.current(null);
     setSelectionMethod(null);
-    lastSelectedIdRef.current = null;
     setStatus({ key: "map.status.cleared" });
     setCollateStatus(null);
   };
