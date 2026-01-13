@@ -273,20 +273,16 @@ def _arcgis_tile_generalization(z: int) -> tuple[float | None, int | None]:
 @router.get("/tiles/parcels/{z}/{x}/{y}.pbf")
 @router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
-    # Prefer module-level variable so tests can monkeypatch tiles.PARCEL_TILE_TABLE.
-    parcel_table = _safe_identifier(PARCEL_TILE_TABLE, "public.riyadh_parcels_arcgis_proxy")
-    if (
-        not parcel_table
-        or parcel_table == "public.riyadh_parcels_arcgis_proxy"
-        and (PARCEL_TILE_TABLE or "").strip() == ""
-    ):
-        parcel_table = _get_parcel_tile_table()
+    # Resolve parcel table (test- and runtime-safe)
+    raw_table = PARCEL_TILE_TABLE or ""
+    parcel_table = _safe_identifier(
+        raw_table if raw_table.strip() else _get_parcel_tile_table(),
+        "public.riyadh_parcels_arcgis_proxy",
+    )
     simplify_default = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
 
-    # Robust ArcGIS mode detection:
-    # - Proxy/raw names include "arcgis"
-    # - Avoid brittle membership lists that can drift
-    arcgis_mode = "arcgis" in str(parcel_table).lower()
+    # ArcGIS mode must be derived from the EFFECTIVE table, not the monkeypatched symbol
+    arcgis_mode = "arcgis" in parcel_table.lower()
     try:
         if parcel_table in ("public.inferred_parcels_v1", "inferred_parcels_v1"):
             id_col = "parcel_id"
