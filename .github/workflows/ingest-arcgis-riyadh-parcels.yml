@@ -1,0 +1,55 @@
+name: Ingest ArcGIS Riyadh Parcels
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "Batch size for ArcGIS objectIds (max 2000)"
+        required: false
+        default: "300"
+      sleep_s:
+        description: "Sleep seconds between batches"
+        required: false
+        default: "0.25"
+      max_minutes:
+        description: "Maximum runtime in minutes (stop before 360)"
+        required: false
+        default: "330"
+      resume:
+        description: "Resume from checkpoint"
+        required: false
+        default: "true"
+      start_from_index:
+        description: "Manual override start index"
+        required: false
+        default: "0"
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    env:
+      PGHOST: ${{ secrets.POSTGRES_HOST }}
+      PGPORT: ${{ secrets.POSTGRES_PORT }}
+      PGDATABASE: ${{ secrets.POSTGRES_DB }}
+      PGUSER: ${{ secrets.POSTGRES_USER }}
+      PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      PGSSLMODE: ${{ secrets.PGSSLMODE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests psycopg2-binary
+      - name: Run ingest
+        run: |
+          python scripts/ingest_arcgis_riyadh_parcels.py \
+            --batch-size "${{ inputs.batch_size }}" \
+            --sleep-s "${{ inputs.sleep_s }}" \
+            --max-minutes "${{ inputs.max_minutes }}" \
+            --resume "${{ inputs.resume }}" \
+            --start-from-index "${{ inputs.start_from_index }}"
