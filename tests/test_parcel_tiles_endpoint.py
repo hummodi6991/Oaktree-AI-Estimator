@@ -40,8 +40,8 @@ def _riyadh_tile(z: int = 16, lng: float = 46.675, lat: float = 24.713) -> tuple
     return x, y
 
 
-def test_parcel_tile_low_zoom_returns_204_without_db() -> None:
-    dummy = DummySession(allow_execute=False)
+def test_parcel_tile_low_zoom_uses_arcgis_generalization() -> None:
+    dummy = DummySession(payload=b"parcels")
 
     def override_get_db():
         yield dummy
@@ -49,9 +49,13 @@ def test_parcel_tile_low_zoom_returns_204_without_db() -> None:
     app.dependency_overrides[get_db] = override_get_db
     try:
         client = TestClient(app)
-        resp = client.get("/v1/tiles/parcels/15/0/0.pbf")
-        assert resp.status_code == 204
-        assert not dummy.executed
+        resp = client.get("/v1/tiles/parcels/10/0/0.pbf")
+        assert resp.status_code == 200
+        assert resp.content == b"parcels"
+        assert dummy.executed
+        assert dummy.last_params is not None
+        assert dummy.last_params.get("simplify_tol") == 120.0
+        assert dummy.last_params.get("min_area_m2") == 200000
     finally:
         app.dependency_overrides.pop(get_db, None)
 

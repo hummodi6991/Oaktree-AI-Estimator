@@ -49,7 +49,7 @@
       "noneSelected": "No parcels selected yet."
     },
     "controls": {
-      "parcelOutlines": "Parcel outlines",
+      "parcelOutlines": "ArcGIS parcel outlines",
       "multiSelect": "Multi-select parcels",
       "clearSelection": "Clear selection",
       "mergeParcels": "Merge parcels",

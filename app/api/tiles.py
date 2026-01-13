@@ -157,7 +157,12 @@ def _safe_column(value: str | None, fallback: str) -> str:
     return fallback
 
 
-def _generic_parcel_tile_sql(table_name: str, simplify: bool, id_col: str = "id") -> text:
+def _generic_parcel_tile_sql(
+    table_name: str,
+    id_col: str = "id",
+    simplify_tol: float | None = None,
+    min_area_m2: int | None = None,
+) -> text:
     safe_id_col = _safe_column(id_col, "id")
     if table_name in _NON_LANDUSE_PARCEL_TABLES:
         landuse_col = "NULL::text"
@@ -169,8 +174,11 @@ def _generic_parcel_tile_sql(table_name: str, simplify: bool, id_col: str = "id"
         landuse_col = "p.landuse"
         classification_col = "p.classification"
     geom_expr = "p.geom3857"
-    if simplify:
+    if simplify_tol is not None and simplify_tol > 0:
         geom_expr = "ST_SimplifyPreserveTopology(p.geom3857, :simplify_tol)"
+    area_filter = ""
+    if min_area_m2 is not None:
+        area_filter = "AND p.area_m2 >= :min_area_m2"
     return text(
         f"""
         WITH tile AS (
@@ -191,6 +199,7 @@ def _generic_parcel_tile_sql(table_name: str, simplify: bool, id_col: str = "id"
           FROM {table_name} p, tile4326 t
           WHERE p.geom && t.geom
             AND ST_Intersects(p.geom, t.geom)
+            {area_filter}
         ),
         simplified AS (
           SELECT
@@ -235,22 +244,51 @@ def _generic_parcel_tile_sql(table_name: str, simplify: bool, id_col: str = "id"
     )
 
 
+def _arcgis_tile_generalization(z: int) -> tuple[float | None, int | None]:
+    if z <= 10:
+        return 120.0, 200000
+    if z <= 12:
+        return 60.0, 80000
+    if z <= 14:
+        return 20.0, 20000
+    if z == 15:
+        return 8.0, 4000
+    if z == 16:
+        return 3.0, None
+    return None, None
+
+
 @router.get("/tiles/parcels/{z}/{x}/{y}.pbf")
 @router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
-    if z < 16:
-        return Response(status_code=204)
-
-    simplify = z == 16
+    arcgis_mode = PARCEL_TILE_TABLE in _ARCGIS_PARCEL_TABLES
     try:
         if PARCEL_TILE_TABLE in ("public.inferred_parcels_v1", "inferred_parcels_v1"):
             id_col = "parcel_id"
         else:
             id_col = "id"
-        tile_sql = _generic_parcel_tile_sql(PARCEL_TILE_TABLE, simplify, id_col=id_col)
         params = {"z": z, "x": x, "y": y}
-        if simplify:
-            params["simplify_tol"] = PARCEL_SIMPLIFY_TOLERANCE_M
+        if arcgis_mode:
+            simplify_tol, min_area_m2 = _arcgis_tile_generalization(z)
+            tile_sql = _generic_parcel_tile_sql(
+                PARCEL_TILE_TABLE,
+                id_col=id_col,
+                simplify_tol=simplify_tol,
+                min_area_m2=min_area_m2,
+            )
+            if simplify_tol is not None and simplify_tol > 0:
+                params["simplify_tol"] = simplify_tol
+            if min_area_m2 is not None:
+                params["min_area_m2"] = min_area_m2
+        else:
+            simplify = z == 16
+            tile_sql = _generic_parcel_tile_sql(
+                PARCEL_TILE_TABLE,
+                id_col=id_col,
+                simplify_tol=PARCEL_SIMPLIFY_TOLERANCE_M if simplify else None,
+            )
+            if simplify:
+                params["simplify_tol"] = PARCEL_SIMPLIFY_TOLERANCE_M
         tile_bytes = db.execute(tile_sql, params).scalar()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to render parcel tile: {exc}")
