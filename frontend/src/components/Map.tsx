@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import maplibregl from "maplibre-gl";
 import proj4 from "proj4";
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from "geojson";
@@ -21,9 +21,11 @@ const SELECT_FILL_LAYER_ID = "selected-parcel-fill";
 const SELECT_LINE_LAYER_ID = "selected-parcel-line";
 const PARCEL_SOURCE_ID = "parcel-tiles-src";
 const PARCEL_FILL_LAYER_ID = "parcel-tiles-fill";
-const PARCEL_LINE_LAYER_ID = "parcel-tiles-line";
-const ARCGIS_PARCEL_SOURCE_ID = "arcgis-parcels";
-const ARCGIS_PARCEL_OUTLINE_LAYER_ID = "arcgis-parcels-outline";
+const PARCEL_OUTLINE_CASING_LAYER_ID = "parcel-tiles-outline-casing";
+const PARCEL_OUTLINE_LAYER_ID = "parcel-tiles-outline";
+const HOVER_SOURCE_ID = "parcel-hover-src";
+const HOVER_CASING_LAYER_ID = "parcel-hover-casing";
+const HOVER_LINE_LAYER_ID = "parcel-hover-line";
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
 
@@ -79,6 +81,29 @@ function transformGeometryToWgs84(geometry?: Geometry | null): Geometry | null {
   return geometry;
 }
 
+function setHoverGeometry(
+  map: maplibregl.Map,
+  geometry: Geometry | null,
+  hoverDataRef: MutableRefObject<FeatureCollection<Geometry, GeoJsonProperties>>,
+  parcelId?: string | null,
+) {
+  const source = map.getSource(HOVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+  const data = geometry
+    ? {
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            geometry,
+            properties: { parcel_id: parcelId ?? null },
+          },
+        ],
+      }
+    : EMPTY_FEATURE_COLLECTION;
+  hoverDataRef.current = data;
+  source?.setData(data);
+}
+
 function ensureSelectionLayers(map: maplibregl.Map) {
   if (!map.getSource(SELECT_SOURCE_ID)) {
     map.addSource(SELECT_SOURCE_ID, {
@@ -110,13 +135,20 @@ function ensureSelectionLayers(map: maplibregl.Map) {
   }
 }
 
-function ensureParcelLayers(map: maplibregl.Map) {
+const EMPTY_FEATURE_COLLECTION: FeatureCollection<Geometry, GeoJsonProperties> = {
+  type: "FeatureCollection",
+  features: [],
+};
+
+const PARCEL_OUTLINE_WIDTH = ["interpolate", ["linear"], ["zoom"], 0, 2.2, 12, 1.6, 16, 1.1, 20, 0.9] as any;
+
+function ensureParcelLayers(map: maplibregl.Map, outlineVisible: boolean) {
   if (!map.getSource(PARCEL_SOURCE_ID)) {
     map.addSource(PARCEL_SOURCE_ID, {
       type: "vector",
       tiles: [buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf")],
       minzoom: 0,
-      maxzoom: 18,
+      maxzoom: 22,
     });
   }
 
@@ -146,46 +178,177 @@ function ensureParcelLayers(map: maplibregl.Map) {
     });
   }
 
-  if (!map.getLayer(PARCEL_LINE_LAYER_ID)) {
+  if (!map.getLayer(PARCEL_OUTLINE_CASING_LAYER_ID)) {
     map.addLayer({
-      id: PARCEL_LINE_LAYER_ID,
+      id: PARCEL_OUTLINE_CASING_LAYER_ID,
       type: "line",
       source: PARCEL_SOURCE_ID,
       "source-layer": "parcels",
-      layout: { visibility: "visible" },
+      layout: { "line-join": "round", "line-cap": "round", visibility: outlineVisible ? "visible" : "none" },
       paint: {
-        "line-color": "#2f7bff",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 0, 0.3, 14, 0.3, 16, 1.2, 18, 2.0],
-        "line-opacity": ["interpolate", ["linear"], ["zoom"], 0, 0.4, 14, 0.4, 16, 0.9],
+        "line-color": "rgba(0,0,0,0.55)",
+        "line-opacity": 0.9,
+        "line-width": ["+", PARCEL_OUTLINE_WIDTH, 1.2],
+      },
+    });
+  }
+
+  if (!map.getLayer(PARCEL_OUTLINE_LAYER_ID)) {
+    map.addLayer({
+      id: PARCEL_OUTLINE_LAYER_ID,
+      type: "line",
+      source: PARCEL_SOURCE_ID,
+      "source-layer": "parcels",
+      layout: { "line-join": "round", "line-cap": "round", visibility: outlineVisible ? "visible" : "none" },
+      paint: {
+        "line-color": "rgba(255,255,255,0.85)",
+        "line-opacity": 0.9,
+        "line-width": PARCEL_OUTLINE_WIDTH,
       },
     });
   }
 }
 
-function ensureArcgisParcelLayers(map: maplibregl.Map, visible: boolean) {
-  if (!map.getSource(ARCGIS_PARCEL_SOURCE_ID)) {
-    map.addSource(ARCGIS_PARCEL_SOURCE_ID, {
-      type: "vector",
-      tiles: [buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf")],
-      minzoom: 0,
-      maxzoom: 18,
+function ensureHoverLayers(map: maplibregl.Map) {
+  if (!map.getSource(HOVER_SOURCE_ID)) {
+    map.addSource(HOVER_SOURCE_ID, {
+      type: "geojson",
+      data: EMPTY_FEATURE_COLLECTION,
     });
   }
 
-  if (!map.getLayer(ARCGIS_PARCEL_OUTLINE_LAYER_ID)) {
+  if (!map.getLayer(HOVER_CASING_LAYER_ID)) {
     map.addLayer({
-      id: ARCGIS_PARCEL_OUTLINE_LAYER_ID,
+      id: HOVER_CASING_LAYER_ID,
       type: "line",
-      source: ARCGIS_PARCEL_SOURCE_ID,
-      "source-layer": "parcels",
-      layout: { visibility: visible ? "visible" : "none" },
+      source: HOVER_SOURCE_ID,
+      layout: { "line-join": "round", "line-cap": "round" },
       paint: {
-        "line-color": "#00A3FF",
-        "line-opacity": 0.8,
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 14, 1, 17, 2],
+        "line-color": "rgba(0,0,0,0.7)",
+        "line-opacity": 0.95,
+        "line-width": 5,
       },
     });
   }
+
+  if (!map.getLayer(HOVER_LINE_LAYER_ID)) {
+    map.addLayer({
+      id: HOVER_LINE_LAYER_ID,
+      type: "line",
+      source: HOVER_SOURCE_ID,
+      layout: { "line-join": "round", "line-cap": "round" },
+      paint: {
+        "line-color": "rgba(0,255,255,0.95)",
+        "line-opacity": 0.95,
+        "line-width": 3,
+      },
+    });
+  }
+}
+
+function ensureLayerOrder(map: maplibregl.Map) {
+  const order = [
+    PARCEL_FILL_LAYER_ID,
+    PARCEL_OUTLINE_CASING_LAYER_ID,
+    PARCEL_OUTLINE_LAYER_ID,
+    HOVER_CASING_LAYER_ID,
+    HOVER_LINE_LAYER_ID,
+    SELECT_FILL_LAYER_ID,
+    SELECT_LINE_LAYER_ID,
+  ];
+
+  order.forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.moveLayer(layerId);
+    }
+  });
+}
+
+function tolForZoom(zoom: number) {
+  if (zoom <= 12) return 40;
+  if (zoom <= 14) return 25;
+  if (zoom <= 16) return 15;
+  return 8;
+}
+
+function wireHover(
+  map: maplibregl.Map,
+  hoverDataRef: MutableRefObject<FeatureCollection<Geometry, GeoJsonProperties>>,
+) {
+  let lastId: string | null = null;
+  let abortController: AbortController | null = null;
+  let timer: number | null = null;
+
+  const clearHover = () => {
+    lastId = null;
+    setHoverGeometry(map, null, hoverDataRef);
+  };
+
+  const runIdentify = async (lng: number, lat: number) => {
+    const tol = tolForZoom(map.getZoom());
+    abortController?.abort();
+    abortController = new AbortController();
+
+    const params = new URLSearchParams({
+      lng: String(lng),
+      lat: String(lat),
+      tol_m: String(tol),
+    });
+
+    try {
+      const res = await fetch(buildApiUrl(`/v1/geo/identify?${params.toString()}`), {
+        signal: abortController.signal,
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      const parcel = json?.parcel as ParcelSummary | null | undefined;
+      if (!json?.found || !parcel?.geometry) {
+        clearHover();
+        return;
+      }
+
+      const geometry = transformGeometryToWgs84(parcel.geometry as Geometry | null);
+      if (!geometry) {
+        clearHover();
+        return;
+      }
+
+      if (parcel.parcel_id && parcel.parcel_id === lastId) {
+        return;
+      }
+
+      lastId = parcel.parcel_id ?? null;
+      setHoverGeometry(map, geometry, hoverDataRef, parcel.parcel_id ?? null);
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") return;
+      console.error(error);
+    }
+  };
+
+  const scheduleIdentify = (lng: number, lat: number) => {
+    if (timer) window.clearTimeout(timer);
+    timer = window.setTimeout(() => runIdentify(lng, lat), 80);
+  };
+
+  const handleMove = (e: maplibregl.MapMouseEvent) => {
+    scheduleIdentify(e.lngLat.lng, e.lngLat.lat);
+  };
+
+  const handleLeave = () => {
+    clearHover();
+  };
+
+  map.on("mousemove", handleMove);
+  map.on("touchmove", handleMove);
+  map.on("mouseleave", handleLeave);
+
+  return () => {
+    if (timer) window.clearTimeout(timer);
+    abortController?.abort();
+    map.off("mousemove", handleMove);
+    map.off("touchmove", handleMove);
+    map.off("mouseleave", handleLeave);
+  };
 }
 
 export default function Map({ onParcel }: MapProps) {
@@ -208,6 +371,7 @@ export default function Map({ onParcel }: MapProps) {
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
   const currentParcelRef = useRef<ParcelSummary | null>(null);
+  const hoverDataRef = useRef<FeatureCollection<Geometry, GeoJsonProperties>>(EMPTY_FEATURE_COLLECTION);
 
   const renderStatus = useMemo(() => {
     if (!status) return null;
@@ -328,22 +492,30 @@ export default function Map({ onParcel }: MapProps) {
     mapRef.current = map;
 
     let disposed = false;
+    let disposeHover: (() => void) | null = null;
 
     const handleZoom = () => {
       setZoomLevel(map.getZoom());
     };
 
     map.on("load", () => {
-      ensureParcelLayers(map);
-      ensureArcgisParcelLayers(map, showArcgisOutlines);
+      ensureParcelLayers(map, showArcgisOutlines);
+      ensureHoverLayers(map);
       ensureSelectionLayers(map);
+      ensureLayerOrder(map);
       handleZoom();
+      disposeHover = wireHover(map, hoverDataRef);
     });
 
     map.on("style.load", () => {
-      ensureParcelLayers(map);
-      ensureArcgisParcelLayers(map, showArcgisOutlines);
+      ensureParcelLayers(map, showArcgisOutlines);
+      ensureHoverLayers(map);
       ensureSelectionLayers(map);
+      const selectSource = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      selectSource?.setData(selectedParcelsGeojson);
+      const hoverSource = map.getSource(HOVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      hoverSource?.setData(hoverDataRef.current);
+      ensureLayerOrder(map);
     });
 
     map.on("zoom", handleZoom);
@@ -379,6 +551,7 @@ export default function Map({ onParcel }: MapProps) {
     return () => {
       disposed = true;
       map.off("zoom", handleZoom);
+      disposeHover?.();
       mapRef.current = null;
       map.remove();
     };
@@ -387,14 +560,15 @@ export default function Map({ onParcel }: MapProps) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    if (map.getLayer(ARCGIS_PARCEL_OUTLINE_LAYER_ID)) {
-      map.setLayoutProperty(
-        ARCGIS_PARCEL_OUTLINE_LAYER_ID,
-        "visibility",
-        showArcgisOutlines ? "visible" : "none",
-      );
+    if (map.getLayer(PARCEL_OUTLINE_LAYER_ID) || map.getLayer(PARCEL_OUTLINE_CASING_LAYER_ID)) {
+      [PARCEL_OUTLINE_LAYER_ID, PARCEL_OUTLINE_CASING_LAYER_ID].forEach((layerId) => {
+        if (map.getLayer(layerId)) {
+          map.setLayoutProperty(layerId, "visibility", showArcgisOutlines ? "visible" : "none");
+        }
+      });
     } else if (map.isStyleLoaded()) {
-      ensureArcgisParcelLayers(map, showArcgisOutlines);
+      ensureParcelLayers(map, showArcgisOutlines);
+      ensureLayerOrder(map);
     }
   }, [showArcgisOutlines]);
 
