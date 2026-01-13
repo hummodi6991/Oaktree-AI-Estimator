@@ -51,14 +51,26 @@ district,far_max,city,zoning,road_class,frontage_min_m,asof_date,source_url
 ```
 Only `district` and `far_max` are required. When an estimate runs, the API first tries polygon features for FAR; if none are found, it falls back to this rules table by matching the inferred **district**.
 
+### ArcGIS parcels (default outlines + identify)
+ArcGIS parcels (`public.riyadh_parcels_arcgis_raw`) are the default geometry source via the proxy view
+`public.riyadh_parcels_arcgis_proxy`. Ensure the migration that creates the view and GiST index has run, or run:
+`alembic upgrade head` before using the endpoints.
+
+Default settings (override via env vars as needed):
+- `PARCEL_TILE_TABLE=public.riyadh_parcels_arcgis_proxy`
+- `PARCEL_IDENTIFY_TABLE=public.riyadh_parcels_arcgis_proxy`
+- `PARCEL_IDENTIFY_GEOM_COLUMN=geom`
+- `PARCEL_TARGET_SRID=4326`
+
 ### Suhail parcel tiles import (resumable)
 - Workflow: trigger `.github/workflows/suhail-parcels-import.yml` (dispatch inputs: `zoom`, `layer`, `force_resume_from`, `max_tiles`). The job runs Alembic, ensures PostGIS, and resumes via `suhail_tile_ingest_state`.
 - Local check: `python -m app.ingest.suhail_parcels_tiles --zoom 15 --layer parcels-base --max-tiles 2`.
-- Parcel identify: set `PARCEL_IDENTIFY_TABLE=suhail_parcels_proxy` and `PARCEL_IDENTIFY_GEOM_COLUMN=geom` to route lookups through the new proxy view.
+- Parcel identify: set `PARCEL_IDENTIFY_TABLE=suhail_parcels_proxy` and `PARCEL_IDENTIFY_GEOM_COLUMN=geom` to route lookups through the Suhail proxy view.
 
-### Inferred parcels (default outlines + identify)
-Inferred parcels are computed from building footprints (`public.inferred_parcels_v1`) and are now the default parcel outlines and identify source. Suhail parcels remain available only as land-use/zoning overlays.
-Set `PARCEL_TILE_TABLE=public.inferred_parcels_v1`, `PARCEL_IDENTIFY_TABLE=public.inferred_parcels_v1`, and `PARCEL_IDENTIFY_GEOM_COLUMN=geom` to align tiles + identify with inferred parcels in an environment where defaults are overridden.
+### Inferred parcels (optional outlines + identify)
+Inferred parcels are computed from building footprints (`public.inferred_parcels_v1`) and can be enabled for parcel
+outlines and identify by setting `PARCEL_TILE_TABLE=public.inferred_parcels_v1`,
+`PARCEL_IDENTIFY_TABLE=public.inferred_parcels_v1`, and `PARCEL_IDENTIFY_GEOM_COLUMN=geom`.
 
 **Smoke check (local)**
 ```bash
@@ -66,7 +78,7 @@ curl -fsS "http://127.0.0.1:8000/v1/tiles/parcels/15/20634/14062.pbf" -o /tmp/pa
 ls -lh /tmp/parcels.pbf
 curl -fsS "http://127.0.0.1:8000/v1/geo/identify?lng=46.675&lat=24.713&tol_m=25"
 ```
-Confirm the tile output is non-empty when `public.inferred_parcels_v1` has rows and that the identify response includes a `parcel_id` from `public.inferred_parcels_v1`.
+Confirm the tile output is non-empty when `public.riyadh_parcels_arcgis_proxy` has rows and that the identify response includes a `parcel_id` from the ArcGIS proxy view.
 
 ### Microsoft GlobalML Building Footprints (Saudi Arabia)
 - Download the Saudi Arabia `.csv.gz` files from the `dataset-links.csv` manifest in `microsoft/GlobalMLBuildingFootprints` (filter the CSV for `Saudi Arabia`).

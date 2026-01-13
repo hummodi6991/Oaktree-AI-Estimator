@@ -19,15 +19,23 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
     return fallback
 
 
-_RAW_PARCEL_TILE_TABLE = getattr(settings, "PARCEL_TILE_TABLE", "public.suhail_parcels_mat")
-PARCEL_TILE_TABLE = _safe_identifier(_RAW_PARCEL_TILE_TABLE, "public.suhail_parcels_mat")
-if (_RAW_PARCEL_TILE_TABLE or "").strip() in (
-    "",
+_RAW_PARCEL_TILE_TABLE = getattr(
+    settings, "PARCEL_TILE_TABLE", "public.riyadh_parcels_arcgis_proxy"
+)
+PARCEL_TILE_TABLE = _safe_identifier(
+    _RAW_PARCEL_TILE_TABLE, "public.riyadh_parcels_arcgis_proxy"
+)
+PARCEL_SIMPLIFY_TOLERANCE_M = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
+_ARCGIS_PARCEL_TABLES = {
+    "public.riyadh_parcels_arcgis_proxy",
+    "riyadh_parcels_arcgis_proxy",
+}
+_NON_LANDUSE_PARCEL_TABLES = {
     "public.inferred_parcels_v1",
     "inferred_parcels_v1",
-):
-    PARCEL_TILE_TABLE = "public.suhail_parcels_mat"
-PARCEL_SIMPLIFY_TOLERANCE_M = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
+    "public.derived_parcels_v1",
+    "derived_parcels_v1",
+}
 
 
 _SUHAIL_PARCEL_TILE_SQL = text(
@@ -151,6 +159,15 @@ def _safe_column(value: str | None, fallback: str) -> str:
 
 def _generic_parcel_tile_sql(table_name: str, simplify: bool, id_col: str = "id") -> text:
     safe_id_col = _safe_column(id_col, "id")
+    if table_name in _NON_LANDUSE_PARCEL_TABLES:
+        landuse_col = "NULL::text"
+        classification_col = "NULL::text"
+    elif table_name in _ARCGIS_PARCEL_TABLES:
+        landuse_col = "p.landuse_label"
+        classification_col = "p.landuse_code"
+    else:
+        landuse_col = "p.landuse"
+        classification_col = "p.classification"
     geom_expr = "p.geom3857"
     if simplify:
         geom_expr = "ST_SimplifyPreserveTopology(p.geom3857, :simplify_tol)"
@@ -159,16 +176,21 @@ def _generic_parcel_tile_sql(table_name: str, simplify: bool, id_col: str = "id"
         WITH tile AS (
           SELECT ST_SetSRID(ST_TileEnvelope(:z,:x,:y), 3857) AS geom3857
         ),
+        tile4326 AS (
+          SELECT ST_Transform(geom3857, 4326) AS geom
+          FROM tile
+        ),
         parcel_candidates AS (
           SELECT
             p.{safe_id_col} AS id,
-            p.landuse,
-            p.classification,
+            {landuse_col} AS landuse,
+            {classification_col} AS classification,
             p.area_m2,
             p.perimeter_m,
             ST_Transform(p.geom, 3857) AS geom3857
-          FROM {table_name} p, tile t
-          WHERE ST_Transform(p.geom, 3857) && t.geom3857
+          FROM {table_name} p, tile4326 t
+          WHERE p.geom && t.geom
+            AND ST_Intersects(p.geom, t.geom)
         ),
         simplified AS (
           SELECT

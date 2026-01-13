@@ -33,3 +33,14 @@ Use the following SQL to validate progress:
 SELECT * FROM public.ingest_checkpoints WHERE job_name='arcgis_riyadh_parcel';
 SELECT count(*) FROM public.riyadh_parcels_arcgis_raw;
 ```
+
+## Proxy view + app defaults
+The app consumes ArcGIS parcels via `public.riyadh_parcels_arcgis_proxy`, which is created by the migration that also
+adds a GiST index on `public.riyadh_parcels_arcgis_raw.geom`. Run `alembic upgrade head` (or the specific migration)
+after ingesting raw data to ensure the proxy exists.
+
+Default parcel geometry settings (override via env vars if needed):
+- `PARCEL_TILE_TABLE=public.riyadh_parcels_arcgis_proxy`
+- `PARCEL_IDENTIFY_TABLE=public.riyadh_parcels_arcgis_proxy`
+- `PARCEL_IDENTIFY_GEOM_COLUMN=geom`
+- `PARCEL_TARGET_SRID=4326`
