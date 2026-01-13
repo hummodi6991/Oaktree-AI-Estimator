@@ -1,5 +1,4 @@
 import os
-from pydantic import BaseModel
 
 from dotenv import load_dotenv
 
@@ -14,6 +13,19 @@ class Settings:
     DB_NAME: str = os.getenv("POSTGRES_DB", "oaktree")
     DB_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
     DB_PORT: int = int(os.getenv("POSTGRES_PORT", "5432"))
+
+    # --- Parcel source tables (ArcGIS is the default) ---
+    # These are used by:
+    # - /v1/tiles/parcels (outlines)
+    # - /v1/geo/identify (click selection)
+    # ArcGIS proxy view exposes: id, geom(4326), area_m2, perimeter_m, landuse_* fields.
+    PARCEL_TILE_TABLE: str = os.getenv(
+        "PARCEL_TILE_TABLE", "public.riyadh_parcels_arcgis_proxy"
+    )
+    PARCEL_IDENTIFY_TABLE: str = os.getenv(
+        "PARCEL_IDENTIFY_TABLE", "public.riyadh_parcels_arcgis_proxy"
+    )
+    PARCEL_IDENTIFY_GEOM_COLUMN: str = os.getenv("PARCEL_IDENTIFY_GEOM_COLUMN", "geom")
 
     # --- External data & APIs (env-driven) ---
     # ArcGIS (البوابة المكانية) parcels/zoning
@@ -39,13 +51,6 @@ class Settings:
     PARCEL_TARGET_SRID: int = int(os.getenv("PARCEL_TARGET_SRID", "4326"))
     PARCEL_IDENTIFY_TOLERANCE_M: float = float(
         os.getenv("PARCEL_IDENTIFY_TOLERANCE_M", "25.0")
-    )
-    PARCEL_IDENTIFY_TABLE: str = os.getenv(
-        "PARCEL_IDENTIFY_TABLE", "public.riyadh_parcels_arcgis_proxy"
-    )
-    PARCEL_IDENTIFY_GEOM_COLUMN: str = os.getenv("PARCEL_IDENTIFY_GEOM_COLUMN", "geom")
-    PARCEL_TILE_TABLE: str = os.getenv(
-        "PARCEL_TILE_TABLE", "public.riyadh_parcels_arcgis_proxy"
     )
     PARCEL_ENVELOPE_PAD_M: float = float(os.getenv("PARCEL_ENVELOPE_PAD_M", "5.0"))
     PARCEL_SIMPLIFY_TOLERANCE_M: float = float(
