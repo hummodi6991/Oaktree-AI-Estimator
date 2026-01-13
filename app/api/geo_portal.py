@@ -107,25 +107,27 @@ def _effective_parcel_mode(db: Session) -> str:
     return _PARCEL_MODE
 
 
-_TARGET_SRID = getattr(settings, "PARCEL_TARGET_SRID", 32638)
+_TARGET_SRID = getattr(settings, "PARCEL_TARGET_SRID", 4326)
 _DEFAULT_TOLERANCE = getattr(settings, "PARCEL_IDENTIFY_TOLERANCE_M", 25.0) or 25.0
 if _DEFAULT_TOLERANCE <= 0:
     _DEFAULT_TOLERANCE = 25.0
 
-_RAW_PARCEL_TABLE = getattr(settings, "PARCEL_IDENTIFY_TABLE", "public.suhail_parcels_mat")
-_PARCEL_TABLE = _safe_identifier(_RAW_PARCEL_TABLE, "public.suhail_parcels_mat")
-if (_RAW_PARCEL_TABLE or "").strip() in (
-    "",
-    "public.inferred_parcels_v1",
-    "inferred_parcels_v1",
-):
-    _PARCEL_TABLE = "public.suhail_parcels_mat"
+_RAW_PARCEL_TABLE = getattr(
+    settings, "PARCEL_IDENTIFY_TABLE", "public.riyadh_parcels_arcgis_proxy"
+)
+_PARCEL_TABLE = _safe_identifier(
+    _RAW_PARCEL_TABLE, "public.riyadh_parcels_arcgis_proxy"
+)
 _PARCEL_GEOM_COLUMN = _safe_identifier(
     getattr(settings, "PARCEL_IDENTIFY_GEOM_COLUMN", "geom"), "geom"
 )
 _DERIVED_PARCEL_TABLES = {"public.derived_parcels_v1", "derived_parcels_v1"}
 _MS_BUILDINGS_TABLES = {"public.ms_buildings_raw", "ms_buildings_raw"}
 _INFERRED_PARCEL_TABLES = {"public.inferred_parcels_v1", "inferred_parcels_v1"}
+_ARCGIS_PARCEL_TABLES = {
+    "public.riyadh_parcels_arcgis_proxy",
+    "riyadh_parcels_arcgis_proxy",
+}
 _MS_BUILDINGS_TABLE = "public.ms_buildings_raw"
 
 
@@ -136,6 +138,8 @@ def _parcel_mode(table_name: str) -> str:
         return "derived"
     if table_name in _MS_BUILDINGS_TABLES:
         return "ms_buildings"
+    if table_name in _ARCGIS_PARCEL_TABLES:
+        return "arcgis"
     return "default"
 
 
@@ -175,6 +179,17 @@ def _parcel_expressions(mode: str, geom_column: str) -> dict[str, str]:
             "perimeter_expr": "perimeter_m::bigint AS perimeter_m",
             "site_area_expr": "NULL::double precision AS site_area_m2",
             "footprint_expr": "footprint_area_m2",
+            "building_count_expr": "NULL::int AS building_count",
+        }
+    if mode == "arcgis":
+        return {
+            "landuse_expr": "landuse_label AS landuse",
+            "classification_expr": "NULL::text AS classification",
+            "classification_ref": "NULL::text",
+            "area_expr": "area_m2::bigint AS area_m2",
+            "perimeter_expr": "perimeter_m::bigint AS perimeter_m",
+            "site_area_expr": "NULL::double precision AS site_area_m2",
+            "footprint_expr": "NULL::double precision AS footprint_area_m2",
             "building_count_expr": "NULL::int AS building_count",
         }
     return {

@@ -14,7 +14,7 @@
   "app": {
     "clickToStart": "Click a parcel on the map to begin…",
     "tipLabel": "Tip:",
-    "tipMessage": "Suhail parcel outlines are shown at all zoom levels. Zoom in for full parcel detail.",
+    "tipMessage": "ArcGIS parcel outlines are shown at all zoom levels. Zoom in for full parcel detail.",
     "parcelLabel": "Parcel",
     "areaLabel": "Area",
     "footprintLabel": "Footprint",
@@ -55,7 +55,7 @@
       "mergeParcels": "Merge parcels",
       "merging": "Merging…"
     },
-    "disclaimer": "Suhail parcel outlines are shown at all zoom levels. Zoom in for full parcel detail."
+    "disclaimer": "ArcGIS parcel outlines are shown at all zoom levels. Zoom in for full parcel detail."
   },
   "excel": {
     "providerLabel": "Provider:",
