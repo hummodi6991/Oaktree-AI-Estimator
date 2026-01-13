@@ -21,9 +21,11 @@ spec:
             - name: PARCEL_TILE_TABLE
               value: "public.inferred_parcels_v1"
             - name: PARCEL_IDENTIFY_TABLE
-              value: "public.inferred_parcels_v1"
+              value: "public.riyadh_parcels_arcgis_proxy"
             - name: PARCEL_IDENTIFY_GEOM_COLUMN
               value: "geom"
+            - name: PARCEL_TARGET_SRID
+              value: "4326"
           envFrom:
             - secretRef:
                 name: oaktree-db-env
