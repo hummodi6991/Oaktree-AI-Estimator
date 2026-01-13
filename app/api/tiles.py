@@ -261,9 +261,16 @@ def _arcgis_tile_generalization(z: int) -> tuple[float | None, int | None]:
 @router.get("/tiles/parcels/{z}/{x}/{y}.pbf")
 @router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
-    arcgis_mode = PARCEL_TILE_TABLE in _ARCGIS_PARCEL_TABLES
+    # Read live settings (do not rely on module-import constants in tests/CI).
+    parcel_table = getattr(settings, "PARCEL_TILE_TABLE", "public.riyadh_parcels_arcgis_proxy")
+    simplify_default = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
+
+    # Robust ArcGIS mode detection:
+    # - Proxy/raw names include "arcgis"
+    # - Avoid brittle membership lists that can drift
+    arcgis_mode = "arcgis" in str(parcel_table).lower()
     try:
-        if PARCEL_TILE_TABLE in ("public.inferred_parcels_v1", "inferred_parcels_v1"):
+        if parcel_table in ("public.inferred_parcels_v1", "inferred_parcels_v1"):
             id_col = "parcel_id"
         else:
             id_col = "id"
@@ -271,7 +278,7 @@ def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
         if arcgis_mode:
             simplify_tol, min_area_m2 = _arcgis_tile_generalization(z)
             tile_sql = _generic_parcel_tile_sql(
-                PARCEL_TILE_TABLE,
+                parcel_table,
                 id_col=id_col,
                 simplify_tol=simplify_tol,
                 min_area_m2=min_area_m2,
@@ -283,12 +290,12 @@ def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
         else:
             simplify = z == 16
             tile_sql = _generic_parcel_tile_sql(
-                PARCEL_TILE_TABLE,
+                parcel_table,
                 id_col=id_col,
-                simplify_tol=PARCEL_SIMPLIFY_TOLERANCE_M if simplify else None,
+                simplify_tol=simplify_default if simplify else None,
             )
             if simplify:
-                params["simplify_tol"] = PARCEL_SIMPLIFY_TOLERANCE_M
+                params["simplify_tol"] = simplify_default
         tile_bytes = db.execute(tile_sql, params).scalar()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to render parcel tile: {exc}")
