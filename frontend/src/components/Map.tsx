@@ -124,8 +124,8 @@ function ensureParcelLayers(map: maplibregl.Map) {
   if (!map.getSource(PARCEL_SOURCE_ID)) {
     map.addSource(PARCEL_SOURCE_ID, {
       type: "vector",
-      tiles: [buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf")],
-      minzoom: 12,
+      tiles: [buildApiUrl("/v1/tiles/suhail/{z}/{x}/{y}.pbf")],
+      minzoom: 0,
       maxzoom: 18,
     });
   }
@@ -139,7 +139,19 @@ function ensureParcelLayers(map: maplibregl.Map) {
       layout: { visibility: "visible" },
       paint: {
         "fill-color": "#2f7bff",
-        "fill-opacity": 0.08,
+        "fill-opacity": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          0,
+          0.0,
+          14.9,
+          0.0,
+          15.5,
+          0.03,
+          16,
+          0.08,
+        ],
       },
     });
   }
@@ -153,8 +165,8 @@ function ensureParcelLayers(map: maplibregl.Map) {
       layout: { visibility: "visible" },
       paint: {
         "line-color": "#2f7bff",
-        "line-width": 1.1,
-        "line-opacity": 0.8,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 0, 0.3, 14, 0.3, 16, 1.2, 18, 2.0],
+        "line-opacity": ["interpolate", ["linear"], ["zoom"], 0, 0.4, 14, 0.4, 16, 0.9],
       },
     });
   }
@@ -196,6 +208,7 @@ export default function Map({ onParcel }: MapProps) {
   const [collateStatus, setCollateStatus] = useState<StatusMessage | null>(null);
   const [collating, setCollating] = useState(false);
   const [selectionMethod, setSelectionMethod] = useState<"feature" | null>(null);
+  const [zoomLevel, setZoomLevel] = useState<number | null>(null);
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
@@ -352,15 +365,22 @@ export default function Map({ onParcel }: MapProps) {
 
     let disposed = false;
 
+    const handleZoom = () => {
+      setZoomLevel(map.getZoom());
+    };
+
     map.on("load", () => {
       ensureParcelLayers(map);
       ensureSelectionLayers(map);
+      handleZoom();
     });
 
     map.on("style.load", () => {
       ensureParcelLayers(map);
       ensureSelectionLayers(map);
     });
+
+    map.on("zoom", handleZoom);
 
     map.on("click", async (e) => {
       setCollateStatus(null);
@@ -484,6 +504,7 @@ export default function Map({ onParcel }: MapProps) {
 
     return () => {
       disposed = true;
+      map.off("zoom", handleZoom);
       mapRef.current = null;
       map.remove();
     };
@@ -551,17 +572,37 @@ export default function Map({ onParcel }: MapProps) {
 
   return (
     <div>
-      <div
-        ref={containerRef}
-        style={{
-          width: "100%",
-          height: "60vh",
-          borderRadius: 12,
-          overflow: "hidden",
-          boxShadow: "0 1px 2px rgba(16, 24, 40, 0.08)",
-          cursor: "crosshair",
-        }}
-      />
+      <div style={{ position: "relative" }}>
+        <div
+          ref={containerRef}
+          style={{
+            width: "100%",
+            height: "60vh",
+            borderRadius: 12,
+            overflow: "hidden",
+            boxShadow: "0 1px 2px rgba(16, 24, 40, 0.08)",
+            cursor: "crosshair",
+          }}
+        />
+        {zoomLevel != null && (
+          <div
+            style={{
+              position: "absolute",
+              right: 10,
+              bottom: 10,
+              padding: "2px 6px",
+              borderRadius: 6,
+              background: "rgba(17, 24, 39, 0.55)",
+              color: "white",
+              fontSize: "0.75rem",
+              letterSpacing: "0.02em",
+              pointerEvents: "none",
+            }}
+          >
+            Zoom: {zoomLevel.toFixed(1)}
+          </div>
+        )}
+      </div>
       <div style={{ marginTop: 6, fontSize: "0.85rem", color: "rgba(71, 84, 103, 0.9)" }}>
         {t("map.disclaimer")}
       </div>
