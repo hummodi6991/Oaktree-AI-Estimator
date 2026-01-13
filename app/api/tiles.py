@@ -19,12 +19,8 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
     return fallback
 
 
-_RAW_PARCEL_TILE_TABLE = getattr(
-    settings, "PARCEL_TILE_TABLE", "public.riyadh_parcels_arcgis_proxy"
-)
-PARCEL_TILE_TABLE = _safe_identifier(
-    _RAW_PARCEL_TILE_TABLE, "public.riyadh_parcels_arcgis_proxy"
-)
+# NOTE: Do NOT freeze PARCEL_TILE_TABLE at import time.
+# Parcel source must be resolved at request time from settings/env.
 PARCEL_SIMPLIFY_TOLERANCE_M = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
 _ARCGIS_PARCEL_TABLES = {
     "public.riyadh_parcels_arcgis_proxy",
@@ -262,7 +258,10 @@ def _arcgis_tile_generalization(z: int) -> tuple[float | None, int | None]:
 @router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
     # Read live settings (do not rely on module-import constants in tests/CI).
-    parcel_table = getattr(settings, "PARCEL_TILE_TABLE", "public.riyadh_parcels_arcgis_proxy")
+    parcel_table = _safe_identifier(
+        getattr(settings, "PARCEL_TILE_TABLE", "public.riyadh_parcels_arcgis_proxy"),
+        "public.riyadh_parcels_arcgis_proxy",
+    )
     simplify_default = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
 
     # Robust ArcGIS mode detection:
