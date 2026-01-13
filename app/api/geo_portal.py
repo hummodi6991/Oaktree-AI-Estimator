@@ -112,9 +112,14 @@ _DEFAULT_TOLERANCE = getattr(settings, "PARCEL_IDENTIFY_TOLERANCE_M", 25.0) or 2
 if _DEFAULT_TOLERANCE <= 0:
     _DEFAULT_TOLERANCE = 25.0
 
-_PARCEL_TABLE = _safe_identifier(
-    getattr(settings, "PARCEL_IDENTIFY_TABLE", "parcels"), "parcels"
-)
+_RAW_PARCEL_TABLE = getattr(settings, "PARCEL_IDENTIFY_TABLE", "public.suhail_parcels_mat")
+_PARCEL_TABLE = _safe_identifier(_RAW_PARCEL_TABLE, "public.suhail_parcels_mat")
+if (_RAW_PARCEL_TABLE or "").strip() in (
+    "",
+    "public.inferred_parcels_v1",
+    "inferred_parcels_v1",
+):
+    _PARCEL_TABLE = "public.suhail_parcels_mat"
 _PARCEL_GEOM_COLUMN = _safe_identifier(
     getattr(settings, "PARCEL_IDENTIFY_GEOM_COLUMN", "geom"), "geom"
 )

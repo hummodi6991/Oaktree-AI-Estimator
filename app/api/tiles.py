@@ -19,10 +19,14 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
     return fallback
 
 
-PARCEL_TILE_TABLE = _safe_identifier(
-    getattr(settings, "PARCEL_TILE_TABLE", "public.suhail_parcels_mat"),
-    "public.suhail_parcels_mat",
-)
+_RAW_PARCEL_TILE_TABLE = getattr(settings, "PARCEL_TILE_TABLE", "public.suhail_parcels_mat")
+PARCEL_TILE_TABLE = _safe_identifier(_RAW_PARCEL_TILE_TABLE, "public.suhail_parcels_mat")
+if (_RAW_PARCEL_TILE_TABLE or "").strip() in (
+    "",
+    "public.inferred_parcels_v1",
+    "inferred_parcels_v1",
+):
+    PARCEL_TILE_TABLE = "public.suhail_parcels_mat"
 PARCEL_SIMPLIFY_TOLERANCE_M = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
 
 
