@@ -38,10 +38,6 @@ def _get_parcel_tile_table() -> str:
 PARCEL_TILE_TABLE = _get_parcel_tile_table()
 
 PARCEL_SIMPLIFY_TOLERANCE_M = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
-_ARCGIS_PARCEL_TABLES = {
-    "public.riyadh_parcels_arcgis_proxy",
-    "riyadh_parcels_arcgis_proxy",
-}
 _NON_LANDUSE_PARCEL_TABLES = {
     "public.inferred_parcels_v1",
     "inferred_parcels_v1",
@@ -179,7 +175,7 @@ def _generic_parcel_tile_sql(
     if table_name in _NON_LANDUSE_PARCEL_TABLES:
         landuse_col = "NULL::text"
         classification_col = "NULL::text"
-    elif table_name in _ARCGIS_PARCEL_TABLES:
+    elif "arcgis" in table_name.lower():
         landuse_col = "p.landuse_label"
         classification_col = "p.landuse_code"
     else:
