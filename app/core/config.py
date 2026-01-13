@@ -2,7 +2,12 @@ import os
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# IMPORTANT:
+# In CI, loading .env from the repo can override Settings defaults and break tests.
+# GitHub Actions sets CI=true, so we skip dotenv there.
+_CI = os.getenv("CI", "").strip().lower() in {"1", "true", "yes"}
+if not _CI:
+    load_dotenv()
 
 
 class Settings:
