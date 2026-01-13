@@ -860,6 +860,8 @@ def _pick_landuse(
     ovt_code: str | None,
     ovt_conf: float,
 ) -> tuple[str | None, str | None]:
+    if label_code and label_is_signal:
+        return label_code, "parcel_label"
     osm_strong = bool(
         osm_code
         and ((osm_res >= 0.70 and osm_com <= 0.15) or (osm_com >= 0.70))

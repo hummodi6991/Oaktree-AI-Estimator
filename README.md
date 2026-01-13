@@ -62,6 +62,9 @@ Default settings (override via env vars as needed):
 - `PARCEL_IDENTIFY_GEOM_COLUMN=geom`
 - `PARCEL_TARGET_SRID=4326`
 
+Tiles from the ArcGIS proxy are served at all zoom levels with zoom-based simplification and minimum-area
+filters to keep low-zoom outlines readable.
+
 ### Suhail parcel tiles import (resumable)
 - Workflow: trigger `.github/workflows/suhail-parcels-import.yml` (dispatch inputs: `zoom`, `layer`, `force_resume_from`, `max_tiles`). The job runs Alembic, ensures PostGIS, and resumes via `suhail_tile_ingest_state`.
 - Local check: `python -m app.ingest.suhail_parcels_tiles --zoom 15 --layer parcels-base --max-tiles 2`.

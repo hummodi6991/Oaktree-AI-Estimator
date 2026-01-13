@@ -21,7 +21,7 @@ def test_parcel_tile_default_uses_arcgis_proxy_when_env_missing(monkeypatch):
     monkeypatch.delenv("PARCEL_TILE_TABLE", raising=False)
 
     tiles = _reload_tiles()
-    sql = str(tiles._generic_parcel_tile_sql(tiles.PARCEL_TILE_TABLE, simplify=False))
+    sql = str(tiles._generic_parcel_tile_sql(tiles.PARCEL_TILE_TABLE, simplify_tol=None))
 
     assert tiles.PARCEL_TILE_TABLE == "public.riyadh_parcels_arcgis_proxy"
     assert "public.riyadh_parcels_arcgis_proxy" in sql

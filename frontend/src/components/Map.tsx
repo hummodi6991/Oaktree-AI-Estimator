@@ -7,8 +7,8 @@ import { formatInteger, formatNumber } from "../i18n/format";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { buildApiUrl, collateParcels, inferParcel, landuse } from "../api";
-import type { CollateResponse, InferParcelResponse, LanduseResponse, ParcelSummary } from "../api";
+import { buildApiUrl, collateParcels, identify, inferParcel } from "../api";
+import type { CollateResponse, InferParcelResponse, ParcelSummary } from "../api";
 
 type MapProps = {
   onParcel: (parcel: ParcelSummary | null) => void;
@@ -212,7 +212,6 @@ export default function Map({ onParcel }: MapProps) {
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
-  const landuseRequestRef = useRef(0);
   const inferRequestRef = useRef(0);
   const lastSelectedIdRef = useRef<string | null>(null);
   const currentParcelRef = useRef<ParcelSummary | null>(null);
@@ -393,65 +392,40 @@ export default function Map({ onParcel }: MapProps) {
             layers: [PARCEL_LINE_LAYER_ID],
           });
         }
-        if (!features.length) {
+
+        const feature = pickBestFeature(features);
+        const props = feature?.properties || {};
+        const rawId = props.parcel_id;
+        const parcelIdFromFeature = rawId != null ? String(rawId) : null;
+        const buildingIdRaw = props.building_id != null ? Number(props.building_id) : null;
+        const partIndexRaw = props.part_index != null ? Number(props.part_index) : null;
+        const parsedId = parcelIdFromFeature ? parseMsParcelId(parcelIdFromFeature) : null;
+        const buildingId = Number.isFinite(buildingIdRaw) ? Number(buildingIdRaw) : parsedId?.buildingId ?? null;
+        const partIndex = Number.isFinite(partIndexRaw) ? Number(partIndexRaw) : parsedId?.partIndex ?? null;
+        const methodRaw = props.method != null ? String(props.method) : null;
+        const isPrecomputedParcel = methodRaw === "road_block_voronoi_v1";
+
+        const identifyResult = await identify(e.lngLat.lng, e.lngLat.lat);
+        if (!identifyResult?.found || !identifyResult.parcel) {
           setStatus({ key: "map.status.notFound" });
           const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource;
           source?.setData({ type: "FeatureCollection", features: [] });
           return;
         }
 
-        const feature = pickBestFeature(features);
-        if (!feature) {
-          setStatus({ key: "map.status.notFound" });
-          return;
-        }
-        const geometry = feature.geometry as Geometry | null;
-        if (!geometry) {
-          setStatus({ key: "map.status.notFound" });
-          return;
-        }
-
-        const props = feature.properties || {};
-        const rawId = props.parcel_id;
-        const parcelId = rawId != null ? String(rawId) : null;
-        const buildingIdRaw = props.building_id != null ? Number(props.building_id) : null;
-        const partIndexRaw = props.part_index != null ? Number(props.part_index) : null;
-        const parsedId = parcelId ? parseMsParcelId(parcelId) : null;
-        const buildingId = Number.isFinite(buildingIdRaw) ? Number(buildingIdRaw) : parsedId?.buildingId ?? null;
-        const partIndex = Number.isFinite(partIndexRaw) ? Number(partIndexRaw) : parsedId?.partIndex ?? null;
-        const areaM2 = props.area_m2 != null ? Number(props.area_m2) : null;
-        const parcelAreaM2 = props.parcel_area_m2 != null ? Number(props.parcel_area_m2) : null;
-        const footprintAreaM2 = props.footprint_area_m2 != null ? Number(props.footprint_area_m2) : null;
-        const perimeterM = props.perimeter_m != null ? Number(props.perimeter_m) : null;
-        const methodRaw = props.method != null ? String(props.method) : null;
-        const isPrecomputedParcel = methodRaw === "road_block_voronoi_v1";
+        const identifyParcel = identifyResult.parcel;
+        const geometry = transformGeometryToWgs84(identifyParcel.geometry as Geometry | null);
         const parcel: ParcelSummary = {
-          parcel_id: parcelId,
-          area_m2: Number.isFinite(areaM2) ? areaM2 : null,
-          parcel_area_m2: Number.isFinite(parcelAreaM2) ? parcelAreaM2 : null,
-          footprint_area_m2: Number.isFinite(footprintAreaM2) ? footprintAreaM2 : null,
-          perimeter_m: Number.isFinite(perimeterM) ? perimeterM : null,
-          parcel_method: isPrecomputedParcel ? "inferred_parcels_v1" : null,
+          ...identifyParcel,
           geometry,
+          parcel_area_m2: identifyParcel.parcel_area_m2 ?? identifyParcel.area_m2 ?? null,
+          parcel_method: isPrecomputedParcel ? "inferred_parcels_v1" : identifyParcel.parcel_method ?? null,
         };
 
         applyParcelSelection(parcel, geometry, "feature");
 
-        try {
-          const requestId = ++landuseRequestRef.current;
-          const landuseData: LanduseResponse = await landuse(e.lngLat.lng, e.lngLat.lat);
-          if (disposed) return;
-          if (landuseRequestRef.current !== requestId) return;
-          if (lastSelectedIdRef.current !== parcelId) return;
-          const latestParcel = currentParcelRef.current ?? parcel;
-          onParcelRef.current({ ...latestParcel, ...landuseData });
-        } catch (error) {
-          if (!disposed) {
-            console.warn("Landuse lookup failed", error);
-          }
-        }
-
         const shouldInfer = !isPrecomputedParcel;
+        const parcelId = parcel.parcel_id ?? parcelIdFromFeature ?? null;
         if (shouldInfer && parcelId && inferCacheRef.current.has(parcelId)) {
           const cached = inferCacheRef.current.get(parcelId);
           if (cached) {

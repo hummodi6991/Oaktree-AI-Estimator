@@ -49,7 +49,7 @@
       "noneSelected": "لم يتم تحديد أي قطع بعد."
     },
     "controls": {
-      "parcelOutlines": "حدود القطع",
+      "parcelOutlines": "حدود قطع ArcGIS",
       "multiSelect": "تحديد متعدد للقطع",
       "clearSelection": "مسح التحديد",
       "mergeParcels": "دمج القطع",
