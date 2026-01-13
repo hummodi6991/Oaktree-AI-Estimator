@@ -20,8 +20,8 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
 
 
 PARCEL_TILE_TABLE = _safe_identifier(
-    getattr(settings, "PARCEL_TILE_TABLE", "public.riyadh_urban_parcels_proxy"),
-    "public.riyadh_urban_parcels_proxy",
+    getattr(settings, "PARCEL_TILE_TABLE", "public.suhail_parcels_mat"),
+    "public.suhail_parcels_mat",
 )
 PARCEL_SIMPLIFY_TOLERANCE_M = getattr(settings, "PARCEL_SIMPLIFY_TOLERANCE_M", 1.0)
 
@@ -71,7 +71,7 @@ _SUHAIL_PARCEL_TILE_SQL = text(
         area_m2,
         perimeter_m,
         ST_AsMVTGeom(
-          geom3857,
+          c.geom3857,
           t.geom3857,
           4096,
           64,
@@ -185,7 +185,7 @@ def _generic_parcel_tile_sql(table_name: str, simplify: bool) -> text:
             area_m2,
             perimeter_m,
             ST_AsMVTGeom(
-              geom3857,
+              c.geom3857,
               t.geom3857,
               4096,
               64,

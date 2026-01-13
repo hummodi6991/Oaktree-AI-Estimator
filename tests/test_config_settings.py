@@ -30,5 +30,5 @@ def test_parcel_tile_table_default(monkeypatch):
     config = importlib.reload(config)
 
     settings = config.Settings()
-    assert settings.PARCEL_TILE_TABLE == "public.riyadh_urban_parcels_proxy"
-    assert settings.PARCEL_IDENTIFY_TABLE == "public.riyadh_urban_parcels_proxy"
+    assert settings.PARCEL_TILE_TABLE == "public.suhail_parcels_mat"
+    assert settings.PARCEL_IDENTIFY_TABLE == "public.suhail_parcels_mat"

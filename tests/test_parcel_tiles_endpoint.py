@@ -70,7 +70,8 @@ def test_parcel_tile_high_zoom_returns_bytes() -> None:
         assert dummy.executed
         assert dummy.last_params is not None
         assert "simplify_tol" in dummy.last_params
-        assert "riyadh_urban_parcels_proxy" in str(dummy.last_sql)
+        assert "suhail_parcels_mat" in str(dummy.last_sql)
+        assert "c.geom3857" in str(dummy.last_sql)
     finally:
         app.dependency_overrides.pop(get_db, None)
 
