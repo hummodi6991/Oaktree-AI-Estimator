@@ -14,13 +14,13 @@
   "app": {
     "clickToStart": "انقر على قطعة في الخريطة للبدء…",
     "tipLabel": "تلميح:",
-    "tipMessage": "تظهر بعض حدود القطع المستنتجة عند التكبير فقط. إذا بدت القطع مفقودة، قرّب التكبير لإظهار حدود القطع الزرقاء.",
-    "parcelLabel": "قطعة مستنتجة",
+    "tipMessage": "يتم عرض حدود قطع Suhail على جميع مستويات التكبير. قرّب لإظهار تفاصيل القطعة بالكامل.",
+    "parcelLabel": "قطعة أرض",
     "areaLabel": "المساحة",
     "footprintLabel": "بصمة المبنى",
-    "methodLabel": "طريقة الاستدلال",
-    "methodInferred": "inferred_parcels_v1",
-    "methodClickFallback": "استدلال عند النقر (احتياطي)",
+    "methodLabel": "الطريقة",
+    "methodInferred": "suhail_parcels_v1",
+    "methodClickFallback": "احتياطي عند النقر",
     "landUseLabel": "الاستخدام",
     "landUseCodeLabel": "{{code}} — {{label}}",
     "landUse": {
@@ -55,7 +55,7 @@
       "mergeParcels": "دمج القطع",
       "merging": "جارٍ الدمج…"
     },
-    "disclaimer": "قد لا تتطابق حدود القطع المستنتجة تمامًا مع خريطة الأساس."
+    "disclaimer": "يتم عرض حدود قطع Suhail على جميع مستويات التكبير. قرّب لإظهار تفاصيل القطعة بالكامل."
   },
   "excel": {
     "providerLabel": "المزوّد:",

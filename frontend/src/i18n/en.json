@@ -14,13 +14,13 @@
   "app": {
     "clickToStart": "Click a parcel on the map to begin…",
     "tipLabel": "Tip:",
-    "tipMessage": "Some inferred parcel outlines appear only when you zoom in. If parcels look missing, zoom closer to reveal the blue parcel boundaries.",
-    "parcelLabel": "Inferred parcel",
+    "tipMessage": "Suhail parcel outlines are shown at all zoom levels. Zoom in for full parcel detail.",
+    "parcelLabel": "Parcel",
     "areaLabel": "Area",
     "footprintLabel": "Footprint",
     "methodLabel": "Method",
-    "methodInferred": "inferred_parcels_v1",
-    "methodClickFallback": "click-time inference fallback",
+    "methodInferred": "suhail_parcels_v1",
+    "methodClickFallback": "click-time fallback",
     "landUseLabel": "Land-use",
     "landUseCodeLabel": "{{code}} — {{label}}",
     "landUse": {
@@ -55,7 +55,7 @@
       "mergeParcels": "Merge parcels",
       "merging": "Merging…"
     },
-    "disclaimer": "Inferred parcel outlines may not align perfectly with the basemap."
+    "disclaimer": "Suhail parcel outlines are shown at all zoom levels. Zoom in for full parcel detail."
   },
   "excel": {
     "providerLabel": "Provider:",
