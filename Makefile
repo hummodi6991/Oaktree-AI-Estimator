@@ -39,6 +39,10 @@ ingest-rega-indicators:
 ingest-ms-buildings:
 	MS_BUILDINGS_DIR=$(MS_BUILDINGS_DIR) PYTHONPATH=. python -m app.ingest.ms_buildings
 
+.PHONY: ingest-riyadh-urban-parcels
+ingest-riyadh-urban-parcels:
+	PYTHONPATH=. python -m app.ingest.riyadh_urban_parcels
+
 .PHONY: fetch-ms-buildings-riyadh
 fetch-ms-buildings-riyadh:
 	PYTHONPATH=. python -m app.ingest.fetch_ms_buildings_riyadh

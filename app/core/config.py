@@ -40,10 +40,12 @@ class Settings:
         os.getenv("PARCEL_IDENTIFY_TOLERANCE_M", "25.0")
     )
     PARCEL_IDENTIFY_TABLE: str = os.getenv(
-        "PARCEL_IDENTIFY_TABLE", "public.ms_buildings_raw"
+        "PARCEL_IDENTIFY_TABLE", "public.riyadh_urban_parcels_proxy"
     )
     PARCEL_IDENTIFY_GEOM_COLUMN: str = os.getenv("PARCEL_IDENTIFY_GEOM_COLUMN", "geom")
-    PARCEL_TILE_TABLE: str = os.getenv("PARCEL_TILE_TABLE", "public.ms_buildings_raw")
+    PARCEL_TILE_TABLE: str = os.getenv(
+        "PARCEL_TILE_TABLE", "public.riyadh_urban_parcels_proxy"
+    )
     PARCEL_ENVELOPE_PAD_M: float = float(os.getenv("PARCEL_ENVELOPE_PAD_M", "5.0"))
     PARCEL_SIMPLIFY_TOLERANCE_M: float = float(
         os.getenv("PARCEL_SIMPLIFY_TOLERANCE_M", "1.0")
