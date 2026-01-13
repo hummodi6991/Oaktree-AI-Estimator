@@ -177,7 +177,7 @@ function ensureArcgisParcelLayers(map: maplibregl.Map, visible: boolean) {
       id: ARCGIS_PARCEL_OUTLINE_LAYER_ID,
       type: "line",
       source: ARCGIS_PARCEL_SOURCE_ID,
-      "source-layer": "riyadh_parcels_arcgis_proxy",
+      "source-layer": "parcels",
       layout: { visibility: visible ? "visible" : "none" },
       paint: {
         "line-color": "#00A3FF",
