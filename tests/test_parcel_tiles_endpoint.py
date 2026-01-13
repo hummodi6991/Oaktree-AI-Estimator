@@ -2,6 +2,7 @@ import math
 
 from fastapi.testclient import TestClient
 
+from app.api import tiles
 from app.db.deps import get_db
 from app.main import app
 
@@ -70,7 +71,7 @@ def test_parcel_tile_high_zoom_returns_bytes() -> None:
         assert dummy.executed
         assert dummy.last_params is not None
         assert "simplify_tol" in dummy.last_params
-        assert "suhail_parcels_mat" in str(dummy.last_sql)
+        assert tiles.PARCEL_TILE_TABLE in str(dummy.last_sql)
         assert "c.geom3857" in str(dummy.last_sql)
     finally:
         app.dependency_overrides.pop(get_db, None)
@@ -106,5 +107,24 @@ def test_parcel_tile_riyadh_tile_returns_bytes_when_available() -> None:
         assert resp.status_code == 200
         assert resp.content == b"parcels"
         assert dummy.executed
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def test_parcel_tile_inferred_uses_parcel_id_column(monkeypatch) -> None:
+    dummy = DummySession(payload=b"parcels")
+    monkeypatch.setattr(tiles, "PARCEL_TILE_TABLE", "public.inferred_parcels_v1")
+
+    def override_get_db():
+        yield dummy
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        client = TestClient(app)
+        resp = client.get("/v1/tiles/parcels/16/0/0.pbf")
+        assert resp.status_code == 200
+        sql_text = str(dummy.last_sql)
+        assert "parcel_id AS id" in sql_text
+        assert "p.id" not in sql_text
     finally:
         app.dependency_overrides.pop(get_db, None)

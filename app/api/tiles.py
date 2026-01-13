@@ -136,7 +136,17 @@ _SUHAIL_PARCEL_ROT_TILE_SQL = text(
 )
 
 
-def _generic_parcel_tile_sql(table_name: str, simplify: bool) -> text:
+def _safe_column(value: str | None, fallback: str) -> str:
+    candidate = (value or "").strip()
+    if not candidate:
+        return fallback
+    if all(ch.isalnum() or ch == "_" for ch in candidate):
+        return candidate
+    return fallback
+
+
+def _generic_parcel_tile_sql(table_name: str, simplify: bool, id_col: str = "id") -> text:
+    safe_id_col = _safe_column(id_col, "id")
     geom_expr = "p.geom3857"
     if simplify:
         geom_expr = "ST_SimplifyPreserveTopology(p.geom3857, :simplify_tol)"
@@ -147,7 +157,7 @@ def _generic_parcel_tile_sql(table_name: str, simplify: bool) -> text:
         ),
         parcel_candidates AS (
           SELECT
-            p.id,
+            p.{safe_id_col} AS id,
             p.landuse,
             p.classification,
             p.area_m2,
@@ -207,7 +217,11 @@ def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
 
     simplify = z == 16
     try:
-        tile_sql = _generic_parcel_tile_sql(PARCEL_TILE_TABLE, simplify)
+        if PARCEL_TILE_TABLE in ("public.inferred_parcels_v1", "inferred_parcels_v1"):
+            id_col = "parcel_id"
+        else:
+            id_col = "id"
+        tile_sql = _generic_parcel_tile_sql(PARCEL_TILE_TABLE, simplify, id_col=id_col)
         params = {"z": z, "x": x, "y": y}
         if simplify:
             params["simplify_tol"] = PARCEL_SIMPLIFY_TOLERANCE_M
