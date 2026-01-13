@@ -298,14 +298,26 @@ def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
             if min_area_m2 is not None:
                 params["min_area_m2"] = min_area_m2
         else:
-            simplify = z == 16
-            tile_sql = _generic_parcel_tile_sql(
-                parcel_table,
-                id_col=id_col,
-                simplify_tol=simplify_default if simplify else None,
-            )
-            if simplify:
-                params["simplify_tol"] = simplify_default
+            simplify_tol, min_area_m2 = _arcgis_tile_generalization(z)
+            if min_area_m2 is not None:
+                tile_sql = _generic_parcel_tile_sql(
+                    parcel_table,
+                    id_col=id_col,
+                    simplify_tol=simplify_tol,
+                    min_area_m2=min_area_m2,
+                )
+                if simplify_tol is not None:
+                    params["simplify_tol"] = simplify_tol
+                params["min_area_m2"] = min_area_m2
+            else:
+                simplify = z == 16
+                tile_sql = _generic_parcel_tile_sql(
+                    parcel_table,
+                    id_col=id_col,
+                    simplify_tol=simplify_default if simplify else None,
+                )
+                if simplify:
+                    params["simplify_tol"] = simplify_default
         tile_bytes = db.execute(tile_sql, params).scalar()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"failed to render parcel tile: {exc}")
