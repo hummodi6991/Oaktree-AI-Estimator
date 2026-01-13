@@ -88,8 +88,8 @@ function setHoverGeometry(
   parcelId?: string | null,
 ) {
   const source = map.getSource(HOVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-  const data = geometry
-    ? {
+  const data: FeatureCollection<Geometry, GeoJsonProperties> = geometry
+    ? ({
         type: "FeatureCollection",
         features: [
           {
@@ -98,7 +98,7 @@ function setHoverGeometry(
             properties: { parcel_id: parcelId ?? null },
           },
         ],
-      }
+      } satisfies FeatureCollection<Geometry, GeoJsonProperties>)
     : EMPTY_FEATURE_COLLECTION;
   hoverDataRef.current = data;
   source?.setData(data);
