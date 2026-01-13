@@ -50,6 +50,8 @@
     },
     "controls": {
       "parcelOutlines": "ArcGIS parcel outlines",
+      "on": "On",
+      "off": "Off",
       "multiSelect": "Multi-select parcels",
       "clearSelection": "Clear selection",
       "mergeParcels": "Merge parcels",
