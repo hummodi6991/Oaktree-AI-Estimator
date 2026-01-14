@@ -854,6 +854,57 @@ def _ovt_overlay_code(geometry: dict, db) -> tuple[str | None, float, float, flo
     return code, res, com, conf
 
 
+def _select_identify_landuse(
+    label_raw: str,
+    label_code: str | None,
+    label_is_signal: bool,
+    suhail_raw: str,
+    suhail_code: str | None,
+    suhail_signal: bool,
+    osm_code: str | None,
+    osm_res: float,
+    osm_com: float,
+    osm_conf: float,
+) -> dict[str, Any]:
+    landuse_raw = label_raw
+    if label_code and label_is_signal:
+        return {
+            "landuse_raw": landuse_raw,
+            "landuse_code": label_code,
+            "landuse_method": "parcel_label",
+            "residential_share": None,
+            "commercial_share": None,
+            "osm_conf": 0.0,
+        }
+    if suhail_code and suhail_signal:
+        landuse_raw = suhail_raw
+        return {
+            "landuse_raw": landuse_raw,
+            "landuse_code": suhail_code,
+            "landuse_method": "suhail_overlay",
+            "residential_share": None,
+            "commercial_share": None,
+            "osm_conf": 0.0,
+        }
+    if osm_code:
+        return {
+            "landuse_raw": landuse_raw,
+            "landuse_code": osm_code,
+            "landuse_method": "osm_overlay",
+            "residential_share": osm_res,
+            "commercial_share": osm_com,
+            "osm_conf": osm_conf,
+        }
+    return {
+        "landuse_raw": landuse_raw,
+        "landuse_code": None,
+        "landuse_method": None,
+        "residential_share": None,
+        "commercial_share": None,
+        "osm_conf": 0.0,
+    }
+
+
 def _pick_landuse(
     label_code: str | None,
     label_is_signal: bool,
@@ -945,6 +996,33 @@ def _clamp_param(value: float | None, default: float, minimum: float, maximum: f
     if value is None:
         return default
     return max(min(value, maximum), minimum)
+
+
+def _suhail_landuse_at_point(
+    lng: float, lat: float, db: Session
+) -> tuple[str, str | None, bool]:
+    try:
+        row = db.execute(_SUHAIL_LANDUSE_SQL, {"lng": lng, "lat": lat}).mappings().first()
+    except SQLAlchemyError as exc:
+        logger.warning("Suhail landuse lookup failed: %s", exc)
+        return "", None, False
+    if not row:
+        return "", None, False
+    landuse_raw = str(row.get("landuse") or row.get("classification") or "")
+    label_code = _landuse_code_from_label(landuse_raw)
+    label_is_signal = _label_is_signal(landuse_raw, label_code)
+    return landuse_raw, label_code, label_is_signal
+
+
+def _representative_point(geometry: dict) -> tuple[float, float] | None:
+    try:
+        geom = shape(geometry)
+    except Exception:
+        return None
+    if geom.is_empty:
+        return None
+    point = geom.representative_point()
+    return point.x, point.y
 
 
 @router.post("/osm-classify", response_model=ClassifyResponse)
@@ -1445,38 +1523,20 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
     label_code = _landuse_code_from_label(str(landuse_raw))
     label_is_signal = _label_is_signal(str(landuse_raw), label_code)
 
-    ovt_attr_code: str | None = None
-    ovt_attr_conf = 0.0
-    # Only attempt overture building attribute lookup when it's a single Overture "parcel"
-    if classification_raw == "overture_building" and len(found_ids) == 1:
-        parcel_id = found_ids[0]
-        ovt_id = parcel_id[4:] if parcel_id.startswith("ovt:") else parcel_id
-        try:
-            record = (
-                db.execute(
-                    text("SELECT subtype, class FROM overture_buildings WHERE id=:id"),
-                    {"id": ovt_id},
-                )
-                .mappings()
-                .first()
-            )
-        except Exception as exc:
-            logger.warning("Overture building attribute lookup failed: %s", exc)
-            record = None
-
-        if record:
-            ovt_attr_code = _landuse_code_from_label(str(record.get("subtype") or ""))
-            if not ovt_attr_code:
-                ovt_attr_code = _landuse_code_from_label(str(record.get("class") or ""))
-            if ovt_attr_code:
-                landuse_raw = record.get("subtype") or record.get("class") or landuse_raw
-                ovt_attr_conf = 0.90
-
     osm_code = None
-    ovt_code = None
-    osm_res = osm_com = ovt_res = ovt_com = 0.0
-    osm_conf = ovt_conf = 0.0
+    osm_res = osm_com = 0.0
+    osm_conf = 0.0
+    suhail_raw = ""
+    suhail_code = None
+    suhail_signal = False
     if geometry and not label_is_signal:
+        point = _representative_point(geometry)
+        if point:
+            suhail_raw, suhail_code, suhail_signal = _suhail_landuse_at_point(
+                point[0], point[1], db
+            )
+
+    if geometry and not label_is_signal and not (suhail_code and suhail_signal):
         try:
             osm_start = time.perf_counter()
             osm_code, osm_res, osm_com, osm_conf = _osm_fallback_code(geometry, db)
@@ -1486,37 +1546,26 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
             )
         except Exception as exc:
             logger.warning("OSM overlay classification failed: %s", exc)
-        try:
-            ovt_start = time.perf_counter()
-            ovt_code, ovt_res, ovt_com, ovt_conf = _ovt_overlay_code(geometry, db)
-            logger.debug(
-                "Timing collate OVT overlay: %.2fms",
-                (time.perf_counter() - ovt_start) * 1000.0,
-            )
-        except Exception as exc:
-            logger.warning("Overture overlay classification failed: %s", exc)
 
-    landuse_code, landuse_method = _pick_landuse(
-        label_code,
-        label_is_signal,
-        ovt_attr_code,
-        ovt_attr_conf,
-        osm_code,
-        osm_res,
-        osm_com,
-        osm_conf,
-        ovt_code,
-        ovt_conf,
+    selection = _select_identify_landuse(
+        label_raw=str(landuse_raw),
+        label_code=label_code,
+        label_is_signal=label_is_signal,
+        suhail_raw=suhail_raw,
+        suhail_code=suhail_code,
+        suhail_signal=suhail_signal,
+        osm_code=osm_code,
+        osm_res=osm_res,
+        osm_com=osm_com,
+        osm_conf=osm_conf,
     )
 
-    residential_share = None
-    commercial_share = None
-    if landuse_method == "osm_overlay":
-        residential_share = osm_res
-        commercial_share = osm_com
-    elif landuse_method == "overture_overlay":
-        residential_share = ovt_res
-        commercial_share = ovt_com
+    landuse_code = selection["landuse_code"]
+    landuse_method = selection["landuse_method"]
+    landuse_raw = selection["landuse_raw"]
+    residential_share = selection["residential_share"]
+    commercial_share = selection["commercial_share"]
+    osm_conf = selection["osm_conf"]
 
     # Stable (deterministic) collated id for UX/caching
     collated_id = hashlib.sha1("|".join(sorted(found_ids)).encode("utf-8")).hexdigest()[:12]
@@ -1535,11 +1584,11 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
         "commercial_share": commercial_share,
         "residential_share_osm": osm_res,
         "commercial_share_osm": osm_com,
-        "residential_share_ovt": ovt_res,
-        "commercial_share_ovt": ovt_com,
-        "ovt_attr_conf": ovt_attr_conf,
+        "residential_share_ovt": 0.0,
+        "commercial_share_ovt": 0.0,
+        "ovt_attr_conf": 0.0,
         "osm_conf": osm_conf,
-        "ovt_conf": ovt_conf,
+        "ovt_conf": 0.0,
         "source_url": f"postgis/{source_table}",
         "component_count": len(found_ids),
         "component_area_m2_sum": component_area_m2_sum,
@@ -1589,40 +1638,16 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
     landuse_raw = row.get("landuse") or row.get("classification") or ""
     label_code = _landuse_code_from_label(str(landuse_raw))
     label_is_signal = _label_is_signal(str(landuse_raw), label_code)
-    ovt_attr_code: str | None = None
-    ovt_attr_conf = 0.0
-    if row.get("classification") == "overture_building":
-        parcel_id = row.get("id") or ""
-        ovt_id = parcel_id[4:] if parcel_id.startswith("ovt:") else parcel_id
-        try:
-            record = (
-                db.execute(
-                    text(
-                        "SELECT subtype, class FROM overture_buildings WHERE id=:id"
-                    ),
-                    {"id": ovt_id},
-                )
-                .mappings()
-                .first()
-            )
-        except SQLAlchemyError as exc:
-            logger.warning("Overture building attribute lookup failed: %s", exc)
-            record = None
-
-        if record:
-            ovt_attr_code = _landuse_code_from_label(str(record.get("subtype") or ""))
-            if not ovt_attr_code:
-                ovt_attr_code = _landuse_code_from_label(str(record.get("class") or ""))
-
-            if ovt_attr_code:
-                landuse_raw = record.get("subtype") or record.get("class") or landuse_raw
-                ovt_attr_conf = 0.90
-
     osm_code = None
-    ovt_code = None
-    osm_res = osm_com = ovt_res = ovt_com = 0.0
-    osm_conf = ovt_conf = 0.0
-    if geometry and not label_is_signal:
+    osm_res = osm_com = 0.0
+    osm_conf = 0.0
+    suhail_raw = ""
+    suhail_code = None
+    suhail_signal = False
+    if not label_is_signal:
+        suhail_raw, suhail_code, suhail_signal = _suhail_landuse_at_point(lng, lat, db)
+
+    if geometry and not label_is_signal and not (suhail_code and suhail_signal):
         try:
             osm_start = time.perf_counter()
             osm_code, osm_res, osm_com, osm_conf = _osm_fallback_code(geometry, db)
@@ -1632,37 +1657,26 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
             )
         except Exception as exc:
             logger.warning("OSM overlay classification failed: %s", exc)
-        try:
-            ovt_start = time.perf_counter()
-            ovt_code, ovt_res, ovt_com, ovt_conf = _ovt_overlay_code(geometry, db)
-            logger.debug(
-                "Timing identify OVT overlay: %.2fms",
-                (time.perf_counter() - ovt_start) * 1000.0,
-            )
-        except Exception as exc:
-            logger.warning("Overture overlay classification failed: %s", exc)
 
-    landuse_code, landuse_method = _pick_landuse(
-        label_code,
-        label_is_signal,
-        ovt_attr_code,
-        ovt_attr_conf,
-        osm_code,
-        osm_res,
-        osm_com,
-        osm_conf,
-        ovt_code,
-        ovt_conf,
+    selection = _select_identify_landuse(
+        label_raw=str(landuse_raw),
+        label_code=label_code,
+        label_is_signal=label_is_signal,
+        suhail_raw=suhail_raw,
+        suhail_code=suhail_code,
+        suhail_signal=suhail_signal,
+        osm_code=osm_code,
+        osm_res=osm_res,
+        osm_com=osm_com,
+        osm_conf=osm_conf,
     )
 
-    residential_share = None
-    commercial_share = None
-    if landuse_method == "osm_overlay":
-        residential_share = osm_res
-        commercial_share = osm_com
-    elif landuse_method == "overture_overlay":
-        residential_share = ovt_res
-        commercial_share = ovt_com
+    landuse_raw = selection["landuse_raw"]
+    landuse_code = selection["landuse_code"]
+    landuse_method = selection["landuse_method"]
+    residential_share = selection["residential_share"]
+    commercial_share = selection["commercial_share"]
+    osm_conf = selection["osm_conf"]
 
     parcel = {
         "parcel_id": row.get("id"),
@@ -1680,11 +1694,11 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
         "commercial_share": commercial_share,
         "residential_share_osm": osm_res,
         "commercial_share_osm": osm_com,
-        "residential_share_ovt": ovt_res,
-        "commercial_share_ovt": ovt_com,
-        "ovt_attr_conf": ovt_attr_conf,
+        "residential_share_ovt": 0.0,
+        "commercial_share_ovt": 0.0,
+        "ovt_attr_conf": 0.0,
         "osm_conf": osm_conf,
-        "ovt_conf": ovt_conf,
+        "ovt_conf": 0.0,
         "source_url": f"postgis/{source_table}",
     }
 
