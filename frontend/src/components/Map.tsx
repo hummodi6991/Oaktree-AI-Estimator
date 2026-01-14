@@ -507,16 +507,20 @@ export default function Map({ onParcel }: MapProps) {
       disposeHover = wireHover(map, hoverDataRef);
 
       map.on("sourcedata", (event) => {
-        if (event.sourceId === PARCEL_SOURCE_ID && event.isSourceLoaded && !parcelSourceLoggedLoaded) {
+        const ev = event as any;
+        if (ev.sourceId === PARCEL_SOURCE_ID && ev.isSourceLoaded && !parcelSourceLoggedLoaded) {
           parcelSourceLoggedLoaded = true;
           console.info("Parcel source loaded:", PARCEL_SOURCE_ID);
         }
       });
 
       map.on("error", (event) => {
-        const sourceId = (event as maplibregl.ErrorEvent).sourceId ?? (event as maplibregl.ErrorEvent).source?.id;
+        // MapLibre runtime error events sometimes include sourceId/source,
+        // but the published TS types don't always declare them.
+        const ev = event as any;
+        const sourceId: string | undefined = ev?.sourceId ?? ev?.source?.id;
         if (sourceId === PARCEL_SOURCE_ID) {
-          console.error("Parcel source tile error:", event.error);
+          console.error("Parcel source tile error:", ev?.error ?? event);
         }
       });
     });
