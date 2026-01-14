@@ -24,7 +24,10 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
 
 def _empty_mvt(layer_name: str = "parcels") -> bytes:
     """Return a valid empty MVT (MapLibre must receive 200, not 204)."""
-    return mapbox_vector_tile.encode({layer_name: []})
+    # mapbox_vector_tile.encode expects a list of layers in the form:
+    # [{"name": "<layer>", "features": [...]}]
+    # Passing a dict can trigger KeyError: 'name' in some versions.
+    return mapbox_vector_tile.encode([{"name": layer_name, "features": []}])
 
 
 # --- Dynamic parcel table proxy (TEST-COMPATIBLE) ---

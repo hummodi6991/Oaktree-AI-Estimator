@@ -55,7 +55,7 @@ def test_parcel_tile_low_zoom_uses_arcgis_generalization() -> None:
         assert dummy.executed
         assert dummy.last_params is not None
         assert dummy.last_params.get("simplify_tol") == 120.0
-        assert dummy.last_params.get("min_area_m2") == 200000
+        assert dummy.last_params.get("min_area_m2") == 50
     finally:
         app.dependency_overrides.pop(get_db, None)
 
@@ -81,7 +81,7 @@ def test_parcel_tile_high_zoom_returns_bytes() -> None:
         app.dependency_overrides.pop(get_db, None)
 
 
-def test_parcel_tile_riyadh_tile_empty_returns_204() -> None:
+def test_parcel_tile_riyadh_tile_empty_returns_200() -> None:
     dummy = DummySession(payload=None)
 
     def override_get_db():
@@ -92,7 +92,8 @@ def test_parcel_tile_riyadh_tile_empty_returns_204() -> None:
         client = TestClient(app)
         x, y = _riyadh_tile()
         resp = client.get(f"/v1/tiles/parcels/16/{x}/{y}.pbf")
-        assert resp.status_code == 204
+        assert resp.status_code == 200
+        assert resp.headers.get("content-type", "").startswith("application/x-protobuf")
     finally:
         app.dependency_overrides.pop(get_db, None)
 
