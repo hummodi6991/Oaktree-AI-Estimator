@@ -1,4 +1,4 @@
-import type { AnySourceData, LineLayer, Map as MapLibreMap } from "maplibre-gl";
+import type { Map as MapLibreMap } from "maplibre-gl";
 
 const SOURCE_ID = "oaktree-parcels";
 const LAYER_CASING_ID = "oaktree-parcels-outline-casing";
@@ -25,18 +25,18 @@ function findBeforeId(map: MapLibreMap): string | undefined {
 
 export function ensureParcelsOutline(map: MapLibreMap): void {
   if (!map.getSource(SOURCE_ID)) {
-    const source: AnySourceData = {
+    const source = {
       type: "vector",
       tiles: [parcelsTileUrl()],
       minzoom: 0,
       maxzoom: 22,
     };
-    map.addSource(SOURCE_ID, source);
+    map.addSource(SOURCE_ID, source as any);
   }
 
   const beforeId = findBeforeId(map);
 
-  const casing: LineLayer = {
+  const casing = {
     id: LAYER_CASING_ID,
     type: "line",
     source: SOURCE_ID,
@@ -61,9 +61,9 @@ export function ensureParcelsOutline(map: MapLibreMap): void {
       ],
       "line-color": "rgba(0,0,0,0.9)",
     },
-  };
+  } as any;
 
-  const outline: LineLayer = {
+  const outline = {
     id: LAYER_OUTLINE_ID,
     type: "line",
     source: SOURCE_ID,
@@ -88,7 +88,7 @@ export function ensureParcelsOutline(map: MapLibreMap): void {
       ],
       "line-color": "rgba(255,255,255,0.95)",
     },
-  };
+  } as any;
 
   if (!map.getLayer(LAYER_CASING_ID)) {
     map.addLayer(casing, beforeId);
