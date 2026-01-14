@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -1362,8 +1363,13 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
         parcel_json = json.dumps(payload)
 
     try:
+        meta_start = time.perf_counter()
         params = {"ids": ids} if not use_ms_buildings else {"parcel_json": parcel_json}
         rows = db.execute(collate_meta_sql, params).mappings().all()
+        logger.debug(
+            "Timing collate DB meta query: %.2fms",
+            (time.perf_counter() - meta_start) * 1000.0,
+        )
     except SQLAlchemyError as exc:
         logger.warning("PostGIS collate meta query failed: %s", exc)
         return None
@@ -1389,10 +1395,15 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
     component_area_m2_sum = sum(int(r.get("area_m2") or 0) for r in rows)
 
     try:
+        union_start = time.perf_counter()
         union_params = (
             {"ids": found_ids} if not use_ms_buildings else {"parcel_json": parcel_json}
         )
         urow = db.execute(collate_union_sql, union_params).mappings().first()
+        logger.debug(
+            "Timing collate DB union query: %.2fms",
+            (time.perf_counter() - union_start) * 1000.0,
+        )
     except SQLAlchemyError as exc:
         logger.warning("PostGIS collate union query failed: %s", exc)
         return None
@@ -1456,8 +1467,29 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
                 landuse_raw = record.get("subtype") or record.get("class") or landuse_raw
                 ovt_attr_conf = 0.90
 
-    osm_code, osm_res, osm_com, osm_conf = _osm_fallback_code(geometry, db)
-    ovt_code, ovt_res, ovt_com, ovt_conf = _ovt_overlay_code(geometry, db)
+    osm_code = None
+    ovt_code = None
+    osm_res = osm_com = ovt_res = ovt_com = 0.0
+    osm_conf = ovt_conf = 0.0
+    if geometry and not label_is_signal:
+        try:
+            osm_start = time.perf_counter()
+            osm_code, osm_res, osm_com, osm_conf = _osm_fallback_code(geometry, db)
+            logger.debug(
+                "Timing collate OSM overlay: %.2fms",
+                (time.perf_counter() - osm_start) * 1000.0,
+            )
+        except Exception as exc:
+            logger.warning("OSM overlay classification failed: %s", exc)
+        try:
+            ovt_start = time.perf_counter()
+            ovt_code, ovt_res, ovt_com, ovt_conf = _ovt_overlay_code(geometry, db)
+            logger.debug(
+                "Timing collate OVT overlay: %.2fms",
+                (time.perf_counter() - ovt_start) * 1000.0,
+            )
+        except Exception as exc:
+            logger.warning("Overture overlay classification failed: %s", exc)
 
     landuse_code, landuse_method = _pick_landuse(
         label_code,
@@ -1523,7 +1555,12 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
     identify_sql = _IDENTIFY_SQL if mode == _PARCEL_MODE else _IDENTIFY_SQL_MS_BUILDINGS
     source_table = _PARCEL_TABLE if mode == _PARCEL_MODE else _MS_BUILDINGS_TABLE
     try:
+        query_start = time.perf_counter()
         row = db.execute(identify_sql, params).mappings().first()
+        logger.debug(
+            "Timing identify DB query: %.2fms",
+            (time.perf_counter() - query_start) * 1000.0,
+        )
     except SQLAlchemyError as exc:
         logger.warning("PostGIS identify query failed: %s", exc)
         return None
@@ -1580,14 +1617,25 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
     ovt_code = None
     osm_res = osm_com = ovt_res = ovt_com = 0.0
     osm_conf = ovt_conf = 0.0
-    try:
-        osm_code, osm_res, osm_com, osm_conf = _osm_fallback_code(geometry, db)
-    except Exception as exc:
-        logger.warning("OSM overlay classification failed: %s", exc)
-    try:
-        ovt_code, ovt_res, ovt_com, ovt_conf = _ovt_overlay_code(geometry, db)
-    except Exception as exc:
-        logger.warning("Overture overlay classification failed: %s", exc)
+    if geometry and not label_is_signal:
+        try:
+            osm_start = time.perf_counter()
+            osm_code, osm_res, osm_com, osm_conf = _osm_fallback_code(geometry, db)
+            logger.debug(
+                "Timing identify OSM overlay: %.2fms",
+                (time.perf_counter() - osm_start) * 1000.0,
+            )
+        except Exception as exc:
+            logger.warning("OSM overlay classification failed: %s", exc)
+        try:
+            ovt_start = time.perf_counter()
+            ovt_code, ovt_res, ovt_com, ovt_conf = _ovt_overlay_code(geometry, db)
+            logger.debug(
+                "Timing identify OVT overlay: %.2fms",
+                (time.perf_counter() - ovt_start) * 1000.0,
+            )
+        except Exception as exc:
+            logger.warning("Overture overlay classification failed: %s", exc)
 
     landuse_code, landuse_method = _pick_landuse(
         label_code,
