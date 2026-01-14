@@ -1,5 +1,6 @@
 import os
 
+import mapbox_vector_tile
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -19,6 +20,11 @@ def _safe_identifier(value: str | None, fallback: str) -> str:
     if all(ch.isalnum() or ch in {"_", "."} for ch in candidate):
         return candidate
     return fallback
+
+
+def _empty_mvt(layer_name: str = "parcels") -> bytes:
+    """Return a valid empty MVT (MapLibre must receive 200, not 204)."""
+    return mapbox_vector_tile.encode({layer_name: []})
 
 
 # --- Dynamic parcel table proxy (TEST-COMPATIBLE) ---
@@ -254,16 +260,16 @@ def _generic_parcel_tile_sql(
 
 def _arcgis_tile_generalization(z: int) -> tuple[float | None, int | None]:
     if z <= 10:
-        return 120.0, 200000
+        return 120.0, 50
     if z <= 12:
-        return 60.0, 80000
+        return 60.0, 50
     if z <= 14:
-        return 20.0, 20000
+        return 20.0, 50
     if z == 15:
-        return 8.0, 4000
+        return 8.0, 50
     if z == 16:
-        return 3.0, None
-    return None, None
+        return 3.0, 50
+    return None, 50
 
 
 @router.get("/tiles/parcels/{z}/{x}/{y}.pbf")
@@ -286,6 +292,8 @@ def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
             id_col = "id"
         params = {"z": z, "x": x, "y": y}
         if arcgis_mode:
+            # ArcGIS parcels are authoritative cadastral data:
+            # never aggressively area-filter them, or tiles become empty.
             simplify_tol, min_area_m2 = _arcgis_tile_generalization(z)
             tile_sql = _generic_parcel_tile_sql(
                 parcel_table,
@@ -312,7 +320,11 @@ def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
 
     payload = bytes(tile_bytes or b"")
     if not payload:
-        return Response(status_code=204)
+        return Response(
+            _empty_mvt("parcels"),
+            media_type="application/x-protobuf",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
 
     return Response(
         payload,
