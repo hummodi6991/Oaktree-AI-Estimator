@@ -138,7 +138,11 @@ def _landuse_code_from_label(label: str | None) -> str | None:
     arabic_has_commercial = any(
         token in arabic for token in ["تجاري", "استثماري", "محلات", "مكاتب", "اداري", "إداري"]
     )
-    arabic_has_mixed = "مختلط" in arabic or (arabic_has_residential and arabic_has_commercial)
+    arabic_has_mixed = (
+        "مختلط" in arabic
+        or (arabic_has_residential and arabic_has_commercial)
+        or ("متعدد" in arabic and "استخدام" in arabic)
+    )
 
     if any(k in tl for k in ["mixed", "mixed-use", "mixed use"]) or arabic_has_mixed:
         return "m"
