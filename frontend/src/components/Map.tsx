@@ -140,9 +140,7 @@ const EMPTY_FEATURE_COLLECTION: FeatureCollection<Geometry, GeoJsonProperties> =
   features: [],
 };
 
-const PARCEL_OUTLINE_WIDTH = ["interpolate", ["linear"], ["zoom"], 0, 2.2, 12, 1.6, 16, 1.1, 20, 0.9] as any;
-
-function ensureParcelLayers(map: maplibregl.Map, outlineVisible: boolean) {
+function ensureParcelLayers(map: maplibregl.Map, _outlineVisible: boolean) {
   if (!map.getSource(PARCEL_SOURCE_ID)) {
     map.addSource(PARCEL_SOURCE_ID, {
       type: "vector",
@@ -184,11 +182,11 @@ function ensureParcelLayers(map: maplibregl.Map, outlineVisible: boolean) {
       type: "line",
       source: PARCEL_SOURCE_ID,
       "source-layer": "parcels",
-      layout: { "line-join": "round", "line-cap": "round", visibility: outlineVisible ? "visible" : "none" },
+      layout: { "line-join": "round", "line-cap": "round", visibility: "visible" },
       paint: {
         "line-color": "rgba(0,0,0,0.55)",
-        "line-opacity": 0.9,
-        "line-width": ["+", PARCEL_OUTLINE_WIDTH, 1.2],
+        "line-opacity": 1,
+        "line-width": 6,
       },
     });
   }
@@ -199,11 +197,11 @@ function ensureParcelLayers(map: maplibregl.Map, outlineVisible: boolean) {
       type: "line",
       source: PARCEL_SOURCE_ID,
       "source-layer": "parcels",
-      layout: { "line-join": "round", "line-cap": "round", visibility: outlineVisible ? "visible" : "none" },
+      layout: { "line-join": "round", "line-cap": "round", visibility: "visible" },
       paint: {
         "line-color": "rgba(255,255,255,0.85)",
-        "line-opacity": 0.9,
-        "line-width": PARCEL_OUTLINE_WIDTH,
+        "line-opacity": 1,
+        "line-width": 4,
       },
     });
   }
@@ -498,17 +496,34 @@ export default function Map({ onParcel }: MapProps) {
       setZoomLevel(map.getZoom());
     };
 
+    let parcelSourceLoggedLoaded = false;
+
     map.on("load", () => {
-      ensureParcelLayers(map, showArcgisOutlines);
+      ensureParcelLayers(map, true);
       ensureHoverLayers(map);
       ensureSelectionLayers(map);
       ensureLayerOrder(map);
       handleZoom();
       disposeHover = wireHover(map, hoverDataRef);
+
+      map.on("sourcedata", (event) => {
+        if (event.sourceId === PARCEL_SOURCE_ID && event.isSourceLoaded && !parcelSourceLoggedLoaded) {
+          parcelSourceLoggedLoaded = true;
+          console.info("Parcel source loaded:", PARCEL_SOURCE_ID);
+        }
+      });
+
+      map.on("error", (event) => {
+        const sourceId = (event as maplibregl.ErrorEvent).sourceId ?? (event as maplibregl.ErrorEvent).source?.id;
+        if (sourceId === PARCEL_SOURCE_ID) {
+          console.error("Parcel source tile error:", event.error);
+        }
+      });
     });
 
     map.on("style.load", () => {
-      ensureParcelLayers(map, showArcgisOutlines);
+      parcelSourceLoggedLoaded = false;
+      ensureParcelLayers(map, true);
       ensureHoverLayers(map);
       ensureSelectionLayers(map);
       const selectSource = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
@@ -516,6 +531,7 @@ export default function Map({ onParcel }: MapProps) {
       const hoverSource = map.getSource(HOVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
       hoverSource?.setData(hoverDataRef.current);
       ensureLayerOrder(map);
+      console.info("style.load reattached parcel layers");
     });
 
     map.on("zoom", handleZoom);
@@ -563,11 +579,11 @@ export default function Map({ onParcel }: MapProps) {
     if (map.getLayer(PARCEL_OUTLINE_LAYER_ID) || map.getLayer(PARCEL_OUTLINE_CASING_LAYER_ID)) {
       [PARCEL_OUTLINE_LAYER_ID, PARCEL_OUTLINE_CASING_LAYER_ID].forEach((layerId) => {
         if (map.getLayer(layerId)) {
-          map.setLayoutProperty(layerId, "visibility", showArcgisOutlines ? "visible" : "none");
+          map.setLayoutProperty(layerId, "visibility", "visible");
         }
       });
     } else if (map.isStyleLoaded()) {
-      ensureParcelLayers(map, showArcgisOutlines);
+      ensureParcelLayers(map, true);
       ensureLayerOrder(map);
     }
   }, [showArcgisOutlines]);
