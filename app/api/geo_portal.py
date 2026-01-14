@@ -30,9 +30,14 @@ _HAS_INFERRED_PARCELS: bool | None = None
 
 
 def _label_is_signal(label: str | None, code: str | None) -> bool:
+    raw = (label or "").strip()
+    if not raw:
+        return False
     if not code:
         return False
-    tl = (label or "").strip().lower()
+    if any("\u0600" <= ch <= "\u06FF" for ch in raw):
+        return True
+    tl = raw.lower()
     return tl not in _NO_SIGNAL_LABELS
 
 
