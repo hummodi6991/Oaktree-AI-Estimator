@@ -131,11 +131,13 @@ def _landuse_code_from_label(label: str | None) -> str | None:
         return None
 
     arabic = re.sub(r"[\u064B-\u065F\u0670\u06D6-\u06ED]", "", t)
-    arabic = re.sub(r"[،,;؛/\\\-\(\)\[\]\{\}\.\+]+", " ", arabic)
+    arabic = re.sub(r"[،,;؛/\\\|:\uFF1A\u2013\u2014\-\(\)\[\]\{\}\.\+]+", " ", arabic)
     arabic = re.sub(r"\s+", " ", arabic).strip()
 
     arabic_has_residential = any(token in arabic for token in ["سكني", "سكنية", "سكن"])
-    arabic_has_commercial = any(token in arabic for token in ["تجاري", "استثماري", "محلات", "مكاتب"])
+    arabic_has_commercial = any(
+        token in arabic for token in ["تجاري", "استثماري", "محلات", "مكاتب", "اداري", "إداري"]
+    )
     arabic_has_mixed = "مختلط" in arabic or (arabic_has_residential and arabic_has_commercial)
 
     if any(k in tl for k in ["mixed", "mixed-use", "mixed use"]) or arabic_has_mixed:
