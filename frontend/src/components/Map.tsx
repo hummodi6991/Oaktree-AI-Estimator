@@ -146,7 +146,7 @@ function ensureParcelLayers(map: maplibregl.Map, outlineVisible: boolean) {
   if (!map.getSource(PARCEL_SOURCE_ID)) {
     map.addSource(PARCEL_SOURCE_ID, {
       type: "vector",
-      tiles: [buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf")],
+      tiles: [buildApiUrl("/tiles/parcels/{z}/{x}/{y}.pbf")],
       minzoom: 0,
       maxzoom: 22,
     });
