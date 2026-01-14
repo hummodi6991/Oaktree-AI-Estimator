@@ -24,10 +24,8 @@ class _DummyDB:
         self.calls.append(sql)
         if "WITH q AS" in sql:
             return _DummyResult(self.responses.get("identify"))
-        if "FROM overture_buildings WHERE id" in sql:
-            return _DummyResult(self.responses.get("attr"))
-        if "FROM overture_buildings o" in sql:
-            return _DummyResult(self.responses.get("ovt_overlay"))
+        if "FROM public.suhail_parcels_mat" in sql:
+            return _DummyResult(self.responses.get("suhail"))
         if "planet_osm_polygon" in sql:
             return _DummyResult(self.responses.get("osm_overlay"))
         raise AssertionError(f"Unexpected SQL: {sql}")
@@ -49,7 +47,7 @@ def _geom_json():
     return json.dumps(geometry)
 
 
-def _identify_row(landuse=None, classification="overture_building"):
+def _identify_row(landuse=None, classification="parcel"):
     return {
         "id": "ovt:build2",
         "landuse": landuse,
@@ -64,45 +62,40 @@ def _identify_row(landuse=None, classification="overture_building"):
     }
 
 
-def test_identify_postgis_overture_attr_sets_landuse():
+def test_identify_postgis_prefers_parcel_label_when_signal():
     db = _DummyDB(
         {
-            "identify": _identify_row(),
-            "attr": {"subtype": "residential", "class": None},
-            "ovt_overlay": {"res_share": 0.1, "com_share": 0.1},
-            "osm_overlay": {"res_share": 0.1, "com_share": 0.1},
+            "identify": _identify_row(landuse="residential", classification="parcel"),
+            "osm_overlay": {"res_share": 0.2, "com_share": 0.2},
         }
     )
     result = _identify_postgis(46.675, 24.713, 25.0, db)
     parcel = result["parcel"]
     assert parcel["landuse_code"] == "s"
-    assert parcel["landuse_method"] == "overture_building_attr"
-    assert parcel["landuse_raw"] == "residential"
+    assert parcel["landuse_method"] == "parcel_label"
+    assert all("suhail_parcels_mat" not in sql for sql in db.calls)
+    assert all("planet_osm_polygon" not in sql for sql in db.calls)
 
 
-def test_identify_postgis_overture_overlay_wins_when_osm_weak():
+def test_identify_postgis_uses_suhail_when_label_weak():
     db = _DummyDB(
         {
             "identify": _identify_row(landuse="building", classification="parcel"),
-            "attr": None,
-            "ovt_overlay": {"res_share": 0.1, "com_share": 0.7},
-            "osm_overlay": {"res_share": 0.2, "com_share": 0.1},
+            "suhail": {"landuse": "سكني", "classification": None},
         }
     )
     result = _identify_postgis(46.675, 24.713, 25.0, db)
     parcel = result["parcel"]
-    assert parcel["landuse_code"] == "m"
-    assert parcel["landuse_method"] == "overture_overlay"
-    assert parcel["residential_share"] == 0.1
-    assert parcel["commercial_share"] == 0.7
+    assert parcel["landuse_code"] == "s"
+    assert parcel["landuse_method"] == "suhail_overlay"
+    assert parcel["landuse_raw"] == "سكني"
 
 
-def test_identify_postgis_osm_overlay_wins_when_strong():
+def test_identify_postgis_falls_back_to_osm_when_labels_weak():
     db = _DummyDB(
         {
             "identify": _identify_row(landuse="building", classification="parcel"),
-            "attr": None,
-            "ovt_overlay": {"res_share": 0.2, "com_share": 0.4},
+            "suhail": None,
             "osm_overlay": {"res_share": 0.75, "com_share": 0.1},
         }
     )
@@ -112,33 +105,3 @@ def test_identify_postgis_osm_overlay_wins_when_strong():
     assert parcel["landuse_method"] == "osm_overlay"
     assert parcel["residential_share"] == 0.75
     assert parcel["commercial_share"] == 0.1
-
-
-def test_identify_postgis_overture_overlay_wins_when_osm_not_strong():
-    db = _DummyDB(
-        {
-            "identify": _identify_row(landuse="building", classification="parcel"),
-            "attr": None,
-            "ovt_overlay": {"res_share": 0.5, "com_share": 0.1},
-            "osm_overlay": {"res_share": 0.45, "com_share": 0.15},
-        }
-    )
-    result = _identify_postgis(46.675, 24.713, 25.0, db)
-    parcel = result["parcel"]
-    assert parcel["landuse_code"] == "s"
-    assert parcel["landuse_method"] == "overture_overlay"
-
-
-def test_identify_postgis_prefers_parcel_label_when_signal():
-    db = _DummyDB(
-        {
-            "identify": _identify_row(landuse="residential", classification="parcel"),
-            "attr": None,
-            "ovt_overlay": {"res_share": 0.2, "com_share": 0.2},
-            "osm_overlay": {"res_share": 0.2, "com_share": 0.2},
-        }
-    )
-    result = _identify_postgis(46.675, 24.713, 25.0, db)
-    parcel = result["parcel"]
-    assert parcel["landuse_code"] == "s"
-    assert parcel["landuse_method"] == "parcel_label"
