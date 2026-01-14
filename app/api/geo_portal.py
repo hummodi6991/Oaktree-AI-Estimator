@@ -35,10 +35,26 @@ def _label_is_signal(label: str | None, code: str | None) -> bool:
         return False
     if not code:
         return False
+    tl = raw.lower()
+    if tl in _NO_SIGNAL_LABELS:
+        return False
+    if code == "m":
+        arabic_tokens = ("تجاري", "استثماري", "اداري", "إداري", "محلات", "مكاتب", "صناعي", "خدمات", "خدمي")
+        english_tokens = (
+            "commercial",
+            "retail",
+            "office",
+            "industrial",
+            "warehouse",
+            "hotel",
+            "mall",
+            "service",
+        )
+        if any(token in raw for token in arabic_tokens) or any(token in tl for token in english_tokens):
+            return True
     if any("\u0600" <= ch <= "\u06FF" for ch in raw):
         return True
-    tl = raw.lower()
-    return tl not in _NO_SIGNAL_LABELS
+    return True
 
 
 def _safe_identifier(value: str | None, fallback: str) -> str:
