@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+import re
 from typing import Any, Dict, Optional, Tuple
 
 from shapely.geometry import MultiPolygon, Polygon, mapping, shape
@@ -129,11 +130,19 @@ def _landuse_code_from_label(label: str | None) -> str | None:
     if tl in {"building", "yes", "true", "1", "0", "unknown", "none", "y"}:
         return None
 
-    if any(k in tl for k in ["mixed", "mixed-use", "mixed use"]) or "مختلط" in t:
-        return None
+    arabic = re.sub(r"[\u064B-\u065F\u0670\u06D6-\u06ED]", "", t)
+    arabic = re.sub(r"[،,;؛/\\\-\(\)\[\]\{\}\.\+]+", " ", arabic)
+    arabic = re.sub(r"\s+", " ", arabic).strip()
+
+    arabic_has_residential = any(token in arabic for token in ["سكني", "سكنية", "سكن"])
+    arabic_has_commercial = any(token in arabic for token in ["تجاري", "استثماري", "محلات", "مكاتب"])
+    arabic_has_mixed = "مختلط" in arabic or (arabic_has_residential and arabic_has_commercial)
+
+    if any(k in tl for k in ["mixed", "mixed-use", "mixed use"]) or arabic_has_mixed:
+        return "m"
 
     # Residential signals
-    if ("سكن" in t) or any(k in tl for k in [
+    if arabic_has_residential or any(k in tl for k in [
         "residential",
         "residence",
         "housing",
@@ -152,7 +161,7 @@ def _landuse_code_from_label(label: str | None) -> str | None:
         return "s"
 
     # Mixed/commercial signals
-    if ("تجاري" in t) or any(k in tl for k in [
+    if arabic_has_commercial or any(k in tl for k in [
         "commercial",
         "retail",
         "office",
