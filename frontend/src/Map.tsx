@@ -8,7 +8,6 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import "./Map.css";
 import { formatNumber } from "./i18n/format";
-import { ensureParcelsOutline } from "./map/ensureParcelsOutline";
 
 type MapProps = { polygon?: Polygon | null; onPolygon: (geometry: Polygon | null) => void; };
 
@@ -235,15 +234,6 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     mapRef.current = map;
     if (import.meta.env.DEV) (window as any).__map = map;
 
-    const addOverlays = () => {
-      if (!map.isStyleLoaded()) return;
-      try {
-        ensureParcelsOutline(map);
-      } catch (error) {
-        console.warn("Could not apply parcel overlays", error);
-      }
-    };
-
     map.on("error", (event) => {
       if (event?.error) {
         console.warn("Map error", event.error, {
@@ -274,10 +264,6 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     drawRef.current = draw;
     map.addControl(draw as unknown as IControl);
     map.addControl(new NavigationControl({ showCompass: false }), "top-left");
-    addOverlays();
-
-    map.on("load", addOverlays);
-    map.on("style.load", addOverlays);
 
     let raf = 0;
     const updateZoomHud = () => {
@@ -434,8 +420,6 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       finishDrawingRef.current = () => undefined;
       toolbarRef.current = null;
       map.doubleClickZoom.enable();
-      map.off("load", addOverlays);
-      map.off("style.load", addOverlays);
       map.off("move", updateZoomHud);
       map.off("zoom", updateZoomHud);
       cancelAnimationFrame(raf);
