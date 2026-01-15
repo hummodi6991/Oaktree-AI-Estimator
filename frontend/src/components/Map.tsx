@@ -21,6 +21,7 @@ const SELECT_FILL_LAYER_ID = "selected-parcel-fill";
 const SELECT_LINE_LAYER_ID = "selected-parcel-line";
 const PARCEL_SOURCE_ID = "parcel-tiles-src";
 const PARCEL_FILL_LAYER_ID = "parcel-tiles-fill";
+const PARCEL_MIXED_USE_LAYER_ID = "parcel-tiles-mixed-use";
 const PARCEL_OUTLINE_CASING_LAYER_ID = "parcel-tiles-outline-casing";
 const PARCEL_OUTLINE_LAYER_ID = "parcel-tiles-outline";
 const HOVER_SOURCE_ID = "parcel-hover-src";
@@ -176,6 +177,20 @@ function ensureParcelLayers(map: maplibregl.Map, _outlineVisible: boolean) {
     });
   }
 
+  if (!map.getLayer(PARCEL_MIXED_USE_LAYER_ID)) {
+    map.addLayer({
+      id: PARCEL_MIXED_USE_LAYER_ID,
+      type: "fill",
+      source: PARCEL_SOURCE_ID,
+      "source-layer": "parcels",
+      filter: ["==", ["get", "classification"], "m"],
+      paint: {
+        "fill-color": "#ff0000",
+        "fill-opacity": 0.25,
+      },
+    });
+  }
+
   if (!map.getLayer(PARCEL_OUTLINE_CASING_LAYER_ID)) {
     map.addLayer({
       id: PARCEL_OUTLINE_CASING_LAYER_ID,
@@ -247,6 +262,7 @@ function ensureHoverLayers(map: maplibregl.Map) {
 function ensureLayerOrder(map: maplibregl.Map) {
   const order = [
     PARCEL_FILL_LAYER_ID,
+    PARCEL_MIXED_USE_LAYER_ID,
     PARCEL_OUTLINE_CASING_LAYER_ID,
     PARCEL_OUTLINE_LAYER_ID,
     HOVER_CASING_LAYER_ID,
@@ -364,7 +380,6 @@ export default function Map({ onParcel }: MapProps) {
   const [collating, setCollating] = useState(false);
   const [selectionMethod, setSelectionMethod] = useState<"feature" | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number | null>(null);
-  const [showArcgisOutlines, setShowArcgisOutlines] = useState(true);
   const onParcelRef = useRef(onParcel);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
@@ -580,21 +595,6 @@ export default function Map({ onParcel }: MapProps) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    if (map.getLayer(PARCEL_OUTLINE_LAYER_ID) || map.getLayer(PARCEL_OUTLINE_CASING_LAYER_ID)) {
-      [PARCEL_OUTLINE_LAYER_ID, PARCEL_OUTLINE_CASING_LAYER_ID].forEach((layerId) => {
-        if (map.getLayer(layerId)) {
-          map.setLayoutProperty(layerId, "visibility", "visible");
-        }
-      });
-    } else if (map.isStyleLoaded()) {
-      ensureParcelLayers(map, true);
-      ensureLayerOrder(map);
-    }
-  }, [showArcgisOutlines]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
     const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     if (source) {
       source.setData(selectedParcelsGeojson);
@@ -712,17 +712,6 @@ export default function Map({ onParcel }: MapProps) {
           alignItems: "center",
         }}
       >
-        <span style={{ fontSize: "0.9rem", color: "#475467" }}>{t("map.controls.parcelOutlines")}</span>
-        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input
-            type="checkbox"
-            checked={showArcgisOutlines}
-            onChange={(event) => {
-              setShowArcgisOutlines(event.target.checked);
-            }}
-          />
-          <span>{showArcgisOutlines ? t("map.controls.on") : t("map.controls.off")}</span>
-        </label>
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"
