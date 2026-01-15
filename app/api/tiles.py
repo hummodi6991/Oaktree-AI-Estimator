@@ -269,10 +269,10 @@ def _arcgis_tile_generalization(z: int) -> tuple[float | None, int | None]:
     if z <= 14:
         return 20.0, 50
     if z == 15:
-        return 8.0, 50
+        return 8.0, None
     if z == 16:
-        return 3.0, 50
-    return None, 50
+        return 3.0, None
+    return None, None
 
 
 @router.get("/tiles/parcels/{z}/{x}/{y}.pbf")
