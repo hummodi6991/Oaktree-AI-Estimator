@@ -4,13 +4,17 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: true,
+    host: "0.0.0.0",
     port: 5173,
-    proxy: {
-      "/tiles": { target: "http://127.0.0.1:8000", changeOrigin: true },
-      "/v1": { target: "http://127.0.0.1:8000", changeOrigin: true },
-      "/health": { target: "http://127.0.0.1:8000", changeOrigin: true }
-    }
+    watch: {
+      // 🔑 Critical for Codespaces
+      ignored: [
+        "**/public/static-tiles/**",
+        "**/node_modules/**",
+        "**/.git/**",
+      ],
+      usePolling: true,
+      interval: 1000,
+    },
   },
-  preview: { host: true, port: 4173 }
 });
