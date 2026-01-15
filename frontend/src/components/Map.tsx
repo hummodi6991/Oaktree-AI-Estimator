@@ -184,7 +184,11 @@ function ensureParcelLayers(map: maplibregl.Map) {
       type: "fill",
       source: PARCEL_SOURCE_ID,
       "source-layer": "parcels",
-      filter: ["==", ["get", "classification"], 7500],
+      filter: [
+        "any",
+        ["==", ["get", "classification"], 7500],
+        ["==", ["get", "classification"], "7500"],
+      ],
       paint: {
         "fill-color": "#ff0000",
         "fill-opacity": 0.25,
@@ -201,8 +205,8 @@ function ensureParcelLayers(map: maplibregl.Map) {
       layout: { "line-join": "round", "line-cap": "round" },
       paint: {
         "line-color": "rgba(0,0,0,0.55)",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.8, 14, 1.3, 18, 2.4],
-        "line-opacity": ["interpolate", ["linear"], ["zoom"], 9, 0.25, 12, 0.45, 16, 0.7],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 0, 0.3, 10, 0.8, 14, 1.3, 18, 2.4],
+        "line-opacity": ["interpolate", ["linear"], ["zoom"], 0, 0.2, 9, 0.25, 12, 0.45, 16, 0.7],
       },
     });
   }
@@ -216,8 +220,8 @@ function ensureParcelLayers(map: maplibregl.Map) {
       layout: { "line-join": "round", "line-cap": "round" },
       paint: {
         "line-color": "rgba(255,255,255,0.85)",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.4, 14, 0.8, 18, 1.6],
-        "line-opacity": ["interpolate", ["linear"], ["zoom"], 9, 0.35, 12, 0.6, 16, 0.85],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 0, 0.2, 10, 0.4, 14, 0.8, 18, 1.6],
+        "line-opacity": ["interpolate", ["linear"], ["zoom"], 0, 0.25, 9, 0.35, 12, 0.6, 16, 0.85],
       },
     });
   }
@@ -386,6 +390,7 @@ export default function Map({ onParcel }: MapProps) {
   const selectedParcelIdsRef = useRef(selectedParcelIds);
   const currentParcelRef = useRef<ParcelSummary | null>(null);
   const hoverDataRef = useRef<FeatureCollection<Geometry, GeoJsonProperties>>(EMPTY_FEATURE_COLLECTION);
+  const parcelPropertiesLoggedRef = useRef(false);
 
   const renderStatus = useMemo(() => {
     if (!status) return null;
@@ -513,6 +518,14 @@ export default function Map({ onParcel }: MapProps) {
     };
 
     let parcelSourceLoggedLoaded = false;
+    const logParcelPropertiesOnce = () => {
+      if (parcelPropertiesLoggedRef.current) return;
+      const features = map.queryRenderedFeatures({ layers: [PARCEL_FILL_LAYER_ID, PARCEL_MIXED_USE_LAYER_ID] });
+      if (!features.length) return;
+      const keys = Object.keys(features[0]?.properties ?? {});
+      console.info("Parcel feature properties keys:", keys);
+      parcelPropertiesLoggedRef.current = true;
+    };
 
     map.on("load", () => {
       ensureParcelLayers(map);
@@ -521,6 +534,7 @@ export default function Map({ onParcel }: MapProps) {
       ensureLayerOrder(map);
       handleZoom();
       disposeHover = wireHover(map, hoverDataRef);
+      map.on("idle", logParcelPropertiesOnce);
 
       map.on("sourcedata", (event) => {
         const ev = event as any;
@@ -552,6 +566,7 @@ export default function Map({ onParcel }: MapProps) {
       hoverSource?.setData(hoverDataRef.current);
       ensureLayerOrder(map);
       console.info("style.load reattached parcel layers");
+      map.on("idle", logParcelPropertiesOnce);
     });
 
     map.on("zoom", handleZoom);
@@ -587,6 +602,7 @@ export default function Map({ onParcel }: MapProps) {
     return () => {
       disposed = true;
       map.off("zoom", handleZoom);
+      map.off("idle", logParcelPropertiesOnce);
       disposeHover?.();
       mapRef.current = null;
       map.remove();
