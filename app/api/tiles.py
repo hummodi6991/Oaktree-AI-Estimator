@@ -195,7 +195,7 @@ def _generic_parcel_tile_sql(
         geom_expr = "ST_SimplifyPreserveTopology(p.geom3857, :simplify_tol)"
     area_filter = ""
     if min_area_m2 is not None:
-        area_filter = "AND p.area_m2 >= :min_area_m2"
+        area_filter = "AND (p.area_m2 >= :min_area_m2 OR p.area_m2 IS NULL)"
     return text(
         f"""
         WITH tile AS (
