@@ -141,7 +141,7 @@ const EMPTY_FEATURE_COLLECTION: FeatureCollection<Geometry, GeoJsonProperties> =
   features: [],
 };
 
-function ensureParcelLayers(map: maplibregl.Map, _outlineVisible: boolean) {
+function ensureParcelLayers(map: maplibregl.Map) {
   if (!map.getSource(PARCEL_SOURCE_ID)) {
     map.addSource(PARCEL_SOURCE_ID, {
       type: "vector",
@@ -178,17 +178,18 @@ function ensureParcelLayers(map: maplibregl.Map, _outlineVisible: boolean) {
   }
 
   if (!map.getLayer(PARCEL_MIXED_USE_LAYER_ID)) {
+    const beforeLayerId = map.getLayer(PARCEL_OUTLINE_CASING_LAYER_ID) ? PARCEL_OUTLINE_CASING_LAYER_ID : undefined;
     map.addLayer({
       id: PARCEL_MIXED_USE_LAYER_ID,
       type: "fill",
       source: PARCEL_SOURCE_ID,
       "source-layer": "parcels",
-      filter: ["==", ["get", "classification"], "m"],
+      filter: ["==", ["get", "classification"], 7500],
       paint: {
         "fill-color": "#ff0000",
         "fill-opacity": 0.25,
       },
-    });
+    }, beforeLayerId);
   }
 
   if (!map.getLayer(PARCEL_OUTLINE_CASING_LAYER_ID)) {
@@ -197,11 +198,11 @@ function ensureParcelLayers(map: maplibregl.Map, _outlineVisible: boolean) {
       type: "line",
       source: PARCEL_SOURCE_ID,
       "source-layer": "parcels",
-      layout: { "line-join": "round", "line-cap": "round", visibility: "visible" },
+      layout: { "line-join": "round", "line-cap": "round" },
       paint: {
         "line-color": "rgba(0,0,0,0.55)",
-        "line-opacity": 1,
-        "line-width": 6,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.8, 14, 1.3, 18, 2.4],
+        "line-opacity": ["interpolate", ["linear"], ["zoom"], 9, 0.25, 12, 0.45, 16, 0.7],
       },
     });
   }
@@ -212,11 +213,11 @@ function ensureParcelLayers(map: maplibregl.Map, _outlineVisible: boolean) {
       type: "line",
       source: PARCEL_SOURCE_ID,
       "source-layer": "parcels",
-      layout: { "line-join": "round", "line-cap": "round", visibility: "visible" },
+      layout: { "line-join": "round", "line-cap": "round" },
       paint: {
         "line-color": "rgba(255,255,255,0.85)",
-        "line-opacity": 1,
-        "line-width": 4,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.4, 14, 0.8, 18, 1.6],
+        "line-opacity": ["interpolate", ["linear"], ["zoom"], 9, 0.35, 12, 0.6, 16, 0.85],
       },
     });
   }
@@ -514,7 +515,7 @@ export default function Map({ onParcel }: MapProps) {
     let parcelSourceLoggedLoaded = false;
 
     map.on("load", () => {
-      ensureParcelLayers(map, true);
+      ensureParcelLayers(map);
       ensureHoverLayers(map);
       ensureSelectionLayers(map);
       ensureLayerOrder(map);
@@ -542,7 +543,7 @@ export default function Map({ onParcel }: MapProps) {
 
     map.on("style.load", () => {
       parcelSourceLoggedLoaded = false;
-      ensureParcelLayers(map, true);
+      ensureParcelLayers(map);
       ensureHoverLayers(map);
       ensureSelectionLayers(map);
       const selectSource = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
