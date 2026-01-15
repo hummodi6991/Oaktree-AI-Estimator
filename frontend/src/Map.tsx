@@ -8,6 +8,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import "./Map.css";
 import { formatNumber } from "./i18n/format";
+import { installParcelDebugLogging, installParcelLayerPersistence } from "./map/parcelLayers";
 
 type MapProps = { polygon?: Polygon | null; onPolygon: (geometry: Polygon | null) => void; };
 
@@ -264,6 +265,8 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     drawRef.current = draw;
     map.addControl(draw as unknown as IControl);
     map.addControl(new NavigationControl({ showCompass: false }), "top-left");
+    installParcelLayerPersistence(map);
+    installParcelDebugLogging(map);
 
     let raf = 0;
     const updateZoomHud = () => {
