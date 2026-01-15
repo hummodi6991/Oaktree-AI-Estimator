@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import maplibregl from "maplibre-gl";
+import maplibregl, { type ExpressionSpecification } from "maplibre-gl";
 import proj4 from "proj4";
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from "geojson";
 import { useTranslation } from "react-i18next";
@@ -29,6 +29,12 @@ const HOVER_CASING_LAYER_ID = "parcel-hover-casing";
 const HOVER_LINE_LAYER_ID = "parcel-hover-line";
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
+const MIXED_USE_CLASSIFICATION_CODE = 7500;
+const MIXED_USE_FILTER: ExpressionSpecification = [
+  "any",
+  ["==", ["to-number", ["get", "classification"], -1], MIXED_USE_CLASSIFICATION_CODE],
+  ["==", ["get", "classification"], "m"],
+];
 
 function toWgs84(coord: [number, number]) {
   return proj4(SOURCE_CRS, "WGS84", coord) as [number, number];
@@ -184,7 +190,7 @@ function ensureParcelLayers(map: maplibregl.Map) {
       type: "fill",
       source: PARCEL_SOURCE_ID,
       "source-layer": "parcels",
-      filter: ["==", ["to-number", ["get", "classification"], -1], 7500],
+      filter: MIXED_USE_FILTER,
       paint: {
         "fill-color": "#ff0000",
         "fill-opacity": 0.25,
