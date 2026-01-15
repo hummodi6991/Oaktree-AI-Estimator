@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import maplibregl, { type ExpressionSpecification } from "maplibre-gl";
+import maplibregl from "maplibre-gl";
 import proj4 from "proj4";
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from "geojson";
 import { useTranslation } from "react-i18next";
 import { formatInteger, formatNumber } from "../i18n/format";
+import {
+  installParcelDebugLogging,
+  installParcelLayerPersistence,
+  PARCELS_MIXEDUSE_LAYER_ID,
+  PARCELS_OUTLINE_LAYER_ID,
+} from "../map/parcelLayers";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -19,22 +25,11 @@ type StatusMessage = { key: string; options?: Record<string, unknown> } | { raw:
 const SELECT_SOURCE_ID = "selected-parcel-src";
 const SELECT_FILL_LAYER_ID = "selected-parcel-fill";
 const SELECT_LINE_LAYER_ID = "selected-parcel-line";
-const PARCEL_SOURCE_ID = "parcel-tiles-src";
-const PARCEL_FILL_LAYER_ID = "parcel-tiles-fill";
-const PARCEL_MIXED_USE_LAYER_ID = "parcel-tiles-mixed-use";
-const PARCEL_OUTLINE_CASING_LAYER_ID = "parcel-tiles-outline-casing";
-const PARCEL_OUTLINE_LAYER_ID = "parcel-tiles-outline";
 const HOVER_SOURCE_ID = "parcel-hover-src";
 const HOVER_CASING_LAYER_ID = "parcel-hover-casing";
 const HOVER_LINE_LAYER_ID = "parcel-hover-line";
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
-const MIXED_USE_CLASSIFICATION_CODE = 7500;
-const MIXED_USE_FILTER: ExpressionSpecification = [
-  "any",
-  ["==", ["to-number", ["get", "classification"], -1], MIXED_USE_CLASSIFICATION_CODE],
-  ["==", ["get", "classification"], "m"],
-];
 
 function toWgs84(coord: [number, number]) {
   return proj4(SOURCE_CRS, "WGS84", coord) as [number, number];
@@ -147,88 +142,6 @@ const EMPTY_FEATURE_COLLECTION: FeatureCollection<Geometry, GeoJsonProperties> =
   features: [],
 };
 
-function ensureParcelLayers(map: maplibregl.Map) {
-  if (!map.getSource(PARCEL_SOURCE_ID)) {
-    map.addSource(PARCEL_SOURCE_ID, {
-      type: "vector",
-      tiles: [buildApiUrl("/v1/tiles/parcels/{z}/{x}/{y}.pbf")],
-      minzoom: 0,
-      maxzoom: 22,
-    });
-  }
-
-  if (!map.getLayer(PARCEL_FILL_LAYER_ID)) {
-    map.addLayer({
-      id: PARCEL_FILL_LAYER_ID,
-      type: "fill",
-      source: PARCEL_SOURCE_ID,
-      "source-layer": "parcels",
-      layout: { visibility: "visible" },
-      paint: {
-        "fill-color": "#2f7bff",
-        "fill-opacity": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          0,
-          0.0,
-          14.9,
-          0.0,
-          15.5,
-          0.03,
-          16,
-          0.08,
-        ],
-      },
-    });
-  }
-
-  if (!map.getLayer(PARCEL_MIXED_USE_LAYER_ID)) {
-    const beforeLayerId = map.getLayer(PARCEL_OUTLINE_CASING_LAYER_ID) ? PARCEL_OUTLINE_CASING_LAYER_ID : undefined;
-    map.addLayer({
-      id: PARCEL_MIXED_USE_LAYER_ID,
-      type: "fill",
-      source: PARCEL_SOURCE_ID,
-      "source-layer": "parcels",
-      filter: MIXED_USE_FILTER,
-      paint: {
-        "fill-color": "#ff0000",
-        "fill-opacity": 0.25,
-      },
-    }, beforeLayerId);
-  }
-
-  if (!map.getLayer(PARCEL_OUTLINE_CASING_LAYER_ID)) {
-    map.addLayer({
-      id: PARCEL_OUTLINE_CASING_LAYER_ID,
-      type: "line",
-      source: PARCEL_SOURCE_ID,
-      "source-layer": "parcels",
-      layout: { "line-join": "round", "line-cap": "round" },
-      paint: {
-        "line-color": "rgba(0,0,0,0.55)",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 0, 0.3, 10, 0.8, 14, 1.3, 18, 2.4],
-        "line-opacity": ["interpolate", ["linear"], ["zoom"], 0, 0.2, 9, 0.25, 12, 0.45, 16, 0.7],
-      },
-    });
-  }
-
-  if (!map.getLayer(PARCEL_OUTLINE_LAYER_ID)) {
-    map.addLayer({
-      id: PARCEL_OUTLINE_LAYER_ID,
-      type: "line",
-      source: PARCEL_SOURCE_ID,
-      "source-layer": "parcels",
-      layout: { "line-join": "round", "line-cap": "round" },
-      paint: {
-        "line-color": "rgba(255,255,255,0.85)",
-        "line-width": ["interpolate", ["linear"], ["zoom"], 0, 0.2, 10, 0.4, 14, 0.8, 18, 1.6],
-        "line-opacity": ["interpolate", ["linear"], ["zoom"], 0, 0.25, 9, 0.35, 12, 0.6, 16, 0.85],
-      },
-    });
-  }
-}
-
 function ensureHoverLayers(map: maplibregl.Map) {
   if (!map.getSource(HOVER_SOURCE_ID)) {
     map.addSource(HOVER_SOURCE_ID, {
@@ -268,10 +181,8 @@ function ensureHoverLayers(map: maplibregl.Map) {
 
 function ensureLayerOrder(map: maplibregl.Map) {
   const order = [
-    PARCEL_FILL_LAYER_ID,
-    PARCEL_MIXED_USE_LAYER_ID,
-    PARCEL_OUTLINE_CASING_LAYER_ID,
-    PARCEL_OUTLINE_LAYER_ID,
+    PARCELS_MIXEDUSE_LAYER_ID,
+    PARCELS_OUTLINE_LAYER_ID,
     HOVER_CASING_LAYER_ID,
     HOVER_LINE_LAYER_ID,
     SELECT_FILL_LAYER_ID,
@@ -511,6 +422,8 @@ export default function Map({ onParcel }: MapProps) {
       zoom: 15,
     });
     mapRef.current = map;
+    installParcelLayerPersistence(map);
+    installParcelDebugLogging(map);
 
     let disposed = false;
     let disposeHover: (() => void) | null = null;
@@ -519,10 +432,11 @@ export default function Map({ onParcel }: MapProps) {
       setZoomLevel(map.getZoom());
     };
 
-    let parcelSourceLoggedLoaded = false;
     const logParcelPropertiesOnce = () => {
       if (parcelPropertiesLoggedRef.current) return;
-      const features = map.queryRenderedFeatures({ layers: [PARCEL_FILL_LAYER_ID, PARCEL_MIXED_USE_LAYER_ID] });
+      const features = map.queryRenderedFeatures({
+        layers: [PARCELS_MIXEDUSE_LAYER_ID, PARCELS_OUTLINE_LAYER_ID],
+      });
       if (!features.length) return;
       const keys = Object.keys(features[0]?.properties ?? {});
       console.info("Parcel feature properties keys:", keys);
@@ -530,36 +444,15 @@ export default function Map({ onParcel }: MapProps) {
     };
 
     map.on("load", () => {
-      ensureParcelLayers(map);
       ensureHoverLayers(map);
       ensureSelectionLayers(map);
       ensureLayerOrder(map);
       handleZoom();
       disposeHover = wireHover(map, hoverDataRef);
       map.on("idle", logParcelPropertiesOnce);
-
-      map.on("sourcedata", (event) => {
-        const ev = event as any;
-        if (ev.sourceId === PARCEL_SOURCE_ID && ev.isSourceLoaded && !parcelSourceLoggedLoaded) {
-          parcelSourceLoggedLoaded = true;
-          console.info("Parcel source loaded:", PARCEL_SOURCE_ID);
-        }
-      });
-
-      map.on("error", (event) => {
-        // MapLibre runtime error events sometimes include sourceId/source,
-        // but the published TS types don't always declare them.
-        const ev = event as any;
-        const sourceId: string | undefined = ev?.sourceId ?? ev?.source?.id;
-        if (sourceId === PARCEL_SOURCE_ID) {
-          console.error("Parcel source tile error:", ev?.error ?? event);
-        }
-      });
     });
 
     map.on("style.load", () => {
-      parcelSourceLoggedLoaded = false;
-      ensureParcelLayers(map);
       ensureHoverLayers(map);
       ensureSelectionLayers(map);
       const selectSource = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
@@ -567,7 +460,7 @@ export default function Map({ onParcel }: MapProps) {
       const hoverSource = map.getSource(HOVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
       hoverSource?.setData(hoverDataRef.current);
       ensureLayerOrder(map);
-      console.info("style.load reattached parcel layers");
+      console.info("style.load reattached selection and hover layers");
       map.on("idle", logParcelPropertiesOnce);
     });
 
