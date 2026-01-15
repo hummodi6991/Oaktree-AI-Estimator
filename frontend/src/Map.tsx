@@ -233,6 +233,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     });
 
     mapRef.current = map;
+    if (import.meta.env.DEV) (window as any).__map = map;
 
     const addOverlays = () => {
       if (!map.isStyleLoaded()) return;
@@ -273,6 +274,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
     drawRef.current = draw;
     map.addControl(draw as unknown as IControl);
     map.addControl(new NavigationControl({ showCompass: false }), "top-left");
+    addOverlays();
 
     map.on("load", addOverlays);
     map.on("style.load", addOverlays);

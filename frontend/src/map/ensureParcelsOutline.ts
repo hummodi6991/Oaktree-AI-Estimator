@@ -5,16 +5,17 @@ const LAYER_CASING_ID = "oaktree-parcels-outline-casing";
 const LAYER_OUTLINE_ID = "oaktree-parcels-outline";
 const SOURCE_LAYER = "parcels";
 
-function apiBase(): string {
-  const raw = (import.meta as any)?.env?.VITE_API_BASE_URL ?? "";
-  return String(raw).trim().replace(/\/+$/, "");
+function apiBase(): string | null {
+  const raw = (import.meta as any)?.env?.VITE_API_BASE_URL;
+  if (raw == null) return null;
+  const v = String(raw).trim();
+  if (!v) return null;
+  return v.replace(/\/+$/, "");
 }
 
 function parcelsTileUrl(): string {
   const base = apiBase();
-  return base
-    ? `${base}/v1/tiles/parcels/{z}/{x}/{y}.pbf`
-    : "/v1/tiles/parcels/{z}/{x}/{y}.pbf";
+  return base ? `${base}/v1/tiles/parcels/{z}/{x}/{y}.pbf` : "/v1/tiles/parcels/{z}/{x}/{y}.pbf";
 }
 
 function findBeforeId(map: MapLibreMap): string | undefined {
@@ -31,7 +32,11 @@ export function ensureParcelsOutline(map: MapLibreMap): void {
       minzoom: 0,
       maxzoom: 22,
     };
-    map.addSource(SOURCE_ID, source as any);
+    try {
+      map.addSource(SOURCE_ID, source as any);
+    } catch (error) {
+      console.warn("Could not add parcel source", error);
+    }
   }
 
   const beforeId = findBeforeId(map);
@@ -91,10 +96,18 @@ export function ensureParcelsOutline(map: MapLibreMap): void {
   } as any;
 
   if (!map.getLayer(LAYER_CASING_ID)) {
-    map.addLayer(casing, beforeId);
+    try {
+      map.addLayer(casing, beforeId);
+    } catch (error) {
+      console.warn("Could not add parcel casing layer", error);
+    }
   }
 
   if (!map.getLayer(LAYER_OUTLINE_ID)) {
-    map.addLayer(outline, beforeId);
+    try {
+      map.addLayer(outline, beforeId);
+    } catch (error) {
+      console.warn("Could not add parcel outline layer", error);
+    }
   }
 }
