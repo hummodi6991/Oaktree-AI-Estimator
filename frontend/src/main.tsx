@@ -14,6 +14,19 @@ function App() {
   const [parcel, setParcel] = useState<ParcelSummary | null>(null);
   const { t } = useTranslation();
 
+  const formatLanduseMethod = (method?: string | null): string => {
+    switch (method) {
+      case "parcel_label":
+        return "ArcGIS parcel label";
+      case "suhail_overlay":
+        return "Suhail zoning";
+      case "osm_overlay":
+        return "OSM overlay";
+      default:
+        return "—";
+    }
+  };
+
   const codeLabel = (() => {
     const selectedLandUse = parcel?.landuse_code?.trim().toLowerCase();
     if (selectedLandUse === "s") {
@@ -56,12 +69,7 @@ function App() {
               const footprintArea = parcel.footprint_area_m2 ?? null;
               const showFootprint =
                 footprintArea != null && Number.isFinite(footprintArea) && parcel.parcel_area_m2 != null;
-              const methodLabel =
-                parcel.parcel_method === "inferred_parcels_v1"
-                  ? t("app.methodInferred")
-                  : parcel.parcel_method === "click_fallback"
-                    ? t("app.methodClickFallback")
-                    : t("common.notAvailable");
+              const methodLabel = formatLanduseMethod(parcel.landuse_method);
               return (
                 <div>
                   <b>{t("app.parcelLabel")}:</b> {parcel.parcel_id} | <b>{t("app.areaLabel")}:</b>{" "}
