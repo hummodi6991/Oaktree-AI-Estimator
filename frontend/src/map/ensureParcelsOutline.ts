@@ -1,26 +1,24 @@
-import type { Map as MapLibreMap } from "maplibre-gl";
+import type { LayerSpecification, Map as MapLibreMap } from "maplibre-gl";
 
 const SOURCE_ID = "oaktree-parcels";
+const LAYER_MIXED_USE_ID = "oaktree-parcels-mixeduse";
 const LAYER_CASING_ID = "oaktree-parcels-outline-casing";
 const LAYER_OUTLINE_ID = "oaktree-parcels-outline";
 const SOURCE_LAYER = "parcels";
 
-function apiBase(): string | null {
-  const raw = (import.meta as any)?.env?.VITE_API_BASE_URL;
-  if (raw == null) return null;
-  const v = String(raw).trim();
-  if (!v) return null;
-  return v.replace(/\/+$/, "");
+function apiBase(): string {
+  const raw = (import.meta as any)?.env?.VITE_API_BASE_URL ?? "";
+  return String(raw).replace(/\/+$/, "");
 }
 
 function parcelsTileUrl(): string {
   const base = apiBase();
-  return base ? `${base}/v1/tiles/parcels/{z}/{x}/{y}.pbf` : "/v1/tiles/parcels/{z}/{x}/{y}.pbf";
+  return `${base}/v1/tiles/parcels/{z}/{x}/{y}.pbf`;
 }
 
 function findBeforeId(map: MapLibreMap): string | undefined {
   const layers = map.getStyle()?.layers ?? [];
-  const drawLayer = layers.find((layer) => layer.id?.startsWith("gl-draw-"))?.id;
+  const drawLayer = layers.find((layer) => layer.id?.startsWith("gl-draw"))?.id;
   return drawLayer;
 }
 
@@ -41,59 +39,91 @@ export function ensureParcelsOutline(map: MapLibreMap): void {
 
   const beforeId = findBeforeId(map);
 
-  const casing = {
+  const mixedUse: LayerSpecification = {
+    id: LAYER_MIXED_USE_ID,
+    type: "fill",
+    source: SOURCE_ID,
+    "source-layer": SOURCE_LAYER,
+    filter: ["==", ["get", "classification"], "m"],
+    paint: {
+      "fill-color": "#ff0000",
+      "fill-opacity": 0.25,
+    },
+  };
+
+  const casing: LayerSpecification = {
     id: LAYER_CASING_ID,
     type: "line",
     source: SOURCE_ID,
     "source-layer": SOURCE_LAYER,
     layout: { "line-join": "round", "line-cap": "round" },
     paint: {
-      "line-opacity": 0.35,
+      "line-opacity": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        9,
+        0.25,
+        12,
+        0.45,
+        16,
+        0.7,
+      ],
       "line-width": [
         "interpolate",
         ["linear"],
         ["zoom"],
-        12,
+        10,
         0.8,
         14,
-        1.2,
-        16,
-        1.8,
+        1.3,
         18,
-        2.6,
-        20,
-        3.2,
+        2.4,
       ],
-      "line-color": "rgba(0,0,0,0.9)",
+      "line-color": "rgba(0,0,0,0.55)",
     },
-  } as any;
+  };
 
-  const outline = {
+  const outline: LayerSpecification = {
     id: LAYER_OUTLINE_ID,
     type: "line",
     source: SOURCE_ID,
     "source-layer": SOURCE_LAYER,
     layout: { "line-join": "round", "line-cap": "round" },
     paint: {
-      "line-opacity": 0.8,
+      "line-opacity": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        9,
+        0.35,
+        12,
+        0.6,
+        16,
+        0.85,
+      ],
       "line-width": [
         "interpolate",
         ["linear"],
         ["zoom"],
-        12,
+        10,
         0.4,
         14,
-        0.7,
-        16,
-        1.1,
+        0.8,
         18,
         1.6,
-        20,
-        2.0,
       ],
-      "line-color": "rgba(255,255,255,0.95)",
+      "line-color": "rgba(255,255,255,0.85)",
     },
-  } as any;
+  };
+
+  if (!map.getLayer(LAYER_MIXED_USE_ID)) {
+    try {
+      map.addLayer(mixedUse, beforeId);
+    } catch (error) {
+      console.warn("Could not add parcel mixed-use layer", error);
+    }
+  }
 
   if (!map.getLayer(LAYER_CASING_ID)) {
     try {
