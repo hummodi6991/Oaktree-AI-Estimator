@@ -184,11 +184,7 @@ function ensureParcelLayers(map: maplibregl.Map) {
       type: "fill",
       source: PARCEL_SOURCE_ID,
       "source-layer": "parcels",
-      filter: [
-        "any",
-        ["==", ["get", "classification"], 7500],
-        ["==", ["get", "classification"], "7500"],
-      ],
+      filter: ["==", ["to-number", ["get", "classification"], -1], 7500],
       paint: {
         "fill-color": "#ff0000",
         "fill-opacity": 0.25,
