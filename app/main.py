@@ -156,8 +156,11 @@ def log_route_counts() -> None:
 # Allow cross-origin requests for the API (tighten in production as needed).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[
+        "https://fluffy-trout-r4rj9vjwrwx2xr4v-5173.app.github.dev",
+    ],
+    allow_origin_regex=r"^https://.*-5173\.app\.github\.dev$",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
