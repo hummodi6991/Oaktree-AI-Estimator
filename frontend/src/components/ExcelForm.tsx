@@ -541,16 +541,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const amountHeaderStyle = { ...baseCellStyle, textAlign: "right", paddingRight: "1.5rem", fontWeight: 600 } as const;
   const calcHeaderStyle = { ...baseCellStyle, textAlign: "left", fontWeight: 600, paddingLeft: "1rem" } as const;
   const farEditInputStyle = {
-    width: "100%",
-    maxWidth: 150,
-    minWidth: 96,
-    padding: "8px 10px",
-    minHeight: 40,
-    borderRadius: 4,
+    width: "160px",
+    padding: "6px 10px",
+    borderRadius: 6,
     border: "1px solid rgba(255,255,255,0.3)",
     background: "rgba(0,0,0,0.25)",
     color: "white",
-    fontSize: "1rem",
+    fontSize: "15px",
+    fontWeight: 500,
     textAlign: "right" as const,
   };
   const farEditButtonStyle = {
@@ -780,6 +778,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                               type="number"
                               step="0.01"
                               min="0"
+                              data-field="effective_far"
                               value={farDraft}
                               onChange={(event) => setFarDraft(event.target.value)}
                               onKeyDown={(event) => {
