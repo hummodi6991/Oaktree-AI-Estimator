@@ -543,19 +543,35 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const farEditInputStyle = {
     width: "100%",
     maxWidth: 110,
-    padding: "2px 6px",
+    padding: "6px 8px",
+    minHeight: 32,
     borderRadius: 4,
     border: "1px solid rgba(255,255,255,0.3)",
     background: "rgba(0,0,0,0.25)",
     color: "white",
     textAlign: "right" as const,
   };
-  const farButtonStyle = {
-    background: "none",
+  const farEditButtonStyle = {
     border: "none",
-    padding: 0,
-    color: "inherit",
+    padding: "4px 8px",
+    minHeight: 32,
+    borderRadius: 999,
+    color: "#f8fafc",
+    textDecoration: "underline",
+    background: "rgba(148,163,184,0.2)",
     font: "inherit",
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+  } as const;
+  const farEditActionStyle = {
+    padding: "4px 10px",
+    minHeight: 32,
+    borderRadius: 6,
+    border: "1px solid rgba(255,255,255,0.2)",
+    fontSize: "0.8rem",
+    fontWeight: 600,
     cursor: "pointer",
   } as const;
   const farErrorStyle = { color: "#fca5a5", fontSize: "0.75rem", marginTop: 4 } as const;
@@ -601,6 +617,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     setFarDraft(String(farAboveGround));
     setIsEditingFar(true);
   };
+  const farApplyDisabled =
+    farDraft.trim() === "" ||
+    !Number.isFinite(Number(farDraft)) ||
+    Number(farDraft) <= 0 ||
+    (farAboveGround != null && Number(farDraft) === Number(farAboveGround));
   const revenueItems = Object.keys(incomeComponents || {}).map((key) => {
     const nlaVal = nla[key] ?? 0;
     const efficiencyVal = efficiency[key] ?? null;
@@ -752,34 +773,68 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       <td style={itemColumnStyle}>{t("excel.effectiveFar")}</td>
                       <td style={amountColumnStyle}>
                         {isEditingFar ? (
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={farDraft}
-                            onChange={(event) => setFarDraft(event.target.value)}
-                            onBlur={applyFarEdit}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                applyFarEdit();
-                              }
-                              if (event.key === "Escape") {
-                                event.preventDefault();
-                                cancelFarEdit();
-                              }
-                            }}
-                            style={farEditInputStyle}
-                            autoFocus
-                          />
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }}>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={farDraft}
+                              onChange={(event) => setFarDraft(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  applyFarEdit();
+                                }
+                                if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  cancelFarEdit();
+                                }
+                              }}
+                              style={farEditInputStyle}
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={applyFarEdit}
+                              disabled={farApplyDisabled}
+                              style={{
+                                ...farEditActionStyle,
+                                background: "rgba(59,130,246,0.9)",
+                                color: "white",
+                                opacity: farApplyDisabled ? 0.5 : 1,
+                              }}
+                            >
+                              {t("excel.apply")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={cancelFarEdit}
+                              style={{
+                                ...farEditActionStyle,
+                                background: "rgba(148,163,184,0.2)",
+                                color: "white",
+                              }}
+                            >
+                              {t("excel.cancel")}
+                            </button>
+                          </div>
                         ) : (
-                          <button type="button" onClick={startFarEdit} style={farButtonStyle}>
-                            {formatNumberValue(farAboveGround, 3)}
+                          <button
+                            type="button"
+                            onClick={startFarEdit}
+                            style={farEditButtonStyle}
+                            title={t("excel.farEditHint")}
+                          >
+                            <span>{formatNumberValue(farAboveGround, 3)}</span>
+                            <span style={{ fontSize: "0.8rem", opacity: 0.85 }}>{t("excel.farEdit")}</span>
                           </button>
                         )}
                       </td>
                       <td style={calcColumnStyle}>
                         {farNote || t("excel.effectiveFarDefault")}
+                        {!isEditingFar && (
+                          <div style={{ marginTop: 6 }}>{t("excel.farEditHintInline")}</div>
+                        )}
                         {farEditError && <div style={farErrorStyle}>{farEditError}</div>}
                       </td>
                     </tr>
