@@ -12,6 +12,7 @@ import {
 import ParkingSummary from "./ParkingSummary";
 import type { EstimateNotes, EstimateTotals } from "../lib/types";
 import { formatAreaM2, formatCurrencySAR, formatNumber, formatPercent } from "../i18n/format";
+import { scaleAboveGroundAreaRatio } from "../utils/areaRatio";
 
 const PROVIDERS = [
   {
@@ -156,6 +157,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
     String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
   );
+  const [isEditingFar, setIsEditingFar] = useState(false);
+  const [farDraft, setFarDraft] = useState<string>("");
+  const [farEditError, setFarEditError] = useState<string | null>(null);
 
   useEffect(() => {
     const geometrySignature = parcel?.geometry ? JSON.stringify(parcel.geometry) : "";
@@ -386,6 +390,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const formatArea = (value: number | null | undefined) =>
     formatAreaM2(Number(value), { maximumFractionDigits: 0 }, "");
 
+  useEffect(() => {
+    if (!isEditingFar && farAboveGround != null) {
+      setFarDraft(String(farAboveGround));
+    }
+  }, [farAboveGround, isEditingFar]);
+
   const buaNote = (key: string) => {
     const noteKey = `${key}_bua`;
     if (explanations[noteKey]) return explanations[noteKey];
@@ -530,6 +540,67 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const itemHeaderStyle = { ...itemColumnStyle, fontWeight: 600 } as const;
   const amountHeaderStyle = { ...baseCellStyle, textAlign: "right", paddingRight: "1.5rem", fontWeight: 600 } as const;
   const calcHeaderStyle = { ...baseCellStyle, textAlign: "left", fontWeight: 600, paddingLeft: "1rem" } as const;
+  const farEditInputStyle = {
+    width: "100%",
+    maxWidth: 110,
+    padding: "2px 6px",
+    borderRadius: 4,
+    border: "1px solid rgba(255,255,255,0.3)",
+    background: "rgba(0,0,0,0.25)",
+    color: "white",
+    textAlign: "right" as const,
+  };
+  const farButtonStyle = {
+    background: "none",
+    border: "none",
+    padding: 0,
+    color: "inherit",
+    font: "inherit",
+    cursor: "pointer",
+  } as const;
+  const farErrorStyle = { color: "#fca5a5", fontSize: "0.75rem", marginTop: 4 } as const;
+
+  const resetFarDraft = () => {
+    setFarDraft(farAboveGround != null ? String(farAboveGround) : "");
+  };
+
+  const cancelFarEdit = () => {
+    setIsEditingFar(false);
+    resetFarDraft();
+    setFarEditError(null);
+  };
+
+  const applyFarEdit = () => {
+    const targetFar = Number(farDraft);
+    if (!Number.isFinite(targetFar) || targetFar <= 0) {
+      setFarEditError(t("excel.farEditErrorInvalid"));
+      return;
+    }
+
+    const currentAreaRatio = inputsRef.current?.area_ratio || {};
+    const scaled = scaleAboveGroundAreaRatio(currentAreaRatio, targetFar);
+    if (!scaled) {
+      setFarEditError(t("excel.farEditErrorMissing"));
+      return;
+    }
+
+    const nextInputs: ExcelInputs = {
+      ...inputsRef.current,
+      area_ratio: scaled.nextAreaRatio,
+    };
+    setInputs(nextInputs);
+    setIsEditingFar(false);
+    setFarEditError(null);
+    setFarDraft(String(targetFar));
+    runEstimate(nextInputs);
+  };
+
+  const startFarEdit = () => {
+    if (farAboveGround == null) return;
+    setFarEditError(null);
+    setFarDraft(String(farAboveGround));
+    setIsEditingFar(true);
+  };
   const revenueItems = Object.keys(incomeComponents || {}).map((key) => {
     const nlaVal = nla[key] ?? 0;
     const efficiencyVal = efficiency[key] ?? null;
@@ -680,9 +751,37 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     <tr>
                       <td style={itemColumnStyle}>{t("excel.effectiveFar")}</td>
                       <td style={amountColumnStyle}>
-                        {formatNumberValue(farAboveGround, 3)}
+                        {isEditingFar ? (
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={farDraft}
+                            onChange={(event) => setFarDraft(event.target.value)}
+                            onBlur={applyFarEdit}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                applyFarEdit();
+                              }
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                cancelFarEdit();
+                              }
+                            }}
+                            style={farEditInputStyle}
+                            autoFocus
+                          />
+                        ) : (
+                          <button type="button" onClick={startFarEdit} style={farButtonStyle}>
+                            {formatNumberValue(farAboveGround, 3)}
+                          </button>
+                        )}
                       </td>
-                      <td style={calcColumnStyle}>{farNote || t("excel.effectiveFarDefault")}</td>
+                      <td style={calcColumnStyle}>
+                        {farNote || t("excel.effectiveFarDefault")}
+                        {farEditError && <div style={farErrorStyle}>{farEditError}</div>}
+                      </td>
                     </tr>
                   )}
                   <tr>

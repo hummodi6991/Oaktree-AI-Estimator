@@ -3,7 +3,7 @@ export type LandUseCode = "s" | "m";
 export type ExcelInputs = {
   // IMPORTANT: backend prefers this explicit field for landuse inference【turn10file7†file 89.txt†L41-L55】
   land_use_code?: LandUseCode;
-  area_ratio: Record<string, number>;
+  area_ratio: Record<string, number | string>;
   unit_cost: Record<string, number>;
   efficiency: Record<string, number>;
   cp_sqm_per_space: Record<string, number>;

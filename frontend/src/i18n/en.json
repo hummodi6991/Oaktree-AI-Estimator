@@ -81,6 +81,8 @@
     "calculation": "How we calculated it",
     "effectiveFar": "Effective FAR (above-ground)",
     "effectiveFarDefault": "Sum of above-ground area ratios (excludes basement).",
+    "farEditErrorInvalid": "Enter a FAR greater than 0.",
+    "farEditErrorMissing": "Unable to scale FAR from current ratios.",
     "residentialBua": "Residential BUA",
     "retailBua": "Retail BUA",
     "officeBua": "Office BUA",
