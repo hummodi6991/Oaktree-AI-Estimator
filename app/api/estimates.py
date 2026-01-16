@@ -269,7 +269,10 @@ class EstimateRequest(BaseModel):
         description="Development exit strategy. Use 'build_to_sell' for GDV sales, 'build_to_rent' for NOI/cap exits.",
     )
     city: Optional[str] = None
-    far: float = 2.0
+    far: float = Field(
+        default=2.0,
+        description="Deprecated/ignored. FAR is computed automatically by the engine.",
+    )
     efficiency: float = 0.82
     sale_price_per_m2: float | None = Field(
         default=None,
@@ -432,81 +435,35 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
     except Exception:
         overture_context_metrics = {}
 
-    # The frontend may send FAR even when the user didn't override it (it just echoes the default).
-    # Treat FAR as explicit only when provided AND different from the model default.
-    far_in_fields_set = hasattr(req, "model_fields_set") and "far" in req.model_fields_set
-    far_default = 0.0
-    try:
-        if hasattr(EstimateRequest, "model_fields"):
-            far_default = float(EstimateRequest.model_fields.get("far").default or 0.0)
-    except Exception:
-        far_default = 0.0
-    far_explicit = bool(far_in_fields_set and abs(float(req.far) - far_default) > 1e-9)
+    # FAR is intentionally fully automatic:
+    # - Do NOT use district FAR (data is corrupted)
+    # - Do NOT use user-supplied FAR (confusing UX)
     far_max = None
     far_max_source = None
     typical_source = None
-    try:
-        far_max = far_rules.lookup_far(db, req.city, district_norm or district)
-        if far_max is not None:
-            far_max_source = "far_rules"
-    except Exception:
-        far_max = None
 
     typical_far_proxy = overture_context_metrics.get("far_proxy_existing")
     typical_source = "overture_proxy" if typical_far_proxy is not None else None
     if overture_context_metrics.get("building_count") == 0:
         typical_far_proxy = None
         typical_source = None
-    typical_far_clamped = max(0.3, float(typical_far_proxy)) if typical_far_proxy is not None else None
-    suggested_far = None
-    if far_max is not None and typical_far_clamped is not None:
-        suggested_far = min(float(far_max), typical_far_clamped)
-    elif far_max is not None:
-        suggested_far = float(far_max)
-    elif typical_far_clamped is not None:
-        suggested_far = typical_far_clamped
-    else:
-        suggested_far = req.far
-
-    # --- NEW: cap inferred FAR by land-use class to avoid absurd outliers (e.g., FAR=30) ---
     landuse_for_cap = _infer_landuse_code_from_excel_inputs(
         dict(req.excel_inputs) if isinstance(req.excel_inputs, dict) else None
     )
-    far_cap_meta: dict[str, Any] | None = None
-    if not far_explicit:
-        # Only cap non-explicit FAR (i.e., inferred from Overture/rules)
-        capped, meta = far_rules.cap_far_by_landuse(
-            float(suggested_far) if suggested_far is not None else None,
-            landuse_for_cap,
-        )
-        far_cap_meta = meta
-        if capped is not None:
-            # Keep source_label intact; this is a post-processing safety clamp
-            suggested_far = capped
-    else:
-        far_cap_meta = {"applied": False, "reason": "explicit_far"}
+    FAR_SAFETY_FACTOR = 1.15
+    final_far, far_calc_meta = far_rules.compute_far_with_priors(
+        landuse_code=landuse_for_cap,
+        overture_typical_far=float(typical_far_proxy) if typical_far_proxy is not None else None,
+        safety_factor=FAR_SAFETY_FACTOR,
+    )
+    suggested_far = float(final_far)
 
-    method = "default_far"
-    source_label = None
-    if far_explicit:
-        method = "explicit_far"
-        source_label = "explicit"
-    elif far_max is not None and typical_far_clamped is not None:
-        method = "min_far_max_and_typical"
-        source_label = far_max_source if float(far_max) <= float(typical_far_clamped) else typical_source
-    elif far_max is not None:
-        method = "far_max_only"
-        source_label = far_max_source
-    elif typical_far_clamped is not None:
-        method = "overture_typical"
-        source_label = typical_source
-    else:
-        source_label = None
-
-    far_used = req.far if far_explicit else float(suggested_far or req.far)
+    method = str((far_calc_meta or {}).get("method") or "priors_min_overture_cap")
+    source_label = "priors_min_overture_cap"
+    far_used = float(suggested_far)
     far_inference_notes = {
         "suggested_far": float(suggested_far or 0.0) if suggested_far is not None else None,
-        "far_max": float(far_max) if far_max is not None else None,
+        "far_max": None,
         "source": source_label,
         "far_max_source": far_max_source,
         "typical_source": typical_source,
@@ -514,8 +471,8 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         "buffer_m": overture_context_metrics.get("buffer_m"),
         "typical_far_proxy": float(typical_far_proxy or 0.0) if typical_far_proxy is not None else None,
         "district": district_norm or district,
-        "explicit_far": far_explicit,
-        "far_cap": far_cap_meta,
+        "explicit_far": False,
+        "far_calc": far_calc_meta,
     }
 
     def _finalize_result(
@@ -597,30 +554,16 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
         # In Excel-mode, BUA is computed from `area_ratio`. To avoid it getting stuck on
         # template placeholders (e.g. residential 1.60), scale placeholder area ratios to
-        # match the best available FAR (explicit > inferred > default).
+        # match the automatic FAR.
         target_far: float | None = None
         target_far_source: str = ""
-        if far_explicit:
-            try:
-                target_far = float(req.far)
-                if target_far > 0:
-                    target_far_source = "explicit_far"
-            except Exception:
-                target_far = None
-
-        if (target_far is None or target_far <= 0) and suggested_far is not None:
-            # Only auto-scale placeholder ratios when FAR is actually inferred
-            # (Overture / rules). If we fell back to the request default FAR
-            # (method == "default_far"), keep template ratios unchanged.
-            far_method_norm = str(method or "").strip().lower()
-            if far_method_norm and far_method_norm != "default_far":
-                try:
-                    sf = float(suggested_far)
-                except Exception:
-                    sf = 0.0
-                if sf > 0:
-                    target_far = sf
-                    target_far_source = str(method or "far")
+        try:
+            tf = float(far_used)
+        except Exception:
+            tf = 0.0
+        if tf > 0:
+            target_far = tf
+            target_far_source = "auto_far_priors"
 
         excel_inputs = scale_placeholder_area_ratio(
             excel_inputs, target_far=target_far, target_far_source=target_far_source
@@ -1146,7 +1089,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                     "key": "far",
                     "value": float(far_used),
                     "unit": None,
-                    "source_type": "Manual" if far_explicit else (far_max_source or "Overture"),
+                    "source_type": "Model",
                 },
                 {
                     "key": "parking_required_spaces",
@@ -1240,9 +1183,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 },
                 "existing_footprint_area_m2": overture_site_metrics.get("footprint_area_m2"),
                 "existing_bua_m2": overture_site_metrics.get("existing_bua_m2"),
-                "potential_bua_m2": float(far_max * site_area_m2) if far_max is not None else None,
+                "potential_bua_m2": float(far_used * site_area_m2) if far_used is not None else None,
                 "suggested_far": float(suggested_far or 0.0) if suggested_far is not None else None,
-                "far_max": float(far_max) if far_max is not None else None,
+                "far_max": None,
             },
             "rent": {},
             "explainability": {},
