@@ -7,7 +7,11 @@ export const PARCELS_MIXEDUSE_LAYER_ID = "parcels-mixeduse-fill";
 
 export function apiBase(): string {
   const raw = import.meta.env.VITE_API_BASE_URL as string | undefined;
-  return (raw || "").replace(/\/+$/, "");
+  const trimmed = raw?.trim() ?? "";
+  if (!trimmed) {
+    return window.location.origin;
+  }
+  return trimmed.replace(/\/+$/, "");
 }
 
 export function parcelTileUrlTemplate(): string {
