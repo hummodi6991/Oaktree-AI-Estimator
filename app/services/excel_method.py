@@ -671,6 +671,75 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     """Compute an Excel-style estimate using caller-provided parameters."""
 
     area_ratio = inputs.get("area_ratio", {}) or {}
+    # -------------------------------------------------------------------------
+    # HARD GUARANTEE: Effective FAR (above-ground) floor for mixed-use parcels.
+    #
+    # Effective FAR (above-ground) is defined as:
+    #   Σ(area ratios excluding basement)
+    # and is what the UI displays.
+    #
+    # Some upstream steps (parking auto-adjust, template rewrites, floors scaling)
+    # can still yield an above-ground FAR < 2.5 even when landuse is mixed-use.
+    # Enforce it here at the final source-of-truth.
+    # -------------------------------------------------------------------------
+    def _norm_land_use_local() -> str:
+        lu = (
+            inputs.get("land_use_code")
+            or inputs.get("landuse_code")
+            or inputs.get("land_use")
+            or inputs.get("landuse")
+            or ""
+        ).strip().lower()
+        if lu in {"m", "s", "c"}:
+            return lu
+        keys = {str(k).strip().lower() for k in area_ratio.keys()}
+        # mixed-use if retail/office keys present (current repo convention)
+        if {"retail", "office"} & keys:
+            return "m"
+        return ""
+
+    land_use_code = _norm_land_use_local()
+    if land_use_code == "m" and isinstance(area_ratio, dict) and area_ratio:
+        min_far = 2.5
+        max_far = 5.0
+
+        far_above = 0.0
+        for k, v in area_ratio.items():
+            if isinstance(k, str) and _is_basement_area_ratio_key(k):
+                continue
+            try:
+                far_above += float(v or 0.0)
+            except Exception:
+                continue
+
+        if far_above > 0:
+            target = None
+            if far_above < min_far:
+                target = min_far
+            elif far_above > max_far:
+                target = max_far
+
+            if target is not None:
+                factor = target / far_above
+                new_ar: dict[str, Any] = {}
+                for k, v in area_ratio.items():
+                    if isinstance(k, str) and _is_basement_area_ratio_key(k):
+                        new_ar[k] = v
+                        continue
+                    try:
+                        new_ar[k] = float(v or 0.0) * factor
+                    except Exception:
+                        new_ar[k] = v
+                inputs["area_ratio"] = new_ar
+                area_ratio = new_ar
+                # add transparent note for debugging
+                note = str(inputs.get("area_ratio_note") or "").strip()
+                extra = (
+                    "Effective FAR (above-ground) clamped to "
+                    f"{target:.3f} (was {far_above:.3f}) via ×{factor:.3f} "
+                    "[mixed_use_far_floor_final]."
+                )
+                inputs["area_ratio_note"] = (note + " " + extra).strip() if note else extra
     unit_cost = inputs.get("unit_cost", {}) or {}
     cp_density = inputs.get("cp_sqm_per_space", {}) or {}
     efficiency = inputs.get("efficiency", {}) or {}
