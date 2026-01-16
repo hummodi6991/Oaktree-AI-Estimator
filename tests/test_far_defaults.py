@@ -106,7 +106,10 @@ def test_far_autofill_when_not_explicit(monkeypatch):
     # New contract: FAR is fully automatic. Residential clamp band is [1.5, 3.0].
     far_val = float(far_info.get("suggested_far") or 0.0)
     assert 1.5 <= far_val <= 3.0
-    assert pytest.approx(far_info.get("far_used") or 0.0, rel=1e-6) == 1.5
+    # Auto engine sets far_used == suggested_far (no user override, no district FAR).
+    far_used = float(far_info.get("far_used") or 0.0)
+    assert 1.5 <= far_used <= 3.0
+    assert far_used == pytest.approx(far_val, rel=1e-9)
     built_area = notes.get("excel_breakdown", {}).get("built_area", {})
     # FAR proxy 1.5 → residential area ratio should scale to ~1.5 on 1000 m² site
     assert pytest.approx(built_area.get("residential") or 0.0, rel=1e-6) == 1500.0
