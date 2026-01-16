@@ -598,6 +598,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 baseline_floors_above_ground=baseline_floors_above_ground,
                 desired_floors_source="fixed_mixed_use_rule",
                 baseline_floors_source=baseline_source,
+                min_above_ground_far=2.5,
+                max_above_ground_far=5.0,
+                enforce_far_source="mixed_use_far_floor",
             )
 
             floors_adjustment = {
