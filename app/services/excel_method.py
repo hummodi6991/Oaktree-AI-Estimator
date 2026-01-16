@@ -180,6 +180,9 @@ def scale_area_ratio_by_floors(
     baseline_floors_above_ground: float | int | str | None,
     desired_floors_source: str | None = None,
     baseline_floors_source: str | None = None,
+    min_above_ground_far: float | None = None,
+    max_above_ground_far: float | None = None,
+    enforce_far_source: str | None = None,
 ) -> Dict[str, Any]:
     """
     Option B — Use floors (stories) to scale `area_ratio`.
@@ -237,6 +240,48 @@ def scale_area_ratio_by_floors(
         new_area_ratio[k] = r * factor
         if isinstance(k, str):
             scaled_keys.append(k)
+
+    # Optional enforcement: keep above-ground FAR within bounds after floors scaling.
+    try:
+        min_far = float(min_above_ground_far) if min_above_ground_far is not None else None
+    except Exception:
+        min_far = None
+    try:
+        max_far = float(max_above_ground_far) if max_above_ground_far is not None else None
+    except Exception:
+        max_far = None
+
+    far_sum = 0.0
+    for k, v in new_area_ratio.items():
+        if isinstance(k, str) and _is_basement_area_ratio_key(k):
+            continue
+        try:
+            far_sum += float(v or 0.0)
+        except Exception:
+            continue
+
+    far_target: float | None = None
+    if far_sum > 0:
+        if min_far is not None and far_sum < min_far:
+            far_target = min_far
+        if max_far is not None and far_sum > max_far:
+            far_target = max_far
+
+    if far_target is not None and far_sum > 0:
+        adj = far_target / far_sum
+        for k, v in list(new_area_ratio.items()):
+            if isinstance(k, str) and _is_basement_area_ratio_key(k):
+                continue
+            try:
+                new_area_ratio[k] = float(v or 0.0) * adj
+            except Exception:
+                continue
+        inputs["area_ratio_note"] = (str(inputs.get("area_ratio_note") or "").strip() + " ").strip() + (
+            f"Above-ground FAR adjusted to {far_target:.3f} (was {far_sum:.3f}) "
+            f"via × {adj:.3f} [{enforce_far_source or 'far_enforcement'}]."
+        )
+        inputs["far_above_ground_enforced_to"] = far_target
+        inputs["far_above_ground_enforce_factor"] = adj
 
     inputs["area_ratio"] = new_area_ratio
 
