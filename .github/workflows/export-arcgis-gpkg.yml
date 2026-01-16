@@ -1,0 +1,82 @@
+name: Export ArcGIS Riyadh Parcels (GPKG)
+
+permissions:
+  contents: read
+  actions: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "ObjectID batch size (<=2000). 200 is safest."
+        required: true
+        default: "200"
+      sleep_s:
+        description: "Sleep seconds between batches"
+        required: true
+        default: "0.25"
+      max_minutes:
+        description: "Stop after N minutes (GitHub limit ~360). Use 330."
+        required: true
+        default: "330"
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GDAL + tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdal-bin jq python3-pip unzip
+          python3 -m pip install --upgrade pip
+          python3 -m pip install requests
+
+      - name: Restore previous checkpoint (if any)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${REPO}/actions/artifacts?per_page=100"
+          url="$(curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${api}" | jq -r '[.artifacts[] | select(.name=="riyadh_parcels_arcgis_gpkg" and .expired==false)] | sort_by(.created_at) | reverse | .[0].archive_download_url // ""')"
+          if [ -z "${url}" ]; then
+            echo "No previous artifact found."
+            exit 0
+          fi
+          echo "Downloading previous artifact..."
+          curl -sSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "${url}" -o previous_artifact.zip
+          unzip -o previous_artifact.zip
+          if [ -f riyadh_parcels_arcgis_gpkg.zip ]; then
+            unzip -o riyadh_parcels_arcgis_gpkg.zip
+          fi
+
+      - name: Export GeoPackage
+        env:
+          BASE: "https://services-ap1.arcgis.com/if9krLUYaMWhxyMO/ArcGIS/rest/services/Riyadh_Parcel/FeatureServer/0"
+          BATCH: ${{ inputs.batch_size }}
+          SLEEP: ${{ inputs.sleep_s }}
+          MAX_MINUTES: ${{ inputs.max_minutes }}
+          OUT: "riyadh_parcels_arcgis.gpkg"
+          LAYER: "riyadh_parcels_arcgis"
+        run: |
+          python3 scripts/export_arcgis_to_gpkg.py
+
+      - name: Show outputs
+        run: |
+          ls -lh riyadh_parcels_arcgis.gpkg checkpoint.txt || true
+          ogrinfo -so riyadh_parcels_arcgis.gpkg riyadh_parcels_arcgis | head -n 60 || true
+
+      - name: Zip output (smaller + iPad friendly)
+        run: |
+          zip -9 riyadh_parcels_arcgis_gpkg.zip riyadh_parcels_arcgis.gpkg checkpoint.txt
+
+      - name: Upload artifact (zipped)
+        uses: actions/upload-artifact@v4
+        with:
+          name: riyadh_parcels_arcgis_gpkg
+          path: riyadh_parcels_arcgis_gpkg.zip
+          if-no-files-found: error
