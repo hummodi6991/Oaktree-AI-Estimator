@@ -542,13 +542,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const calcHeaderStyle = { ...baseCellStyle, textAlign: "left", fontWeight: 600, paddingLeft: "1rem" } as const;
   const farEditInputStyle = {
     width: "100%",
-    maxWidth: 110,
-    padding: "6px 8px",
-    minHeight: 32,
+    maxWidth: 150,
+    minWidth: 96,
+    padding: "8px 10px",
+    minHeight: 40,
     borderRadius: 4,
     border: "1px solid rgba(255,255,255,0.3)",
     background: "rgba(0,0,0,0.25)",
     color: "white",
+    fontSize: "1rem",
     textAlign: "right" as const,
   };
   const farEditButtonStyle = {
