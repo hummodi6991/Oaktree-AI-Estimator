@@ -17,14 +17,12 @@ on:
 
 permissions:
   contents: read
+  packages: write
+  actions: read
 
 env:
   ALIBABA_REGION: ${{ vars.ALIBABA_REGION }}            # e.g., me-central-1
-  ACR_INSTANCE_ID: ${{ secrets.ALIBABA_CLOUD_ACR_INSTANCE_ID }}  # e.g., cri-xxxxxxxx
-  ACR_NAMESPACE: ${{ vars.ACR_NAMESPACE }}              # e.g., oaktree
-  SERVICE_NAME: ${{ vars.SERVICE_NAME }}                # e.g., oaktree-estimator
   ACK_CLUSTER_ID: ${{ vars.ACK_CLUSTER_ID }}            # e.g., c5b5e80b0b64a4bf...
-  ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}        # e.g., oaktree-ai-estimator-registry.me-central-1.cr.aliyuncs.com
 
 jobs:
   deploy:
@@ -41,26 +39,6 @@ jobs:
           curl -L -o kubectl https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
           chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
 
-      # Normalize registry host (strip scheme, CR/LF, trailing slashes)
-      - name: Normalize ACR registry host
-        id: reg
-        run: |
-          R="${ACR_LOGIN_SERVER}"
-          R="${R#http://}"; R="${R#https://}"
-          R="$(printf '%s' "$R" | tr -d '\r' | tr -d '\n' | sed 's:/*$::')"
-          echo "host=$R" >> "$GITHUB_OUTPUT"
-          echo "ACR_REG_HOST=$R" >> "$GITHUB_ENV"
-
-      # Normalize namespace and service (strip CR/LF, spaces, trailing slashes)
-      - name: Normalize image coordinates
-        id: imgmeta
-        run: |
-          NS="$(printf '%s' "${ACR_NAMESPACE}" | tr -d '\r\n' | tr -d ' ' | sed 's:/*$::')"
-          SVC="$(printf '%s' "${SERVICE_NAME}" | tr -d '\r\n' | tr -d ' ' | sed 's:/*$::')"
-          echo "ns=$NS"  >> "$GITHUB_OUTPUT"
-          echo "svc=$SVC" >> "$GITHUB_OUTPUT"
-          echo "ACR_NS=$NS" >> "$GITHUB_ENV"
-          echo "SVC_NAME=$SVC" >> "$GITHUB_ENV"
       # 2) Configure Alibaba Cloud credentials (AK/SK workaround until OIDC is enabled)
       - name: Configure Alibaba Cloud credentials
         run: |
@@ -70,27 +48,15 @@ jobs:
             --access-key-secret "${{ secrets.ALIBABA_ACCESS_KEY_SECRET }}" \
             --region "${{ env.ALIBABA_REGION }}"
 
-      # 3) Ephemeral ACR login (token from ACR API)
-      - name: Get temporary ACR login (STS)
-        id: acr
+      # 3) Login to GHCR
+      - name: Docker login to GHCR
+        run: echo "${{ github.token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: GHCR visibility note
         run: |
-          # Fetch a short-lived Docker username/password for ACR EE (no --output flags)
-          JSON=$(aliyun cr GetAuthorizationToken --RegionId "$ALIBABA_REGION" --InstanceId "$ACR_INSTANCE_ID")
-          # Support multiple response shapes
-          ACR_USER=$(echo "$JSON" | jq -r '.TempUsername // .tempUserName // .data.tempUserName // .data.TempUsername')
-          ACR_PASS=$(echo "$JSON" | jq -r '.AuthorizationToken // .authorizationToken // .data.authorizationToken // .data.AuthorizationToken')
-          if [ -z "$ACR_USER" ] || [ -z "$ACR_PASS" ]; then
-            echo "Failed to parse ACR token response" >&2
-            echo "$JSON" | jq -r 'del(.AuthorizationToken,.data.authorizationToken)' >&2
-            exit 1
-          fi
-          echo "acr_username=$ACR_USER" >> "$GITHUB_OUTPUT"
-          echo "acr_password=$ACR_PASS" >> "$GITHUB_OUTPUT"
+          echo "If this is the first push, ensure the GHCR package is set to Public in the GitHub UI."
 
-      - name: Docker login to ACR
-        run: echo "${{ steps.acr.outputs.acr_password }}" | docker login "${{ steps.reg.outputs.host }}" -u "${{ steps.acr.outputs.acr_username }}" --password-stdin
-
-      # 4) Build & push Docker image to ACR
+      # 4) Build & push Docker image to GHCR
       - name: Free disk space on runner
         run: |
           df -h
@@ -101,7 +67,7 @@ jobs:
       - name: Build & push image
         id: img
         run: |
-          IMAGE="${ACR_REG_HOST}/${ACR_NS}/${SVC_NAME}:${{ github.sha }}"
+          IMAGE="ghcr.io/${{ github.repository_owner }}/oaktree-estimator:${{ github.sha }}"
           echo "Using image: $IMAGE"
           docker build --build-arg VITE_PARCEL_TILE_TABLE=public.riyadh_parcels_arcgis_proxy -t "$IMAGE" .
           docker push "$IMAGE"
