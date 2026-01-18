@@ -747,7 +747,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>
             {t("excel.financialBreakdown")}
           </h3>
-          <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
 
           <div
             style={{
@@ -1092,6 +1091,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
               )}
             </div>
           </div>
+          <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
         </div>
       )}
     </div>
