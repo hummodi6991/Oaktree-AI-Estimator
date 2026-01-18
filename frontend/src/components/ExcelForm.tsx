@@ -128,6 +128,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [suggestedPrice, setSuggestedPrice] = useState<number | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [includeFitout, setIncludeFitout] = useState(true);
+  const [includeContingency, setIncludeContingency] = useState(true);
+  const [includeFeasibility, setIncludeFeasibility] = useState(true);
   const normalizedParcelLandUse = normalizeLandUse(parcel?.landuse_code);
   const normalizedPropLandUse = normalizeLandUse(landUseOverride);
   const initialLandUse = normalizedPropLandUse ?? normalizedParcelLandUse ?? "s";
@@ -184,6 +186,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       if (!includeFitout) {
         next.fitout_rate = 0;
       }
+      if (!includeContingency) {
+        next.contingency_pct = 0;
+      }
+      if (!includeFeasibility) {
+        next.feasibility_fee_pct = 0;
+      }
       return next;
     });
   }, [effectiveLandUse]);
@@ -198,6 +206,30 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     const nextInputs = {
       ...inputsRef.current,
       fitout_rate: checked ? templateForLandUse(effectiveLandUse).fitout_rate : 0,
+    };
+    setInputs(nextInputs);
+    if (excelResult) {
+      runEstimate(nextInputs);
+    }
+  };
+
+  const handleContingencyToggle = (checked: boolean) => {
+    setIncludeContingency(checked);
+    const nextInputs = {
+      ...inputsRef.current,
+      contingency_pct: checked ? templateForLandUse(effectiveLandUse).contingency_pct : 0,
+    };
+    setInputs(nextInputs);
+    if (excelResult) {
+      runEstimate(nextInputs);
+    }
+  };
+
+  const handleFeasibilityToggle = (checked: boolean) => {
+    setIncludeFeasibility(checked);
+    const nextInputs = {
+      ...inputsRef.current,
+      feasibility_fee_pct: checked ? templateForLandUse(effectiveLandUse).feasibility_fee_pct : 0,
     };
     setInputs(nextInputs);
     if (excelResult) {
@@ -386,6 +418,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const fitoutTotal =
     fitoutTotalFromBreakdown ?? (typeof excelResult?.costs?.fitout_cost === "number" ? excelResult.costs.fitout_cost : 0);
   const fitoutExcluded = !includeFitout;
+  const contingencyExcluded = !includeContingency;
+  const feasibilityExcluded = !includeFeasibility;
 
   const formatArea = (value: number | null | undefined) =>
     formatAreaM2(Number(value), { maximumFractionDigits: 0 }, "");
@@ -430,13 +464,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       })
       : t("excelNotes.fitoutFallback"));
 
-  const contingencyNote =
-    explanations.contingency ||
-    t("excelNotes.contingency", {
-      pct: formatPercentValue(contingencyPct),
-      direct: formatNumberValue(constructionDirectTotal, 0),
-      fitout: formatNumberValue(fitoutTotal, 0),
-    });
+  const contingencyNote = contingencyExcluded
+    ? t("excelNotes.contingencyExcluded")
+    : explanations.contingency ||
+      t("excelNotes.contingency", {
+        pct: formatPercentValue(contingencyPct),
+        direct: formatNumberValue(constructionDirectTotal, 0),
+        fitout: formatNumberValue(fitoutTotal, 0),
+      });
 
   const consultantsNote =
     explanations.consultants ||
@@ -451,6 +486,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       land: formatNumberValue(landCostValue, 0),
       pct: formatPercentValue(transactionPct),
     });
+  const inclusionToggleStyle = (included: boolean) => ({
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: included ? "rgba(16,185,129,0.15)" : "rgba(248,113,113,0.1)",
+    color: "white",
+    padding: "4px 8px",
+    borderRadius: 999,
+    cursor: "pointer",
+    fontSize: "0.8rem",
+  });
 
   const directNote =
     explanations.construction_direct ||
@@ -899,15 +943,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         <button
                           type="button"
                           onClick={() => handleFitoutToggle(!includeFitout)}
-                          style={{
-                            border: "1px solid rgba(255,255,255,0.2)",
-                            background: includeFitout ? "rgba(16,185,129,0.15)" : "rgba(248,113,113,0.1)",
-                            color: "white",
-                            padding: "4px 8px",
-                            borderRadius: 999,
-                            cursor: "pointer",
-                            fontSize: "0.8rem",
-                          }}
+                          style={inclusionToggleStyle(includeFitout)}
                         >
                           {includeFitout ? t("excel.fitoutIncluded") : t("excel.fitoutExcluded")}
                         </button>
@@ -921,7 +957,25 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>{t("excel.contingency")}</td>
+                    <td style={itemColumnStyle}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "0.5rem",
+                        }}
+                      >
+                        <span>{t("excel.contingency")}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleContingencyToggle(!includeContingency)}
+                          style={inclusionToggleStyle(includeContingency)}
+                        >
+                          {includeContingency ? t("excel.fitoutIncluded") : t("excel.fitoutExcluded")}
+                        </button>
+                      </div>
+                    </td>
                     <td style={amountColumnStyle}>
                       {formatCurrencySAR(excelResult.costs.contingency_cost)}
                     </td>
@@ -939,15 +993,35 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>{t("excel.feasibilityFee")}</td>
+                    <td style={itemColumnStyle}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "0.5rem",
+                        }}
+                      >
+                        <span>{t("excel.feasibilityFee")}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleFeasibilityToggle(!includeFeasibility)}
+                          style={inclusionToggleStyle(includeFeasibility)}
+                        >
+                          {includeFeasibility ? t("excel.fitoutIncluded") : t("excel.fitoutExcluded")}
+                        </button>
+                      </div>
+                    </td>
                     <td style={amountColumnStyle}>
                       {formatCurrencySAR(excelResult.costs.feasibility_fee)}
                     </td>
                     <td style={calcColumnStyle}>
-                      {t("excelNotes.feasibility", {
-                        land: formatNumberValue(landCostValue, 0),
-                        pct: formatPercentValue(feasibilityPct, 1),
-                      })}
+                      {feasibilityExcluded
+                        ? t("excelNotes.feasibilityExcluded")
+                        : t("excelNotes.feasibility", {
+                          land: formatNumberValue(landCostValue, 0),
+                          pct: formatPercentValue(feasibilityPct, 1),
+                        })}
                     </td>
                   </tr>
                   <tr>

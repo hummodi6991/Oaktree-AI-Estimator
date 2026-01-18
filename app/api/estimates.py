@@ -324,6 +324,7 @@ class EstimateRequest(BaseModel):
                     "contingency_pct": 0.05,
                     "consultants_pct": 0.06,
                     "transaction_pct": 0.03,
+                    "feasibility_fee_pct": 0.02,
                     "land_price_sar_m2": 2800,
                 }
             }]
