@@ -572,7 +572,6 @@ export default function App() {
               <p className="card-subtitle">{t("ui.financialSummary.subtitle")}</p>
             </div>
           </div>
-          <ParkingSummary totals={estimate?.totals} notes={estimate?.notes} />
           <dl className="stat-grid">
             {(["land_value", "hard_costs", "soft_costs", "financing", "revenues"] as const).map((key) => (
               <div key={key} className="stat">
@@ -818,9 +817,10 @@ export default function App() {
               {!rentHasDrivers && !rentHasComps && rentHeadline == null && rentUnitRate == null &&
                 rentVacancy == null && rentGrowth == null && (
                   <p className="metrics-note">{t("ui.rentSnapshot.noIndicators")}</p>
-                )}
+              )}
             </div>
           )}
+          <ParkingSummary totals={estimate?.totals} notes={estimate?.notes} />
         </section>
       )}
 
