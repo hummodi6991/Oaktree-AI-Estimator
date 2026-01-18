@@ -1075,23 +1075,23 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                 </tbody>
               </table>
 
-              {summaryText && (
-                <div
-                  style={{
-                    marginTop: "0.75rem",
-                    paddingTop: "0.75rem",
-                    borderTop: "1px solid rgba(255,255,255,0.08)",
-                  }}
-                >
-                  <h5 style={{ margin: "0 0 0.35rem 0", fontSize: "0.95rem" }}>
-                    {t("excel.executiveSummary")}
-                  </h5>
-                  <p style={{ margin: 0, lineHeight: 1.4 }}>{summaryText}</p>
-                </div>
-              )}
             </div>
           </div>
           <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
+          {summaryText && (
+            <div
+              style={{
+                marginTop: "0.75rem",
+                paddingTop: "0.75rem",
+                borderTop: "1px solid rgba(255,255,255,0.08)",
+              }}
+            >
+              <h5 style={{ margin: "0 0 0.35rem 0", fontSize: "0.95rem" }}>
+                {t("excel.executiveSummary")}
+              </h5>
+              <p style={{ margin: 0, lineHeight: 1.4 }}>{summaryText}</p>
+            </div>
+          )}
         </div>
       )}
     </div>
