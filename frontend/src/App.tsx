@@ -817,7 +817,7 @@ export default function App() {
               {!rentHasDrivers && !rentHasComps && rentHeadline == null && rentUnitRate == null &&
                 rentVacancy == null && rentGrowth == null && (
                   <p className="metrics-note">{t("ui.rentSnapshot.noIndicators")}</p>
-              )}
+                )}
             </div>
           )}
           <ParkingSummary totals={estimate?.totals} notes={estimate?.notes} />
