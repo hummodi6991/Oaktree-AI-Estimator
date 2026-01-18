@@ -827,7 +827,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     contingency_cost = sub_total * float(inputs.get("contingency_pct", 0.0))
     consultants_cost = (sub_total + contingency_cost) * float(inputs.get("consultants_pct", 0.0))
     land_cost = float(site_area_m2) * float(inputs.get("land_price_sar_m2", 0.0))
-    feasibility_fee_pct = 0.02
+    feasibility_fee_pct = float(inputs.get("feasibility_fee_pct", 0.02) or 0.0)
     feasibility_fee = land_cost * feasibility_fee_pct
     transaction_cost = land_cost * float(inputs.get("transaction_pct", 0.0))
 

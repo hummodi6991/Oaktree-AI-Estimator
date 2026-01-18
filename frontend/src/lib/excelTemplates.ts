@@ -12,6 +12,7 @@ export type ExcelInputs = {
   contingency_pct: number;
   consultants_pct: number;
   transaction_pct: number;
+  feasibility_fee_pct: number;
   y1_income_effective_pct?: number;
   land_price_sar_m2?: number;
 };
@@ -41,6 +42,7 @@ export const TEMPLATE_S: ExcelInputs = {
   contingency_pct: 0.05,
   consultants_pct: 0.06,
   transaction_pct: 0.05,
+  feasibility_fee_pct: 0.02,
 };
 
 // Mixed-use ("m") template: must include commercial keys so backend sees "m" even if land_use_code missing.
@@ -80,6 +82,7 @@ export const TEMPLATE_M: ExcelInputs = {
   contingency_pct: 0.05,
   consultants_pct: 0.06,
   transaction_pct: 0.05,
+  feasibility_fee_pct: 0.02,
 };
 
 export function templateForLandUse(code: LandUseCode): ExcelInputs {
