@@ -143,6 +143,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const formatPercentValue = (value?: number | null, digits = 1) =>
     formatPercent(value ?? null, { maximumFractionDigits: digits, minimumFractionDigits: digits }, notAvailable);
 
+  const updateUnitCost = (key: string, value: string) => {
+    const nextValue = value === "" ? 0 : Number(value);
+    const nextInputs = {
+      ...inputsRef.current,
+      unit_cost: {
+        ...inputsRef.current.unit_cost,
+        [key]: nextValue,
+      },
+    };
+    setInputs(nextInputs);
+  };
+
   // User override from dropdown; null means "use inferred"
   const [overrideLandUse, setOverrideLandUse] = useState<LandUseCode | null>(normalizedPropLandUse);
   const effectiveLandUse: LandUseCode = overrideLandUse ?? normalizedParcelLandUse ?? "s";
@@ -162,6 +174,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [isEditingFar, setIsEditingFar] = useState(false);
   const [farDraft, setFarDraft] = useState<string>("");
   const [farEditError, setFarEditError] = useState<string | null>(null);
+  const unitCostInputs = inputs.unit_cost || {};
 
   useEffect(() => {
     const geometrySignature = parcel?.geometry ? JSON.stringify(parcel.geometry) : "";
@@ -695,6 +708,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       ? notes.summary_ar ?? notes.summary_en ?? notes.summary
       : notes.summary_en ?? notes.summary ?? excelResult?.summary
     )?.trim() || (excelResult ? t("excel.summaryRoi", { value: formatPercentValue(excelResult.roi) }) : "");
+  const unitCostFields = [
+    { key: "residential", label: t("excel.unitCostResidential") },
+    { key: "retail", label: t("excel.unitCostRetail") },
+    { key: "office", label: t("excel.unitCostOffice") },
+    { key: "basement", label: t("excel.unitCostBasement") },
+  ];
+  const activeUnitCostFields =
+    effectiveLandUse === "m"
+      ? unitCostFields
+      : unitCostFields.filter((field) => field.key === "residential" || field.key === "basement");
   return (
     <div>
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
@@ -764,6 +787,33 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
               : t("excel.notFetched")}
           </span>
         </label>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ color: "white", fontWeight: 600 }}>{t("excel.unitCostTitle")}</span>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+              gap: 8,
+            }}
+          >
+            {activeUnitCostFields.map((field) => (
+              <label
+                key={field.key}
+                style={{ display: "flex", flexDirection: "column", gap: 4, color: "white" }}
+              >
+                <span style={{ fontSize: "0.85rem", color: "#cbd5f5" }}>{field.label}</span>
+                <input
+                  type="number"
+                  step="1"
+                  min="0"
+                  value={unitCostInputs[field.key] ?? ""}
+                  onChange={(event) => updateUnitCost(field.key, event.target.value)}
+                  style={{ padding: "4px 6px", borderRadius: 4, border: "1px solid rgba(255,255,255,0.2)" }}
+                />
+              </label>
+            ))}
+          </div>
+        </div>
       </div>
 
       <button onClick={() => runEstimate()} style={{ marginTop: 12 }}>
