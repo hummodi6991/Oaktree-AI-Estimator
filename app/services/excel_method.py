@@ -377,7 +377,14 @@ def build_excel_explanations(
         ratio = float(area_ratio.get(key, 0.0) or 0.0)
         if ratio:
             key_lower = str(key).lower()
-            if key_lower.startswith("basement"):
+            if key_lower == "residential":
+                explanations_en[f"{key}_bua"] = (
+                    f"{_fmt_amount(site_area_m2)} m² × area ratio {ratio:.3f} = {_fmt_amount(area)} m²."
+                )
+                explanations_ar[f"{key}_bua"] = (
+                    f"{_fmt_amount(site_area_m2)} م² × نسبة المساحة {ratio:.3f} = {_fmt_amount(area)} م²."
+                )
+            elif key_lower.startswith("basement"):
                 explanations_en[f"{key}_bua"] = (
                     f"{_fmt_amount(site_area_m2)} m² × basement ratio {ratio:.3f} = {_fmt_amount(area)} m². "
                     "Basement excluded from FAR."
@@ -393,7 +400,12 @@ def build_excel_explanations(
                 explanations_ar[f"{key}_bua"] = (
                     f"{_fmt_amount(site_area_m2)} م² × نسبة المساحة {ratio:.3f} = {_fmt_amount(area)} م²."
                 )
-            if area_ratio_note and not note_appended and not key_lower.startswith("basement"):
+            if (
+                area_ratio_note
+                and not note_appended
+                and not key_lower.startswith("basement")
+                and key_lower != "residential"
+            ):
                 explanations_en[f"{key}_bua"] = f"{explanations_en[f'{key}_bua']} {area_ratio_note}"
                 if area_ratio_note_ar:
                     explanations_ar[f"{key}_bua"] = f"{explanations_ar[f'{key}_bua']} {area_ratio_note_ar}"
