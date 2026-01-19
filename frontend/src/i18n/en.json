@@ -112,7 +112,7 @@
     "year1Income": "Year 1 net income",
     "year1IncomeNote": "Net leasable area per use × rent rate (SAR/m²/yr), using efficiency to convert built area to NLA",
     "year1IncomeEffective": "Year 1 net income (effective)",
-    "opexEffectiveIncome": "OPEX: 5% of effective income",
+    "opexEffectiveIncome": "OPEX (of effective income)",
     "opex": "OPEX",
     "noiYear1": "Year 1 NOI",
     "included": "Included",

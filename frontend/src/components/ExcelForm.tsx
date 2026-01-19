@@ -214,7 +214,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       }
       return next;
     });
-  }, [effectiveLandUse]);
+  }, [effectiveLandUse, includeFitout, includeContingency, includeFeasibility, includeOpex]);
 
   useEffect(() => {
     const normalized = normalizeEffectivePct(inputs?.y1_income_effective_pct as number | undefined);
