@@ -112,6 +112,7 @@
     "year1Income": "Year 1 net income",
     "year1IncomeNote": "Net leasable area per use × rent rate (SAR/m²/yr), using efficiency to convert built area to NLA",
     "year1IncomeEffective": "Year 1 net income (effective)",
+    "opexEffectiveIncome": "OPEX: 5% of effective income",
     "effectiveIncomePct": "Effective income percentage",
     "unleveredRoi": "Unlevered ROI",
     "executiveSummary": "Executive summary",
@@ -143,6 +144,7 @@
     "incomeBase": "NLA {{nla}} m²",
     "incomeItem": "{{key}}: {{efficiencyText}} × {{rent}} SAR/m²/yr",
     "effectiveIncome": "{{pct}} of Year 1 net income to reflect stabilization, downtime, and collection leakage.",
+    "opexEffectiveIncome": "{{pct}} of effective income allocated to operating expenses.",
     "revenueNoteDash": "—",
     "totalCapexFormula": "{{pct}} of Year 1 net income ÷ total capex"
   },

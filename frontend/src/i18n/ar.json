@@ -112,6 +112,7 @@
     "year1Income": "صافي دخل السنة الأولى",
     "year1IncomeNote": "المساحة القابلة للتأجير لكل استخدام × معدل الإيجار (ر.س/م²/سنة) مع استخدام الكفاءة لتحويل مساحة البناء إلى NLA",
     "year1IncomeEffective": "صافي دخل السنة الأولى (فعّال)",
+    "opexEffectiveIncome": "OPEX: 5% من الدخل الفعّال",
     "effectiveIncomePct": "نسبة الدخل الفعّال",
     "unleveredRoi": "العائد غير الممول",
     "executiveSummary": "ملخص تنفيذي",
@@ -143,6 +144,7 @@
     "incomeBase": "NLA {{nla}} م²",
     "incomeItem": "{{key}}: {{efficiencyText}} × {{rent}} ر.س/م²/سنة",
     "effectiveIncome": "{{pct}} من صافي دخل السنة الأولى ليعكس الاستقرار وفترات التوقف وتسرب التحصيل.",
+    "opexEffectiveIncome": "{{pct}} من الدخل الفعّال مخصّصة للمصاريف التشغيلية.",
     "revenueNoteDash": "—",
     "totalCapexFormula": "{{pct}} من صافي دخل السنة الأولى ÷ إجمالي النفقات الرأسمالية"
   },

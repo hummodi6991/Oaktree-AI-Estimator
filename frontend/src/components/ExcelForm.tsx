@@ -567,6 +567,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     t("excelNotes.effectiveIncome", {
       pct: formatPercentValue(effectiveIncomeFactor, 0),
     });
+  const opexRate = 0.05;
+  const opexAmount = (excelResult?.costs.y1_income_effective ?? 0) * opexRate;
+  const opexNote = t("excelNotes.opexEffectiveIncome", {
+    pct: formatPercentValue(opexRate, 0),
+  });
 
   const resolveRevenueNote = (key: string, baseNote: string, amount: number) => {
     if (key !== "parking_income") return baseNote;
@@ -1186,6 +1191,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       {formatCurrencySAR(excelResult.costs.y1_income_effective ?? 0)}
                     </td>
                     <td style={calcColumnStyle}>{y1IncomeEffectiveNote}</td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>{t("excel.opexEffectiveIncome")}</td>
+                    <td style={amountColumnStyle}>{formatCurrencySAR(opexAmount)}</td>
+                    <td style={calcColumnStyle}>{opexNote}</td>
                   </tr>
                   <tr>
                     <td style={itemColumnStyle}>
