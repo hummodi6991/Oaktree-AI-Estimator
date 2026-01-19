@@ -118,9 +118,9 @@
     "included": "Included",
     "excluded": "Excluded",
     "effectiveIncomePct": "Effective income percentage",
-    "unleveredRoi": "Unlevered ROI",
+    "unleveredRoi": "ROI",
     "executiveSummary": "Executive summary",
-    "summaryRoi": "Unlevered ROI: {{value}}",
+    "summaryRoi": "ROI: {{value}}",
     "landUseOption": "{{code}} — {{label}}",
     "regaNote": "Base rent uses the REGA residential rent benchmark for {{location}}: {{monthly}} SAR/m²/month ({{yearly}} SAR/m²/year). This rent fully overrides any manual rent inputs.",
     "providers": {
