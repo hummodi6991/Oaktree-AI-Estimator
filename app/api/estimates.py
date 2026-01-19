@@ -325,6 +325,7 @@ class EstimateRequest(BaseModel):
                     "consultants_pct": 0.06,
                     "transaction_pct": 0.03,
                     "feasibility_fee_pct": 0.02,
+                    "opex_pct": 0.05,
                     "land_price_sar_m2": 2800,
                 }
             }]
@@ -1028,6 +1029,9 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             "y1_income": float(excel["y1_income"]),
             "y1_income_effective": float(excel.get("y1_income_effective") or 0.0),
             "y1_income_effective_factor": y1_income_effective_factor,
+            "opex_pct": float(excel.get("opex_pct") or 0.0),
+            "opex_cost": float(excel.get("opex_cost") or 0.0),
+            "y1_noi": float(excel.get("y1_noi") or 0.0),
             "roi": float(excel["roi"]),
         }
         unit_counts = _estimate_unit_counts(excel, excel_inputs, req.unit_mix)

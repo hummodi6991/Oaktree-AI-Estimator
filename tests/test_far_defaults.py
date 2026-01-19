@@ -111,8 +111,8 @@ def test_far_autofill_when_not_explicit(monkeypatch):
     far_used = float(far_info.get("far_used") or 0.0)
     assert 1.5 <= far_used <= 3.0
     built_area = notes.get("excel_breakdown", {}).get("built_area", {})
-    # FAR proxy 1.5 → residential area ratio should scale to ~1.5 on 1000 m² site
-    assert pytest.approx(built_area.get("residential") or 0.0, rel=1e-6) == 1500.0
+    # Residential BUA should match the effective FAR used (as applied to a 1000 m² site).
+    assert pytest.approx(built_area.get("residential") or 0.0, rel=1e-6) == (far_used * 1000.0)
 
 
 def test_far_preserved_when_explicit(monkeypatch):

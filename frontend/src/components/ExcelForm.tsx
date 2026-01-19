@@ -45,6 +45,9 @@ type ExcelResult = {
     y1_income: number;
     y1_income_effective?: number;
     y1_income_effective_factor?: number;
+    opex_pct?: number;
+    opex_cost?: number;
+    y1_noi?: number;
   };
   breakdown: Record<string, any>;
   inputs: any;
@@ -130,6 +133,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [includeFitout, setIncludeFitout] = useState(true);
   const [includeContingency, setIncludeContingency] = useState(true);
   const [includeFeasibility, setIncludeFeasibility] = useState(true);
+  const [includeOpex, setIncludeOpex] = useState(true);
   const normalizedParcelLandUse = normalizeLandUse(parcel?.landuse_code);
   const normalizedPropLandUse = normalizeLandUse(landUseOverride);
   const initialLandUse = normalizedPropLandUse ?? normalizedParcelLandUse ?? "s";
@@ -205,9 +209,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       if (!includeFeasibility) {
         next.feasibility_fee_pct = 0;
       }
+      if (!includeOpex) {
+        next.opex_pct = 0;
+      }
       return next;
     });
-  }, [effectiveLandUse]);
+  }, [effectiveLandUse, includeFitout, includeContingency, includeFeasibility, includeOpex]);
 
   useEffect(() => {
     const normalized = normalizeEffectivePct(inputs?.y1_income_effective_pct as number | undefined);
@@ -243,6 +250,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     const nextInputs = {
       ...inputsRef.current,
       feasibility_fee_pct: checked ? templateForLandUse(effectiveLandUse).feasibility_fee_pct : 0,
+    };
+    setInputs(nextInputs);
+    if (excelResult) {
+      runEstimate(nextInputs);
+    }
+  };
+
+  const handleOpexToggle = (checked: boolean) => {
+    setIncludeOpex(checked);
+    const nextInputs = {
+      ...inputsRef.current,
+      opex_pct: checked ? templateForLandUse(effectiveLandUse).opex_pct : 0,
     };
     setInputs(nextInputs);
     if (excelResult) {
@@ -567,6 +586,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     t("excelNotes.effectiveIncome", {
       pct: formatPercentValue(effectiveIncomeFactor, 0),
     });
+  const opexPct = excelResult?.costs.opex_pct ?? inputs.opex_pct ?? 0.05;
+  const opexNote = t("excelNotes.opexEffectiveIncome", {
+    pct: formatPercentValue(opexPct, 0),
+  });
 
   const resolveRevenueNote = (key: string, baseNote: string, amount: number) => {
     if (key !== "parking_income") return baseNote;
@@ -1189,12 +1212,72 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   </tr>
                   <tr>
                     <td style={itemColumnStyle}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: "0.5rem",
+                        }}
+                      >
+                        <span>{t("excel.opex")}</span>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min={0}
+                            max={1}
+                            value={inputs.opex_pct ?? 0}
+                            onChange={(event) => {
+                              const rawValue = event.target.value;
+                              const parsed = rawValue === "" ? 0 : Number(rawValue);
+                              const clamped = Number.isFinite(parsed) ? Math.max(0, Math.min(parsed, 1)) : 0;
+                              const nextInputs = {
+                                ...inputsRef.current,
+                                opex_pct: clamped,
+                              };
+                              setInputs(nextInputs);
+                              if (excelResult) {
+                                runEstimate(nextInputs);
+                              }
+                            }}
+                            style={{
+                              width: 72,
+                              padding: "4px 6px",
+                              borderRadius: 6,
+                              border: "1px solid rgba(255,255,255,0.2)",
+                              background: "rgba(0,0,0,0.15)",
+                              color: "white",
+                            }}
+                            aria-label={t("excel.opex")}
+                            disabled={!includeOpex}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleOpexToggle(!includeOpex)}
+                            style={inclusionToggleStyle(includeOpex)}
+                          >
+                            {includeOpex ? t("excel.included") : t("excel.excluded")}
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                    <td style={amountColumnStyle}>{formatCurrencySAR(excelResult.costs.opex_cost ?? 0)}</td>
+                    <td style={calcColumnStyle}>{opexNote}</td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>{t("excel.noiYear1")}</td>
+                    <td style={amountColumnStyle}>{formatCurrencySAR(excelResult.costs.y1_noi ?? 0)}</td>
+                    <td style={calcColumnStyle}>{t("excelNotes.noiYear1")}</td>
+                  </tr>
+                  <tr>
+                    <td style={itemColumnStyle}>
                       <strong>{t("excel.unleveredRoi")}</strong>
                     </td>
                     <td style={amountColumnStyle}>
                       <strong>{formatPercentValue(excelResult.roi)}</strong>
                     </td>
-                    <td style={calcColumnStyle}>{t("excelNotes.totalCapexFormula", { pct: formatPercentValue(effectiveIncomeFactor, 0) })}</td>
+                    <td style={calcColumnStyle}>{t("excelNotes.roiNoiFormula")}</td>
                   </tr>
                 </tbody>
               </table>

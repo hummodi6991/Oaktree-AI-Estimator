@@ -112,6 +112,11 @@
     "year1Income": "Year 1 net income",
     "year1IncomeNote": "Net leasable area per use × rent rate (SAR/m²/yr), using efficiency to convert built area to NLA",
     "year1IncomeEffective": "Year 1 net income (effective)",
+    "opexEffectiveIncome": "OPEX (of effective income)",
+    "opex": "OPEX",
+    "noiYear1": "Year 1 NOI",
+    "included": "Included",
+    "excluded": "Excluded",
     "effectiveIncomePct": "Effective income percentage",
     "unleveredRoi": "Unlevered ROI",
     "executiveSummary": "Executive summary",
@@ -143,8 +148,11 @@
     "incomeBase": "NLA {{nla}} m²",
     "incomeItem": "{{key}}: {{efficiencyText}} × {{rent}} SAR/m²/yr",
     "effectiveIncome": "{{pct}} of Year 1 net income to reflect stabilization, downtime, and collection leakage.",
+    "opexEffectiveIncome": "{{pct}} of effective income allocated to operating expenses.",
+    "noiYear1": "Effective income − OPEX.",
     "revenueNoteDash": "—",
-    "totalCapexFormula": "{{pct}} of Year 1 net income ÷ total capex"
+    "totalCapexFormula": "{{pct}} of Year 1 net income ÷ total capex",
+    "roiNoiFormula": "Year 1 NOI ÷ total capex"
   },
   "parking": {
     "title": "Parking",

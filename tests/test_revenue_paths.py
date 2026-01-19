@@ -110,7 +110,7 @@ def test_sale_revenue_formula_mvp(monkeypatch, client):
     )
     assert excel["y1_income_effective"] == pytest.approx(excel["y1_income"] * 0.9, rel=1e-6)
     assert excel["roi"] == pytest.approx(
-        excel["y1_income_effective"] / excel["grand_total_capex"], rel=1e-6
+        excel["y1_noi"] / excel["grand_total_capex"], rel=1e-6
     )
     assert data["notes"]["excel_land_price"]["ppm2"] == excel_inputs["land_price_sar_m2"]
 
@@ -152,7 +152,7 @@ def test_sale_revenue_custom_effective_income(monkeypatch, client):
 
     assert excel["y1_income_effective_factor"] == pytest.approx(0.8, rel=1e-6)
     assert excel["y1_income_effective"] == pytest.approx(excel["y1_income"] * 0.8, rel=1e-6)
-    assert excel["roi"] == pytest.approx(excel["y1_income_effective"] / excel["grand_total_capex"], rel=1e-6)
+    assert excel["roi"] == pytest.approx(excel["y1_noi"] / excel["grand_total_capex"], rel=1e-6)
 
 
 def test_sale_revenue_effective_income_defaults(monkeypatch, client):
