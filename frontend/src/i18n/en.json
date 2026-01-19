@@ -93,7 +93,7 @@
     "officeBua": "Office BUA",
     "basementBua": "Basement BUA",
     "landCost": "Land cost",
-    "constructionDirect": "Construction (direct)",
+    "constructionDirect": "Construction",
     "constructionDirectDefault": "Built area × unit cost by use.",
     "unitCostTitle": "Construction unit costs (SAR/m²)",
     "unitCostResidential": "Residential (SAR/m²)",
