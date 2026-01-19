@@ -365,11 +365,11 @@ def build_excel_explanations(
     land_cost_total = float(breakdown.get("land_cost", site_area_m2 * land_price) or 0.0)
     explanations_en["land_cost"] = (
         f"{_fmt_amount(site_area_m2)} m² × {land_price:,.0f} SAR/m² = {_fmt_amount(land_cost_total)} SAR. "
-        "Land price is estimated using a hedonic model calibrated on comparable transactions."
+        "Price derived from hedonic comps."
     )
     explanations_ar["land_cost"] = (
         f"{_fmt_amount(site_area_m2)} م² × {land_price:,.0f} SAR/م² = {_fmt_amount(land_cost_total)} SAR. "
-        "تم تقدير سعر الأرض باستخدام نموذج هدوني معاير على معاملات مماثلة."
+        "السعر مستند إلى نموذج هدوني ومعاملات مماثلة."
     )
 
     note_appended = False
@@ -380,11 +380,11 @@ def build_excel_explanations(
             if key_lower.startswith("basement"):
                 explanations_en[f"{key}_bua"] = (
                     f"{_fmt_amount(site_area_m2)} m² × basement ratio {ratio:.3f} = {_fmt_amount(area)} m². "
-                    "Basement area is estimated separately and excluded from FAR calculations."
+                    "Basement excluded from FAR."
                 )
                 explanations_ar[f"{key}_bua"] = (
                     f"{_fmt_amount(site_area_m2)} م² × نسبة القبو {ratio:.3f} = {_fmt_amount(area)} م². "
-                    "يتم تقدير مساحة القبو بشكل منفصل واستبعادها من حسابات معامل البناء."
+                    "القبو مستبعد من معامل البناء."
                 )
             else:
                 explanations_en[f"{key}_bua"] = (
@@ -405,11 +405,11 @@ def build_excel_explanations(
     floors_above_ground = inputs.get("floors_above_ground")
     baseline_floors_above_ground = inputs.get("baseline_floors_above_ground")
     far_explanation = (
-        "Effective above-ground FAR = Σ(area ratios excluding basement) "
+        "Above-ground FAR = Σ(area ratios excluding basement) "
         f"= {far_above_ground:.3f}."
     )
     far_explanation_ar = (
-        "معامل البناء الفعّال فوق الأرض = Σ(نسب المساحة باستثناء القبو) "
+        "معامل البناء فوق الأرض = Σ(نسب المساحة باستثناء القبو) "
         f"= {far_above_ground:.3f}."
     )
     try:
@@ -418,12 +418,12 @@ def build_excel_explanations(
         if desired_floors > 0 and baseline_floors > 0:
             scale_factor = desired_floors / baseline_floors
             far_explanation = (
-                f"{far_explanation} Area ratios scaled for floors: desired floors {desired_floors:g} ÷ "
-                f"baseline {baseline_floors:g} = factor {scale_factor:.3f}."
+                f"{far_explanation} Floors scaling {desired_floors:g} ÷ {baseline_floors:g} "
+                f"= {scale_factor:.3f}."
             )
             far_explanation_ar = (
-                f"{far_explanation_ar} تم تحجيم نسب المساحة وفق الطوابق: الطوابق المطلوبة {desired_floors:g} ÷ "
-                f"الأساس {baseline_floors:g} = معامل {scale_factor:.3f}."
+                f"{far_explanation_ar} تحجيم الطوابق {desired_floors:g} ÷ {baseline_floors:g} "
+                f"= {scale_factor:.3f}."
             )
     except Exception:
         pass
@@ -446,10 +446,10 @@ def build_excel_explanations(
         )
     if construction_parts:
         explanations_en["construction_direct"] = (
-            "; ".join(construction_parts) + f". Total construction cost: {_fmt_amount(direct_total)} SAR."
+            "; ".join(construction_parts) + f". Direct construction total: {_fmt_amount(direct_total)} SAR."
         )
         explanations_ar["construction_direct"] = (
-            "; ".join(construction_parts_ar) + f". إجمالي تكلفة الإنشاء المباشر: {_fmt_amount(direct_total)} SAR."
+            "; ".join(construction_parts_ar) + f". إجمالي الإنشاء المباشر: {_fmt_amount(direct_total)} SAR."
         )
 
     fitout_area = sum(
@@ -458,27 +458,25 @@ def build_excel_explanations(
     fitout_rate = float(inputs.get("fitout_rate") or 0.0)
     fitout_cost = float(breakdown.get("fitout_cost", 0.0) or 0.0)
     explanations_en["fitout"] = (
-        f"{_fmt_amount(fitout_area)} m² × {fitout_rate:,.0f} SAR/m² = {_fmt_amount(fitout_cost)} SAR. "
-        "Applied to above-ground built-up area only."
+        f"{_fmt_amount(fitout_area)} m² × {fitout_rate:,.0f} SAR/m² = {_fmt_amount(fitout_cost)} SAR "
+        "(above-ground only)."
     )
     explanations_ar["fitout"] = (
-        f"{_fmt_amount(fitout_area)} م² × {fitout_rate:,.0f} SAR/م² = {_fmt_amount(fitout_cost)} SAR. "
-        "يُطبق على المساحة المبنية فوق الأرض فقط."
+        f"{_fmt_amount(fitout_area)} م² × {fitout_rate:,.0f} SAR/م² = {_fmt_amount(fitout_cost)} SAR "
+        "(فوق الأرض فقط)."
     )
 
     contingency_pct = float(inputs.get("contingency_pct") or 0.0)
     contingency_cost = float(breakdown.get("contingency_cost", 0.0) or 0.0)
     explanations_en["contingency"] = (
-        f"{contingency_pct * 100:.1f}% × (construction direct cost {_fmt_amount(direct_total)} SAR + "
+        f"{contingency_pct * 100:.1f}% × (direct {_fmt_amount(direct_total)} SAR + "
         f"fit-out {_fmt_amount(fitout_cost)} SAR) = {_fmt_amount(contingency_cost)} SAR. "
-        "This applies contingency to total hard construction scope, including above-ground fit-out, as an allowance "
-        "for design development and execution risk."
+        "Allowance for execution risk."
     )
     explanations_ar["contingency"] = (
-        f"{contingency_pct * 100:.1f}% × (تكلفة الإنشاء المباشر {_fmt_amount(direct_total)} SAR + "
+        f"{contingency_pct * 100:.1f}% × (الإنشاء المباشر {_fmt_amount(direct_total)} SAR + "
         f"التشطيبات {_fmt_amount(fitout_cost)} SAR) = {_fmt_amount(contingency_cost)} SAR. "
-        "يتم تطبيق الاحتياطي على إجمالي نطاق الأعمال الإنشائية الصلبة، بما في ذلك تشطيبات فوق الأرض، "
-        "كبدل لمخاطر التطوير والتنفيذ."
+        "بدل لمخاطر التنفيذ."
     )
 
     consultants_pct = float(inputs.get("consultants_pct") or 0.0)
@@ -496,12 +494,12 @@ def build_excel_explanations(
     explanations_en["transaction_cost"] = (
         f"{transaction_pct * 100:.1f}% × {_fmt_amount(land_cost_total)} SAR = "
         f"{_fmt_amount(float(breakdown.get('transaction_cost', 0.0) or 0.0))} SAR. "
-        "Calculated in accordance with Saudi RETT regulations."
+        "Per Saudi RETT."
     )
     explanations_ar["transaction_cost"] = (
         f"{transaction_pct * 100:.1f}% × {_fmt_amount(land_cost_total)} SAR = "
         f"{_fmt_amount(float(breakdown.get('transaction_cost', 0.0) or 0.0))} SAR. "
-        "محسوب وفق أنظمة ضريبة التصرفات العقارية (RETT) في السعودية."
+        "وفق أنظمة ضريبة التصرفات العقارية."
     )
 
     income_parts = []
@@ -537,12 +535,12 @@ def build_excel_explanations(
             note = f" (includes real estate price index scalar {re_scalar:,.3f})"
             note_ar = f" (يشمل معامل مؤشر أسعار العقارات {re_scalar:,.3f})"
         income_parts.append(
-            f"{key} net lettable area {_fmt_amount(nla_val, decimals=2)} m² × {rent_used:,.0f} SAR/m²/year "
-            f"= {_fmt_amount(component)} SAR/year. Rent benchmark sourced from {rent_label}.{note}"
+            f"{key} NLA {_fmt_amount(nla_val, decimals=2)} m² × {rent_used:,.0f} SAR/m²/yr "
+            f"= {_fmt_amount(component)} SAR/yr. Benchmark: {rent_label}.{note}"
         )
         income_parts_ar.append(
             f"{key} المساحة القابلة للتأجير {_fmt_amount(nla_val, decimals=2)} م² × {rent_used:,.0f} SAR/م²/سنة "
-            f"= {_fmt_amount(component)} SAR/سنة. مصدر معيار الإيجار: {rent_label_ar}.{note_ar}"
+            f"= {_fmt_amount(component)} SAR/سنة. المعيار: {rent_label_ar}.{note_ar}"
         )
     if parking_income_component:
         extra_spaces = int(parking_income_meta.get("extra_spaces") or 0)
@@ -550,12 +548,12 @@ def build_excel_explanations(
         occupancy_used = float(parking_income_meta.get("occupancy_used") or 0.0)
         rate_note = str(parking_income_meta.get("rate_note") or "").strip()
         parking_line = (
-            f"Parking income from {extra_spaces} excess spaces at {monthly_rate_used:,.0f} SAR/space/month "
-            f"× {occupancy_used:.2f} occupancy = {_fmt_amount(parking_income_component)} SAR/year."
+            f"Parking: {extra_spaces} excess spaces × {monthly_rate_used:,.0f} SAR/space/mo "
+            f"× {occupancy_used:.2f} occupancy = {_fmt_amount(parking_income_component)} SAR/yr."
         )
         parking_line_ar = (
-            f"دخل مواقف السيارات من {extra_spaces} موقفًا إضافيًا بسعر {monthly_rate_used:,.0f} SAR/موقف/شهر "
-            f"× نسبة إشغال {occupancy_used:.2f} = {_fmt_amount(parking_income_component)} SAR/سنة."
+            f"مواقف: {extra_spaces} مواقف إضافية × {monthly_rate_used:,.0f} SAR/موقف/شهر "
+            f"× إشغال {occupancy_used:.2f} = {_fmt_amount(parking_income_component)} SAR/سنة."
         )
         if rate_note:
             parking_line = f"{parking_line} {rate_note}"
