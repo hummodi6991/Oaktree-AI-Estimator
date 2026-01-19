@@ -615,25 +615,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     return t("excelNotes.revenueNoteDash");
   };
 
-  const toCalculationText = (note?: string | null) => {
-    if (!note) return "—";
-
-    const normalized = String(note)
-      .replace(/[\u2012\u2013\u2014\u2212]/g, "-")
-      .replace(/(\d)\s*x\s*(\d)/gi, "$1 × $2")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    const keepMathOnly = normalized
-      .replace(/[^0-9\u0660-\u0669\u06F0-\u06F9+\-*/×÷().,%= ]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    const hasAnyDigit = /[0-9\u0660-\u0669\u06F0-\u06F9]/.test(keepMathOnly);
-    if (!hasAnyDigit) return "—";
-    return keepMathOnly || "—";
-  };
-
   const noteStyle = { fontSize: "0.8rem", color: "#cbd5f5" } as const;
   const baseCellStyle = { padding: "0.65rem 0.75rem", verticalAlign: "top" } as const;
   const itemColumnStyle = { ...baseCellStyle, paddingLeft: 0 } as const;
@@ -982,7 +963,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         )}
                       </td>
                       <td style={calcColumnStyle}>
-                        {toCalculationText(farNote || t("excel.effectiveFarDefault"))}
+                        {farNote || t("excel.effectiveFarDefault")}
+                        {!isEditingFar && (
+                          <div style={{ marginTop: 6 }}>{t("excel.farEditHintInline")}</div>
+                        )}
                         {farEditError && <div style={farErrorStyle}>{farEditError}</div>}
                       </td>
                     </tr>
@@ -990,26 +974,26 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.residentialBua")}</td>
                     <td style={amountColumnStyle}>{formatArea(builtArea.residential)}</td>
-                    <td style={calcColumnStyle}>{toCalculationText(buaNote("residential"))}</td>
+                    <td style={calcColumnStyle}>{buaNote("residential")}</td>
                   </tr>
                   {effectiveLandUse === "m" && builtArea.retail !== undefined && (
                     <tr>
                       <td style={itemColumnStyle}>{t("excel.retailBua")}</td>
                       <td style={amountColumnStyle}>{formatArea(builtArea.retail)}</td>
-                      <td style={calcColumnStyle}>{toCalculationText(buaNote("retail"))}</td>
+                      <td style={calcColumnStyle}>{buaNote("retail")}</td>
                     </tr>
                   )}
                   {effectiveLandUse === "m" && builtArea.office !== undefined && (
                     <tr>
                       <td style={itemColumnStyle}>{t("excel.officeBua")}</td>
                       <td style={amountColumnStyle}>{formatArea(builtArea.office)}</td>
-                      <td style={calcColumnStyle}>{toCalculationText(buaNote("office"))}</td>
+                      <td style={calcColumnStyle}>{buaNote("office")}</td>
                     </tr>
                   )}
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.basementBua")}</td>
                     <td style={amountColumnStyle}>{formatArea(builtArea.basement)}</td>
-                    <td style={calcColumnStyle}>{toCalculationText(buaNote("basement"))}</td>
+                    <td style={calcColumnStyle}>{buaNote("basement")}</td>
                   </tr>
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.landCost")}</td>
@@ -1017,7 +1001,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       {formatCurrencySAR(excelResult.costs.land_cost)}
                     </td>
                     <td style={calcColumnStyle}>
-                      {toCalculationText(landNote)}
+                      {landNote}
                     </td>
                   </tr>
                   <tr>
@@ -1026,13 +1010,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       {formatCurrencySAR(excelResult.costs.construction_direct_cost)}
                     </td>
                     <td style={calcColumnStyle}>
-                      {toCalculationText(
-                        explanations.construction_direct
-                          ? directNote
-                          : directNote
-                          ? `${directNote}; ${t("excel.constructionDirectDefault")}`
-                          : t("excel.constructionDirectDefault"),
-                      )}
+                      {explanations.construction_direct
+                        ? directNote
+                        : directNote
+                        ? `${directNote}; ${t("excel.constructionDirectDefault")}`
+                        : t("excel.constructionDirectDefault")}
                     </td>
                   </tr>
                   <tr>
@@ -1059,7 +1041,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       {formatCurrencySAR(excelResult.costs.fitout_cost)}
                     </td>
                     <td style={calcColumnStyle}>
-                      {toCalculationText(fitoutNote)}
+                      {fitoutNote}
                     </td>
                   </tr>
                   <tr>
@@ -1086,7 +1068,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       {formatCurrencySAR(excelResult.costs.contingency_cost)}
                     </td>
                     <td style={calcColumnStyle}>
-                      {toCalculationText(contingencyNote)}
+                      {contingencyNote}
                     </td>
                   </tr>
                   <tr>
@@ -1095,7 +1077,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       {formatCurrencySAR(excelResult.costs.consultants_cost)}
                     </td>
                     <td style={calcColumnStyle}>
-                      {toCalculationText(consultantsNote)}
+                      {consultantsNote}
                     </td>
                   </tr>
                   <tr>
@@ -1122,14 +1104,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       {formatCurrencySAR(excelResult.costs.feasibility_fee)}
                     </td>
                     <td style={calcColumnStyle}>
-                      {toCalculationText(
-                        feasibilityExcluded
-                          ? t("excelNotes.feasibilityExcluded")
-                          : t("excelNotes.feasibility", {
-                            land: formatNumberValue(landCostValue, 0),
-                            pct: formatPercentValue(feasibilityPct, 1),
-                          }),
-                      )}
+                      {feasibilityExcluded
+                        ? t("excelNotes.feasibilityExcluded")
+                        : t("excelNotes.feasibility", {
+                          land: formatNumberValue(landCostValue, 0),
+                          pct: formatPercentValue(feasibilityPct, 1),
+                        })}
                     </td>
                   </tr>
                   <tr>
@@ -1138,7 +1118,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       {formatCurrencySAR(excelResult.costs.transaction_cost)}
                     </td>
                     <td style={calcColumnStyle}>
-                      {toCalculationText(transactionNote)}
+                      {transactionNote}
                     </td>
                   </tr>
                   <tr>
@@ -1149,7 +1129,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       <strong>{formatCurrencySAR(excelResult.costs.grand_total_capex)}</strong>
                     </td>
                     <td style={calcColumnStyle}>
-                      {toCalculationText(t("excel.totalCapexNote"))}
+                      {t("excel.totalCapexNote")}
                     </td>
                   </tr>
                 </tbody>
@@ -1180,7 +1160,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     <tr key={item.key}>
                       <td style={itemColumnStyle}>{item.key.replace(/_/g, " ")}</td>
                       <td style={amountColumnStyle}>{formatCurrencySAR(item.amount || 0)}</td>
-                      <td style={calcColumnStyle}>{toCalculationText(item.note)}</td>
+                      <td style={calcColumnStyle}>{item.note}</td>
                     </tr>
                   ))}
                   <tr>
@@ -1189,7 +1169,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       {formatCurrencySAR(excelResult.costs.y1_income)}
                     </td>
                     <td style={calcColumnStyle}>
-                      {toCalculationText(incomeNote || t("excel.year1IncomeNote"))}
+                      {incomeNote || t("excel.year1IncomeNote")}
                     </td>
                   </tr>
                   <tr>
@@ -1243,7 +1223,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     <td style={amountColumnStyle}>
                       {formatCurrencySAR(excelResult.costs.y1_income_effective ?? 0)}
                     </td>
-                    <td style={calcColumnStyle}>{toCalculationText(y1IncomeEffectiveNote)}</td>
+                    <td style={calcColumnStyle}>{y1IncomeEffectiveNote}</td>
                   </tr>
                   <tr>
                     <td style={itemColumnStyle}>
@@ -1298,12 +1278,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       </div>
                     </td>
                     <td style={amountColumnStyle}>{formatCurrencySAR(opexCostResolved)}</td>
-                    <td style={calcColumnStyle}>{toCalculationText(opexNote)}</td>
+                    <td style={calcColumnStyle}>{opexNote}</td>
                   </tr>
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.noiYear1")}</td>
                     <td style={amountColumnStyle}>{formatCurrencySAR(y1NoiResolved)}</td>
-                    <td style={calcColumnStyle}>{toCalculationText(t("excelNotes.noiYear1"))}</td>
+                    <td style={calcColumnStyle}>{t("excelNotes.noiYear1")}</td>
                   </tr>
                   <tr>
                     <td style={itemColumnStyle}>
@@ -1312,7 +1292,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     <td style={amountColumnStyle}>
                       <strong>{formatPercentValue(excelResult.roi)}</strong>
                     </td>
-                    <td style={calcColumnStyle}>{toCalculationText(t("excelNotes.roiNoiFormula"))}</td>
+                    <td style={calcColumnStyle}>{t("excelNotes.roiNoiFormula")}</td>
                   </tr>
                 </tbody>
               </table>
