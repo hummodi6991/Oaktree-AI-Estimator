@@ -113,7 +113,7 @@ def build_memo_pdf(
                 ),
                 ("Land cost", excel_breakdown.get("land_cost"), explanations.get("land_cost")),
                 (
-                    "Construction (direct)",
+                    "Construction",
                     direct_cost_total,
                     explanations.get("construction_direct"),
                 ),

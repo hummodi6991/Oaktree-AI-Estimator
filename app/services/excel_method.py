@@ -458,7 +458,7 @@ def build_excel_explanations(
         )
     if construction_parts:
         explanations_en["construction_direct"] = (
-            "; ".join(construction_parts) + f". Direct construction total: {_fmt_amount(direct_total)} SAR."
+            "; ".join(construction_parts) + "."
         )
         explanations_ar["construction_direct"] = (
             "; ".join(construction_parts_ar) + f". إجمالي الإنشاء المباشر: {_fmt_amount(direct_total)} SAR."
