@@ -581,12 +581,27 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const effectiveIncomeApplyDisabled =
     !excelResult || resolveEffectivePctFromDraft(effectiveIncomePctDraft) === committedEffectiveIncomePct;
   const effectiveIncomeFactor = effectiveIncomePct / 100;
+  // Some estimate fields may exist in excelResult.breakdown (raw backend excel output)
+  // rather than excelResult.costs (API "cost_breakdown"). Prefer costs when present, fallback to breakdown.
+  const excelBreakdown = (excelResult?.breakdown || {}) as Record<string, any>;
+  const y1IncomeEffective =
+    (excelResult?.costs?.y1_income_effective ?? excelBreakdown?.y1_income_effective ?? 0) as number;
+  const opexPctResolved =
+    (excelResult?.costs?.opex_pct ?? excelBreakdown?.opex_pct ?? inputs.opex_pct ?? 0.05) as number;
+  const opexCostResolved =
+    (excelResult?.costs?.opex_cost ??
+      excelBreakdown?.opex_cost ??
+      (y1IncomeEffective || 0) * (opexPctResolved || 0)) as number;
+  const y1NoiResolved =
+    (excelResult?.costs?.y1_noi ??
+      excelBreakdown?.y1_noi ??
+      (y1IncomeEffective || 0) - (opexCostResolved || 0)) as number;
   const y1IncomeEffectiveNote =
     explanations?.y1_income_effective ||
     t("excelNotes.effectiveIncome", {
       pct: formatPercentValue(effectiveIncomeFactor, 0),
     });
-  const opexPct = excelResult?.costs.opex_pct ?? inputs.opex_pct ?? 0.05;
+  const opexPct = opexPctResolved;
   const opexNote = t("excelNotes.opexEffectiveIncome", {
     pct: formatPercentValue(opexPct, 0),
   });
@@ -1262,12 +1277,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         </div>
                       </div>
                     </td>
-                    <td style={amountColumnStyle}>{formatCurrencySAR(excelResult.costs.opex_cost ?? 0)}</td>
+                    <td style={amountColumnStyle}>{formatCurrencySAR(opexCostResolved)}</td>
                     <td style={calcColumnStyle}>{opexNote}</td>
                   </tr>
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.noiYear1")}</td>
-                    <td style={amountColumnStyle}>{formatCurrencySAR(excelResult.costs.y1_noi ?? 0)}</td>
+                    <td style={amountColumnStyle}>{formatCurrencySAR(y1NoiResolved)}</td>
                     <td style={calcColumnStyle}>{t("excelNotes.noiYear1")}</td>
                   </tr>
                   <tr>
