@@ -579,6 +579,14 @@ def build_excel_explanations(
     y1_income_effective = float(
         breakdown.get("y1_income_effective", 0.0) or (y1_income_total * y1_income_effective_factor)
     )
+    opex_pct_raw = breakdown.get("opex_pct", 0.05)
+    try:
+        opex_pct = float(opex_pct_raw or 0.0)
+    except Exception:
+        opex_pct = 0.0
+    opex_pct = max(0.0, min(opex_pct, 1.0))
+    opex_cost = float(breakdown.get("opex_cost", y1_income_effective * opex_pct) or 0.0)
+    y1_noi = float(breakdown.get("y1_noi", y1_income_effective - opex_cost) or 0.0)
     explanations_en["y1_income_effective"] = (
         f"Effective Year-1 income = {y1_income_total:,.0f} SAR × {y1_income_effective_factor*100:.0f}% "
         f"= {y1_income_effective:,.0f} SAR."
@@ -587,14 +595,18 @@ def build_excel_explanations(
         f"الدخل الفعّال للسنة الأولى = {y1_income_total:,.0f} SAR × {y1_income_effective_factor*100:.0f}% "
         f"= {y1_income_effective:,.0f} SAR."
     )
+    explanations_en["opex_cost"] = f"OPEX = {opex_pct*100:.0f}% × effective income = {opex_cost:,.0f} SAR."
+    explanations_ar["opex_cost"] = f"المصاريف التشغيلية = {opex_pct*100:.0f}% × الدخل الفعّال = {opex_cost:,.0f} SAR."
+    explanations_en["y1_noi"] = "Year-1 NOI = effective income − OPEX."
+    explanations_ar["y1_noi"] = "صافي الدخل التشغيلي للسنة الأولى = الدخل الفعّال − المصاريف التشغيلية."
     grand_total_capex = float(breakdown.get("grand_total_capex", 0.0) or 0.0)
     roi = float(breakdown.get("roi", 0.0) or 0.0)
     explanations_en["roi"] = (
-        f"Effective Year-1 income {_fmt_amount(y1_income_effective)} SAR ÷ total development cost "
+        f"Year-1 NOI {_fmt_amount(y1_noi)} SAR ÷ total development cost "
         f"{_fmt_amount(grand_total_capex)} SAR = {roi * 100:,.2f}%."
     )
     explanations_ar["roi"] = (
-        f"الدخل الفعّال للسنة الأولى {_fmt_amount(y1_income_effective)} SAR ÷ إجمالي تكلفة التطوير "
+        f"صافي الدخل التشغيلي للسنة الأولى {_fmt_amount(y1_noi)} SAR ÷ إجمالي تكلفة التطوير "
         f"{_fmt_amount(grand_total_capex)} SAR = {roi * 100:,.2f}%."
     )
 
@@ -919,10 +931,18 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         inputs.get("y1_income_effective_pct") if inputs.get("y1_income_effective_pct") is not None else inputs.get("y1_income_effective_factor")
     )
     y1_income_effective = float(y1_income) * y1_income_effective_factor
+    opex_pct_raw = inputs.get("opex_pct", 0.05)
+    try:
+        opex_pct = float(opex_pct_raw or 0.0)
+    except Exception:
+        opex_pct = 0.0
+    opex_pct = max(0.0, min(opex_pct, 1.0))
+    opex_cost = y1_income_effective * opex_pct
+    y1_noi = y1_income_effective - opex_cost
     parking_monthly_rate_used = float(parking_income_meta.get("monthly_rate_used") or 0.0)
     parking_occupancy_used = float(parking_income_meta.get("occupancy_used") or 0.0)
 
-    roi = (y1_income_effective / grand_total_capex) if grand_total_capex > 0 else 0.0
+    roi = (y1_noi / grand_total_capex) if grand_total_capex > 0 else 0.0
 
     far_above_ground = _area_ratio_positive_sum(area_ratio, exclude_basement=True)
     far_total_including_basement = _area_ratio_positive_sum(area_ratio, exclude_basement=False)
@@ -956,6 +976,9 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "y1_income": y1_income,
         "y1_income_effective": y1_income_effective,
         "y1_income_effective_factor": y1_income_effective_factor,
+        "opex_pct": opex_pct,
+        "opex_cost": opex_cost,
+        "y1_noi": y1_noi,
         "rent_applied_sar_m2_yr": rent_applied,
         "parking_income_y1": parking_income_y1,
         "parking_income_meta": parking_income_meta,

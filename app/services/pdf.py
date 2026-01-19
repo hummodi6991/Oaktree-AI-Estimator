@@ -59,9 +59,10 @@ def build_memo_pdf(
         )
         y1_eff_label = f"Year 1 net income ({y1_eff_factor*100:.0f}% effective)"
         y1_income_effective = excel_breakdown.get("y1_income_effective") or 0
-        opex_rate = 0.05
-        opex_amount = y1_income_effective * opex_rate
-        opex_note = f"{opex_rate:.0%} of effective income"
+        opex_pct = excel_breakdown.get("opex_pct", 0.05) or 0.0
+        opex_amount = excel_breakdown.get("opex_cost", y1_income_effective * float(opex_pct or 0.0)) or 0.0
+        opex_note = f"{float(opex_pct):.0%} of effective income"
+        y1_noi = excel_breakdown.get("y1_noi")
         direct_cost_total = sum((excel_breakdown.get("direct_cost") or {}).values())
         built_area = excel_breakdown.get("built_area") or {}
 
@@ -131,9 +132,14 @@ def build_memo_pdf(
                     explanations.get("y1_income_effective"),
                 ),
                 (
-                    "OPEX (5% of effective income)",
+                    "OPEX",
                     opex_amount,
                     opex_note,
+                ),
+                (
+                    "Year 1 NOI",
+                    y1_noi,
+                    "Effective income − OPEX",
                 ),
             ]
         )
