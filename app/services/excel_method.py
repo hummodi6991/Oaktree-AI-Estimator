@@ -414,8 +414,6 @@ def build_excel_explanations(
             explanations_en[f"{key}_bua"] = f"Built-up area {_fmt_amount(area)} m²."
             explanations_ar[f"{key}_bua"] = f"المساحة المبنية {_fmt_amount(area)} م²."
 
-    floors_above_ground = inputs.get("floors_above_ground")
-    baseline_floors_above_ground = inputs.get("baseline_floors_above_ground")
     far_explanation = (
         "Above-ground FAR = Σ(area ratios excluding basement) "
         f"= {far_above_ground:.3f}."
@@ -424,21 +422,6 @@ def build_excel_explanations(
         "معامل البناء فوق الأرض = Σ(نسب المساحة باستثناء القبو) "
         f"= {far_above_ground:.3f}."
     )
-    try:
-        desired_floors = float(floors_above_ground)
-        baseline_floors = float(baseline_floors_above_ground)
-        if desired_floors > 0 and baseline_floors > 0:
-            scale_factor = desired_floors / baseline_floors
-            far_explanation = (
-                f"{far_explanation} Floors scaling {desired_floors:g} ÷ {baseline_floors:g} "
-                f"= {scale_factor:.3f}."
-            )
-            far_explanation_ar = (
-                f"{far_explanation_ar} تحجيم الطوابق {desired_floors:g} ÷ {baseline_floors:g} "
-                f"= {scale_factor:.3f}."
-            )
-    except Exception:
-        pass
     explanations_en["effective_far_above_ground"] = far_explanation
     explanations_ar["effective_far_above_ground"] = far_explanation_ar
 
