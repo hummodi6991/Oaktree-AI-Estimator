@@ -108,3 +108,23 @@ def test_pdf_export_roundtrip():
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/pdf")
     assert len(response.content) > 500
+
+
+def test_export_pdf_includes_excel_breakdown_from_wrapped_notes(monkeypatch):
+    estimate_id = _make_estimate()
+    captured = {}
+
+    def fake_build_memo_pdf(
+        title,
+        totals,
+        assumptions,
+        top_comps,
+        excel_breakdown=None,
+    ):
+        captured["excel_breakdown"] = excel_breakdown
+        return b"%PDF-1.4\n%%EOF"
+
+    monkeypatch.setattr("app.api.estimates.build_memo_pdf", fake_build_memo_pdf)
+    response = client.get(f"/v1/estimates/{estimate_id}/memo.pdf")
+    assert response.status_code == 200
+    assert captured.get("excel_breakdown") is not None
