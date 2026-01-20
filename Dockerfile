@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy only what the backend needs (avoid copying the huge frontend sources/tiles again)
 COPY app/ ./app/
+COPY app/assets/fonts/ ./app/assets/fonts/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
 COPY models/ ./models/
