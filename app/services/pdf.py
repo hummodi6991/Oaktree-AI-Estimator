@@ -26,6 +26,12 @@ def _fmt_amount(x: float | None) -> str:
         return "N/A"
 
 
+def _pdf_safe_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).encode("latin-1", errors="replace").decode("latin-1")
+
+
 def build_memo_pdf(
     title: str,
     totals: Dict[str, Any],
@@ -45,20 +51,20 @@ def build_memo_pdf(
 
     # Header
     pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, title, ln=True)
+    pdf.cell(0, 10, _pdf_safe_text(title), ln=True)
 
     # Totals
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "Totals (SAR)", ln=True)
+    pdf.cell(0, 8, _pdf_safe_text("Totals (SAR)"), ln=True)
     pdf.set_font("Helvetica", "", 11)
     for k in ["land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"]:
-        pdf.cell(60, 7, k.replace("_", " ").title()+":", border=0)
-        pdf.cell(0, 7, _fmt_money(totals.get(k)), ln=True)
+        pdf.cell(60, 7, _pdf_safe_text(f"{k.replace('_', ' ').title()}:"), border=0)
+        pdf.cell(0, 7, _pdf_safe_text(_fmt_money(totals.get(k))), ln=True)
 
     if excel_breakdown:
         pdf.ln(2)
         pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, "Cost breakdown", ln=True)
+        pdf.cell(0, 8, _pdf_safe_text("Cost breakdown"), ln=True)
         pdf.set_font("Helvetica", "", 10)
 
         explanations = excel_breakdown.get("explanations")
@@ -158,11 +164,11 @@ def build_memo_pdf(
         )
 
         for label, amount, note, *unit in rows:
-            pdf.cell(60, 6, f"{label}:", ln=False)
-            pdf.cell(0, 6, _format_amount(amount, unit[0] if unit else "SAR"), ln=True)
+            pdf.cell(60, 6, _pdf_safe_text(f"{label}:"))
+            pdf.cell(0, 6, _pdf_safe_text(_format_amount(amount, unit[0] if unit else "SAR")), ln=True)
             if note:
                 pdf.set_font("Helvetica", "", 8)
-                pdf.multi_cell(0, 5, f"    {note}")
+                pdf.multi_cell(0, 5, _pdf_safe_text(f"    {note}"))
                 pdf.set_font("Helvetica", "", 10)
 
     # Assumptions
@@ -170,7 +176,7 @@ def build_memo_pdf(
     if assumption_rows:
         pdf.ln(2)
         pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, "Key Assumptions", ln=True)
+        pdf.cell(0, 8, _pdf_safe_text("Key Assumptions"), ln=True)
         pdf.set_font("Helvetica", "", 10)
         for a in assumption_rows[:12]:
             key = a.get("key") or "Unknown"
@@ -181,14 +187,19 @@ def build_memo_pdf(
                 value_text = "N/A" if value is None else str(value)
             unit = f" {a.get('unit')}" if a.get("unit") else ""
             source_type = a.get("source_type") or "N/A"
-            pdf.cell(0, 6, f"- {key}: {value_text}{unit} [{source_type}]", ln=True)
+            pdf.cell(
+                0,
+                6,
+                _pdf_safe_text(f"- {key}: {value_text}{unit} [{source_type}]"),
+                ln=True,
+            )
 
     # Top comps
     comps_rows = [c for c in top_comps if isinstance(c, dict)]
     if comps_rows:
         pdf.ln(2)
         pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, "Top Comps (abbrev.)", ln=True)
+        pdf.cell(0, 8, _pdf_safe_text("Top Comps (abbrev.)"), ln=True)
         pdf.set_font("Helvetica", "", 10)
         for c in comps_rows[:8]:
             comp_id = c.get("id") or "N/A"
@@ -200,6 +211,6 @@ def build_memo_pdf(
                 f"{comp_city}/{comp_district} | "
                 f"{_fmt_money(c.get('price_per_m2'))} SAR/m²"
             )
-            pdf.cell(0, 6, line, ln=True)
+            pdf.cell(0, 6, _pdf_safe_text(line), ln=True)
 
     return bytes(pdf.output(dest="S"))
