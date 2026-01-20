@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
 
-import { landPrice, makeEstimate } from "../api";
+import { landPrice, makeEstimate, memoPdfUrl } from "../api";
 import {
   cloneTemplate,
   ExcelInputs,
@@ -163,6 +163,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [overrideLandUse, setOverrideLandUse] = useState<LandUseCode | null>(normalizedPropLandUse);
   const effectiveLandUse: LandUseCode = overrideLandUse ?? normalizedParcelLandUse ?? "s";
   const parcelIdentityRef = useRef<string | null>(null);
+  const [estimateId, setEstimateId] = useState<string | null>(null);
 
   // Excel inputs state (drives payload). Seed from template.
   const [inputs, setInputs] = useState<ExcelInputs>(() => cloneTemplate(templateForLandUse(initialLandUse)));
@@ -186,6 +187,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     if (parcelIdentityRef.current !== parcelKey) {
       parcelIdentityRef.current = parcelKey;
       setOverrideLandUse(null);
+      setEstimateId(null);
     }
   }, [parcel]);
 
@@ -326,6 +328,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     if (!parcel) return;
     setError(null);
     setExcelResult(null);
+    setEstimateId(null);
     try {
       const excelInputs = { ...currentInputs, land_use_code: effectiveLandUse };
       const result = await makeEstimate({
@@ -376,12 +379,28 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         totals: result?.totals,
         notes: result?.notes,
       });
+      setEstimateId(result?.id ?? null);
       // Preserve override selection on calculate; reset only when parcel identity changes.
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
     }
   }
+
+  const handleExportPdf = () => {
+    if (!estimateId) return;
+    const url = memoPdfUrl(estimateId);
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const copyEstimateId = async () => {
+    if (!estimateId || !navigator?.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(estimateId);
+    } catch (err) {
+      // no-op; clipboard may be blocked
+    }
+  };
 
   const breakdown = excelResult?.breakdown || {};
   const notes = excelResult?.notes || {};
@@ -844,9 +863,33 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         </div>
       </div>
 
-      <button onClick={() => runEstimate()} style={{ marginTop: 12 }}>
-        {t("excel.calculateEstimate")}
-      </button>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12, alignItems: "center" }}>
+        <button onClick={() => runEstimate()}>{t("excel.calculateEstimate")}</button>
+        {estimateId && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <button type="button" onClick={handleExportPdf}>
+              Export PDF
+            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: "#cbd5f5" }}>
+              <span>Estimate ID: {estimateId}</span>
+              <button
+                type="button"
+                onClick={copyEstimateId}
+                aria-label="Copy estimate ID"
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "#cbd5f5",
+                  cursor: "pointer",
+                  padding: 0,
+                }}
+              >
+                📋
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {error && (
         <div style={{ marginTop: 12, color: "#fca5a5" }}>
