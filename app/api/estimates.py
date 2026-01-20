@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
+from app.core.config import settings
 from app.services import geo as geo_svc
 from app.services import far_rules
 from app.services import parking as parking_svc
@@ -485,6 +486,7 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
         totals = result["totals"]
         assumptions = result.get("assumptions", [])
         notes_payload = {"bands": payload_bands, "notes": result["notes"]}
+        persisted = False
 
         line_dicts: list[dict[str, Any]] = []
         for key in ["land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"]:
@@ -520,8 +522,8 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
             )
 
         if _supports_sqlalchemy(db):
-            # Persist to DB if possible. Any failure here should not break the user flow
-            # (we'll fall back to an in-memory store so the UI can still show results).
+            # Persist to DB if possible. In non-prod, failures fall back to in-memory
+            # so the UI can still show results.
             try:
                 orm_lines = [EstimateLine(**entry) for entry in line_dicts]
                 header = EstimateHeader(
@@ -534,16 +536,33 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
                 db.add(header)
                 db.add_all(orm_lines)
                 db.commit()
+                persisted = True
             except Exception:
                 db.rollback()
                 logger.exception(
-                    "Failed to persist estimate to DB; falling back to in-memory store"
+                    "Failed to persist estimate to DB",
+                    extra={"estimate_id": est_id, "app_env": settings.APP_ENV},
                 )
+                if (settings.APP_ENV or "").lower() == "prod":
+                    raise HTTPException(status_code=500, detail="Failed to persist estimate")
                 _persist_inmemory(
                     est_id, req.strategy, totals, notes_payload, assumptions, line_dicts
                 )
         else:
+            if (settings.APP_ENV or "").lower() == "prod":
+                logger.error(
+                    "Estimate persistence unavailable in production",
+                    extra={"estimate_id": est_id, "app_env": settings.APP_ENV},
+                )
+                raise HTTPException(status_code=500, detail="Failed to persist estimate")
             _persist_inmemory(est_id, req.strategy, totals, notes_payload, assumptions, line_dicts)
+
+        notes_payload["persisted"] = persisted
+        result_notes = result.get("notes")
+        if not isinstance(result_notes, dict):
+            result_notes = {}
+        result_notes["persisted"] = persisted
+        result["notes"] = result_notes
 
         result["id"] = est_id
         result["strategy"] = req.strategy
