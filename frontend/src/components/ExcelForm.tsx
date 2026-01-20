@@ -543,30 +543,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       .filter(Boolean)
       .join("; ");
 
-  const incomeNote =
-    explanations.y1_income ||
-    Object.keys(incomeComponents)
-      .map((key) => {
-        const nlaVal = nla[key] ?? 0;
-        const efficiencyVal = efficiency[key] ?? null;
-        const baseArea = builtArea[key] ?? null;
-        const efficiencyText =
-          efficiencyVal != null && baseArea != null
-            ? t("excelNotes.incomeEfficiency", {
-              nla: formatNumberValue(nlaVal, 0),
-              built: formatNumberValue(baseArea, 0),
-              efficiency: formatNumberValue((efficiencyVal as number) * 100, 0),
-            })
-            : t("excelNotes.incomeBase", { nla: formatNumberValue(nlaVal, 0) });
-        const rent = appliedRentRates[key] ?? 0;
-        return t("excelNotes.incomeItem", {
-          key,
-          efficiencyText,
-          rent: formatNumberValue(rent, 0),
-        });
-      })
-      .filter(Boolean)
-      .join("; ");
+  const incomeNote = t("excel.year1IncomeNote");
 
   const parkingIncomeExplanation =
     typeof explanations?.parking_income === "string" ? explanations.parking_income : null;
