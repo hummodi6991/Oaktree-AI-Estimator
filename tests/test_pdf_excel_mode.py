@@ -34,3 +34,33 @@ def test_build_memo_pdf_excel_mode_minimal():
 
     assert pdf_bytes.startswith(b"%PDF")
     assert len(pdf_bytes) > 0
+
+
+def test_build_memo_pdf_handles_arabic_text():
+    estimate_id = "excel-arabic"
+    totals = {"land_value": 500000, "hard_costs": 125000}
+    notes = {
+        "excel_breakdown": {
+            "built_area": {"residential": 1500},
+            "direct_cost": None,
+            "y1_income_effective_factor": None,
+            "explanations": {"land_cost": "حي العليا"},
+        }
+    }
+    assumptions = [
+        {"key": "zoning", "value": "مختلط", "unit": None, "source_type": "manual"},
+    ]
+
+    _persist_inmemory(estimate_id, "build_to_sell", totals, notes, assumptions, [])
+    base = get_estimate(estimate_id, db=object())
+
+    pdf_bytes = build_memo_pdf(
+        title=f"Estimate {estimate_id}",
+        totals=base["totals"],
+        assumptions=base.get("assumptions", []),
+        top_comps=[],
+        excel_breakdown=base.get("notes", {}).get("excel_breakdown"),
+    )
+
+    assert pdf_bytes.startswith(b"%PDF")
+    assert len(pdf_bytes) > 0
