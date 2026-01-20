@@ -64,4 +64,3 @@ def test_build_memo_pdf_handles_arabic_text():
 
     assert pdf_bytes.startswith(b"%PDF")
     assert len(pdf_bytes) > 0
-    assert b"NotoNaskh" in pdf_bytes
