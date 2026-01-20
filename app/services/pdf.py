@@ -1,9 +1,4 @@
-import os
-import re
 from typing import List, Dict, Any
-
-import arabic_reshaper
-from bidi.algorithm import get_display
 
 from app.services.excel_method import DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR, _normalize_y1_income_effective_factor
 
@@ -31,20 +26,10 @@ def _fmt_amount(x: float | None) -> str:
         return "N/A"
 
 
-ARABIC_REGEX = re.compile(r"[\u0600-\u06FF]")
-
-
-def _rtl(text: str) -> str:
-    return get_display(arabic_reshaper.reshape(text))
-
-
-def _pdf_text(value: Any) -> str:
+def _pdf_safe_text(value: Any) -> str:
     if value is None:
         return ""
-    text = str(value)
-    if ARABIC_REGEX.search(text):
-        return _rtl(text)
-    return text
+    return str(value).encode("latin-1", errors="replace").decode("latin-1")
 
 
 def build_memo_pdf(
@@ -62,28 +47,25 @@ def build_memo_pdf(
     excel_breakdown = excel_breakdown if isinstance(excel_breakdown, dict) else None
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
-    pdf.set_title(_pdf_text(title))
-    font_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets", "fonts"))
-    pdf.add_font("NotoNaskh", "", os.path.join(font_dir, "NotoNaskhArabic-Regular.ttf"), uni=True)
-    pdf.add_font("NotoNaskh", "B", os.path.join(font_dir, "NotoNaskhArabic-Bold.ttf"), uni=True)
+    pdf.set_title(title)
 
     # Header
-    pdf.set_font("NotoNaskh", "B", 16)
-    pdf.cell(0, 10, _pdf_text(title), ln=True)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, _pdf_safe_text(title), ln=True)
 
     # Totals
-    pdf.set_font("NotoNaskh", "B", 12)
-    pdf.cell(0, 8, _pdf_text("Totals (SAR)"), ln=True)
-    pdf.set_font("NotoNaskh", "", 11)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, _pdf_safe_text("Totals (SAR)"), ln=True)
+    pdf.set_font("Helvetica", "", 11)
     for k in ["land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"]:
-        pdf.cell(60, 7, _pdf_text(f"{k.replace('_', ' ').title()}:"), border=0)
-        pdf.cell(0, 7, _pdf_text(_fmt_money(totals.get(k))), ln=True)
+        pdf.cell(60, 7, _pdf_safe_text(f"{k.replace('_', ' ').title()}:"), border=0)
+        pdf.cell(0, 7, _pdf_safe_text(_fmt_money(totals.get(k))), ln=True)
 
     if excel_breakdown:
         pdf.ln(2)
-        pdf.set_font("NotoNaskh", "B", 12)
-        pdf.cell(0, 8, _pdf_text("Cost breakdown"), ln=True)
-        pdf.set_font("NotoNaskh", "", 10)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, _pdf_safe_text("Cost breakdown"), ln=True)
+        pdf.set_font("Helvetica", "", 10)
 
         explanations = excel_breakdown.get("explanations")
         if not isinstance(explanations, dict):
@@ -182,20 +164,20 @@ def build_memo_pdf(
         )
 
         for label, amount, note, *unit in rows:
-            pdf.cell(60, 6, _pdf_text(f"{label}:"))
-            pdf.cell(0, 6, _pdf_text(_format_amount(amount, unit[0] if unit else "SAR")), ln=True)
+            pdf.cell(60, 6, _pdf_safe_text(f"{label}:"))
+            pdf.cell(0, 6, _pdf_safe_text(_format_amount(amount, unit[0] if unit else "SAR")), ln=True)
             if note:
-                pdf.set_font("NotoNaskh", "", 8)
-                pdf.multi_cell(0, 5, _pdf_text(f"    {note}"))
-                pdf.set_font("NotoNaskh", "", 10)
+                pdf.set_font("Helvetica", "", 8)
+                pdf.multi_cell(0, 5, _pdf_safe_text(f"    {note}"))
+                pdf.set_font("Helvetica", "", 10)
 
     # Assumptions
     assumption_rows = [a for a in assumptions if isinstance(a, dict)]
     if assumption_rows:
         pdf.ln(2)
-        pdf.set_font("NotoNaskh", "B", 12)
-        pdf.cell(0, 8, _pdf_text("Key Assumptions"), ln=True)
-        pdf.set_font("NotoNaskh", "", 10)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, _pdf_safe_text("Key Assumptions"), ln=True)
+        pdf.set_font("Helvetica", "", 10)
         for a in assumption_rows[:12]:
             key = a.get("key") or "Unknown"
             value = a.get("value")
@@ -208,7 +190,7 @@ def build_memo_pdf(
             pdf.cell(
                 0,
                 6,
-                _pdf_text(f"- {key}: {value_text}{unit} [{source_type}]"),
+                _pdf_safe_text(f"- {key}: {value_text}{unit} [{source_type}]"),
                 ln=True,
             )
 
@@ -216,9 +198,9 @@ def build_memo_pdf(
     comps_rows = [c for c in top_comps if isinstance(c, dict)]
     if comps_rows:
         pdf.ln(2)
-        pdf.set_font("NotoNaskh", "B", 12)
-        pdf.cell(0, 8, _pdf_text("Top Comps (abbrev.)"), ln=True)
-        pdf.set_font("NotoNaskh", "", 10)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, _pdf_safe_text("Top Comps (abbrev.)"), ln=True)
+        pdf.set_font("Helvetica", "", 10)
         for c in comps_rows[:8]:
             comp_id = c.get("id") or "N/A"
             comp_date = c.get("date") or "N/A"
@@ -229,6 +211,6 @@ def build_memo_pdf(
                 f"{comp_city}/{comp_district} | "
                 f"{_fmt_money(c.get('price_per_m2'))} SAR/m²"
             )
-            pdf.cell(0, 6, _pdf_text(line), ln=True)
+            pdf.cell(0, 6, _pdf_safe_text(line), ln=True)
 
     return bytes(pdf.output(dest="S"))
