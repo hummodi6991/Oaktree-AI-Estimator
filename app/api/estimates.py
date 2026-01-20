@@ -1549,12 +1549,16 @@ def export_pdf(estimate_id: str, db: Session = Depends(get_db)):
     comps = [to_comp_dict(r) for r in comps_rows]
     notes = base.get("notes") if isinstance(base, dict) else {}
     excel_breakdown = None
+    cost_breakdown = None
     if isinstance(notes, dict):
         excel_breakdown = notes.get("excel_breakdown")
-        if excel_breakdown is None:
-            nested_notes = notes.get("notes")
-            if isinstance(nested_notes, dict):
+        cost_breakdown = notes.get("cost_breakdown")
+        nested_notes = notes.get("notes")
+        if isinstance(nested_notes, dict):
+            if excel_breakdown is None:
                 excel_breakdown = nested_notes.get("excel_breakdown")
+            if cost_breakdown is None:
+                cost_breakdown = nested_notes.get("cost_breakdown")
     try:
         pdf_bytes = build_memo_pdf(
             title=f"Estimate {estimate_id}",
@@ -1562,6 +1566,8 @@ def export_pdf(estimate_id: str, db: Session = Depends(get_db)):
             assumptions=base.get("assumptions", []),
             top_comps=comps,
             excel_breakdown=excel_breakdown,
+            cost_breakdown=cost_breakdown,
+            notes=notes,
         )
     except Exception as exc:
         logger.exception("PDF generation failed for estimate %s", estimate_id)
