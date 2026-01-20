@@ -31,7 +31,7 @@ def _parse_bool(value: Any) -> bool | None:
 
 
 def _normalize_y1_income_effective_factor(value: Any) -> float:
-    """Normalize user-provided effective income percentage to a 0–1 factor."""
+    """Normalize user-provided annual net income percentage to a 0–1 factor."""
 
     try:
         factor = float(value)
@@ -598,16 +598,16 @@ def build_excel_explanations(
     opex_cost = float(breakdown.get("opex_cost", y1_income_effective * opex_pct) or 0.0)
     y1_noi = float(breakdown.get("y1_noi", y1_income_effective - opex_cost) or 0.0)
     explanations_en["y1_income_effective"] = (
-        f"Effective Year-1 income = {y1_income_total:,.0f} SAR × {y1_income_effective_factor*100:.0f}% "
+        f"annual net income = {y1_income_total:,.0f} SAR × {y1_income_effective_factor*100:.0f}% "
         f"= {y1_income_effective:,.0f} SAR."
     )
     explanations_ar["y1_income_effective"] = (
         f"الدخل الفعّال للسنة الأولى = {y1_income_total:,.0f} SAR × {y1_income_effective_factor*100:.0f}% "
         f"= {y1_income_effective:,.0f} SAR."
     )
-    explanations_en["opex_cost"] = f"OPEX = {opex_pct*100:.0f}% × effective income = {opex_cost:,.0f} SAR."
+    explanations_en["opex_cost"] = f"OPEX = {opex_pct*100:.0f}% × annual net income = {opex_cost:,.0f} SAR."
     explanations_ar["opex_cost"] = f"المصاريف التشغيلية = {opex_pct*100:.0f}% × الدخل الفعّال = {opex_cost:,.0f} SAR."
-    explanations_en["y1_noi"] = "Year-1 NOI = effective income − OPEX."
+    explanations_en["y1_noi"] = "Year-1 NOI = annual net income − OPEX."
     explanations_ar["y1_noi"] = "صافي الدخل التشغيلي للسنة الأولى = الدخل الفعّال − المصاريف التشغيلية."
     grand_total_capex = float(breakdown.get("grand_total_capex", 0.0) or 0.0)
     roi = float(breakdown.get("roi", 0.0) or 0.0)

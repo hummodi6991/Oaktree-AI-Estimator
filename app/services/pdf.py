@@ -61,7 +61,7 @@ def build_memo_pdf(
         y1_income_effective = excel_breakdown.get("y1_income_effective") or 0
         opex_pct = excel_breakdown.get("opex_pct", 0.05) or 0.0
         opex_amount = excel_breakdown.get("opex_cost", y1_income_effective * float(opex_pct or 0.0)) or 0.0
-        opex_note = f"{float(opex_pct):.0%} of effective income"
+        opex_note = f"{float(opex_pct):.0%} of annual net income"
         y1_noi = excel_breakdown.get("y1_noi")
         direct_cost_total = sum((excel_breakdown.get("direct_cost") or {}).values())
         built_area = excel_breakdown.get("built_area") or {}
