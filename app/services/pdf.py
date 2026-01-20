@@ -44,22 +44,22 @@ def build_memo_pdf(
     pdf.set_title(title)
 
     # Header
-    pdf.set_font("Arial", "B", 16)
+    pdf.set_font("Helvetica", "B", 16)
     pdf.cell(0, 10, title, ln=True)
 
     # Totals
-    pdf.set_font("Arial", "B", 12)
+    pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "Totals (SAR)", ln=True)
-    pdf.set_font("Arial", "", 11)
+    pdf.set_font("Helvetica", "", 11)
     for k in ["land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"]:
         pdf.cell(60, 7, k.replace("_", " ").title()+":", border=0)
         pdf.cell(0, 7, _fmt_money(totals.get(k)), ln=True)
 
     if excel_breakdown:
         pdf.ln(2)
-        pdf.set_font("Arial", "B", 12)
+        pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 8, "Cost breakdown", ln=True)
-        pdf.set_font("Arial", "", 10)
+        pdf.set_font("Helvetica", "", 10)
 
         explanations = excel_breakdown.get("explanations")
         if not isinstance(explanations, dict):
@@ -161,17 +161,17 @@ def build_memo_pdf(
             pdf.cell(60, 6, f"{label}:", ln=False)
             pdf.cell(0, 6, _format_amount(amount, unit[0] if unit else "SAR"), ln=True)
             if note:
-                pdf.set_font("Arial", "", 8)
+                pdf.set_font("Helvetica", "", 8)
                 pdf.multi_cell(0, 5, f"    {note}")
-                pdf.set_font("Arial", "", 10)
+                pdf.set_font("Helvetica", "", 10)
 
     # Assumptions
     assumption_rows = [a for a in assumptions if isinstance(a, dict)]
     if assumption_rows:
         pdf.ln(2)
-        pdf.set_font("Arial", "B", 12)
+        pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 8, "Key Assumptions", ln=True)
-        pdf.set_font("Arial", "", 10)
+        pdf.set_font("Helvetica", "", 10)
         for a in assumption_rows[:12]:
             key = a.get("key") or "Unknown"
             value = a.get("value")
@@ -187,9 +187,9 @@ def build_memo_pdf(
     comps_rows = [c for c in top_comps if isinstance(c, dict)]
     if comps_rows:
         pdf.ln(2)
-        pdf.set_font("Arial", "B", 12)
+        pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 8, "Top Comps (abbrev.)", ln=True)
-        pdf.set_font("Arial", "", 10)
+        pdf.set_font("Helvetica", "", 10)
         for c in comps_rows[:8]:
             comp_id = c.get("id") or "N/A"
             comp_date = c.get("date") or "N/A"
