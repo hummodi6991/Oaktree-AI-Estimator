@@ -404,7 +404,7 @@ def build_excel_explanations(
                 area_ratio_note
                 and not note_appended
                 and not key_lower.startswith("basement")
-                and key_lower != "residential"
+                and key_lower not in {"residential", "retail"}
             ):
                 explanations_en[f"{key}_bua"] = f"{explanations_en[f'{key}_bua']} {area_ratio_note}"
                 if area_ratio_note_ar:
