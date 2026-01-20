@@ -9,17 +9,21 @@ except ModuleNotFoundError:  # pragma: no cover
 
 
 def _fmt_money(x: float | None) -> str:
+    if x is None:
+        return "N/A"
     try:
         return f"{float(x):,.0f}"
     except Exception:
-        return str(x)
+        return "N/A"
 
 
 def _fmt_amount(x: float | None) -> str:
+    if x is None:
+        return "N/A"
     try:
         return f"{float(x):,.0f}"
     except Exception:
-        return str(x)
+        return "N/A"
 
 
 def build_memo_pdf(
@@ -31,6 +35,10 @@ def build_memo_pdf(
 ) -> bytes:
     if FPDF is None:
         raise RuntimeError("fpdf library is not installed")
+    totals = totals if isinstance(totals, dict) else {}
+    assumptions = assumptions if isinstance(assumptions, list) else []
+    top_comps = top_comps if isinstance(top_comps, list) else []
+    excel_breakdown = excel_breakdown if isinstance(excel_breakdown, dict) else None
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
     pdf.set_title(title)
@@ -53,7 +61,9 @@ def build_memo_pdf(
         pdf.cell(0, 8, "Cost breakdown", ln=True)
         pdf.set_font("Arial", "", 10)
 
-        explanations = excel_breakdown.get("explanations") or {}
+        explanations = excel_breakdown.get("explanations")
+        if not isinstance(explanations, dict):
+            explanations = {}
         y1_eff_factor = _normalize_y1_income_effective_factor(
             excel_breakdown.get("y1_income_effective_factor", DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR)
         )
@@ -63,12 +73,15 @@ def build_memo_pdf(
         opex_amount = excel_breakdown.get("opex_cost", y1_income_effective * float(opex_pct or 0.0)) or 0.0
         opex_note = f"{float(opex_pct):.0%} of annual net income"
         y1_noi = excel_breakdown.get("y1_noi")
-        direct_cost_total = sum((excel_breakdown.get("direct_cost") or {}).values())
-        built_area = excel_breakdown.get("built_area") or {}
+        direct_cost = excel_breakdown.get("direct_cost")
+        if not isinstance(direct_cost, dict):
+            direct_cost = {}
+        direct_cost_total = sum(direct_cost.values())
+        built_area = excel_breakdown.get("built_area")
+        if not isinstance(built_area, dict):
+            built_area = {}
 
         def _format_amount(value: Any, unit: str | None = "SAR") -> str:
-            if value is None:
-                return ""
             formatter = _fmt_amount if unit and unit != "SAR" else _fmt_money
             unit_suffix = f" {unit}" if unit else ""
             return f"{formatter(value)}{unit_suffix}"
@@ -139,7 +152,7 @@ def build_memo_pdf(
                 (
                     "Year 1 NOI",
                     y1_noi,
-                    "Effective income − OPEX",
+                    "Effective income - OPEX",
                 ),
             ]
         )
@@ -153,25 +166,40 @@ def build_memo_pdf(
                 pdf.set_font("Arial", "", 10)
 
     # Assumptions
-    pdf.ln(2)
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 8, "Key Assumptions", ln=True)
-    pdf.set_font("Arial", "", 10)
-    for a in (assumptions or [])[:12]:
-        unit = f" {a.get('unit')}" if a.get("unit") else ""
-        pdf.cell(0, 6, f"- {a.get('key')}: {a.get('value')}{unit} [{a.get('source_type')}]", ln=True)
+    assumption_rows = [a for a in assumptions if isinstance(a, dict)]
+    if assumption_rows:
+        pdf.ln(2)
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, "Key Assumptions", ln=True)
+        pdf.set_font("Arial", "", 10)
+        for a in assumption_rows[:12]:
+            key = a.get("key") or "Unknown"
+            value = a.get("value")
+            if isinstance(value, (int, float)):
+                value_text = _fmt_amount(value)
+            else:
+                value_text = "N/A" if value is None else str(value)
+            unit = f" {a.get('unit')}" if a.get("unit") else ""
+            source_type = a.get("source_type") or "N/A"
+            pdf.cell(0, 6, f"- {key}: {value_text}{unit} [{source_type}]", ln=True)
 
     # Top comps
-    pdf.ln(2)
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 8, "Top Comps (abbrev.)", ln=True)
-    pdf.set_font("Arial", "", 10)
-    for c in (top_comps or [])[:8]:
-        line = (
-            f"{c.get('id')} | {c.get('date')} | "
-            f"{c.get('city')}/{c.get('district') or ''} | "
-            f"{_fmt_money(c.get('price_per_m2'))} SAR/m²"
-        )
-        pdf.cell(0, 6, line, ln=True)
+    comps_rows = [c for c in top_comps if isinstance(c, dict)]
+    if comps_rows:
+        pdf.ln(2)
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, "Top Comps (abbrev.)", ln=True)
+        pdf.set_font("Arial", "", 10)
+        for c in comps_rows[:8]:
+            comp_id = c.get("id") or "N/A"
+            comp_date = c.get("date") or "N/A"
+            comp_city = c.get("city") or "N/A"
+            comp_district = c.get("district") or "N/A"
+            line = (
+                f"{comp_id} | {comp_date} | "
+                f"{comp_city}/{comp_district} | "
+                f"{_fmt_money(c.get('price_per_m2'))} SAR/m²"
+            )
+            pdf.cell(0, 6, line, ln=True)
 
     return bytes(pdf.output(dest="S"))

@@ -1552,8 +1552,9 @@ def export_pdf(estimate_id: str, db: Session = Depends(get_db)):
             top_comps=comps,
             excel_breakdown=notes.get("excel_breakdown"),
         )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        logger.exception("PDF generation failed for estimate %s", estimate_id)
+        raise HTTPException(status_code=500, detail="PDF generation failed") from exc
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
