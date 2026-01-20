@@ -399,7 +399,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     if (typeof note !== "string") return note;
     const disallowedFragments = [
       "Above-ground FAR adjusted",
-      "Auto-added basement area to meet parking minimums",
     ];
     const filtered = note
       .split("|")
