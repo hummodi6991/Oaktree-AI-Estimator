@@ -110,7 +110,7 @@
     "totalCapex": "Total capex",
     "totalCapexNote": "Land + construction + fit-out + contingency + consultants + fees + transaction.",
     "year1Income": "Annual Net Revenue",
-    "year1IncomeNote": "Net leasable area per use × rent rate (SAR/m²/yr), using efficiency to convert built area to NLA",
+    "year1IncomeNote": "Annual Net Revenue = residential + retail + office revenues",
     "year1IncomeEffective": "Annual Net income",
     "opexEffectiveIncome": "OPEX (of effective income)",
     "opex": "OPEX",
