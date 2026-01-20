@@ -394,7 +394,21 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     (isArabic
       ? breakdown.explanations_ar ?? breakdown.explanations_en ?? breakdown.explanations
       : breakdown.explanations_en ?? breakdown.explanations) || {};
-  const farNote = explanations.effective_far_above_ground;
+  const farNote = (() => {
+    const note = explanations.effective_far_above_ground;
+    if (typeof note !== "string") return note;
+    const disallowedFragments = [
+      "Above-ground FAR adjusted",
+      "Auto-added basement area to meet parking minimums",
+    ];
+    const filtered = note
+      .split("|")
+      .map((part) => part.trim())
+      .filter(
+        (part) => !disallowedFragments.some((fragment) => part.startsWith(fragment)),
+      );
+    return filtered.join(" | ");
+  })();
   const usedInputs = excelResult?.inputs || {};
   const unitCost = usedInputs.unit_cost || {};
   const rentRates = usedInputs.rent_sar_m2_yr || {};

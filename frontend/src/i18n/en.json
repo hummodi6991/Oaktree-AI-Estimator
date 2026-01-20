@@ -114,7 +114,7 @@
     "year1IncomeEffective": "Annual net income",
     "opexEffectiveIncome": "OPEX (of annual net income)",
     "opex": "OPEX",
-    "noiYear1": "Year 1 NOI",
+    "noiYear1": "Annual NOI",
     "included": "Included",
     "excluded": "Excluded",
     "effectiveIncomePct": "Annual net income percentage",
@@ -152,7 +152,7 @@
     "noiYear1": "Annual net income − OPEX.",
     "revenueNoteDash": "—",
     "totalCapexFormula": "{{pct}} of Year 1 net income ÷ total capex",
-    "roiNoiFormula": "Year 1 NOI ÷ total capex"
+    "roiNoiFormula": "Annual NOI ÷ total capex"
   },
   "parking": {
     "title": "Parking",
