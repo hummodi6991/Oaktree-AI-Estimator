@@ -77,6 +77,21 @@ def test_identify_postgis_prefers_parcel_label_when_signal():
     assert all("planet_osm_polygon" not in sql for sql in db.calls)
 
 
+def test_identify_postgis_prefers_parcel_label_over_suhail_when_both_present():
+    db = _DummyDB(
+        {
+            "identify": _identify_row(landuse="Mixed/Commercial", classification="parcel"),
+            "suhail": {"landuse": "سكني", "classification": None},
+        }
+    )
+    result = _identify_postgis(46.675, 24.713, 25.0, db)
+    parcel = result["parcel"]
+    assert parcel["landuse_code"] == "m"
+    assert parcel["landuse_method"] == "parcel_label"
+    assert parcel["landuse_raw"] == "Mixed/Commercial"
+    assert all("suhail_parcels_mat" not in sql for sql in db.calls)
+
+
 def test_identify_postgis_uses_suhail_when_label_weak():
     db = _DummyDB(
         {

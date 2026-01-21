@@ -35,26 +35,16 @@ def _label_is_signal(label: str | None, code: str | None) -> bool:
         return False
     if not code:
         return False
-    tl = raw.lower()
-    if tl in _NO_SIGNAL_LABELS:
+    if raw.lower() in _NO_SIGNAL_LABELS:
         return False
-    if code == "m":
-        arabic_tokens = ("تجاري", "استثماري", "اداري", "إداري", "محلات", "مكاتب", "صناعي", "خدمات", "خدمي")
-        english_tokens = (
-            "commercial",
-            "retail",
-            "office",
-            "industrial",
-            "warehouse",
-            "hotel",
-            "mall",
-            "service",
-        )
-        if any(token in raw for token in arabic_tokens) or any(token in tl for token in english_tokens):
-            return True
-    if any("\u0600" <= ch <= "\u06FF" for ch in raw):
-        return True
     return True
+
+
+def _label_has_value(label: str | None) -> bool:
+    raw = (label or "").strip()
+    if not raw:
+        return False
+    return raw.lower() not in _NO_SIGNAL_LABELS
 
 
 def _safe_identifier(value: str | None, fallback: str) -> str:
@@ -883,7 +873,7 @@ def _select_identify_landuse(
     osm_conf: float,
 ) -> dict[str, Any]:
     landuse_raw = label_raw
-    if label_code and label_is_signal:
+    if label_is_signal:
         return {
             "landuse_raw": landuse_raw,
             "landuse_code": label_code,
@@ -1538,6 +1528,8 @@ def _collate_postgis(parcel_ids: list[str], db: Session) -> Optional[Dict[str, A
     # Reuse same landuse selection logic as /identify
     label_code = _landuse_code_from_label(str(landuse_raw))
     label_is_signal = _label_is_signal(str(landuse_raw), label_code)
+    if mode == "arcgis" and _label_has_value(str(landuse_raw)):
+        label_is_signal = True
 
     osm_code = None
     osm_res = osm_com = 0.0
@@ -1654,6 +1646,8 @@ def _identify_postgis(lng: float, lat: float, tol_m: float, db: Session) -> Opti
     landuse_raw = row.get("landuse") or row.get("classification") or ""
     label_code = _landuse_code_from_label(str(landuse_raw))
     label_is_signal = _label_is_signal(str(landuse_raw), label_code)
+    if mode == "arcgis" and _label_has_value(str(landuse_raw)):
+        label_is_signal = True
     osm_code = None
     osm_res = osm_com = 0.0
     osm_conf = 0.0
