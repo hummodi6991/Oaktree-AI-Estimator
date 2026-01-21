@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 
 MODE = os.getenv("AUTH_MODE", "disabled")  # disabled | api_key | oidc
 API_KEY = os.getenv("API_KEY")
@@ -56,3 +56,9 @@ async def require(
         # Placeholder: validate JWT (iss/aud) via jwks; keep it simple for now per roadmap
         # Raise until wired to Entra ID in staging
         raise HTTPException(status_code=501, detail="OIDC not yet configured")
+
+
+async def require_admin(payload: dict = Depends(require)) -> dict:
+    if payload.get("is_admin") is not True:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return payload
