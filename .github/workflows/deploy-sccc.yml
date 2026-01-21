@@ -23,6 +23,10 @@ permissions:
 env:
   ALIBABA_REGION: ${{ vars.ALIBABA_REGION }}            # e.g., me-central-1
   ACK_CLUSTER_ID: ${{ vars.ACK_CLUSTER_ID }}            # e.g., c5b5e80b0b64a4bf...
+  # Auth secrets (set in GitHub): AUTH_MODE=api_key, API_KEYS_JSON, ADMIN_API_KEYS_JSON
+  AUTH_MODE: ${{ secrets.AUTH_MODE || 'disabled' }}
+  API_KEYS_JSON: ${{ secrets.API_KEYS_JSON || '' }}
+  ADMIN_API_KEYS_JSON: ${{ secrets.ADMIN_API_KEYS_JSON || '' }}
 
 jobs:
   deploy:
@@ -94,16 +98,25 @@ jobs:
 
       - name: Create/Update App Secret (oaktree-app-env)
         run: |
+          secret_args=(
+            --from-literal=APP_ENV=prod
+            --from-literal=AUTH_MODE="${AUTH_MODE}"
+            --from-literal=PARCEL_TILE_TABLE=public.riyadh_parcels_arcgis_proxy
+            --from-literal=PARCEL_IDENTIFY_TABLE=public.riyadh_parcels_arcgis_proxy
+            --from-literal=PARCEL_IDENTIFY_GEOM_COLUMN=geom
+            --from-literal=PARCEL_TARGET_SRID=4326
+            --from-literal=PARCEL_IDENTIFY_TOLERANCE_M=15
+            --from-literal=PARCEL_ENVELOPE_PAD_M=5
+            --from-literal=PARCEL_SIMPLIFY_TOLERANCE_M=1
+          )
+          if [[ -n "${API_KEYS_JSON}" ]]; then
+            secret_args+=(--from-literal=API_KEYS_JSON="${API_KEYS_JSON}")
+          fi
+          if [[ -n "${ADMIN_API_KEYS_JSON}" ]]; then
+            secret_args+=(--from-literal=ADMIN_API_KEYS_JSON="${ADMIN_API_KEYS_JSON}")
+          fi
           kubectl create secret generic oaktree-app-env \
-            --from-literal=APP_ENV=prod \
-            --from-literal=AUTH_MODE=disabled \
-            --from-literal=PARCEL_TILE_TABLE=public.riyadh_parcels_arcgis_proxy \
-            --from-literal=PARCEL_IDENTIFY_TABLE=public.riyadh_parcels_arcgis_proxy \
-            --from-literal=PARCEL_IDENTIFY_GEOM_COLUMN=geom \
-            --from-literal=PARCEL_TARGET_SRID=4326 \
-            --from-literal=PARCEL_IDENTIFY_TOLERANCE_M=15 \
-            --from-literal=PARCEL_ENVELOPE_PAD_M=5 \
-            --from-literal=PARCEL_SIMPLIFY_TOLERANCE_M=1 \
+            "${secret_args[@]}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Run DB migrations (alembic)
