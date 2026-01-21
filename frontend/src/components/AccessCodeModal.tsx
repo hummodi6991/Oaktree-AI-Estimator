@@ -31,7 +31,7 @@ export default function AccessCodeModal({ isOpen, onSubmit }: AccessCodeModalPro
       <div className="access-modal" role="dialog" aria-modal="true" aria-labelledby="access-modal-title">
         <h2 id="access-modal-title" className="access-modal-title">Enter access code</h2>
         <p className="access-modal-body">
-          Use your assigned access code to continue.
+          Use your assigned access code to continue. If authentication is disabled locally, any value will work.
         </p>
         <form className="access-modal-form" onSubmit={handleSubmit}>
           <label className="access-modal-label" htmlFor="access-code-input">
