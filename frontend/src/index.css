@@ -93,6 +93,54 @@ textarea {
   flex: 1;
 }
 
+.tertiary-button {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(230, 214, 189, 0.9);
+  border: 1px dashed rgba(213, 177, 106, 0.35);
+  border-radius: 12px;
+  padding: 8px 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.tertiary-button:hover {
+  border-color: rgba(213, 177, 106, 0.7);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.access-code-control {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.primary-button {
+  background: linear-gradient(135deg, rgba(213, 177, 106, 0.95), rgba(199, 155, 69, 0.9));
+  color: #1a2d29;
+  border: none;
+  border-radius: 999px;
+  padding: 13px 32px;
+  font-weight: 600;
+  font-size: 1rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+  box-shadow: 0 16px 32px rgba(10, 25, 22, 0.6);
+}
+
+.primary-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.primary-button:not(:disabled):hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow: 0 24px 44px rgba(10, 25, 22, 0.65);
+}
+
 .language-switcher {
   display: inline-flex;
   align-items: center;
@@ -101,4 +149,72 @@ textarea {
 
 :root[dir="rtl"] .language-switcher {
   flex-direction: row-reverse;
+}
+
+.access-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 12, 10, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 2000;
+  backdrop-filter: blur(6px);
+}
+
+.access-modal {
+  width: min(420px, 100%);
+  background: rgba(7, 30, 27, 0.96);
+  border-radius: 24px;
+  border: 1px solid rgba(213, 177, 106, 0.3);
+  padding: 28px;
+  box-shadow: 0 24px 50px rgba(2, 14, 12, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.access-modal-title {
+  margin: 0;
+  font-family: "Playfair Display", "Times New Roman", serif;
+  font-size: 1.5rem;
+  color: var(--sand-50);
+}
+
+.access-modal-body {
+  margin: 0;
+  color: rgba(238, 225, 206, 0.75);
+  font-size: 0.95rem;
+}
+
+.access-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.access-modal-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(230, 214, 189, 0.7);
+}
+
+.access-modal-input {
+  border-radius: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(213, 177, 106, 0.3);
+  background: rgba(4, 20, 17, 0.85);
+  color: var(--sand-50);
+  font-size: 1rem;
+}
+
+.access-modal-input:focus {
+  outline: 2px solid rgba(213, 177, 106, 0.5);
+  outline-offset: 2px;
+}
+
+.access-modal-button {
+  align-self: flex-start;
 }

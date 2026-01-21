@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { useTranslation } from "react-i18next";
 
 import Map from "./components/Map";
 import ExcelForm from "./components/ExcelForm";
+import AccessCodeModal from "./components/AccessCodeModal";
 import "./i18n";
 import "./index.css";
 import type { ParcelSummary } from "./api";
@@ -12,6 +13,10 @@ import { formatAreaM2 } from "./i18n/format";
 
 function App() {
   const [parcel, setParcel] = useState<ParcelSummary | null>(null);
+  const [hasApiKey, setHasApiKey] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return Boolean(window.localStorage.getItem("oaktree_api_key"));
+  });
   const { t } = useTranslation();
 
   const formatLanduseMethod = (method?: string | null): string => {
@@ -44,9 +49,38 @@ function App() {
     return t("common.notAvailable");
   })();
 
+  useEffect(() => {
+    function handleStorage(event: StorageEvent) {
+      if (event.key === "oaktree_api_key") {
+        setHasApiKey(Boolean(event.newValue));
+        if (!event.newValue) {
+          setParcel(null);
+        }
+      }
+    }
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  const handleAccessCodeSubmit = useCallback((code: string) => {
+    window.localStorage.setItem("oaktree_api_key", code);
+    setHasApiKey(true);
+  }, []);
+
+  const handleAccessCodeClear = useCallback(() => {
+    window.localStorage.removeItem("oaktree_api_key");
+    setHasApiKey(false);
+    setParcel(null);
+  }, []);
+
   return (
     <>
       <header className="app-header">
+        {hasApiKey && (
+          <button type="button" className="tertiary-button access-code-control" onClick={handleAccessCodeClear}>
+            Change access code
+          </button>
+        )}
         <div className="app-header__spacer" />
         <LanguageSwitcher />
       </header>
@@ -90,6 +124,7 @@ function App() {
           </>
         ) : null}
       </div>
+      <AccessCodeModal isOpen={!hasApiKey} onSubmit={handleAccessCodeSubmit} />
     </>
   );
 }
