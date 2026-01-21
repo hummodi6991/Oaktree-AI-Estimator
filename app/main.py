@@ -20,9 +20,11 @@ from app.api.ingest import router as ingest_router
 from app.api.metadata import router as metadata_router
 from app.api.tiles import router as tiles_router
 from app.telemetry import setup_otel_if_configured
-from app.security.auth import require as auth_require
+from app.security.auth import MODE as AUTH_MODE
+from app.security.auth_context import set_auth_context
 from app.core.config import settings
 from app.db.session import SessionLocal
+from app.telemetry_usage import add_usage_event_middleware
 
 app = FastAPI(title="Oaktree Estimator API", version="0.1.0")
 setup_otel_if_configured(app)
@@ -176,6 +178,8 @@ app.add_middleware(
     protected_prefixes=_PROTECTED_PREFIXES,
 )
 
+add_usage_event_middleware(app)
+
 
 @app.api_route("/", methods=["GET", "HEAD"])
 def serve_spa_root() -> Response:
@@ -188,14 +192,8 @@ def serve_spa_root() -> Response:
 
 app.include_router(health_router, prefix="")  # public
 deps: list = []  # stays empty unless AUTH_MODE != disabled (kept simple)
-try:
-    # if not disabled, enforce dependency
-    from app.security.auth import MODE as _MODE
-
-    if _MODE != "disabled":
-        deps = [Depends(auth_require)]
-except Exception:
-    pass
+if AUTH_MODE != "disabled":
+    deps = [Depends(set_auth_context)]
 
 app.include_router(indices_router, prefix="/v1", dependencies=deps)
 app.include_router(comps_router, prefix="/v1", dependencies=deps)

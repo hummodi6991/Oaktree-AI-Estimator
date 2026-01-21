@@ -2,11 +2,11 @@ from typing import Generator
 
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
+from app.db import session as db_session
 
 
 def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
+    db = db_session.SessionLocal()
     try:
         yield db
     finally:

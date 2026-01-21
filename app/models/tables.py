@@ -1,4 +1,17 @@
-from sqlalchemy import Column, Integer, String, Date, DateTime, Numeric, Text, Index, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Index,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.models.base import Base
@@ -218,6 +231,29 @@ class FarRule(Base):
     far_max = Column(Numeric(6, 3), nullable=False)
     asof_date = Column(Date)
     source_url = Column(String(512))
+
+
+class UsageEvent(Base):
+    __tablename__ = "usage_event"
+
+    id = Column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True)
+    ts = Column(DateTime(timezone=True), nullable=False, server_default=text("now()"))
+    user_id = Column(String(128))
+    is_admin = Column(Boolean, nullable=False, server_default=text("false"))
+    event_name = Column(String(128))
+    method = Column(String(16), nullable=False)
+    path = Column(String(512), nullable=False)
+    status_code = Column(Integer, nullable=False)
+    duration_ms = Column(Integer, nullable=False)
+    estimate_id = Column(String(64))
+    meta = Column(JSONB().with_variant(JSON, "sqlite"))
+
+    __table_args__ = (
+        Index("ix_usage_event_ts", "ts"),
+        Index("ix_usage_event_user_ts", "user_id", "ts"),
+        Index("ix_usage_event_event_ts", "event_name", "ts"),
+        Index("ix_usage_event_path_ts", "path", "ts"),
+    )
 
 
 class PriceQuote(Base):

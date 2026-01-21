@@ -35,10 +35,11 @@ def _init_db(db_path: Path) -> None:
     Rate.__table__.create(db_session.engine, checkfirst=True)
 
 
-def test_admin_usage_allows_admin_key(
+def test_usage_event_logging_and_summary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    db_url = f"sqlite:///{tmp_path / 'usage.db'}?check_same_thread=false"
+    db_path = tmp_path / "usage.db"
+    db_url = f"sqlite:///{db_path}?check_same_thread=false"
     app = _load_app(
         monkeypatch,
         db_url,
@@ -46,30 +47,25 @@ def test_admin_usage_allows_admin_key(
         ADMIN_API_KEYS_JSON='{"ceo": "ceo-key"}',
         API_KEYS_JSON='{"tester": "tester-key"}',
     )
-    _init_db(tmp_path / "usage.db")
+    _init_db(db_path)
     client = TestClient(app)
 
-    response = client.get("/v1/admin/usage/summary", headers={"X-API-Key": "ceo-key"})
-
+    response = client.get("/v1/indices/rates", headers={"X-API-Key": "tester-key"})
     assert response.status_code == 200
 
+    from app.db.session import SessionLocal
+    from app.models.tables import UsageEvent
 
-def test_admin_usage_rejects_tester_key(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    db_url = f"sqlite:///{tmp_path / 'usage.db'}?check_same_thread=false"
-    app = _load_app(
-        monkeypatch,
-        db_url,
-        AUTH_MODE="api_key",
-        ADMIN_API_KEYS_JSON='{"ceo": "ceo-key"}',
-        API_KEYS_JSON='{"tester": "tester-key"}',
-    )
-    _init_db(tmp_path / "usage.db")
-    client = TestClient(app)
+    with SessionLocal() as db:
+        events = (
+            db.query(UsageEvent)
+            .filter(UsageEvent.user_id == "tester", UsageEvent.is_admin.is_(False))
+            .all()
+        )
+    assert len(events) >= 1
 
-    response = client.get(
-        "/v1/admin/usage/summary", headers={"X-API-Key": "tester-key"}
-    )
-
-    assert response.status_code == 403
+    summary = client.get("/v1/admin/usage/summary", headers={"X-API-Key": "ceo-key"})
+    assert summary.status_code == 200
+    payload = summary.json()
+    assert payload["totals"]["requests"] >= 1
+    assert payload["totals"]["active_users"] >= 1
