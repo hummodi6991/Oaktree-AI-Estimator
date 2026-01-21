@@ -505,7 +505,6 @@ def build_memo_pdf(
         ("Year 1 income", _fmt_money(cost_breakdown.get("y1_income") or totals.get("revenues"))),
         ("Year 1 NOI", _fmt_money(cost_breakdown.get("y1_noi"))),
         ("Unlevered ROI", _fmt_percent(cost_breakdown.get("roi"), 1)),
-        ("P50 profit", _fmt_money(totals.get("p50_profit"))),
     ]
     metric_width = (pdf.w - pdf.l_margin - pdf.r_margin) / len(metrics)
     pdf.set_font(FONT_FAMILY, "", 8)
