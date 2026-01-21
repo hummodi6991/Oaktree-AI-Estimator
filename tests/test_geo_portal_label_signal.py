@@ -15,3 +15,4 @@ def test_label_is_signal_rejects_noisy_english_labels():
 
 def test_label_is_signal_allows_valid_english_labels():
     assert _label_is_signal("residential", "s") is True
+    assert _label_is_signal("Mixed/Commercial", "m") is True

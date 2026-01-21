@@ -28,6 +28,7 @@ export function ensureParcelLayers(map: maplibregl.Map) {
   }
 
   if (!map.getLayer(PARCELS_MIXEDUSE_LAYER_ID)) {
+    // Mixed-use parcels need multiple fallbacks because some tiles omit classification.
     map.addLayer({
       id: PARCELS_MIXEDUSE_LAYER_ID,
       type: "fill",
@@ -37,6 +38,15 @@ export function ensureParcelLayers(map: maplibregl.Map) {
         "any",
         ["==", ["get", "classification"], 7500],
         ["==", ["get", "classification"], "7500"],
+        [
+          "==",
+          ["downcase", ["to-string", ["coalesce", ["get", "landuse_code"], ""]]],
+          "m",
+        ],
+        ["==", ["downcase", ["to-string", ["coalesce", ["get", "landuse"], ""]]], "m"],
+        ["in", "mixed", ["downcase", ["to-string", ["coalesce", ["get", "landuse_label"], ""]]]],
+        ["in", "مختلط", ["to-string", ["coalesce", ["get", "landuse_label"], ""]]],
+        ["in", "متعدد", ["to-string", ["coalesce", ["get", "landuse_label"], ""]]],
       ],
       paint: {
         "fill-color": "#ff0000",
