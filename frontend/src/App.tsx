@@ -234,6 +234,8 @@ export default function App() {
     setError(undefined);
     setEstimate(null);
     setComps([]);
+    setGeom(JSON.stringify(DEFAULT_POLY, null, 2));
+    setGeomVer((value) => value + 1);
   }, []);
 
   function badgeStyle(kind?: string): CSSProperties {

@@ -40,6 +40,15 @@ const FALLBACK_RASTER_STYLE: any = {
   ],
 };
 
+const getApiKey = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem("oaktree_api_key");
+  } catch {
+    return null;
+  }
+};
+
 /**
  * Compute a LngLatBounds from a (Multi)Polygon without adding turf as a dep.
  */
@@ -230,6 +239,11 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
       center: [46.675, 24.713],
       zoom: 15,
       maxZoom: 22,
+      transformRequest: (url) => {
+        const apiKey = getApiKey();
+        if (!apiKey) return { url };
+        return { url, headers: { "X-API-Key": apiKey } };
+      },
     });
 
     mapRef.current = map;
