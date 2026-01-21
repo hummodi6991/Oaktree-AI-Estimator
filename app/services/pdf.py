@@ -42,6 +42,15 @@ def _fmt_percent(x: float | None, digits: int = 1) -> str:
         return "N/A"
 
 
+def _fmt_decimal(x: float | None, digits: int = 3) -> str:
+    if x is None:
+        return "N/A"
+    try:
+        return f"{float(x):,.{digits}f}"
+    except Exception:
+        return "N/A"
+
+
 def _is_ascii(value: str) -> bool:
     try:
         value.encode("ascii")
@@ -151,6 +160,7 @@ def _build_cost_breakdown_rows(
     cost_breakdown: Dict[str, Any],
     explanations: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
+    far_above_ground = excel_breakdown.get("far_above_ground")
     built_area = excel_breakdown.get("built_area")
     built_area = built_area if isinstance(built_area, dict) else {}
 
@@ -162,6 +172,16 @@ def _build_cost_breakdown_rows(
         construction_direct = sum(direct_cost.values()) if direct_cost else None
 
     rows = []
+    if far_above_ground is not None:
+        rows.append(
+            {
+                "cells": [
+                    "Effective FAR (above-ground)",
+                    _fmt_decimal(far_above_ground, 3),
+                    _short_note(explanations.get("far_above_ground")),
+                ]
+            }
+        )
     built_rows = [
         ("Residential BUA", "residential", "residential_bua"),
         ("Retail BUA", "retail", "retail_bua"),
@@ -339,6 +359,8 @@ def _build_assumption_rows(assumptions: List[Dict[str, Any]]) -> List[Dict[str, 
         key = _resolve_ascii(item.get("key") or "")
         if not key:
             continue
+        if key.lower() == "far":
+            key = "FAR (model prior)"
         value = item.get("value")
         unit = item.get("unit") or ""
         source_type = _resolve_ascii(item.get("source_type") or "")
@@ -494,7 +516,7 @@ def build_memo_pdf(
     pdf.set_font(FONT_FAMILY, "B", 10)
     for _label, value in metrics:
         pdf.cell(metric_width, 7, _pdf_safe_text(value), border=1, align="C")
-    pdf.ln(SECTION_SPACING)
+    pdf.ln(10)
 
     explanations = _resolve_explanations(excel_breakdown)
 
