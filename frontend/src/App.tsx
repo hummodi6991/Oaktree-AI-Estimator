@@ -231,6 +231,9 @@ export default function App() {
   const handleAccessCodeClear = useCallback(() => {
     window.localStorage.removeItem("oaktree_api_key");
     setHasApiKey(false);
+    setError(undefined);
+    setEstimate(null);
+    setComps([]);
   }, []);
 
   function badgeStyle(kind?: string): CSSProperties {

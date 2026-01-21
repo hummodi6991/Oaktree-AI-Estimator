@@ -21,11 +21,14 @@ export const buildApiUrl = withBase;
 
 export async function fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}) {
   const apiKey = typeof window !== "undefined" ? window.localStorage.getItem("oaktree_api_key") : null;
-  const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));
+  const resolvedInput = typeof input === "string" ? withBase(input) : input;
+  const headers = new Headers(
+    init.headers || (resolvedInput instanceof Request ? resolvedInput.headers : undefined),
+  );
   if (apiKey) {
     headers.set("X-API-Key", apiKey);
   }
-  const res = await fetch(input, { ...init, headers });
+  const res = await fetch(resolvedInput, { ...init, headers });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     const suffix = text ? `: ${text}` : "";
