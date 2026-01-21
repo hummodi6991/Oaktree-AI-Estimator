@@ -10,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 
 from app.api.comps import router as comps_router
+from app.api.admin_usage import router as admin_usage_router
 from app.api.estimates import router as estimates_router
 from app.api import pricing as pricing_router
 from app.api.geo_portal import router as geo_router
@@ -201,6 +202,7 @@ app.include_router(comps_router, prefix="/v1", dependencies=deps)
 app.include_router(estimates_router, prefix="/v1", dependencies=deps)
 app.include_router(pricing_router.router, prefix="/v1", dependencies=deps)
 app.include_router(metadata_router, prefix="/v1", dependencies=deps)
+app.include_router(admin_usage_router, prefix="/v1", dependencies=deps)
 app.include_router(ingest_router, dependencies=deps)
 app.include_router(tiles_router, prefix="", dependencies=deps)
 # Always expose geo routes; they already try PostGIS first and fall back to ArcGIS/external.
