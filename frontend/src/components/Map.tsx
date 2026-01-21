@@ -412,6 +412,28 @@ export default function Map({ onParcel }: MapProps) {
     return sourceUrl.includes("arcgis");
   };
 
+  const transformRequest = (url: string): maplibregl.RequestParameters => {
+    if (typeof window === "undefined") {
+      return { url };
+    }
+    const apiKey = window.localStorage.getItem("oaktree_api_key");
+    if (!apiKey) {
+      return { url };
+    }
+    let resolved: URL | null = null;
+    try {
+      resolved = new URL(url, window.location.origin);
+    } catch {
+      resolved = null;
+    }
+    const isRelativeBackend = url.startsWith("/v1/");
+    const isSameOrigin = resolved?.origin === window.location.origin;
+    if (isRelativeBackend || isSameOrigin) {
+      return { url, headers: { "X-API-Key": apiKey } };
+    }
+    return { url };
+  };
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -420,6 +442,7 @@ export default function Map({ onParcel }: MapProps) {
       style: import.meta.env.VITE_MAP_STYLE || "/esri-style.json",
       center: [46.675, 24.713],
       zoom: 15,
+      transformRequest,
     });
     mapRef.current = map;
     installParcelLayerPersistence(map);
