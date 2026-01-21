@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import Map from "./Map";
 import { createEstimate, getFreshness, memoPdfUrl, runScenario, getComps, exportCsvUrl } from "./api";
 import "./App.css";
+import AccessCodeModal from "./components/AccessCodeModal";
 import ParkingSummary from "./components/ParkingSummary";
 import type { EstimateResponse, RentBlock } from "./lib/types";
 import {
@@ -114,6 +115,10 @@ export default function App() {
   const [comps, setComps] = useState<any[]>([]);
   const [uplift, setUplift] = useState(0);
   const [avgApartmentSize, setAvgApartmentSize] = useState(120);
+  const [hasApiKey, setHasApiKey] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return Boolean(window.localStorage.getItem("oaktree_api_key"));
+  });
 
   const parsedGeom = useMemo(() => {
     try {
@@ -136,6 +141,16 @@ export default function App() {
 
   useEffect(() => {
     getFreshness().then(setFreshness).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    function handleStorage(event: StorageEvent) {
+      if (event.key === "oaktree_api_key") {
+        setHasApiKey(Boolean(event.newValue));
+      }
+    }
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
   useEffect(() => {
@@ -207,6 +222,19 @@ export default function App() {
     }
     return String(value);
   };
+
+  const handleAccessCodeSubmit = useCallback((code: string) => {
+    window.localStorage.setItem("oaktree_api_key", code);
+    setHasApiKey(true);
+  }, []);
+
+  const handleAccessCodeClear = useCallback(() => {
+    window.localStorage.removeItem("oaktree_api_key");
+    setHasApiKey(false);
+    setError(undefined);
+    setEstimate(null);
+    setComps([]);
+  }, []);
 
   function badgeStyle(kind?: string): CSSProperties {
     const k = (kind || "").toLowerCase();
@@ -284,6 +312,17 @@ export default function App() {
   return (
     <div className={`app-shell${isArabic ? " rtl" : ""}`}>
       <header className="page-header">
+        {hasApiKey && (
+          <div className="header-actions">
+            <button
+              type="button"
+              className="tertiary-button access-code-control"
+              onClick={handleAccessCodeClear}
+            >
+              Change access code
+            </button>
+          </div>
+        )}
         <div className="page-hero">
           <div className="brand-block">
             <span className="brand-emblem" aria-hidden="true">
@@ -868,6 +907,7 @@ export default function App() {
           </div>
         </section>
       )}
+      <AccessCodeModal isOpen={!hasApiKey} onSubmit={handleAccessCodeSubmit} />
     </div>
   );
 }

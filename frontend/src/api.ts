@@ -19,6 +19,24 @@ function withBase(path: string): string {
 
 export const buildApiUrl = withBase;
 
+export async function fetchWithAuth(input: RequestInfo | URL, init: RequestInit = {}) {
+  const apiKey = typeof window !== "undefined" ? window.localStorage.getItem("oaktree_api_key") : null;
+  const resolvedInput = typeof input === "string" ? withBase(input) : input;
+  const headers = new Headers(
+    init.headers || (resolvedInput instanceof Request ? resolvedInput.headers : undefined),
+  );
+  if (apiKey) {
+    headers.set("X-API-Key", apiKey);
+  }
+  const res = await fetch(resolvedInput, { ...init, headers });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    const suffix = text ? `: ${text}` : "";
+    throw new Error(`${res.status} ${res.statusText}${suffix}`);
+  }
+  return res;
+}
+
 async function readJson<T = any>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -106,7 +124,7 @@ export type InferParcelResponse = {
 };
 
 export async function identify(lng: number, lat: number) {
-  const res = await fetch(withBase("/v1/geo/identify"), {
+  const res = await fetchWithAuth(withBase("/v1/geo/identify"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lng, lat }),
@@ -116,12 +134,12 @@ export async function identify(lng: number, lat: number) {
 
 export async function landuse(lng: number, lat: number) {
   const params = new URLSearchParams({ lng: String(lng), lat: String(lat) });
-  const res = await fetch(withBase(`/v1/geo/landuse?${params.toString()}`));
+  const res = await fetchWithAuth(withBase(`/v1/geo/landuse?${params.toString()}`));
   return readJson<LanduseResponse>(res);
 }
 
 export async function collateParcels(parcelIds: string[]) {
-  const res = await fetch(withBase("/v1/geo/collate"), {
+  const res = await fetchWithAuth(withBase("/v1/geo/collate"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ parcel_ids: parcelIds }),
@@ -147,7 +165,7 @@ export async function inferParcel(params: {
   if (params.radiusM != null) search.set("radius_m", String(params.radiusM));
   if (params.roadBufM != null) search.set("road_buf_m", String(params.roadBufM));
   if (params.k != null) search.set("k", String(params.k));
-  const res = await fetch(withBase(`/v1/geo/infer-parcel?${search.toString()}`));
+  const res = await fetchWithAuth(withBase(`/v1/geo/infer-parcel?${search.toString()}`));
   return readJson<InferParcelResponse>(res);
 }
 
@@ -166,7 +184,7 @@ export async function landPrice(
   if (parcelId) params.set("parcel_id", parcelId);
   if (lng != null) params.set("lng", String(lng));
   if (lat != null) params.set("lat", String(lat));
-  const res = await fetch(withBase(`/v1/pricing/land?${params.toString()}`));
+  const res = await fetchWithAuth(withBase(`/v1/pricing/land?${params.toString()}`));
   return readJson(res);
 }
 
@@ -179,7 +197,7 @@ export async function createEstimate(payload: FormData | Record<string, unknown>
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload ?? {}),
         };
-  const res = await fetch(withBase("/v1/estimates"), init);
+  const res = await fetchWithAuth(withBase("/v1/estimates"), init);
   return readJson(res);
 }
 
@@ -219,7 +237,7 @@ export async function makeEstimate(params: {
 }
 
 export async function runScenario(estimateId: string, patch: Record<string, unknown>) {
-  const res = await fetch(withBase(`/v1/estimates/${encodeURIComponent(estimateId)}/scenario`), {
+  const res = await fetchWithAuth(withBase(`/v1/estimates/${encodeURIComponent(estimateId)}/scenario`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch ?? {}),
@@ -244,7 +262,7 @@ export async function getComps(params: {
   if (params.radiusM != null) search.set("radius_m", String(params.radiusM));
   const query = search.toString();
   const url = query ? `/v1/comps?${query}` : "/v1/comps";
-  const res = await fetch(withBase(url));
+  const res = await fetchWithAuth(withBase(url));
   return readJson(res);
 }
 
@@ -253,11 +271,7 @@ export async function getFreshness() {
   let lastError: Error | null = null;
   for (const path of candidates) {
     try {
-      const res = await fetch(withBase(path));
-      if (!res.ok) {
-        lastError = new Error(`${res.status} ${res.statusText}`);
-        continue;
-      }
+      const res = await fetchWithAuth(withBase(path));
       try {
         return await readJson(res);
       } catch {
