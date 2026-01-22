@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   getAdminUsageFeedback,
+  getAdminUsageFeedbackInbox,
   getAdminUsageInsights,
   getAdminUsageSummary,
   getAdminUsageUser,
   getAdminUsageUsers,
   type AdminUsageInsights,
   type AdminUsageFeedbackResponse,
+  type AdminUsageFeedbackInbox,
   type FeedbackItem,
   type AdminUsageSummary,
   type AdminUsageUser,
@@ -79,6 +81,9 @@ const EVIDENCE_LABELS: Record<string, string> = {
   total_estimate_results: "Estimate results",
   suhail_overlay_count: "Suhail fallbacks",
   suhail_overlay_pct: "Suhail fallback rate",
+  feedback_up_count: "Thumbs up",
+  feedback_down_count: "Thumbs down",
+  feedback_down_rate: "Thumbs-down rate",
 };
 
 const EVIDENCE_ORDER = [
@@ -89,6 +94,9 @@ const EVIDENCE_ORDER = [
   "estimate_count",
   "pdf_exports",
   "conversion_rate",
+  "feedback_up_count",
+  "feedback_down_count",
+  "feedback_down_rate",
   "repeated_error_users",
   "estimate_failures",
   "top_5xx_path_count",
@@ -113,17 +121,20 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   const [summary, setSummary] = useState<AdminUsageSummary | null>(null);
   const [insights, setInsights] = useState<AdminUsageInsights | null>(null);
   const [feedback, setFeedback] = useState<AdminUsageFeedbackResponse | null>(null);
+  const [feedbackInbox, setFeedbackInbox] = useState<AdminUsageFeedbackInbox | null>(null);
   const [users, setUsers] = useState<AdminUsageUser[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [userDetail, setUserDetail] = useState<AdminUsageUserDetail | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const [feedbackInboxError, setFeedbackInboxError] = useState<string | null>(null);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
   const [isInsightsLoading, setIsInsightsLoading] = useState(false);
   const [isFeedbackLoading, setIsFeedbackLoading] = useState(false);
+  const [isFeedbackInboxLoading, setIsFeedbackInboxLoading] = useState(false);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
 
@@ -134,17 +145,20 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
       setSummary(null);
       setInsights(null);
       setFeedback(null);
+      setFeedbackInbox(null);
       setUsers([]);
       setSelectedUserId(null);
       setUserDetail(null);
       setSummaryError(null);
       setInsightsError(null);
       setFeedbackError(null);
+      setFeedbackInboxError(null);
       setUsersError(null);
       setDetailError(null);
       setIsSummaryLoading(false);
       setIsInsightsLoading(false);
       setIsFeedbackLoading(false);
+      setIsFeedbackInboxLoading(false);
       setIsUsersLoading(false);
       setIsDetailLoading(false);
       return;
@@ -198,18 +212,27 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
     const loadFeedback = async () => {
       setIsFeedbackLoading(true);
       setFeedbackError(null);
+      setIsFeedbackInboxLoading(true);
+      setFeedbackInboxError(null);
       try {
-        const response = await getAdminUsageFeedback(since);
+        const [response, inboxResponse] = await Promise.all([
+          getAdminUsageFeedback(since),
+          getAdminUsageFeedbackInbox(since),
+        ]);
         if (!isActive) return;
         setFeedback(response);
+        setFeedbackInbox(inboxResponse);
       } catch (error) {
         if (!isActive) return;
         setFeedback(null);
+        setFeedbackInbox(null);
         const message = error instanceof Error ? error.message : "Feedback unavailable";
         setFeedbackError(message);
+        setFeedbackInboxError(message);
       } finally {
         if (!isActive) return;
         setIsFeedbackLoading(false);
+        setIsFeedbackInboxLoading(false);
       }
     };
 
@@ -286,6 +309,9 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   const daily = userDetail?.daily ?? [];
   const highlights = insights?.highlights ?? [];
   const feedbackItems = feedback?.items ?? [];
+  const feedbackTotals = feedbackInbox?.totals;
+  const feedbackReasons = feedbackInbox?.top_reasons ?? [];
+  const feedbackUsers = feedbackInbox?.by_user ?? [];
 
   return (
     <div className="admin-analytics-overlay" role="presentation">
@@ -314,6 +340,84 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
           </div>
         </header>
         <div className="admin-analytics-body">
+          <section className="admin-analytics-section">
+            <h3 className="section-heading">Feedback inbox</h3>
+            {feedbackInboxError && <p className="admin-analytics-error">Feedback inbox unavailable.</p>}
+            {isFeedbackInboxLoading && <p className="admin-analytics-loading">Loading feedback inbox...</p>}
+            {!isFeedbackInboxLoading && !feedbackInboxError && (
+              <div className="admin-analytics-split">
+                <div className="admin-analytics-panel">
+                  <h4 className="admin-analytics-subtitle">Totals</h4>
+                  <dl className="metrics-grid">
+                    <div>
+                      <dt>Thumbs up</dt>
+                      <dd className="numeric-value">{formatNumber(feedbackTotals?.count_up)}</dd>
+                    </div>
+                    <div>
+                      <dt>Thumbs down</dt>
+                      <dd className="numeric-value">{formatNumber(feedbackTotals?.count_down)}</dd>
+                    </div>
+                    <div>
+                      <dt>Down rate</dt>
+                      <dd className="numeric-value">{formatPercent(feedbackTotals?.down_rate)}</dd>
+                    </div>
+                  </dl>
+                </div>
+                <div className="admin-analytics-panel">
+                  <h4 className="admin-analytics-subtitle">Top reasons</h4>
+                  {feedbackReasons.length === 0 ? (
+                    <p className="admin-analytics-muted">No downvotes recorded.</p>
+                  ) : (
+                    <div className="table-wrapper">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>reason</th>
+                            <th className="numeric-cell">count</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {feedbackReasons.map((row) => (
+                            <tr key={row.reason}>
+                              <td>{row.reason}</td>
+                              <td className="numeric-cell">{formatNumber(row.count)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            {!isFeedbackInboxLoading && !feedbackInboxError && feedbackUsers.length > 0 && (
+              <div className="admin-analytics-panel">
+                <h4 className="admin-analytics-subtitle">Feedback by user</h4>
+                <div className="table-wrapper">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>user_id</th>
+                        <th className="numeric-cell">thumbs up</th>
+                        <th className="numeric-cell">thumbs down</th>
+                        <th className="numeric-cell">down rate</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {feedbackUsers.map((row) => (
+                        <tr key={row.user_id}>
+                          <td>{row.user_id}</td>
+                          <td className="numeric-cell">{formatNumber(row.count_up)}</td>
+                          <td className="numeric-cell">{formatNumber(row.count_down)}</td>
+                          <td className="numeric-cell">{formatPercent(row.down_rate)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </section>
           <section className="admin-analytics-section">
             <h3 className="section-heading">Product feedback</h3>
             {feedbackError && <p className="admin-analytics-error">Feedback unavailable.</p>}

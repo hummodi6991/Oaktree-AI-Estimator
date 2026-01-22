@@ -188,6 +188,39 @@ export type AdminUsageFeedbackResponse = {
   items?: FeedbackItem[];
 };
 
+export type AdminUsageFeedbackInbox = {
+  since?: string | null;
+  totals?: {
+    count_up?: number;
+    count_down?: number;
+    down_rate?: number;
+  };
+  top_reasons?: Array<{ reason: string; count?: number }>;
+  by_user?: Array<{ user_id: string; count_up?: number; count_down?: number; down_rate?: number }>;
+  by_landuse_method?: Array<{ landuse_method: string; count_up?: number; count_down?: number; down_rate?: number }>;
+  by_provider?: Array<{ provider: string; count_up?: number; count_down?: number; down_rate?: number }>;
+  total_responses?: number;
+};
+
+export async function trackEvent(
+  eventName: string,
+  payload?: { estimateId?: string; meta?: any },
+): Promise<void> {
+  try {
+    await fetchWithAuth(buildApiUrl("/v1/analytics/event"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        event_name: eventName,
+        estimate_id: payload?.estimateId,
+        meta: payload?.meta,
+      }),
+    });
+  } catch (error) {
+    // Swallow tracking errors to avoid blocking UX.
+  }
+}
+
 export async function identify(lng: number, lat: number) {
   const res = await fetchWithAuth(withBase("/v1/geo/identify"), {
     method: "POST",
@@ -273,6 +306,14 @@ export async function getAdminUsageFeedback(since?: string) {
   const query = params.toString();
   const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/feedback${query ? `?${query}` : ""}`));
   return readJson<AdminUsageFeedbackResponse>(res);
+}
+
+export async function getAdminUsageFeedbackInbox(since?: string) {
+  const params = new URLSearchParams();
+  if (since) params.set("since", since);
+  const query = params.toString();
+  const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/feedback_inbox${query ? `?${query}` : ""}`));
+  return readJson<AdminUsageFeedbackInbox>(res);
 }
 
 export async function landPrice(

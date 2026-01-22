@@ -13,7 +13,7 @@ import {
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { buildApiUrl, collateParcels, identify } from "../api";
+import { buildApiUrl, collateParcels, identify, trackEvent } from "../api";
 import type { CollateResponse, ParcelSummary } from "../api";
 
 type MapProps = {
@@ -349,6 +349,15 @@ export default function Map({ onParcel }: MapProps) {
     currentParcelRef.current = nextParcel;
     onParcelRef.current(nextParcel);
     setSelectionMethod(method);
+    if (nextParcel.parcel_id) {
+      void trackEvent("ui_parcel_selected", {
+        meta: {
+          parcel_id: nextParcel.parcel_id,
+          landuse_code: nextParcel.landuse_code ?? null,
+          landuse_method: nextParcel.landuse_method ?? null,
+        },
+      });
+    }
 
     if (!geometry) {
       setStatus({ key: "map.status.noGeometry" });
