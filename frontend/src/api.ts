@@ -202,6 +202,42 @@ export type AdminUsageFeedbackInbox = {
   total_responses?: number;
 };
 
+export type AdminUsageFunnelResponse = {
+  since?: string | null;
+  totals?: {
+    unique_users?: number;
+    parcel_selected_users?: number;
+    estimate_started_users?: number;
+    estimate_completed_users?: number;
+    pdf_opened_users?: number;
+    feedback_users?: number;
+    events?: {
+      parcel_selected?: number;
+      estimate_started?: number;
+      estimate_completed?: number;
+      pdf_opened?: number;
+      feedback_votes?: number;
+    };
+  };
+  conversion?: {
+    parcel_to_estimate_started?: number;
+    estimate_started_to_completed?: number;
+    completed_to_pdf?: number;
+    pdf_to_feedback?: number;
+  };
+  time_to_value?: {
+    median_minutes_parcel_to_first_estimate?: number;
+    p80_minutes_parcel_to_first_estimate?: number;
+    median_minutes_estimate_to_pdf?: number;
+    p80_minutes_estimate_to_pdf?: number;
+  };
+  per_user_samples?: Array<{
+    user_id: string;
+    parcel_to_estimate_min?: number | null;
+    estimate_to_pdf_min?: number | null;
+  }>;
+};
+
 export async function trackEvent(
   eventName: string,
   payload?: { estimateId?: string; meta?: any },
@@ -314,6 +350,14 @@ export async function getAdminUsageFeedbackInbox(since?: string) {
   const query = params.toString();
   const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/feedback_inbox${query ? `?${query}` : ""}`));
   return readJson<AdminUsageFeedbackInbox>(res);
+}
+
+export async function getAdminUsageFunnel(since?: string) {
+  const params = new URLSearchParams();
+  if (since) params.set("since", since);
+  const query = params.toString();
+  const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/funnel${query ? `?${query}` : ""}`));
+  return readJson<AdminUsageFunnelResponse>(res);
 }
 
 export async function landPrice(
