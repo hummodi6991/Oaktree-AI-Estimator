@@ -366,3 +366,9 @@ export function memoPdfUrl(estimateId: string) {
   const encodedId = encodeURIComponent(estimateId);
   return withBase(`/v1/estimates/${encodedId}/memo.pdf`);
 }
+
+export async function downloadMemoPdf(estimateId: string): Promise<Blob> {
+  const url = memoPdfUrl(estimateId);
+  const res = await fetchWithAuth(url);
+  return res.blob();
+}

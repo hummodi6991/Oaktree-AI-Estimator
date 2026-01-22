@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
 
-import { landPrice, makeEstimate, memoPdfUrl } from "../api";
+import { downloadMemoPdf, landPrice, makeEstimate } from "../api";
 import {
   cloneTemplate,
   ExcelInputs,
@@ -387,10 +387,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     }
   }
 
-  const handleExportPdf = () => {
+  const handleExportPdf = async () => {
     if (!estimateId) return;
-    const url = memoPdfUrl(estimateId);
-    window.open(url, "_blank", "noopener,noreferrer");
+    try {
+      const blob = await downloadMemoPdf(estimateId);
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    } catch (err) {
+      setError("Unable to export PDF. Please try again.");
+    }
   };
 
   const copyEstimateId = async () => {
