@@ -22,11 +22,14 @@ _SKIP_PATHS = {
 _SKIP_PREFIXES: tuple[str, ...] = ("/v1/admin/usage",)
 _ESTIMATE_RE = re.compile(r"^/v1/estimates/(?P<estimate_id>[^/]+)")
 _ESTIMATE_PDF_RE = re.compile(r"^/v1/estimates/[^/]+/memo\.pdf$")
+_ESTIMATE_SCENARIO_RE = re.compile(r"^/v1/estimates/[^/]+/scenario$")
 
 
 def _resolve_event_name(method: str, path: str) -> str | None:
     if method == "POST" and path == "/v1/estimates":
         return "estimate_create"
+    if method == "POST" and _ESTIMATE_SCENARIO_RE.match(path):
+        return "scenario_run"
     if method == "GET" and _ESTIMATE_PDF_RE.match(path):
         return "pdf_export"
     if method == "GET" and path == "/v1/pricing/land":

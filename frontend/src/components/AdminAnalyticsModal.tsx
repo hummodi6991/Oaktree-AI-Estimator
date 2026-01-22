@@ -8,6 +8,8 @@ import {
   getAdminUsageSummary,
   getAdminUsageUser,
   getAdminUsageUsers,
+  getAdminUsageDeepValue,
+  type AdminUsageDeepValueResponse,
   type AdminUsageFunnelResponse,
   type AdminUsageInsights,
   type AdminUsageFeedbackResponse,
@@ -112,6 +114,14 @@ const EVIDENCE_ORDER = [
   "suhail_overlay_pct",
 ];
 
+const OVERRIDE_LABELS: Record<string, string> = {
+  ui_override_land_price: "Land price override",
+  ui_override_far: "FAR override",
+  ui_change_provider: "Provider switch",
+};
+
+const OVERRIDE_ORDER = ["ui_override_land_price", "ui_override_far", "ui_change_provider"];
+
 function getEvidenceLines(item: FeedbackItem) {
   const evidence = item.evidence ?? {};
   return EVIDENCE_ORDER.filter((key) => key in evidence)
@@ -130,6 +140,7 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   const [insights, setInsights] = useState<AdminUsageInsights | null>(null);
   const [feedback, setFeedback] = useState<AdminUsageFeedbackResponse | null>(null);
   const [feedbackInbox, setFeedbackInbox] = useState<AdminUsageFeedbackInbox | null>(null);
+  const [deepValue, setDeepValue] = useState<AdminUsageDeepValueResponse | null>(null);
   const [users, setUsers] = useState<AdminUsageUser[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [userDetail, setUserDetail] = useState<AdminUsageUserDetail | null>(null);
@@ -138,6 +149,7 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackInboxError, setFeedbackInboxError] = useState<string | null>(null);
+  const [deepValueError, setDeepValueError] = useState<string | null>(null);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
@@ -145,6 +157,7 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   const [isInsightsLoading, setIsInsightsLoading] = useState(false);
   const [isFeedbackLoading, setIsFeedbackLoading] = useState(false);
   const [isFeedbackInboxLoading, setIsFeedbackInboxLoading] = useState(false);
+  const [isDeepValueLoading, setIsDeepValueLoading] = useState(false);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
 
@@ -157,6 +170,7 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
       setInsights(null);
       setFeedback(null);
       setFeedbackInbox(null);
+      setDeepValue(null);
       setUsers([]);
       setSelectedUserId(null);
       setUserDetail(null);
@@ -165,6 +179,7 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
       setInsightsError(null);
       setFeedbackError(null);
       setFeedbackInboxError(null);
+      setDeepValueError(null);
       setUsersError(null);
       setDetailError(null);
       setIsSummaryLoading(false);
@@ -172,6 +187,7 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
       setIsInsightsLoading(false);
       setIsFeedbackLoading(false);
       setIsFeedbackInboxLoading(false);
+      setIsDeepValueLoading(false);
       setIsUsersLoading(false);
       setIsDetailLoading(false);
       return;
@@ -289,6 +305,35 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
     if (!isOpen) return;
     let isActive = true;
 
+    const loadDeepValue = async () => {
+      setIsDeepValueLoading(true);
+      setDeepValueError(null);
+      try {
+        const response = await getAdminUsageDeepValue(since);
+        if (!isActive) return;
+        setDeepValue(response);
+      } catch (error) {
+        if (!isActive) return;
+        setDeepValue(null);
+        const message = error instanceof Error ? error.message : "Deep value unavailable";
+        setDeepValueError(message);
+      } finally {
+        if (!isActive) return;
+        setIsDeepValueLoading(false);
+      }
+    };
+
+    void loadDeepValue();
+
+    return () => {
+      isActive = false;
+    };
+  }, [isOpen, since]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let isActive = true;
+
     const loadInsights = async () => {
       setIsInsightsLoading(true);
       setInsightsError(null);
@@ -359,6 +404,15 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   const feedbackTotals = feedbackInbox?.totals;
   const feedbackReasons = feedbackInbox?.top_reasons ?? [];
   const feedbackUsers = feedbackInbox?.by_user ?? [];
+  const deepValueScenario = deepValue?.scenario;
+  const deepValueRerun = deepValue?.rerun_after_override;
+  const deepValueTopUsers = deepValueScenario?.top_users ?? [];
+  const deepValueOverrideStats = deepValueRerun?.by_override_type ?? {};
+  const deepValueOverrideRows = OVERRIDE_ORDER.map((key) => ({
+    key,
+    label: OVERRIDE_LABELS[key] ?? key,
+    stats: deepValueOverrideStats[key],
+  }));
 
   return (
     <div className="admin-analytics-overlay" role="presentation">
@@ -387,6 +441,103 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
           </div>
         </header>
         <div className="admin-analytics-body">
+          <section className="admin-analytics-section">
+            <h3 className="section-heading">Deep value</h3>
+            {deepValueError && <p className="admin-analytics-error">Deep value metrics unavailable.</p>}
+            {isDeepValueLoading && <p className="admin-analytics-loading">Loading deep value metrics...</p>}
+            {!isDeepValueLoading && !deepValueError && (
+              <>
+                <div className="admin-analytics-split">
+                  <div className="admin-analytics-panel">
+                    <h4 className="admin-analytics-subtitle">Scenario usage</h4>
+                    <dl className="metrics-grid">
+                      <div>
+                        <dt>Scenario requests</dt>
+                        <dd className="numeric-value">{formatNumber(deepValueScenario?.scenario_requests)}</dd>
+                      </div>
+                      <div>
+                        <dt>Scenario users</dt>
+                        <dd className="numeric-value">{formatNumber(deepValueScenario?.scenario_users)}</dd>
+                      </div>
+                      <div>
+                        <dt>Scenario estimates</dt>
+                        <dd className="numeric-value">{formatNumber(deepValueScenario?.scenario_estimates)}</dd>
+                      </div>
+                    </dl>
+                    <div className="table-wrapper">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>user_id</th>
+                            <th className="numeric-cell">scenario runs</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {deepValueTopUsers.length === 0 ? (
+                            <tr>
+                              <td colSpan={2}>No scenario activity yet.</td>
+                            </tr>
+                          ) : (
+                            deepValueTopUsers.map((row) => (
+                              <tr key={row.user_id}>
+                                <td>{row.user_id}</td>
+                                <td className="numeric-cell">{formatNumber(row.count)}</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <div className="admin-analytics-panel">
+                    <h4 className="admin-analytics-subtitle">Rerun-after-override</h4>
+                    <dl className="metrics-grid">
+                      <div>
+                        <dt>Rerun rate</dt>
+                        <dd className="numeric-value">{formatPercent(deepValueRerun?.rerun_rate)}</dd>
+                      </div>
+                      <div>
+                        <dt>Median minutes to rerun</dt>
+                        <dd className="numeric-value">
+                          {formatMinutes(deepValueRerun?.median_minutes_to_rerun)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>P80 minutes to rerun</dt>
+                        <dd className="numeric-value">{formatMinutes(deepValueRerun?.p80_minutes_to_rerun)}</dd>
+                      </div>
+                    </dl>
+                    <div className="table-wrapper">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>override type</th>
+                            <th className="numeric-cell">override users</th>
+                            <th className="numeric-cell">rerun users</th>
+                            <th className="numeric-cell">median min</th>
+                            <th className="numeric-cell">p80 min</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {deepValueOverrideRows.map((row) => (
+                            <tr key={row.key}>
+                              <td>{row.label}</td>
+                              <td className="numeric-cell">
+                                {formatNumber(row.stats?.override_users)}
+                              </td>
+                              <td className="numeric-cell">{formatNumber(row.stats?.rerun_users)}</td>
+                              <td className="numeric-cell">{formatMinutes(row.stats?.median_min)}</td>
+                              <td className="numeric-cell">{formatMinutes(row.stats?.p80_min)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </section>
           <section className="admin-analytics-section">
             <h3 className="section-heading">Funnel &amp; time-to-value</h3>
             {funnelError && <p className="admin-analytics-error">Funnel metrics unavailable.</p>}

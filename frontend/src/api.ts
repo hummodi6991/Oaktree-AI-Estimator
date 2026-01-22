@@ -238,6 +238,33 @@ export type AdminUsageFunnelResponse = {
   }>;
 };
 
+export type AdminUsageDeepValueResponse = {
+  since?: string | null;
+  scenario: {
+    scenario_requests?: number;
+    scenario_users?: number;
+    scenario_estimates?: number;
+    top_users?: Array<{ user_id: string; count?: number }>;
+  };
+  rerun_after_override: {
+    override_events?: number;
+    rerun_events?: number;
+    rerun_users?: number;
+    rerun_rate?: number;
+    median_minutes_to_rerun?: number;
+    p80_minutes_to_rerun?: number;
+    by_override_type?: Record<
+      string,
+      {
+        override_users?: number;
+        rerun_users?: number;
+        median_min?: number;
+        p80_min?: number;
+      }
+    >;
+  };
+};
+
 export async function trackEvent(
   eventName: string,
   payload?: { estimateId?: string; meta?: any },
@@ -358,6 +385,14 @@ export async function getAdminUsageFunnel(since?: string) {
   const query = params.toString();
   const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/funnel${query ? `?${query}` : ""}`));
   return readJson<AdminUsageFunnelResponse>(res);
+}
+
+export async function getAdminUsageDeepValue(since?: string) {
+  const params = new URLSearchParams();
+  if (since) params.set("since", since);
+  const query = params.toString();
+  const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/deep_value${query ? `?${query}` : ""}`));
+  return readJson<AdminUsageDeepValueResponse>(res);
 }
 
 export async function landPrice(
