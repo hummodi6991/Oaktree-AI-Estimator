@@ -4,6 +4,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.db.deps import get_db
+from tests.excel_inputs import sample_excel_inputs
+
 
 def _load_app(monkeypatch: pytest.MonkeyPatch, db_url: str, **env: str):
     keys = [
@@ -69,3 +72,102 @@ def test_usage_event_logging_and_summary(
     payload = summary.json()
     assert payload["totals"]["requests"] >= 1
     assert payload["totals"]["active_users"] >= 1
+
+
+class DummyQuery:
+    def filter(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def first(self):
+        return None
+
+    def all(self):
+        return []
+
+
+class DummySession:
+    def query(self, *args, **kwargs):
+        return DummyQuery()
+
+    def add_all(self, entries):
+        pass
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+    def close(self):
+        pass
+
+
+def _override_get_db():
+    session = DummySession()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def test_estimate_result_usage_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "usage.db"
+    db_url = f"sqlite:///{db_path}?check_same_thread=false"
+    app = _load_app(
+        monkeypatch,
+        db_url,
+        AUTH_MODE="api_key",
+        ADMIN_API_KEYS_JSON='{"ceo": "ceo-key"}',
+        API_KEYS_JSON='{"tester": "tester-key"}',
+    )
+    _init_db(db_path)
+    app.dependency_overrides[get_db] = _override_get_db
+    client = TestClient(app)
+
+    poly = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [46.675, 24.713],
+                [46.676, 24.713],
+                [46.676, 24.714],
+                [46.675, 24.714],
+                [46.675, 24.713],
+            ]
+        ],
+    }
+    payload = {
+        "geometry": poly,
+        "asset_program": "residential_midrise",
+        "unit_mix": [{"type": "1BR", "count": 10}],
+        "finish_level": "mid",
+        "timeline": {"start": "2025-10-01", "months": 18},
+        "financing_params": {"margin_bps": 250, "ltv": 0.6},
+        "strategy": "build_to_sell",
+        "excel_inputs": sample_excel_inputs(),
+    }
+
+    response = client.post("/v1/estimates", json=payload, headers={"X-API-Key": "tester-key"})
+    assert response.status_code == 200
+
+    from app.db.session import SessionLocal
+    from app.models.tables import UsageEvent
+
+    with SessionLocal() as db:
+        event = (
+            db.query(UsageEvent)
+            .filter(UsageEvent.event_name == "estimate_result")
+            .order_by(UsageEvent.ts.desc())
+            .first()
+        )
+
+    assert event is not None
+    assert isinstance(event.meta, dict)
+    assert "land_price_overridden" in event.meta
+
+    app.dependency_overrides.pop(get_db, None)

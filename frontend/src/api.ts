@@ -162,6 +162,18 @@ export type AdminUsageUserDetail = {
   }>;
 };
 
+export type AdminUsageInsightHighlight = {
+  title: string;
+  detail?: string | null;
+  metric?: Record<string, unknown> | null;
+};
+
+export type AdminUsageInsights = {
+  since?: string | null;
+  highlights?: AdminUsageInsightHighlight[];
+  support?: Record<string, unknown> | null;
+};
+
 export async function identify(lng: number, lat: number) {
   const res = await fetchWithAuth(withBase("/v1/geo/identify"), {
     method: "POST",
@@ -231,6 +243,14 @@ export async function getAdminUsageUser(userId: string, since?: string) {
   const encoded = encodeURIComponent(userId);
   const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/user/${encoded}${query ? `?${query}` : ""}`));
   return readJson<AdminUsageUserDetail>(res);
+}
+
+export async function getAdminUsageInsights(since?: string) {
+  const params = new URLSearchParams();
+  if (since) params.set("since", since);
+  const query = params.toString();
+  const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/insights${query ? `?${query}` : ""}`));
+  return readJson<AdminUsageInsights>(res);
 }
 
 export async function landPrice(

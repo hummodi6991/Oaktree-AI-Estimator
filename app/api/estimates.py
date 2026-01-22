@@ -1,14 +1,17 @@
 from typing import Any, Dict, List, Literal, Optional
-from datetime import date
+from datetime import date, datetime, timezone
+import os
 import json, uuid, csv, io
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.deps import get_db
 from app.core.config import settings
+from app.db import session as db_session
 from app.services import geo as geo_svc
 from app.services import far_rules
 from app.services import parking as parking_svc
@@ -35,8 +38,9 @@ from app.services.rent import RentMedianResult, aqar_rent_median
 from app.services.district_resolver import resolve_district, resolution_meta
 from app.services.overture_buildings_metrics import compute_building_metrics
 from app.services.tax import latest_tax_rate
-from app.models.tables import EstimateHeader, EstimateLine
+from app.models.tables import EstimateHeader, EstimateLine, UsageEvent
 from app.ml.name_normalization import norm_city
+from app.security import auth
 
 router = APIRouter(tags=["estimates"])
 logger = logging.getLogger(__name__)
@@ -162,6 +166,40 @@ def _supports_sqlalchemy(db: Any) -> bool:
 
     required = ("add", "add_all", "commit", "query", "get")
     return all(hasattr(db, attr) for attr in required)
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _delta_pct(value: float | None, base: float | None) -> float | None:
+    if value is None or base in (None, 0):
+        return None
+    return (value - base) / base
+
+
+def _extract_excel_breakdown(notes: dict[str, Any]) -> dict[str, Any]:
+    excel_breakdown = notes.get("excel_breakdown")
+    if not isinstance(excel_breakdown, dict):
+        nested = notes.get("notes")
+        if isinstance(nested, dict):
+            excel_breakdown = nested.get("excel_breakdown")
+    return excel_breakdown if isinstance(excel_breakdown, dict) else {}
+
+
+def _insert_usage_event(db: Any, event: UsageEvent) -> None:
+    if _supports_sqlalchemy(db):
+        db.add(event)
+        db.commit()
+        return
+    if not os.getenv("DATABASE_URL"):
+        return
+    with db_session.SessionLocal() as session:
+        session.add(event)
+        session.commit()
 
 
 def _persist_inmemory(
@@ -386,7 +424,11 @@ def _infer_landuse_code_from_excel_inputs(excel_inputs: dict | None) -> str | No
 
 
 @router.post("/estimates", response_model=EstimateResponseModel)
-def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> EstimateResponseModel:
+def create_estimate(
+    req: EstimateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> EstimateResponseModel:
     # Geometry → area
     try:
         geom = geo_svc.parse_geojson(req.geometry)
@@ -566,7 +608,88 @@ def create_estimate(req: EstimateRequest, db: Session = Depends(get_db)) -> Esti
 
         result["id"] = est_id
         result["strategy"] = req.strategy
+        _log_estimate_result_event(result)
         return EstimateResponseModel.model_validate(result)
+
+    def _log_estimate_result_event(result: dict[str, Any]) -> None:
+        try:
+            auth_payload = getattr(request.state, "auth", None) or {}
+            if auth.MODE == "disabled":
+                user_id = "anonymous"
+                is_admin = False
+            else:
+                user_id = auth_payload.get("sub")
+                is_admin = bool(auth_payload.get("is_admin", False))
+
+            notes = result.get("notes") if isinstance(result.get("notes"), dict) else {}
+            excel_breakdown = _extract_excel_breakdown(notes)
+            excel_inputs = (
+                dict(req.excel_inputs) if isinstance(req.excel_inputs, dict) else {}
+            )
+
+            land_price_auto = _safe_float(
+                excel_breakdown.get("land_price_sar_m2")
+            )
+            if land_price_auto is None:
+                land_price_auto = _safe_float(
+                    (notes.get("excel_land_price") or {}).get("ppm2")
+                )
+            land_price_input = _safe_float(excel_inputs.get("land_price_sar_m2"))
+
+            site_area = _safe_float(notes.get("site_area_m2"))
+            land_cost = _safe_float(excel_breakdown.get("land_cost"))
+            land_price_final = (
+                land_cost / site_area
+                if land_cost is not None and site_area not in (None, 0)
+                else land_price_auto
+            )
+
+            land_price_overridden = None
+            if land_price_input is not None and land_price_auto not in (None, 0):
+                land_price_overridden = abs(land_price_input - land_price_auto) / land_price_auto > 0.01
+
+            far_effective = _safe_float(excel_breakdown.get("far_above_ground"))
+            far_input = _safe_float(req.far) or _safe_float(excel_inputs.get("far"))
+            far_auto = _safe_float(notes.get("suggested_far"))
+            if far_auto is None:
+                far_inference = notes.get("far_inference") if isinstance(notes.get("far_inference"), dict) else {}
+                far_auto = _safe_float(far_inference.get("suggested_far"))
+            far_overridden = None
+            if far_input is not None and far_auto not in (None, 0):
+                far_overridden = abs(far_input - far_auto) / far_auto > 0.01
+
+            meta = {
+                "land_price_auto": land_price_auto,
+                "land_price_input": land_price_input,
+                "land_price_final": land_price_final,
+                "land_price_overridden": land_price_overridden,
+                "land_price_delta_pct": _delta_pct(land_price_final, land_price_auto),
+                "far_effective": far_effective,
+                "far_input": far_input,
+                "far_overridden": far_overridden,
+                "far_delta_pct": _delta_pct(far_input, far_auto),
+                "landuse_code": notes.get("landuse_code") or excel_inputs.get("land_use_code"),
+                "landuse_method": notes.get("landuse_method"),
+                "provider": excel_inputs.get("provider"),
+            }
+
+            event = UsageEvent(
+                ts=datetime.now(timezone.utc),
+                user_id=user_id,
+                is_admin=is_admin,
+                event_name="estimate_result",
+                method="POST",
+                path="/v1/estimates",
+                status_code=200,
+                duration_ms=0,
+                estimate_id=result.get("id"),
+                meta=meta,
+            )
+            _insert_usage_event(db, event)
+        except SQLAlchemyError as exc:
+            logger.warning("Estimate usage event insert failed: %s", exc)
+        except Exception as exc:
+            logger.warning("Estimate usage event logging failed: %s", exc)
 
     # Excel-only mode: always use the Excel-style computation and short-circuit other paths.
     if req.excel_inputs:

@@ -21,6 +21,21 @@ _SKIP_PATHS = {
 }
 _SKIP_PREFIXES: tuple[str, ...] = ("/v1/admin/usage",)
 _ESTIMATE_RE = re.compile(r"^/v1/estimates/(?P<estimate_id>[^/]+)")
+_ESTIMATE_PDF_RE = re.compile(r"^/v1/estimates/[^/]+/memo\.pdf$")
+
+
+def _resolve_event_name(method: str, path: str) -> str | None:
+    if method == "POST" and path == "/v1/estimates":
+        return "estimate_create"
+    if method == "GET" and _ESTIMATE_PDF_RE.match(path):
+        return "pdf_export"
+    if method == "GET" and path == "/v1/pricing/land":
+        return "land_price_fetch"
+    if method == "POST" and path == "/v1/geo/identify":
+        return "parcel_identify"
+    if path.startswith("/v1/tiles/"):
+        return "tile_fetch"
+    return None
 
 
 def _should_log(path: str) -> bool:
@@ -66,13 +81,13 @@ class UsageEventMiddleware(BaseHTTPMiddleware):
                     ts=datetime.now(timezone.utc),
                     user_id=user_id,
                     is_admin=is_admin,
-                    event_name=None,
+                    event_name=_resolve_event_name(request.method, path),
                     method=request.method,
                     path=path,
                     status_code=status_code,
                     duration_ms=duration_ms,
                     estimate_id=_extract_estimate_id(path),
-                    meta=None,
+                    meta={"query": request.url.query} if request.url.query else None,
                 )
                 with db_session.SessionLocal() as db:
                     db.add(event)
