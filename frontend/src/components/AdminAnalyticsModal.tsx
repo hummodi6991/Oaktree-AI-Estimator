@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  getAdminUsageFeedback,
   getAdminUsageInsights,
   getAdminUsageSummary,
   getAdminUsageUser,
   getAdminUsageUsers,
   type AdminUsageInsights,
+  type AdminUsageFeedbackResponse,
+  type FeedbackItem,
   type AdminUsageSummary,
   type AdminUsageUser,
   type AdminUsageUserDetail,
@@ -51,19 +54,76 @@ function formatDateTime(value?: string | null): string {
   return date.toLocaleString();
 }
 
+function formatEvidenceValue(key: string, value: number | string | null | undefined): string {
+  if (value == null) return "—";
+  if (typeof value === "number") {
+    if (key.includes("rate") || key.endsWith("_pct")) {
+      return formatPercent(value);
+    }
+    return formatNumber(value);
+  }
+  return String(value);
+}
+
+const EVIDENCE_LABELS: Record<string, string> = {
+  users_with_estimates: "Users w/ estimates",
+  override_users: "Users overriding",
+  override_rate: "Override rate",
+  avg_delta_pct: "Avg delta",
+  estimate_count: "Estimates",
+  pdf_exports: "PDF exports",
+  conversion_rate: "PDF conversion",
+  repeated_error_users: "Users w/ 3+ 5xx",
+  estimate_failures: "Estimate failures",
+  top_5xx_path_count: "Endpoints w/ 5xx",
+  total_estimate_results: "Estimate results",
+  suhail_overlay_count: "Suhail fallbacks",
+  suhail_overlay_pct: "Suhail fallback rate",
+};
+
+const EVIDENCE_ORDER = [
+  "users_with_estimates",
+  "override_users",
+  "override_rate",
+  "avg_delta_pct",
+  "estimate_count",
+  "pdf_exports",
+  "conversion_rate",
+  "repeated_error_users",
+  "estimate_failures",
+  "top_5xx_path_count",
+  "total_estimate_results",
+  "suhail_overlay_count",
+  "suhail_overlay_pct",
+];
+
+function getEvidenceLines(item: FeedbackItem) {
+  const evidence = item.evidence ?? {};
+  return EVIDENCE_ORDER.filter((key) => key in evidence)
+    .map((key) => ({
+      key,
+      label: EVIDENCE_LABELS[key] ?? key,
+      value: formatEvidenceValue(key, evidence[key]),
+    }))
+    .slice(0, 3);
+}
+
 export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsModalProps) {
   const [sinceKey, setSinceKey] = useState<SinceKey>("30d");
   const [summary, setSummary] = useState<AdminUsageSummary | null>(null);
   const [insights, setInsights] = useState<AdminUsageInsights | null>(null);
+  const [feedback, setFeedback] = useState<AdminUsageFeedbackResponse | null>(null);
   const [users, setUsers] = useState<AdminUsageUser[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [userDetail, setUserDetail] = useState<AdminUsageUserDetail | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [insightsError, setInsightsError] = useState<string | null>(null);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
   const [isInsightsLoading, setIsInsightsLoading] = useState(false);
+  const [isFeedbackLoading, setIsFeedbackLoading] = useState(false);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
 
@@ -73,15 +133,18 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
     if (!isOpen) {
       setSummary(null);
       setInsights(null);
+      setFeedback(null);
       setUsers([]);
       setSelectedUserId(null);
       setUserDetail(null);
       setSummaryError(null);
       setInsightsError(null);
+      setFeedbackError(null);
       setUsersError(null);
       setDetailError(null);
       setIsSummaryLoading(false);
       setIsInsightsLoading(false);
+      setIsFeedbackLoading(false);
       setIsUsersLoading(false);
       setIsDetailLoading(false);
       return;
@@ -122,6 +185,35 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
     };
 
     void load();
+
+    return () => {
+      isActive = false;
+    };
+  }, [isOpen, since]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let isActive = true;
+
+    const loadFeedback = async () => {
+      setIsFeedbackLoading(true);
+      setFeedbackError(null);
+      try {
+        const response = await getAdminUsageFeedback(since);
+        if (!isActive) return;
+        setFeedback(response);
+      } catch (error) {
+        if (!isActive) return;
+        setFeedback(null);
+        const message = error instanceof Error ? error.message : "Feedback unavailable";
+        setFeedbackError(message);
+      } finally {
+        if (!isActive) return;
+        setIsFeedbackLoading(false);
+      }
+    };
+
+    void loadFeedback();
 
     return () => {
       isActive = false;
@@ -193,6 +285,7 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   const topPaths = userDetail?.top_paths ?? [];
   const daily = userDetail?.daily ?? [];
   const highlights = insights?.highlights ?? [];
+  const feedbackItems = feedback?.items ?? [];
 
   return (
     <div className="admin-analytics-overlay" role="presentation">
@@ -221,6 +314,52 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
           </div>
         </header>
         <div className="admin-analytics-body">
+          <section className="admin-analytics-section">
+            <h3 className="section-heading">Product feedback</h3>
+            {feedbackError && <p className="admin-analytics-error">Feedback unavailable.</p>}
+            {isFeedbackLoading && <p className="admin-analytics-loading">Loading feedback...</p>}
+            {!isFeedbackLoading && !feedbackError && feedbackItems.length === 0 && (
+              <p className="admin-analytics-muted">No feedback available for the selected window.</p>
+            )}
+            {!isFeedbackLoading && !feedbackError && feedbackItems.length > 0 && (
+              <div className="admin-feedback-list">
+                {feedbackItems.map((item) => {
+                  const evidenceLines = getEvidenceLines(item);
+                  return (
+                    <article key={item.id} className="admin-feedback-card">
+                      <div className="admin-feedback-header">
+                        <h4 className="admin-analytics-subtitle">{item.title}</h4>
+                        <span className={`severity-badge severity-${item.severity}`}>
+                          {item.severity}
+                        </span>
+                      </div>
+                      <p className="admin-analytics-muted">{item.summary}</p>
+                      {evidenceLines.length > 0 && (
+                        <ul className="admin-feedback-evidence">
+                          {evidenceLines.map((line) => (
+                            <li key={`${item.id}-${line.key}`}>
+                              <span className="admin-feedback-label">{line.label}:</span>{" "}
+                              <span>{line.value}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {item.recommended_actions && item.recommended_actions.length > 0 && (
+                        <div>
+                          <h5 className="admin-feedback-actions-title">Recommended actions</h5>
+                          <ul className="admin-feedback-actions">
+                            {item.recommended_actions.map((action) => (
+                              <li key={action}>{action}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
           <section className="admin-analytics-section">
             <h3 className="section-heading">Insights</h3>
             {insightsError && <p className="admin-analytics-error">Insights unavailable.</p>}
