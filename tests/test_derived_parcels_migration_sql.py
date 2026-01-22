@@ -9,4 +9,6 @@ def test_derived_parcels_mv_guarded_by_to_regclass():
 
     assert "to_regclass('public.derived_parcels_v1')" in text
     assert "IF to_regclass('public.derived_parcels_v1') IS NULL" in text
+    assert "relkind" in text
+    assert "DROP VIEW public.derived_parcels_v1" in text
     assert "CREATE MATERIALIZED VIEW public.derived_parcels_v1" in text
