@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  getAdminUsageInsights,
   getAdminUsageSummary,
   getAdminUsageUser,
   getAdminUsageUsers,
+  type AdminUsageInsights,
   type AdminUsageSummary,
   type AdminUsageUser,
   type AdminUsageUserDetail,
@@ -52,13 +54,16 @@ function formatDateTime(value?: string | null): string {
 export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsModalProps) {
   const [sinceKey, setSinceKey] = useState<SinceKey>("30d");
   const [summary, setSummary] = useState<AdminUsageSummary | null>(null);
+  const [insights, setInsights] = useState<AdminUsageInsights | null>(null);
   const [users, setUsers] = useState<AdminUsageUser[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [userDetail, setUserDetail] = useState<AdminUsageUserDetail | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [insightsError, setInsightsError] = useState<string | null>(null);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
+  const [isInsightsLoading, setIsInsightsLoading] = useState(false);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
   const [isDetailLoading, setIsDetailLoading] = useState(false);
 
@@ -67,13 +72,16 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   useEffect(() => {
     if (!isOpen) {
       setSummary(null);
+      setInsights(null);
       setUsers([]);
       setSelectedUserId(null);
       setUserDetail(null);
       setSummaryError(null);
+      setInsightsError(null);
       setUsersError(null);
       setDetailError(null);
       setIsSummaryLoading(false);
+      setIsInsightsLoading(false);
       setIsUsersLoading(false);
       setIsDetailLoading(false);
       return;
@@ -121,6 +129,35 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   }, [isOpen, since]);
 
   useEffect(() => {
+    if (!isOpen) return;
+    let isActive = true;
+
+    const loadInsights = async () => {
+      setIsInsightsLoading(true);
+      setInsightsError(null);
+      try {
+        const response = await getAdminUsageInsights(since);
+        if (!isActive) return;
+        setInsights(response);
+      } catch (error) {
+        if (!isActive) return;
+        setInsights(null);
+        const message = error instanceof Error ? error.message : "Insights unavailable";
+        setInsightsError(message);
+      } finally {
+        if (!isActive) return;
+        setIsInsightsLoading(false);
+      }
+    };
+
+    void loadInsights();
+
+    return () => {
+      isActive = false;
+    };
+  }, [isOpen, since]);
+
+  useEffect(() => {
     if (!isOpen || !selectedUserId) return;
     let isActive = true;
 
@@ -155,6 +192,7 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   const metrics = userDetail?.metrics;
   const topPaths = userDetail?.top_paths ?? [];
   const daily = userDetail?.daily ?? [];
+  const highlights = insights?.highlights ?? [];
 
   return (
     <div className="admin-analytics-overlay" role="presentation">
@@ -183,6 +221,24 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
           </div>
         </header>
         <div className="admin-analytics-body">
+          <section className="admin-analytics-section">
+            <h3 className="section-heading">Insights</h3>
+            {insightsError && <p className="admin-analytics-error">Insights unavailable.</p>}
+            {isInsightsLoading && <p className="admin-analytics-loading">Loading insights...</p>}
+            {!isInsightsLoading && !insightsError && highlights.length === 0 && (
+              <p className="admin-analytics-muted">No insights available for the selected window.</p>
+            )}
+            {!isInsightsLoading && !insightsError && highlights.length > 0 && (
+              <ul className="admin-analytics-insights">
+                {highlights.map((item, index) => (
+                  <li key={`${item.title}-${index}`} className="admin-analytics-insight">
+                    <h4 className="admin-analytics-subtitle">{item.title}</h4>
+                    <p className="admin-analytics-muted">{item.detail || "No detail available yet."}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
           <section className="admin-analytics-section">
             <h3 className="section-heading">Key performance indicators</h3>
             {summaryError && <p className="admin-analytics-error">Admin endpoints unavailable.</p>}
