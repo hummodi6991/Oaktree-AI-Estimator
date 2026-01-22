@@ -186,6 +186,7 @@ class EstimateHeader(Base):
 
     id = Column(String(36), primary_key=True)
     created_at = Column(DateTime)
+    owner = Column(String(64))
     strategy = Column(String(32), nullable=False)
     input_json = Column(Text, nullable=False)
     totals_json = Column(Text, nullable=False)

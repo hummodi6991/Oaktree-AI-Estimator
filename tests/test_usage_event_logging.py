@@ -31,12 +31,21 @@ def _load_app(monkeypatch: pytest.MonkeyPatch, db_url: str, **env: str):
 
 def _init_db(db_path: Path) -> None:
     from app.db import session as db_session
-    from app.models.tables import MarketIndicator, Rate, TaxRule, UsageEvent
+    from app.models.tables import (
+        EstimateHeader,
+        EstimateLine,
+        MarketIndicator,
+        Rate,
+        TaxRule,
+        UsageEvent,
+    )
 
     UsageEvent.__table__.create(db_session.engine, checkfirst=True)
     Rate.__table__.create(db_session.engine, checkfirst=True)
     TaxRule.__table__.create(db_session.engine, checkfirst=True)
     MarketIndicator.__table__.create(db_session.engine, checkfirst=True)
+    EstimateHeader.__table__.create(db_session.engine, checkfirst=True)
+    EstimateLine.__table__.create(db_session.engine, checkfirst=True)
 
 
 def test_usage_event_logging_and_summary(
@@ -130,3 +139,62 @@ def test_estimate_result_usage_event(
     assert event is not None
     assert isinstance(event.meta, dict)
     assert "land_price_overridden" in event.meta
+
+
+def test_estimate_owner_stamped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "owner.db"
+    db_url = f"sqlite:///{db_path}?check_same_thread=false"
+    app = _load_app(
+        monkeypatch,
+        db_url,
+        AUTH_MODE="api_key",
+        API_KEYS_JSON='{"tester-1": "tester-key"}',
+    )
+    _init_db(db_path)
+    client = TestClient(app)
+
+    poly = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [46.675, 24.713],
+                [46.676, 24.713],
+                [46.676, 24.714],
+                [46.675, 24.714],
+                [46.675, 24.713],
+            ]
+        ],
+    }
+    payload = {
+        "geometry": poly,
+        "asset_program": "residential_midrise",
+        "unit_mix": [{"type": "1BR", "count": 10}],
+        "finish_level": "mid",
+        "timeline": {"start": "2025-10-01", "months": 18},
+        "financing_params": {"margin_bps": 250, "ltv": 0.6},
+        "strategy": "build_to_sell",
+        "excel_inputs": sample_excel_inputs(),
+    }
+
+    response = client.post("/v1/estimates", json=payload, headers={"X-API-Key": "tester-key"})
+    assert response.status_code == 200
+    estimate_id = response.json()["id"]
+
+    from app.db.session import SessionLocal
+    from app.models.tables import EstimateHeader, EstimateLine
+
+    with SessionLocal() as db:
+        header = db.get(EstimateHeader, estimate_id)
+        assert header is not None
+        assert header.owner == "tester-1"
+
+        owners = {
+            row.owner
+            for row in db.query(EstimateLine)
+            .filter(EstimateLine.estimate_id == estimate_id)
+            .all()
+        }
+
+    assert owners == {"tester-1"}

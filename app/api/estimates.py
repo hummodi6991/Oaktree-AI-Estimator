@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, ConfigDict
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -168,6 +169,16 @@ def _supports_sqlalchemy(db: Any) -> bool:
     return all(hasattr(db, attr) for attr in required)
 
 
+def _estimate_header_supports_owner(db: Any) -> bool:
+    if not _supports_sqlalchemy(db):
+        return False
+    try:
+        inspector = inspect(db.get_bind())
+        return any(col["name"] == "owner" for col in inspector.get_columns("estimate_header"))
+    except Exception:
+        return False
+
+
 def _safe_float(value: Any) -> float | None:
     try:
         return float(value)
@@ -209,6 +220,7 @@ def _persist_inmemory(
     notes: dict[str, Any],
     assumptions: list[dict[str, Any]],
     lines: list[dict[str, Any]],
+    owner: str | None = None,
 ) -> None:
     """Persist estimate data in a simple in-memory store (used in tests)."""
 
@@ -217,6 +229,7 @@ def _persist_inmemory(
         "totals": dict(totals),
         "notes": notes.copy() if isinstance(notes, dict) else dict(notes or {}),
         "assumptions": [dict(a) for a in assumptions],
+        "owner": owner,
     }
     _INMEM_LINES[estimate_id] = [dict(line) for line in lines]
 
@@ -529,6 +542,11 @@ def create_estimate(
         assumptions = result.get("assumptions", [])
         notes_payload = {"bands": payload_bands, "notes": result["notes"]}
         persisted = False
+        auth_payload = getattr(request.state, "auth", None) or {}
+        if auth.MODE == "disabled":
+            user_id = "anonymous"
+        else:
+            user_id = auth_payload.get("sub") or "api"
 
         line_dicts: list[dict[str, Any]] = []
         for key in ["land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"]:
@@ -540,7 +558,7 @@ def create_estimate(
                     "value": totals[key],
                     "unit": "SAR",
                     "source_type": "Model",
-                    "owner": "api",
+                    "owner": user_id,
                     "url": None,
                     "model_version": None,
                     "created_at": None,
@@ -556,7 +574,7 @@ def create_estimate(
                     "value": assumption.get("value"),
                     "unit": assumption.get("unit"),
                     "source_type": assumption.get("source_type"),
-                    "owner": "api",
+                    "owner": user_id,
                     "url": None,
                     "model_version": None,
                     "created_at": None,
@@ -568,13 +586,16 @@ def create_estimate(
             # so the UI can still show results.
             try:
                 orm_lines = [EstimateLine(**entry) for entry in line_dicts]
-                header = EstimateHeader(
-                    id=est_id,
-                    strategy=req.strategy,
-                    input_json=json.dumps(req.model_dump(), default=str),
-                    totals_json=json.dumps(totals, default=str),
-                    notes_json=json.dumps(notes_payload, default=str),
-                )
+                header_payload = {
+                    "id": est_id,
+                    "strategy": req.strategy,
+                    "input_json": json.dumps(req.model_dump(), default=str),
+                    "totals_json": json.dumps(totals, default=str),
+                    "notes_json": json.dumps(notes_payload, default=str),
+                }
+                if _estimate_header_supports_owner(db):
+                    header_payload["owner"] = user_id
+                header = EstimateHeader(**header_payload)
                 db.add(header)
                 db.add_all(orm_lines)
                 db.commit()
@@ -588,7 +609,13 @@ def create_estimate(
                 if (settings.APP_ENV or "").lower() == "prod":
                     raise HTTPException(status_code=500, detail="Failed to persist estimate")
                 _persist_inmemory(
-                    est_id, req.strategy, totals, notes_payload, assumptions, line_dicts
+                    est_id,
+                    req.strategy,
+                    totals,
+                    notes_payload,
+                    assumptions,
+                    line_dicts,
+                    owner=user_id,
                 )
         else:
             if (settings.APP_ENV or "").lower() == "prod":
@@ -597,7 +624,15 @@ def create_estimate(
                     extra={"estimate_id": est_id, "app_env": settings.APP_ENV},
                 )
                 raise HTTPException(status_code=500, detail="Failed to persist estimate")
-            _persist_inmemory(est_id, req.strategy, totals, notes_payload, assumptions, line_dicts)
+            _persist_inmemory(
+                est_id,
+                req.strategy,
+                totals,
+                notes_payload,
+                assumptions,
+                line_dicts,
+                owner=user_id,
+            )
 
         notes_payload["persisted"] = persisted
         result_notes = result.get("notes")
