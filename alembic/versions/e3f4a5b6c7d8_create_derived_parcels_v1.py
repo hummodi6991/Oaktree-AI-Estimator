@@ -171,6 +171,18 @@ def upgrade() -> None:
         """
         DO $$
         BEGIN
+            IF to_regclass('public.derived_parcels_v1') IS NOT NULL THEN
+                IF (
+                    SELECT relkind
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'public'
+                      AND c.relname = 'derived_parcels_v1'
+                ) = 'v' THEN
+                    EXECUTE 'DROP VIEW public.derived_parcels_v1';
+                END IF;
+            END IF;
+
             IF to_regclass('public.derived_parcels_v1') IS NULL THEN
                 IF to_regclass('public.planet_osm_line') IS NOT NULL THEN
                     EXECUTE $mv$%s$mv$;
@@ -185,14 +197,25 @@ def upgrade() -> None:
 
     op.execute(
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS derived_parcels_v1_parcel_id_uq
-            ON public.derived_parcels_v1 (parcel_id);
-        """
-    )
-    op.execute(
-        """
-        CREATE INDEX IF NOT EXISTS derived_parcels_v1_geom_gix
-            ON public.derived_parcels_v1 USING GIST (geom);
+        DO $$
+        BEGIN
+            IF (
+                SELECT relkind
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relname = 'derived_parcels_v1'
+            ) = 'm' THEN
+                EXECUTE '
+                    CREATE UNIQUE INDEX IF NOT EXISTS derived_parcels_v1_parcel_id_uq
+                        ON public.derived_parcels_v1 (parcel_id);
+                ';
+                EXECUTE '
+                    CREATE INDEX IF NOT EXISTS derived_parcels_v1_geom_gix
+                        ON public.derived_parcels_v1 USING GIST (geom);
+                ';
+            END IF;
+        END $$;
         """
     )
 
