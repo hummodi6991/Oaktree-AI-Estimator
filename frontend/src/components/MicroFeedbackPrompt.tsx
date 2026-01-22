@@ -6,7 +6,8 @@ type MicroFeedbackPromptProps = {
   isOpen: boolean;
   context: "estimate" | "pdf";
   estimateId?: string | null;
-  onClose: () => void;
+  onDismiss: () => void;
+  onSubmit: () => void;
 };
 
 const DOWN_REASONS = [
@@ -18,16 +19,25 @@ const DOWN_REASONS = [
   { value: "other", label: "Other" },
 ];
 
-export default function MicroFeedbackPrompt({ isOpen, context, estimateId, onClose }: MicroFeedbackPromptProps) {
+export default function MicroFeedbackPrompt({
+  isOpen,
+  context,
+  estimateId,
+  onDismiss,
+  onSubmit,
+}: MicroFeedbackPromptProps) {
   const [isDownVote, setIsDownVote] = useState(false);
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
 
   if (!isOpen) return null;
 
-  const closePrompt = () => {
+  const resetPrompt = () => {
     setIsDownVote(false);
     setSelectedReasons([]);
-    onClose();
+  };
+  const dismissPrompt = () => {
+    resetPrompt();
+    onDismiss();
   };
 
   const handleUpVote = async () => {
@@ -35,7 +45,8 @@ export default function MicroFeedbackPrompt({ isOpen, context, estimateId, onClo
       estimateId: estimateId ?? undefined,
       meta: { vote: "up", context },
     });
-    closePrompt();
+    resetPrompt();
+    onSubmit();
   };
 
   const handleDownVote = () => {
@@ -53,7 +64,8 @@ export default function MicroFeedbackPrompt({ isOpen, context, estimateId, onClo
       estimateId: estimateId ?? undefined,
       meta: { vote: "down", context, reasons: selectedReasons },
     });
-    closePrompt();
+    resetPrompt();
+    onSubmit();
   };
 
   return (
@@ -89,7 +101,7 @@ export default function MicroFeedbackPrompt({ isOpen, context, estimateId, onClo
             </button>
           </div>
         )}
-        <button type="button" className="micro-feedback-dismiss" onClick={closePrompt}>
+        <button type="button" className="micro-feedback-dismiss" onClick={dismissPrompt}>
           Not now
         </button>
       </div>
