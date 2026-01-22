@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
 
-import { downloadMemoPdf, landPrice, makeEstimate, trackEvent } from "../api";
+import { downloadMemoPdf, landPrice, makeEstimate, runScenario, trackEvent } from "../api";
 import {
   cloneTemplate,
   ExcelInputs,
@@ -14,6 +14,7 @@ import type { EstimateNotes, EstimateTotals } from "../lib/types";
 import { formatAreaM2, formatCurrencySAR, formatNumber, formatPercent } from "../i18n/format";
 import { scaleAboveGroundAreaRatio } from "../utils/areaRatio";
 import MicroFeedbackPrompt from "./MicroFeedbackPrompt";
+import ScenarioModal from "./ScenarioModal";
 
 const PROVIDERS = [
   {
@@ -141,6 +142,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const notAvailable = t("common.notAvailable");
   const providerLabel = t(`excel.providers.${provider}`);
   const isArabic = i18n.language?.toLowerCase().startsWith("ar");
+  const scenarioProviders = PROVIDERS.map((item) => ({
+    value: item.value,
+    label: t(item.labelKey),
+  }));
 
   const formatNumberValue = (value: number | string | null | undefined, digits = 0) =>
     formatNumber(value, { maximumFractionDigits: digits, minimumFractionDigits: digits }, notAvailable);
@@ -188,6 +193,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [isEditingFar, setIsEditingFar] = useState(false);
   const [farDraft, setFarDraft] = useState<string>("");
   const [farEditError, setFarEditError] = useState<string | null>(null);
+  const [isScenarioOpen, setIsScenarioOpen] = useState(false);
+  const [isScenarioSubmitting, setIsScenarioSubmitting] = useState(false);
   const unitCostInputs = inputs.unit_cost || {};
 
   useEffect(() => {
@@ -557,6 +564,67 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       },
     });
     void runEstimate();
+  };
+
+  const handleScenarioSubmit = async (patch: Record<string, unknown>, meta: Record<string, unknown>) => {
+    if (!estimateId) return;
+    setError(null);
+    setIsScenarioSubmitting(true);
+    try {
+      const res = await runScenario(estimateId, patch);
+      const rawNotes = res?.notes;
+      const notes = rawNotes && typeof rawNotes === "object" ? rawNotes : null;
+      const costs = notes?.cost_breakdown || null;
+      const excelBreakdown = notes?.excel_breakdown || null;
+      const effectivePctInput = normalizeEffectivePct(inputsRef.current?.y1_income_effective_pct);
+      const effectiveFactorFromInput = effectivePctInput / 100;
+      const y1IncomeEffective = costs
+        ? costs.y1_income_effective ??
+          excelBreakdown?.y1_income_effective ??
+          (costs.y1_income ?? excelBreakdown?.y1_income ?? 0) * effectiveFactorFromInput
+        : null;
+      const y1IncomeEffectiveFactor = costs
+        ? costs.y1_income_effective_factor ??
+          excelBreakdown?.y1_income_effective_factor ??
+          effectiveFactorFromInput
+        : null;
+      setExcelResult((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          totals: res?.totals ?? prev.totals,
+          notes: notes ?? prev.notes,
+          roi: notes?.excel_roi ?? res?.totals?.excel_roi ?? prev.roi,
+          costs: costs
+            ? {
+              ...prev.costs,
+              land_cost: costs.land_cost ?? prev.costs.land_cost,
+              construction_direct_cost: costs.construction_direct_cost ?? prev.costs.construction_direct_cost,
+              fitout_cost: costs.fitout_cost ?? prev.costs.fitout_cost,
+              contingency_cost: costs.contingency_cost ?? prev.costs.contingency_cost,
+              consultants_cost: costs.consultants_cost ?? prev.costs.consultants_cost,
+              feasibility_fee: costs.feasibility_fee ?? prev.costs.feasibility_fee,
+              transaction_cost: costs.transaction_cost ?? prev.costs.transaction_cost,
+              grand_total_capex: costs.grand_total_capex ?? prev.costs.grand_total_capex,
+              y1_income: costs.y1_income ?? prev.costs.y1_income,
+              y1_income_effective: y1IncomeEffective ?? prev.costs.y1_income_effective,
+              y1_income_effective_factor: y1IncomeEffectiveFactor ?? prev.costs.y1_income_effective_factor,
+            }
+            : prev.costs,
+          breakdown: excelBreakdown ?? prev.breakdown,
+        };
+      });
+      setIsScenarioOpen(false);
+      void trackEvent("ui_scenario_run", {
+        estimateId,
+        meta,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+    } finally {
+      setIsScenarioSubmitting(false);
+    }
   };
 
   const copyEstimateId = async () => {
@@ -1054,6 +1122,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12, alignItems: "center" }}>
         <button onClick={handleEstimateClick}>{t("excel.calculateEstimate")}</button>
+        <button
+          type="button"
+          onClick={() => setIsScenarioOpen(true)}
+          disabled={!estimateId || isScenarioSubmitting}
+        >
+          Scenario
+        </button>
         {estimateId && (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <button type="button" onClick={handleExportPdf}>
@@ -1539,6 +1614,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           <div ref={feedbackSentinelRef} style={{ height: 1 }} />
         </div>
       )}
+      <ScenarioModal
+        isOpen={isScenarioOpen}
+        providers={scenarioProviders}
+        isSubmitting={isScenarioSubmitting}
+        onClose={() => setIsScenarioOpen(false)}
+        onSubmit={handleScenarioSubmit}
+      />
       <MicroFeedbackPrompt
         isOpen={isFeedbackOpen}
         context={feedbackContext}
