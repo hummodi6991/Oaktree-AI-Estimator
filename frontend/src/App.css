@@ -651,6 +651,100 @@
   align-self: flex-start;
 }
 
+.scenario-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 12, 10, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 2050;
+  backdrop-filter: blur(6px);
+}
+
+.scenario-modal {
+  width: min(520px, 100%);
+  background: rgba(7, 30, 27, 0.96);
+  border-radius: 24px;
+  border: 1px solid rgba(213, 177, 106, 0.3);
+  padding: 28px;
+  box-shadow: 0 24px 50px rgba(2, 14, 12, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.scenario-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.scenario-modal-title {
+  margin: 0;
+  font-family: "Playfair Display", "Times New Roman", serif;
+  font-size: 1.4rem;
+  color: var(--sand-50);
+}
+
+.scenario-modal-close {
+  background: transparent;
+  color: rgba(230, 214, 189, 0.8);
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+.scenario-modal-body {
+  margin: 0;
+  color: rgba(238, 225, 206, 0.75);
+  font-size: 0.95rem;
+}
+
+.scenario-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.scenario-modal-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(230, 214, 189, 0.7);
+}
+
+.scenario-modal-input,
+.scenario-modal-select {
+  border-radius: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(213, 177, 106, 0.3);
+  background: rgba(4, 20, 17, 0.85);
+  color: var(--sand-50);
+  font-size: 0.95rem;
+}
+
+.scenario-modal-input:focus,
+.scenario-modal-select:focus {
+  outline: 2px solid rgba(213, 177, 106, 0.5);
+  outline-offset: 2px;
+}
+
+.scenario-modal-error {
+  color: #fca5a5;
+  font-size: 0.85rem;
+}
+
+.scenario-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
+}
+
 .admin-analytics-overlay {
   position: fixed;
   inset: 0;

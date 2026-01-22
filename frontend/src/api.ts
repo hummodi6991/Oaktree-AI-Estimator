@@ -463,7 +463,7 @@ export async function makeEstimate(params: {
 }
 
 export async function runScenario(estimateId: string, patch: Record<string, unknown>) {
-  const res = await fetchWithAuth(withBase(`/v1/estimates/${encodeURIComponent(estimateId)}/scenario`), {
+  const res = await fetchWithAuth(buildApiUrl(`/v1/estimates/${encodeURIComponent(estimateId)}/scenario`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch ?? {}),
