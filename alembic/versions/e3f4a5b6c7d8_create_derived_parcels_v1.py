@@ -171,10 +171,12 @@ def upgrade() -> None:
         """
         DO $$
         BEGIN
-            IF to_regclass('public.planet_osm_line') IS NOT NULL THEN
-                EXECUTE $mv$%s$mv$;
-            ELSE
-                EXECUTE $mv$%s$mv$;
+            IF to_regclass('public.derived_parcels_v1') IS NULL THEN
+                IF to_regclass('public.planet_osm_line') IS NOT NULL THEN
+                    EXECUTE $mv$%s$mv$;
+                ELSE
+                    EXECUTE $mv$%s$mv$;
+                END IF;
             END IF;
         END $$;
         """
