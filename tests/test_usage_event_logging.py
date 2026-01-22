@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db.deps import get_db
 from tests.excel_inputs import sample_excel_inputs
 
 
@@ -32,10 +31,12 @@ def _load_app(monkeypatch: pytest.MonkeyPatch, db_url: str, **env: str):
 
 def _init_db(db_path: Path) -> None:
     from app.db import session as db_session
-    from app.models.tables import Rate, UsageEvent
+    from app.models.tables import MarketIndicator, Rate, TaxRule, UsageEvent
 
     UsageEvent.__table__.create(db_session.engine, checkfirst=True)
     Rate.__table__.create(db_session.engine, checkfirst=True)
+    TaxRule.__table__.create(db_session.engine, checkfirst=True)
+    MarketIndicator.__table__.create(db_session.engine, checkfirst=True)
 
 
 def test_usage_event_logging_and_summary(
@@ -74,45 +75,6 @@ def test_usage_event_logging_and_summary(
     assert payload["totals"]["active_users"] >= 1
 
 
-class DummyQuery:
-    def filter(self, *args, **kwargs):
-        return self
-
-    def order_by(self, *args, **kwargs):
-        return self
-
-    def first(self):
-        return None
-
-    def all(self):
-        return []
-
-
-class DummySession:
-    def query(self, *args, **kwargs):
-        return DummyQuery()
-
-    def add_all(self, entries):
-        pass
-
-    def commit(self):
-        pass
-
-    def rollback(self):
-        pass
-
-    def close(self):
-        pass
-
-
-def _override_get_db():
-    session = DummySession()
-    try:
-        yield session
-    finally:
-        session.close()
-
-
 def test_estimate_result_usage_event(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -126,7 +88,6 @@ def test_estimate_result_usage_event(
         API_KEYS_JSON='{"tester": "tester-key"}',
     )
     _init_db(db_path)
-    app.dependency_overrides[get_db] = _override_get_db
     client = TestClient(app)
 
     poly = {
@@ -169,5 +130,3 @@ def test_estimate_result_usage_event(
     assert event is not None
     assert isinstance(event.meta, dict)
     assert "land_price_overridden" in event.meta
-
-    app.dependency_overrides.pop(get_db, None)
