@@ -1,5 +1,7 @@
+from bisect import bisect_right
 from datetime import date, datetime, time, timezone
 import math
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import case, func, or_
@@ -14,6 +16,8 @@ router = APIRouter(
     tags=["admin"],
     dependencies=[Depends(require_admin_context)],
 )
+
+_SCENARIO_PATH_RE = re.compile(r"^/v1/estimates/(?P<estimate_id>[^/]+)/scenario$")
 
 
 def _parse_since(since: str | None) -> datetime | None:
@@ -52,6 +56,13 @@ def _percentile_float(values: list[float], pct: float) -> float:
     values_sorted = sorted(values)
     index = max(0, math.ceil((pct / 100) * len(values_sorted)) - 1)
     return float(values_sorted[index])
+
+
+def _extract_scenario_estimate_id(path: str) -> str | None:
+    match = _SCENARIO_PATH_RE.match(path)
+    if not match:
+        return None
+    return match.group("estimate_id")
 
 
 def _feedback_rollups(
@@ -960,6 +971,146 @@ def usage_feedback_inbox(
         "by_landuse_method": _format_breakdown(breakdowns["by_landuse_method"], "landuse_method"),
         "by_provider": _format_breakdown(breakdowns["by_provider"], "provider"),
         "total_responses": total,
+    }
+
+
+@router.get("/deep_value")
+def usage_deep_value(
+    since: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    since_dt = _parse_since(since)
+    filters = [UsageEvent.is_admin.is_(False)]
+    if since_dt:
+        filters.append(UsageEvent.ts >= since_dt)
+
+    scenario_filter = or_(
+        UsageEvent.event_name == "scenario_run",
+        (UsageEvent.method == "POST") & (UsageEvent.path.like("/v1/estimates/%/scenario")),
+    )
+    scenario_rows = (
+        db.query(UsageEvent.user_id, UsageEvent.estimate_id, UsageEvent.path)
+        .filter(*filters, scenario_filter)
+        .all()
+    )
+    scenario_requests = len(scenario_rows)
+    scenario_users = len({row.user_id for row in scenario_rows if row.user_id})
+    scenario_estimate_ids: set[str] = set()
+    for row in scenario_rows:
+        estimate_id = row.estimate_id or _extract_scenario_estimate_id(row.path)
+        if estimate_id:
+            scenario_estimate_ids.add(estimate_id)
+
+    top_users_rows = (
+        db.query(UsageEvent.user_id, func.count().label("count"))
+        .filter(*filters, scenario_filter, UsageEvent.user_id.isnot(None))
+        .group_by(UsageEvent.user_id)
+        .order_by(func.count().desc())
+        .limit(10)
+        .all()
+    )
+
+    override_event_names = [
+        "ui_override_land_price",
+        "ui_override_far",
+        "ui_change_provider",
+    ]
+    rerun_event_names = ["ui_estimate_started", "estimate_create"]
+    override_rows = (
+        db.query(UsageEvent.user_id, UsageEvent.event_name, UsageEvent.ts)
+        .filter(
+            *filters,
+            UsageEvent.user_id.isnot(None),
+            UsageEvent.event_name.in_(override_event_names),
+        )
+        .order_by(UsageEvent.user_id, UsageEvent.ts)
+        .all()
+    )
+    rerun_rows = (
+        db.query(UsageEvent.user_id, UsageEvent.ts)
+        .filter(
+            *filters,
+            UsageEvent.user_id.isnot(None),
+            UsageEvent.event_name.in_(rerun_event_names),
+        )
+        .order_by(UsageEvent.user_id, UsageEvent.ts)
+        .all()
+    )
+
+    rerun_by_user: dict[str, list[datetime]] = {}
+    for user_id, ts in rerun_rows:
+        if not user_id:
+            continue
+        rerun_by_user.setdefault(user_id, []).append(ts)
+
+    override_users: set[str] = set()
+    rerun_users: set[str] = set()
+    deltas: list[float] = []
+    by_override_type: dict[str, dict[str, set | list[float]]] = {
+        name: {"override_users": set(), "rerun_users": set(), "deltas": []}
+        for name in override_event_names
+    }
+    window_minutes = 15.0
+
+    for user_id, event_name, ts in override_rows:
+        if not user_id or not event_name:
+            continue
+        override_users.add(user_id)
+        entry = by_override_type.setdefault(
+            event_name,
+            {"override_users": set(), "rerun_users": set(), "deltas": []},
+        )
+        entry["override_users"].add(user_id)
+        rerun_times = rerun_by_user.get(user_id, [])
+        if not rerun_times:
+            continue
+        index = bisect_right(rerun_times, ts)
+        if index >= len(rerun_times):
+            continue
+        rerun_ts = rerun_times[index]
+        delta_minutes = (rerun_ts - ts).total_seconds() / 60
+        if delta_minutes < 0 or delta_minutes > window_minutes:
+            continue
+        deltas.append(delta_minutes)
+        rerun_users.add(user_id)
+        entry["rerun_users"].add(user_id)
+        entry["deltas"].append(delta_minutes)
+
+    users_with_overrides = len(override_users)
+    rerun_rate = len(rerun_users) / users_with_overrides if users_with_overrides else 0.0
+
+    rerun_by_override_payload: dict[str, dict[str, float | int]] = {}
+    for name, entry in by_override_type.items():
+        override_user_count = len(entry["override_users"])
+        rerun_user_count = len(entry["rerun_users"])
+        entry_deltas = entry["deltas"]
+        rerun_by_override_payload[name] = {
+            "override_users": override_user_count,
+            "rerun_users": rerun_user_count,
+            "median_min": _percentile_float(entry_deltas, 50),
+            "p80_min": _percentile_float(entry_deltas, 80),
+        }
+
+    return {
+        "since": since,
+        "scenario": {
+            "scenario_requests": scenario_requests,
+            "scenario_users": scenario_users,
+            "scenario_estimates": len(scenario_estimate_ids),
+            "top_users": [
+                {"user_id": row.user_id, "count": int(row.count or 0)}
+                for row in top_users_rows
+            ],
+        },
+        "rerun_after_override": {
+            "override_events": len(override_rows),
+            "rerun_events": len(deltas),
+            "rerun_users": len(rerun_users),
+            "rerun_rate": rerun_rate,
+            "median_minutes_to_rerun": _percentile_float(deltas, 50),
+            "p80_minutes_to_rerun": _percentile_float(deltas, 80),
+            "by_override_type": rerun_by_override_payload,
+        },
     }
 
 

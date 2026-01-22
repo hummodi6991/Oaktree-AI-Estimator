@@ -70,6 +70,9 @@ def test_admin_usage_allows_admin_key(
     inbox_payload = feedback_inbox.json()
     assert "totals" in inbox_payload
 
+    deep_value = client.get("/v1/admin/usage/deep_value", headers={"X-API-Key": "ceo-key"})
+    assert deep_value.status_code == 200
+
     funnel = client.get("/v1/admin/usage/funnel", headers={"X-API-Key": "ceo-key"})
     assert funnel.status_code == 200
 
@@ -104,6 +107,9 @@ def test_admin_usage_rejects_tester_key(
         "/v1/admin/usage/feedback_inbox", headers={"X-API-Key": "tester-key"}
     )
     assert feedback_inbox.status_code == 403
+
+    deep_value = client.get("/v1/admin/usage/deep_value", headers={"X-API-Key": "tester-key"})
+    assert deep_value.status_code == 403
 
     funnel = client.get("/v1/admin/usage/funnel", headers={"X-API-Key": "tester-key"})
     assert funnel.status_code == 403
