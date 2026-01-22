@@ -3,10 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import {
   getAdminUsageFeedback,
   getAdminUsageFeedbackInbox,
+  getAdminUsageFunnel,
   getAdminUsageInsights,
   getAdminUsageSummary,
   getAdminUsageUser,
   getAdminUsageUsers,
+  type AdminUsageFunnelResponse,
   type AdminUsageInsights,
   type AdminUsageFeedbackResponse,
   type AdminUsageFeedbackInbox,
@@ -47,6 +49,11 @@ function formatNumber(value?: number | null): string {
 function formatPercent(value?: number | null): string {
   if (value == null || Number.isNaN(value)) return "—";
   return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatMinutes(value?: number | null): string {
+  if (value == null || Number.isNaN(value)) return "—";
+  return `${value.toFixed(1)} min`;
 }
 
 function formatDateTime(value?: string | null): string {
@@ -119,6 +126,7 @@ function getEvidenceLines(item: FeedbackItem) {
 export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsModalProps) {
   const [sinceKey, setSinceKey] = useState<SinceKey>("30d");
   const [summary, setSummary] = useState<AdminUsageSummary | null>(null);
+  const [funnel, setFunnel] = useState<AdminUsageFunnelResponse | null>(null);
   const [insights, setInsights] = useState<AdminUsageInsights | null>(null);
   const [feedback, setFeedback] = useState<AdminUsageFeedbackResponse | null>(null);
   const [feedbackInbox, setFeedbackInbox] = useState<AdminUsageFeedbackInbox | null>(null);
@@ -126,12 +134,14 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [userDetail, setUserDetail] = useState<AdminUsageUserDetail | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [funnelError, setFunnelError] = useState<string | null>(null);
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackInboxError, setFeedbackInboxError] = useState<string | null>(null);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
+  const [isFunnelLoading, setIsFunnelLoading] = useState(false);
   const [isInsightsLoading, setIsInsightsLoading] = useState(false);
   const [isFeedbackLoading, setIsFeedbackLoading] = useState(false);
   const [isFeedbackInboxLoading, setIsFeedbackInboxLoading] = useState(false);
@@ -143,6 +153,7 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   useEffect(() => {
     if (!isOpen) {
       setSummary(null);
+      setFunnel(null);
       setInsights(null);
       setFeedback(null);
       setFeedbackInbox(null);
@@ -150,12 +161,14 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
       setSelectedUserId(null);
       setUserDetail(null);
       setSummaryError(null);
+      setFunnelError(null);
       setInsightsError(null);
       setFeedbackError(null);
       setFeedbackInboxError(null);
       setUsersError(null);
       setDetailError(null);
       setIsSummaryLoading(false);
+      setIsFunnelLoading(false);
       setIsInsightsLoading(false);
       setIsFeedbackLoading(false);
       setIsFeedbackInboxLoading(false);
@@ -247,6 +260,35 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
     if (!isOpen) return;
     let isActive = true;
 
+    const loadFunnel = async () => {
+      setIsFunnelLoading(true);
+      setFunnelError(null);
+      try {
+        const response = await getAdminUsageFunnel(since);
+        if (!isActive) return;
+        setFunnel(response);
+      } catch (error) {
+        if (!isActive) return;
+        setFunnel(null);
+        const message = error instanceof Error ? error.message : "Funnel unavailable";
+        setFunnelError(message);
+      } finally {
+        if (!isActive) return;
+        setIsFunnelLoading(false);
+      }
+    };
+
+    void loadFunnel();
+
+    return () => {
+      isActive = false;
+    };
+  }, [isOpen, since]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let isActive = true;
+
     const loadInsights = async () => {
       setIsInsightsLoading(true);
       setInsightsError(null);
@@ -304,6 +346,11 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
   if (!isOpen) return null;
 
   const totals = summary?.totals;
+  const funnelTotals = funnel?.totals;
+  const funnelEvents = funnel?.totals?.events;
+  const funnelConversion = funnel?.conversion;
+  const funnelTimeToValue = funnel?.time_to_value;
+  const funnelSamples = funnel?.per_user_samples ?? [];
   const metrics = userDetail?.metrics;
   const topPaths = userDetail?.top_paths ?? [];
   const daily = userDetail?.daily ?? [];
@@ -340,6 +387,157 @@ export default function AdminAnalyticsModal({ isOpen, onClose }: AdminAnalyticsM
           </div>
         </header>
         <div className="admin-analytics-body">
+          <section className="admin-analytics-section">
+            <h3 className="section-heading">Funnel &amp; time-to-value</h3>
+            {funnelError && <p className="admin-analytics-error">Funnel metrics unavailable.</p>}
+            {isFunnelLoading && <p className="admin-analytics-loading">Loading funnel metrics...</p>}
+            {!isFunnelLoading && !funnelError && (
+              <>
+                <div className="admin-analytics-split">
+                  <div className="admin-analytics-panel">
+                    <h4 className="admin-analytics-subtitle">Activation + value funnel</h4>
+                    <dl className="metrics-grid">
+                      <div>
+                        <dt>Unique users</dt>
+                        <dd className="numeric-value">{formatNumber(funnelTotals?.unique_users)}</dd>
+                      </div>
+                      <div>
+                        <dt>Parcel selected</dt>
+                        <dd className="numeric-value">
+                          {formatNumber(funnelTotals?.parcel_selected_users)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Estimate started</dt>
+                        <dd className="numeric-value">
+                          {formatNumber(funnelTotals?.estimate_started_users)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Estimate completed</dt>
+                        <dd className="numeric-value">
+                          {formatNumber(funnelTotals?.estimate_completed_users)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>PDF opened</dt>
+                        <dd className="numeric-value">{formatNumber(funnelTotals?.pdf_opened_users)}</dd>
+                      </div>
+                      <div>
+                        <dt>Feedback vote</dt>
+                        <dd className="numeric-value">{formatNumber(funnelTotals?.feedback_users)}</dd>
+                      </div>
+                    </dl>
+                    <div className="table-wrapper">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>event</th>
+                            <th className="numeric-cell">events</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td>parcel_selected</td>
+                            <td className="numeric-cell">{formatNumber(funnelEvents?.parcel_selected)}</td>
+                          </tr>
+                          <tr>
+                            <td>estimate_started</td>
+                            <td className="numeric-cell">{formatNumber(funnelEvents?.estimate_started)}</td>
+                          </tr>
+                          <tr>
+                            <td>estimate_completed</td>
+                            <td className="numeric-cell">{formatNumber(funnelEvents?.estimate_completed)}</td>
+                          </tr>
+                          <tr>
+                            <td>pdf_opened</td>
+                            <td className="numeric-cell">{formatNumber(funnelEvents?.pdf_opened)}</td>
+                          </tr>
+                          <tr>
+                            <td>feedback_votes</td>
+                            <td className="numeric-cell">{formatNumber(funnelEvents?.feedback_votes)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <dl className="metrics-grid">
+                      <div>
+                        <dt>Parcel → started</dt>
+                        <dd className="numeric-value">
+                          {formatPercent(funnelConversion?.parcel_to_estimate_started)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Started → completed</dt>
+                        <dd className="numeric-value">
+                          {formatPercent(funnelConversion?.estimate_started_to_completed)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Completed → PDF</dt>
+                        <dd className="numeric-value">{formatPercent(funnelConversion?.completed_to_pdf)}</dd>
+                      </div>
+                      <div>
+                        <dt>PDF → feedback</dt>
+                        <dd className="numeric-value">{formatPercent(funnelConversion?.pdf_to_feedback)}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                  <div className="admin-analytics-panel">
+                    <h4 className="admin-analytics-subtitle">Time-to-value</h4>
+                    <dl className="metrics-grid">
+                      <div>
+                        <dt>Median parcel → estimate</dt>
+                        <dd className="numeric-value">
+                          {formatMinutes(funnelTimeToValue?.median_minutes_parcel_to_first_estimate)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>P80 parcel → estimate</dt>
+                        <dd className="numeric-value">
+                          {formatMinutes(funnelTimeToValue?.p80_minutes_parcel_to_first_estimate)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>Median estimate → PDF</dt>
+                        <dd className="numeric-value">
+                          {formatMinutes(funnelTimeToValue?.median_minutes_estimate_to_pdf)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>P80 estimate → PDF</dt>
+                        <dd className="numeric-value">
+                          {formatMinutes(funnelTimeToValue?.p80_minutes_estimate_to_pdf)}
+                        </dd>
+                      </div>
+                    </dl>
+                    {funnelSamples.length > 0 && (
+                      <div className="table-wrapper">
+                        <table className="data-table">
+                          <thead>
+                            <tr>
+                              <th>user_id</th>
+                              <th className="numeric-cell">parcel → estimate</th>
+                              <th className="numeric-cell">estimate → PDF</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {funnelSamples.map((row) => (
+                              <tr key={row.user_id}>
+                                <td>{row.user_id}</td>
+                                <td className="numeric-cell">{formatMinutes(row.parcel_to_estimate_min)}</td>
+                                <td className="numeric-cell">{formatMinutes(row.estimate_to_pdf_min)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </section>
           <section className="admin-analytics-section">
             <h3 className="section-heading">Feedback inbox</h3>
             {feedbackInboxError && <p className="admin-analytics-error">Feedback inbox unavailable.</p>}

@@ -32,7 +32,21 @@ def _error_rate(errors: int, total: int) -> float:
     return errors / total
 
 
+def _conversion_rate(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return numerator / denominator
+
+
 def _percentile(values: list[int], pct: float) -> float:
+    if not values:
+        return 0.0
+    values_sorted = sorted(values)
+    index = max(0, math.ceil((pct / 100) * len(values_sorted)) - 1)
+    return float(values_sorted[index])
+
+
+def _percentile_float(values: list[float], pct: float) -> float:
     if not values:
         return 0.0
     values_sorted = sorted(values)
@@ -946,4 +960,191 @@ def usage_feedback_inbox(
         "by_landuse_method": _format_breakdown(breakdowns["by_landuse_method"], "landuse_method"),
         "by_provider": _format_breakdown(breakdowns["by_provider"], "provider"),
         "total_responses": total,
+    }
+
+
+@router.get("/funnel")
+def usage_funnel(
+    since: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    since_dt = _parse_since(since)
+    filters = [UsageEvent.is_admin.is_(False)]
+    if since_dt:
+        filters.append(UsageEvent.ts >= since_dt)
+
+    unique_users = (
+        db.query(func.count(func.distinct(UsageEvent.user_id)))
+        .filter(*filters, UsageEvent.user_id.isnot(None))
+        .scalar()
+        or 0
+    )
+
+    parcel_filter = UsageEvent.event_name == "ui_parcel_selected"
+    estimate_started_filter = UsageEvent.event_name == "ui_estimate_started"
+    estimate_completed_filter = UsageEvent.event_name.in_(
+        ["ui_estimate_completed", "estimate_result"]
+    )
+    pdf_opened_filter = UsageEvent.event_name.in_(["ui_pdf_opened", "pdf_export"])
+    feedback_filter = UsageEvent.event_name == "feedback_vote"
+
+    def _distinct_user_count(event_filter) -> int:
+        return (
+            db.query(func.count(func.distinct(UsageEvent.user_id)))
+            .filter(*filters, UsageEvent.user_id.isnot(None), event_filter)
+            .scalar()
+            or 0
+        )
+
+    parcel_selected_users = _distinct_user_count(parcel_filter)
+    estimate_started_users = _distinct_user_count(estimate_started_filter)
+    estimate_completed_users = _distinct_user_count(estimate_completed_filter)
+    pdf_opened_users = _distinct_user_count(pdf_opened_filter)
+    feedback_users = _distinct_user_count(feedback_filter)
+
+    parcel_selected_events = (
+        db.query(func.count())
+        .select_from(UsageEvent)
+        .filter(*filters, parcel_filter)
+        .scalar()
+        or 0
+    )
+    estimate_started_events = (
+        db.query(func.count())
+        .select_from(UsageEvent)
+        .filter(*filters, estimate_started_filter)
+        .scalar()
+        or 0
+    )
+    estimate_completed_events = (
+        db.query(func.count())
+        .select_from(UsageEvent)
+        .filter(*filters, estimate_completed_filter)
+        .scalar()
+        or 0
+    )
+    pdf_opened_events = (
+        db.query(func.count())
+        .select_from(UsageEvent)
+        .filter(*filters, pdf_opened_filter)
+        .scalar()
+        or 0
+    )
+    feedback_events = (
+        db.query(func.count())
+        .select_from(UsageEvent)
+        .filter(*filters, feedback_filter)
+        .scalar()
+        or 0
+    )
+
+    time_event_names = [
+        "ui_parcel_selected",
+        "ui_estimate_completed",
+        "estimate_result",
+        "ui_pdf_opened",
+        "pdf_export",
+    ]
+    time_rows = (
+        db.query(
+            UsageEvent.user_id.label("user_id"),
+            func.min(
+                case((UsageEvent.event_name == "ui_parcel_selected", UsageEvent.ts))
+            ).label("first_parcel_ts"),
+            func.min(
+                case((UsageEvent.event_name.in_(["ui_estimate_completed", "estimate_result"]), UsageEvent.ts))
+            ).label("first_estimate_ts"),
+            func.min(
+                case((UsageEvent.event_name.in_(["ui_pdf_opened", "pdf_export"]), UsageEvent.ts))
+            ).label("first_pdf_ts"),
+            func.max(UsageEvent.ts).label("last_seen"),
+        )
+        .filter(
+            *filters,
+            UsageEvent.user_id.isnot(None),
+            UsageEvent.event_name.in_(time_event_names),
+        )
+        .group_by(UsageEvent.user_id)
+        .all()
+    )
+
+    parcel_to_estimate_values: list[float] = []
+    estimate_to_pdf_values: list[float] = []
+    samples: list[dict[str, float | str | None]] = []
+    for row in time_rows:
+        parcel_to_estimate = None
+        estimate_to_pdf = None
+        if row.first_parcel_ts and row.first_estimate_ts:
+            delta = (row.first_estimate_ts - row.first_parcel_ts).total_seconds() / 60
+            parcel_to_estimate = float(delta)
+            parcel_to_estimate_values.append(parcel_to_estimate)
+        if row.first_estimate_ts and row.first_pdf_ts:
+            delta = (row.first_pdf_ts - row.first_estimate_ts).total_seconds() / 60
+            estimate_to_pdf = float(delta)
+            estimate_to_pdf_values.append(estimate_to_pdf)
+        if parcel_to_estimate is not None or estimate_to_pdf is not None:
+            samples.append(
+                {
+                    "user_id": row.user_id,
+                    "parcel_to_estimate_min": parcel_to_estimate,
+                    "estimate_to_pdf_min": estimate_to_pdf,
+                    "last_seen": row.last_seen,
+                }
+            )
+
+    samples.sort(
+        key=lambda item: item.get("last_seen") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    per_user_samples = [
+        {
+            "user_id": item["user_id"],
+            "parcel_to_estimate_min": item["parcel_to_estimate_min"],
+            "estimate_to_pdf_min": item["estimate_to_pdf_min"],
+        }
+        for item in samples[:10]
+    ]
+
+    return {
+        "since": since,
+        "totals": {
+            "unique_users": unique_users,
+            "parcel_selected_users": parcel_selected_users,
+            "estimate_started_users": estimate_started_users,
+            "estimate_completed_users": estimate_completed_users,
+            "pdf_opened_users": pdf_opened_users,
+            "feedback_users": feedback_users,
+            "events": {
+                "parcel_selected": parcel_selected_events,
+                "estimate_started": estimate_started_events,
+                "estimate_completed": estimate_completed_events,
+                "pdf_opened": pdf_opened_events,
+                "feedback_votes": feedback_events,
+            },
+        },
+        "conversion": {
+            "parcel_to_estimate_started": _conversion_rate(
+                estimate_started_users, parcel_selected_users
+            ),
+            "estimate_started_to_completed": _conversion_rate(
+                estimate_completed_users, estimate_started_users
+            ),
+            "completed_to_pdf": _conversion_rate(pdf_opened_users, estimate_completed_users),
+            "pdf_to_feedback": _conversion_rate(feedback_users, pdf_opened_users),
+        },
+        "time_to_value": {
+            "median_minutes_parcel_to_first_estimate": _percentile_float(
+                parcel_to_estimate_values, 50
+            ),
+            "p80_minutes_parcel_to_first_estimate": _percentile_float(
+                parcel_to_estimate_values, 80
+            ),
+            "median_minutes_estimate_to_pdf": _percentile_float(
+                estimate_to_pdf_values, 50
+            ),
+            "p80_minutes_estimate_to_pdf": _percentile_float(
+                estimate_to_pdf_values, 80
+            ),
+        },
+        "per_user_samples": per_user_samples,
     }
