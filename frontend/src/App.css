@@ -881,6 +881,68 @@
   background: rgba(213, 177, 106, 0.14);
 }
 
+.micro-feedback-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.micro-feedback-card {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 1.5rem;
+  border-radius: 16px;
+  width: min(420px, 92vw);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.45);
+  text-align: center;
+}
+
+.micro-feedback-actions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin: 1rem 0 0.5rem;
+}
+
+.micro-feedback-thumb {
+  font-size: 2rem;
+  background: rgba(148, 163, 184, 0.2);
+  border: none;
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+.micro-feedback-reasons {
+  margin-top: 1rem;
+  text-align: left;
+}
+
+.micro-feedback-reasons-grid {
+  display: grid;
+  gap: 8px;
+  margin: 0.75rem 0 1rem;
+}
+
+.micro-feedback-reason {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.micro-feedback-dismiss {
+  margin-top: 1rem;
+  background: transparent;
+  color: #cbd5f5;
+  border: none;
+  cursor: pointer;
+}
+
 @media (max-width: 960px) {
   .admin-analytics-split {
     grid-template-columns: 1fr;

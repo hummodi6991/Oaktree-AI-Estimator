@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
 
-import { downloadMemoPdf, landPrice, makeEstimate } from "../api";
+import { downloadMemoPdf, landPrice, makeEstimate, trackEvent } from "../api";
 import {
   cloneTemplate,
   ExcelInputs,
@@ -13,6 +13,7 @@ import ParkingSummary from "./ParkingSummary";
 import type { EstimateNotes, EstimateTotals } from "../lib/types";
 import { formatAreaM2, formatCurrencySAR, formatNumber, formatPercent } from "../i18n/format";
 import { scaleAboveGroundAreaRatio } from "../utils/areaRatio";
+import MicroFeedbackPrompt from "./MicroFeedbackPrompt";
 
 const PROVIDERS = [
   {
@@ -164,6 +165,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const effectiveLandUse: LandUseCode = overrideLandUse ?? normalizedParcelLandUse ?? "s";
   const parcelIdentityRef = useRef<string | null>(null);
   const [estimateId, setEstimateId] = useState<string | null>(null);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  const [feedbackContext, setFeedbackContext] = useState<"estimate" | "pdf">("estimate");
 
   // Excel inputs state (drives payload). Seed from template.
   const [inputs, setInputs] = useState<ExcelInputs>(() => cloneTemplate(templateForLandUse(initialLandUse)));
@@ -190,6 +193,27 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       setEstimateId(null);
     }
   }, [parcel]);
+
+  const getFeedbackKey = (id: string) => `feedback_given_${id}`;
+  const hasFeedbackKey = (id: string) => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(getFeedbackKey(id)) === "true";
+  };
+  const markFeedbackKey = (id: string) => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(getFeedbackKey(id), "true");
+  };
+  const maybeOpenFeedback = (context: "estimate" | "pdf", id?: string | null) => {
+    if (!id || hasFeedbackKey(id)) return;
+    setFeedbackContext(context);
+    setIsFeedbackOpen(true);
+  };
+  const handleFeedbackClose = () => {
+    if (estimateId) {
+      markFeedbackKey(estimateId);
+    }
+    setIsFeedbackOpen(false);
+  };
 
   useEffect(() => {
     setOverrideLandUse(normalizedPropLandUse);
@@ -379,11 +403,26 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         totals: result?.totals,
         notes: result?.notes,
       });
-      setEstimateId(result?.id ?? null);
+      const nextEstimateId = result?.id ?? null;
+      setEstimateId(nextEstimateId);
+      void trackEvent("ui_estimate_completed", {
+        estimateId: nextEstimateId ?? undefined,
+        meta: {
+          roi: notes.excel_roi ?? result?.totals?.excel_roi ?? null,
+          far_effective: excelBreakdown.far_above_ground ?? null,
+          land_price_sar_m2: excelInputs.land_price_sar_m2 ?? null,
+        },
+      });
+      maybeOpenFeedback("estimate", nextEstimateId);
       // Preserve override selection on calculate; reset only when parcel identity changes.
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
+      const statusMatch = typeof message === "string" ? message.match(/^(\d{3})\s/) : null;
+      const status = statusMatch ? Number(statusMatch[1]) : undefined;
+      void trackEvent("ui_estimate_failed", {
+        meta: { message, status },
+      });
     }
   }
 
@@ -394,9 +433,24 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       const blobUrl = URL.createObjectURL(blob);
       window.open(blobUrl, "_blank", "noopener,noreferrer");
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+      void trackEvent("ui_pdf_opened", {
+        estimateId,
+      });
+      maybeOpenFeedback("pdf", estimateId);
     } catch (err) {
       setError("Unable to export PDF. Please try again.");
     }
+  };
+
+  const handleEstimateClick = () => {
+    void trackEvent("ui_estimate_started", {
+      meta: {
+        parcel_id: parcel?.parcel_id ?? null,
+        landuse_code: parcel?.landuse_code ?? null,
+        provider,
+      },
+    });
+    void runEstimate();
   };
 
   const copyEstimateId = async () => {
@@ -718,6 +772,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     setIsEditingFar(false);
     setFarEditError(null);
     setFarDraft(String(targetFar));
+    void trackEvent("ui_override_far", {
+      meta: {
+        from: farAboveGround ?? null,
+        to: targetFar,
+      },
+    });
     runEstimate(nextInputs);
   };
 
@@ -776,7 +836,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span>{t("excel.providerLabel")}</span>
-          <select value={provider} onChange={(event) => setProvider(event.target.value as any)}>
+          <select
+            value={provider}
+            onChange={(event) => {
+              const nextProvider = event.target.value as any;
+              setProvider(nextProvider);
+              void trackEvent("ui_change_provider", { meta: { provider: nextProvider } });
+            }}
+          >
             {PROVIDERS.map((item) => (
               <option key={item.value} value={item.value}>
                 {t(item.labelKey)}
@@ -823,12 +890,22 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           <input
             type="number"
             value={inputs.land_price_sar_m2 ?? ""}
-            onChange={(event) =>
+            onChange={(event) => {
+              const prevValue = inputsRef.current?.land_price_sar_m2 ?? null;
+              const nextValue = event.target.value === "" ? 0 : Number(event.target.value);
               setInputs((current) => ({
                 ...current,
-                land_price_sar_m2: event.target.value === "" ? 0 : Number(event.target.value),
-              }))
-            }
+                land_price_sar_m2: nextValue,
+              }));
+              if (prevValue !== nextValue) {
+                void trackEvent("ui_override_land_price", {
+                  meta: {
+                    from: prevValue,
+                    to: nextValue,
+                  },
+                });
+              }
+            }}
             style={{ padding: "4px 6px", borderRadius: 4, border: "1px solid rgba(255,255,255,0.2)" }}
           />
           <span style={{ fontSize: "0.8rem", color: "#cbd5f5" }}>
@@ -870,7 +947,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12, alignItems: "center" }}>
-        <button onClick={() => runEstimate()}>{t("excel.calculateEstimate")}</button>
+        <button onClick={handleEstimateClick}>{t("excel.calculateEstimate")}</button>
         {estimateId && (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <button type="button" onClick={handleExportPdf}>
@@ -1355,6 +1432,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           )}
         </div>
       )}
+      <MicroFeedbackPrompt
+        isOpen={isFeedbackOpen}
+        context={feedbackContext}
+        estimateId={estimateId}
+        onClose={handleFeedbackClose}
+      />
     </div>
   );
 }

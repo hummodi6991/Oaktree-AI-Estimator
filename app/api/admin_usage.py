@@ -40,6 +40,70 @@ def _percentile(values: list[int], pct: float) -> float:
     return float(values_sorted[index])
 
 
+def _feedback_rollups(
+    db: Session, filters: list
+) -> tuple[dict[str, int | float], dict[str, int], dict[str, dict[str, int]]]:
+    rows = (
+        db.query(UsageEvent.user_id, UsageEvent.meta)
+        .filter(*filters, UsageEvent.event_name == "feedback_vote")
+        .all()
+    )
+    count_up = 0
+    count_down = 0
+    down_reasons: dict[str, int] = {}
+    by_user: dict[str, dict[str, int]] = {}
+    by_landuse_method: dict[str, dict[str, int]] = {}
+    by_provider: dict[str, dict[str, int]] = {}
+
+    for row in rows:
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        vote = meta.get("vote")
+        if vote == "up":
+            count_up += 1
+        elif vote == "down":
+            count_down += 1
+            reasons = meta.get("reasons") if isinstance(meta, dict) else None
+            if isinstance(reasons, list):
+                for reason in reasons:
+                    if not isinstance(reason, str) or not reason:
+                        continue
+                    down_reasons[reason] = down_reasons.get(reason, 0) + 1
+
+        user_id = row.user_id
+        if user_id:
+            user_entry = by_user.setdefault(user_id, {"count_up": 0, "count_down": 0})
+            if vote == "up":
+                user_entry["count_up"] += 1
+            elif vote == "down":
+                user_entry["count_down"] += 1
+
+        landuse_method = meta.get("landuse_method") if isinstance(meta, dict) else None
+        if isinstance(landuse_method, str) and landuse_method:
+            landuse_entry = by_landuse_method.setdefault(landuse_method, {"count_up": 0, "count_down": 0})
+            if vote == "up":
+                landuse_entry["count_up"] += 1
+            elif vote == "down":
+                landuse_entry["count_down"] += 1
+
+        provider = meta.get("provider") if isinstance(meta, dict) else None
+        if isinstance(provider, str) and provider:
+            provider_entry = by_provider.setdefault(provider, {"count_up": 0, "count_down": 0})
+            if vote == "up":
+                provider_entry["count_up"] += 1
+            elif vote == "down":
+                provider_entry["count_down"] += 1
+
+    total = count_up + count_down
+    down_rate = count_down / total if total else 0.0
+    summary = {"count_up": count_up, "count_down": count_down, "down_rate": down_rate}
+    breakdowns = {
+        "by_user": by_user,
+        "by_landuse_method": by_landuse_method,
+        "by_provider": by_provider,
+    }
+    return summary, down_reasons, breakdowns
+
+
 @router.get("/summary")
 def usage_summary(
     since: str | None = None,
@@ -528,6 +592,9 @@ def usage_feedback(
     if since_dt:
         filters.append(UsageEvent.ts >= since_dt)
 
+    feedback_summary, _, _ = _feedback_rollups(db, filters)
+    feedback_total = feedback_summary["count_up"] + feedback_summary["count_down"]
+
     estimate_event_rows = (
         db.query(UsageEvent.user_id, UsageEvent.meta)
         .filter(*filters, UsageEvent.event_name == "estimate_result")
@@ -721,6 +788,15 @@ def usage_feedback(
                 "override_users": len(land_price_override_users),
                 "override_rate": land_price_override_rate,
                 "avg_delta_pct": avg_land_price_delta,
+                **(
+                    {
+                        "feedback_up_count": feedback_summary["count_up"],
+                        "feedback_down_count": feedback_summary["count_down"],
+                        "feedback_down_rate": feedback_summary["down_rate"],
+                    }
+                    if feedback_total
+                    else {}
+                ),
             },
             "recommended_actions": [
                 "Review blended_v1 calibration in districts with frequent overrides",
@@ -736,6 +812,15 @@ def usage_feedback(
                 "users_with_estimates": user_count,
                 "override_users": len(far_override_users),
                 "override_rate": far_override_rate,
+                **(
+                    {
+                        "feedback_up_count": feedback_summary["count_up"],
+                        "feedback_down_count": feedback_summary["count_down"],
+                        "feedback_down_rate": feedback_summary["down_rate"],
+                    }
+                    if feedback_total
+                    else {}
+                ),
             },
             "recommended_actions": [
                 "Audit FAR overrides by zoning to tune FAR defaults",
@@ -751,6 +836,15 @@ def usage_feedback(
                 "estimate_count": estimate_count,
                 "pdf_exports": pdf_exports,
                 "conversion_rate": conversion_rate,
+                **(
+                    {
+                        "feedback_up_count": feedback_summary["count_up"],
+                        "feedback_down_count": feedback_summary["count_down"],
+                        "feedback_down_rate": feedback_summary["down_rate"],
+                    }
+                    if feedback_total
+                    else {}
+                ),
             },
             "recommended_actions": [
                 "Add in-product prompts to export the memo after estimating",
@@ -766,6 +860,15 @@ def usage_feedback(
                 "repeated_error_users": repeated_error_users,
                 "estimate_failures": estimate_failure_count,
                 "top_5xx_path_count": len(top_5xx_paths),
+                **(
+                    {
+                        "feedback_up_count": feedback_summary["count_up"],
+                        "feedback_down_count": feedback_summary["count_down"],
+                        "feedback_down_rate": feedback_summary["down_rate"],
+                    }
+                    if feedback_total
+                    else {}
+                ),
             },
             "recommended_actions": [
                 "Prioritize fixes on endpoints with repeated 5xx spikes",
@@ -781,6 +884,15 @@ def usage_feedback(
                 "total_estimate_results": total_estimate_results,
                 "suhail_overlay_count": suhail_overlay_count,
                 "suhail_overlay_pct": suhail_overlay_rate,
+                **(
+                    {
+                        "feedback_up_count": feedback_summary["count_up"],
+                        "feedback_down_count": feedback_summary["count_down"],
+                        "feedback_down_rate": feedback_summary["down_rate"],
+                    }
+                    if feedback_total
+                    else {}
+                ),
             },
             "recommended_actions": [
                 "Audit ArcGIS label signal; reduce Suhail fallback when ArcGIS label present",
@@ -790,3 +902,48 @@ def usage_feedback(
     ]
 
     return {"since": since, "items": items}
+
+
+@router.get("/feedback_inbox")
+def usage_feedback_inbox(
+    since: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    since_dt = _parse_since(since)
+    filters = [UsageEvent.is_admin.is_(False)]
+    if since_dt:
+        filters.append(UsageEvent.ts >= since_dt)
+
+    summary, down_reasons, breakdowns = _feedback_rollups(db, filters)
+    total = summary["count_up"] + summary["count_down"]
+    top_reasons = sorted(down_reasons.items(), key=lambda item: item[1], reverse=True)[:10]
+
+    def _format_breakdown(
+        source: dict[str, dict[str, int]],
+        key_name: str,
+    ) -> list[dict[str, float | int | str]]:
+        items: list[dict[str, float | int | str]] = []
+        for key, counts in source.items():
+            count_up = counts.get("count_up", 0)
+            count_down = counts.get("count_down", 0)
+            total_count = count_up + count_down
+            items.append(
+                {
+                    key_name: key,
+                    "count_up": count_up,
+                    "count_down": count_down,
+                    "down_rate": count_down / total_count if total_count else 0.0,
+                }
+            )
+        items.sort(key=lambda item: item["count_down"], reverse=True)
+        return items
+
+    return {
+        "since": since,
+        "totals": summary,
+        "top_reasons": [{"reason": reason, "count": count} for reason, count in top_reasons],
+        "by_user": _format_breakdown(breakdowns["by_user"], "user_id"),
+        "by_landuse_method": _format_breakdown(breakdowns["by_landuse_method"], "landuse_method"),
+        "by_provider": _format_breakdown(breakdowns["by_provider"], "provider"),
+        "total_responses": total,
+    }
