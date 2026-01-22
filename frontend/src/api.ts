@@ -174,6 +174,20 @@ export type AdminUsageInsights = {
   support?: Record<string, unknown> | null;
 };
 
+export type FeedbackItem = {
+  id: string;
+  severity: "high" | "medium" | "low";
+  title: string;
+  summary: string;
+  evidence?: Record<string, number | string | null>;
+  recommended_actions?: string[];
+};
+
+export type AdminUsageFeedbackResponse = {
+  since?: string | null;
+  items?: FeedbackItem[];
+};
+
 export async function identify(lng: number, lat: number) {
   const res = await fetchWithAuth(withBase("/v1/geo/identify"), {
     method: "POST",
@@ -251,6 +265,14 @@ export async function getAdminUsageInsights(since?: string) {
   const query = params.toString();
   const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/insights${query ? `?${query}` : ""}`));
   return readJson<AdminUsageInsights>(res);
+}
+
+export async function getAdminUsageFeedback(since?: string) {
+  const params = new URLSearchParams();
+  if (since) params.set("since", since);
+  const query = params.toString();
+  const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/feedback${query ? `?${query}` : ""}`));
+  return readJson<AdminUsageFeedbackResponse>(res);
 }
 
 export async function landPrice(

@@ -516,3 +516,277 @@ def usage_insights(
             },
         },
     }
+
+
+@router.get("/feedback")
+def usage_feedback(
+    since: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    since_dt = _parse_since(since)
+    filters = [UsageEvent.is_admin.is_(False)]
+    if since_dt:
+        filters.append(UsageEvent.ts >= since_dt)
+
+    estimate_event_rows = (
+        db.query(UsageEvent.user_id, UsageEvent.meta)
+        .filter(*filters, UsageEvent.event_name == "estimate_result")
+        .all()
+    )
+    estimate_users: set[str] = set()
+    land_price_override_users: set[str] = set()
+    far_override_users: set[str] = set()
+    land_price_deltas: list[float] = []
+    suhail_overlay_count = 0
+    for row in estimate_event_rows:
+        user_id = row.user_id
+        if user_id:
+            estimate_users.add(user_id)
+        meta = row.meta if isinstance(row.meta, dict) else {}
+        if user_id and meta.get("land_price_overridden") is True:
+            land_price_override_users.add(user_id)
+        if user_id and meta.get("far_overridden") is True:
+            far_override_users.add(user_id)
+        if meta.get("land_price_overridden") is True and meta.get(
+            "land_price_delta_pct"
+        ) is not None:
+            try:
+                land_price_deltas.append(float(meta["land_price_delta_pct"]))
+            except Exception:
+                pass
+        if meta.get("landuse_method") == "suhail_overlay":
+            suhail_overlay_count += 1
+
+    user_count = len(estimate_users)
+    land_price_override_rate = (
+        len(land_price_override_users) / user_count if user_count else 0.0
+    )
+    far_override_rate = len(far_override_users) / user_count if user_count else 0.0
+    avg_land_price_delta = (
+        sum(land_price_deltas) / len(land_price_deltas) if land_price_deltas else 0.0
+    )
+    total_estimate_results = len(estimate_event_rows)
+    suhail_overlay_rate = (
+        suhail_overlay_count / total_estimate_results if total_estimate_results else 0.0
+    )
+
+    estimate_count = (
+        db.query(func.count())
+        .select_from(UsageEvent)
+        .filter(
+            *filters,
+            or_(
+                UsageEvent.event_name == "estimate_create",
+                (UsageEvent.method == "POST") & (UsageEvent.path == "/v1/estimates"),
+            ),
+        )
+        .scalar()
+        or 0
+    )
+    pdf_exports = (
+        db.query(func.count())
+        .select_from(UsageEvent)
+        .filter(
+            *filters,
+            or_(
+                UsageEvent.event_name == "pdf_export",
+                (UsageEvent.path.like("/v1/estimates/%/memo.pdf"))
+                & (UsageEvent.status_code == 200),
+            ),
+        )
+        .scalar()
+        or 0
+    )
+    conversion_rate = pdf_exports / estimate_count if estimate_count else 0.0
+
+    error_rows = (
+        db.query(
+            UsageEvent.user_id.label("user_id"),
+            func.sum(
+                case(
+                    (
+                        (UsageEvent.status_code >= 500)
+                        & (UsageEvent.status_code < 600),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("errors"),
+        )
+        .filter(*filters, UsageEvent.user_id.isnot(None))
+        .group_by(UsageEvent.user_id)
+        .all()
+    )
+    repeated_error_users = sum(1 for row in error_rows if int(row.errors or 0) >= 3)
+
+    top_5xx_paths = (
+        db.query(UsageEvent.path, func.count().label("count"))
+        .filter(
+            *filters,
+            UsageEvent.status_code >= 500,
+            UsageEvent.status_code < 600,
+        )
+        .group_by(UsageEvent.path)
+        .order_by(func.count().desc())
+        .limit(5)
+        .all()
+    )
+
+    estimate_failure_count = (
+        db.query(func.count())
+        .select_from(UsageEvent)
+        .filter(
+            *filters,
+            or_(
+                UsageEvent.event_name == "estimate_create",
+                (UsageEvent.method == "POST") & (UsageEvent.path == "/v1/estimates"),
+            ),
+            UsageEvent.status_code >= 500,
+        )
+        .scalar()
+        or 0
+    )
+
+    if land_price_override_rate >= 0.50:
+        land_price_severity = "high"
+    elif land_price_override_rate >= 0.25:
+        land_price_severity = "medium"
+    else:
+        land_price_severity = "low"
+
+    if far_override_rate >= 0.40:
+        far_severity = "high"
+    elif far_override_rate >= 0.20:
+        far_severity = "medium"
+    else:
+        far_severity = "low"
+
+    if estimate_count >= 10 and conversion_rate < 0.20:
+        conversion_severity = "high"
+    elif estimate_count >= 10 and conversion_rate < 0.40:
+        conversion_severity = "medium"
+    else:
+        conversion_severity = "low"
+
+    friction_severity = (
+        "high"
+        if repeated_error_users >= 2 or estimate_failure_count >= 3
+        else "low"
+    )
+
+    suhail_severity = "high" if suhail_overlay_rate >= 0.30 else "low"
+
+    if user_count:
+        land_price_summary = (
+            f"{land_price_override_rate:.0%} of users override land price; "
+            f"avg delta {avg_land_price_delta:+.1%}."
+        )
+        far_summary = f"{far_override_rate:.0%} of users override FAR."
+    else:
+        land_price_summary = "No estimate results to evaluate land price overrides."
+        far_summary = "No estimate results to evaluate FAR overrides."
+
+    if estimate_count:
+        conversion_summary = (
+            f"{pdf_exports} of {estimate_count} estimates exported to PDF "
+            f"({conversion_rate:.1%})."
+        )
+    else:
+        conversion_summary = "No estimate creation events in the selected window."
+
+    if repeated_error_users or estimate_failure_count:
+        friction_summary = (
+            f"{repeated_error_users} users hit 3+ 5xx responses; "
+            f"{estimate_failure_count} estimate requests failed."
+        )
+    else:
+        friction_summary = "No repeated 5xx spikes detected in this window."
+
+    if total_estimate_results:
+        suhail_summary = (
+            f"Suhail overlay used in {suhail_overlay_count} of "
+            f"{total_estimate_results} estimate results ({suhail_overlay_rate:.1%})."
+        )
+    else:
+        suhail_summary = "No estimate results to evaluate landuse fallback."
+
+    items = [
+        {
+            "id": "land_price_trust_gap",
+            "severity": land_price_severity,
+            "title": "Land price trust gap",
+            "summary": land_price_summary,
+            "evidence": {
+                "users_with_estimates": user_count,
+                "override_users": len(land_price_override_users),
+                "override_rate": land_price_override_rate,
+                "avg_delta_pct": avg_land_price_delta,
+            },
+            "recommended_actions": [
+                "Review blended_v1 calibration in districts with frequent overrides",
+                "Expose price confidence band in UI to reduce manual overrides",
+            ],
+        },
+        {
+            "id": "far_trust_gap",
+            "severity": far_severity,
+            "title": "FAR trust/fit gap",
+            "summary": far_summary,
+            "evidence": {
+                "users_with_estimates": user_count,
+                "override_users": len(far_override_users),
+                "override_rate": far_override_rate,
+            },
+            "recommended_actions": [
+                "Audit FAR overrides by zoning to tune FAR defaults",
+                "Show source of FAR assumption to reinforce trust",
+            ],
+        },
+        {
+            "id": "value_conversion_gap",
+            "severity": conversion_severity,
+            "title": "Value conversion gap",
+            "summary": conversion_summary,
+            "evidence": {
+                "estimate_count": estimate_count,
+                "pdf_exports": pdf_exports,
+                "conversion_rate": conversion_rate,
+            },
+            "recommended_actions": [
+                "Add in-product prompts to export the memo after estimating",
+                "Surface memo preview value propositions in the estimate flow",
+            ],
+        },
+        {
+            "id": "friction_errors_retries",
+            "severity": friction_severity,
+            "title": "Friction: high errors and retries",
+            "summary": friction_summary,
+            "evidence": {
+                "repeated_error_users": repeated_error_users,
+                "estimate_failures": estimate_failure_count,
+                "top_5xx_path_count": len(top_5xx_paths),
+            },
+            "recommended_actions": [
+                "Prioritize fixes on endpoints with repeated 5xx spikes",
+                "Add retry-safe UX messaging for estimate failures",
+            ],
+        },
+        {
+            "id": "data_source_confusion_suhail",
+            "severity": suhail_severity,
+            "title": "Data source confusion: Suhail fallback rate",
+            "summary": suhail_summary,
+            "evidence": {
+                "total_estimate_results": total_estimate_results,
+                "suhail_overlay_count": suhail_overlay_count,
+                "suhail_overlay_pct": suhail_overlay_rate,
+            },
+            "recommended_actions": [
+                "Audit ArcGIS label signal; reduce Suhail fallback when ArcGIS label present",
+                "Log landuse_method transitions to confirm source selection",
+            ],
+        },
+    ]
+
+    return {"since": since, "items": items}

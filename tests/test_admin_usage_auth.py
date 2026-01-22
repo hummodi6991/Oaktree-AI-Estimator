@@ -58,6 +58,11 @@ def test_admin_usage_allows_admin_key(
     payload = insights.json()
     assert "highlights" in payload
 
+    feedback = client.get("/v1/admin/usage/feedback", headers={"X-API-Key": "ceo-key"})
+    assert feedback.status_code == 200
+    feedback_payload = feedback.json()
+    assert "items" in feedback_payload
+
 
 def test_admin_usage_rejects_tester_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -81,3 +86,6 @@ def test_admin_usage_rejects_tester_key(
 
     insights = client.get("/v1/admin/usage/insights", headers={"X-API-Key": "tester-key"})
     assert insights.status_code == 403
+
+    feedback = client.get("/v1/admin/usage/feedback", headers={"X-API-Key": "tester-key"})
+    assert feedback.status_code == 403
