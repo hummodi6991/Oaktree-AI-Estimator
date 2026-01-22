@@ -5,19 +5,33 @@ import { useTranslation } from "react-i18next";
 import Map from "./components/Map";
 import ExcelForm from "./components/ExcelForm";
 import AccessCodeModal from "./components/AccessCodeModal";
+import AdminAnalyticsModal from "./components/AdminAnalyticsModal";
 import "./i18n";
+import "./App.css";
 import "./index.css";
 import type { ParcelSummary } from "./api";
+import { getAdminUsageSummary } from "./api";
 import LanguageSwitcher from "./components/LanguageSwitcher";
 import { formatAreaM2 } from "./i18n/format";
 
 function App() {
   const [parcel, setParcel] = useState<ParcelSummary | null>(null);
-  const [hasApiKey, setHasApiKey] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return Boolean(window.localStorage.getItem("oaktree_api_key"));
+  const [apiKey, setApiKey] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem("oaktree_api_key") ?? "";
   });
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+  const hasApiKey = Boolean(apiKey);
   const { t } = useTranslation();
+
+  const extractStatus = (error: unknown): number | null => {
+    if (error instanceof Error) {
+      const match = error.message.match(/^(\d{3})\\s/);
+      if (match) return Number(match[1]);
+    }
+    return null;
+  };
 
   const formatLanduseMethod = (method?: string | null): string => {
     switch (method) {
@@ -52,7 +66,7 @@ function App() {
   useEffect(() => {
     function handleStorage(event: StorageEvent) {
       if (event.key === "oaktree_api_key") {
-        setHasApiKey(Boolean(event.newValue));
+        setApiKey(event.newValue ?? "");
         if (!event.newValue) {
           setParcel(null);
         }
@@ -62,25 +76,74 @@ function App() {
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
+  useEffect(() => {
+    if (!apiKey) {
+      setIsAdmin(false);
+      return;
+    }
+    let isActive = true;
+    setIsAdmin(false);
+    const checkAdmin = async () => {
+      try {
+        await getAdminUsageSummary();
+        if (!isActive) return;
+        setIsAdmin(true);
+      } catch (error) {
+        if (!isActive) return;
+        const status = extractStatus(error);
+        if (status === 401 || status === 403) {
+          setIsAdmin(false);
+          return;
+        }
+        setIsAdmin(false);
+      }
+    };
+    void checkAdmin();
+    return () => {
+      isActive = false;
+    };
+  }, [apiKey]);
+
+  useEffect(() => {
+    setIsAdminModalOpen(false);
+  }, [apiKey]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setIsAdminModalOpen(false);
+    }
+  }, [isAdmin]);
+
   const handleAccessCodeSubmit = useCallback((code: string) => {
     window.localStorage.setItem("oaktree_api_key", code);
-    setHasApiKey(true);
+    setApiKey(code);
+    setIsAdmin(false);
+    setIsAdminModalOpen(false);
   }, []);
 
   const handleAccessCodeClear = useCallback(() => {
     window.localStorage.removeItem("oaktree_api_key");
-    setHasApiKey(false);
+    setApiKey("");
+    setIsAdmin(false);
+    setIsAdminModalOpen(false);
     setParcel(null);
   }, []);
 
   return (
     <>
       <header className="app-header">
-        {hasApiKey && (
-          <button type="button" className="tertiary-button access-code-control" onClick={handleAccessCodeClear}>
-            Change access code
-          </button>
-        )}
+        <div className="app-header__actions">
+          {hasApiKey && (
+            <button type="button" className="tertiary-button access-code-control" onClick={handleAccessCodeClear}>
+              Change access code
+            </button>
+          )}
+          {isAdmin && (
+            <button type="button" className="tertiary-button access-code-control" onClick={() => setIsAdminModalOpen(true)}>
+              Admin Analytics
+            </button>
+          )}
+        </div>
         <div className="app-header__spacer" />
         <LanguageSwitcher />
       </header>
@@ -125,6 +188,7 @@ function App() {
         ) : null}
       </div>
       <AccessCodeModal isOpen={!hasApiKey} onSubmit={handleAccessCodeSubmit} />
+      <AdminAnalyticsModal isOpen={isAdminModalOpen} onClose={() => setIsAdminModalOpen(false)} />
     </>
   );
 }

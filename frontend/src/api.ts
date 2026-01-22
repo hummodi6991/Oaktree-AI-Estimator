@@ -123,6 +123,45 @@ export type InferParcelResponse = {
   debug?: Record<string, unknown> | null;
 };
 
+export type AdminUsageSummary = {
+  since?: string | null;
+  totals?: {
+    active_users?: number;
+    requests?: number;
+    estimates?: number;
+    pdf_exports?: number;
+    error_rate?: number;
+  };
+};
+
+export type AdminUsageUser = {
+  user_id: string;
+  requests?: number;
+  estimates?: number;
+  pdf_exports?: number;
+  last_seen?: string | null;
+  error_rate?: number;
+};
+
+export type AdminUsageUserDetail = {
+  user_id: string;
+  since?: string | null;
+  metrics?: {
+    requests?: number;
+    estimates?: number;
+    pdf_exports?: number;
+    error_rate?: number;
+  };
+  top_paths?: Array<{ path: string; count?: number }>;
+  daily?: Array<{
+    date: string;
+    requests?: number;
+    estimates?: number;
+    pdf_exports?: number;
+    errors?: number;
+  }>;
+};
+
 export async function identify(lng: number, lat: number) {
   const res = await fetchWithAuth(withBase("/v1/geo/identify"), {
     method: "POST",
@@ -167,6 +206,31 @@ export async function inferParcel(params: {
   if (params.k != null) search.set("k", String(params.k));
   const res = await fetchWithAuth(withBase(`/v1/geo/infer-parcel?${search.toString()}`));
   return readJson<InferParcelResponse>(res);
+}
+
+export async function getAdminUsageSummary(since?: string) {
+  const params = new URLSearchParams();
+  if (since) params.set("since", since);
+  const query = params.toString();
+  const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/summary${query ? `?${query}` : ""}`));
+  return readJson<AdminUsageSummary>(res);
+}
+
+export async function getAdminUsageUsers(since?: string) {
+  const params = new URLSearchParams();
+  if (since) params.set("since", since);
+  const query = params.toString();
+  const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/users${query ? `?${query}` : ""}`));
+  return readJson<{ since?: string | null; items?: AdminUsageUser[] }>(res);
+}
+
+export async function getAdminUsageUser(userId: string, since?: string) {
+  const params = new URLSearchParams();
+  if (since) params.set("since", since);
+  const query = params.toString();
+  const encoded = encodeURIComponent(userId);
+  const res = await fetchWithAuth(buildApiUrl(`/v1/admin/usage/user/${encoded}${query ? `?${query}` : ""}`));
+  return readJson<AdminUsageUserDetail>(res);
 }
 
 export async function landPrice(
