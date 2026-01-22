@@ -167,6 +167,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [estimateId, setEstimateId] = useState<string | null>(null);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [feedbackContext, setFeedbackContext] = useState<"estimate" | "pdf">("estimate");
+  const feedbackSentinelRef = useRef<HTMLDivElement | null>(null);
+  const feedbackEligibleRef = useRef(false);
+  const [hasUserScrolled, setHasUserScrolled] = useState(false);
+  const [estimateCompletedAt, setEstimateCompletedAt] = useState<number | null>(null);
+  const [isFeedbackTimeReady, setIsFeedbackTimeReady] = useState(false);
+  const feedbackDismissCooldownMs = 24 * 60 * 60 * 1000;
 
   // Excel inputs state (drives payload). Seed from template.
   const [inputs, setInputs] = useState<ExcelInputs>(() => cloneTemplate(templateForLandUse(initialLandUse)));
@@ -195,20 +201,41 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   }, [parcel]);
 
   const getFeedbackKey = (id: string) => `feedback_given_${id}`;
+  const getFeedbackDismissedKey = (id: string) => `feedback_dismissed_${id}`;
   const hasFeedbackKey = (id: string) => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem(getFeedbackKey(id)) === "true";
+  };
+  const hasRecentFeedbackDismissal = (id: string) => {
+    if (typeof window === "undefined") return false;
+    const dismissedAt = Number(window.localStorage.getItem(getFeedbackDismissedKey(id)));
+    if (!Number.isFinite(dismissedAt)) return false;
+    return Date.now() - dismissedAt < feedbackDismissCooldownMs;
   };
   const markFeedbackKey = (id: string) => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(getFeedbackKey(id), "true");
   };
-  const maybeOpenFeedback = (context: "estimate" | "pdf", id?: string | null) => {
-    if (!id || hasFeedbackKey(id)) return;
+  const markFeedbackDismissed = (id: string) => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(getFeedbackDismissedKey(id), String(Date.now()));
+  };
+  const openFeedback = (context: "estimate" | "pdf", id?: string | null) => {
+    if (!id || hasFeedbackKey(id) || hasRecentFeedbackDismissal(id) || isFeedbackOpen) return;
     setFeedbackContext(context);
     setIsFeedbackOpen(true);
+    void trackEvent("ui_feedback_shown", {
+      estimateId: id ?? undefined,
+      meta: { context },
+    });
   };
-  const handleFeedbackClose = () => {
+  const handleFeedbackDismiss = () => {
+    if (estimateId) {
+      markFeedbackDismissed(estimateId);
+    }
+    setIsFeedbackOpen(false);
+  };
+  const handleFeedbackSubmit = () => {
     if (estimateId) {
       markFeedbackKey(estimateId);
     }
@@ -246,6 +273,84 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     const normalized = normalizeEffectivePct(inputs?.y1_income_effective_pct as number | undefined);
     setEffectiveIncomePctDraft(String(normalized));
   }, [inputs?.y1_income_effective_pct]);
+
+  useEffect(() => {
+    if (!estimateId) return;
+    feedbackEligibleRef.current = false;
+  }, [estimateId]);
+
+  useEffect(() => {
+    if (!estimateCompletedAt) return;
+    setIsFeedbackTimeReady(false);
+    const timeoutId = window.setTimeout(() => setIsFeedbackTimeReady(true), 8000);
+    return () => window.clearTimeout(timeoutId);
+  }, [estimateCompletedAt]);
+
+  useEffect(() => {
+    if (!excelResult) return;
+    const handleScroll = () => setHasUserScrolled(true);
+    const windowScrollOptions: AddEventListenerOptions = { passive: true, once: true };
+    const documentScrollOptions: AddEventListenerOptions = { passive: true, once: true, capture: true };
+    window.addEventListener("scroll", handleScroll, windowScrollOptions);
+    document.addEventListener("scroll", handleScroll, documentScrollOptions);
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      document.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [excelResult]);
+
+  useEffect(() => {
+    if (
+      !excelResult ||
+      !estimateId ||
+      isFeedbackOpen ||
+      hasFeedbackKey(estimateId) ||
+      hasRecentFeedbackDismissal(estimateId)
+    ) {
+      return;
+    }
+    const sentinel = feedbackSentinelRef.current;
+    if (!sentinel) return;
+    const canShowFeedback = hasUserScrolled || isFeedbackTimeReady;
+    let dwellTimeout: number | null = null;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        const isVisible = !!entry && entry.isIntersecting && entry.intersectionRatio >= 0.6;
+        if (isVisible && canShowFeedback) {
+          if (!feedbackEligibleRef.current) {
+            feedbackEligibleRef.current = true;
+            void trackEvent("ui_feedback_eligible", {
+              estimateId,
+              meta: { context: "estimate" },
+            });
+          }
+          if (dwellTimeout != null) return;
+          dwellTimeout = window.setTimeout(() => {
+            openFeedback("estimate", estimateId);
+            dwellTimeout = null;
+          }, 1000);
+          return;
+        }
+
+        if (dwellTimeout != null) {
+          window.clearTimeout(dwellTimeout);
+          dwellTimeout = null;
+        }
+      },
+      { threshold: [0, 0.6, 1] },
+    );
+
+    observer.observe(sentinel);
+
+    return () => {
+      if (dwellTimeout != null) {
+        window.clearTimeout(dwellTimeout);
+      }
+      observer.disconnect();
+    };
+  }, [excelResult, estimateId, hasUserScrolled, isFeedbackOpen, isFeedbackTimeReady]);
 
   const handleFitoutToggle = (checked: boolean) => {
     setIncludeFitout(checked);
@@ -405,6 +510,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       });
       const nextEstimateId = result?.id ?? null;
       setEstimateId(nextEstimateId);
+      setHasUserScrolled(false);
+      setEstimateCompletedAt(Date.now());
       void trackEvent("ui_estimate_completed", {
         estimateId: nextEstimateId ?? undefined,
         meta: {
@@ -413,7 +520,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           land_price_sar_m2: excelInputs.land_price_sar_m2 ?? null,
         },
       });
-      maybeOpenFeedback("estimate", nextEstimateId);
       // Preserve override selection on calculate; reset only when parcel identity changes.
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -436,7 +542,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       void trackEvent("ui_pdf_opened", {
         estimateId,
       });
-      maybeOpenFeedback("pdf", estimateId);
+      openFeedback("pdf", estimateId);
     } catch (err) {
       setError("Unable to export PDF. Please try again.");
     }
@@ -1430,13 +1536,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
               <p style={{ margin: 0, lineHeight: 1.4 }}>{summaryText}</p>
             </div>
           )}
+          <div ref={feedbackSentinelRef} style={{ height: 1 }} />
         </div>
       )}
       <MicroFeedbackPrompt
         isOpen={isFeedbackOpen}
         context={feedbackContext}
         estimateId={estimateId}
-        onClose={handleFeedbackClose}
+        onDismiss={handleFeedbackDismiss}
+        onSubmit={handleFeedbackSubmit}
       />
     </div>
   );
