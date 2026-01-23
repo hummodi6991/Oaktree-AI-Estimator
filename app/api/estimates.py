@@ -1812,6 +1812,20 @@ def scenario(estimate_id: str, patch: ScenarioPatch, db: Session = Depends(get_d
                     nested_copy.setdefault("excel_breakdown", excel_breakdown)
                 response_notes["notes"] = nested_copy
 
+        scenario_overrides = {
+            "far": normalized_far,
+            "efficiency": normalized_efficiency,
+            "area_ratio": float(area_ratio),
+            "land_price_sar_m2": normalized_land_price,
+            "provider": patch.provider,
+            "price_uplift_pct": normalized_uplift,
+        }
+        response_notes["scenario_overrides"] = scenario_overrides
+        if isinstance(response_notes.get("notes"), dict):
+            nested_copy = dict(response_notes["notes"])
+            nested_copy["scenario_overrides"] = scenario_overrides
+            response_notes["notes"] = nested_copy
+
         response: dict[str, Any] = {
             "id": estimate_id,
             "totals": response_totals,

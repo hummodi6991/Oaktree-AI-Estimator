@@ -183,3 +183,49 @@ def test_excel_scenario_uses_nested_site_area_and_land_price_overrides():
     assert scenario_body["totals"]["p50_profit"] != base_totals["p50_profit"]
     assert updated_breakdown["land_cost"] == pytest.approx(new_land_price * site_area_m2, rel=1e-6)
     assert updated_breakdown["land_price_final"] == pytest.approx(new_land_price, rel=1e-6)
+
+
+def test_excel_scenario_includes_scenario_overrides_in_notes():
+    poly = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [46.675, 24.713],
+                [46.676, 24.713],
+                [46.676, 24.714],
+                [46.675, 24.714],
+                [46.675, 24.713],
+            ]
+        ],
+    }
+    payload = {
+        "geometry": poly,
+        "asset_program": "residential_midrise",
+        "unit_mix": [{"type": "1BR", "count": 10}],
+        "finish_level": "mid",
+        "timeline": {"start": "2025-10-01", "months": 18},
+        "financing_params": {"margin_bps": 250, "ltv": 0.6},
+        "strategy": "build_to_sell",
+        "excel_inputs": sample_excel_inputs(),
+    }
+    create_response = client.post("/v1/estimates", json=payload)
+    assert create_response.status_code == 200
+    base_body = create_response.json()
+    estimate_id = base_body["id"]
+    base_notes = base_body["notes"]
+    base_notes["notes"] = dict(base_notes.get("notes") or {"nested": True})
+    estimates_api._INMEM_HEADERS[estimate_id]["notes"] = base_notes
+
+    scenario_response = client.post(
+        f"/v1/estimates/{estimate_id}/scenario",
+        json={"far": 3.5, "land_price_sar_m2": 4250},
+    )
+    assert scenario_response.status_code == 200
+    scenario_body = scenario_response.json()
+    overrides = scenario_body["notes"]["scenario_overrides"]
+    nested_overrides = scenario_body["notes"]["notes"]["scenario_overrides"]
+
+    assert overrides["far"] == pytest.approx(3.5, rel=1e-6)
+    assert overrides["land_price_sar_m2"] == pytest.approx(4250, rel=1e-6)
+    assert overrides["area_ratio"] > 0
+    assert nested_overrides == overrides
