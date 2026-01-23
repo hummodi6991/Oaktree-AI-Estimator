@@ -1770,7 +1770,8 @@ def scenario(estimate_id: str, patch: ScenarioPatch, db: Session = Depends(get_d
                 updated_breakdown[key] = _float_or_zero(updated_breakdown.get(key)) * hard_scale
             for key in ("contingency_cost", "consultants_cost", "feasibility_fee", "transaction_cost"):
                 updated_breakdown[key] = _float_or_zero(updated_breakdown.get(key)) * soft_scale
-            updated_breakdown["y1_income"] = _float_or_zero(updated_breakdown.get("y1_income")) * rev_scale
+            base_y1_income = _float_or_zero(updated_breakdown.get("y1_income"))
+            updated_breakdown["y1_income"] = base_y1_income * rev_scale
             if normalized_land_price is not None and site_m2 > 0:
                 updated_breakdown["land_cost"] = float(normalized_land_price) * site_m2
                 updated_breakdown["land_price_final"] = float(normalized_land_price)
@@ -1781,13 +1782,15 @@ def scenario(estimate_id: str, patch: ScenarioPatch, db: Session = Depends(get_d
                 or 0.9
             )
             updated_breakdown["y1_income_effective_factor"] = y1_income_effective_factor
-            updated_breakdown["y1_income_effective"] = updated_breakdown["y1_income"] * y1_income_effective_factor
+            y1_income_effective = updated_breakdown["y1_income"] * y1_income_effective_factor
+            updated_breakdown["y1_income_effective"] = y1_income_effective
             opex_pct = _float_or_zero(
                 updated_breakdown.get("opex_pct") or (excel_breakdown or {}).get("opex_pct") or 0.05
             )
             updated_breakdown["opex_pct"] = opex_pct
-            updated_breakdown["opex_cost"] = updated_breakdown["y1_income_effective"] * opex_pct
-            updated_breakdown["y1_noi"] = updated_breakdown["y1_income_effective"] - updated_breakdown["opex_cost"]
+            opex_cost = y1_income_effective * opex_pct
+            updated_breakdown["opex_cost"] = opex_cost
+            updated_breakdown["y1_noi"] = y1_income_effective - opex_cost
             total_capex = (
                 _float_or_zero(updated_breakdown.get("land_cost"))
                 + _float_or_zero(updated_breakdown.get("construction_direct_cost"))
@@ -1804,12 +1807,22 @@ def scenario(estimate_id: str, patch: ScenarioPatch, db: Session = Depends(get_d
 
             response_notes["cost_breakdown"] = updated_breakdown
             if isinstance(excel_breakdown, dict):
-                response_notes.setdefault("excel_breakdown", excel_breakdown)
+                updated_excel_breakdown = dict(excel_breakdown)
+                for key in (
+                    "y1_income",
+                    "y1_income_effective",
+                    "y1_income_effective_factor",
+                    "opex_pct",
+                    "opex_cost",
+                    "y1_noi",
+                ):
+                    updated_excel_breakdown[key] = updated_breakdown[key]
+                response_notes["excel_breakdown"] = updated_excel_breakdown
             if isinstance(nested_notes, dict):
                 nested_copy = dict(nested_notes)
                 nested_copy["cost_breakdown"] = updated_breakdown
                 if isinstance(excel_breakdown, dict):
-                    nested_copy.setdefault("excel_breakdown", excel_breakdown)
+                    nested_copy["excel_breakdown"] = response_notes["excel_breakdown"]
                 response_notes["notes"] = nested_copy
 
         scenario_overrides = {
