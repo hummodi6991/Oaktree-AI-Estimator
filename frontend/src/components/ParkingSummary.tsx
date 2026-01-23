@@ -60,14 +60,6 @@ export default function ParkingSummary(props: { totals?: AnyDict; notes?: any })
   const basementBefore = parking?.basement_ratio_before;
   const basementAfter = parking?.basement_ratio_after;
 
-  const sourceUrl =
-    parking?.requirement_meta?.source_url ??
-    parking?.source_url;
-
-  const rulesetName =
-    parking?.requirement_meta?.ruleset_name ??
-    parking?.ruleset_name;
-
   const warnings: string[] =
     Array.isArray(parking?.requirement_meta?.warnings) ? parking.requirement_meta.warnings : [];
 
@@ -165,19 +157,6 @@ export default function ParkingSummary(props: { totals?: AnyDict; notes?: any })
           </details>
         )}
 
-        {(rulesetName || sourceUrl) && (
-          <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
-            {rulesetName ? <div>{t("parking.ruleset", { name: String(rulesetName) })}</div> : null}
-            {sourceUrl ? (
-              <div>
-                {t("parking.source")} {" "}
-                <a href={String(sourceUrl)} target="_blank" rel="noreferrer">
-                  {t("parking.viewGuide")}
-                </a>
-              </div>
-            ) : null}
-          </div>
-        )}
       </div>
     </section>
   );
