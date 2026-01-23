@@ -1566,9 +1566,13 @@ def scenario(estimate_id: str, patch: ScenarioPatch, db: Session = Depends(get_d
         cost_breakdown = base_notes.get("cost_breakdown")
         if cost_breakdown is None:
             cost_breakdown = nested_notes.get("cost_breakdown")
+        if not isinstance(cost_breakdown, dict):
+            cost_breakdown = {}
         excel_breakdown = base_notes.get("excel_breakdown")
         if excel_breakdown is None:
             excel_breakdown = nested_notes.get("excel_breakdown")
+        if not isinstance(excel_breakdown, dict):
+            excel_breakdown = {}
         is_excel = isinstance(cost_breakdown, dict) and bool(cost_breakdown)
 
         def _assumption_value(key: str, default: float) -> float:
@@ -1584,6 +1588,70 @@ def scenario(estimate_id: str, patch: ScenarioPatch, db: Session = Depends(get_d
         def _float_or_zero(value: Any) -> float:
             parsed = _safe_float(value)
             return parsed if parsed is not None else 0.0
+
+        def _get_note_float(*candidates: Any) -> float | None:
+            for candidate in candidates:
+                parsed = _safe_float(candidate)
+                if parsed is not None:
+                    return parsed
+            return None
+
+        def _resolve_site_m2(
+            base_notes_dict: dict[str, Any],
+            nested_notes_dict: dict[str, Any],
+            cost_breakdown_dict: dict[str, Any],
+            excel_breakdown_dict: dict[str, Any],
+            base_totals_dict: dict[str, Any],
+        ) -> float:
+            site_m2 = _get_note_float(
+                base_notes_dict.get("site_area_m2"),
+                nested_notes_dict.get("site_area_m2"),
+                cost_breakdown_dict.get("site_area_m2"),
+                excel_breakdown_dict.get("site_area_m2"),
+            )
+            if site_m2 is not None and site_m2 > 0:
+                return site_m2
+
+            land_cost = _get_note_float(
+                cost_breakdown_dict.get("land_cost"),
+                excel_breakdown_dict.get("land_cost"),
+                base_totals_dict.get("land_value"),
+            )
+            ppm2 = _get_note_float(
+                cost_breakdown_dict.get("land_price_final"),
+                cost_breakdown_dict.get("land_price_sar_m2"),
+                excel_breakdown_dict.get("land_price_sar_m2"),
+            )
+            if land_cost is not None and land_cost > 0 and ppm2 is not None and ppm2 > 0:
+                return land_cost / ppm2
+            return 0.0
+
+        def _resolve_base_nfa(
+            site_m2_value: float,
+            base_notes_dict: dict[str, Any],
+            nested_notes_dict: dict[str, Any],
+            excel_breakdown_dict: dict[str, Any],
+            cost_breakdown_dict: dict[str, Any],
+        ) -> float:
+            base_nfa_value = _get_note_float(
+                base_notes_dict.get("nfa_m2"),
+                nested_notes_dict.get("nfa_m2"),
+                excel_breakdown_dict.get("nfa_m2"),
+            )
+            if base_nfa_value is not None and base_nfa_value > 0:
+                return base_nfa_value
+
+            if site_m2_value > 0:
+                far = _get_note_float(
+                    excel_breakdown_dict.get("far_above_ground"),
+                    base_notes_dict.get("far_used"),
+                )
+                far = far if far is not None and far > 0 else 2.0
+                efficiency = _get_note_float(excel_breakdown_dict.get("efficiency_overall"))
+                efficiency = efficiency if efficiency is not None and efficiency > 0 else 0.82
+                return site_m2_value * far * efficiency
+
+            return 0.0
 
         def _build_excel_totals(costs: dict[str, Any], totals: dict[str, Any]) -> dict[str, float]:
             land_value = _float_or_zero(costs.get("land_cost") or totals.get("land_value"))
@@ -1610,8 +1678,19 @@ def scenario(estimate_id: str, patch: ScenarioPatch, db: Session = Depends(get_d
                 "p50_profit": float(p50_profit),
             }
 
-        site_m2 = float(notes.get("site_area_m2") or 0.0)
-        base_nfa = float(notes.get("nfa_m2") or (site_m2 * 2.0 * 0.82))
+        site_m2 = _resolve_site_m2(base_notes, nested_notes, cost_breakdown, excel_breakdown, base_totals)
+        base_nfa = _resolve_base_nfa(
+            site_m2,
+            base_notes,
+            nested_notes,
+            excel_breakdown,
+            cost_breakdown,
+        )
+        if site_m2 <= 0 or base_nfa <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Scenario cannot run: missing site area / NFA in persisted estimate. Re-run estimate.",
+            )
         new_far = normalized_far if normalized_far is not None else _assumption_value("far", 2.0)
         new_eff = (
             normalized_efficiency

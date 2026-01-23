@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.db.deps import get_db
 from app.main import app
+from app.api import estimates as estimates_api
 from tests.excel_inputs import sample_excel_inputs
 
 
@@ -116,3 +117,69 @@ def test_excel_scenario_price_uplift_updates_cost_breakdown():
     assert updated_breakdown["y1_noi"] > base_breakdown["y1_noi"]
     assert updated_breakdown["roi"] > base_breakdown["roi"]
     assert "excel_breakdown" in updated_notes
+
+
+def test_excel_scenario_uses_nested_site_area_and_land_price_overrides():
+    poly = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [46.675, 24.713],
+                [46.676, 24.713],
+                [46.676, 24.714],
+                [46.675, 24.714],
+                [46.675, 24.713],
+            ]
+        ],
+    }
+    payload = {
+        "geometry": poly,
+        "asset_program": "residential_midrise",
+        "unit_mix": [{"type": "1BR", "count": 10}],
+        "finish_level": "mid",
+        "timeline": {"start": "2025-10-01", "months": 18},
+        "financing_params": {"margin_bps": 250, "ltv": 0.6},
+        "strategy": "build_to_sell",
+        "excel_inputs": sample_excel_inputs(),
+    }
+    create_response = client.post("/v1/estimates", json=payload)
+    assert create_response.status_code == 200
+    base_body = create_response.json()
+    estimate_id = base_body["id"]
+    base_totals = base_body["totals"]
+    base_notes = base_body["notes"]
+
+    site_area_m2 = base_notes.get("site_area_m2") or base_notes.get("notes", {}).get("site_area_m2")
+    assert site_area_m2 and site_area_m2 > 0
+
+    updated_notes = dict(base_notes)
+    updated_notes.pop("site_area_m2", None)
+    updated_notes.pop("nfa_m2", None)
+    nested_notes = dict(updated_notes.get("notes") or {})
+    nested_notes["site_area_m2"] = site_area_m2
+    updated_notes["notes"] = nested_notes
+
+    cost_breakdown = dict(updated_notes.get("cost_breakdown") or {})
+    cost_breakdown.pop("site_area_m2", None)
+    land_cost = cost_breakdown.get("land_cost") or base_totals.get("land_value")
+    land_price_final = cost_breakdown.get("land_price_final")
+    if not land_price_final and site_area_m2 > 0:
+        land_price_final = land_cost / site_area_m2
+    cost_breakdown["land_cost"] = land_cost
+    cost_breakdown["land_price_final"] = land_price_final
+    updated_notes["cost_breakdown"] = cost_breakdown
+
+    estimates_api._INMEM_HEADERS[estimate_id]["notes"] = updated_notes
+
+    new_land_price = land_price_final * 1.1
+    scenario_response = client.post(
+        f"/v1/estimates/{estimate_id}/scenario",
+        json={"far": 3.1, "land_price_sar_m2": new_land_price},
+    )
+    assert scenario_response.status_code == 200
+    scenario_body = scenario_response.json()
+    updated_breakdown = scenario_body["notes"]["cost_breakdown"]
+
+    assert scenario_body["totals"]["p50_profit"] != base_totals["p50_profit"]
+    assert updated_breakdown["land_cost"] == pytest.approx(new_land_price * site_area_m2, rel=1e-6)
+    assert updated_breakdown["land_price_final"] == pytest.approx(new_land_price, rel=1e-6)
