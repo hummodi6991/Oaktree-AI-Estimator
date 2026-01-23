@@ -98,6 +98,7 @@ def test_excel_scenario_price_uplift_updates_cost_breakdown():
     assert create_response.status_code == 200
     base_body = create_response.json()
     estimate_id = base_body["id"]
+    base_totals = base_body["totals"]
     base_breakdown = base_body["notes"]["cost_breakdown"]
 
     scenario_response = client.post(
@@ -106,9 +107,12 @@ def test_excel_scenario_price_uplift_updates_cost_breakdown():
     )
     assert scenario_response.status_code == 200
     scenario_body = scenario_response.json()
+    assert "totals" in scenario_body
+    assert scenario_body["totals"]["p50_profit"] != base_totals["p50_profit"]
     updated_notes = scenario_body["notes"]
     updated_breakdown = updated_notes["cost_breakdown"]
 
     assert updated_breakdown["y1_income"] > base_breakdown["y1_income"]
     assert updated_breakdown["y1_noi"] > base_breakdown["y1_noi"]
+    assert updated_breakdown["roi"] > base_breakdown["roi"]
     assert "excel_breakdown" in updated_notes

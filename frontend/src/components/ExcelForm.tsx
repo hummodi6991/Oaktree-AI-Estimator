@@ -572,10 +572,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     setIsScenarioSubmitting(true);
     try {
       const res = await runScenario(estimateId, patch);
+      const scenarioTotals = res?.totals ?? res?.scenario;
       const rawNotes = res?.notes;
       const notes = rawNotes && typeof rawNotes === "object" ? rawNotes : null;
       const costs = notes?.cost_breakdown || null;
       const excelBreakdown = notes?.excel_breakdown || null;
+      const fallbackRoi = res?.totals ? null : notes?.cost_breakdown?.roi ?? null;
       const effectivePctInput = normalizeEffectivePct(inputsRef.current?.y1_income_effective_pct);
       const effectiveFactorFromInput = effectivePctInput / 100;
       const y1IncomeEffective = costs
@@ -592,9 +594,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         if (!prev) return prev;
         return {
           ...prev,
-          totals: res?.totals ?? prev.totals,
+          totals: scenarioTotals ?? prev.totals,
           notes: notes ?? prev.notes,
-          roi: notes?.excel_roi ?? res?.totals?.excel_roi ?? prev.roi,
+          roi: notes?.excel_roi ?? scenarioTotals?.excel_roi ?? fallbackRoi ?? prev.roi,
           costs: costs
             ? {
               ...prev.costs,

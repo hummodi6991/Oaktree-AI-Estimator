@@ -1518,168 +1518,236 @@ class ScenarioPatch(BaseModel):
 
 @router.post("/estimates/{estimate_id}/scenario")
 def scenario(estimate_id: str, patch: ScenarioPatch, db: Session = Depends(get_db)) -> dict[str, Any]:
-    base = get_estimate(estimate_id, db)
-    # Fast scenario: scale area-driven items by NFA ratio; then apply margin/softcost/price tweaks.
-    base_totals = base["totals"]
-    notes = base.get("notes", {}) or {}
-    assumptions = base.get("assumptions", []) or []
-    base_notes = notes if isinstance(notes, dict) else {}
-    nested_notes = base_notes.get("notes") if isinstance(base_notes.get("notes"), dict) else {}
-    cost_breakdown = base_notes.get("cost_breakdown")
-    if cost_breakdown is None:
-        cost_breakdown = nested_notes.get("cost_breakdown")
-    excel_breakdown = base_notes.get("excel_breakdown")
-    if excel_breakdown is None:
-        excel_breakdown = nested_notes.get("excel_breakdown")
-    is_excel = isinstance(cost_breakdown, dict) and bool(cost_breakdown)
+    errors: dict[str, str] = {}
+    normalized_far = None
+    normalized_efficiency = None
+    normalized_land_price = None
+    normalized_uplift = None
 
-    def _assumption_value(key: str, default: float) -> float:
-        for item in assumptions:
-            if item.get("key") == key:
-                val = item.get("value")
-                try:
-                    return float(val)
-                except (TypeError, ValueError):
-                    return default
-        return default
+    if patch.far is not None:
+        normalized_far = _safe_float(patch.far)
+        if normalized_far is None or normalized_far <= 0:
+            errors["far"] = "far must be greater than 0"
 
-    def _float_or_zero(value: Any) -> float:
-        parsed = _safe_float(value)
-        return parsed if parsed is not None else 0.0
+    if patch.efficiency is not None:
+        normalized_efficiency = _safe_float(patch.efficiency)
+        if normalized_efficiency is None:
+            errors["efficiency"] = "efficiency must be a number"
+        else:
+            if normalized_efficiency > 1 and normalized_efficiency <= 100:
+                normalized_efficiency = normalized_efficiency / 100
+            if normalized_efficiency <= 0 or normalized_efficiency > 1:
+                errors["efficiency"] = "efficiency must be between 0 and 1"
 
-    def _build_excel_totals(costs: dict[str, Any], totals: dict[str, Any]) -> dict[str, float]:
-        land_value = _float_or_zero(costs.get("land_cost") or totals.get("land_value"))
-        hard_costs = _float_or_zero(costs.get("construction_direct_cost")) + _float_or_zero(costs.get("fitout_cost"))
-        soft_costs = (
-            _float_or_zero(costs.get("contingency_cost"))
-            + _float_or_zero(costs.get("consultants_cost"))
-            + _float_or_zero(costs.get("feasibility_fee"))
-            + _float_or_zero(costs.get("transaction_cost"))
+    if patch.land_price_sar_m2 is not None:
+        normalized_land_price = _safe_float(patch.land_price_sar_m2)
+        if normalized_land_price is None or normalized_land_price <= 0:
+            errors["land_price_sar_m2"] = "land_price_sar_m2 must be greater than 0"
+
+    if patch.price_uplift_pct is not None:
+        normalized_uplift = _safe_float(patch.price_uplift_pct)
+        if normalized_uplift is None:
+            errors["price_uplift_pct"] = "price_uplift_pct must be a number"
+        else:
+            normalized_uplift = max(-90.0, min(200.0, normalized_uplift))
+
+    if errors:
+        logger.warning("Scenario patch validation failed: %s", errors)
+        raise HTTPException(status_code=400, detail={"errors": errors})
+
+    try:
+        base = get_estimate(estimate_id, db)
+        # Fast scenario: scale area-driven items by NFA ratio; then apply margin/softcost/price tweaks.
+        base_totals = base["totals"]
+        notes = base.get("notes", {}) or {}
+        assumptions = base.get("assumptions", []) or []
+        base_notes = notes if isinstance(notes, dict) else {}
+        nested_notes = base_notes.get("notes") if isinstance(base_notes.get("notes"), dict) else {}
+        cost_breakdown = base_notes.get("cost_breakdown")
+        if cost_breakdown is None:
+            cost_breakdown = nested_notes.get("cost_breakdown")
+        excel_breakdown = base_notes.get("excel_breakdown")
+        if excel_breakdown is None:
+            excel_breakdown = nested_notes.get("excel_breakdown")
+        is_excel = isinstance(cost_breakdown, dict) and bool(cost_breakdown)
+
+        def _assumption_value(key: str, default: float) -> float:
+            for item in assumptions:
+                if item.get("key") == key:
+                    val = item.get("value")
+                    try:
+                        return float(val)
+                    except (TypeError, ValueError):
+                        return default
+            return default
+
+        def _float_or_zero(value: Any) -> float:
+            parsed = _safe_float(value)
+            return parsed if parsed is not None else 0.0
+
+        def _build_excel_totals(costs: dict[str, Any], totals: dict[str, Any]) -> dict[str, float]:
+            land_value = _float_or_zero(costs.get("land_cost") or totals.get("land_value"))
+            hard_costs = _float_or_zero(costs.get("construction_direct_cost")) + _float_or_zero(
+                costs.get("fitout_cost")
+            )
+            soft_costs = (
+                _float_or_zero(costs.get("contingency_cost"))
+                + _float_or_zero(costs.get("consultants_cost"))
+                + _float_or_zero(costs.get("feasibility_fee"))
+                + _float_or_zero(costs.get("transaction_cost"))
+            )
+            financing = _float_or_zero(totals.get("financing"))
+            revenues = _float_or_zero(costs.get("y1_income") or totals.get("revenues"))
+            p50_profit = _safe_float(totals.get("p50_profit"))
+            if p50_profit is None:
+                p50_profit = revenues - (land_value + hard_costs + soft_costs + financing)
+            return {
+                "land_value": land_value,
+                "hard_costs": hard_costs,
+                "soft_costs": soft_costs,
+                "financing": financing,
+                "revenues": revenues,
+                "p50_profit": float(p50_profit),
+            }
+
+        site_m2 = float(notes.get("site_area_m2") or 0.0)
+        base_nfa = float(notes.get("nfa_m2") or (site_m2 * 2.0 * 0.82))
+        new_far = normalized_far if normalized_far is not None else _assumption_value("far", 2.0)
+        new_eff = (
+            normalized_efficiency
+            if normalized_efficiency is not None
+            else _assumption_value("efficiency", 0.82)
         )
-        financing = _float_or_zero(totals.get("financing"))
-        revenues = _float_or_zero(costs.get("y1_income") or totals.get("revenues"))
-        p50_profit = _safe_float(totals.get("p50_profit"))
-        if p50_profit is None:
-            p50_profit = revenues - (land_value + hard_costs + soft_costs + financing)
-        return {
-            "land_value": land_value,
-            "hard_costs": hard_costs,
-            "soft_costs": soft_costs,
-            "financing": financing,
-            "revenues": revenues,
-            "p50_profit": float(p50_profit),
-        }
+        new_nfa = site_m2 * new_far * new_eff if site_m2 > 0 else base_nfa
+        area_ratio = (new_nfa / base_nfa) if base_nfa > 0 else 1.0
 
-    site_m2 = float(notes.get("site_area_m2") or 0.0)
-    base_nfa = float(notes.get("nfa_m2") or (site_m2 * 2.0 * 0.82))
-    new_far = patch.far if patch.far is not None else _assumption_value("far", 2.0)
-    new_eff = patch.efficiency if patch.efficiency is not None else _assumption_value("efficiency", 0.82)
-    new_nfa = site_m2 * new_far * new_eff if site_m2 > 0 else base_nfa
-    area_ratio = (new_nfa / base_nfa) if base_nfa > 0 else 1.0
+        if is_excel:
+            excel_totals = _build_excel_totals(cost_breakdown, base_totals)
+            base_totals_for_scenario = {**base_totals, **excel_totals}
+            t = excel_totals.copy()
+        else:
+            base_totals_for_scenario = base_totals
+            t = base_totals.copy()
 
-    if is_excel:
-        excel_totals = _build_excel_totals(cost_breakdown, base_totals)
-        base_totals_for_scenario = {**base_totals, **excel_totals}
-        t = excel_totals.copy()
-    else:
-        base_totals_for_scenario = base_totals
-        t = base_totals.copy()
+        t["hard_costs"] = _float_or_zero(t.get("hard_costs")) * area_ratio
+        t["revenues"] = _float_or_zero(t.get("revenues")) * area_ratio
+        t["land_value"] = _float_or_zero(t.get("land_value"))
 
-    t["hard_costs"] = _float_or_zero(t.get("hard_costs")) * area_ratio
-    t["revenues"] = _float_or_zero(t.get("revenues")) * area_ratio
-    t["land_value"] = _float_or_zero(t.get("land_value"))
-
-    base_soft_ratio = (
-        (base_totals_for_scenario.get("soft_costs", 0.0) / base_totals_for_scenario.get("hard_costs", 0.0))
-        if base_totals_for_scenario.get("hard_costs")
-        else 0.15
-    )
-    base_cost_sum = base_totals_for_scenario.get("hard_costs", 0.0) + base_totals_for_scenario.get("soft_costs", 0.0)
-    base_financing_ratio = (base_totals_for_scenario.get("financing", 0.0) / base_cost_sum) if base_cost_sum else 0.6
-    # Price uplift affects revenues
-    uplift = 1.0 + (patch.price_uplift_pct or 0.0) / 100.0
-    t["revenues"] = t["revenues"] * uplift
-    # Financing sensitivity via margin_bps (linear approx)
-    if patch.soft_cost_pct is not None:
-        t["soft_costs"] = t["hard_costs"] * patch.soft_cost_pct
-    else:
-        t["soft_costs"] = t["hard_costs"] * base_soft_ratio
-
-    t["financing"] = base_financing_ratio * (t["hard_costs"] + t["soft_costs"])
-    if patch.margin_bps is not None:
-        delta = (patch.margin_bps - 250) / 250.0  # relative to default 250 bps
-        t["financing"] = t["financing"] * (1.0 + 0.4 * delta)
-    if patch.land_price_sar_m2 is not None and site_m2 > 0:
-        t["land_value"] = float(patch.land_price_sar_m2) * site_m2
-    t["p50_profit"] = t["revenues"] - (t["land_value"] + t["hard_costs"] + t["soft_costs"] + t["financing"])
-    bands = p_bands(t["p50_profit"], drivers={"land_ppm2": (1.0, 0.10), "unit_cost": (1.0, 0.08), "gdv_m2_price": (1.0, 0.10)})
-    base_baseline = base_totals_for_scenario
-    response: dict[str, Any] = {
-        "baseline": base_baseline,
-        "scenario": t,
-        "delta": {k: t[k] - base_baseline.get(k, 0.0) for k in t},
-        "confidence_bands": bands,
-    }
-    if is_excel:
-        updated_breakdown = dict(cost_breakdown)
-        old_hard = _float_or_zero(updated_breakdown.get("construction_direct_cost")) + _float_or_zero(
-            updated_breakdown.get("fitout_cost")
+        base_soft_ratio = (
+            (base_totals_for_scenario.get("soft_costs", 0.0) / base_totals_for_scenario.get("hard_costs", 0.0))
+            if base_totals_for_scenario.get("hard_costs")
+            else 0.15
         )
-        old_soft = (
-            _float_or_zero(updated_breakdown.get("contingency_cost"))
-            + _float_or_zero(updated_breakdown.get("consultants_cost"))
-            + _float_or_zero(updated_breakdown.get("feasibility_fee"))
-            + _float_or_zero(updated_breakdown.get("transaction_cost"))
+        base_cost_sum = base_totals_for_scenario.get("hard_costs", 0.0) + base_totals_for_scenario.get(
+            "soft_costs", 0.0
         )
-        old_revenues = _float_or_zero(updated_breakdown.get("y1_income"))
-        hard_scale = (t["hard_costs"] / old_hard) if old_hard > 0 else 1.0
-        soft_scale = (t["soft_costs"] / old_soft) if old_soft > 0 else 1.0
-        rev_scale = (t["revenues"] / old_revenues) if old_revenues > 0 else 1.0
-        for key in ("construction_direct_cost", "fitout_cost"):
-            updated_breakdown[key] = _float_or_zero(updated_breakdown.get(key)) * hard_scale
-        for key in ("contingency_cost", "consultants_cost", "feasibility_fee", "transaction_cost"):
-            updated_breakdown[key] = _float_or_zero(updated_breakdown.get(key)) * soft_scale
-        updated_breakdown["y1_income"] = _float_or_zero(updated_breakdown.get("y1_income")) * rev_scale
-        if patch.land_price_sar_m2 is not None and site_m2 > 0:
-            updated_breakdown["land_cost"] = float(patch.land_price_sar_m2) * site_m2
-            updated_breakdown["land_price_final"] = float(patch.land_price_sar_m2)
+        base_financing_ratio = (
+            (base_totals_for_scenario.get("financing", 0.0) / base_cost_sum) if base_cost_sum else 0.6
+        )
+        # Price uplift affects revenues
+        uplift_pct = normalized_uplift if normalized_uplift is not None else 0.0
+        uplift = 1.0 + uplift_pct / 100.0
+        t["revenues"] = t["revenues"] * uplift
+        # Financing sensitivity via margin_bps (linear approx)
+        if patch.soft_cost_pct is not None:
+            t["soft_costs"] = t["hard_costs"] * patch.soft_cost_pct
+        else:
+            t["soft_costs"] = t["hard_costs"] * base_soft_ratio
 
-        y1_income_effective_factor = _float_or_zero(
-            updated_breakdown.get("y1_income_effective_factor")
-            or (excel_breakdown or {}).get("y1_income_effective_factor")
-            or 0.9
+        t["financing"] = base_financing_ratio * (t["hard_costs"] + t["soft_costs"])
+        if patch.margin_bps is not None:
+            delta = (patch.margin_bps - 250) / 250.0  # relative to default 250 bps
+            t["financing"] = t["financing"] * (1.0 + 0.4 * delta)
+        if normalized_land_price is not None and site_m2 > 0:
+            t["land_value"] = float(normalized_land_price) * site_m2
+        t["p50_profit"] = t["revenues"] - (t["land_value"] + t["hard_costs"] + t["soft_costs"] + t["financing"])
+        bands = p_bands(
+            t["p50_profit"],
+            drivers={"land_ppm2": (1.0, 0.10), "unit_cost": (1.0, 0.08), "gdv_m2_price": (1.0, 0.10)},
         )
-        updated_breakdown["y1_income_effective_factor"] = y1_income_effective_factor
-        updated_breakdown["y1_income_effective"] = updated_breakdown["y1_income"] * y1_income_effective_factor
-        opex_pct = _float_or_zero(updated_breakdown.get("opex_pct") or (excel_breakdown or {}).get("opex_pct") or 0.05)
-        updated_breakdown["opex_pct"] = opex_pct
-        updated_breakdown["opex_cost"] = updated_breakdown["y1_income_effective"] * opex_pct
-        updated_breakdown["y1_noi"] = updated_breakdown["y1_income_effective"] - updated_breakdown["opex_cost"]
-        total_capex = (
-            _float_or_zero(updated_breakdown.get("land_cost"))
-            + _float_or_zero(updated_breakdown.get("construction_direct_cost"))
-            + _float_or_zero(updated_breakdown.get("fitout_cost"))
-            + _float_or_zero(updated_breakdown.get("contingency_cost"))
-            + _float_or_zero(updated_breakdown.get("consultants_cost"))
-            + _float_or_zero(updated_breakdown.get("feasibility_fee"))
-            + _float_or_zero(updated_breakdown.get("transaction_cost"))
-        )
-        updated_breakdown["grand_total_capex"] = total_capex
-        updated_breakdown["roi"] = (updated_breakdown["y1_noi"] / total_capex) if total_capex > 0 else 0.0
-        t["excel_roi"] = updated_breakdown["roi"]
+        base_baseline = base_totals_for_scenario
+        response_notes = dict(base_notes) if isinstance(base_notes, dict) else {}
+        response_totals = dict(base_baseline)
+        for key in ("land_value", "hard_costs", "soft_costs", "financing", "revenues", "p50_profit"):
+            if key in t:
+                response_totals[key] = t[key]
 
-        updated_notes = dict(base_notes)
-        updated_notes["cost_breakdown"] = updated_breakdown
-        if isinstance(excel_breakdown, dict):
-            updated_notes.setdefault("excel_breakdown", excel_breakdown)
-        if isinstance(nested_notes, dict):
-            nested_copy = dict(nested_notes)
-            nested_copy["cost_breakdown"] = updated_breakdown
+        if is_excel:
+            updated_breakdown = dict(cost_breakdown)
+            old_hard = _float_or_zero(updated_breakdown.get("construction_direct_cost")) + _float_or_zero(
+                updated_breakdown.get("fitout_cost")
+            )
+            old_soft = (
+                _float_or_zero(updated_breakdown.get("contingency_cost"))
+                + _float_or_zero(updated_breakdown.get("consultants_cost"))
+                + _float_or_zero(updated_breakdown.get("feasibility_fee"))
+                + _float_or_zero(updated_breakdown.get("transaction_cost"))
+            )
+            old_revenues = _float_or_zero(updated_breakdown.get("y1_income"))
+            hard_scale = (t["hard_costs"] / old_hard) if old_hard > 0 else 1.0
+            soft_scale = (t["soft_costs"] / old_soft) if old_soft > 0 else 1.0
+            rev_scale = (t["revenues"] / old_revenues) if old_revenues > 0 else 1.0
+            for key in ("construction_direct_cost", "fitout_cost"):
+                updated_breakdown[key] = _float_or_zero(updated_breakdown.get(key)) * hard_scale
+            for key in ("contingency_cost", "consultants_cost", "feasibility_fee", "transaction_cost"):
+                updated_breakdown[key] = _float_or_zero(updated_breakdown.get(key)) * soft_scale
+            updated_breakdown["y1_income"] = _float_or_zero(updated_breakdown.get("y1_income")) * rev_scale
+            if normalized_land_price is not None and site_m2 > 0:
+                updated_breakdown["land_cost"] = float(normalized_land_price) * site_m2
+                updated_breakdown["land_price_final"] = float(normalized_land_price)
+
+            y1_income_effective_factor = _float_or_zero(
+                updated_breakdown.get("y1_income_effective_factor")
+                or (excel_breakdown or {}).get("y1_income_effective_factor")
+                or 0.9
+            )
+            updated_breakdown["y1_income_effective_factor"] = y1_income_effective_factor
+            updated_breakdown["y1_income_effective"] = updated_breakdown["y1_income"] * y1_income_effective_factor
+            opex_pct = _float_or_zero(
+                updated_breakdown.get("opex_pct") or (excel_breakdown or {}).get("opex_pct") or 0.05
+            )
+            updated_breakdown["opex_pct"] = opex_pct
+            updated_breakdown["opex_cost"] = updated_breakdown["y1_income_effective"] * opex_pct
+            updated_breakdown["y1_noi"] = updated_breakdown["y1_income_effective"] - updated_breakdown["opex_cost"]
+            total_capex = (
+                _float_or_zero(updated_breakdown.get("land_cost"))
+                + _float_or_zero(updated_breakdown.get("construction_direct_cost"))
+                + _float_or_zero(updated_breakdown.get("fitout_cost"))
+                + _float_or_zero(updated_breakdown.get("contingency_cost"))
+                + _float_or_zero(updated_breakdown.get("consultants_cost"))
+                + _float_or_zero(updated_breakdown.get("feasibility_fee"))
+                + _float_or_zero(updated_breakdown.get("transaction_cost"))
+            )
+            updated_breakdown["grand_total_capex"] = total_capex
+            updated_breakdown["roi"] = (updated_breakdown["y1_noi"] / total_capex) if total_capex > 0 else 0.0
+            t["excel_roi"] = updated_breakdown["roi"]
+            response_totals["excel_roi"] = updated_breakdown["roi"]
+
+            response_notes["cost_breakdown"] = updated_breakdown
             if isinstance(excel_breakdown, dict):
-                nested_copy.setdefault("excel_breakdown", excel_breakdown)
-            updated_notes["notes"] = nested_copy
-        response["notes"] = updated_notes
-    return response
+                response_notes.setdefault("excel_breakdown", excel_breakdown)
+            if isinstance(nested_notes, dict):
+                nested_copy = dict(nested_notes)
+                nested_copy["cost_breakdown"] = updated_breakdown
+                if isinstance(excel_breakdown, dict):
+                    nested_copy.setdefault("excel_breakdown", excel_breakdown)
+                response_notes["notes"] = nested_copy
+
+        response: dict[str, Any] = {
+            "id": estimate_id,
+            "totals": response_totals,
+            "notes": response_notes,
+            "baseline": base_baseline,
+            "scenario": t,
+            "delta": {k: t[k] - base_baseline.get(k, 0.0) for k in t},
+            "confidence_bands": bands,
+        }
+        return response
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Scenario calculation failed for estimate %s", estimate_id)
+        raise HTTPException(status_code=500, detail="Scenario calculation failed.")
 
 
 @router.get("/estimates/{estimate_id}/export")
