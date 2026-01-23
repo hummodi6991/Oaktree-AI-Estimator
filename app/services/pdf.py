@@ -312,14 +312,14 @@ def _build_revenue_breakdown_rows(
         [
             {
                 "cells": [
-                    "Year 1 income",
+                    "Annual net revenue",
                     _format_amount(y1_income, "SAR"),
                     "Sum of income components",
                 ]
             },
             {
                 "cells": [
-                    "Year 1 income (effective)",
+                    "Annual net income",
                     _format_amount(y1_income_effective, "SAR"),
                     f"{_fmt_percent(y1_income_effective_factor, 0)} effective",
                 ]
@@ -328,14 +328,14 @@ def _build_revenue_breakdown_rows(
                 "cells": [
                     "OPEX",
                     _format_amount(opex_cost, "SAR"),
-                    f"{_fmt_percent(opex_pct, 0)} of effective income",
+                    f"{_fmt_percent(opex_pct, 0)} of annual net income",
                 ]
             },
             {
                 "cells": [
-                    "Year 1 NOI",
+                    "Annual NOI",
                     _format_amount(y1_noi, "SAR"),
-                    "Effective income - OPEX",
+                    "Annual net income - OPEX",
                 ]
             },
             {
@@ -402,10 +402,10 @@ def _build_appendix_rows(
         "feasibility_fee": "Feasibility fee",
         "transaction_cost": "Transaction costs",
         "grand_total_capex": "Total capex",
-        "y1_income": "Year 1 income",
-        "y1_income_effective": "Year 1 income (effective)",
+        "y1_income": "Annual net revenue",
+        "y1_income_effective": "Annual net income",
         "opex": "OPEX",
-        "y1_noi": "Year 1 NOI",
+        "y1_noi": "Annual NOI",
     }
     for key, label in label_map.items():
         note = explanations.get(key)
@@ -502,8 +502,8 @@ def build_memo_pdf(
     metrics = [
         ("Land value", _fmt_money(cost_breakdown.get("land_cost") or totals.get("land_value"))),
         ("Total capex", _fmt_money(cost_breakdown.get("grand_total_capex"))),
-        ("Year 1 income", _fmt_money(cost_breakdown.get("y1_income") or totals.get("revenues"))),
-        ("Year 1 NOI", _fmt_money(cost_breakdown.get("y1_noi"))),
+        ("Annual net revenue", _fmt_money(cost_breakdown.get("y1_income") or totals.get("revenues"))),
+        ("Annual NOI", _fmt_money(cost_breakdown.get("y1_noi"))),
         ("Unlevered ROI", _fmt_percent(cost_breakdown.get("roi"), 1)),
     ]
     metric_width = (pdf.w - pdf.l_margin - pdf.r_margin) / len(metrics)
