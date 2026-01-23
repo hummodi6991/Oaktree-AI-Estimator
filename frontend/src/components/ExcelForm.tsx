@@ -195,6 +195,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [farEditError, setFarEditError] = useState<string | null>(null);
   const [isScenarioOpen, setIsScenarioOpen] = useState(false);
   const [isScenarioSubmitting, setIsScenarioSubmitting] = useState(false);
+  const [scenarioBaseResult, setScenarioBaseResult] = useState<ExcelResult | null>(null);
+  const [isScenarioActive, setIsScenarioActive] = useState(false);
+  const excelResultRef = useRef<ExcelResult | null>(null);
   const unitCostInputs = inputs.unit_cost || {};
 
   useEffect(() => {
@@ -204,6 +207,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       parcelIdentityRef.current = parcelKey;
       setOverrideLandUse(null);
       setEstimateId(null);
+      setScenarioBaseResult(null);
+      setIsScenarioActive(false);
     }
   }, [parcel]);
 
@@ -294,6 +299,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   }, [estimateCompletedAt]);
 
   useEffect(() => {
+    excelResultRef.current = excelResult;
     if (!excelResult) return;
     const handleScroll = () => setHasUserScrolled(true);
     const windowScrollOptions: AddEventListenerOptions = { passive: true, once: true };
@@ -465,6 +471,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     setError(null);
     setExcelResult(null);
     setEstimateId(null);
+    setScenarioBaseResult(null);
+    setIsScenarioActive(false);
     try {
       const excelInputs = { ...currentInputs, land_use_code: effectiveLandUse };
       const result = await makeEstimate({
@@ -590,6 +598,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           excelBreakdown?.y1_income_effective_factor ??
           effectiveFactorFromInput
         : null;
+      if (!scenarioBaseResult && excelResultRef.current) {
+        setScenarioBaseResult(excelResultRef.current);
+      }
       setExcelResult((prev) => {
         if (!prev) return prev;
         return {
@@ -616,6 +627,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           breakdown: excelBreakdown ?? prev.breakdown,
         };
       });
+      setIsScenarioActive(true);
       setIsScenarioOpen(false);
       void trackEvent("ui_scenario_run", {
         estimateId,
@@ -640,8 +652,29 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const breakdown = excelResult?.breakdown || {};
   const notes = excelResult?.notes || {};
+  const scenario =
+    notes?.scenario_overrides ?? notes?.notes?.scenario_overrides ?? null;
   const builtArea = breakdown.built_area || {};
   const farAboveGround = breakdown.far_above_ground;
+  const scenarioAreaRatio =
+    scenario && typeof scenario.area_ratio === "number" ? scenario.area_ratio : null;
+  const scenarioFar = scenario && typeof scenario.far === "number" ? scenario.far : null;
+  const scenarioLandPrice =
+    scenario && typeof scenario.land_price_sar_m2 === "number" ? scenario.land_price_sar_m2 : null;
+  const displayedFar =
+    scenarioAreaRatio != null
+      ? scenarioFar ?? (farAboveGround != null ? farAboveGround * scenarioAreaRatio : null)
+      : farAboveGround;
+  const displayedBuiltArea =
+    scenarioAreaRatio != null
+      ? {
+        ...builtArea,
+        residential: (builtArea.residential ?? 0) * scenarioAreaRatio,
+        retail: (builtArea.retail ?? 0) * scenarioAreaRatio,
+        office: (builtArea.office ?? 0) * scenarioAreaRatio,
+        basement: builtArea.basement,
+      }
+      : builtArea;
   const nla = breakdown.nla || {};
   const directCost = breakdown.direct_cost || {};
   const incomeComponents = breakdown.y1_income_components || {};
@@ -649,18 +682,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     (isArabic
       ? breakdown.explanations_ar ?? breakdown.explanations_en ?? breakdown.explanations
       : breakdown.explanations_en ?? breakdown.explanations) || {};
-  const farNote = (() => {
+  const farNoteBase = (() => {
     const note = explanations.effective_far_above_ground;
     if (typeof note !== "string") return note;
-    const disallowedFragments = [
-      "Above-ground FAR adjusted",
-    ];
+    const disallowedFragments = ["Above-ground FAR adjusted"];
     const filtered = note
       .split("|")
       .map((part) => part.trim())
-      .filter(
-        (part) => !disallowedFragments.some((fragment) => part.startsWith(fragment)),
-      );
+      .filter((part) => !disallowedFragments.some((fragment) => part.startsWith(fragment)));
     return filtered.join(" | ");
   })();
   const usedInputs = excelResult?.inputs || {};
@@ -725,25 +754,57 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     formatAreaM2(Number(value), { maximumFractionDigits: 0 }, "");
 
   useEffect(() => {
-    if (!isEditingFar && farAboveGround != null) {
-      setFarDraft(String(farAboveGround));
+    if (!isEditingFar && displayedFar != null) {
+      setFarDraft(String(displayedFar));
     }
-  }, [farAboveGround, isEditingFar]);
+  }, [displayedFar, isEditingFar]);
 
   const buaNote = (key: string) => {
     const noteKey = `${key}_bua`;
-    if (explanations[noteKey]) return explanations[noteKey];
+    const showScenarioScale = scenarioAreaRatio != null && key !== "basement";
+    if (explanations[noteKey]) {
+      return (
+        <>
+          <div>{explanations[noteKey]}</div>
+          {showScenarioScale && (
+            <div style={{ marginTop: 4 }}>
+              Scenario scale: ×{formatNumberValue(scenarioAreaRatio, 2)}
+            </div>
+          )}
+        </>
+      );
+    }
     const ratio = areaRatio?.[key];
     if (siteArea != null && ratio != null) {
-      return t("excelNotes.siteAreaRatio", {
-        area: formatNumberValue(siteArea, 0),
-        ratio: formatNumberValue(ratio, 2),
-      });
+      return (
+        <>
+          <div>
+            {t("excelNotes.siteAreaRatio", {
+              area: formatNumberValue(siteArea, 0),
+              ratio: formatNumberValue(ratio, 2),
+            })}
+          </div>
+          {showScenarioScale && (
+            <div style={{ marginTop: 4 }}>
+              Scenario scale: ×{formatNumberValue(scenarioAreaRatio, 2)}
+            </div>
+          )}
+        </>
+      );
     }
-    return t("excelNotes.buaFallback");
+    return (
+      <>
+        <div>{t("excelNotes.buaFallback")}</div>
+        {showScenarioScale && (
+          <div style={{ marginTop: 4 }}>
+            Scenario scale: ×{formatNumberValue(scenarioAreaRatio, 2)}
+          </div>
+        )}
+      </>
+    );
   };
 
-  const landNote =
+  const landNoteBase =
     explanations.land_cost ||
     (siteArea && landPricePpm2
       ? t("excelNotes.landCost", {
@@ -752,6 +813,35 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         source: excelResult?.landPrice?.source_type || t("excel.sourceInput"),
       })
       : t("excelNotes.landCostFallback"));
+  const landNote =
+    scenarioLandPrice != null
+      ? (
+        <>
+          <div>{landNoteBase}</div>
+          <div style={{ marginTop: 4 }}>
+            Scenario override: land price = {formatNumberValue(scenarioLandPrice, 0)} SAR/m²
+          </div>
+        </>
+      )
+      : landNoteBase;
+
+  const farNote = (
+    <>
+      <div>{farNoteBase || t("excel.effectiveFarDefault")}</div>
+      {scenarioAreaRatio != null && (
+        <>
+          {scenarioFar != null && (
+            <div style={{ marginTop: 4 }}>
+              Scenario override: FAR = {formatNumberValue(scenarioFar, 3)}
+            </div>
+          )}
+          <div style={{ marginTop: 4 }}>
+            Scaled by ×{formatNumberValue(scenarioAreaRatio, 2)}
+          </div>
+        </>
+      )}
+    </>
+  );
 
   const fitoutNote =
     explanations.fitout ||
@@ -1131,6 +1221,43 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         >
           Scenario
         </button>
+        {isScenarioActive && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span
+              style={{
+                padding: "4px 8px",
+                borderRadius: 999,
+                fontSize: "0.75rem",
+                border: "1px solid rgba(148,163,184,0.6)",
+                color: "#e2e8f0",
+                background: "rgba(148,163,184,0.2)",
+              }}
+            >
+              Scenario active
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                if (scenarioBaseResult) {
+                  setExcelResult(scenarioBaseResult);
+                  setScenarioBaseResult(null);
+                  setIsScenarioActive(false);
+                }
+              }}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "#cbd5f5",
+                textDecoration: "underline",
+                cursor: "pointer",
+                padding: 0,
+                fontSize: "0.8rem",
+              }}
+            >
+              Reset scenario
+            </button>
+          </div>
+        )}
         {estimateId && (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <button type="button" onClick={handleExportPdf}>
@@ -1256,13 +1383,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                             style={farEditButtonStyle}
                             title={t("excel.farEditHint")}
                           >
-                            <span>{formatNumberValue(farAboveGround, 3)}</span>
+                            <span>{formatNumberValue(displayedFar, 3)}</span>
                             <span style={{ fontSize: "0.8rem", opacity: 0.85 }}>{t("excel.farEdit")}</span>
                           </button>
                         )}
                       </td>
                       <td style={calcColumnStyle}>
-                        {farNote || t("excel.effectiveFarDefault")}
+                        {farNote}
                         {!isEditingFar && (
                           <div style={{ marginTop: 6 }}>{t("excel.farEditHintInline")}</div>
                         )}
@@ -1272,26 +1399,26 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   )}
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.residentialBua")}</td>
-                    <td style={amountColumnStyle}>{formatArea(builtArea.residential)}</td>
+                    <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.residential)}</td>
                     <td style={calcColumnStyle}>{buaNote("residential")}</td>
                   </tr>
                   {effectiveLandUse === "m" && builtArea.retail !== undefined && (
                     <tr>
                       <td style={itemColumnStyle}>{t("excel.retailBua")}</td>
-                      <td style={amountColumnStyle}>{formatArea(builtArea.retail)}</td>
+                      <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.retail)}</td>
                       <td style={calcColumnStyle}>{buaNote("retail")}</td>
                     </tr>
                   )}
                   {effectiveLandUse === "m" && builtArea.office !== undefined && (
                     <tr>
                       <td style={itemColumnStyle}>{t("excel.officeBua")}</td>
-                      <td style={amountColumnStyle}>{formatArea(builtArea.office)}</td>
+                      <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.office)}</td>
                       <td style={calcColumnStyle}>{buaNote("office")}</td>
                     </tr>
                   )}
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.basementBua")}</td>
-                    <td style={amountColumnStyle}>{formatArea(builtArea.basement)}</td>
+                    <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.basement)}</td>
                     <td style={calcColumnStyle}>{buaNote("basement")}</td>
                   </tr>
                   <tr>
