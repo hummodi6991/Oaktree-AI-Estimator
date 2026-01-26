@@ -121,6 +121,8 @@ type ExcelFormProps = {
   landUseOverride?: string;
 };
 
+type MassingLock = "far" | "floors" | "coverage";
+
 const normalizeLandUse = (value?: string | null): LandUseCode | null => {
   const v = (value || "").trim().toLowerCase();
   return v === "m" ? "m" : v === "s" ? "s" : null;
@@ -129,6 +131,17 @@ const normalizeLandUse = (value?: string | null): LandUseCode | null => {
 const normalizeEffectivePct = (value?: number | null) => {
   if (value == null || Number.isNaN(value)) return 90;
   return Math.max(0, Math.min(value, 100));
+};
+
+const normalizeCoverageRatio = (value?: number | null) => {
+  if (value == null || Number.isNaN(value)) return null;
+  if (value <= 0 || value > 1) return null;
+  return value;
+};
+
+const resolveMassingLock = (value?: string | null): MassingLock => {
+  if (value === "floors" || value === "coverage") return value;
+  return "far";
 };
 
 export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
@@ -214,10 +227,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [opexPctDraft, setOpexPctDraft] = useState<string>(
     formatPercentDraftFromFraction(inputs.opex_pct),
   );
+  const [coverageDraft, setCoverageDraft] = useState<string>(
+    formatPercentDraftFromFraction(inputs.coverage_ratio, 0),
+  );
   const [floorsDraft, setFloorsDraft] = useState<string>("");
   const [isEditingFar, setIsEditingFar] = useState(false);
   const [farDraft, setFarDraft] = useState<string>("");
   const [farEditError, setFarEditError] = useState<string | null>(null);
+  const [coverageEditError, setCoverageEditError] = useState<string | null>(null);
   const [floorsEditError, setFloorsEditError] = useState<string | null>(null);
   const [isScenarioOpen, setIsScenarioOpen] = useState(false);
   const [isScenarioSubmitting, setIsScenarioSubmitting] = useState(false);
@@ -296,6 +313,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       if (currentLandPrice > 0) {
         nextPatch.land_price_sar_m2 = currentLandPrice;
       }
+      const defaultCoverage = effectiveLandUse === "m" ? 0.6 : 0.7;
+      const currentCoverage = normalizeCoverageRatio(inputsRef.current?.coverage_ratio ?? null);
+      if (prev.coverage_ratio == null && currentCoverage == null) {
+        nextPatch.coverage_ratio = defaultCoverage;
+      }
+      if (prev.massing_lock == null && inputsRef.current?.massing_lock == null) {
+        nextPatch.massing_lock = "far";
+      }
       nextPatch.fitout_rate = includeFitout ? template.fitout_rate : 0;
       nextPatch.contingency_pct = includeContingency ? template.contingency_pct : 0;
       nextPatch.feasibility_fee_pct = includeFeasibility ? template.feasibility_fee_pct : 0;
@@ -312,6 +337,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   useEffect(() => {
     setOpexPctDraft(formatPercentDraftFromFraction(inputs.opex_pct));
   }, [inputs.opex_pct]);
+
+  useEffect(() => {
+    const resolved = normalizeCoverageRatio(inputs.coverage_ratio ?? null);
+    setCoverageDraft(
+      formatPercentDraftFromFraction(resolved ?? (effectiveLandUse === "m" ? 0.6 : 0.7), 0),
+    );
+  }, [effectiveLandUse, inputs.coverage_ratio]);
 
   useEffect(() => {
     if (!estimateId) return;
@@ -439,6 +471,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   };
 
   const resolveOpexPctFromDraft = (draft: string) => resolveFractionFromDraftPercent(draft);
+  const resolveCoverageFromDraft = (draft: string) => {
+    if (draft.trim() === "") return null;
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed)) return null;
+    if (parsed <= 0 || parsed > 100) return null;
+    return parsed / 100;
+  };
   const resolveFloorsFromDraft = (draft: string) => {
     const trimmed = draft.trim();
     if (!trimmed) return null;
@@ -466,6 +505,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     return effectiveLandUse === "m" ? 3.5 : null;
   }, [effectiveLandUse, floorsAdjustmentValue, inputs?.desired_floors_above_ground]);
   const disableFloorsScaling = inputsRef.current?.disable_floors_scaling === true;
+  const massingLock = resolveMassingLock(inputs.massing_lock ?? null);
+  const defaultCoverageRatio = effectiveLandUse === "m" ? 0.6 : 0.7;
+  const coverageRatio = normalizeCoverageRatio(inputs.coverage_ratio ?? null) ?? defaultCoverageRatio;
+
+  const resolveScaledAreaRatio = (targetFar: number) => {
+    const baseRatio = resolveAreaRatioBase([
+      excelResultRef.current?.used_inputs?.area_ratio,
+      inputsRef.current?.area_ratio,
+      templateForLandUse(effectiveLandUse).area_ratio,
+    ]);
+    return scaleAboveGroundAreaRatio(baseRatio, targetFar);
+  };
 
   const commitEffectiveIncomePct = (draftOverride?: string) => {
     const pct = resolveEffectivePctFromDraft(draftOverride ?? effectiveIncomePctDraft);
@@ -495,6 +546,68 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     setOpexPctDraft(formatPercentDraftFromFraction(resolved));
   };
 
+  const commitCoverage = () => {
+    const resolved = resolveCoverageFromDraft(coverageDraft);
+    if (resolved == null) {
+      setCoverageEditError("Enter a percent greater than 0 and up to 100.");
+      return;
+    }
+    const committed = normalizeCoverageRatio(inputsRef.current?.coverage_ratio ?? null) ?? defaultCoverageRatio;
+    if (Math.abs(resolved - committed) < 1e-6) {
+      setCoverageDraft(formatPercentDraftFromFraction(resolved, 0));
+      setCoverageEditError(null);
+      return;
+    }
+
+    const farValue = displayedFar ?? farAboveGround ?? null;
+    const floorsValue = committedFloorsValue ?? null;
+
+    if (massingLock === "floors") {
+      if (floorsValue == null || floorsValue <= 0) {
+        setCoverageEditError("Set floors before updating coverage.");
+        return;
+      }
+      const targetFar = floorsValue * resolved;
+      const scaled = resolveScaledAreaRatio(targetFar);
+      if (!scaled) {
+        setCoverageEditError(t("excel.farEditErrorMissing"));
+        return;
+      }
+      applyInputPatch(
+        {
+          coverage_ratio: resolved,
+          desired_floors_above_ground: floorsValue,
+          area_ratio: scaled.nextAreaRatio,
+          disable_floors_scaling: true,
+        },
+        true,
+      );
+    } else if (massingLock === "far") {
+      if (farValue == null || !Number.isFinite(farValue) || farValue <= 0) {
+        setCoverageEditError("FAR must be available to update coverage.");
+        return;
+      }
+      const nextFloors = farValue / resolved;
+      if (!Number.isFinite(nextFloors) || nextFloors <= 0) {
+        setCoverageEditError("Coverage results in an invalid floors value.");
+        return;
+      }
+      applyInputPatch(
+        {
+          coverage_ratio: resolved,
+          desired_floors_above_ground: nextFloors,
+          disable_floors_scaling: true,
+        },
+        true,
+      );
+    } else {
+      applyInputPatch({ coverage_ratio: resolved }, true);
+    }
+
+    setCoverageDraft(formatPercentDraftFromFraction(resolved, 0));
+    setCoverageEditError(null);
+  };
+
   const commitFloors = () => {
     const resolved = resolveFloorsFromDraft(floorsDraft);
     if (resolved == null) {
@@ -507,7 +620,41 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       setFloorsEditError(null);
       return;
     }
-    applyInputPatch({ desired_floors_above_ground: resolved }, true);
+    const farValue = displayedFar ?? farAboveGround ?? null;
+    if (massingLock === "far") {
+      if (farValue == null || !Number.isFinite(farValue) || farValue <= 0) {
+        setFloorsEditError("FAR must be available to update floors.");
+        return;
+      }
+      const nextCoverage = farValue / resolved;
+      if (!Number.isFinite(nextCoverage) || nextCoverage <= 0 || nextCoverage > 1) {
+        setFloorsEditError("Coverage would be out of range.");
+        return;
+      }
+      applyInputPatch(
+        {
+          desired_floors_above_ground: resolved,
+          coverage_ratio: nextCoverage,
+          disable_floors_scaling: true,
+        },
+        true,
+      );
+    } else {
+      const targetFar = resolved * coverageRatio;
+      const scaled = resolveScaledAreaRatio(targetFar);
+      if (!scaled) {
+        setFloorsEditError(t("excel.farEditErrorMissing"));
+        return;
+      }
+      applyInputPatch(
+        {
+          desired_floors_above_ground: resolved,
+          area_ratio: scaled.nextAreaRatio,
+          disable_floors_scaling: true,
+        },
+        true,
+      );
+    }
     setFloorsDraft(String(resolved));
     setFloorsEditError(null);
   };
@@ -766,6 +913,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     scenarioAreaRatio != null
       ? scenarioFar ?? (farAboveGround != null ? farAboveGround * scenarioAreaRatio : null)
       : farAboveGround;
+  const impliedFloors =
+    displayedFar != null && coverageRatio > 0 && Number.isFinite(coverageRatio)
+      ? displayedFar / coverageRatio
+      : null;
   const displayedBuiltArea =
     scenarioAreaRatio != null
       ? {
@@ -957,7 +1108,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   );
   const floorsNoteBase =
     "Used to scale above-ground area ratios when FAR is not manually overridden. Default 3.5 for mixed-use.";
-  const floorsDisabledNote = "Disabled because FAR was manually overridden.";
+  const floorsDisabledNote = "Skipped because FAR was manually overridden.";
   const floorsNote = disableFloorsScaling ? floorsDisabledNote : floorsNoteBase;
 
   const fitoutNote =
@@ -1038,10 +1189,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     !includeOpex ||
     opexDraftValue == null ||
     Math.abs(opexDraftValue - committedOpexPct) < 1e-6;
+  const coverageDraftValue = resolveCoverageFromDraft(coverageDraft);
+  const committedCoverageRatio =
+    normalizeCoverageRatio(inputsRef.current?.coverage_ratio ?? null) ?? defaultCoverageRatio;
+  const coverageApplyDisabled =
+    coverageDraftValue == null || Math.abs(coverageDraftValue - committedCoverageRatio) < 1e-6;
   const floorsDraftValue = resolveFloorsFromDraft(floorsDraft);
   const floorsApplyDisabled =
     effectiveLandUse !== "m" ||
-    disableFloorsScaling ||
     floorsDraftValue == null ||
     (committedFloorsValue != null && Math.abs(floorsDraftValue - committedFloorsValue) < 1e-6);
   const effectiveIncomeFactor = effectiveIncomePct / 100;
@@ -1120,6 +1275,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     fontSize: "14px",
     textAlign: "right" as const,
   };
+  const coverageInputStyle = {
+    width: "72px",
+    padding: "4px 6px",
+    borderRadius: 6,
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(0,0,0,0.15)",
+    color: "white",
+    fontSize: "14px",
+    textAlign: "right" as const,
+  };
   const floorsApplyButtonStyle = {
     padding: "4px 8px",
     borderRadius: 6,
@@ -1154,7 +1319,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const farErrorStyle = { color: "#fca5a5", fontSize: "0.75rem", marginTop: 4 } as const;
 
   const resetFarDraft = () => {
-    setFarDraft(farAboveGround != null ? String(farAboveGround) : "");
+    setFarDraft(displayedFar != null ? String(displayedFar) : "");
   };
 
   const cancelFarEdit = () => {
@@ -1169,20 +1334,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       setFarEditError(t("excel.farEditErrorInvalid"));
       return;
     }
-
-    const baseRatio = resolveAreaRatioBase([
-      excelResultRef.current?.used_inputs?.area_ratio,
-      inputsRef.current?.area_ratio,
-      templateForLandUse(effectiveLandUse).area_ratio,
-    ]);
-    const scaled = scaleAboveGroundAreaRatio(baseRatio, targetFar);
+    const scaled = resolveScaledAreaRatio(targetFar);
     if (!scaled) {
       setFarEditError(t("excel.farEditErrorMissing"));
       return;
     }
-
     applyInputPatch(
-      { area_ratio: scaled.nextAreaRatio, disable_floors_scaling: true } as Partial<ExcelInputs>,
+      { area_ratio: scaled.nextAreaRatio, disable_floors_scaling: true, massing_lock: "far" } as Partial<ExcelInputs>,
       true,
     );
     setIsScenarioActive(false);
@@ -1199,16 +1357,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   };
 
   const startFarEdit = () => {
-    if (farAboveGround == null) return;
+    if (displayedFar == null) return;
     setFarEditError(null);
-    setFarDraft(String(farAboveGround));
+    setFarDraft(String(displayedFar));
     setIsEditingFar(true);
   };
   const farApplyDisabled =
     farDraft.trim() === "" ||
     !Number.isFinite(Number(farDraft)) ||
     Number(farDraft) <= 0 ||
-    (farAboveGround != null && Number(farDraft) === Number(farAboveGround));
+    (displayedFar != null && Number(farDraft) === Number(displayedFar));
   const revenueItems = Object.keys(incomeComponents || {}).map((key) => {
     const nlaVal = nla[key] ?? 0;
     const efficiencyVal = efficiency[key] ?? null;
@@ -1473,6 +1631,59 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   </tr>
                 </thead>
                 <tbody>
+                  <tr>
+                    <td style={itemColumnStyle}>Coverage</td>
+                    <td style={amountColumnStyle}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "flex-end",
+                          gap: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <input
+                          type="number"
+                          min={0.1}
+                          max={100}
+                          step="0.1"
+                          value={coverageDraft}
+                          onChange={(event) => {
+                            setCoverageDraft(event.target.value);
+                            if (coverageEditError) {
+                              setCoverageEditError(null);
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              commitCoverage();
+                            }
+                          }}
+                          style={coverageInputStyle}
+                          aria-label="Coverage ratio"
+                        />
+                        <span style={{ opacity: 0.75 }}>%</span>
+                        <button
+                          type="button"
+                          onClick={commitCoverage}
+                          disabled={coverageApplyDisabled}
+                          style={{
+                            ...floorsApplyButtonStyle,
+                            cursor: coverageApplyDisabled ? "not-allowed" : "pointer",
+                            opacity: coverageApplyDisabled ? 0.6 : 1,
+                          }}
+                        >
+                          {t("common.apply")}
+                        </button>
+                      </div>
+                    </td>
+                    <td style={calcColumnStyle}>
+                      <div>Used with FAR to infer above-ground floors.</div>
+                      {coverageEditError && <div style={farErrorStyle}>{coverageEditError}</div>}
+                    </td>
+                  </tr>
                   {farAboveGround != null && (
                     <tr>
                       <td style={itemColumnStyle}>{t("excel.effectiveFar")}</td>
@@ -1544,6 +1755,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       </td>
                     </tr>
                   )}
+                  <tr>
+                    <td style={itemColumnStyle}>Implied floors</td>
+                    <td style={amountColumnStyle}>
+                      {impliedFloors != null && Number.isFinite(impliedFloors)
+                        ? formatNumberValue(impliedFloors, 1)
+                        : "—"}
+                    </td>
+                    <td style={calcColumnStyle}>FAR ÷ coverage.</td>
+                  </tr>
                   {effectiveLandUse === "m" && (
                     <tr>
                       <td style={itemColumnStyle}>Floors (above-ground)</td>
@@ -1576,9 +1796,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                             }}
                             style={{
                               ...floorsInputStyle,
-                              opacity: disableFloorsScaling ? 0.6 : 1,
                             }}
-                            disabled={disableFloorsScaling}
                             aria-label="Floors above ground"
                           />
                           <button
@@ -1601,6 +1819,49 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       </td>
                     </tr>
                   )}
+                  <tr>
+                    <td style={itemColumnStyle}>Massing locks</td>
+                    <td style={amountColumnStyle}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "flex-end",
+                          gap: 12,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <input
+                            type="radio"
+                            name="massing-lock"
+                            checked={massingLock === "floors"}
+                            onChange={() => applyInputPatch({ massing_lock: "floors" })}
+                          />
+                          Lock floors
+                        </label>
+                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <input
+                            type="radio"
+                            name="massing-lock"
+                            checked={massingLock === "far"}
+                            onChange={() => applyInputPatch({ massing_lock: "far" })}
+                          />
+                          Lock FAR
+                        </label>
+                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                          <input
+                            type="radio"
+                            name="massing-lock"
+                            checked={massingLock === "coverage"}
+                            onChange={() => applyInputPatch({ massing_lock: "coverage" })}
+                          />
+                          Lock coverage
+                        </label>
+                      </div>
+                    </td>
+                    <td style={calcColumnStyle}>Choose a single driver for massing updates.</td>
+                  </tr>
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.residentialBua")}</td>
                     <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.residential)}</td>

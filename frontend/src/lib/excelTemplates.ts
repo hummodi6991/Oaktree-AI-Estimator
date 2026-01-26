@@ -5,6 +5,8 @@ export type ExcelInputs = {
   land_use_code?: LandUseCode;
   disable_floors_scaling?: boolean;
   desired_floors_above_ground?: number;
+  coverage_ratio?: number;
+  massing_lock?: "far" | "floors" | "coverage";
   area_ratio: Record<string, number | string>;
   unit_cost: Record<string, number>;
   efficiency: Record<string, number>;
@@ -23,6 +25,8 @@ export type ExcelInputs = {
 // Baseline template: Residential ("s")
 export const TEMPLATE_S: ExcelInputs = {
   land_use_code: "s",
+  coverage_ratio: 0.7,
+  massing_lock: "far",
   area_ratio: {
     residential: 1.6,
     basement: 1.0,
@@ -53,6 +57,8 @@ export const TEMPLATE_S: ExcelInputs = {
 // Backend heuristic checks area_ratio keys for residential+commercial to infer "m"【turn10file7†file 89.txt†L57-L81】
 export const TEMPLATE_M: ExcelInputs = {
   land_use_code: "m",
+  coverage_ratio: 0.6,
+  massing_lock: "far",
   area_ratio: {
     residential: 1.2,
     retail: 0.6,
