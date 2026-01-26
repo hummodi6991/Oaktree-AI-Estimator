@@ -14,6 +14,7 @@ import type { EstimateNotes, EstimateTotals } from "../lib/types";
 import { formatAreaM2, formatCurrencySAR, formatNumber, formatPercent } from "../i18n/format";
 import { scaleAboveGroundAreaRatio } from "../utils/areaRatio";
 import { applyPatch } from "../utils/applyPatch";
+import { formatPercentDraftFromFraction, resolveFractionFromDraftPercent } from "../utils/opex";
 import MicroFeedbackPrompt from "./MicroFeedbackPrompt";
 import ScenarioModal from "./ScenarioModal";
 
@@ -207,7 +208,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
     String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
   );
-  const [opexPctDraft, setOpexPctDraft] = useState<string>(String(inputs.opex_pct ?? 0));
+  const [opexPctDraft, setOpexPctDraft] = useState<string>(
+    formatPercentDraftFromFraction(inputs.opex_pct),
+  );
   const [isEditingFar, setIsEditingFar] = useState(false);
   const [farDraft, setFarDraft] = useState<string>("");
   const [farEditError, setFarEditError] = useState<string | null>(null);
@@ -302,7 +305,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   }, [inputs?.y1_income_effective_pct]);
 
   useEffect(() => {
-    setOpexPctDraft(String(inputs.opex_pct ?? 0));
+    setOpexPctDraft(formatPercentDraftFromFraction(inputs.opex_pct));
   }, [inputs.opex_pct]);
 
   useEffect(() => {
@@ -430,12 +433,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     return normalizeEffectivePct(parsed);
   };
 
-  const resolveOpexPctFromDraft = (draft: string) => {
-    if (draft.trim() === "") return null;
-    const parsed = Number(draft);
-    if (!Number.isFinite(parsed)) return null;
-    return Math.max(0, Math.min(parsed, 1));
-  };
+  const resolveOpexPctFromDraft = (draft: string) => resolveFractionFromDraftPercent(draft);
 
   const commitEffectiveIncomePct = (draftOverride?: string) => {
     const pct = resolveEffectivePctFromDraft(draftOverride ?? effectiveIncomePctDraft);
@@ -456,13 +454,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
     if (resolved == null) return;
 
-    if (resolved === currentPct) {
-      setOpexPctDraft(String(resolved));
+    if (Math.abs(resolved - currentPct) < 1e-6) {
+      setOpexPctDraft(formatPercentDraftFromFraction(resolved));
       return;
     }
 
     applyInputPatch({ opex_pct: resolved }, Boolean(excelResult));
-    setOpexPctDraft(String(resolved));
+    setOpexPctDraft(formatPercentDraftFromFraction(resolved));
   };
 
   const assetProgram =
@@ -656,6 +654,25 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           breakdown: excelBreakdown ?? prev.breakdown,
         };
       });
+      const scenarioOverrides: Partial<ExcelInputs> = {};
+      if (typeof patch.land_price_sar_m2 === "number" && Number.isFinite(patch.land_price_sar_m2)) {
+        scenarioOverrides.land_price_sar_m2 = patch.land_price_sar_m2;
+      }
+      if (typeof patch.far === "number" && Number.isFinite(patch.far)) {
+        const currentAreaRatio = inputsRef.current?.area_ratio || {};
+        const scaled = scaleAboveGroundAreaRatio(currentAreaRatio, patch.far);
+        if (scaled) {
+          scenarioOverrides.area_ratio = scaled.nextAreaRatio;
+        } else {
+          setError(t("excel.farEditErrorMissing"));
+        }
+      }
+      if (Object.keys(scenarioOverrides).length > 0) {
+        applyInputPatch(scenarioOverrides, false);
+      }
+      if (typeof patch.provider === "string" && patch.provider.trim()) {
+        setProvider(patch.provider.trim() as (typeof PROVIDERS)[number]["value"]);
+      }
       setIsScenarioActive(true);
       setIsScenarioOpen(false);
       void trackEvent("ui_scenario_run", {
@@ -947,7 +964,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const opexDraftValue = resolveOpexPctFromDraft(opexPctDraft);
   const committedOpexPct = Math.max(0, Math.min(inputsRef.current?.opex_pct ?? 0, 1));
   const opexApplyDisabled =
-    !includeOpex || opexDraftValue == null || opexDraftValue === committedOpexPct;
+    !includeOpex ||
+    opexDraftValue == null ||
+    Math.abs(opexDraftValue - committedOpexPct) < 1e-6;
   const effectiveIncomeFactor = effectiveIncomePct / 100;
   // Some estimate fields may exist in excelResult.breakdown (raw backend excel output)
   // rather than excelResult.costs (API "cost_breakdown"). Prefer costs when present, fallback to breakdown.
@@ -1690,9 +1709,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <input
                             type="number"
-                            step="0.01"
+                            step="0.1"
                             min={0}
-                            max={1}
+                            max={100}
                             value={opexPctDraft}
                             onChange={(event) => setOpexPctDraft(event.target.value)}
                             onKeyDown={(event) => {
@@ -1712,6 +1731,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                             aria-label={t("excel.opex")}
                             disabled={!includeOpex}
                           />
+                          <span style={{ opacity: 0.75 }}>%</span>
                           <button
                             type="button"
                             onClick={() => commitOpexPct()}
