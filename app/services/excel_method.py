@@ -180,9 +180,6 @@ def scale_area_ratio_by_floors(
     baseline_floors_above_ground: float | int | str | None,
     desired_floors_source: str | None = None,
     baseline_floors_source: str | None = None,
-    min_above_ground_far: float | None = None,
-    max_above_ground_far: float | None = None,
-    enforce_far_source: str | None = None,
 ) -> Dict[str, Any]:
     """
     Option B — Use floors (stories) to scale `area_ratio`.
@@ -240,48 +237,6 @@ def scale_area_ratio_by_floors(
         new_area_ratio[k] = r * factor
         if isinstance(k, str):
             scaled_keys.append(k)
-
-    # Optional enforcement: keep above-ground FAR within bounds after floors scaling.
-    try:
-        min_far = float(min_above_ground_far) if min_above_ground_far is not None else None
-    except Exception:
-        min_far = None
-    try:
-        max_far = float(max_above_ground_far) if max_above_ground_far is not None else None
-    except Exception:
-        max_far = None
-
-    far_sum = 0.0
-    for k, v in new_area_ratio.items():
-        if isinstance(k, str) and _is_basement_area_ratio_key(k):
-            continue
-        try:
-            far_sum += float(v or 0.0)
-        except Exception:
-            continue
-
-    far_target: float | None = None
-    if far_sum > 0:
-        if min_far is not None and far_sum < min_far:
-            far_target = min_far
-        if max_far is not None and far_sum > max_far:
-            far_target = max_far
-
-    if far_target is not None and far_sum > 0:
-        adj = far_target / far_sum
-        for k, v in list(new_area_ratio.items()):
-            if isinstance(k, str) and _is_basement_area_ratio_key(k):
-                continue
-            try:
-                new_area_ratio[k] = float(v or 0.0) * adj
-            except Exception:
-                continue
-        inputs["area_ratio_note"] = (str(inputs.get("area_ratio_note") or "").strip() + " ").strip() + (
-            f"Above-ground FAR adjusted to {far_target:.3f} (was {far_sum:.3f}) "
-            f"via × {adj:.3f} [{enforce_far_source or 'far_enforcement'}]."
-        )
-        inputs["far_above_ground_enforced_to"] = far_target
-        inputs["far_above_ground_enforce_factor"] = adj
 
     inputs["area_ratio"] = new_area_ratio
 
@@ -364,12 +319,10 @@ def build_excel_explanations(
     land_price = float(inputs.get("land_price_sar_m2", 0.0) or 0.0)
     land_cost_total = float(breakdown.get("land_cost", site_area_m2 * land_price) or 0.0)
     explanations_en["land_cost"] = (
-        f"{_fmt_amount(site_area_m2)} m² × {land_price:,.0f} SAR/m² = {_fmt_amount(land_cost_total)} SAR. "
-        "Price derived from hedonic comps."
+        f"{_fmt_amount(site_area_m2)} m² × {land_price:,.0f} SAR/m² = {_fmt_amount(land_cost_total)} SAR."
     )
     explanations_ar["land_cost"] = (
-        f"{_fmt_amount(site_area_m2)} م² × {land_price:,.0f} SAR/م² = {_fmt_amount(land_cost_total)} SAR. "
-        "السعر مستند إلى نموذج هدوني ومعاملات مماثلة."
+        f"{_fmt_amount(site_area_m2)} م² × {land_price:,.0f} SAR/م² = {_fmt_amount(land_cost_total)} SAR."
     )
 
     note_appended = False
@@ -676,75 +629,6 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     """Compute an Excel-style estimate using caller-provided parameters."""
 
     area_ratio = inputs.get("area_ratio", {}) or {}
-    # -------------------------------------------------------------------------
-    # HARD GUARANTEE: Effective FAR (above-ground) floor for mixed-use parcels.
-    #
-    # Effective FAR (above-ground) is defined as:
-    #   Σ(area ratios excluding basement)
-    # and is what the UI displays.
-    #
-    # Some upstream steps (parking auto-adjust, template rewrites, floors scaling)
-    # can still yield an above-ground FAR < 2.5 even when landuse is mixed-use.
-    # Enforce it here at the final source-of-truth.
-    # -------------------------------------------------------------------------
-    def _norm_land_use_local() -> str:
-        lu = (
-            inputs.get("land_use_code")
-            or inputs.get("landuse_code")
-            or inputs.get("land_use")
-            or inputs.get("landuse")
-            or ""
-        ).strip().lower()
-        if lu in {"m", "s", "c"}:
-            return lu
-        keys = {str(k).strip().lower() for k in area_ratio.keys()}
-        # mixed-use if retail/office keys present (current repo convention)
-        if {"retail", "office"} & keys:
-            return "m"
-        return ""
-
-    land_use_code = _norm_land_use_local()
-    if land_use_code == "m" and isinstance(area_ratio, dict) and area_ratio:
-        min_far = 2.5
-        max_far = 5.0
-
-        far_above = 0.0
-        for k, v in area_ratio.items():
-            if isinstance(k, str) and _is_basement_area_ratio_key(k):
-                continue
-            try:
-                far_above += float(v or 0.0)
-            except Exception:
-                continue
-
-        if far_above > 0:
-            target = None
-            if far_above < min_far:
-                target = min_far
-            elif far_above > max_far:
-                target = max_far
-
-            if target is not None:
-                factor = target / far_above
-                new_ar: dict[str, Any] = {}
-                for k, v in area_ratio.items():
-                    if isinstance(k, str) and _is_basement_area_ratio_key(k):
-                        new_ar[k] = v
-                        continue
-                    try:
-                        new_ar[k] = float(v or 0.0) * factor
-                    except Exception:
-                        new_ar[k] = v
-                inputs["area_ratio"] = new_ar
-                area_ratio = new_ar
-                # add transparent note for debugging
-                note = str(inputs.get("area_ratio_note") or "").strip()
-                extra = (
-                    "Effective FAR (above-ground) clamped to "
-                    f"{target:.3f} (was {far_above:.3f}) via ×{factor:.3f} "
-                    "[mixed_use_far_floor_final]."
-                )
-                inputs["area_ratio_note"] = (note + " " + extra).strip() if note else extra
     unit_cost = inputs.get("unit_cost", {}) or {}
     cp_density = inputs.get("cp_sqm_per_space", {}) or {}
     efficiency = inputs.get("efficiency", {}) or {}

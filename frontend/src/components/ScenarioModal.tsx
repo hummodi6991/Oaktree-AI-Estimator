@@ -60,6 +60,10 @@ export default function ScenarioModal({
       setError("Please enter valid numbers for scenario inputs.");
       return false;
     }
+    if (key === "far" && parsed <= 0) {
+      setError("FAR must be greater than 0.");
+      return false;
+    }
     patch[key] = parsed;
     meta[key] = parsed;
     return true;

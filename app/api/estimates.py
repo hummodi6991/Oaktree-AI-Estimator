@@ -369,7 +369,7 @@ class EstimateRequest(BaseModel):
                 "efficiency": 0.82,
                 "excel_inputs": {
                     "area_ratio": {"residential": 1.6, "basement": 1},
-                    "unit_cost": {"residential": 2200, "basement": 1200},
+                    "unit_cost": {"residential": 2200, "basement": 2200},
                     "efficiency": {"residential": 0.82},
                     "cp_sqm_per_space": {"basement": 30},
                     "rent_sar_m2_yr": {"residential": 2400},
@@ -778,9 +778,6 @@ def create_estimate(
                 baseline_floors_above_ground=baseline_floors_above_ground,
                 desired_floors_source="fixed_mixed_use_rule",
                 baseline_floors_source=baseline_source,
-                min_above_ground_far=2.5,
-                max_above_ground_far=5.0,
-                enforce_far_source="mixed_use_far_floor",
             )
 
             floors_adjustment = {
