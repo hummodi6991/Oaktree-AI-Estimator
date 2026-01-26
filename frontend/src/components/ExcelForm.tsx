@@ -12,7 +12,7 @@ import {
 import ParkingSummary from "./ParkingSummary";
 import type { EstimateNotes, EstimateTotals } from "../lib/types";
 import { formatAreaM2, formatCurrencySAR, formatNumber, formatPercent } from "../i18n/format";
-import { scaleAboveGroundAreaRatio } from "../utils/areaRatio";
+import { resolveAreaRatioBase, scaleAboveGroundAreaRatio } from "../utils/areaRatio";
 import { applyPatch } from "../utils/applyPatch";
 import { formatPercentDraftFromFraction, resolveFractionFromDraftPercent } from "../utils/opex";
 import MicroFeedbackPrompt from "./MicroFeedbackPrompt";
@@ -659,8 +659,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         scenarioOverrides.land_price_sar_m2 = patch.land_price_sar_m2;
       }
       if (typeof patch.far === "number" && Number.isFinite(patch.far)) {
-        const currentAreaRatio = inputsRef.current?.area_ratio || {};
-        const scaled = scaleAboveGroundAreaRatio(currentAreaRatio, patch.far);
+        const baseRatio = resolveAreaRatioBase(
+          inputsRef.current?.area_ratio,
+          templateForLandUse(effectiveLandUse).area_ratio,
+        );
+        const scaled = scaleAboveGroundAreaRatio(baseRatio, patch.far);
         if (scaled) {
           scenarioOverrides.area_ratio = scaled.nextAreaRatio;
         } else {
@@ -1075,14 +1078,19 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       return;
     }
 
-    const currentAreaRatio = inputsRef.current?.area_ratio || {};
-    const scaled = scaleAboveGroundAreaRatio(currentAreaRatio, targetFar);
+    const baseRatio = resolveAreaRatioBase(
+      inputsRef.current?.area_ratio,
+      templateForLandUse(effectiveLandUse).area_ratio,
+    );
+    const scaled = scaleAboveGroundAreaRatio(baseRatio, targetFar);
     if (!scaled) {
       setFarEditError(t("excel.farEditErrorMissing"));
       return;
     }
 
     applyInputPatch({ area_ratio: scaled.nextAreaRatio }, true);
+    setIsScenarioActive(false);
+    setScenarioBaseResult(null);
     setIsEditingFar(false);
     setFarEditError(null);
     setFarDraft(String(targetFar));

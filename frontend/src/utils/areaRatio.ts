@@ -1,5 +1,15 @@
 export type AreaRatioMap = Record<string, number | string>;
 
+export const resolveAreaRatioBase = (
+  current: AreaRatioMap | null | undefined,
+  fallback: AreaRatioMap,
+): AreaRatioMap => {
+  if (current && Object.keys(current).length > 0) {
+    return current;
+  }
+  return fallback;
+};
+
 const isBasementKey = (key: string) => {
   const normalized = key.toLowerCase();
   return normalized === "basement" || normalized.includes("basement");
