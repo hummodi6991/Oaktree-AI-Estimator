@@ -155,3 +155,42 @@ def test_land_use_override_does_not_persist_between_requests():
     assert response_auto.status_code == 200
     notes_auto = response_auto.json().get("notes") or {}
     assert notes_auto.get("landuse_for_far_cap") == "s"
+
+
+def test_disable_floors_scaling_skips_mixed_use_adjustment():
+    poly_mixed_use = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [46.675, 24.713],
+                [46.676, 24.713],
+                [46.676, 24.714],
+                [46.675, 24.714],
+                [46.675, 24.713],
+            ]
+        ],
+    }
+    payload = {
+        "geometry": poly_mixed_use,
+        "asset_program": "residential_midrise",
+        "unit_mix": [{"type": "1BR", "count": 10}],
+        "finish_level": "mid",
+        "timeline": {"start": "2025-10-01", "months": 18},
+        "financing_params": {"margin_bps": 250, "ltv": 0.6},
+        "strategy": "build_to_sell",
+    }
+    mixed_inputs = sample_excel_inputs()
+    mixed_inputs["land_use_code"] = "m"
+    mixed_inputs["area_ratio"] = {"residential": 2.0, "retail": 1.0, "basement": 1.0}
+    mixed_inputs["disable_floors_scaling"] = True
+
+    response = client.post(
+        "/v1/estimates",
+        json={**payload, "excel_inputs": mixed_inputs},
+    )
+    assert response.status_code == 200
+    notes = response.json().get("notes") or {}
+    breakdown = notes.get("excel_breakdown") or {}
+    assert breakdown.get("far_above_ground") == pytest.approx(3.0, rel=1e-6)
+    floors_adjustment = notes.get("floors_adjustment") or {}
+    assert floors_adjustment.get("floors_scaling_skipped") is True

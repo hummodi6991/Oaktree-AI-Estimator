@@ -670,6 +670,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         const scaled = scaleAboveGroundAreaRatio(baseRatio, patch.far);
         if (scaled) {
           scenarioOverrides.area_ratio = scaled.nextAreaRatio;
+          (scenarioOverrides as Partial<ExcelInputs> & { disable_floors_scaling?: boolean })
+            .disable_floors_scaling = true;
         } else {
           setError(t("excel.farEditErrorMissing"));
         }
@@ -1093,7 +1095,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       return;
     }
 
-    applyInputPatch({ area_ratio: scaled.nextAreaRatio }, true);
+    applyInputPatch(
+      { area_ratio: scaled.nextAreaRatio, disable_floors_scaling: true } as Partial<ExcelInputs>,
+      true,
+    );
     setIsScenarioActive(false);
     setScenarioBaseResult(null);
     setIsEditingFar(false);
