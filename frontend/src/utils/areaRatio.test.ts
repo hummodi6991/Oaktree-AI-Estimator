@@ -11,7 +11,7 @@ describe("scaleAboveGroundAreaRatio", () => {
     if (!scaled) return;
     const next = scaled.nextAreaRatio as Record<string, number>;
     expect(next.basement).toBe(1.2);
-    const nextAboveGround = (next.residential ?? 0) + (next.retail ?? 0);
+    const nextAboveGround = (Number(next.residential ?? 0) || 0) + (Number(next.retail ?? 0) || 0);
     expect(nextAboveGround).toBeCloseTo(targetFar);
   });
 
@@ -32,7 +32,7 @@ describe("scaleAboveGroundAreaRatio", () => {
     const next = scaled.nextAreaRatio as Record<string, number | string>;
     expect(next.basement).toBe("0.8");
     expect(next.basement_storage).toBe(0.2);
-    const nextAboveGround = (next.residential ?? 0) + (next.retail ?? 0);
+    const nextAboveGround = (Number(next.residential ?? 0) || 0) + (Number(next.retail ?? 0) || 0);
     expect(nextAboveGround).toBeCloseTo(3);
   });
 });
