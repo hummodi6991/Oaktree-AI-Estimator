@@ -754,11 +754,23 @@ def create_estimate(
         floors_adjustment: dict[str, Any] | None = None
         if landuse_for_cap == "m":
             desired_floors_above_ground = 3.5
+            desired_floors_source = "fixed_mixed_use_rule"
             disable_floors_scaling = False
             try:
                 disable_floors_scaling = bool((excel_inputs or {}).get("disable_floors_scaling"))
             except Exception:
                 disable_floors_scaling = False
+            try:
+                v = (excel_inputs or {}).get("desired_floors_above_ground")
+                if v is None:
+                    v = (excel_inputs or {}).get("floors_above_ground")
+                if v is not None:
+                    vf = float(v)
+                    if vf > 0:
+                        desired_floors_above_ground = vf
+                        desired_floors_source = "user_input"
+            except Exception:
+                pass
 
             baseline_floors_above_ground: float | None = None
             baseline_source: str | None = None
@@ -792,7 +804,7 @@ def create_estimate(
                     excel_inputs,
                     desired_floors_above_ground=desired_floors_above_ground,
                     baseline_floors_above_ground=baseline_floors_above_ground,
-                    desired_floors_source="fixed_mixed_use_rule",
+                    desired_floors_source=desired_floors_source,
                     baseline_floors_source=baseline_source,
                 )
             else:

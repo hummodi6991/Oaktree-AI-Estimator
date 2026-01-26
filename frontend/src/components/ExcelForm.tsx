@@ -214,9 +214,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [opexPctDraft, setOpexPctDraft] = useState<string>(
     formatPercentDraftFromFraction(inputs.opex_pct),
   );
+  const [floorsDraft, setFloorsDraft] = useState<string>("");
   const [isEditingFar, setIsEditingFar] = useState(false);
   const [farDraft, setFarDraft] = useState<string>("");
   const [farEditError, setFarEditError] = useState<string | null>(null);
+  const [floorsEditError, setFloorsEditError] = useState<string | null>(null);
   const [isScenarioOpen, setIsScenarioOpen] = useState(false);
   const [isScenarioSubmitting, setIsScenarioSubmitting] = useState(false);
   const [scenarioBaseResult, setScenarioBaseResult] = useState<ExcelResult | null>(null);
@@ -437,6 +439,33 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   };
 
   const resolveOpexPctFromDraft = (draft: string) => resolveFractionFromDraftPercent(draft);
+  const resolveFloorsFromDraft = (draft: string) => {
+    const trimmed = draft.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return parsed;
+  };
+  const floorsAdjustmentValue = useMemo(() => {
+    const notes = excelResult?.notes || {};
+    const nestedNotes = notes?.notes ?? null;
+    const floorsAdjustment =
+      notes?.floors_adjustment ?? (nestedNotes && typeof nestedNotes === "object" ? nestedNotes.floors_adjustment : null);
+    return floorsAdjustment && typeof floorsAdjustment.desired_floors_above_ground === "number"
+      ? floorsAdjustment.desired_floors_above_ground
+      : null;
+  }, [excelResult]);
+  const committedFloorsValue = useMemo(() => {
+    const overrideValue = inputs?.desired_floors_above_ground;
+    if (typeof overrideValue === "number" && Number.isFinite(overrideValue) && overrideValue > 0) {
+      return overrideValue;
+    }
+    if (typeof floorsAdjustmentValue === "number" && floorsAdjustmentValue > 0) {
+      return floorsAdjustmentValue;
+    }
+    return effectiveLandUse === "m" ? 3.5 : null;
+  }, [effectiveLandUse, floorsAdjustmentValue, inputs?.desired_floors_above_ground]);
+  const disableFloorsScaling = inputsRef.current?.disable_floors_scaling === true;
 
   const commitEffectiveIncomePct = (draftOverride?: string) => {
     const pct = resolveEffectivePctFromDraft(draftOverride ?? effectiveIncomePctDraft);
@@ -464,6 +493,23 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
     applyInputPatch({ opex_pct: resolved }, Boolean(excelResult));
     setOpexPctDraft(formatPercentDraftFromFraction(resolved));
+  };
+
+  const commitFloors = () => {
+    const resolved = resolveFloorsFromDraft(floorsDraft);
+    if (resolved == null) {
+      setFloorsEditError("Enter a number greater than 0.");
+      return;
+    }
+    const committed = committedFloorsValue ?? null;
+    if (committed != null && Math.abs(resolved - committed) < 1e-6) {
+      setFloorsDraft(String(resolved));
+      setFloorsEditError(null);
+      return;
+    }
+    applyInputPatch({ desired_floors_above_ground: resolved }, true);
+    setFloorsDraft(String(resolved));
+    setFloorsEditError(null);
   };
 
   const assetProgram =
@@ -814,6 +860,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     }
   }, [displayedFar, isEditingFar]);
 
+  useEffect(() => {
+    if (effectiveLandUse !== "m") {
+      setFloorsDraft("");
+      setFloorsEditError(null);
+      return;
+    }
+    if (committedFloorsValue != null) {
+      setFloorsDraft(String(committedFloorsValue));
+      setFloorsEditError(null);
+    }
+  }, [committedFloorsValue, effectiveLandUse]);
+
   const buaNote = (key: string) => {
     const noteKey = `${key}_bua`;
     const showScenarioScale = scenarioAreaRatio != null && key !== "basement";
@@ -897,6 +955,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       )}
     </>
   );
+  const floorsNoteBase =
+    "Used to scale above-ground area ratios when FAR is not manually overridden. Default 3.5 for mixed-use.";
+  const floorsDisabledNote = "Disabled because FAR was manually overridden.";
+  const floorsNote = disableFloorsScaling ? floorsDisabledNote : floorsNoteBase;
 
   const fitoutNote =
     explanations.fitout ||
@@ -976,6 +1038,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     !includeOpex ||
     opexDraftValue == null ||
     Math.abs(opexDraftValue - committedOpexPct) < 1e-6;
+  const floorsDraftValue = resolveFloorsFromDraft(floorsDraft);
+  const floorsApplyDisabled =
+    effectiveLandUse !== "m" ||
+    disableFloorsScaling ||
+    floorsDraftValue == null ||
+    (committedFloorsValue != null && Math.abs(floorsDraftValue - committedFloorsValue) < 1e-6);
   const effectiveIncomeFactor = effectiveIncomePct / 100;
   // Some estimate fields may exist in excelResult.breakdown (raw backend excel output)
   // rather than excelResult.costs (API "cost_breakdown"). Prefer costs when present, fallback to breakdown.
@@ -1042,6 +1110,24 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     fontWeight: 500,
     textAlign: "right" as const,
   };
+  const floorsInputStyle = {
+    width: "110px",
+    padding: "4px 6px",
+    borderRadius: 6,
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(0,0,0,0.15)",
+    color: "white",
+    fontSize: "14px",
+    textAlign: "right" as const,
+  };
+  const floorsApplyButtonStyle = {
+    padding: "4px 8px",
+    borderRadius: 6,
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "rgba(255,255,255,0.08)",
+    color: "white",
+    cursor: "pointer",
+  } as const;
   const farEditButtonStyle = {
     border: "none",
     padding: "4px 8px",
@@ -1455,6 +1541,63 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                           <div style={{ marginTop: 6 }}>{t("excel.farEditHintInline")}</div>
                         )}
                         {farEditError && <div style={farErrorStyle}>{farEditError}</div>}
+                      </td>
+                    </tr>
+                  )}
+                  {effectiveLandUse === "m" && (
+                    <tr>
+                      <td style={itemColumnStyle}>Floors (above-ground)</td>
+                      <td style={amountColumnStyle}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "flex-end",
+                            gap: 8,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <input
+                            type="number"
+                            min={0.1}
+                            step="0.1"
+                            value={floorsDraft}
+                            onChange={(event) => {
+                              setFloorsDraft(event.target.value);
+                              if (floorsEditError) {
+                                setFloorsEditError(null);
+                              }
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                commitFloors();
+                              }
+                            }}
+                            style={{
+                              ...floorsInputStyle,
+                              opacity: disableFloorsScaling ? 0.6 : 1,
+                            }}
+                            disabled={disableFloorsScaling}
+                            aria-label="Floors above ground"
+                          />
+                          <button
+                            type="button"
+                            onClick={commitFloors}
+                            disabled={floorsApplyDisabled}
+                            style={{
+                              ...floorsApplyButtonStyle,
+                              cursor: floorsApplyDisabled ? "not-allowed" : "pointer",
+                              opacity: floorsApplyDisabled ? 0.6 : 1,
+                            }}
+                          >
+                            {t("common.apply")}
+                          </button>
+                        </div>
+                      </td>
+                      <td style={calcColumnStyle}>
+                        {floorsNote}
+                        {floorsEditError && <div style={farErrorStyle}>{floorsEditError}</div>}
                       </td>
                     </tr>
                   )}
