@@ -207,6 +207,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
     String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
   );
+  const [opexPctDraft, setOpexPctDraft] = useState<string>(String(inputs.opex_pct ?? 0));
   const [isEditingFar, setIsEditingFar] = useState(false);
   const [farDraft, setFarDraft] = useState<string>("");
   const [farEditError, setFarEditError] = useState<string | null>(null);
@@ -299,6 +300,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     const normalized = normalizeEffectivePct(inputs?.y1_income_effective_pct as number | undefined);
     setEffectiveIncomePctDraft(String(normalized));
   }, [inputs?.y1_income_effective_pct]);
+
+  useEffect(() => {
+    setOpexPctDraft(String(inputs.opex_pct ?? 0));
+  }, [inputs.opex_pct]);
 
   useEffect(() => {
     if (!estimateId) return;
@@ -425,6 +430,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     return normalizeEffectivePct(parsed);
   };
 
+  const resolveOpexPctFromDraft = (draft: string) => {
+    if (draft.trim() === "") return null;
+    const parsed = Number(draft);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.max(0, Math.min(parsed, 1));
+  };
+
   const commitEffectiveIncomePct = (draftOverride?: string) => {
     const pct = resolveEffectivePctFromDraft(draftOverride ?? effectiveIncomePctDraft);
     const currentPct = normalizeEffectivePct(inputsRef.current?.y1_income_effective_pct as number | undefined);
@@ -436,6 +448,21 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
     applyInputPatch({ y1_income_effective_pct: pct }, Boolean(excelResult));
     setEffectiveIncomePctDraft(String(pct));
+  };
+
+  const commitOpexPct = (draftOverride?: string) => {
+    const resolved = resolveOpexPctFromDraft(draftOverride ?? opexPctDraft);
+    const currentPct = Math.max(0, Math.min(inputsRef.current?.opex_pct ?? 0, 1));
+
+    if (resolved == null) return;
+
+    if (resolved === currentPct) {
+      setOpexPctDraft(String(resolved));
+      return;
+    }
+
+    applyInputPatch({ opex_pct: resolved }, Boolean(excelResult));
+    setOpexPctDraft(String(resolved));
   };
 
   const assetProgram =
@@ -917,6 +944,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   );
   const effectiveIncomeApplyDisabled =
     !excelResult || resolveEffectivePctFromDraft(effectiveIncomePctDraft) === committedEffectiveIncomePct;
+  const opexDraftValue = resolveOpexPctFromDraft(opexPctDraft);
+  const committedOpexPct = Math.max(0, Math.min(inputsRef.current?.opex_pct ?? 0, 1));
+  const opexApplyDisabled =
+    !includeOpex || opexDraftValue == null || opexDraftValue === committedOpexPct;
   const effectiveIncomeFactor = effectiveIncomePct / 100;
   // Some estimate fields may exist in excelResult.breakdown (raw backend excel output)
   // rather than excelResult.costs (API "cost_breakdown"). Prefer costs when present, fallback to breakdown.
@@ -1662,12 +1693,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                             step="0.01"
                             min={0}
                             max={1}
-                            value={inputs.opex_pct ?? 0}
-                            onChange={(event) => {
-                              const rawValue = event.target.value;
-                              const parsed = rawValue === "" ? 0 : Number(rawValue);
-                              const clamped = Number.isFinite(parsed) ? Math.max(0, Math.min(parsed, 1)) : 0;
-                              applyInputPatch({ opex_pct: clamped }, Boolean(excelResult));
+                            value={opexPctDraft}
+                            onChange={(event) => setOpexPctDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                commitOpexPct();
+                              }
                             }}
                             style={{
                               width: 72,
@@ -1680,6 +1712,22 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                             aria-label={t("excel.opex")}
                             disabled={!includeOpex}
                           />
+                          <button
+                            type="button"
+                            onClick={() => commitOpexPct()}
+                            disabled={opexApplyDisabled}
+                            style={{
+                              padding: "4px 8px",
+                              borderRadius: 6,
+                              border: "1px solid rgba(255,255,255,0.2)",
+                              background: "rgba(255,255,255,0.08)",
+                              color: "white",
+                              cursor: opexApplyDisabled ? "not-allowed" : "pointer",
+                              opacity: opexApplyDisabled ? 0.6 : 1,
+                            }}
+                          >
+                            {t("common.apply")}
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleOpexToggle(!includeOpex)}
