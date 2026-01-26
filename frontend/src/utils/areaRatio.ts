@@ -1,18 +1,17 @@
 export type AreaRatioMap = Record<string, number | string>;
 
-export const resolveAreaRatioBase = (
-  current: AreaRatioMap | null | undefined,
-  fallback: AreaRatioMap,
-): AreaRatioMap => {
-  if (current && Object.keys(current).length > 0) {
-    return current;
+export const resolveAreaRatioBase = (candidates: Array<AreaRatioMap | null | undefined>): AreaRatioMap => {
+  for (const candidate of candidates) {
+    if (candidate && Object.keys(candidate).length > 0) {
+      return candidate;
+    }
   }
-  return fallback;
+  return {};
 };
 
 const isBasementKey = (key: string) => {
-  const normalized = key.toLowerCase();
-  return normalized === "basement" || normalized.includes("basement");
+  const normalized = key.trim().toLowerCase();
+  return normalized === "basement" || /^basement([_-].+)?$/.test(normalized);
 };
 
 const toNumber = (value: unknown) => {
@@ -30,9 +29,11 @@ type ScaleResult = {
   factor: number;
 };
 
+const isAboveGroundKey = (key: string) => !isBasementKey(key);
+
 /**
  * Scale only above-ground area ratios so their sum matches the target FAR.
- * Basement ratios (keys containing "basement") are left unchanged.
+ * Basement ratios (keys named basement or prefixed with basement_) are left unchanged.
  */
 export const scaleAboveGroundAreaRatio = (
   areaRatio: AreaRatioMap,
@@ -44,7 +45,7 @@ export const scaleAboveGroundAreaRatio = (
   let currentAboveGroundFar = 0;
 
   for (const [key, value] of entries) {
-    if (isBasementKey(key)) continue;
+    if (!isAboveGroundKey(key)) continue;
     const numericValue = toNumber(value);
     if (numericValue == null) continue;
     currentAboveGroundFar += numericValue;
@@ -58,7 +59,7 @@ export const scaleAboveGroundAreaRatio = (
   const nextAreaRatio: AreaRatioMap = { ...areaRatio };
 
   for (const [key, value] of entries) {
-    if (isBasementKey(key)) continue;
+    if (!isAboveGroundKey(key)) continue;
     const numericValue = toNumber(value);
     if (numericValue == null) continue;
     nextAreaRatio[key] = numericValue * factor;
