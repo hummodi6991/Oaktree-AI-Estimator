@@ -64,6 +64,9 @@ type ExcelResult = {
   };
   totals?: EstimateTotals;
   notes?: EstimateNotes;
+  used_inputs?: {
+    area_ratio?: Record<string, number | string>;
+  };
 };
 
 function polygonCentroidAndArea(coords: number[][][]): { area: number; centroid: Centroid } | null {
@@ -659,10 +662,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         scenarioOverrides.land_price_sar_m2 = patch.land_price_sar_m2;
       }
       if (typeof patch.far === "number" && Number.isFinite(patch.far)) {
-        const baseRatio = resolveAreaRatioBase(
+        const baseRatio = resolveAreaRatioBase([
+          excelResultRef.current?.used_inputs?.area_ratio,
           inputsRef.current?.area_ratio,
           templateForLandUse(effectiveLandUse).area_ratio,
-        );
+        ]);
         const scaled = scaleAboveGroundAreaRatio(baseRatio, patch.far);
         if (scaled) {
           scenarioOverrides.area_ratio = scaled.nextAreaRatio;
@@ -1078,10 +1082,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       return;
     }
 
-    const baseRatio = resolveAreaRatioBase(
+    const baseRatio = resolveAreaRatioBase([
+      excelResultRef.current?.used_inputs?.area_ratio,
       inputsRef.current?.area_ratio,
       templateForLandUse(effectiveLandUse).area_ratio,
-    );
+    ]);
     const scaled = scaleAboveGroundAreaRatio(baseRatio, targetFar);
     if (!scaled) {
       setFarEditError(t("excel.farEditErrorMissing"));
