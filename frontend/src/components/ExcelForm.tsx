@@ -579,6 +579,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           desired_floors_above_ground: floorsValue,
           area_ratio: scaled.nextAreaRatio,
           disable_floors_scaling: true,
+          massing_lock: "coverage",
         },
         true,
       );
@@ -597,11 +598,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           coverage_ratio: resolved,
           desired_floors_above_ground: nextFloors,
           disable_floors_scaling: true,
+          massing_lock: "coverage",
         },
         true,
       );
     } else {
-      applyInputPatch({ coverage_ratio: resolved }, true);
+      applyInputPatch({ coverage_ratio: resolved, massing_lock: "coverage" }, true);
     }
 
     setCoverageDraft(formatPercentDraftFromFraction(resolved, 0));
@@ -636,6 +638,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           desired_floors_above_ground: resolved,
           coverage_ratio: nextCoverage,
           disable_floors_scaling: true,
+          massing_lock: "floors",
         },
         true,
       );
@@ -651,6 +654,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           desired_floors_above_ground: resolved,
           area_ratio: scaled.nextAreaRatio,
           disable_floors_scaling: true,
+          massing_lock: "floors",
         },
         true,
       );
