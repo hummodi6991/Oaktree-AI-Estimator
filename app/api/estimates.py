@@ -754,6 +754,11 @@ def create_estimate(
         floors_adjustment: dict[str, Any] | None = None
         if landuse_for_cap == "m":
             desired_floors_above_ground = 3.5
+            disable_floors_scaling = False
+            try:
+                disable_floors_scaling = bool((excel_inputs or {}).get("disable_floors_scaling"))
+            except Exception:
+                disable_floors_scaling = False
 
             baseline_floors_above_ground: float | None = None
             baseline_source: str | None = None
@@ -772,14 +777,6 @@ def create_estimate(
                 baseline_floors_above_ground = 2.0
                 baseline_source = "default_assumption"
 
-            excel_inputs = scale_area_ratio_by_floors(
-                excel_inputs,
-                desired_floors_above_ground=desired_floors_above_ground,
-                baseline_floors_above_ground=baseline_floors_above_ground,
-                desired_floors_source="fixed_mixed_use_rule",
-                baseline_floors_source=baseline_source,
-            )
-
             floors_adjustment = {
                 "landuse": "m",
                 "desired_floors_above_ground": desired_floors_above_ground,
@@ -790,7 +787,19 @@ def create_estimate(
                 else None,
             }
 
-            # Convenience: computed above-ground FAR after floors scaling.
+            if not disable_floors_scaling:
+                excel_inputs = scale_area_ratio_by_floors(
+                    excel_inputs,
+                    desired_floors_above_ground=desired_floors_above_ground,
+                    baseline_floors_above_ground=baseline_floors_above_ground,
+                    desired_floors_source="fixed_mixed_use_rule",
+                    baseline_floors_source=baseline_source,
+                )
+            else:
+                floors_adjustment["floors_scaling_skipped"] = True
+                floors_adjustment["floors_scaling_skip_reason"] = "disable_floors_scaling"
+
+            # Convenience: computed above-ground FAR after floors scaling (or skip).
             try:
                 ar = excel_inputs.get("area_ratio") or {}
                 far_above_ground = 0.0
