@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
 
@@ -13,6 +13,7 @@ import ParkingSummary from "./ParkingSummary";
 import type { EstimateNotes, EstimateTotals } from "../lib/types";
 import { formatAreaM2, formatCurrencySAR, formatNumber, formatPercent } from "../i18n/format";
 import { scaleAboveGroundAreaRatio } from "../utils/areaRatio";
+import { applyPatch } from "../utils/applyPatch";
 import MicroFeedbackPrompt from "./MicroFeedbackPrompt";
 import ScenarioModal from "./ScenarioModal";
 
@@ -153,16 +154,24 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const formatPercentValue = (value?: number | null, digits = 1) =>
     formatPercent(value ?? null, { maximumFractionDigits: digits, minimumFractionDigits: digits }, notAvailable);
 
+  const applyInputPatch = (patch: Partial<ExcelInputs>, shouldRunEstimate = false) => {
+    setOverrides((prev) => {
+      const nextOverrides = applyPatch(prev, patch);
+      if (shouldRunEstimate) {
+        const nextInputs = applyPatch(baseInputsRef.current, nextOverrides);
+        runEstimate(nextInputs);
+      }
+      return nextOverrides;
+    });
+  };
+
   const updateUnitCost = (key: string, value: string) => {
     const nextValue = value === "" ? 0 : Number(value);
-    const nextInputs = {
-      ...inputsRef.current,
+    applyInputPatch({
       unit_cost: {
-        ...inputsRef.current.unit_cost,
         [key]: nextValue,
       },
-    };
-    setInputs(nextInputs);
+    });
   };
 
   // User override from dropdown; null means "use inferred"
@@ -180,7 +189,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const feedbackDismissCooldownMs = 24 * 60 * 60 * 1000;
 
   // Excel inputs state (drives payload). Seed from template.
-  const [inputs, setInputs] = useState<ExcelInputs>(() => cloneTemplate(templateForLandUse(initialLandUse)));
+  const [baseInputs, setBaseInputs] = useState<ExcelInputs>(() =>
+    cloneTemplate(templateForLandUse(initialLandUse)),
+  );
+  const [overrides, setOverrides] = useState<Partial<ExcelInputs>>({});
+  const baseInputsRef = useRef(baseInputs);
+  useEffect(() => {
+    baseInputsRef.current = baseInputs;
+  }, [baseInputs]);
+  const inputs = useMemo(() => applyPatch(baseInputs, overrides), [baseInputs, overrides]);
   const inputsRef = useRef(inputs);
   useEffect(() => {
     inputsRef.current = inputs;
@@ -259,25 +276,22 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   }, [normalizedPropLandUse]);
 
   useEffect(() => {
-    setInputs((prev) => {
-      const next = cloneTemplate(templateForLandUse(effectiveLandUse));
-      const prevPrice = Number(prev?.land_price_sar_m2 ?? 0);
-      if (prevPrice > 0) {
-        next.land_price_sar_m2 = prevPrice;
+    setBaseInputs(cloneTemplate(templateForLandUse(effectiveLandUse)));
+  }, [effectiveLandUse]);
+
+  useEffect(() => {
+    const template = templateForLandUse(effectiveLandUse);
+    setOverrides((prev) => {
+      const nextPatch: Partial<ExcelInputs> = {};
+      const currentLandPrice = Number(inputsRef.current?.land_price_sar_m2 ?? 0);
+      if (currentLandPrice > 0) {
+        nextPatch.land_price_sar_m2 = currentLandPrice;
       }
-      if (!includeFitout) {
-        next.fitout_rate = 0;
-      }
-      if (!includeContingency) {
-        next.contingency_pct = 0;
-      }
-      if (!includeFeasibility) {
-        next.feasibility_fee_pct = 0;
-      }
-      if (!includeOpex) {
-        next.opex_pct = 0;
-      }
-      return next;
+      nextPatch.fitout_rate = includeFitout ? template.fitout_rate : 0;
+      nextPatch.contingency_pct = includeContingency ? template.contingency_pct : 0;
+      nextPatch.feasibility_fee_pct = includeFeasibility ? template.feasibility_fee_pct : 0;
+      nextPatch.opex_pct = includeOpex ? template.opex_pct : 0;
+      return applyPatch(prev, nextPatch);
     });
   }, [effectiveLandUse, includeFitout, includeContingency, includeFeasibility, includeOpex]);
 
@@ -367,50 +381,42 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const handleFitoutToggle = (checked: boolean) => {
     setIncludeFitout(checked);
-    const nextInputs = {
-      ...inputsRef.current,
-      fitout_rate: checked ? templateForLandUse(effectiveLandUse).fitout_rate : 0,
-    };
-    setInputs(nextInputs);
-    if (excelResult) {
-      runEstimate(nextInputs);
-    }
+    applyInputPatch(
+      {
+        fitout_rate: checked ? templateForLandUse(effectiveLandUse).fitout_rate : 0,
+      },
+      Boolean(excelResult),
+    );
   };
 
   const handleContingencyToggle = (checked: boolean) => {
     setIncludeContingency(checked);
-    const nextInputs = {
-      ...inputsRef.current,
-      contingency_pct: checked ? templateForLandUse(effectiveLandUse).contingency_pct : 0,
-    };
-    setInputs(nextInputs);
-    if (excelResult) {
-      runEstimate(nextInputs);
-    }
+    applyInputPatch(
+      {
+        contingency_pct: checked ? templateForLandUse(effectiveLandUse).contingency_pct : 0,
+      },
+      Boolean(excelResult),
+    );
   };
 
   const handleFeasibilityToggle = (checked: boolean) => {
     setIncludeFeasibility(checked);
-    const nextInputs = {
-      ...inputsRef.current,
-      feasibility_fee_pct: checked ? templateForLandUse(effectiveLandUse).feasibility_fee_pct : 0,
-    };
-    setInputs(nextInputs);
-    if (excelResult) {
-      runEstimate(nextInputs);
-    }
+    applyInputPatch(
+      {
+        feasibility_fee_pct: checked ? templateForLandUse(effectiveLandUse).feasibility_fee_pct : 0,
+      },
+      Boolean(excelResult),
+    );
   };
 
   const handleOpexToggle = (checked: boolean) => {
     setIncludeOpex(checked);
-    const nextInputs = {
-      ...inputsRef.current,
-      opex_pct: checked ? templateForLandUse(effectiveLandUse).opex_pct : 0,
-    };
-    setInputs(nextInputs);
-    if (excelResult) {
-      runEstimate(nextInputs);
-    }
+    applyInputPatch(
+      {
+        opex_pct: checked ? templateForLandUse(effectiveLandUse).opex_pct : 0,
+      },
+      Boolean(excelResult),
+    );
   };
 
   const resolveEffectivePctFromDraft = (draft: string) => {
@@ -428,12 +434,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       return;
     }
 
-    const nextInputs = { ...inputsRef.current, y1_income_effective_pct: pct };
-    setInputs(nextInputs);
+    applyInputPatch({ y1_income_effective_pct: pct }, Boolean(excelResult));
     setEffectiveIncomePctDraft(String(pct));
-    if (excelResult) {
-      runEstimate(nextInputs);
-    }
   };
 
   const assetProgram =
@@ -459,7 +461,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       }
       setPrice(ppm2);
       setSuggestedPrice(ppm2);
-      setInputs((current) => ({ ...current, land_price_sar_m2: ppm2 }));
+      applyInputPatch({ land_price_sar_m2: ppm2 });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setFetchError(message);
@@ -1030,11 +1032,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       return;
     }
 
-    const nextInputs: ExcelInputs = {
-      ...inputsRef.current,
-      area_ratio: scaled.nextAreaRatio,
-    };
-    setInputs(nextInputs);
+    applyInputPatch({ area_ratio: scaled.nextAreaRatio }, true);
     setIsEditingFar(false);
     setFarEditError(null);
     setFarDraft(String(targetFar));
@@ -1044,7 +1042,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         to: targetFar,
       },
     });
-    runEstimate(nextInputs);
   };
 
   const startFarEdit = () => {
@@ -1159,10 +1156,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             onChange={(event) => {
               const prevValue = inputsRef.current?.land_price_sar_m2 ?? null;
               const nextValue = event.target.value === "" ? 0 : Number(event.target.value);
-              setInputs((current) => ({
-                ...current,
-                land_price_sar_m2: nextValue,
-              }));
+              applyInputPatch({ land_price_sar_m2: nextValue });
               if (prevValue !== nextValue) {
                 void trackEvent("ui_override_land_price", {
                   meta: {
@@ -1673,14 +1667,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                               const rawValue = event.target.value;
                               const parsed = rawValue === "" ? 0 : Number(rawValue);
                               const clamped = Number.isFinite(parsed) ? Math.max(0, Math.min(parsed, 1)) : 0;
-                              const nextInputs = {
-                                ...inputsRef.current,
-                                opex_pct: clamped,
-                              };
-                              setInputs(nextInputs);
-                              if (excelResult) {
-                                runEstimate(nextInputs);
-                              }
+                              applyInputPatch({ opex_pct: clamped }, Boolean(excelResult));
                             }}
                             style={{
                               width: 72,
