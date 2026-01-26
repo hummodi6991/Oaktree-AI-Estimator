@@ -31,7 +31,7 @@ const DEFAULT_POLY: Polygon = {
 
 const DEFAULT_EXCEL_INPUTS = {
   area_ratio: {},
-  unit_cost: { residential: 2200, basement: 1200 },
+  unit_cost: { residential: 2200, basement: 2200 },
   efficiency: { residential: 0.82 },
   cp_sqm_per_space: { basement: 30 },
   rent_sar_m2_yr: { residential: 2400 },

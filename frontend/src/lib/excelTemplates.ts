@@ -27,7 +27,7 @@ export const TEMPLATE_S: ExcelInputs = {
   },
   unit_cost: {
     residential: 2200,
-    basement: 1200,
+    basement: 2200,
   },
   efficiency: {
     residential: 0.82,
@@ -61,7 +61,7 @@ export const TEMPLATE_M: ExcelInputs = {
     residential: 2200,
     retail: 2600,
     office: 2400,
-    basement: 1200,
+    basement: 2200,
   },
   efficiency: {
     residential: 0.82,

@@ -1391,7 +1391,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                             <input
                               type="number"
                               step="0.01"
-                              min="0"
                               data-field="effective_far"
                               value={farDraft}
                               onChange={(event) => setFarDraft(event.target.value)}
