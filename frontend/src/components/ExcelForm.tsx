@@ -616,49 +616,23 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       setFloorsEditError("Enter a number greater than 0.");
       return;
     }
-    const committed = committedFloorsValue ?? null;
-    if (committed != null && Math.abs(resolved - committed) < 1e-6) {
-      setFloorsDraft(String(resolved));
-      setFloorsEditError(null);
+    const committedCoverage =
+      normalizeCoverageRatio(inputsRef.current?.coverage_ratio ?? null) ?? (effectiveLandUse === "m" ? 0.6 : 0.7);
+    const targetFar = resolved * committedCoverage;
+    const scaled = resolveScaledAreaRatio(targetFar);
+    if (!scaled) {
+      setFloorsEditError(t("excel.farEditErrorMissing"));
       return;
     }
-    const farValue = displayedFar ?? farAboveGround ?? null;
-    if (massingLock === "far") {
-      if (farValue == null || !Number.isFinite(farValue) || farValue <= 0) {
-        setFloorsEditError("FAR must be available to update floors.");
-        return;
-      }
-      const nextCoverage = farValue / resolved;
-      if (!Number.isFinite(nextCoverage) || nextCoverage <= 0 || nextCoverage > 1) {
-        setFloorsEditError("Coverage would be out of range.");
-        return;
-      }
-      applyInputPatch(
-        {
-          desired_floors_above_ground: resolved,
-          coverage_ratio: nextCoverage,
-          disable_floors_scaling: true,
-          massing_lock: "floors",
-        },
-        true,
-      );
-    } else {
-      const targetFar = resolved * coverageRatio;
-      const scaled = resolveScaledAreaRatio(targetFar);
-      if (!scaled) {
-        setFloorsEditError(t("excel.farEditErrorMissing"));
-        return;
-      }
-      applyInputPatch(
-        {
-          desired_floors_above_ground: resolved,
-          area_ratio: scaled.nextAreaRatio,
-          disable_floors_scaling: true,
-          massing_lock: "floors",
-        },
-        true,
-      );
-    }
+    applyInputPatch(
+      {
+        desired_floors_above_ground: resolved,
+        area_ratio: scaled.nextAreaRatio,
+        disable_floors_scaling: true,
+        massing_lock: "floors",
+      } as Partial<ExcelInputs>,
+      true,
+    );
     setFloorsDraft(String(resolved));
     setFloorsEditError(null);
   };
