@@ -584,6 +584,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           desired_floors_above_ground: floorsValue,
           area_ratio: scaled.nextAreaRatio,
           disable_floors_scaling: true,
+          disable_placeholder_area_ratio_scaling: true,
           massing_lock: "coverage",
         },
         true,
@@ -609,6 +610,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           coverage_ratio: resolved,
           desired_floors_above_ground: nextFloors,
           disable_floors_scaling: true,
+          disable_placeholder_area_ratio_scaling: true,
           massing_lock: "coverage",
         },
         true,
@@ -619,7 +621,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       return;
     }
 
-    applyInputPatch({ coverage_ratio: resolved, massing_lock: "coverage" }, true);
+    applyInputPatch(
+      {
+        coverage_ratio: resolved,
+        disable_placeholder_area_ratio_scaling: true,
+        massing_lock: "coverage",
+      },
+      true,
+    );
     setCoverageDraft(formatPercentDraftFromFraction(resolved, 0));
     setCoverageEditError(null);
   };
@@ -643,6 +652,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         desired_floors_above_ground: resolved,
         area_ratio: scaled.nextAreaRatio,
         disable_floors_scaling: true,
+        disable_placeholder_area_ratio_scaling: true,
         massing_lock: "floors",
       } as Partial<ExcelInputs>,
       true,
@@ -1345,7 +1355,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       return;
     }
     applyInputPatch(
-      { area_ratio: scaled.nextAreaRatio, disable_floors_scaling: true, massing_lock: "far" } as Partial<ExcelInputs>,
+      {
+        area_ratio: scaled.nextAreaRatio,
+        disable_floors_scaling: true,
+        disable_placeholder_area_ratio_scaling: true,
+        massing_lock: "far",
+      } as Partial<ExcelInputs>,
       true,
     );
     setIsScenarioActive(false);

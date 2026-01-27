@@ -4,6 +4,7 @@ export type ExcelInputs = {
   // IMPORTANT: backend prefers this explicit field for landuse inference【turn10file7†file 89.txt†L41-L55】
   land_use_code?: LandUseCode;
   disable_floors_scaling?: boolean;
+  disable_placeholder_area_ratio_scaling?: boolean;
   desired_floors_above_ground?: number;
   coverage_ratio?: number;
   massing_lock?: "far" | "floors" | "coverage";
