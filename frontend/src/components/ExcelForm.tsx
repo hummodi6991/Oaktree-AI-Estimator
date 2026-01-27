@@ -144,6 +144,11 @@ const resolveMassingLock = (value?: string | null): MassingLock => {
   return "far";
 };
 
+const roundTo = (value: number, digits = 1) => {
+  const factor = Math.pow(10, digits);
+  return Math.round(value * factor) / factor;
+};
+
 export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const { t, i18n } = useTranslation();
   const [provider, setProvider] = useState<(typeof PROVIDERS)[number]["value"]>("blended_v1");
@@ -504,7 +509,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     }
     return effectiveLandUse === "m" ? 3.5 : null;
   }, [effectiveLandUse, floorsAdjustmentValue, inputs?.desired_floors_above_ground]);
-  const disableFloorsScaling = inputsRef.current?.disable_floors_scaling === true;
   const massingLock = resolveMassingLock(inputs.massing_lock ?? null);
   const defaultCoverageRatio = effectiveLandUse === "m" ? 0.6 : 0.7;
   const coverageRatio = normalizeCoverageRatio(inputs.coverage_ratio ?? null) ?? defaultCoverageRatio;
@@ -559,10 +563,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       return;
     }
 
+    const lock = resolveMassingLock(inputsRef.current?.massing_lock ?? inputs.massing_lock ?? null);
     const farValue = displayedFar ?? farAboveGround ?? null;
     const floorsValue = committedFloorsValue ?? null;
 
-    if (massingLock === "floors") {
+    if (lock === "floors") {
       if (floorsValue == null || floorsValue <= 0) {
         setCoverageEditError("Set floors before updating coverage.");
         return;
@@ -583,12 +588,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         },
         true,
       );
-    } else if (massingLock === "far") {
+      setFloorsDraft(String(roundTo(floorsValue, 1)));
+      setCoverageDraft(formatPercentDraftFromFraction(resolved, 0));
+      setCoverageEditError(null);
+      return;
+    }
+
+    if (lock === "far" || lock === "coverage") {
       if (farValue == null || !Number.isFinite(farValue) || farValue <= 0) {
         setCoverageEditError("FAR must be available to update coverage.");
         return;
       }
-      const nextFloors = farValue / resolved;
+      const nextFloors = roundTo(farValue / resolved, 1);
       if (!Number.isFinite(nextFloors) || nextFloors <= 0) {
         setCoverageEditError("Coverage results in an invalid floors value.");
         return;
@@ -602,10 +613,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         },
         true,
       );
-    } else {
-      applyInputPatch({ coverage_ratio: resolved, massing_lock: "coverage" }, true);
+      setFloorsDraft(String(nextFloors));
+      setCoverageDraft(formatPercentDraftFromFraction(resolved, 0));
+      setCoverageEditError(null);
+      return;
     }
 
+    applyInputPatch({ coverage_ratio: resolved, massing_lock: "coverage" }, true);
     setCoverageDraft(formatPercentDraftFromFraction(resolved, 0));
     setCoverageEditError(null);
   };
@@ -1001,6 +1015,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     }
   }, [committedFloorsValue, effectiveLandUse]);
 
+  useEffect(() => {
+    if (effectiveLandUse !== "m") return;
+    const lock = resolveMassingLock(inputsRef.current?.massing_lock ?? null);
+    if (lock !== "coverage" && lock !== "far") return;
+    if (isEditingFar) return;
+    if (displayedFar == null || !coverageRatio) return;
+    const derivedFloors = roundTo(displayedFar / coverageRatio, 1);
+    setFloorsDraft(String(derivedFloors));
+  }, [coverageRatio, displayedFar, effectiveLandUse, isEditingFar]);
+
   const buaNote = (key: string) => {
     const noteKey = `${key}_bua`;
     const showScenarioScale = scenarioAreaRatio != null && key !== "basement";
@@ -1087,7 +1111,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const floorsNoteBase =
     "Used to scale above-ground area ratios when FAR is not manually overridden. Default 3.5 for mixed-use.";
   const floorsDisabledNote = "Skipped because FAR was manually overridden.";
-  const floorsNote = disableFloorsScaling ? floorsDisabledNote : floorsNoteBase;
+  const farManuallyOverridden =
+    inputsRef.current?.disable_floors_scaling === true &&
+    resolveMassingLock(inputsRef.current?.massing_lock ?? null) === "far";
+  const floorsNote = farManuallyOverridden ? floorsDisabledNote : floorsNoteBase;
 
   const fitoutNote =
     explanations.fitout ||
