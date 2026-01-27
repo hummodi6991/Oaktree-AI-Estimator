@@ -745,9 +745,18 @@ def create_estimate(
             target_far = tf
             target_far_source = "auto_far_priors"
 
-        excel_inputs = scale_placeholder_area_ratio(
-            excel_inputs, target_far=target_far, target_far_source=target_far_source
-        )
+        disable_placeholder_area_ratio_scaling = False
+        try:
+            disable_placeholder_area_ratio_scaling = bool(
+                (excel_inputs or {}).get("disable_placeholder_area_ratio_scaling")
+            )
+        except Exception:
+            disable_placeholder_area_ratio_scaling = False
+
+        if not disable_placeholder_area_ratio_scaling:
+            excel_inputs = scale_placeholder_area_ratio(
+                excel_inputs, target_far=target_far, target_far_source=target_far_source
+            )
 
         # Option B — Use floors to scale area_ratio.
         # Force mixed-use ("m") to 3.5 floors above ground and reflect that on FAR/BUA.
