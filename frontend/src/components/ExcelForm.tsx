@@ -1284,10 +1284,16 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const coverageApplyDisabled =
     coverageDraftValue == null || Math.abs(coverageDraftValue - committedCoverageRatio) < 1e-6;
   const floorsDraftValue = resolveFloorsFromDraft(floorsDraft);
+  const committedFloorsOverride =
+    typeof inputsRef.current?.desired_floors_above_ground === "number" &&
+    Number.isFinite(inputsRef.current.desired_floors_above_ground) &&
+    inputsRef.current.desired_floors_above_ground > 0
+      ? inputsRef.current.desired_floors_above_ground
+      : null;
   const floorsApplyDisabled =
     effectiveLandUse !== "m" ||
     floorsDraftValue == null ||
-    (committedFloorsValue != null && Math.abs(floorsDraftValue - committedFloorsValue) < 1e-6);
+    (committedFloorsOverride != null && Math.abs(floorsDraftValue - committedFloorsOverride) < 1e-6);
   const effectiveIncomeFactor = effectiveIncomePct / 100;
   // Some estimate fields may exist in excelResult.breakdown (raw backend excel output)
   // rather than excelResult.costs (API "cost_breakdown"). Prefer costs when present, fallback to breakdown.
