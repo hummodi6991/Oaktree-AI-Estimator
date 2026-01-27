@@ -600,6 +600,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         setCoverageEditError("FAR must be available to update coverage.");
         return;
       }
+      const pinnedAreaRatio =
+        (excelResultRef.current?.used_inputs?.area_ratio as ExcelInputs["area_ratio"] | undefined) ??
+        (inputsRef.current?.area_ratio as ExcelInputs["area_ratio"] | undefined) ??
+        null;
+      if (!pinnedAreaRatio || Object.keys(pinnedAreaRatio).length === 0) {
+        setCoverageEditError("Missing current area ratios; please run estimate first.");
+        return;
+      }
       const nextFloors = roundTo(farValue / resolved, 1);
       if (!Number.isFinite(nextFloors) || nextFloors <= 0) {
         setCoverageEditError("Coverage results in an invalid floors value.");
@@ -607,12 +615,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       }
       applyInputPatch(
         {
+          area_ratio: pinnedAreaRatio,
           coverage_ratio: resolved,
           desired_floors_above_ground: nextFloors,
           disable_floors_scaling: true,
           disable_placeholder_area_ratio_scaling: true,
           massing_lock: "coverage",
-        },
+        } as Partial<ExcelInputs>,
         true,
       );
       setFloorsDraft(String(nextFloors));
