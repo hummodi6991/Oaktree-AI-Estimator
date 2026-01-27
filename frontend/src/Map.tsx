@@ -9,6 +9,7 @@ import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
 import "./Map.css";
 import { formatNumber } from "./i18n/format";
 import { installParcelDebugLogging, installParcelLayerPersistence } from "./map/parcelLayers";
+import MapSearch from "./components/MapSearch";
 
 type MapProps = { polygon?: Polygon | null; onPolygon: (geometry: Polygon | null) => void; };
 
@@ -495,6 +496,7 @@ export default function MapView({ polygon, onPolygon }: MapProps) {
   return (
     <div className="map-wrapper">
       <div ref={containerRef} className="map-canvas" />
+      <MapSearch mapRef={mapRef} />
       <div className="map-zoom-hud">
         <div className="map-zoom-hud__row">
           <span>{t("mapDraw.zoomHud.zoomLabel")}</span>

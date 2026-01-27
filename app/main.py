@@ -19,6 +19,7 @@ from app.api.health import router as health_router
 from app.api.indices import router as indices_router
 from app.api.ingest import router as ingest_router
 from app.api.metadata import router as metadata_router
+from app.api.search import router as search_router
 from app.api.tiles import router as tiles_router
 from app.telemetry import setup_otel_if_configured
 from app.security.auth import MODE as AUTH_MODE
@@ -203,6 +204,7 @@ app.include_router(pricing_router.router, prefix="/v1", dependencies=deps)
 app.include_router(metadata_router, prefix="/v1", dependencies=deps)
 app.include_router(admin_usage_router, prefix="/v1", dependencies=deps)
 app.include_router(analytics_router, prefix="/v1", dependencies=deps)
+app.include_router(search_router, prefix="/v1", dependencies=deps)
 app.include_router(ingest_router, dependencies=deps)
 app.include_router(tiles_router, prefix="", dependencies=deps)
 # Always expose geo routes; they already try PostGIS first and fall back to ArcGIS/external.

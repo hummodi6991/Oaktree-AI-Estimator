@@ -167,6 +167,113 @@
   border-color: rgba(213, 177, 106, 0.55);
 }
 
+.map-search {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  width: min(360px, calc(100% - 40px));
+  pointer-events: auto;
+  color: var(--sand-50);
+}
+
+.map-search__input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.map-search__input {
+  width: 100%;
+  padding: 12px 42px 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(213, 177, 106, 0.4);
+  background: rgba(5, 24, 21, 0.9);
+  color: inherit;
+  font: inherit;
+  font-size: 0.92rem;
+  box-shadow: 0 18px 28px rgba(2, 12, 10, 0.45);
+}
+
+.map-search__input::placeholder {
+  color: rgba(238, 225, 206, 0.6);
+}
+
+.map-search__spinner {
+  position: absolute;
+  right: 14px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(213, 177, 106, 0.4);
+  border-top-color: rgba(213, 177, 106, 1);
+  animation: map-search-spin 0.8s linear infinite;
+}
+
+.map-search__results {
+  margin-top: 8px;
+  background: rgba(5, 24, 21, 0.94);
+  border: 1px solid rgba(213, 177, 106, 0.28);
+  border-radius: 18px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 28px 44px rgba(2, 12, 10, 0.5);
+}
+
+.map-search__status {
+  padding: 8px 12px;
+  font-size: 0.84rem;
+  color: rgba(238, 225, 206, 0.7);
+}
+
+.map-search__result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: rgba(11, 39, 34, 0.85);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.map-search__result:hover {
+  border-color: rgba(213, 177, 106, 0.55);
+  background: rgba(18, 59, 52, 0.9);
+}
+
+.map-search__result-label {
+  font-weight: 600;
+}
+
+.map-search__result-subtitle {
+  font-size: 0.8rem;
+  color: rgba(238, 225, 206, 0.65);
+}
+
+.map-search-marker {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(213, 177, 106, 0.95);
+  border: 2px solid #122a25;
+  box-shadow: 0 0 0 6px rgba(213, 177, 106, 0.2);
+}
+
+@keyframes map-search-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 640px) {
   .map-toolbar {
     max-width: 220px;
@@ -177,6 +284,10 @@
     left: 14px;
     bottom: 14px;
     padding: 14px 16px;
+  }
+
+  .map-search {
+    top: 12px;
   }
 
   .map-zoom-hud {
