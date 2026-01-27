@@ -204,7 +204,11 @@ app.include_router(pricing_router.router, prefix="/v1", dependencies=deps)
 app.include_router(metadata_router, prefix="/v1", dependencies=deps)
 app.include_router(admin_usage_router, prefix="/v1", dependencies=deps)
 app.include_router(analytics_router, prefix="/v1", dependencies=deps)
-app.include_router(search_router, prefix="/v1", dependencies=deps)
+
+# Public: map search is read-only and used by the UI search bar.
+# Keeping it public avoids 401s when users type in the map search.
+app.include_router(search_router, prefix="/v1")
+
 app.include_router(ingest_router, dependencies=deps)
 app.include_router(tiles_router, prefix="", dependencies=deps)
 # Always expose geo routes; they already try PostGIS first and fall back to ArcGIS/external.
