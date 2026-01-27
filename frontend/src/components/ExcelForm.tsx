@@ -144,6 +144,45 @@ const resolveMassingLock = (value?: string | null): MassingLock => {
   return "far";
 };
 
+const isBasementKey = (key: string) => {
+  const k = (key || "").trim().toLowerCase();
+  return k.includes("basement") || k.includes("underground") || k.includes("below");
+};
+
+const sumAboveGroundFar = (areaRatio: Record<string, any> | null | undefined) => {
+  if (!areaRatio) return null;
+  let sum = 0;
+  for (const [key, value] of Object.entries(areaRatio)) {
+    if (isBasementKey(key)) continue;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) sum += numeric;
+  }
+  return sum > 0 ? sum : null;
+};
+
+const pinAreaRatioToFar = (
+  areaRatio: Record<string, any> | null | undefined,
+  targetFar: number | null | undefined,
+) => {
+  if (!areaRatio || targetFar == null || !Number.isFinite(targetFar) || targetFar <= 0) return null;
+  const baseSum = sumAboveGroundFar(areaRatio);
+  if (!baseSum) return null;
+  const factor = targetFar / baseSum;
+  if (!Number.isFinite(factor) || factor <= 0) return null;
+
+  const out: Record<string, any> = {};
+  for (const [key, value] of Object.entries(areaRatio)) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      out[key] = value;
+      continue;
+    }
+    if (isBasementKey(key)) out[key] = numeric;
+    else out[key] = numeric * factor;
+  }
+  return out;
+};
+
 const roundTo = (value: number, digits = 1) => {
   const factor = Math.pow(10, digits);
   return Math.round(value * factor) / factor;
@@ -247,6 +286,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [isScenarioActive, setIsScenarioActive] = useState(false);
   const excelResultRef = useRef<ExcelResult | null>(null);
   const unitCostInputs = inputs.unit_cost || {};
+  const getBestAreaRatio = (): ExcelInputs["area_ratio"] | null => {
+    const fromUsedInputs =
+      (excelResultRef.current?.used_inputs?.area_ratio as ExcelInputs["area_ratio"] | undefined) ??
+      (excelResultRef.current?.notes?.used_inputs?.area_ratio as ExcelInputs["area_ratio"] | undefined);
+
+    if (fromUsedInputs && Object.keys(fromUsedInputs).length > 0) return fromUsedInputs;
+
+    const fromInputs = inputsRef.current?.area_ratio as ExcelInputs["area_ratio"] | undefined;
+    if (fromInputs && Object.keys(fromInputs).length > 0) return fromInputs;
+
+    return null;
+  };
 
   useEffect(() => {
     const geometrySignature = parcel?.geometry ? JSON.stringify(parcel.geometry) : "";
@@ -600,11 +651,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         setCoverageEditError("FAR must be available to update coverage.");
         return;
       }
-      const pinnedAreaRatio =
-        (excelResultRef.current?.used_inputs?.area_ratio as ExcelInputs["area_ratio"] | undefined) ??
-        (inputsRef.current?.area_ratio as ExcelInputs["area_ratio"] | undefined) ??
-        null;
-      if (!pinnedAreaRatio || Object.keys(pinnedAreaRatio).length === 0) {
+      const baseAreaRatio = getBestAreaRatio();
+      if (!baseAreaRatio) {
+        setCoverageEditError("Missing current area ratios; please run estimate first.");
+        return;
+      }
+      const bakedAreaRatio = pinAreaRatioToFar(baseAreaRatio, farValue);
+      if (!bakedAreaRatio || Object.keys(bakedAreaRatio).length === 0) {
         setCoverageEditError("Missing current area ratios; please run estimate first.");
         return;
       }
@@ -615,7 +668,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       }
       applyInputPatch(
         {
-          area_ratio: pinnedAreaRatio,
+          area_ratio: bakedAreaRatio,
           coverage_ratio: resolved,
           desired_floors_above_ground: nextFloors,
           disable_floors_scaling: true,
@@ -757,6 +810,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         totals: result?.totals,
         notes: result?.notes,
       });
+      const usedAreaRatio = result?.used_inputs?.area_ratio;
+      if (usedAreaRatio && Object.keys(usedAreaRatio).length > 0) {
+        setOverrides((prev) => {
+          const existing = prev.area_ratio as ExcelInputs["area_ratio"] | undefined;
+          if (existing && Object.keys(existing).length > 0) return prev;
+          if (inputsRef.current?.disable_floors_scaling === true) return prev;
+          return applyPatch(prev, {
+            area_ratio: usedAreaRatio,
+            disable_placeholder_area_ratio_scaling: true,
+          });
+        });
+      }
       const nextEstimateId = result?.id ?? null;
       setEstimateId(nextEstimateId);
       setHasUserScrolled(false);
