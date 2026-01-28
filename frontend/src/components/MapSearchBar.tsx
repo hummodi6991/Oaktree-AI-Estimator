@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MutableRefObject, MouseEventHandler, PointerEventHandler, TouchEventHandler } from "react";
+import type { MutableRefObject, SyntheticEvent } from "react";
 import type maplibregl from "maplibre-gl";
 import "./MapSearchBar.css";
 
@@ -126,10 +126,7 @@ export default function MapSearchBar({ mapRef }: MapSearchBarProps) {
     focusItem(item);
   };
 
-  const stopPropagation:
-    | MouseEventHandler<HTMLDivElement>
-    | TouchEventHandler<HTMLDivElement>
-    | PointerEventHandler<HTMLDivElement> = (event) => {
+  const stopPropagation = (event: SyntheticEvent) => {
     event.stopPropagation();
   };
 
