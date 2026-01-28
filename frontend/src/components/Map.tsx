@@ -15,6 +15,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 
 import { buildApiUrl, collateParcels, identify, trackEvent } from "../api";
 import type { CollateResponse, ParcelSummary } from "../api";
+import MapSearchBar from "./MapSearchBar";
 
 type MapProps = {
   onParcel: (parcel: ParcelSummary | null) => void;
@@ -598,6 +599,7 @@ export default function Map({ onParcel }: MapProps) {
   return (
     <div>
       <div style={{ position: "relative" }}>
+        <MapSearchBar mapRef={mapRef} />
         <div
           ref={containerRef}
           style={{
