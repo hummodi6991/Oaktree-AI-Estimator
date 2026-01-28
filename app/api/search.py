@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _TABLE_CACHE: dict[str, bool] = {}
+_RIYADH_BBOX = {
+    "min_lon": 46.20,
+    "min_lat": 24.20,
+    "max_lon": 47.30,
+    "max_lat": 25.10,
+}
 
 
 class SearchItem(BaseModel):
@@ -49,6 +55,10 @@ def _extract_keyword_number(query: str, keywords: list[str]) -> str | None:
         if match:
             return match.group(1)
     return None
+
+
+def _bbox_params() -> dict[str, float]:
+    return dict(_RIYADH_BBOX)
 
 
 def _parse_parcel_tokens(query: str) -> tuple[str | None, str | None, str | None]:
@@ -104,6 +114,10 @@ _ROAD_SQL = text(
         WHERE highway IS NOT NULL
           AND name IS NOT NULL
           AND lower(name) LIKE :q_like_lower
+          AND way && ST_Transform(
+            ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326),
+            3857
+          )
         ORDER BY similarity(lower(name), lower(:q_raw)) DESC
         LIMIT :limit
     )
@@ -142,6 +156,10 @@ _POI_POINT_SQL = text(
         FROM planet_osm_point
         WHERE name IS NOT NULL
           AND lower(name) LIKE :q_like_lower
+          AND way && ST_Transform(
+            ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326),
+            3857
+          )
         ORDER BY similarity(lower(name), lower(:q_raw)) DESC
         LIMIT :limit
     )
@@ -192,6 +210,10 @@ _POI_POLYGON_SQL = text(
             OR sport IS NOT NULL
             OR historic IS NOT NULL
           )
+          AND way && ST_Transform(
+            ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326),
+            3857
+          )
         ORDER BY similarity(lower(name), lower(:q_raw)) DESC
         LIMIT :limit
     )
@@ -223,6 +245,8 @@ _DISTRICT_EXTERNAL_SQL = text(
             lower(properties->>'district_raw') LIKE :q_like_lower
             OR lower(properties->>'district') LIKE :q_like_lower
           )
+          AND ST_SetSRID(ST_GeomFromGeoJSON(geometry::text), 4326)
+              && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
         ORDER BY similarity(lower(COALESCE(properties->>'district_raw', properties->>'district')), lower(:q_raw)) DESC
         LIMIT :limit
     )
@@ -255,6 +279,10 @@ _DISTRICT_FALLBACK_SQL = text(
             place IN ('neighbourhood', 'quarter', 'suburb')
             OR (boundary = 'administrative' AND admin_level IN ('9','10','11'))
           )
+          AND way && ST_Transform(
+            ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326),
+            3857
+          )
         ORDER BY similarity(lower(name), lower(:q_raw)) DESC
         LIMIT :limit
     )
@@ -285,19 +313,22 @@ _PARCEL_SQL = text(
             geom
         FROM public.suhail_parcels_mat
         WHERE (
-            street_name IS NOT NULL AND lower(street_name) LIKE :q_like_lower
+            (
+                street_name IS NOT NULL AND lower(street_name) LIKE :q_like_lower
+            )
+            OR (plan_number IS NOT NULL AND lower(plan_number::text) LIKE :q_like_lower)
+            OR (block_number IS NOT NULL AND lower(block_number::text) LIKE :q_like_lower)
+            OR (parcel_number IS NOT NULL AND lower(parcel_number::text) LIKE :q_like_lower)
+            OR (
+                :plan IS NOT NULL
+                AND :block IS NOT NULL
+                AND :parcel IS NOT NULL
+                AND plan_number::text = :plan
+                AND block_number::text = :block
+                AND parcel_number::text = :parcel
+            )
         )
-        OR (plan_number IS NOT NULL AND lower(plan_number::text) LIKE :q_like_lower)
-        OR (block_number IS NOT NULL AND lower(block_number::text) LIKE :q_like_lower)
-        OR (parcel_number IS NOT NULL AND lower(parcel_number::text) LIKE :q_like_lower)
-        OR (
-            :plan IS NOT NULL
-            AND :block IS NOT NULL
-            AND :parcel IS NOT NULL
-            AND plan_number::text = :plan
-            AND block_number::text = :block
-            AND parcel_number::text = :parcel
-        )
+          AND geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
         ORDER BY similarity(lower(COALESCE(street_name, '')), lower(:q_raw)) DESC
         LIMIT :limit
     )
@@ -353,7 +384,7 @@ def search(
 
     def run_query(sql: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
         try:
-            return list(db.execute(sql, params).mappings())
+            return list(db.execute(sql, {**params, **_bbox_params()}).mappings())
         except SQLAlchemyError as exc:
             logger.warning("Search query failed: %s", exc)
             return []
