@@ -31,6 +31,11 @@ const buildSearchUrl = (query: string) => {
   return normalizedBase ? `${normalizedBase}${path}` : path;
 };
 
+const getSafeMaxZoom = (map: maplibregl.Map) => {
+  const maxZ = map.getMaxZoom?.() ?? 18;
+  return Math.min(maxZ, 18);
+};
+
 export default function MapSearchBar({ mapRef }: MapSearchBarProps) {
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<SearchItem[]>([]);
@@ -106,6 +111,7 @@ export default function MapSearchBar({ mapRef }: MapSearchBarProps) {
   const focusItem = (item: SearchItem) => {
     const map = mapRef.current;
     if (!map) return;
+    const safeMax = getSafeMaxZoom(map);
 
     if (item.bbox && item.bbox.length === 4) {
       map.fitBounds(
@@ -113,10 +119,11 @@ export default function MapSearchBar({ mapRef }: MapSearchBarProps) {
           [item.bbox[0], item.bbox[1]],
           [item.bbox[2], item.bbox[3]],
         ],
-        { padding: 80, duration: 800 },
+        { padding: 80, duration: 800, maxZoom: safeMax },
       );
     } else {
-      map.flyTo({ center: item.center, zoom: 16, duration: 800 });
+      const desiredZoom = 16;
+      map.flyTo({ center: item.center, zoom: Math.min(desiredZoom, safeMax), duration: 800 });
     }
   };
 
