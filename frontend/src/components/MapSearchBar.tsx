@@ -133,7 +133,20 @@ export default function MapSearchBar({ mapRef }: MapSearchBarProps) {
     focusItem(item);
   };
 
+  const handleClear = () => {
+    setQuery("");
+    setItems([]);
+    setOpen(false);
+    setError(null);
+    setLoading(false);
+  };
+
   const stopPropagation = (event: SyntheticEvent) => {
+    event.stopPropagation();
+  };
+
+  const handleClearMouseDown = (event: SyntheticEvent) => {
+    event.preventDefault();
     event.stopPropagation();
   };
 
@@ -165,6 +178,17 @@ export default function MapSearchBar({ mapRef }: MapSearchBarProps) {
           className="map-search-bar__input"
           aria-label="Map search"
         />
+        {query.length > 0 && (
+          <button
+            type="button"
+            className="map-search-bar__clear"
+            aria-label="Clear search"
+            onMouseDown={handleClearMouseDown}
+            onClick={handleClear}
+          >
+            ×
+          </button>
+        )}
         {loading && <span className="map-search-bar__spinner" aria-hidden="true" />}
       </div>
       {open && (items.length > 0 || resultsLabel) && (
