@@ -616,7 +616,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
     const lock = resolveMassingLock(inputsRef.current?.massing_lock ?? inputs.massing_lock ?? null);
     const farValue = displayedFar ?? farAboveGround ?? null;
-    const floorsValue = committedFloorsValue ?? null;
+    const floorsValue =
+      committedFloorsValue ??
+      (impliedFloors != null && Number.isFinite(impliedFloors) ? roundTo(impliedFloors, 1) : null);
 
     if (lock === "floors") {
       if (floorsValue == null || floorsValue <= 0) {
@@ -1088,26 +1090,28 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   }, [displayedFar, isEditingFar]);
 
   useEffect(() => {
-    if (effectiveLandUse !== "m") {
-      setFloorsDraft("");
-      setFloorsEditError(null);
-      return;
-    }
     if (committedFloorsValue != null) {
       setFloorsDraft(String(committedFloorsValue));
       setFloorsEditError(null);
+      return;
     }
-  }, [committedFloorsValue, effectiveLandUse]);
+    if (impliedFloors != null && Number.isFinite(impliedFloors)) {
+      setFloorsDraft(String(roundTo(impliedFloors, 1)));
+      setFloorsEditError(null);
+      return;
+    }
+    setFloorsDraft("");
+    setFloorsEditError(null);
+  }, [committedFloorsValue, impliedFloors]);
 
   useEffect(() => {
-    if (effectiveLandUse !== "m") return;
     const lock = resolveMassingLock(inputsRef.current?.massing_lock ?? null);
     if (lock !== "coverage" && lock !== "far") return;
     if (isEditingFar) return;
     if (displayedFar == null || !coverageRatio) return;
     const derivedFloors = roundTo(displayedFar / coverageRatio, 1);
     setFloorsDraft(String(derivedFloors));
-  }, [coverageRatio, displayedFar, effectiveLandUse, isEditingFar]);
+  }, [coverageRatio, displayedFar, isEditingFar]);
 
   const buaNote = (key: string) => {
     const noteKey = `${key}_bua`;
@@ -1193,7 +1197,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     </>
   );
   const floorsNoteBase =
-    "Used to scale above-ground area ratios when FAR is not manually overridden. Default 3.5 for mixed-use.";
+    "Used to scale above-ground area ratios when FAR is not manually overridden.";
   const floorsDisabledNote = "Skipped because FAR was manually overridden.";
   const farManuallyOverridden =
     inputsRef.current?.disable_floors_scaling === true &&
@@ -1291,7 +1295,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       ? inputsRef.current.desired_floors_above_ground
       : null;
   const floorsApplyDisabled =
-    effectiveLandUse !== "m" ||
     floorsDraftValue == null ||
     (committedFloorsOverride != null && Math.abs(floorsDraftValue - committedFloorsOverride) < 1e-6);
   const effectiveIncomeFactor = effectiveIncomePct / 100;
@@ -1864,61 +1867,59 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                     <td style={calcColumnStyle}>FAR ÷ coverage.</td>
                   </tr>
-                  {effectiveLandUse === "m" && (
-                    <tr>
-                      <td style={itemColumnStyle}>Floors (above-ground)</td>
-                      <td style={amountColumnStyle}>
-                        <div
+                  <tr>
+                    <td style={itemColumnStyle}>Floors (above-ground)</td>
+                    <td style={amountColumnStyle}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "flex-end",
+                          gap: 8,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <input
+                          type="number"
+                          min={0.1}
+                          step="0.1"
+                          value={floorsDraft}
+                          onChange={(event) => {
+                            setFloorsDraft(event.target.value);
+                            if (floorsEditError) {
+                              setFloorsEditError(null);
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              commitFloors();
+                            }
+                          }}
                           style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "flex-end",
-                            gap: 8,
-                            flexWrap: "wrap",
+                            ...floorsInputStyle,
+                          }}
+                          aria-label="Floors above ground"
+                        />
+                        <button
+                          type="button"
+                          onClick={commitFloors}
+                          disabled={floorsApplyDisabled}
+                          style={{
+                            ...floorsApplyButtonStyle,
+                            cursor: floorsApplyDisabled ? "not-allowed" : "pointer",
+                            opacity: floorsApplyDisabled ? 0.6 : 1,
                           }}
                         >
-                          <input
-                            type="number"
-                            min={0.1}
-                            step="0.1"
-                            value={floorsDraft}
-                            onChange={(event) => {
-                              setFloorsDraft(event.target.value);
-                              if (floorsEditError) {
-                                setFloorsEditError(null);
-                              }
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                commitFloors();
-                              }
-                            }}
-                            style={{
-                              ...floorsInputStyle,
-                            }}
-                            aria-label="Floors above ground"
-                          />
-                          <button
-                            type="button"
-                            onClick={commitFloors}
-                            disabled={floorsApplyDisabled}
-                            style={{
-                              ...floorsApplyButtonStyle,
-                              cursor: floorsApplyDisabled ? "not-allowed" : "pointer",
-                              opacity: floorsApplyDisabled ? 0.6 : 1,
-                            }}
-                          >
-                            {t("common.apply")}
-                          </button>
-                        </div>
-                      </td>
-                      <td style={calcColumnStyle}>
-                        {floorsNote}
-                        {floorsEditError && <div style={farErrorStyle}>{floorsEditError}</div>}
-                      </td>
-                    </tr>
-                  )}
+                          {t("common.apply")}
+                        </button>
+                      </div>
+                    </td>
+                    <td style={calcColumnStyle}>
+                      {floorsNote}
+                      {floorsEditError && <div style={farErrorStyle}>{floorsEditError}</div>}
+                    </td>
+                  </tr>
                   <tr>
                     <td style={itemColumnStyle}>Massing locks</td>
                     <td style={amountColumnStyle}>
