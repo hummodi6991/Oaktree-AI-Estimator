@@ -25,6 +25,11 @@ _RIYADH_BBOX = {
     "max_lat": 25.10,
 }
 
+_WGS84_LON_MIN = -180.0
+_WGS84_LON_MAX = 180.0
+_WGS84_LAT_MIN = -90.0
+_WGS84_LAT_MAX = 90.0
+
 _AR_DIACRITICS = re.compile(
     r"[\u0610-\u061A\u064B-\u065F\u06D6-\u06DC\u06DF-\u06E8\u06EA-\u06ED]"
 )
@@ -188,16 +193,41 @@ def _extract_keyword_number(query: str, keywords: list[str]) -> str | None:
     return None
 
 
+def _intersect_bbox_with_riyadh(
+    bbox: tuple[float, float, float, float] | None,
+) -> tuple[float, float, float, float] | None:
+    """
+    Intersect a viewport bbox with the fixed Riyadh bbox.
+    Returns None if bbox is None or if the intersection is empty.
+    """
+    if bbox is None:
+        return None
+    min_lon, min_lat, max_lon, max_lat = bbox
+    riyadh_bbox = _RIYADH_BBOX
+    min_lon = max(min_lon, float(riyadh_bbox["min_lon"]))
+    min_lat = max(min_lat, float(riyadh_bbox["min_lat"]))
+    max_lon = min(max_lon, float(riyadh_bbox["max_lon"]))
+    max_lat = min(max_lat, float(riyadh_bbox["max_lat"]))
+    if min_lon >= max_lon or min_lat >= max_lat:
+        return None
+    return (min_lon, min_lat, max_lon, max_lat)
+
+
 def _bbox_params(viewport_bbox: tuple[float, float, float, float] | None) -> dict[str, float]:
-    if viewport_bbox:
-        min_lon, min_lat, max_lon, max_lat = viewport_bbox
-        return {
-            "min_lon": min_lon,
-            "min_lat": min_lat,
-            "max_lon": max_lon,
-            "max_lat": max_lat,
-        }
-    return dict(_RIYADH_BBOX)
+    """
+    Always constrain search to Riyadh metro bbox (product requirement).
+    If a viewport bbox is provided, clamp it to Riyadh; otherwise use Riyadh bbox.
+    """
+    clipped = _intersect_bbox_with_riyadh(viewport_bbox)
+    if clipped is None:
+        return dict(_RIYADH_BBOX)
+    min_lon, min_lat, max_lon, max_lat = clipped
+    return {
+        "min_lon": min_lon,
+        "min_lat": min_lat,
+        "max_lon": max_lon,
+        "max_lat": max_lat,
+    }
 
 
 def parse_parcel_tokens(query: str) -> tuple[str | None, str | None, str | None]:
@@ -235,7 +265,14 @@ def _parse_viewport_bbox(raw: str | None) -> tuple[float, float, float, float] |
         return None
     if min_lon >= max_lon or min_lat >= max_lat:
         return None
-    return min_lon, min_lat, max_lon, max_lat
+    if (
+        min_lon < _WGS84_LON_MIN
+        or max_lon > _WGS84_LON_MAX
+        or min_lat < _WGS84_LAT_MIN
+        or max_lat > _WGS84_LAT_MAX
+    ):
+        return None
+    return (min_lon, min_lat, max_lon, max_lat)
 
 
 def _bbox_from_row(row: dict[str, Any]) -> list[float] | None:
