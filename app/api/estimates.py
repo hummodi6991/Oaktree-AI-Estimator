@@ -64,6 +64,125 @@ DEFAULT_UNIT_SIZE_M2 = {
 _ESTIMATE_COMPONENTS: tuple[str, str, str] = ("residential", "retail", "office")
 
 
+def _safe_float(v: Any) -> float | None:
+    try:
+        x = float(v)
+        if not (x == x):  # NaN
+            return None
+        return x
+    except Exception:
+        return None
+
+
+def _sum_component_far(
+    area_ratio: dict[str, Any] | None,
+    components: dict[str, bool] | None = None,
+) -> float:
+    """
+    Sum FAR contributions for {residential, retail, office} based on area_ratio keys.
+    Only counts positive numeric values.
+    If `components` is provided, only sums enabled ones.
+    """
+    if not isinstance(area_ratio, dict) or not area_ratio:
+        return 0.0
+    total = 0.0
+    for k, v in area_ratio.items():
+        comp = _normalize_component_name(k)
+        if comp not in _ESTIMATE_COMPONENTS:
+            continue
+        if components is not None and not components.get(comp, True):
+            continue
+        fv = _safe_float(v)
+        if fv is None:
+            continue
+        if fv <= 0:
+            continue
+        total += fv
+    return total
+
+
+def _rebalance_component_area_ratio(
+    excel_inputs: dict[str, Any],
+    component_flags: dict[str, bool],
+    original_area_ratio: dict[str, Any] | None,
+    *,
+    eps: float = 1e-9,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    MODEL B: If any component is excluded, redistribute the *freed FAR* (area_ratio share)
+    among the included components, pro-rata to their current area_ratio.
+
+    - This keeps the sum(res/retail/office) FAR constant vs the original inputs.
+    - Does NOT touch basement/other keys.
+    - Controlled by excel_inputs["disable_component_rebalance"].
+
+    Returns: (updated_excel_inputs, meta)
+    """
+    meta: dict[str, Any] = {"applied": False}
+    if not isinstance(excel_inputs, dict):
+        return excel_inputs, meta
+
+    # Only do work when something is excluded.
+    if all(component_flags.get(c, True) for c in _ESTIMATE_COMPONENTS):
+        meta["skip_reason"] = "all_components_enabled"
+        return excel_inputs, meta
+
+    try:
+        if bool(excel_inputs.get("disable_component_rebalance")):
+            meta["skip_reason"] = "disable_component_rebalance"
+            return excel_inputs, meta
+    except Exception:
+        pass
+
+    ar = excel_inputs.get("area_ratio")
+    if not isinstance(ar, dict) or not ar:
+        meta["skip_reason"] = "missing_area_ratio"
+        return excel_inputs, meta
+
+    # Target total is derived from the *original* area_ratio (before filtering/scaling).
+    target_total = _sum_component_far(original_area_ratio, components=None)
+    if target_total <= eps:
+        meta["skip_reason"] = "target_total_zero"
+        return excel_inputs, meta
+
+    # Current total includes only enabled components.
+    current_total = _sum_component_far(ar, components=component_flags)
+    if current_total <= eps:
+        meta["skip_reason"] = "current_total_zero"
+        return excel_inputs, meta
+
+    factor = target_total / current_total
+    if abs(factor - 1.0) <= 1e-6:
+        meta["skip_reason"] = "already_balanced"
+        return excel_inputs, meta
+
+    # Scale only enabled components, leave everything else unchanged.
+    next_ar = dict(ar)
+    for k, v in ar.items():
+        comp = _normalize_component_name(k)
+        if comp not in _ESTIMATE_COMPONENTS:
+            continue
+        if not component_flags.get(comp, True):
+            continue
+        fv = _safe_float(v)
+        if fv is None or fv <= 0:
+            continue
+        next_ar[k] = fv * factor
+
+    out = dict(excel_inputs)
+    out["area_ratio"] = next_ar
+    meta.update(
+        {
+            "applied": True,
+            "target_component_far": float(target_total),
+            "current_component_far": float(current_total),
+            "scale_factor": float(factor),
+            "enabled_components": {k: bool(component_flags.get(k, True)) for k in _ESTIMATE_COMPONENTS},
+        }
+    )
+    return out, meta
+
+
 def _normalize_component_name(value: Any) -> str | None:
     """
     Normalize the component identifier coming from request payloads.
@@ -679,6 +798,15 @@ def create_estimate(
     except Exception:
         overture_context_metrics = {}
 
+    original_excel_inputs: dict[str, Any] = (
+        dict(req.excel_inputs) if isinstance(req.excel_inputs, dict) else {}
+    )
+    original_area_ratio: dict[str, Any] | None = (
+        original_excel_inputs.get("area_ratio")
+        if isinstance(original_excel_inputs.get("area_ratio"), dict)
+        else None
+    )
+
     # Copy excel_inputs early so we can apply optional component selection consistently
     excel_inputs: dict[str, Any] = (
         dict(req.excel_inputs) if isinstance(req.excel_inputs, dict) else {}
@@ -1028,6 +1156,18 @@ def create_estimate(
                 floors_adjustment["far_above_ground_after"] = far_above_ground
             except Exception:
                 pass
+
+        # --- Component FAR redistribution (Model B) ---
+        # If office/retail/residential is excluded, the freed FAR must be absorbed by the included components.
+        component_rebalance_meta: dict[str, Any] = {"applied": False}
+        try:
+            excel_inputs, component_rebalance_meta = _rebalance_component_area_ratio(
+                excel_inputs,
+                component_flags,
+                original_area_ratio,
+            )
+        except Exception as exc:
+            component_rebalance_meta = {"applied": False, "error": str(exc)}
 
         # --- Parking minimums (Riyadh) ---
         parking_meta: dict[str, Any] = {"applied": False}
@@ -1437,9 +1577,21 @@ def create_estimate(
             "roi": float(excel["roi"]),
         }
         unit_counts = _estimate_unit_counts(excel, excel_inputs, effective_unit_mix)
-        avg_res = _resolve_avg_unit_m2(excel_inputs, "residential", DEFAULT_UNIT_SIZE_M2["residential"])
-        avg_retail = _resolve_avg_unit_m2(excel_inputs, "retail", DEFAULT_UNIT_SIZE_M2["retail"])
-        avg_office = _resolve_avg_unit_m2(excel_inputs, "office", DEFAULT_UNIT_SIZE_M2["office"])
+        avg_res = (
+            _resolve_avg_unit_m2(excel_inputs, "residential", DEFAULT_UNIT_SIZE_M2["residential"])
+            if component_flags.get("residential", True)
+            else None
+        )
+        avg_retail = (
+            _resolve_avg_unit_m2(excel_inputs, "retail", DEFAULT_UNIT_SIZE_M2["retail"])
+            if component_flags.get("retail", True)
+            else None
+        )
+        avg_office = (
+            _resolve_avg_unit_m2(excel_inputs, "office", DEFAULT_UNIT_SIZE_M2["office"])
+            if component_flags.get("office", True)
+            else None
+        )
         res_default = not _has_avg_unit_override(excel_inputs, "residential")
         retail_default = not _has_avg_unit_override(excel_inputs, "retail")
         office_default = not _has_avg_unit_override(excel_inputs, "office")
@@ -1522,24 +1674,6 @@ def create_estimate(
                     "unit": "m²/space",
                     "source_type": "Assumption",
                 },
-                {
-                    "key": "avg_unit_size_residential_m2",
-                    "value": avg_res,
-                    "unit": "m²",
-                    "source_type": "Market assumption",
-                },
-                {
-                    "key": "avg_unit_size_retail_m2",
-                    "value": avg_retail,
-                    "unit": "m²",
-                    "source_type": "Market assumption",
-                },
-                {
-                    "key": "avg_unit_size_office_m2",
-                    "value": avg_office,
-                    "unit": "m²",
-                    "source_type": "Market assumption",
-                },
             ],
             "notes": {
                 "excel_inputs_keys": list(excel_inputs.keys()),
@@ -1553,6 +1687,7 @@ def create_estimate(
                 "summary_en": summary_en,
                 "summary_ar": summary_ar,
                 "components": dict(component_flags),
+                "component_rebalance": component_rebalance_meta,
                 "unit_count_methodology": (
                     "Unit counts are derived from unit_mix when provided; otherwise estimated by "
                     "dividing net lettable area by average unit sizes."
@@ -1566,9 +1701,9 @@ def create_estimate(
                     "قسمة المساحة القابلة للتأجير على متوسط مساحات الوحدات."
                 ),
                 "avg_unit_size_defaults": {
-                    "residential": res_default,
-                    "retail": retail_default,
-                    "office": office_default,
+                    **({"residential": res_default} if component_flags.get("residential", True) else {}),
+                    **({"retail": retail_default} if component_flags.get("retail", True) else {}),
+                    **({"office": office_default} if component_flags.get("office", True) else {}),
                 },
                 "site_area_m2": site_area_m2,
                 "district": district,
@@ -1605,6 +1740,34 @@ def create_estimate(
             "explainability": {},
             "confidence_bands": {},
         }
+
+        if component_flags.get("residential", True) and avg_res is not None:
+            result["assumptions"].append(
+                {
+                    "key": "avg_unit_size_residential_m2",
+                    "value": avg_res,
+                    "unit": "m²",
+                    "source_type": "Market assumption",
+                }
+            )
+        if component_flags.get("retail", True) and avg_retail is not None:
+            result["assumptions"].append(
+                {
+                    "key": "avg_unit_size_retail_m2",
+                    "value": avg_retail,
+                    "unit": "m²",
+                    "source_type": "Market assumption",
+                }
+            )
+        if component_flags.get("office", True) and avg_office is not None:
+            result["assumptions"].append(
+                {
+                    "key": "avg_unit_size_office_m2",
+                    "value": avg_office,
+                    "unit": "m²",
+                    "source_type": "Market assumption",
+                }
+            )
 
         # Surface parking-income assumptions in the ledger without requiring new frontend inputs.
         if parking_income_y1 > 0 and parking_income_meta.get("monetize_extra_parking"):
