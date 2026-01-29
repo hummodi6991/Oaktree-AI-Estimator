@@ -234,14 +234,27 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     retail: true,
     office: true,
   });
+  const [componentsDraft, setComponentsDraft] = useState<ProgramComponents>(components);
+  const componentsDirty =
+    componentsDraft.residential !== components.residential ||
+    componentsDraft.retail !== components.retail ||
+    componentsDraft.office !== components.office;
+
+  useEffect(() => {
+    setComponentsDraft(components);
+  }, [components]);
 
   const toggleComponent = (key: keyof ProgramComponents) => {
-    setComponents((prev) => {
+    setComponentsDraft((prev) => {
       const next = { ...prev, [key]: !prev[key] };
       if (!next.residential && !next.retail && !next.office) return prev;
-      applyInputPatch({ components: next }, Boolean(excelResult));
       return next;
     });
+  };
+
+  const applyComponents = () => {
+    setComponents(componentsDraft);
+    applyInputPatch({ components: componentsDraft }, Boolean(excelResult));
   };
 
   const updateUnitCost = (key: string, value: string) => {
@@ -1651,7 +1664,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           <label className="excel-form__checkbox">
             <input
               type="checkbox"
-              checked={components.residential}
+              checked={componentsDraft.residential}
               onChange={() => toggleComponent("residential")}
             />
             <span>Residential</span>
@@ -1659,7 +1672,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           <label className="excel-form__checkbox">
             <input
               type="checkbox"
-              checked={components.retail}
+              checked={componentsDraft.retail}
               onChange={() => toggleComponent("retail")}
             />
             <span>Retail</span>
@@ -1667,11 +1680,27 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           <label className="excel-form__checkbox">
             <input
               type="checkbox"
-              checked={components.office}
+              checked={componentsDraft.office}
               onChange={() => toggleComponent("office")}
             />
             <span>Office</span>
           </label>
+          <button
+            type="button"
+            onClick={applyComponents}
+            disabled={!componentsDirty}
+            style={{
+              background: componentsDirty ? "rgba(59,130,246,0.9)" : "rgba(148,163,184,0.2)",
+              color: "white",
+              border: "none",
+              borderRadius: 6,
+              padding: "4px 10px",
+              cursor: componentsDirty ? "pointer" : "not-allowed",
+              fontSize: "0.85rem",
+            }}
+          >
+            {t("common.apply")}
+          </button>
           <div className="excel-form__hint">
             Tip: disabling a component removes it from BUA/cost/revenue (it does not auto-redistribute).
           </div>
@@ -2020,11 +2049,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                     <td style={calcColumnStyle}>Choose a single driver for massing updates.</td>
                   </tr>
-                  <tr>
-                    <td style={itemColumnStyle}>{t("excel.residentialBua")}</td>
-                    <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.residential)}</td>
-                    <td style={calcColumnStyle}>{buaNote("residential")}</td>
-                  </tr>
+                  {components.residential && (
+                    <tr>
+                      <td style={itemColumnStyle}>{t("excel.residentialBua")}</td>
+                      <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.residential)}</td>
+                      <td style={calcColumnStyle}>{buaNote("residential")}</td>
+                    </tr>
+                  )}
                   {effectiveLandUse === "m" && builtArea.retail !== undefined && (
                     <tr>
                       <td style={itemColumnStyle}>{t("excel.retailBua")}</td>
