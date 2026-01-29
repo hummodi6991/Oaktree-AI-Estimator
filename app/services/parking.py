@@ -30,6 +30,21 @@ RIYADH_PARKING_RULESET_ID = "riyadh_municipality_parking_guide"
 RIYADH_PARKING_RULESET_NAME = "Amanat Al Riyadh – Parking Calculation Guide by Project Type"
 RIYADH_PARKING_RULESET_SOURCE_URL = "https://trc.alriyadh.gov.sa/pdf/ParkingCalculationGuideByProjectType.pdf"
 
+# ---------------------------------------------------------------------------
+# Parking supply modelling defaults (IBP-aligned)
+# ---------------------------------------------------------------------------
+# The estimator previously treated counted parking GFA as 100% convertible to stalls,
+# which inflates provided spaces (it ignores ramps/cores/columns/aisles/pedestrian paths).
+#
+# IBP-style preconcept capacity implicitly bakes in circulation loss. We mirror this by
+# applying a layout efficiency haircut before converting area -> stalls.
+#
+# NOTE: gross_m2_per_space remains the stall-module gross (stall + aisle module). The
+# layout efficiency represents the fraction of the counted parking area that actually
+# becomes stall modules.
+DEFAULT_PARKING_SUPPLY_GROSS_M2_PER_SPACE = 30.0
+DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY = 0.88
+
 
 def _norm(s: Any) -> str:
     return str(s or "").strip().lower()
@@ -71,6 +86,14 @@ def _ceil_int(x: float) -> int:
 
 def _floor_int(x: float) -> int:
     return int(math.floor(x + 1e-9))
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    if v < lo:
+        return lo
+    if v > hi:
+        return hi
+    return v
 
 
 # --- Rules ---
@@ -143,17 +166,21 @@ def parking_area_from_built_area(built_area: Dict[str, float]) -> Tuple[float, D
 def provided_spaces_from_area(
     parking_area_m2: float,
     *,
-    gross_m2_per_space: float = 30.0,
-    layout_efficiency: float = 1.0,
+    gross_m2_per_space: float = DEFAULT_PARKING_SUPPLY_GROSS_M2_PER_SPACE,
+    layout_efficiency: float = DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY,
 ) -> Tuple[int, Dict[str, Any]]:
-    g = _float(gross_m2_per_space, 30.0)
-    eff = _float(layout_efficiency, 1.0)
+    g = _float(gross_m2_per_space, DEFAULT_PARKING_SUPPLY_GROSS_M2_PER_SPACE)
+    eff = _float(layout_efficiency, DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY)
+    if eff <= 0:
+        eff = DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
+    eff = _clamp(eff, 0.0, 1.0)
     if g <= 0:
         return 0, {"gross_m2_per_space": g, "layout_efficiency": eff, "provided_raw": 0.0}
-    provided_raw = float(parking_area_m2) * max(eff, 0.0) / g
+    provided_raw = float(parking_area_m2) * eff / g
     return _floor_int(provided_raw), {
         "gross_m2_per_space": g,
         "layout_efficiency": eff,
+        "effective_gross_m2_per_space": (g / eff) if eff > 0 else None,
         "provided_raw": provided_raw,
     }
 
@@ -311,7 +338,7 @@ def ensure_parking_minimums(
       - parking_apply: bool (default True for Riyadh)
       - parking_minimum_policy: 'auto_add_basement' (default) | 'flag_only' | 'disabled'
       - parking_supply_gross_m2_per_space: float (default 30)
-      - parking_supply_layout_efficiency: float (default 1.0)
+      - parking_supply_layout_efficiency: float (default 0.88)
       - parking_assumed_avg_apartment_m2: float (default 120)
 
     The function sets:
@@ -356,8 +383,14 @@ def ensure_parking_minimums(
     parking_area_m2, parking_area_by_key = parking_area_from_built_area(built_area)
     provided, prov_meta = provided_spaces_from_area(
         parking_area_m2,
-        gross_m2_per_space=_float(excel_inputs.get("parking_supply_gross_m2_per_space"), 30.0),
-        layout_efficiency=_float(excel_inputs.get("parking_supply_layout_efficiency"), 1.0),
+        gross_m2_per_space=_float(
+            excel_inputs.get("parking_supply_gross_m2_per_space"),
+            DEFAULT_PARKING_SUPPLY_GROSS_M2_PER_SPACE,
+        ),
+        layout_efficiency=_float(
+            excel_inputs.get("parking_supply_layout_efficiency"),
+            DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY,
+        ),
     )
 
     deficit = max(0, int(required) - int(provided))
@@ -386,11 +419,19 @@ def ensure_parking_minimums(
         ar_new = dict(area_ratio or {})
         basement_ratio_before = _float(ar_new.get(basement_key_used), 0.0)
 
-        gross_m2_per_space = _float(excel_inputs.get("parking_supply_gross_m2_per_space"), 30.0)
-        layout_eff = _float(excel_inputs.get("parking_supply_layout_efficiency"), 1.0)
-        layout_eff = layout_eff if layout_eff > 0 else 1.0
+        gross_m2_per_space = _float(
+            excel_inputs.get("parking_supply_gross_m2_per_space"),
+            DEFAULT_PARKING_SUPPLY_GROSS_M2_PER_SPACE,
+        )
+        layout_eff = _float(
+            excel_inputs.get("parking_supply_layout_efficiency"),
+            DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY,
+        )
+        if layout_eff <= 0:
+            layout_eff = DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
+        layout_eff = _clamp(layout_eff, 0.0, 1.0)
 
-        basement_area_added_m2 = float(deficit) * gross_m2_per_space / layout_eff
+        basement_area_added_m2 = float(deficit) * gross_m2_per_space / max(layout_eff, 1e-9)
         add_ratio = basement_area_added_m2 / max(float(site_area_m2), 1e-9)
 
         ar_new[basement_key_used] = basement_ratio_before + add_ratio
