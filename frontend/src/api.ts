@@ -432,6 +432,11 @@ type EstimateStrategy = "build_to_sell" | "build_to_rent";
 export async function makeEstimate(params: {
   geometry: any;
   excelInputs: any;
+  components?: {
+    residential: boolean;
+    retail: boolean;
+    office: boolean;
+  };
   assetProgram?: string;
   strategy?: EstimateStrategy;
   city?: string;
@@ -442,6 +447,7 @@ export async function makeEstimate(params: {
   const {
     geometry,
     excelInputs,
+    components,
     assetProgram,
     strategy,
     city,
@@ -453,6 +459,7 @@ export async function makeEstimate(params: {
   return createEstimate({
     geometry,
     excel_inputs: excelInputs,
+    components,
     asset_program: assetProgram,
     strategy,
     city,

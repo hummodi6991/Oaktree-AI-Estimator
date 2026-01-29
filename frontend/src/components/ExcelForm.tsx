@@ -2,11 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
 
+import "./ExcelForm.css";
+
 import { downloadMemoPdf, landPrice, makeEstimate, runScenario, trackEvent } from "../api";
 import {
   cloneTemplate,
   ExcelInputs,
   LandUseCode,
+  ProgramComponents,
   templateForLandUse,
 } from "../lib/excelTemplates";
 import ParkingSummary from "./ParkingSummary";
@@ -223,6 +226,21 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         runEstimate(nextInputs);
       }
       return nextOverrides;
+    });
+  };
+
+  const [components, setComponents] = useState<ProgramComponents>({
+    residential: true,
+    retail: true,
+    office: true,
+  });
+
+  const toggleComponent = (key: keyof ProgramComponents) => {
+    setComponents((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      if (!next.residential && !next.retail && !next.office) return prev;
+      applyInputPatch({ components: next }, Boolean(excelResult));
+      return next;
     });
   };
 
@@ -763,11 +781,17 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     setScenarioBaseResult(null);
     setIsScenarioActive(false);
     try {
-      const excelInputs = { ...currentInputs, land_use_code: effectiveLandUse };
+      const resolvedComponents = currentInputs.components ?? components;
+      const excelInputs = {
+        ...currentInputs,
+        land_use_code: effectiveLandUse,
+        components: resolvedComponents,
+      };
       const result = await makeEstimate({
         geometry: parcel.geometry,
         excelInputs,
         assetProgram,
+        components: resolvedComponents,
         strategy: "build_to_sell",
         city: "Riyadh",
         far: 2.0,
@@ -1617,6 +1641,39 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                 />
               </label>
             ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="excel-form__section">
+        <div className="excel-form__section-title">Program components</div>
+        <div className="excel-form__component-toggles">
+          <label className="excel-form__checkbox">
+            <input
+              type="checkbox"
+              checked={components.residential}
+              onChange={() => toggleComponent("residential")}
+            />
+            <span>Residential</span>
+          </label>
+          <label className="excel-form__checkbox">
+            <input
+              type="checkbox"
+              checked={components.retail}
+              onChange={() => toggleComponent("retail")}
+            />
+            <span>Retail</span>
+          </label>
+          <label className="excel-form__checkbox">
+            <input
+              type="checkbox"
+              checked={components.office}
+              onChange={() => toggleComponent("office")}
+            />
+            <span>Office</span>
+          </label>
+          <div className="excel-form__hint">
+            Tip: disabling a component removes it from BUA/cost/revenue (it does not auto-redistribute).
           </div>
         </div>
       </div>
