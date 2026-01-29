@@ -1,5 +1,11 @@
 export type LandUseCode = "s" | "m";
 
+export type ProgramComponents = {
+  residential: boolean;
+  retail: boolean;
+  office: boolean;
+};
+
 export type ExcelInputs = {
   // IMPORTANT: backend prefers this explicit field for landuse inference【turn10file7†file 89.txt†L41-L55】
   land_use_code?: LandUseCode;
@@ -21,6 +27,7 @@ export type ExcelInputs = {
   opex_pct: number;
   y1_income_effective_pct?: number;
   land_price_sar_m2?: number;
+  components?: ProgramComponents;
 };
 
 // Baseline template: Residential ("s")

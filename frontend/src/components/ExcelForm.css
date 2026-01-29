@@ -1,0 +1,23 @@
+.excel-form__component-toggles {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.excel-form__checkbox {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  user-select: none;
+}
+
+.excel-form__checkbox input[type="checkbox"] {
+  transform: translateY(1px);
+}
+
+.excel-form__hint {
+  opacity: 0.75;
+  font-size: 12px;
+}
