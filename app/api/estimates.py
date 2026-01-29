@@ -16,6 +16,7 @@ from app.db import session as db_session
 from app.services import geo as geo_svc
 from app.services import far_rules
 from app.services import parking as parking_svc
+from app.services.parking import DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
 from app.services.excel_method import (
     DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR,
     _normalize_y1_income_effective_factor,
@@ -1672,6 +1673,15 @@ def create_estimate(
                     "key": "parking_supply_gross_m2_per_space",
                     "value": float(excel_inputs.get("parking_supply_gross_m2_per_space") or 30.0),
                     "unit": "m²/space",
+                    "source_type": "Assumption",
+                },
+                {
+                    "key": "parking_supply_layout_efficiency",
+                    "value": float(
+                        excel_inputs.get("parking_supply_layout_efficiency")
+                        or DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
+                    ),
+                    "unit": "fraction",
                     "source_type": "Assumption",
                 },
             ],

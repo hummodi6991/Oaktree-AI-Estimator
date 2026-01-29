@@ -1,11 +1,15 @@
 import math
 from typing import Any, Dict
 
+from app.services.parking import (
+    DEFAULT_PARKING_SUPPLY_GROSS_M2_PER_SPACE,
+    DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY,
+)
+from app.services.parking_income import compute_parking_income, _normalize_landuse_code
+
 # Accounting/underwriting haircut default: only 90% of Year-1 net income is treated as "effective"
 # for headline unlevered ROI (stabilization, downtime, leakage, collection loss, etc.).
 DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR = 0.90
-
-from app.services.parking_income import compute_parking_income, _normalize_landuse_code
 
 
 def _parse_bool(value: Any) -> bool | None:
@@ -682,8 +686,13 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     parking_required_spaces = int(math.ceil(parking_required_spaces_raw - 1e-9))
 
     # Parking supply: derive provided stalls from below-grade + explicit parking areas.
-    parking_supply_gross_m2_per_space = float(inputs.get("parking_supply_gross_m2_per_space") or 30.0)
-    parking_supply_layout_efficiency = float(inputs.get("parking_supply_layout_efficiency") or 1.0)
+    parking_supply_gross_m2_per_space = float(
+        inputs.get("parking_supply_gross_m2_per_space") or DEFAULT_PARKING_SUPPLY_GROSS_M2_PER_SPACE
+    )
+    parking_supply_layout_efficiency = float(
+        inputs.get("parking_supply_layout_efficiency") or DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
+    )
+    parking_supply_layout_efficiency = max(0.0, min(parking_supply_layout_efficiency, 1.0))
     parking_area_m2 = 0.0
     parking_area_by_key: Dict[str, float] = {}
     for key, area in built_area.items():
@@ -697,7 +706,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
                 parking_area_m2 += a
     if parking_supply_gross_m2_per_space > 0:
         parking_provided_raw = (
-            parking_area_m2 * max(parking_supply_layout_efficiency, 0.0) / parking_supply_gross_m2_per_space
+            parking_area_m2 * parking_supply_layout_efficiency / parking_supply_gross_m2_per_space
         )
     else:
         parking_provided_raw = 0.0
