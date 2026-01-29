@@ -1,6 +1,8 @@
 from app.api.search import (
     SearchItem,
+    _bbox_params,
     _merge_round_robin,
+    _parse_viewport_bbox,
     normalize_search_text,
     parse_coords,
     parse_parcel_tokens,
@@ -64,3 +66,17 @@ def test_merge_round_robin_includes_parcel_when_available():
 
     assert any(isinstance(item, SearchItem) for item in items)
     assert any(item.type == "parcel" for item in items)
+
+
+def test_viewport_bbox_is_clamped_to_riyadh():
+    viewport = (46.0, 24.0, 48.0, 26.0)
+    params = _bbox_params(viewport)
+    assert params["min_lon"] >= 46.20
+    assert params["min_lat"] >= 24.20
+    assert params["max_lon"] <= 47.30
+    assert params["max_lat"] <= 25.10
+
+
+def test_viewport_bbox_rejects_webmercator_like_values():
+    raw = "4900000,2900000,5000000,3000000"
+    assert _parse_viewport_bbox(raw) is None
