@@ -61,6 +61,157 @@ DEFAULT_UNIT_SIZE_M2 = {
     "office": 120.0,
 }
 
+_ESTIMATE_COMPONENTS: tuple[str, str, str] = ("residential", "retail", "office")
+
+
+def _normalize_component_name(value: Any) -> str | None:
+    """
+    Normalize the component identifier coming from request payloads.
+    Supports a few common aliases while staying conservative.
+    """
+    if value is None:
+        return None
+    s = str(value).strip().lower()
+    if not s:
+        return None
+
+    # exact / common aliases
+    if s in {"residential", "housing", "res"}:
+        return "residential"
+    if s in {"retail", "shop", "shops"}:
+        return "retail"
+    if s in {"office", "offices"}:
+        return "office"
+
+    # tolerate prefixes like "residential_*"
+    if s.startswith("residential"):
+        return "residential"
+    if s.startswith("retail"):
+        return "retail"
+    if s.startswith("office"):
+        return "office"
+
+    return None
+
+
+def _resolve_component_flags(
+    request_components: Any,
+    excel_inputs: dict[str, Any] | None,
+) -> tuple[dict[str, bool], bool]:
+    """
+    Resolve inclusion flags for (residential/retail/office).
+
+    Priority:
+      1) Top-level request `components` (preferred)
+      2) excel_inputs["components"] or excel_inputs["include_components"] (back-compat / advanced usage)
+
+    Returns: (flags, applied)
+      - flags is always a dict with 3 booleans
+      - applied indicates whether user explicitly provided a selection
+    """
+    default_flags = {c: True for c in _ESTIMATE_COMPONENTS}
+
+    # 1) Request-level components (ProgramComponents model)
+    if request_components is not None:
+        flags = {}
+        for c in _ESTIMATE_COMPONENTS:
+            v = None
+            if isinstance(request_components, dict):
+                v = request_components.get(c)
+            else:
+                v = getattr(request_components, c, None)
+            flags[c] = bool(v) if v is not None else True
+        if not any(flags.values()):
+            raise HTTPException(
+                status_code=400,
+                detail="At least one component must be included (residential, retail, office).",
+            )
+        return flags, True
+
+    # 2) Look inside excel_inputs
+    raw = None
+    if isinstance(excel_inputs, dict):
+        raw = excel_inputs.get("components") or excel_inputs.get("include_components")
+
+    if raw is None:
+        return default_flags, False
+
+    # include-list form: ["residential", "retail"]
+    if isinstance(raw, (list, tuple, set)):
+        included = {_normalize_component_name(x) for x in raw}
+        included.discard(None)
+        flags = {c: (c in included) for c in _ESTIMATE_COMPONENTS}
+        if not any(flags.values()):
+            raise HTTPException(
+                status_code=400,
+                detail="At least one component must be included (residential, retail, office).",
+            )
+        return flags, True
+
+    # string form: "residential,retail"
+    if isinstance(raw, str):
+        parts = [p.strip() for p in raw.replace(",", " ").split() if p.strip()]
+        included = {_normalize_component_name(x) for x in parts}
+        included.discard(None)
+        flags = {c: (c in included) for c in _ESTIMATE_COMPONENTS}
+        if not any(flags.values()):
+            raise HTTPException(
+                status_code=400,
+                detail="At least one component must be included (residential, retail, office).",
+            )
+        return flags, True
+
+    # dict form: {"residential": true, "retail": false, "office": true}
+    if isinstance(raw, dict):
+        try:
+            parsed = ProgramComponents(**raw)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid components flags: {exc}")
+        flags = {
+            "residential": bool(parsed.residential),
+            "retail": bool(parsed.retail),
+            "office": bool(parsed.office),
+        }
+        if not any(flags.values()):
+            raise HTTPException(
+                status_code=400,
+                detail="At least one component must be included (residential, retail, office).",
+            )
+        return flags, True
+
+    # Unknown type → ignore for safety (do not break old clients)
+    return default_flags, False
+
+
+def _filter_excel_inputs_components(
+    excel_inputs: dict[str, Any],
+    component_flags: dict[str, bool],
+) -> dict[str, Any]:
+    """
+    Remove excluded components from component-mapped excel_inputs dicts so they do not affect:
+      - FAR landuse inference (area_ratio keys)
+      - parking minimums
+      - revenue & cost computations
+    """
+    if not isinstance(excel_inputs, dict):
+        return {}
+
+    def keep_key(k: Any) -> bool:
+        comp = _normalize_component_name(k)
+        if comp is None:
+            return True
+        return bool(component_flags.get(comp, True))
+
+    out = dict(excel_inputs)
+    for map_key in ("area_ratio", "unit_cost", "efficiency", "rent_sar_m2_yr", "avg_unit_m2"):
+        m = out.get(map_key)
+        if isinstance(m, dict) and m:
+            out[map_key] = {k: v for k, v in m.items() if keep_key(k)}
+
+    # Persist resolved flags for transparency/debugging
+    out["components"] = dict(component_flags)
+    return out
+
 
 def _resolve_avg_unit_m2(excel_inputs: dict, key: str, fallback: float) -> float:
     avg_unit_m2 = excel_inputs.get("avg_unit_m2") if isinstance(excel_inputs, dict) else None
@@ -241,6 +392,22 @@ class UnitMix(BaseModel):
     avg_m2: float | None = None  # optional per-type area
 
 
+class ProgramComponents(BaseModel):
+    """
+    Component inclusion toggles.
+
+    When provided, excluded components are removed from excel_inputs component maps
+    (area_ratio/rent/efficiency/unit_cost/avg_unit_m2), which ensures they don't affect
+    FAR inference, parking minimums, revenues, or costs.
+    """
+
+    residential: bool = True
+    retail: bool = True
+    office: bool = True
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class Timeline(BaseModel):
     start: str
     months: int
@@ -314,6 +481,13 @@ class EstimateRequest(BaseModel):
     geometry: Dict[str, Any] | str
     asset_program: str = "residential_midrise"
     unit_mix: List[UnitMix] = Field(default_factory=list)
+    components: ProgramComponents | None = Field(
+        default=None,
+        description=(
+            "Optional component inclusion flags. If provided, excluded components "
+            "(residential/retail/office) are removed from excel_inputs maps so they do not affect the estimate."
+        ),
+    )
     finish_level: Literal["low", "mid", "high"] = "mid"
     timeline: Timeline = Field(default_factory=_default_timeline)
     financing_params: FinancingParams = Field(default_factory=_default_financing)
@@ -361,6 +535,7 @@ class EstimateRequest(BaseModel):
                     ],
                 },
                 "asset_program": "residential_midrise",
+                "components": {"residential": True, "retail": True, "office": True},
                 "timeline": {"start": "2025-10-01", "months": 18},
                 "financing_params": {"margin_bps": 250, "ltv": 0.6},
                 "strategy": "build_to_sell",
@@ -415,7 +590,17 @@ def _infer_landuse_code_from_excel_inputs(excel_inputs: dict | None) -> str | No
     if not isinstance(ar, dict) or not ar:
         return None
 
-    keys = {str(k).strip().lower() for k in ar.keys()}
+    # IMPORTANT: infer only from components that actually have positive allocation.
+    # This avoids false "mixed-use" classification when UI sets a component key but its ratio is 0.
+    keys: set[str] = set()
+    for k, v in ar.items():
+        try:
+            if float(v) <= 0:
+                continue
+        except Exception:
+            # If v isn't numeric, keep the key (conservative fallback)
+            pass
+        keys.add(str(k).strip().lower())
 
     # Heuristic buckets
     has_res = any("res" in k or k == "residential" for k in keys)
@@ -494,6 +679,21 @@ def create_estimate(
     except Exception:
         overture_context_metrics = {}
 
+    # Copy excel_inputs early so we can apply optional component selection consistently
+    excel_inputs: dict[str, Any] = (
+        dict(req.excel_inputs) if isinstance(req.excel_inputs, dict) else {}
+    )
+    component_flags, component_filter_applied = _resolve_component_flags(
+        req.components, excel_inputs
+    )
+    if component_filter_applied:
+        excel_inputs = _filter_excel_inputs_components(excel_inputs, component_flags)
+
+    # unit_mix only applies to residential yield/parking; ignore it when residential is excluded.
+    effective_unit_mix = (
+        req.unit_mix if component_flags.get("residential", True) else []
+    )
+
     # FAR is intentionally fully automatic:
     # - Do NOT use district FAR (data is corrupted)
     # - Do NOT use user-supplied FAR (confusing UX)
@@ -506,9 +706,7 @@ def create_estimate(
     if overture_context_metrics.get("building_count") == 0:
         typical_far_proxy = None
         typical_source = None
-    landuse_for_cap = _infer_landuse_code_from_excel_inputs(
-        dict(req.excel_inputs) if isinstance(req.excel_inputs, dict) else None
-    )
+    landuse_for_cap = _infer_landuse_code_from_excel_inputs(excel_inputs)
     FAR_SAFETY_FACTOR = 1.15
     final_far, far_calc_meta = far_rules.compute_far_with_priors(
         landuse_code=landuse_for_cap,
@@ -729,8 +927,7 @@ def create_estimate(
 
     # Excel-only mode: always use the Excel-style computation and short-circuit other paths.
     if req.excel_inputs:
-        # Copy inputs and enrich land price if caller didn't provide one (or provided 0/None)
-        excel_inputs = dict(req.excel_inputs)
+        # excel_inputs was copied above (and may have been component-filtered)
 
         # In Excel-mode, BUA is computed from `area_ratio`. To avoid it getting stuck on
         # template placeholders (e.g. residential 1.60), scale placeholder area ratios to
@@ -838,7 +1035,7 @@ def create_estimate(
             excel_inputs, parking_meta = parking_svc.ensure_parking_minimums(
                 excel_inputs=excel_inputs,
                 site_area_m2=site_area_m2,
-                unit_mix=req.unit_mix,
+                unit_mix=effective_unit_mix,
                 city=req.city or "Riyadh",
             )
         except Exception as e:
@@ -1239,7 +1436,7 @@ def create_estimate(
             "y1_noi": float(excel.get("y1_noi") or 0.0),
             "roi": float(excel["roi"]),
         }
-        unit_counts = _estimate_unit_counts(excel, excel_inputs, req.unit_mix)
+        unit_counts = _estimate_unit_counts(excel, excel_inputs, effective_unit_mix)
         avg_res = _resolve_avg_unit_m2(excel_inputs, "residential", DEFAULT_UNIT_SIZE_M2["residential"])
         avg_retail = _resolve_avg_unit_m2(excel_inputs, "retail", DEFAULT_UNIT_SIZE_M2["retail"])
         avg_office = _resolve_avg_unit_m2(excel_inputs, "office", DEFAULT_UNIT_SIZE_M2["office"])
@@ -1254,38 +1451,41 @@ def create_estimate(
             "double-digit": "رقم مزدوج",
             "uncertain": "غير مؤكد",
         }.get(roi_band, roi_band)
-        summary_en = (
-            "Estimated unit yield: "
-            f"{unit_counts.get('residential', 0):,} apartments, "
-            f"{unit_counts.get('retail', 0):,} retail units, "
-            f"{unit_counts.get('office', 0):,} office units."
-        )
+        yield_parts_en: list[str] = []
+        yield_parts_ar: list[str] = []
+        if component_flags.get("residential", True):
+            yield_parts_en.append(f"{unit_counts.get('residential', 0):,} apartments")
+            yield_parts_ar.append(f"{unit_counts.get('residential', 0):,} شقق سكنية")
+        if component_flags.get("retail", True):
+            yield_parts_en.append(f"{unit_counts.get('retail', 0):,} retail units")
+            yield_parts_ar.append(f"{unit_counts.get('retail', 0):,} وحدات تجزئة")
+        if component_flags.get("office", True):
+            yield_parts_en.append(f"{unit_counts.get('office', 0):,} office units")
+            yield_parts_ar.append(f"{unit_counts.get('office', 0):,} وحدات مكتبية")
+
+        summary_en = "Estimated unit yield: " + ", ".join(yield_parts_en) + "."
         summary_en += (
             " Based on current assumptions, the unlevered Year-1 yield on cost is "
             f"{roi_band}."
         )
-        summary_en += (
-            "\n\nAssumed average unit sizes: "
-            f"Residential ≈ {_format_avg_unit_m2(avg_res)} m², "
-            f"Retail ≈ {_format_avg_unit_m2(avg_retail)} m², "
-            f"Office ≈ {_format_avg_unit_m2(avg_office)} m²."
-        )
-        summary_ar = (
-            "تقدير عدد الوحدات: "
-            f"{unit_counts.get('residential', 0):,} شقق سكنية، "
-            f"{unit_counts.get('retail', 0):,} وحدات تجزئة، "
-            f"{unit_counts.get('office', 0):,} وحدات مكتبية."
-        )
+        size_parts_en: list[str] = []
+        size_parts_ar: list[str] = []
+        if component_flags.get("residential", True):
+            size_parts_en.append(f"Residential ≈ {_format_avg_unit_m2(avg_res)} m²")
+            size_parts_ar.append(f"سكني ≈ {_format_avg_unit_m2(avg_res)} م²")
+        if component_flags.get("retail", True):
+            size_parts_en.append(f"Retail ≈ {_format_avg_unit_m2(avg_retail)} m²")
+            size_parts_ar.append(f"تجزئة ≈ {_format_avg_unit_m2(avg_retail)} م²")
+        if component_flags.get("office", True):
+            size_parts_en.append(f"Office ≈ {_format_avg_unit_m2(avg_office)} m²")
+            size_parts_ar.append(f"مكاتب ≈ {_format_avg_unit_m2(avg_office)} م²")
+        summary_en += "\n\nAssumed average unit sizes: " + ", ".join(size_parts_en) + "."
+        summary_ar = "تقدير عدد الوحدات: " + "، ".join(yield_parts_ar) + "."
         summary_ar += (
             " استنادًا إلى الافتراضات الحالية، فإن عائد السنة الأولى غير الممول على التكلفة هو "
             f"{roi_band_ar}."
         )
-        summary_ar += (
-            "\n\nمتوسط مساحات الوحدات المفترضة: "
-            f"سكني ≈ {_format_avg_unit_m2(avg_res)} م²، "
-            f"تجزئة ≈ {_format_avg_unit_m2(avg_retail)} م²، "
-            f"مكاتب ≈ {_format_avg_unit_m2(avg_office)} م²."
-        )
+        summary_ar += "\n\nمتوسط مساحات الوحدات المفترضة: " + "، ".join(size_parts_ar) + "."
         result = {
             "totals": totals,
             "assumptions": [
@@ -1352,6 +1552,7 @@ def create_estimate(
                 "summary": summary_en,
                 "summary_en": summary_en,
                 "summary_ar": summary_ar,
+                "components": dict(component_flags),
                 "unit_count_methodology": (
                     "Unit counts are derived from unit_mix when provided; otherwise estimated by "
                     "dividing net lettable area by average unit sizes."
