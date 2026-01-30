@@ -1,4 +1,5 @@
 import logging
+import math
 import re
 from typing import Any
 from urllib.parse import unquote
@@ -353,13 +354,13 @@ def _build_road_sql(db: Session) -> TextClause:
         search_exprs.append(f"(({trigram_gate.format(expr='ref')}) OR ({like_gate.format(expr='ref')}))")
     if "tags" in cols:
         search_exprs.append(
-            f"(({trigram_gate.format(expr=\"tags->'name:ar'\")}) OR ({like_gate.format(expr=\"tags->'name:ar'\")}))"
+            f'(({trigram_gate.format(expr="tags->\'name:ar\'")}) OR ({like_gate.format(expr="tags->\'name:ar\'")}))'
         )
         search_exprs.append(
-            f"(({trigram_gate.format(expr=\"tags->'name:en'\")}) OR ({like_gate.format(expr=\"tags->'name:en'\")}))"
+            f'(({trigram_gate.format(expr="tags->\'name:en\'")}) OR ({like_gate.format(expr="tags->\'name:en\'")}))'
         )
         search_exprs.append(
-            f"(({trigram_gate.format(expr=\"tags->'alt_name'\")}) OR ({like_gate.format(expr=\"tags->'alt_name'\")}))"
+            f'(({trigram_gate.format(expr="tags->\'alt_name\'")}) OR ({like_gate.format(expr="tags->\'alt_name\'")}))'
         )
     if not search_exprs:
         search_exprs = [f"(({trigram_gate.format(expr='name')}) OR ({like_gate.format(expr='name')}))"]
@@ -489,6 +490,36 @@ def _row_to_item(row: dict[str, Any]) -> SearchItem | None:
         center=center,
         bbox=bbox,
     )
+
+
+def _tokenize_query(normalized_lower: str) -> list[str]:
+    # normalized_lower is already punctuation-stripped by normalize_search_text()
+    tokens = [t for t in normalized_lower.split() if t]
+    return tokens
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Distance in meters between two WGS84 points.
+    """
+    r = 6371000.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def _distance_boost_m(distance_m: float, *, max_boost: float = 0.25, fade_out_m: float = 5000.0) -> float:
+    """
+    Linear fade: max_boost at 0m, down to 0 at fade_out_m.
+    """
+    if distance_m <= 0:
+        return max_boost
+    if distance_m >= fade_out_m:
+        return 0.0
+    return max_boost * (1.0 - (distance_m / fade_out_m))
 
 
 def _parcel_source_metadata(table_name: str) -> tuple[str, str]:
@@ -670,10 +701,28 @@ def _score_row(
     plan: str | None,
     block: str | None,
     parcel: str | None,
+    query_norm_lower: str,
+    query_tokens: list[str],
 ) -> float:
     base_score = float(row.get("score") or 0.0)
-    row_type = row.get("type")
+    row_type = str(row.get("type") or "")
     boost = 0.0
+
+    # --- 5.1 Prefix/exact/token coverage boosts ---
+    label_raw = str(row.get("label") or "")
+    label_norm_lower = normalize_search_text(label_raw, replace_ta_marbuta=True).lower()
+
+    if query_norm_lower and label_norm_lower:
+        if label_norm_lower == query_norm_lower:
+            boost += 0.35  # exact label match (very strong signal)
+        elif label_norm_lower.startswith(query_norm_lower) and len(query_norm_lower) >= 2:
+            boost += 0.22  # prefix match (very common user intent)
+        if query_tokens:
+            # token coverage: all query tokens present in label
+            if all(tok in label_norm_lower for tok in query_tokens):
+                boost += 0.18
+
+    # --- existing intent boosts ---
     if row_type == "parcel":
         if intent.get("parcel"):
             boost += 0.6
@@ -691,12 +740,37 @@ def _score_row(
     elif row_type == "poi" and intent.get("poi"):
         boost += 0.15
 
+    # --- 5.2 Distance-to-viewport-center (soft spatial preference) ---
     if viewport_bbox and row.get("lng") is not None and row.get("lat") is not None:
         min_lon, min_lat, max_lon, max_lat = viewport_bbox
         lng = float(row["lng"])
         lat = float(row["lat"])
+
+        # Keep existing binary inside-bbox boost
         if min_lon <= lng <= max_lon and min_lat <= lat <= max_lat:
             boost += 0.2
+
+        # Add smooth distance-to-center boost
+        center_lon = (min_lon + max_lon) / 2.0
+        center_lat = (min_lat + max_lat) / 2.0
+        d_m = _haversine_m(center_lat, center_lon, lat, lng)
+        boost += _distance_boost_m(d_m, max_boost=0.25, fade_out_m=5000.0)
+
+    # --- 5.3 Source confidence boosts (Aqar district hulls) ---
+    # If external_feature hulls store a point count or similar metadata, use it.
+    if row_type == "district":
+        # We encode layer_name in id: "district:<layer_name>:<id>"
+        row_id = str(row.get("id") or "")
+        if ":aqar_district_hulls:" in row_id:
+            # Try a few possible property-derived columns included by SQL
+            raw_cnt = row.get("point_count") or row.get("points_count") or row.get("n_points")
+            try:
+                cnt = int(raw_cnt) if raw_cnt is not None else 0
+            except (TypeError, ValueError):
+                cnt = 0
+            if cnt > 0:
+                # Log-scaled confidence up to +0.15
+                boost += min(0.15, 0.02 * math.log1p(cnt) * 3.0)
     return base_score + boost
 
 
@@ -742,6 +816,45 @@ def _merge_global_ranked(
         seen.add(key)
         per_type_counts[item.type] = per_type_counts.get(item.type, 0) + 1
         items.append(item)
+    return items
+
+
+def _merge_round_robin(
+    scored_rows: dict[str, list[tuple[float, dict[str, Any]]]],
+    limit: int,
+    type_order: list[str] | None = None,
+) -> list[SearchItem]:
+    """
+    Merge results in round-robin order by type, sorted by per-type score.
+    """
+    if type_order is None:
+        type_order = list(scored_rows.keys())
+    else:
+        remaining = [key for key in scored_rows.keys() if key not in type_order]
+        type_order = type_order + remaining
+
+    per_type_rows: dict[str, list[tuple[float, dict[str, Any]]]] = {
+        key: sorted(rows, key=lambda entry: entry[0], reverse=True) for key, rows in scored_rows.items()
+    }
+    items: list[SearchItem] = []
+    seen: set[tuple[str, str]] = set()
+
+    while len(items) < limit and any(per_type_rows.get(key) for key in type_order):
+        for key in type_order:
+            if len(items) >= limit:
+                break
+            rows = per_type_rows.get(key)
+            if not rows:
+                continue
+            _score, row = rows.pop(0)
+            item = _row_to_item(row)
+            if not item:
+                continue
+            item_key = (item.type, item.id)
+            if item_key in seen:
+                continue
+            seen.add(item_key)
+            items.append(item)
     return items
 
 
@@ -966,6 +1079,14 @@ _DISTRICT_EXTERNAL_SQL = text(
             id,
             layer_name,
             properties,
+            -- optional confidence metadata (varies by ingestion; safe if missing)
+            COALESCE(
+              NULLIF(properties->>'point_count','')::int,
+              NULLIF(properties->>'points_count','')::int,
+              NULLIF(properties->>'n_points','')::int,
+              NULLIF(properties->>'count','')::int,
+              0
+            ) AS point_count,
             ST_SetSRID(ST_GeomFromGeoJSON(geometry::text), 4326) AS geom
         FROM external_feature
         WHERE layer_name IN ('osm_districts', 'aqar_district_hulls')
@@ -989,6 +1110,7 @@ _DISTRICT_EXTERNAL_SQL = text(
         'district:' || COALESCE(layer_name, 'external') || ':' || id AS id,
         COALESCE(properties->>'district_raw', properties->>'name', properties->>'district') AS label,
         ('District • ' || COALESCE(layer_name, 'external')) AS subtitle,
+        point_count,
         ST_X(ST_PointOnSurface(geom)) AS lng,
         ST_Y(ST_PointOnSurface(geom)) AS lat,
         ST_XMin(geom) AS min_lng,
@@ -1063,6 +1185,7 @@ def search(
     q_like_lower = f"%{normalized_lower}%" if normalized_lower else ""
     q_raw = normalized_query or query
     q_raw_lower = normalized_lower or q_raw.lower()
+    query_tokens = _tokenize_query(normalized_lower)
 
     # POI category mode (name-less POIs)
     poi_amenity_values = _poi_amenity_values_for_query(normalized_lower)
@@ -1104,7 +1227,9 @@ def search(
         )
         scored_rows.setdefault("poi", [])
         for row in rows:
-            scored_rows["poi"].append((_score_row(row, intent, viewport, plan, block, parcel), row))
+            scored_rows["poi"].append(
+                (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+            )
 
     if _table_exists(db, "public.planet_osm_polygon"):
         rows = run_query(
@@ -1119,7 +1244,9 @@ def search(
         )
         scored_rows.setdefault("poi", [])
         for row in rows:
-            scored_rows["poi"].append((_score_row(row, intent, viewport, plan, block, parcel), row))
+            scored_rows["poi"].append(
+                (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+            )
 
     if _table_exists(db, "public.planet_osm_line"):
         rows = run_query(
@@ -1132,7 +1259,8 @@ def search(
             },
         )
         scored_rows["road"] = [
-            (_score_row(row, intent, viewport, plan, block, parcel), row) for row in rows
+            (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+            for row in rows
         ]
 
     district_rows: list[dict[str, Any]] = []
@@ -1162,7 +1290,8 @@ def search(
         )
     if district_rows:
         scored_rows["district"] = [
-            (_score_row(row, intent, viewport, plan, block, parcel), row) for row in district_rows
+            (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+            for row in district_rows
         ]
 
     parcel_tables: list[tuple[str, str, str]] = []
@@ -1209,7 +1338,8 @@ def search(
             )
         if parcel_rows:
             scored_rows["parcel"] = [
-                (_score_row(row, intent, viewport, plan, block, parcel), row) for row in parcel_rows
+                (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+                for row in parcel_rows
             ]
 
     items: list[SearchItem] = []
