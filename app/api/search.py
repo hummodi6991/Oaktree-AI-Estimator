@@ -184,6 +184,59 @@ def _strip_intent_words(normalized_lower: str, intent_words: set[str]) -> str:
     return core or normalized_lower
 
 
+# --- POI category keyword matching (name-less POIs) ---
+# If the user types a category (e.g. "hospital" / "مستشفى"), allow matching by amenity type
+# even when POI name is missing.
+_POI_AMENITY_KEYWORDS: dict[str, list[str]] = {
+    # hospitals / clinics
+    "hospital": ["hospital"],
+    "مستشفى": ["hospital"],
+    "عيادة": ["clinic", "doctors"],
+    "clinic": ["clinic", "doctors"],
+    "doctor": ["doctors"],
+    "pharmacy": ["pharmacy"],
+    "صيدلية": ["pharmacy"],
+    # schools
+    "school": ["school"],
+    "مدرسة": ["school"],
+    "university": ["university", "college"],
+    "جامعة": ["university", "college"],
+    # mosques
+    "mosque": ["place_of_worship"],
+    "مسجد": ["place_of_worship"],
+    # police / fire
+    "police": ["police"],
+    "شرطة": ["police"],
+    "fire": ["fire_station"],
+    "الدفاع": ["fire_station"],
+}
+
+
+def _poi_amenity_values_for_query(normalized_lower: str) -> list[str]:
+    """
+    If query looks like a category keyword, return amenity values to match.
+    Otherwise return empty list.
+    """
+    if not normalized_lower:
+        return []
+    tokens = normalized_lower.split()
+    values: list[str] = []
+    if normalized_lower in _POI_AMENITY_KEYWORDS:
+        values.extend(_POI_AMENITY_KEYWORDS[normalized_lower])
+    else:
+        for token in tokens:
+            if token in _POI_AMENITY_KEYWORDS:
+                values.extend(_POI_AMENITY_KEYWORDS[token])
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
 def parse_coords(q: str) -> tuple[float, float] | None:
     if not q:
         return None
@@ -268,6 +321,84 @@ def _bbox_params(viewport_bbox: tuple[float, float, float, float] | None) -> dic
         "max_lon": max_lon,
         "max_lat": max_lat,
     }
+
+
+# --- Dynamic OSM road SQL (supports ref + alt labels if present) ---
+_ROAD_SQL_CACHE: dict[tuple[str, ...], TextClause] = {}
+
+
+def _build_road_sql(db: Session) -> TextClause:
+    """
+    Build a road SQL that can search name, ref, and optional tags-based alt labels
+    without breaking environments where those columns don't exist.
+    """
+    cols = _table_columns(db, "public.planet_osm_line")
+    cache_key = tuple(sorted(cols))
+    cached = _ROAD_SQL_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    def expr_or_null(column: str, cast: str) -> str:
+        return f"{column}::{cast} AS {column}" if column in cols else f"NULL::{cast} AS {column}"
+
+    search_exprs: list[str] = []
+    if "name" in cols:
+        search_exprs.append("lower(name) LIKE :q_like_lower")
+    if "ref" in cols:
+        search_exprs.append("lower(ref) LIKE :q_like_lower")
+    if "tags" in cols:
+        search_exprs.append("lower(tags->'name:ar') LIKE :q_like_lower")
+        search_exprs.append("lower(tags->'name:en') LIKE :q_like_lower")
+        search_exprs.append("lower(tags->'alt_name') LIKE :q_like_lower")
+    if not search_exprs:
+        search_exprs = ["lower(name) LIKE :q_like_lower"]
+
+    where_sql = " OR ".join(f"({expr})" for expr in search_exprs)
+
+    label_expr = "COALESCE(name"
+    if "ref" in cols:
+        label_expr += ", ref"
+    if "tags" in cols:
+        label_expr += ", tags->'name:ar', tags->'name:en', tags->'alt_name'"
+    label_expr += ", '')"
+
+    sql = text(
+        f"""
+        WITH candidates AS (
+            SELECT
+                osm_id,
+                {expr_or_null("name", "text")},
+                {expr_or_null("ref", "text")},
+                {expr_or_null("highway", "text")},
+                {label_expr} AS label,
+                ST_Transform(way, 4326) AS geom
+            FROM planet_osm_line
+            WHERE highway IS NOT NULL
+              AND ({where_sql})
+              AND way && ST_Transform(
+                ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326),
+                3857
+              )
+            ORDER BY similarity(lower({label_expr}), lower(:q_raw)) DESC
+            LIMIT :limit
+        )
+        SELECT
+            'road' AS type,
+            'osm_line:' || osm_id AS id,
+            label AS label,
+            COALESCE(highway, 'road') AS subtitle,
+            ST_X(ST_PointOnSurface(geom)) AS lng,
+            ST_Y(ST_PointOnSurface(geom)) AS lat,
+            ST_XMin(geom) AS min_lng,
+            ST_YMin(geom) AS min_lat,
+            ST_XMax(geom) AS max_lng,
+            ST_YMax(geom) AS max_lat,
+            similarity(lower(label), lower(:q_raw)) AS score
+        FROM candidates
+        """
+    )
+    _ROAD_SQL_CACHE[cache_key] = sql
+    return sql
 
 
 def parse_parcel_tokens(query: str) -> tuple[str | None, str | None, str | None]:
@@ -356,6 +487,24 @@ def _parcel_source_metadata(table_name: str) -> tuple[str, str]:
     return "parcel", "Parcel layer"
 
 
+def _parcel_extra_search_clauses(columns: set[str], *, table_alias: str = "p") -> list[tuple[str, str]]:
+    """
+    Return extra (column, SQL condition) pairs for parcel search when columns exist.
+    """
+    extra: list[tuple[str, str]] = []
+    if "zoning_id" in columns:
+        extra.append(("zoning_id", f"lower({table_alias}.zoning_id) LIKE :q_like_lower"))
+    if "zoning_category" in columns:
+        extra.append(("zoning_category", f"lower({table_alias}.zoning_category) LIKE :q_like_lower"))
+    if "zoning_subcategory" in columns:
+        extra.append(("zoning_subcategory", f"lower({table_alias}.zoning_subcategory) LIKE :q_like_lower"))
+    if "landuse" in columns:
+        extra.append(("landuse", f"lower({table_alias}.landuse) LIKE :q_like_lower"))
+    if "classification" in columns:
+        extra.append(("classification", f"lower({table_alias}.classification) LIKE :q_like_lower"))
+    return extra
+
+
 def _parcel_search_sql(
     table_name: str,
     columns: set[str],
@@ -396,6 +545,9 @@ def _parcel_search_sql(
             """
         )
 
+    extra_clauses = _parcel_extra_search_clauses(columns, table_alias="p")
+    search_clauses.extend([clause for _, clause in extra_clauses])
+
     if not search_clauses:
         return None
 
@@ -413,6 +565,7 @@ def _parcel_search_sql(
         "block_number::text" if has_block else "NULL::text",
         "parcel_number::text" if has_parcel else "NULL::text",
     ]
+    similarity_target_parts.extend([text_field_expr(column) for column, _ in extra_clauses])
     similarity_expr = f"concat_ws(' ', {', '.join(similarity_target_parts)})"
 
     label_expr = "COALESCE(street_name, neighborhood_name, municipality_name"
@@ -562,41 +715,6 @@ def _merge_round_robin(
     return items
 
 
-_ROAD_SQL = text(
-    """
-    WITH candidates AS (
-        SELECT
-            osm_id,
-            name,
-            highway,
-            ST_Transform(way, 4326) AS geom
-        FROM planet_osm_line
-        WHERE highway IS NOT NULL
-          AND name IS NOT NULL
-          AND lower(name) LIKE :q_like_lower
-          AND way && ST_Transform(
-            ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326),
-            3857
-          )
-        ORDER BY similarity(lower(name), lower(:q_raw)) DESC
-        LIMIT :limit
-    )
-    SELECT
-        'road' AS type,
-        'osm_line:' || osm_id AS id,
-        name AS label,
-        COALESCE(highway, 'road') AS subtitle,
-        ST_X(ST_PointOnSurface(geom)) AS lng,
-        ST_Y(ST_PointOnSurface(geom)) AS lat,
-        ST_XMin(geom) AS min_lng,
-        ST_YMin(geom) AS min_lat,
-        ST_XMax(geom) AS max_lng,
-        ST_YMax(geom) AS max_lat,
-        similarity(lower(name), lower(:q_raw)) AS score
-    FROM candidates
-    """
-)
-
 _POI_POINT_SQL = text(
     """
     WITH candidates AS (
@@ -615,19 +733,54 @@ _POI_POINT_SQL = text(
             historic,
             ST_Transform(way, 4326) AS geom
         FROM planet_osm_point
-        WHERE name IS NOT NULL
-          AND lower(name) LIKE :q_like_lower
+        WHERE (
+            (name IS NOT NULL AND lower(name) LIKE :q_like_lower)
+            OR (
+                :poi_amenities IS NOT NULL
+                AND array_length(:poi_amenities, 1) IS NOT NULL
+                AND amenity = ANY(:poi_amenities)
+            )
+        )
           AND way && ST_Transform(
             ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326),
             3857
           )
-        ORDER BY similarity(lower(name), lower(:q_raw)) DESC
+        ORDER BY similarity(
+            lower(
+                COALESCE(
+                    name,
+                    amenity,
+                    shop,
+                    tourism,
+                    leisure,
+                    office,
+                    building,
+                    landuse,
+                    man_made,
+                    sport,
+                    historic
+                )
+            ),
+            lower(:q_raw)
+        ) DESC
         LIMIT :limit
     )
     SELECT
         'poi' AS type,
         'osm_point:' || osm_id AS id,
-        name AS label,
+        COALESCE(
+            name,
+            amenity,
+            shop,
+            tourism,
+            leisure,
+            office,
+            building,
+            landuse,
+            man_made,
+            sport,
+            historic
+        ) AS label,
         COALESCE(amenity, shop, tourism, leisure, office, building, landuse, man_made, sport, historic) AS subtitle,
         ST_X(geom) AS lng,
         ST_Y(geom) AS lat,
@@ -658,8 +811,14 @@ _POI_POLYGON_SQL = text(
             historic,
             ST_Transform(way, 4326) AS geom
         FROM planet_osm_polygon
-        WHERE name IS NOT NULL
-          AND lower(name) LIKE :q_like_lower
+        WHERE (
+            (name IS NOT NULL AND lower(name) LIKE :q_like_lower)
+            OR (
+                :poi_amenities IS NOT NULL
+                AND array_length(:poi_amenities, 1) IS NOT NULL
+                AND amenity = ANY(:poi_amenities)
+            )
+        )
           AND (
             amenity IS NOT NULL
             OR shop IS NOT NULL
@@ -676,13 +835,42 @@ _POI_POLYGON_SQL = text(
             ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326),
             3857
           )
-        ORDER BY similarity(lower(name), lower(:q_raw)) DESC
+        ORDER BY similarity(
+            lower(
+                COALESCE(
+                    name,
+                    amenity,
+                    shop,
+                    tourism,
+                    leisure,
+                    office,
+                    building,
+                    landuse,
+                    man_made,
+                    sport,
+                    historic
+                )
+            ),
+            lower(:q_raw)
+        ) DESC
         LIMIT :limit
     )
     SELECT
         'poi' AS type,
         'osm_polygon:' || osm_id AS id,
-        name AS label,
+        COALESCE(
+            name,
+            amenity,
+            shop,
+            tourism,
+            leisure,
+            office,
+            building,
+            landuse,
+            man_made,
+            sport,
+            historic
+        ) AS label,
         COALESCE(amenity, shop, tourism, leisure, office, building, landuse, man_made, sport, historic) AS subtitle,
         ST_X(ST_PointOnSurface(geom)) AS lng,
         ST_Y(ST_PointOnSurface(geom)) AS lat,
@@ -700,31 +888,38 @@ _DISTRICT_EXTERNAL_SQL = text(
     WITH candidates AS (
         SELECT
             id,
+            layer_name,
             properties,
             ST_SetSRID(ST_GeomFromGeoJSON(geometry::text), 4326) AS geom
         FROM external_feature
-        WHERE layer_name = 'osm_districts'
+        WHERE layer_name IN ('osm_districts', 'aqar_district_hulls')
           AND (
-            lower(properties->>'district_raw') LIKE :q_like_lower
-            OR lower(properties->>'district') LIKE :q_like_lower
+            lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district'))
+                LIKE :q_like_lower
           )
           AND ST_SetSRID(ST_GeomFromGeoJSON(geometry::text), 4326)
               && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-        ORDER BY similarity(lower(COALESCE(properties->>'district_raw', properties->>'district')), lower(:q_raw)) DESC
+        ORDER BY similarity(
+            lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district')),
+            lower(:q_raw)
+        ) DESC
         LIMIT :limit
     )
     SELECT
         'district' AS type,
-        'osm_district:' || id AS id,
-        COALESCE(properties->>'district_raw', properties->>'district') AS label,
-        'District' AS subtitle,
+        'district:' || COALESCE(layer_name, 'external') || ':' || id AS id,
+        COALESCE(properties->>'district_raw', properties->>'name', properties->>'district') AS label,
+        ('District • ' || COALESCE(layer_name, 'external')) AS subtitle,
         ST_X(ST_PointOnSurface(geom)) AS lng,
         ST_Y(ST_PointOnSurface(geom)) AS lat,
         ST_XMin(geom) AS min_lng,
         ST_YMin(geom) AS min_lat,
         ST_XMax(geom) AS max_lng,
         ST_YMax(geom) AS max_lat,
-        similarity(lower(COALESCE(properties->>'district_raw', properties->>'district')), lower(:q_raw)) AS score
+        similarity(
+            lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district')),
+            lower(:q_raw)
+        ) AS score
     FROM candidates
     """
 )
@@ -786,6 +981,9 @@ def search(
     q_like_lower = f"%{normalized_lower}%" if normalized_lower else ""
     q_raw = normalized_query or query
 
+    # POI category mode (name-less POIs)
+    poi_amenity_values = _poi_amenity_values_for_query(normalized_lower)
+
     # Per-type core queries (strip "intent words" like حي/شارع/etc.)
     district_core = _strip_intent_words(normalized_lower, _DISTRICT_INTENT_WORDS)
     road_core = _strip_intent_words(normalized_lower, _ROAD_INTENT_WORDS)
@@ -811,7 +1009,12 @@ def search(
     if _table_exists(db, "public.planet_osm_point"):
         rows = run_query(
             _POI_POINT_SQL,
-            {"q_like_lower": q_like_lower, "q_raw": q_raw, "limit": per_type_limit},
+            {
+                "q_like_lower": q_like_lower,
+                "q_raw": q_raw,
+                "limit": per_type_limit,
+                "poi_amenities": poi_amenity_values,
+            },
         )
         scored_rows.setdefault("poi", [])
         for row in rows:
@@ -820,7 +1023,12 @@ def search(
     if _table_exists(db, "public.planet_osm_polygon"):
         rows = run_query(
             _POI_POLYGON_SQL,
-            {"q_like_lower": q_like_lower, "q_raw": q_raw, "limit": per_type_limit},
+            {
+                "q_like_lower": q_like_lower,
+                "q_raw": q_raw,
+                "limit": per_type_limit,
+                "poi_amenities": poi_amenity_values,
+            },
         )
         scored_rows.setdefault("poi", [])
         for row in rows:
@@ -828,7 +1036,7 @@ def search(
 
     if _table_exists(db, "public.planet_osm_line"):
         rows = run_query(
-            _ROAD_SQL,
+            _build_road_sql(db),
             {"q_like_lower": q_like_lower_road, "q_raw": q_raw_road, "limit": per_type_limit},
         )
         scored_rows["road"] = [
