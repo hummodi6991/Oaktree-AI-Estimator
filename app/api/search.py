@@ -144,6 +144,46 @@ def normalize_search_text(q: str, *, replace_ta_marbuta: bool = True) -> str:
     return normalized
 
 
+# --- Search intent-word stripping (per-type "core query") ---
+# This fixes cases like "حي النرجس" failing to match district label "النرجس",
+# and "شارع الملك" failing when stored name doesn't include the prefix.
+_DISTRICT_INTENT_WORDS = {
+    # Arabic
+    "حي",
+    "حى",
+    # English
+    "district",
+    "neighborhood",
+    "neighbourhood",
+    "hood",
+}
+
+_ROAD_INTENT_WORDS = {
+    # Arabic
+    "شارع",
+    "طريق",
+    # English (common user prefixes)
+    "road",
+    "street",
+    "st",
+    "rd",
+    "avenue",
+    "ave",
+}
+
+
+def _strip_intent_words(normalized_lower: str, intent_words: set[str]) -> str:
+    """
+    Remove standalone intent words from a *normalized lowercase* query.
+    Keeps the original query if stripping would result in empty.
+    """
+    if not normalized_lower:
+        return ""
+    tokens = [t for t in normalized_lower.split() if t and t not in intent_words]
+    core = " ".join(tokens).strip()
+    return core or normalized_lower
+
+
 def parse_coords(q: str) -> tuple[float, float] | None:
     if not q:
         return None
@@ -736,16 +776,28 @@ def search(
 ) -> SearchResponse:
     query = q.strip()
     coord = parse_coords(query)
-    normalized_query = normalize_search_text(query)
+    normalized_query = normalize_search_text(query, replace_ta_marbuta=True)
     if not normalized_query and coord is None:
         return SearchResponse(items=[])
 
-    q_like_lower = f"%{normalized_query.lower()}%" if normalized_query else ""
+    normalized_lower = normalized_query.lower() if normalized_query else ""
+
+    # Default (used for POI + parcels, and as fallback)
+    q_like_lower = f"%{normalized_lower}%" if normalized_lower else ""
     q_raw = normalized_query or query
+
+    # Per-type core queries (strip "intent words" like حي/شارع/etc.)
+    district_core = _strip_intent_words(normalized_lower, _DISTRICT_INTENT_WORDS)
+    road_core = _strip_intent_words(normalized_lower, _ROAD_INTENT_WORDS)
+    q_like_lower_district = f"%{district_core}%" if district_core else q_like_lower
+    q_raw_district = district_core or q_raw
+    q_like_lower_road = f"%{road_core}%" if road_core else q_like_lower
+    q_raw_road = road_core or q_raw
+
     per_type_limit = min(limit, 8)
     viewport = _parse_viewport_bbox(viewport_bbox)
     plan, block, parcel = parse_parcel_tokens(query)
-    intent = _intent_flags(normalized_query.lower(), plan, block, parcel)
+    intent = _intent_flags(normalized_lower, plan, block, parcel)
 
     def run_query(sql: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
         try:
@@ -777,7 +829,7 @@ def search(
     if _table_exists(db, "public.planet_osm_line"):
         rows = run_query(
             _ROAD_SQL,
-            {"q_like_lower": q_like_lower, "q_raw": q_raw, "limit": per_type_limit},
+            {"q_like_lower": q_like_lower_road, "q_raw": q_raw_road, "limit": per_type_limit},
         )
         scored_rows["road"] = [
             (_score_row(row, intent, viewport, plan, block, parcel), row) for row in rows
@@ -788,14 +840,14 @@ def search(
         district_rows.extend(
             run_query(
                 _DISTRICT_EXTERNAL_SQL,
-                {"q_like_lower": q_like_lower, "q_raw": q_raw, "limit": per_type_limit},
+                {"q_like_lower": q_like_lower_district, "q_raw": q_raw_district, "limit": per_type_limit},
             )
         )
     if _table_exists(db, "public.planet_osm_polygon"):
         district_rows.extend(
             run_query(
                 _DISTRICT_FALLBACK_SQL,
-                {"q_like_lower": q_like_lower, "q_raw": q_raw, "limit": per_type_limit},
+                {"q_like_lower": q_like_lower_district, "q_raw": q_raw_district, "limit": per_type_limit},
             )
         )
     if district_rows:
