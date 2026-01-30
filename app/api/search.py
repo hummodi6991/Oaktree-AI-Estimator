@@ -341,17 +341,28 @@ def _build_road_sql(db: Session) -> TextClause:
     def expr_or_null(column: str, cast: str) -> str:
         return f"{column}::{cast} AS {column}" if column in cols else f"NULL::{cast} AS {column}"
 
+    # Use trigram operator (%) as the candidate gate, with LIKE fallback.
+    # Keep LIKE for very short queries.
+    trigram_gate = "(:q_raw_lower IS NOT NULL AND char_length(:q_raw_lower) >= 3 AND lower({expr}) % :q_raw_lower)"
+    like_gate = "lower({expr}) LIKE :q_like_lower"
+
     search_exprs: list[str] = []
     if "name" in cols:
-        search_exprs.append("lower(name) LIKE :q_like_lower")
+        search_exprs.append(f"(({trigram_gate.format(expr='name')}) OR ({like_gate.format(expr='name')}))")
     if "ref" in cols:
-        search_exprs.append("lower(ref) LIKE :q_like_lower")
+        search_exprs.append(f"(({trigram_gate.format(expr='ref')}) OR ({like_gate.format(expr='ref')}))")
     if "tags" in cols:
-        search_exprs.append("lower(tags->'name:ar') LIKE :q_like_lower")
-        search_exprs.append("lower(tags->'name:en') LIKE :q_like_lower")
-        search_exprs.append("lower(tags->'alt_name') LIKE :q_like_lower")
+        search_exprs.append(
+            f"(({trigram_gate.format(expr=\"tags->'name:ar'\")}) OR ({like_gate.format(expr=\"tags->'name:ar'\")}))"
+        )
+        search_exprs.append(
+            f"(({trigram_gate.format(expr=\"tags->'name:en'\")}) OR ({like_gate.format(expr=\"tags->'name:en'\")}))"
+        )
+        search_exprs.append(
+            f"(({trigram_gate.format(expr=\"tags->'alt_name'\")}) OR ({like_gate.format(expr=\"tags->'alt_name'\")}))"
+        )
     if not search_exprs:
-        search_exprs = ["lower(name) LIKE :q_like_lower"]
+        search_exprs = [f"(({trigram_gate.format(expr='name')}) OR ({like_gate.format(expr='name')}))"]
 
     where_sql = " OR ".join(f"({expr})" for expr in search_exprs)
 
@@ -379,7 +390,10 @@ def _build_road_sql(db: Session) -> TextClause:
                 ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326),
                 3857
               )
-            ORDER BY similarity(lower({label_expr}), lower(:q_raw)) DESC
+            ORDER BY GREATEST(
+                similarity(lower({label_expr}), :q_raw_lower),
+                word_similarity(lower({label_expr}), :q_raw_lower)
+            ) DESC
             LIMIT :limit
         )
         SELECT
@@ -393,7 +407,10 @@ def _build_road_sql(db: Session) -> TextClause:
             ST_YMin(geom) AS min_lat,
             ST_XMax(geom) AS max_lng,
             ST_YMax(geom) AS max_lat,
-            similarity(lower(label), lower(:q_raw)) AS score
+            GREATEST(
+                similarity(lower(label), :q_raw_lower),
+                word_similarity(lower(label), :q_raw_lower)
+            ) AS score
         FROM candidates
         """
     )
@@ -734,7 +751,13 @@ _POI_POINT_SQL = text(
             ST_Transform(way, 4326) AS geom
         FROM planet_osm_point
         WHERE (
-            (name IS NOT NULL AND lower(name) LIKE :q_like_lower)
+            (
+              name IS NOT NULL
+              AND (
+                (char_length(:q_raw_lower) >= 3 AND lower(name) % :q_raw_lower)
+                OR lower(name) LIKE :q_like_lower
+              )
+            )
             OR (
                 :poi_amenities IS NOT NULL
                 AND array_length(:poi_amenities, 1) IS NOT NULL
@@ -761,7 +784,7 @@ _POI_POINT_SQL = text(
                     historic
                 )
             ),
-            lower(:q_raw)
+            :q_raw_lower
         ) DESC
         LIMIT :limit
     )
@@ -788,7 +811,24 @@ _POI_POINT_SQL = text(
         ST_YMin(geom) AS min_lat,
         ST_XMax(geom) AS max_lng,
         ST_YMax(geom) AS max_lat,
-        similarity(lower(name), lower(:q_raw)) AS score
+        similarity(
+            lower(
+                COALESCE(
+                    name,
+                    amenity,
+                    shop,
+                    tourism,
+                    leisure,
+                    office,
+                    building,
+                    landuse,
+                    man_made,
+                    sport,
+                    historic
+                )
+            ),
+            :q_raw_lower
+        ) AS score
     FROM candidates
     """
 )
@@ -812,7 +852,13 @@ _POI_POLYGON_SQL = text(
             ST_Transform(way, 4326) AS geom
         FROM planet_osm_polygon
         WHERE (
-            (name IS NOT NULL AND lower(name) LIKE :q_like_lower)
+            (
+              name IS NOT NULL
+              AND (
+                (char_length(:q_raw_lower) >= 3 AND lower(name) % :q_raw_lower)
+                OR lower(name) LIKE :q_like_lower
+              )
+            )
             OR (
                 :poi_amenities IS NOT NULL
                 AND array_length(:poi_amenities, 1) IS NOT NULL
@@ -851,7 +897,7 @@ _POI_POLYGON_SQL = text(
                     historic
                 )
             ),
-            lower(:q_raw)
+            :q_raw_lower
         ) DESC
         LIMIT :limit
     )
@@ -878,7 +924,24 @@ _POI_POLYGON_SQL = text(
         ST_YMin(geom) AS min_lat,
         ST_XMax(geom) AS max_lng,
         ST_YMax(geom) AS max_lat,
-        similarity(lower(name), lower(:q_raw)) AS score
+        similarity(
+            lower(
+                COALESCE(
+                    name,
+                    amenity,
+                    shop,
+                    tourism,
+                    leisure,
+                    office,
+                    building,
+                    landuse,
+                    man_made,
+                    sport,
+                    historic
+                )
+            ),
+            :q_raw_lower
+        ) AS score
     FROM candidates
     """
 )
@@ -894,14 +957,17 @@ _DISTRICT_EXTERNAL_SQL = text(
         FROM external_feature
         WHERE layer_name IN ('osm_districts', 'aqar_district_hulls')
           AND (
-            lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district'))
-                LIKE :q_like_lower
+            (
+              -- Add trigram operator for typo tolerance with LIKE fallback for short queries.
+              (char_length(:q_raw_lower) >= 3 AND lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district')) % :q_raw_lower)
+              OR lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district')) LIKE :q_like_lower
+            )
           )
           AND ST_SetSRID(ST_GeomFromGeoJSON(geometry::text), 4326)
               && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-        ORDER BY similarity(
-            lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district')),
-            lower(:q_raw)
+        ORDER BY GREATEST(
+            similarity(lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district')), :q_raw_lower),
+            word_similarity(lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district')), :q_raw_lower)
         ) DESC
         LIMIT :limit
     )
@@ -916,9 +982,9 @@ _DISTRICT_EXTERNAL_SQL = text(
         ST_YMin(geom) AS min_lat,
         ST_XMax(geom) AS max_lng,
         ST_YMax(geom) AS max_lat,
-        similarity(
-            lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district')),
-            lower(:q_raw)
+        GREATEST(
+            similarity(lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district')), :q_raw_lower),
+            word_similarity(lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district')), :q_raw_lower)
         ) AS score
     FROM candidates
     """
@@ -933,7 +999,10 @@ _DISTRICT_FALLBACK_SQL = text(
             ST_Transform(way, 4326) AS geom
         FROM planet_osm_polygon
         WHERE name IS NOT NULL
-          AND lower(name) LIKE :q_like_lower
+          AND (
+            (char_length(:q_raw_lower) >= 3 AND lower(name) % :q_raw_lower)
+            OR lower(name) LIKE :q_like_lower
+          )
           AND (
             place IN ('neighbourhood', 'quarter', 'suburb')
             OR (boundary = 'administrative' AND admin_level IN ('9','10','11'))
@@ -942,7 +1011,7 @@ _DISTRICT_FALLBACK_SQL = text(
             ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326),
             3857
           )
-        ORDER BY similarity(lower(name), lower(:q_raw)) DESC
+        ORDER BY similarity(lower(name), :q_raw_lower) DESC
         LIMIT :limit
     )
     SELECT
@@ -956,7 +1025,7 @@ _DISTRICT_FALLBACK_SQL = text(
         ST_YMin(geom) AS min_lat,
         ST_XMax(geom) AS max_lng,
         ST_YMax(geom) AS max_lat,
-        similarity(lower(name), lower(:q_raw)) AS score
+        similarity(lower(name), :q_raw_lower) AS score
     FROM candidates
     """
 )
@@ -980,6 +1049,7 @@ def search(
     # Default (used for POI + parcels, and as fallback)
     q_like_lower = f"%{normalized_lower}%" if normalized_lower else ""
     q_raw = normalized_query or query
+    q_raw_lower = normalized_lower or q_raw.lower()
 
     # POI category mode (name-less POIs)
     poi_amenity_values = _poi_amenity_values_for_query(normalized_lower)
@@ -989,8 +1059,10 @@ def search(
     road_core = _strip_intent_words(normalized_lower, _ROAD_INTENT_WORDS)
     q_like_lower_district = f"%{district_core}%" if district_core else q_like_lower
     q_raw_district = district_core or q_raw
+    q_raw_lower_district = district_core or q_raw_lower
     q_like_lower_road = f"%{road_core}%" if road_core else q_like_lower
     q_raw_road = road_core or q_raw
+    q_raw_lower_road = road_core or q_raw_lower
 
     per_type_limit = min(limit, 8)
     viewport = _parse_viewport_bbox(viewport_bbox)
@@ -1012,6 +1084,7 @@ def search(
             {
                 "q_like_lower": q_like_lower,
                 "q_raw": q_raw,
+                "q_raw_lower": q_raw_lower,
                 "limit": per_type_limit,
                 "poi_amenities": poi_amenity_values,
             },
@@ -1026,6 +1099,7 @@ def search(
             {
                 "q_like_lower": q_like_lower,
                 "q_raw": q_raw,
+                "q_raw_lower": q_raw_lower,
                 "limit": per_type_limit,
                 "poi_amenities": poi_amenity_values,
             },
@@ -1037,7 +1111,12 @@ def search(
     if _table_exists(db, "public.planet_osm_line"):
         rows = run_query(
             _build_road_sql(db),
-            {"q_like_lower": q_like_lower_road, "q_raw": q_raw_road, "limit": per_type_limit},
+            {
+                "q_like_lower": q_like_lower_road,
+                "q_raw": q_raw_road,
+                "q_raw_lower": q_raw_lower_road,
+                "limit": per_type_limit,
+            },
         )
         scored_rows["road"] = [
             (_score_row(row, intent, viewport, plan, block, parcel), row) for row in rows
@@ -1048,14 +1127,24 @@ def search(
         district_rows.extend(
             run_query(
                 _DISTRICT_EXTERNAL_SQL,
-                {"q_like_lower": q_like_lower_district, "q_raw": q_raw_district, "limit": per_type_limit},
+                {
+                    "q_like_lower": q_like_lower_district,
+                    "q_raw": q_raw_district,
+                    "q_raw_lower": q_raw_lower_district,
+                    "limit": per_type_limit,
+                },
             )
         )
     if _table_exists(db, "public.planet_osm_polygon"):
         district_rows.extend(
             run_query(
                 _DISTRICT_FALLBACK_SQL,
-                {"q_like_lower": q_like_lower_district, "q_raw": q_raw_district, "limit": per_type_limit},
+                {
+                    "q_like_lower": q_like_lower_district,
+                    "q_raw": q_raw_district,
+                    "q_raw_lower": q_raw_lower_district,
+                    "limit": per_type_limit,
+                },
             )
         )
     if district_rows:
