@@ -700,35 +700,48 @@ def _score_row(
     return base_score + boost
 
 
-def _merge_round_robin(
+def _merge_global_ranked(
     scored_rows: dict[str, list[tuple[float, dict[str, Any]]]],
     limit: int,
-    type_order: list[str],
+    per_type_cap: int | None = None,
 ) -> list[SearchItem]:
-    queues: dict[str, list[tuple[float, dict[str, Any]]]] = {}
-    for row_type, rows in scored_rows.items():
-        queues[row_type] = sorted(rows, key=lambda entry: entry[0], reverse=True)
+    """
+    Merge results by global score (most relevant first), rather than round-robin by type.
+
+    If per_type_cap is set, we limit the number of returned items per type to encourage diversity,
+    but still preserve global relevance ordering among eligible candidates.
+    """
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for rows in scored_rows.values():
+        if not rows:
+            continue
+        candidates.extend(rows)
+
+    # Highest score first
+    candidates.sort(key=lambda entry: entry[0], reverse=True)
 
     items: list[SearchItem] = []
     seen: set[tuple[str, str]] = set()
-    ordered_types = type_order + [t for t in queues.keys() if t not in type_order]
+    per_type_counts: dict[str, int] = {}
 
-    while len(items) < limit and any(queues.values()):
-        for row_type in ordered_types:
-            if len(items) >= limit:
-                break
-            queue = queues.get(row_type)
-            if not queue:
+    for _score, row in candidates:
+        if len(items) >= limit:
+            break
+        item = _row_to_item(row)
+        if not item:
+            continue
+        key = (item.type, item.id)
+        if key in seen:
+            continue
+
+        if per_type_cap is not None:
+            current = per_type_counts.get(item.type, 0)
+            if current >= per_type_cap:
                 continue
-            _, row = queue.pop(0)
-            item = _row_to_item(row)
-            if not item:
-                continue
-            key = (item.type, item.id)
-            if key in seen:
-                continue
-            seen.add(key)
-            items.append(item)
+
+        seen.add(key)
+        per_type_counts[item.type] = per_type_counts.get(item.type, 0) + 1
+        items.append(item)
     return items
 
 
@@ -1199,7 +1212,6 @@ def search(
                 (_score_row(row, intent, viewport, plan, block, parcel), row) for row in parcel_rows
             ]
 
-    type_order = ["parcel", "district", "road", "poi"]
     items: list[SearchItem] = []
     remaining_limit = limit
     if coord is not None and remaining_limit > 0:
@@ -1217,6 +1229,8 @@ def search(
         remaining_limit -= 1
 
     if remaining_limit > 0:
-        items.extend(_merge_round_robin(scored_rows, remaining_limit, type_order))
+        # Global ranking (most relevant first). If you want diversity, set per_type_cap (e.g., 6).
+        # For now we keep it None so the user sees the true best matches first.
+        items.extend(_merge_global_ranked(scored_rows, remaining_limit, per_type_cap=None))
 
     return SearchResponse(items=items[:limit])
