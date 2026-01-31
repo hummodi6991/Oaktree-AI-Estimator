@@ -886,7 +886,11 @@ _SEARCH_INDEX_SQL = text(
           + 0.02 * LEAST(COALESCE(popularity, 0), 50) / 50.0
         ) AS score
       FROM public.search_index_mat
-      WHERE geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+      -- IMPORTANT:
+      -- Use bbox for fast viewport gating and to avoid SRID mismatch edge-cases that can
+      -- cause empty results even when text matches exist.
+      -- (bbox is constructed in the MV from EPSG:4326 geometries.)
+      WHERE bbox && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
         AND (
           (
             char_length(:q_raw_lower) >= 3
