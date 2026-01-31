@@ -90,8 +90,11 @@ def _table_exists(db: Session, table_name: str) -> bool:
         exists = row is not None
     except SQLAlchemyError as exc:
         logger.warning("Search table lookup failed for %s: %s", table_name, exc)
-        exists = False
-    _TABLE_CACHE[table_name] = exists
+        # Do NOT cache failures; allow recovery after transient DB errors.
+        return False
+    # Only cache positive existence. Negative results can change after migrations/ingest.
+    if exists:
+        _TABLE_CACHE[table_name] = True
     return exists
 
 
@@ -122,9 +125,35 @@ def _table_columns(db: Session, table_name: str) -> set[str]:
         columns = {row["column_name"] for row in rows}
     except SQLAlchemyError as exc:
         logger.warning("Search column lookup failed for %s: %s", table_name, exc)
-        columns = set()
+        # Do NOT cache failures; allow recovery after transient DB errors.
+        return set()
+    # Cache successful results (even if empty — table may legitimately have no columns we use)
     _COLUMN_CACHE[table_name] = columns
     return columns
+
+
+@router.get("/search/diag")
+def search_diag(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """
+    Quick diagnostics to see what the *running pod* thinks exists.
+    Helps catch cache-poisoning / missing tables / empty MV.
+    """
+    tables = {
+        "public.search_index_mat": _table_exists(db, "public.search_index_mat"),
+        "public.planet_osm_line": _table_exists(db, "public.planet_osm_line"),
+        "public.planet_osm_point": _table_exists(db, "public.planet_osm_point"),
+        "public.planet_osm_polygon": _table_exists(db, "public.planet_osm_polygon"),
+        "public.external_feature": _table_exists(db, "public.external_feature"),
+    }
+    counts: dict[str, int] = {}
+    if tables["public.search_index_mat"]:
+        try:
+            counts["search_index_mat"] = int(
+                db.execute(text("SELECT COUNT(*) FROM public.search_index_mat")).scalar() or 0
+            )
+        except Exception:
+            counts["search_index_mat"] = -1
+    return {"tables": tables, "counts": counts}
 
 
 def normalize_search_text(q: str, *, replace_ta_marbuta: bool = True) -> str:
