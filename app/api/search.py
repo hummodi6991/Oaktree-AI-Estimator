@@ -892,7 +892,7 @@ def _merge_round_robin(
     return items
 
 
-def _build_search_index_sql(where_spatial: str) -> TextClause:
+def _build_search_index_sql() -> TextClause:
     return text(
         f"""
         WITH candidates AS (
@@ -919,6 +919,13 @@ def _build_search_index_sql(where_spatial: str) -> TextClause:
               + 0.15 * COALESCE(ts_rank_cd(tsv, plainto_tsquery('simple', :q_raw_lower)), 0)
               -- popularity prior (small)
               + 0.02 * LEAST(COALESCE(popularity, 0), 50) / 50.0
+              -- viewport boost (soft preference, NOT a hard filter)
+              + CASE
+                  WHEN :has_viewport = 1
+                   AND geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+                  THEN 0.30
+                  ELSE 0
+                END
             ) AS score
           FROM public.search_index_mat
           -- IMPORTANT:
@@ -936,7 +943,6 @@ def _build_search_index_sql(where_spatial: str) -> TextClause:
             OR label_norm LIKE :q_like_lower
             OR alt_text LIKE :q_like_lower
           )
-          {where_spatial}
           ORDER BY score DESC
           LIMIT :limit
         )
@@ -1323,30 +1329,27 @@ def search(
         # Pull more candidates than the final limit so Python-side rescoring (intent/spatial)
         # has headroom, and dedupe doesn't reduce result count.
         candidate_limit = min(max(limit * 5, 50), 200)
-        where_spatial = ""
         params: dict[str, Any] = {
             "q_raw_lower": index_q_raw_lower,
             "q_like_lower": index_q_like_lower,
             "limit": candidate_limit,
         }
         if viewport:
-            try:
-                min_lon, min_lat, max_lon, max_lat = viewport
-                where_spatial = """
-                  AND geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-                """
-                params.update(
-                    {
-                        "min_lon": min_lon,
-                        "min_lat": min_lat,
-                        "max_lon": max_lon,
-                        "max_lat": max_lat,
-                    }
-                )
-            except Exception:
-                # Invalid bbox → ignore spatial filter entirely
-                where_spatial = ""
-        rows = run_query(_build_search_index_sql(where_spatial), params, include_bbox=False)
+            min_lon, min_lat, max_lon, max_lat = viewport
+            params.update(
+                {
+                    "has_viewport": 1,
+                    "min_lon": min_lon,
+                    "min_lat": min_lat,
+                    "max_lon": max_lon,
+                    "max_lat": max_lat,
+                }
+            )
+        else:
+            params["has_viewport"] = 0
+            # dummy values to satisfy SQL params
+            params.update({"min_lon": 0, "min_lat": 0, "max_lon": 0, "max_lat": 0})
+        rows = run_query(_build_search_index_sql(), params, include_bbox=False)
         # Rows already include a score; still run through _score_row to add intent + spatial boosts.
         for row in rows:
             scored_rows.setdefault(str(row.get("type") or ""), []).append(
