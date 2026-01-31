@@ -381,15 +381,20 @@ def _build_road_sql(db: Session) -> TextClause:
         search_exprs.append(f"(({trigram_gate.format(expr='name')}) OR ({like_gate.format(expr='name')}))")
     if "ref" in cols:
         search_exprs.append(f"(({trigram_gate.format(expr='ref')}) OR ({like_gate.format(expr='ref')}))")
+    # Avoid backslashes inside f-string expressions (SyntaxError: f-string expression part cannot include a backslash)
+    # Use SQL JSON access strings with embedded single quotes without escaping.
+    tags_name_ar = "tags->'name:ar'"
+    tags_name_en = "tags->'name:en'"
+    tags_alt_name = "tags->'alt_name'"
     if "tags" in cols:
         search_exprs.append(
-            f'(({trigram_gate.format(expr="tags->\'name:ar\'")}) OR ({like_gate.format(expr="tags->\'name:ar\'")}))'
+            f"(({trigram_gate.format(expr=tags_name_ar)}) OR ({like_gate.format(expr=tags_name_ar)}))"
         )
         search_exprs.append(
-            f'(({trigram_gate.format(expr="tags->\'name:en\'")}) OR ({like_gate.format(expr="tags->\'name:en\'")}))'
+            f"(({trigram_gate.format(expr=tags_name_en)}) OR ({like_gate.format(expr=tags_name_en)}))"
         )
         search_exprs.append(
-            f'(({trigram_gate.format(expr="tags->\'alt_name\'")}) OR ({like_gate.format(expr="tags->\'alt_name\'")}))'
+            f"(({trigram_gate.format(expr=tags_alt_name)}) OR ({like_gate.format(expr=tags_alt_name)}))"
         )
     if not search_exprs:
         search_exprs = [f"(({trigram_gate.format(expr='name')}) OR ({like_gate.format(expr='name')}))"]
