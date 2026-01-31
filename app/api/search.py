@@ -1253,6 +1253,22 @@ def search(
     plan, block, parcel = parse_parcel_tokens(query)
     intent = _intent_flags(normalized_lower, plan, block, parcel)
 
+    # Use intent-stripped query for both candidate retrieval and scoring when appropriate.
+    score_query_lower = normalized_lower
+    score_query_tokens = query_tokens
+    index_q_like_lower = q_like_lower
+    index_q_raw_lower = q_raw_lower
+    if intent.get("district") and district_core:
+        score_query_lower = district_core
+        score_query_tokens = _tokenize_query(district_core)
+        index_q_like_lower = q_like_lower_district
+        index_q_raw_lower = q_raw_lower_district
+    elif intent.get("road") and road_core:
+        score_query_lower = road_core
+        score_query_tokens = _tokenize_query(road_core)
+        index_q_like_lower = q_like_lower_road
+        index_q_raw_lower = q_raw_lower_road
+
     def run_query(sql: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
         try:
             return list(db.execute(sql, {**params, **_bbox_params(viewport)}).mappings())
@@ -1264,18 +1280,21 @@ def search(
 
     # Prefer unified search index if present (fast + comprehensive).
     if _table_exists(db, "public.search_index_mat"):
+        # Pull more candidates than the final limit so Python-side rescoring (intent/spatial)
+        # has headroom, and dedupe doesn't reduce result count.
+        candidate_limit = min(max(limit * 5, 50), 200)
         rows = run_query(
             _SEARCH_INDEX_SQL,
             {
-                "q_like_lower": q_like_lower,
-                "q_raw_lower": q_raw_lower,
-                "limit": limit,
+                "q_like_lower": index_q_like_lower,
+                "q_raw_lower": index_q_raw_lower,
+                "limit": candidate_limit,
             },
         )
         # Rows already include a score; still run through _score_row to add intent + spatial boosts.
         for row in rows:
             scored_rows.setdefault(str(row.get("type") or ""), []).append(
-                (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+                (_score_row(row, intent, viewport, plan, block, parcel, score_query_lower, score_query_tokens), row)
             )
     else:
         # Fallback to legacy multi-query mode
@@ -1293,7 +1312,7 @@ def search(
             scored_rows.setdefault("poi", [])
             for row in rows:
                 scored_rows["poi"].append(
-                    (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+                    (_score_row(row, intent, viewport, plan, block, parcel, score_query_lower, score_query_tokens), row)
                 )
 
         if _table_exists(db, "public.planet_osm_polygon"):
@@ -1310,7 +1329,7 @@ def search(
             scored_rows.setdefault("poi", [])
             for row in rows:
                 scored_rows["poi"].append(
-                    (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+                    (_score_row(row, intent, viewport, plan, block, parcel, score_query_lower, score_query_tokens), row)
                 )
 
         if _table_exists(db, "public.planet_osm_line"):
@@ -1324,7 +1343,7 @@ def search(
                 },
             )
             scored_rows["road"] = [
-                (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+                (_score_row(row, intent, viewport, plan, block, parcel, score_query_lower, score_query_tokens), row)
                 for row in rows
             ]
 
@@ -1355,7 +1374,7 @@ def search(
             )
         if district_rows:
             scored_rows["district"] = [
-                (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+                (_score_row(row, intent, viewport, plan, block, parcel, score_query_lower, score_query_tokens), row)
                 for row in district_rows
             ]
 

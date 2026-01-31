@@ -19,11 +19,15 @@ def upgrade() -> None:
     # Extensions used by indexes + token ranking
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm;")
 
+    # If a previous deploy attempt partially created the MV (and then failed while building indexes),
+    # we must recreate it so the updated definition takes effect.
+    op.execute("DROP MATERIALIZED VIEW IF EXISTS public.search_index_mat;")
+
     # Build a unified materialized view to avoid juggling many SQL templates.
     # NOTE: all geometries are stored in EPSG:4326.
     op.execute(
         """
-        CREATE MATERIALIZED VIEW IF NOT EXISTS public.search_index_mat AS
+        CREATE MATERIALIZED VIEW public.search_index_mat AS
         WITH
         -- ---- OSM POIs (points) ----
         poi_point AS (
@@ -31,6 +35,7 @@ def upgrade() -> None:
             'poi'::text AS type,
             'osm_point'::text AS source,
             ('osm_point:' || osm_id)::text AS id,
+            ('osm_point:' || COALESCE(osm_id::text,'') || ':' || ctid::text)::text AS row_key,
             COALESCE(
               NULLIF(name,''),
               NULLIF(amenity,''),
@@ -65,6 +70,7 @@ def upgrade() -> None:
             0.0::double precision AS popularity
           FROM public.planet_osm_point
           WHERE way IS NOT NULL
+            AND osm_id IS NOT NULL
             AND (
               name IS NOT NULL OR amenity IS NOT NULL OR shop IS NOT NULL OR tourism IS NOT NULL
               OR leisure IS NOT NULL OR office IS NOT NULL OR building IS NOT NULL OR landuse IS NOT NULL
@@ -77,6 +83,7 @@ def upgrade() -> None:
             'poi'::text AS type,
             'osm_polygon'::text AS source,
             ('osm_polygon:' || osm_id)::text AS id,
+            ('osm_polygon:' || COALESCE(osm_id::text,'') || ':' || ctid::text)::text AS row_key,
             COALESCE(
               NULLIF(name,''),
               NULLIF(amenity,''),
@@ -111,6 +118,7 @@ def upgrade() -> None:
             0.0::double precision AS popularity
           FROM public.planet_osm_polygon
           WHERE way IS NOT NULL
+            AND osm_id IS NOT NULL
             AND (
               name IS NOT NULL OR amenity IS NOT NULL OR shop IS NOT NULL OR tourism IS NOT NULL
               OR leisure IS NOT NULL OR office IS NOT NULL OR building IS NOT NULL OR landuse IS NOT NULL
@@ -123,6 +131,7 @@ def upgrade() -> None:
             'road'::text AS type,
             'osm_line'::text AS source,
             ('osm_line:' || osm_id)::text AS id,
+            ('osm_line:' || COALESCE(osm_id::text,'') || ':' || ctid::text)::text AS row_key,
             COALESCE(NULLIF(name,''), NULLIF(ref,''), 'Road')::text AS label,
             lower(COALESCE(name, ref, ''))::text AS label_norm,
             ARRAY_REMOVE(ARRAY[
@@ -137,7 +146,9 @@ def upgrade() -> None:
             ST_Envelope(ST_Transform(way, 4326)) AS bbox,
             0.0::double precision AS popularity
           FROM public.planet_osm_line
-          WHERE way IS NOT NULL AND highway IS NOT NULL
+          WHERE way IS NOT NULL
+            AND highway IS NOT NULL
+            AND osm_id IS NOT NULL
         ),
         -- ---- Districts (external_feature; both OSM + Aqar hulls) ----
         district_ext AS (
@@ -145,6 +156,7 @@ def upgrade() -> None:
             'district'::text AS type,
             COALESCE(layer_name, 'external')::text AS source,
             ('district:' || COALESCE(layer_name, 'external') || ':' || id)::text AS id,
+            ('district:' || COALESCE(layer_name, 'external') || ':' || COALESCE(id::text,'') || ':' || ctid::text)::text AS row_key,
             COALESCE(properties->>'district_raw', properties->>'name', properties->>'district', 'District')::text AS label,
             lower(COALESCE(properties->>'district_raw', properties->>'name', properties->>'district', ''))::text AS label_norm,
             ARRAY_REMOVE(ARRAY[
@@ -167,6 +179,7 @@ def upgrade() -> None:
           FROM public.external_feature
           WHERE layer_name IN ('osm_districts', 'aqar_district_hulls')
             AND geometry IS NOT NULL
+            AND id IS NOT NULL
         )
         SELECT
           u.*,
@@ -182,8 +195,7 @@ def upgrade() -> None:
         """
     )
 
-    # Ensure it is populated/up-to-date on first install/upgrade.
-    op.execute("REFRESH MATERIALIZED VIEW public.search_index_mat;")
+    # NOTE: CREATE MATERIALIZED VIEW (without WITH NO DATA) already populates it, so no REFRESH here.
 
     # Indexes (CONCURRENTLY requires autocommit)
     with op.get_context().autocommit_block():
@@ -196,8 +208,8 @@ def upgrade() -> None:
 
         # Required for REFRESH MATERIALIZED VIEW CONCURRENTLY
         ensure_index(
-            "public.ux_search_index_mat_id",
-            "CREATE UNIQUE INDEX CONCURRENTLY ux_search_index_mat_id ON public.search_index_mat (id);",
+            "public.ux_search_index_mat_row_key",
+            "CREATE UNIQUE INDEX CONCURRENTLY ux_search_index_mat_row_key ON public.search_index_mat (row_key);",
         )
         # Spatial filter
         ensure_index(
@@ -234,7 +246,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS public.refresh_search_index_mat();")
     with op.get_context().autocommit_block():
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ux_search_index_mat_id;")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ux_search_index_mat_row_key;")
         op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_search_index_mat_tsv_gin;")
         op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_search_index_mat_alt_trgm;")
         op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_search_index_mat_label_trgm;")
