@@ -858,56 +858,57 @@ def _merge_round_robin(
     return items
 
 
-_SEARCH_INDEX_SQL = text(
-    """
-    WITH candidates AS (
-      SELECT
-        type,
-        id,
-        label,
-        subtitle,
-        ST_X(center) AS lng,
-        ST_Y(center) AS lat,
-        ST_XMin(bbox) AS min_lng,
-        ST_YMin(bbox) AS min_lat,
-        ST_XMax(bbox) AS max_lng,
-        ST_YMax(bbox) AS max_lat,
-        (
-          -- text relevance (trigram + word similarity)
-          GREATEST(
-            similarity(label_norm, :q_raw_lower),
-            word_similarity(label_norm, :q_raw_lower),
-            similarity(alt_text, :q_raw_lower),
-            word_similarity(alt_text, :q_raw_lower)
-          )
-          -- optional token ranking
-          + 0.15 * COALESCE(ts_rank_cd(tsv, plainto_tsquery('simple', :q_raw_lower)), 0)
-          -- popularity prior (small)
-          + 0.02 * LEAST(COALESCE(popularity, 0), 50) / 50.0
-        ) AS score
-      FROM public.search_index_mat
-      -- IMPORTANT:
-      -- Use bbox for fast viewport gating and to avoid SRID mismatch edge-cases that can
-      -- cause empty results even when text matches exist.
-      -- (bbox is constructed in the MV from EPSG:4326 geometries.)
-      WHERE bbox && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-        AND (
-          (
-            char_length(:q_raw_lower) >= 3
-            AND (
-              label_norm % :q_raw_lower
-              OR alt_text % :q_raw_lower
+def _build_search_index_sql(where_spatial: str) -> TextClause:
+    return text(
+        f"""
+        WITH candidates AS (
+          SELECT
+            type,
+            id,
+            label,
+            subtitle,
+            ST_X(center) AS lng,
+            ST_Y(center) AS lat,
+            ST_XMin(bbox) AS min_lng,
+            ST_YMin(bbox) AS min_lat,
+            ST_XMax(bbox) AS max_lng,
+            ST_YMax(bbox) AS max_lat,
+            (
+              -- text relevance (trigram + word similarity)
+              GREATEST(
+                similarity(label_norm, :q_raw_lower),
+                word_similarity(label_norm, :q_raw_lower),
+                similarity(alt_text, :q_raw_lower),
+                word_similarity(alt_text, :q_raw_lower)
+              )
+              -- optional token ranking
+              + 0.15 * COALESCE(ts_rank_cd(tsv, plainto_tsquery('simple', :q_raw_lower)), 0)
+              -- popularity prior (small)
+              + 0.02 * LEAST(COALESCE(popularity, 0), 50) / 50.0
+            ) AS score
+          FROM public.search_index_mat
+          -- IMPORTANT:
+          -- Use bbox for fast viewport gating and to avoid SRID mismatch edge-cases that can
+          -- cause empty results even when text matches exist.
+          -- (bbox is constructed in the MV from EPSG:4326 geometries.)
+          WHERE (
+            (
+              char_length(:q_raw_lower) >= 3
+              AND (
+                label_norm % :q_raw_lower
+                OR alt_text % :q_raw_lower
+              )
             )
+            OR label_norm LIKE :q_like_lower
+            OR alt_text LIKE :q_like_lower
           )
-          OR label_norm LIKE :q_like_lower
-          OR alt_text LIKE :q_like_lower
+          {where_spatial}
+          ORDER BY score DESC
+          LIMIT :limit
         )
-      ORDER BY score DESC
-      LIMIT :limit
+        SELECT * FROM candidates
+        """
     )
-    SELECT * FROM candidates
-    """
-)
 
 
 _POI_POINT_SQL = text(
@@ -1273,9 +1274,10 @@ def search(
         index_q_like_lower = q_like_lower_road
         index_q_raw_lower = q_raw_lower_road
 
-    def run_query(sql: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
+    def run_query(sql: Any, params: dict[str, Any], include_bbox: bool = True) -> list[dict[str, Any]]:
         try:
-            return list(db.execute(sql, {**params, **_bbox_params(viewport)}).mappings())
+            bbox_params = _bbox_params(viewport) if include_bbox else {}
+            return list(db.execute(sql, {**params, **bbox_params}).mappings())
         except SQLAlchemyError as exc:
             logger.warning("Search query failed: %s", exc)
             return []
@@ -1287,14 +1289,30 @@ def search(
         # Pull more candidates than the final limit so Python-side rescoring (intent/spatial)
         # has headroom, and dedupe doesn't reduce result count.
         candidate_limit = min(max(limit * 5, 50), 200)
-        rows = run_query(
-            _SEARCH_INDEX_SQL,
-            {
-                "q_like_lower": index_q_like_lower,
-                "q_raw_lower": index_q_raw_lower,
-                "limit": candidate_limit,
-            },
-        )
+        where_spatial = ""
+        params: dict[str, Any] = {
+            "q_raw_lower": index_q_raw_lower,
+            "q_like_lower": index_q_like_lower,
+            "limit": candidate_limit,
+        }
+        if viewport:
+            try:
+                min_lon, min_lat, max_lon, max_lat = viewport
+                where_spatial = """
+                  AND geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+                """
+                params.update(
+                    {
+                        "min_lon": min_lon,
+                        "min_lat": min_lat,
+                        "max_lon": max_lon,
+                        "max_lat": max_lat,
+                    }
+                )
+            except Exception:
+                # Invalid bbox → ignore spatial filter entirely
+                where_spatial = ""
+        rows = run_query(_build_search_index_sql(where_spatial), params, include_bbox=False)
         # Rows already include a score; still run through _score_row to add intent + spatial boosts.
         for row in rows:
             scored_rows.setdefault(str(row.get("type") or ""), []).append(
