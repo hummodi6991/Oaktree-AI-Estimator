@@ -173,7 +173,7 @@ def upgrade() -> None:
           SELECT
             'parcel'::text AS type,
             'suhail'::text AS source,
-            ('suhail:' || parcel_id)::text AS id,
+            ('suhail:' || p.id::text)::text AS id,
             COALESCE(NULLIF(street_name,''), NULLIF(neighborhood_name,''), NULLIF(municipality_name,''), 'Parcel')::text AS label,
             lower(COALESCE(street_name, neighborhood_name, municipality_name, ''))::text AS label_norm,
             ARRAY_REMOVE(ARRAY[
