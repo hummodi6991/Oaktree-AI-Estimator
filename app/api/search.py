@@ -858,6 +858,54 @@ def _merge_round_robin(
     return items
 
 
+_SEARCH_INDEX_SQL = text(
+    """
+    WITH candidates AS (
+      SELECT
+        type,
+        id,
+        label,
+        subtitle,
+        ST_X(center) AS lng,
+        ST_Y(center) AS lat,
+        ST_XMin(bbox) AS min_lng,
+        ST_YMin(bbox) AS min_lat,
+        ST_XMax(bbox) AS max_lng,
+        ST_YMax(bbox) AS max_lat,
+        (
+          -- text relevance (trigram + word similarity)
+          GREATEST(
+            similarity(label_norm, :q_raw_lower),
+            word_similarity(label_norm, :q_raw_lower),
+            similarity(alt_text, :q_raw_lower),
+            word_similarity(alt_text, :q_raw_lower)
+          )
+          -- optional token ranking
+          + 0.15 * COALESCE(ts_rank_cd(tsv, plainto_tsquery('simple', :q_raw_lower)), 0)
+          -- popularity prior (small)
+          + 0.02 * LEAST(COALESCE(popularity, 0), 50) / 50.0
+        ) AS score
+      FROM public.search_index_mat
+      WHERE geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+        AND (
+          (
+            char_length(:q_raw_lower) >= 3
+            AND (
+              label_norm % :q_raw_lower
+              OR alt_text % :q_raw_lower
+            )
+          )
+          OR label_norm LIKE :q_like_lower
+          OR alt_text LIKE :q_like_lower
+        )
+      ORDER BY score DESC
+      LIMIT :limit
+    )
+    SELECT * FROM candidates
+    """
+)
+
+
 _POI_POINT_SQL = text(
     """
     WITH candidates AS (
@@ -1214,133 +1262,150 @@ def search(
 
     scored_rows: dict[str, list[tuple[float, dict[str, Any]]]] = {}
 
-    if _table_exists(db, "public.planet_osm_point"):
+    # Prefer unified search index if present (fast + comprehensive).
+    if _table_exists(db, "public.search_index_mat"):
         rows = run_query(
-            _POI_POINT_SQL,
+            _SEARCH_INDEX_SQL,
             {
                 "q_like_lower": q_like_lower,
-                "q_raw": q_raw,
                 "q_raw_lower": q_raw_lower,
-                "limit": per_type_limit,
-                "poi_amenities": poi_amenity_values,
+                "limit": limit,
             },
         )
-        scored_rows.setdefault("poi", [])
+        # Rows already include a score; still run through _score_row to add intent + spatial boosts.
         for row in rows:
-            scored_rows["poi"].append(
+            scored_rows.setdefault(str(row.get("type") or ""), []).append(
                 (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
             )
-
-    if _table_exists(db, "public.planet_osm_polygon"):
-        rows = run_query(
-            _POI_POLYGON_SQL,
-            {
-                "q_like_lower": q_like_lower,
-                "q_raw": q_raw,
-                "q_raw_lower": q_raw_lower,
-                "limit": per_type_limit,
-                "poi_amenities": poi_amenity_values,
-            },
-        )
-        scored_rows.setdefault("poi", [])
-        for row in rows:
-            scored_rows["poi"].append(
-                (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
-            )
-
-    if _table_exists(db, "public.planet_osm_line"):
-        rows = run_query(
-            _build_road_sql(db),
-            {
-                "q_like_lower": q_like_lower_road,
-                "q_raw": q_raw_road,
-                "q_raw_lower": q_raw_lower_road,
-                "limit": per_type_limit,
-            },
-        )
-        scored_rows["road"] = [
-            (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
-            for row in rows
-        ]
-
-    district_rows: list[dict[str, Any]] = []
-    if _table_exists(db, "public.external_feature"):
-        district_rows.extend(
-            run_query(
-                _DISTRICT_EXTERNAL_SQL,
+    else:
+        # Fallback to legacy multi-query mode
+        if _table_exists(db, "public.planet_osm_point"):
+            rows = run_query(
+                _POI_POINT_SQL,
                 {
-                    "q_like_lower": q_like_lower_district,
-                    "q_raw": q_raw_district,
-                    "q_raw_lower": q_raw_lower_district,
+                    "q_like_lower": q_like_lower,
+                    "q_raw": q_raw,
+                    "q_raw_lower": q_raw_lower,
+                    "limit": per_type_limit,
+                    "poi_amenities": poi_amenity_values,
+                },
+            )
+            scored_rows.setdefault("poi", [])
+            for row in rows:
+                scored_rows["poi"].append(
+                    (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+                )
+
+        if _table_exists(db, "public.planet_osm_polygon"):
+            rows = run_query(
+                _POI_POLYGON_SQL,
+                {
+                    "q_like_lower": q_like_lower,
+                    "q_raw": q_raw,
+                    "q_raw_lower": q_raw_lower,
+                    "limit": per_type_limit,
+                    "poi_amenities": poi_amenity_values,
+                },
+            )
+            scored_rows.setdefault("poi", [])
+            for row in rows:
+                scored_rows["poi"].append(
+                    (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+                )
+
+        if _table_exists(db, "public.planet_osm_line"):
+            rows = run_query(
+                _build_road_sql(db),
+                {
+                    "q_like_lower": q_like_lower_road,
+                    "q_raw": q_raw_road,
+                    "q_raw_lower": q_raw_lower_road,
                     "limit": per_type_limit,
                 },
             )
-        )
-    if _table_exists(db, "public.planet_osm_polygon"):
-        district_rows.extend(
-            run_query(
-                _DISTRICT_FALLBACK_SQL,
-                {
-                    "q_like_lower": q_like_lower_district,
-                    "q_raw": q_raw_district,
-                    "q_raw_lower": q_raw_lower_district,
-                    "limit": per_type_limit,
-                },
-            )
-        )
-    if district_rows:
-        scored_rows["district"] = [
-            (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
-            for row in district_rows
-        ]
+            scored_rows["road"] = [
+                (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+                for row in rows
+            ]
 
-    parcel_tables: list[tuple[str, str, str]] = []
-    safe_active = _canonical_parcel_table(PARCEL_TILE_TABLE)
-    suhail_table = _canonical_parcel_table(SUHAIL_PARCEL_TABLE)
-    allowed_tables = {safe_active, suhail_table}
-    if safe_active in allowed_tables and _table_exists(db, safe_active):
-        prefix, label = _parcel_source_metadata(safe_active)
-        parcel_tables.append((safe_active, prefix, label))
-    if (
-        suhail_table in allowed_tables
-        and safe_active != suhail_table
-        and _table_exists(db, suhail_table)
-    ):
-        prefix, label = _parcel_source_metadata(suhail_table)
-        parcel_tables.append((suhail_table, prefix, label))
-
-    if parcel_tables:
-        include_source_label = len(parcel_tables) > 1
-        parcel_rows: list[dict[str, Any]] = []
-        for table_name, prefix, label in parcel_tables:
-            columns = _table_columns(db, table_name)
-            sql = _parcel_search_sql(
-                table_name=_safe_identifier(table_name, SUHAIL_PARCEL_TABLE),
-                columns=columns,
-                id_prefix=prefix,
-                include_source_label=include_source_label,
-            )
-            if sql is None:
-                continue
-            parcel_rows.extend(
+        district_rows: list[dict[str, Any]] = []
+        if _table_exists(db, "public.external_feature"):
+            district_rows.extend(
                 run_query(
-                    sql,
+                    _DISTRICT_EXTERNAL_SQL,
                     {
-                        "q_like_lower": q_like_lower,
-                        "q_raw": q_raw,
+                        "q_like_lower": q_like_lower_district,
+                        "q_raw": q_raw_district,
+                        "q_raw_lower": q_raw_lower_district,
                         "limit": per_type_limit,
-                        "plan": plan,
-                        "block": block,
-                        "parcel": parcel,
-                        "source_label": label,
                     },
                 )
             )
-        if parcel_rows:
-            scored_rows["parcel"] = [
+        if _table_exists(db, "public.planet_osm_polygon"):
+            district_rows.extend(
+                run_query(
+                    _DISTRICT_FALLBACK_SQL,
+                    {
+                        "q_like_lower": q_like_lower_district,
+                        "q_raw": q_raw_district,
+                        "q_raw_lower": q_raw_lower_district,
+                        "limit": per_type_limit,
+                    },
+                )
+            )
+        if district_rows:
+            scored_rows["district"] = [
                 (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
-                for row in parcel_rows
+                for row in district_rows
             ]
+
+        parcel_tables: list[tuple[str, str, str]] = []
+        safe_active = _canonical_parcel_table(PARCEL_TILE_TABLE)
+        suhail_table = _canonical_parcel_table(SUHAIL_PARCEL_TABLE)
+        allowed_tables = {safe_active, suhail_table}
+        if safe_active in allowed_tables and _table_exists(db, safe_active):
+            prefix, label = _parcel_source_metadata(safe_active)
+            parcel_tables.append((safe_active, prefix, label))
+        if (
+            suhail_table in allowed_tables
+            and safe_active != suhail_table
+            and _table_exists(db, suhail_table)
+        ):
+            prefix, label = _parcel_source_metadata(suhail_table)
+            parcel_tables.append((suhail_table, prefix, label))
+
+        if parcel_tables:
+            include_source_label = len(parcel_tables) > 1
+            parcel_rows: list[dict[str, Any]] = []
+            for table_name, prefix, label in parcel_tables:
+                columns = _table_columns(db, table_name)
+                sql = _parcel_search_sql(
+                    table_name=_safe_identifier(table_name, SUHAIL_PARCEL_TABLE),
+                    columns=columns,
+                    id_prefix=prefix,
+                    include_source_label=include_source_label,
+                )
+                if sql is None:
+                    continue
+                parcel_rows.extend(
+                    run_query(
+                        sql,
+                        {
+                            "q_like_lower": q_like_lower,
+                            "q_raw": q_raw,
+                            "limit": per_type_limit,
+                            "plan": plan,
+                            "block": block,
+                            "parcel": parcel,
+                            "source_label": label,
+                        },
+                    )
+                )
+            if parcel_rows:
+                scored_rows["parcel"] = [
+                    (_score_row(row, intent, viewport, plan, block, parcel, normalized_lower, query_tokens), row)
+                    for row in parcel_rows
+                ]
 
     items: list[SearchItem] = []
     remaining_limit = limit
