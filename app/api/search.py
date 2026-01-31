@@ -1299,7 +1299,7 @@ def search(
             try:
                 min_lon, min_lat, max_lon, max_lat = viewport
                 where_spatial = """
-                  AND bbox && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
+                  AND geom && ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
                 """
                 params.update(
                     {
