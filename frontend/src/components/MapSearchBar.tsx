@@ -1,18 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MutableRefObject, SyntheticEvent } from "react";
 import type maplibregl from "maplibre-gl";
+import { apiUrl } from "../lib/api";
+import type { SearchItem, SearchResponse } from "../types/search";
 import "./MapSearchBar.css";
-
-export type SearchItem = {
-  type: string;
-  id: string;
-  label: string;
-  subtitle?: string | null;
-  center: [number, number];
-  bbox?: [number, number, number, number] | null;
-};
-
-type SearchResponse = { items: SearchItem[] };
 
 type MapSearchBarProps = {
   mapRef: MutableRefObject<maplibregl.Map | null>;
@@ -22,13 +13,26 @@ const MIN_QUERY_LENGTH = 2;
 const DEBOUNCE_MS = 250;
 const MAX_RESULTS = 12;
 
-const base = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
-const normalizedBase = base.replace(/\/+$/, "");
+const boundsToViewportParam = (bounds: maplibregl.LngLatBounds) => {
+  return [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(",");
+};
 
-const buildSearchUrl = (query: string) => {
+const buildSearchParams = (query: string, viewport: string | null) => {
   const params = new URLSearchParams({ q: query, limit: String(MAX_RESULTS) });
-  const path = `/v1/search?${params.toString()}`;
-  return normalizedBase ? `${normalizedBase}${path}` : path;
+  if (viewport) {
+    params.set("viewport_bbox", viewport);
+  }
+  return params;
+};
+
+const fetchSearch = async (query: string, viewport: string | null, signal: AbortSignal) => {
+  const params = buildSearchParams(query, viewport);
+  const res = await fetch(apiUrl(`/v1/search?${params.toString()}`), { signal });
+  if (!res.ok) {
+    throw new Error(`search_failed_${res.status}`);
+  }
+  const data = (await res.json()) as SearchResponse;
+  return Array.isArray(data.items) ? data.items : [];
 };
 
 const getSafeMaxZoom = (map: maplibregl.Map) => {
@@ -49,9 +53,9 @@ export default function MapSearchBar({ mapRef }: MapSearchBarProps) {
   const canSearch = trimmed.length >= MIN_QUERY_LENGTH;
 
   const resultsLabel = useMemo(() => {
+    if (!canSearch) return "";
     if (loading) return "Searching…";
-    if (!canSearch) return "Type a parcel or street";
-    if (error) return error;
+    if (error) return "Search unavailable";
     if (!items.length) return "No matches";
     return "";
   }, [canSearch, error, items.length, loading]);
@@ -66,26 +70,21 @@ export default function MapSearchBar({ mapRef }: MapSearchBarProps) {
 
     const controller = new AbortController();
     const requestId = (requestIdRef.current += 1);
+    const viewport = mapRef.current ? boundsToViewportParam(mapRef.current.getBounds()) : null;
+
     setLoading(true);
     setError(null);
 
     const handle = window.setTimeout(async () => {
       try {
-        const res = await fetch(buildSearchUrl(trimmed), {
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          throw new Error(text || `${res.status} ${res.statusText}`);
-        }
-        const data = (await res.json()) as SearchResponse;
+        const results = await fetchSearch(trimmed, viewport, controller.signal);
         if (requestIdRef.current !== requestId) return;
-        setItems(data.items || []);
+        setItems(results);
         setOpen(true);
       } catch (err) {
         if (controller.signal.aborted) return;
         if (requestIdRef.current !== requestId) return;
-        setError(String((err as Error)?.message || "Search failed"));
+        setError("Search unavailable");
         setItems([]);
         setOpen(true);
       } finally {
@@ -119,11 +118,11 @@ export default function MapSearchBar({ mapRef }: MapSearchBarProps) {
           [item.bbox[0], item.bbox[1]],
           [item.bbox[2], item.bbox[3]],
         ],
-        { padding: 80, duration: 800, maxZoom: safeMax },
+        { padding: 40, duration: 600, maxZoom: safeMax },
       );
     } else {
       const desiredZoom = 16;
-      map.flyTo({ center: item.center, zoom: Math.min(desiredZoom, safeMax), duration: 800 });
+      map.flyTo({ center: item.center, zoom: Math.min(desiredZoom, safeMax), duration: 600 });
     }
   };
 
@@ -157,7 +156,7 @@ export default function MapSearchBar({ mapRef }: MapSearchBarProps) {
 
   const handleFocus = () => {
     if (blurTimeoutRef.current) window.clearTimeout(blurTimeoutRef.current);
-    setOpen(true);
+    setOpen(canSearch);
   };
 
   return (
