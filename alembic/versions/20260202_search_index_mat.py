@@ -168,41 +168,6 @@ def upgrade() -> None:
           WHERE layer_name IN ('osm_districts', 'aqar_district_hulls')
             AND geometry IS NOT NULL
         ),
-        -- ---- Parcels (Suhail mat; can be extended later) ----
-        parcel_suhail AS (
-          SELECT
-            'parcel'::text AS type,
-            'suhail'::text AS source,
-            ('suhail:' || p.id::text)::text AS id,
-            COALESCE(NULLIF(street_name,''), NULLIF(neighborhood_name,''), NULLIF(municipality_name,''), 'Parcel')::text AS label,
-            lower(COALESCE(street_name, neighborhood_name, municipality_name, ''))::text AS label_norm,
-            ARRAY_REMOVE(ARRAY[
-              NULLIF(lower(COALESCE(neighborhood_name,'')), ''),
-              NULLIF(lower(COALESCE(municipality_name,'')), ''),
-              NULLIF(lower(COALESCE(plan_number::text,'')), ''),
-              NULLIF(lower(COALESCE(block_number::text,'')), ''),
-              NULLIF(lower(COALESCE(parcel_number::text,'')), ''),
-              NULLIF(lower(COALESCE(zoning_id,'')), ''),
-              NULLIF(lower(COALESCE(zoning_category,'')), ''),
-              NULLIF(lower(COALESCE(zoning_subcategory,'')), ''),
-              NULLIF(lower(COALESCE(landuse,'')), ''),
-              NULLIF(lower(COALESCE(classification,'')), '')
-            ], NULL)::text[] AS alt_labels,
-            concat_ws(' • ',
-              NULLIF(neighborhood_name,''),
-              NULLIF(municipality_name,''),
-              CASE WHEN plan_number IS NOT NULL THEN ('Plan ' || plan_number::text) END,
-              CASE WHEN block_number IS NOT NULL THEN ('Block ' || block_number::text) END,
-              CASE WHEN parcel_number IS NOT NULL THEN ('Parcel ' || parcel_number::text) END,
-              'Source: Suhail'
-            )::text AS subtitle,
-            p.geom_4326 AS geom,
-            ST_PointOnSurface(p.geom_4326) AS center,
-            ST_Envelope(p.geom_4326) AS bbox,
-            0.0::double precision AS popularity
-          FROM public.suhail_parcels_mat p
-          WHERE p.geom_4326 IS NOT NULL
-        )
         SELECT
           u.*,
           COALESCE(array_to_string(u.alt_labels, ' '), '')::text AS alt_text,
@@ -212,7 +177,6 @@ def upgrade() -> None:
           UNION ALL SELECT * FROM poi_polygon
           UNION ALL SELECT * FROM road_line
           UNION ALL SELECT * FROM district_ext
-          UNION ALL SELECT * FROM parcel_suhail
         ) u
         ;
         """
