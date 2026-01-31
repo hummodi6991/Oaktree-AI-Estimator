@@ -167,7 +167,7 @@ def upgrade() -> None:
           FROM public.external_feature
           WHERE layer_name IN ('osm_districts', 'aqar_district_hulls')
             AND geometry IS NOT NULL
-        ),
+        )
         SELECT
           u.*,
           COALESCE(array_to_string(u.alt_labels, ' '), '')::text AS alt_text,
