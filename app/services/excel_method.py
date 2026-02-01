@@ -10,6 +10,7 @@ from app.services.parking_income import compute_parking_income, _normalize_landu
 # Accounting/underwriting haircut default: only 90% of Year-1 net income is treated as "effective"
 # for headline unlevered ROI (stabilization, downtime, leakage, collection loss, etc.).
 DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR = 0.90
+DEFAULT_NON_FAR_UNIT_COST = 2200.0
 
 
 def _parse_bool(value: Any) -> bool | None:
@@ -302,7 +303,7 @@ def build_excel_explanations(
     These are used by the web UI and PDF export, so keep wording synchronized here.
     """
 
-    unit_cost = inputs.get("unit_cost", {}) or {}
+    unit_cost = breakdown.get("unit_cost_resolved") or inputs.get("unit_cost", {}) or {}
     rent_rates = inputs.get("rent_sar_m2_yr", {}) or {}
     rent_applied = breakdown.get("rent_applied_sar_m2_yr", {}) or {}
     efficiency = inputs.get("efficiency", {}) or {}
@@ -358,6 +359,14 @@ def build_excel_explanations(
                 )
                 explanations_ar[f"{key}_bua"] = (
                     f"{_fmt_amount(site_area_m2)} م² × نسبة المساحة {ratio:.3f} = {_fmt_amount(area)} م²."
+                )
+            elif key_lower == "upper_annex_non_far":
+                explanations_en[f"{key}_bua"] = (
+                    "Added +0.5 floor as non-FAR upper annex for mixed-use. Excluded from FAR."
+                )
+                explanations_ar[f"{key}_bua"] = (
+                    "تمت إضافة نصف طابق علوي كملحق غير محسوب في معامل البناء للاستخدام المختلط. "
+                    "مستبعد من معامل البناء."
                 )
             elif key_lower.startswith("basement"):
                 explanations_en[f"{key}_bua"] = (
@@ -420,6 +429,16 @@ def build_excel_explanations(
         )
         explanations_ar["construction_direct"] = (
             "; ".join(construction_parts_ar) + f". إجمالي الإنشاء المباشر: {_fmt_amount(direct_total)} SAR."
+        )
+
+    upper_annex_area = built_area.get("upper_annex_non_far")
+    if upper_annex_area is not None:
+        unit_rate = float(unit_cost.get("upper_annex_non_far") or 0.0)
+        explanations_en["upper_annex_non_far_cost"] = (
+            f"{_fmt_amount(upper_annex_area)} m² × {unit_rate:,.0f} SAR/m²."
+        )
+        explanations_ar["upper_annex_non_far_cost"] = (
+            f"{_fmt_amount(upper_annex_area)} م² × {unit_rate:,.0f} ر.س/م²."
         )
 
     fitout_area = sum(
@@ -584,6 +603,7 @@ def build_excel_explanations(
 def _build_cost_breakdown_rows(
     built_area: Dict[str, float],
     area_ratio: Dict[str, Any],
+    direct_cost: Dict[str, float],
     inputs: Dict[str, Any],
     explanations: Dict[str, str],
     *,
@@ -645,15 +665,26 @@ def _build_cost_breakdown_rows(
     _append_bua_row("basement", "Basement BUA")
     try:
         if land_use == "m":
-            if "upper_annex_non_far" in built_area and float(built_area.get("upper_annex_non_far") or 0.0) > 0:
+            upper_annex_area = float(built_area.get("upper_annex_non_far") or 0.0)
+            if upper_annex_area > 0:
                 rows.append(
                     {
                         "category": "cost",
                         "key": "upper_annex_non_far_bua",
-                        "label": "Upper annex BUA (non-FAR)",
+                        "label": "Upper annex (non-FAR, +0.5 floor)",
                         "unit": "m²",
-                        "value": float(built_area.get("upper_annex_non_far") or 0.0),
+                        "value": upper_annex_area,
                         "note": explanations.get("upper_annex_non_far_bua"),
+                    }
+                )
+                rows.append(
+                    {
+                        "category": "cost",
+                        "key": "upper_annex_non_far_cost",
+                        "label": "Upper annex construction cost (non-FAR)",
+                        "unit": "SAR",
+                        "value": float(direct_cost.get("upper_annex_non_far", 0.0) or 0.0),
+                        "note": explanations.get("upper_annex_non_far_cost"),
                     }
                 )
     except Exception:
@@ -665,32 +696,47 @@ def _build_cost_breakdown_rows(
 def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[str, Any]:
     """Compute an Excel-style estimate using caller-provided parameters."""
 
-    area_ratio = inputs.get("area_ratio", {}) or {}
-    unit_cost = inputs.get("unit_cost", {}) or {}
-    cp_density = inputs.get("cp_sqm_per_space", {}) or {}
-    efficiency = inputs.get("efficiency", {}) or {}
-    rent_rates = inputs.get("rent_sar_m2_yr", {}) or {}
-    re_scalar = float(inputs.get("re_price_index_scalar") or 1.0)
+    resolved_inputs = dict(inputs or {})
+    area_ratio = resolved_inputs.get("area_ratio", {}) or {}
+    unit_cost_raw = resolved_inputs.get("unit_cost", {}) or {}
+    unit_cost = dict(unit_cost_raw) if isinstance(unit_cost_raw, dict) else {}
+    resolved_inputs["unit_cost"] = unit_cost
+    cp_density = resolved_inputs.get("cp_sqm_per_space", {}) or {}
+    efficiency = resolved_inputs.get("efficiency", {}) or {}
+    rent_rates = resolved_inputs.get("rent_sar_m2_yr", {}) or {}
+    re_scalar = float(resolved_inputs.get("re_price_index_scalar") or 1.0)
 
     built_area = {key: float(area_ratio.get(key, 0.0)) * float(site_area_m2) for key in area_ratio.keys()}
     shell_unit = (unit_cost.get("residential") or 0.0)
     basement_unit = (unit_cost.get("basement") or 0.0)
     direct_cost = {}
+    resolved_unit_cost: Dict[str, float] = {}
     for key in area_ratio.keys():
-        unit_rate = float(unit_cost.get(key, 0.0))
+        if _is_non_far_area_key(str(key)):
+            raw = unit_cost.get(key)
+            try:
+                parsed = float(raw) if raw is not None else 0.0
+            except Exception:
+                parsed = 0.0
+            if parsed <= 0:
+                parsed = DEFAULT_NON_FAR_UNIT_COST
+                unit_cost[key] = parsed
+            unit_rate = float(parsed)
+        else:
+            unit_rate = float(unit_cost.get(key, 0.0))
         if key == "residential":
             unit_rate = float(shell_unit)
         elif key.lower().startswith("basement"):
             unit_rate = float(basement_unit)
         elif _is_non_far_area_key(str(key)):
-            if unit_rate <= 0:
-                unit_rate = float(shell_unit)
+            pass
+        resolved_unit_cost[str(key)] = unit_rate
         direct_cost[key] = built_area.get(key, 0.0) * unit_rate
 
     # --- Parking (required + provided) ---
     # parking_required_* can be overridden upstream (e.g., using Riyadh municipal minimums).
     parking_required_by_component: Dict[str, int] = {}
-    parking_required_by_component_override = inputs.get("parking_required_by_component_override")
+    parking_required_by_component_override = resolved_inputs.get("parking_required_by_component_override")
     if isinstance(parking_required_by_component_override, dict):
         for k, v in parking_required_by_component_override.items():
             try:
@@ -713,7 +759,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
             else:
                 parking_required_by_component[str(key)] = 0
 
-    parking_required_spaces_override = inputs.get("parking_required_spaces_override")
+    parking_required_spaces_override = resolved_inputs.get("parking_required_spaces_override")
     if parking_required_spaces_override is not None:
         try:
             parking_required_spaces_raw = float(parking_required_spaces_override)
@@ -725,10 +771,10 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
 
     # Parking supply: derive provided stalls from below-grade + explicit parking areas.
     parking_supply_gross_m2_per_space = float(
-        inputs.get("parking_supply_gross_m2_per_space") or DEFAULT_PARKING_SUPPLY_GROSS_M2_PER_SPACE
+        resolved_inputs.get("parking_supply_gross_m2_per_space") or DEFAULT_PARKING_SUPPLY_GROSS_M2_PER_SPACE
     )
     parking_supply_layout_efficiency = float(
-        inputs.get("parking_supply_layout_efficiency") or DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
+        resolved_inputs.get("parking_supply_layout_efficiency") or DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
     )
     parking_supply_layout_efficiency = max(0.0, min(parking_supply_layout_efficiency, 1.0))
     parking_area_m2 = 0.0
@@ -756,16 +802,16 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     fitout_area = sum(
         value for key, value in built_area.items() if not key.lower().startswith("basement")
     )
-    fitout_rate = float(inputs.get("fitout_rate") or 0.0)
+    fitout_rate = float(resolved_inputs.get("fitout_rate") or 0.0)
     fitout_cost = fitout_area * fitout_rate
 
     sub_total = sum(direct_cost.values()) + fitout_cost
-    contingency_cost = sub_total * float(inputs.get("contingency_pct", 0.0))
-    consultants_cost = (sub_total + contingency_cost) * float(inputs.get("consultants_pct", 0.0))
-    land_cost = float(site_area_m2) * float(inputs.get("land_price_sar_m2", 0.0))
-    feasibility_fee_pct = float(inputs.get("feasibility_fee_pct", 0.02) or 0.0)
+    contingency_cost = sub_total * float(resolved_inputs.get("contingency_pct", 0.0))
+    consultants_cost = (sub_total + contingency_cost) * float(resolved_inputs.get("consultants_pct", 0.0))
+    land_cost = float(site_area_m2) * float(resolved_inputs.get("land_price_sar_m2", 0.0))
+    feasibility_fee_pct = float(resolved_inputs.get("feasibility_fee_pct", 0.02) or 0.0)
     feasibility_fee = land_cost * feasibility_fee_pct
-    transaction_cost = land_cost * float(inputs.get("transaction_pct", 0.0))
+    transaction_cost = land_cost * float(resolved_inputs.get("transaction_pct", 0.0))
 
     grand_total_capex = (
         sub_total
@@ -787,7 +833,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     def _infer_parking_landuse_code() -> str | None:
         explicit_keys = ("land_use_code", "landuse_code", "land_use", "landuse")
         for k in explicit_keys:
-            code = _normalize_landuse_code(inputs.get(k))
+            code = _normalize_landuse_code(resolved_inputs.get(k))
             if code:
                 return code
         keys = {str(k).strip().lower() for k in area_ratio.keys()}
@@ -803,12 +849,12 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
 
     parking_landuse_code = _infer_parking_landuse_code()
 
-    monetize_raw = _parse_bool(inputs.get("monetize_extra_parking"))
+    monetize_raw = _parse_bool(resolved_inputs.get("monetize_extra_parking"))
     # Frontend currently doesn't expose this; default to ON so extra spaces contribute revenue.
     monetize_extra_parking = True if monetize_raw is None else bool(monetize_raw)
     monetize_defaulted = monetize_raw is None
 
-    public_raw = _parse_bool(inputs.get("parking_public_access"))
+    public_raw = _parse_bool(resolved_inputs.get("parking_public_access"))
     if public_raw is None:
         # Default: commercial/mixed projects can plausibly monetize public parking;
         # residential is typically private/assigned.
@@ -818,12 +864,12 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         parking_public_access = bool(public_raw)
         public_defaulted = False
 
-    override_rate_raw = inputs.get("parking_monthly_rate_sar_per_space")
+    override_rate_raw = resolved_inputs.get("parking_monthly_rate_sar_per_space")
     try:
         override_rate = float(override_rate_raw) if override_rate_raw is not None else None
     except Exception:
         override_rate = None
-    occupancy_override_raw = inputs.get("parking_occupancy")
+    occupancy_override_raw = resolved_inputs.get("parking_occupancy")
     try:
         occupancy_override = float(occupancy_override_raw) if occupancy_override_raw is not None else None
     except Exception:
@@ -833,7 +879,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         parking_extra_spaces,
         monetize=monetize_extra_parking,
         landuse_code=parking_landuse_code,
-        land_price_sar_m2=float(inputs.get("land_price_sar_m2", 0.0) or 0.0),
+        land_price_sar_m2=float(resolved_inputs.get("land_price_sar_m2", 0.0) or 0.0),
         public_access=parking_public_access,
         override_rate=override_rate,
         occupancy_override=occupancy_override,
@@ -852,10 +898,12 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
 
     # Apply accounting efficiency haircut for ROI headline (user-adjustable)
     y1_income_effective_factor = _normalize_y1_income_effective_factor(
-        inputs.get("y1_income_effective_pct") if inputs.get("y1_income_effective_pct") is not None else inputs.get("y1_income_effective_factor")
+        resolved_inputs.get("y1_income_effective_pct")
+        if resolved_inputs.get("y1_income_effective_pct") is not None
+        else resolved_inputs.get("y1_income_effective_factor")
     )
     y1_income_effective = float(y1_income) * y1_income_effective_factor
-    opex_pct_raw = inputs.get("opex_pct", 0.05)
+    opex_pct_raw = resolved_inputs.get("opex_pct", 0.05)
     try:
         opex_pct = float(opex_pct_raw or 0.0)
     except Exception:
@@ -878,6 +926,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     result = {
         "built_area": built_area,
         "direct_cost": direct_cost,
+        "unit_cost_resolved": resolved_unit_cost,
         "fitout_cost": fitout_cost,
         "parking_required_spaces": parking_required_spaces,
         "parking_required_spaces_raw": parking_required_spaces_raw,
@@ -926,14 +975,15 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     except Exception:
         pass
 
-    explanations_en, explanations_ar = build_excel_explanations(site_area_m2, inputs, result)
+    explanations_en, explanations_ar = build_excel_explanations(site_area_m2, resolved_inputs, result)
     result["explanations"] = explanations_en
     result["explanations_en"] = explanations_en
     result["explanations_ar"] = explanations_ar
     result["cost_breakdown_rows"] = _build_cost_breakdown_rows(
         built_area,
         area_ratio,
-        inputs,
+        direct_cost,
+        resolved_inputs,
         explanations_en,
         far_above_ground=far_above_ground,
     )

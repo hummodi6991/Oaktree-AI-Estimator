@@ -187,11 +187,14 @@ def _build_cost_breakdown_rows(
         ("Retail BUA", "retail", "retail_bua"),
         ("Office BUA", "office", "office_bua"),
         ("Basement BUA", "basement", "basement_bua"),
+        ("Upper annex (non-FAR, +0.5 floor)", "upper_annex_non_far", "upper_annex_non_far_bua"),
     ]
     for label, key, explanation_key in built_rows:
         if key not in built_area:
             continue
         amount = built_area.get(key)
+        if key == "upper_annex_non_far" and (amount is None or float(amount or 0.0) <= 0):
+            continue
         rows.append(
             {
                 "cells": [
@@ -218,6 +221,21 @@ def _build_cost_breakdown_rows(
                     _short_note(explanations.get("construction_direct")),
                 ]
             },
+        ]
+    )
+    upper_annex_area = built_area.get("upper_annex_non_far")
+    if upper_annex_area is not None and float(upper_annex_area or 0.0) > 0:
+        rows.append(
+            {
+                "cells": [
+                    "Upper annex construction cost (non-FAR)",
+                    _format_amount(direct_cost.get("upper_annex_non_far"), "SAR"),
+                    _short_note(explanations.get("upper_annex_non_far_cost")),
+                ]
+            }
+        )
+    rows.extend(
+        [
             {
                 "cells": [
                     "Fit-out",

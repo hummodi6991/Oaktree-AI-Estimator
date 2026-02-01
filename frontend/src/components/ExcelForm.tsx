@@ -1040,6 +1040,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         retail: (builtArea.retail ?? 0) * scenarioAreaRatio,
         office: (builtArea.office ?? 0) * scenarioAreaRatio,
         basement: builtArea.basement,
+        upper_annex_non_far: builtArea.upper_annex_non_far,
       }
       : builtArea;
   const nla = breakdown.nla || {};
@@ -1061,6 +1062,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   })();
   const usedInputs = excelResult?.inputs || {};
   const unitCost = usedInputs.unit_cost || {};
+  const resolvedUnitCost =
+    effectiveLandUse === "m"
+      ? {
+        ...unitCost,
+        upper_annex_non_far: unitCost.upper_annex_non_far ?? 2200,
+      }
+      : unitCost;
   const rentRates = usedInputs.rent_sar_m2_yr || {};
   const efficiency = usedInputs.efficiency || {};
   const areaRatio = usedInputs.area_ratio || {};
@@ -1289,7 +1297,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     Object.keys(directCost)
       .map((key) => {
         const area = builtArea[key] ?? 0;
-        const costPerUnit = unitCost[key] ?? 0;
+        const costPerUnit = resolvedUnitCost[key] ?? 0;
         return t("excelNotes.directItem", {
           key,
           area: formatNumberValue(area, 0),
@@ -1298,6 +1306,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       })
       .filter(Boolean)
       .join("; ");
+  const upperAnnexArea = displayedBuiltArea.upper_annex_non_far;
+  const upperAnnexCost = directCost.upper_annex_non_far;
+  const upperAnnexUnitCost = resolvedUnitCost.upper_annex_non_far ?? 0;
+  const upperAnnexCostNote =
+    explanations.upper_annex_non_far_cost ||
+    (upperAnnexArea != null
+      ? `${formatNumberValue(upperAnnexArea, 0)} m² × ${formatNumberValue(upperAnnexUnitCost, 0)} SAR/m².`
+      : null);
 
   const incomeNote = t("excel.year1IncomeNote");
 
@@ -1541,6 +1557,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     { key: "retail", label: t("excel.unitCostRetail") },
     { key: "office", label: t("excel.unitCostOffice") },
     { key: "basement", label: t("excel.unitCostBasement") },
+    { key: "upper_annex_non_far", label: t("excel.unitCostUpperAnnexNonFar") },
   ];
   const activeUnitCostFields =
     effectiveLandUse === "m"
@@ -2070,6 +2087,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       <td style={calcColumnStyle}>{buaNote("office")}</td>
                     </tr>
                   )}
+                  {effectiveLandUse === "m" && upperAnnexArea != null && upperAnnexArea > 0 && (
+                    <tr>
+                      <td style={itemColumnStyle}>{t("excel.upperAnnexNonFarBua")}</td>
+                      <td style={amountColumnStyle}>{formatArea(upperAnnexArea)}</td>
+                      <td style={calcColumnStyle}>{explanations.upper_annex_non_far_bua}</td>
+                    </tr>
+                  )}
                   <tr>
                     <td style={itemColumnStyle}>{t("excel.basementBua")}</td>
                     <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.basement)}</td>
@@ -2097,6 +2121,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         : t("excel.constructionDirectDefault")}
                     </td>
                   </tr>
+                  {effectiveLandUse === "m" && upperAnnexArea != null && upperAnnexArea > 0 && (
+                    <tr>
+                      <td style={itemColumnStyle}>{t("excel.upperAnnexNonFarCost")}</td>
+                      <td style={amountColumnStyle}>
+                        {formatCurrencySAR(upperAnnexCost ?? 0)}
+                      </td>
+                      <td style={calcColumnStyle}>{upperAnnexCostNote}</td>
+                    </tr>
+                  )}
                   <tr>
                     <td style={itemColumnStyle}>
                       <div
