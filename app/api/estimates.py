@@ -1153,10 +1153,74 @@ def create_estimate(
                 for k, v in ar.items():
                     if isinstance(k, str) and ("basement" in k.lower() or "underground" in k.lower()):
                         continue
+                    if isinstance(k, str):
+                        kk = k.lower()
+                        if ("non_far" in kk) or ("annex" in kk) or ("upper_annex" in kk):
+                            continue
                     far_above_ground += float(v or 0)
                 floors_adjustment["far_above_ground_after"] = far_above_ground
             except Exception:
                 pass
+
+            # --- Non-FAR upper annex for mixed-use only ("m") ---
+            #
+            # Riyadh municipality rules commonly allow "50% upper annexes" (ملاحق علوية)
+            # that do NOT count toward FAR, but still add built area and cost.
+            #
+            # Implementation:
+            # - For landuse "m" ONLY, add an extra 0.5 floor worth of *typical floor plate area*
+            # - This is modeled as a dedicated area_ratio key that is excluded from FAR summations:
+            #     area_ratio["upper_annex_non_far"] = (far_used / floors_above_ground) * 0.5
+            #
+            # This increases BUA/cost, but does not change "effective FAR (above-ground)".
+            disable_non_far_annex = False
+            try:
+                disable_non_far_annex = bool((excel_inputs or {}).get("disable_non_far_upper_annex"))
+            except Exception:
+                disable_non_far_annex = False
+
+            if not disable_non_far_annex:
+                try:
+                    desired_floors = float(
+                        (excel_inputs or {}).get("desired_floors_above_ground")
+                        or (excel_inputs or {}).get("floors_above_ground")
+                        or 3.5
+                    )
+                except Exception:
+                    desired_floors = 3.5
+                if desired_floors <= 0:
+                    desired_floors = 3.5
+
+                try:
+                    far_value = float(far_used or 0.0)
+                except Exception:
+                    far_value = 0.0
+
+                if far_value > 0:
+                    extra_floors = 0.5
+                    per_floor_far = far_value / desired_floors
+                    upper_annex_ratio = per_floor_far * extra_floors
+
+                    if upper_annex_ratio > 1e-9:
+                        ar = excel_inputs.get("area_ratio")
+                        if not isinstance(ar, dict):
+                            ar = {}
+                        if ar.get("upper_annex_non_far") is None:
+                            ar["upper_annex_non_far"] = float(upper_annex_ratio)
+                        excel_inputs["area_ratio"] = ar
+
+                        floors_adjustment = floors_adjustment or {}
+                        try:
+                            floors_adjustment["non_far_upper_annex"] = {
+                                "extra_floors": extra_floors,
+                                "desired_floors_above_ground": desired_floors,
+                                "far_used": far_value,
+                                "per_floor_far": float(per_floor_far),
+                                "upper_annex_ratio": float(upper_annex_ratio),
+                                "key": "upper_annex_non_far",
+                            }
+                        except Exception:
+                            pass
 
         # --- Component FAR redistribution (Model B) ---
         # If office/retail/residential is excluded, the freed FAR must be absorbed by the included components.

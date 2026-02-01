@@ -60,12 +60,26 @@ def _is_basement_key(key: str) -> bool:
     return False
 
 
-def _area_ratio_positive_sum(ar: Any, exclude_basement: bool = False) -> float:
+def _is_non_far_area_key(key: str) -> bool:
+    k = (key or "").strip().lower()
+    if not k:
+        return False
+    return ("non_far" in k) or ("annex" in k) or ("upper_annex" in k)
+
+
+def _area_ratio_positive_sum(
+    ar: Any,
+    *,
+    exclude_basement: bool = False,
+    exclude_non_far: bool = False,
+) -> float:
     if not isinstance(ar, dict):
         return 0.0
     total = 0.0
     for k, v in ar.items():
         if exclude_basement and _is_basement_key(str(k)):
+            continue
+        if exclude_non_far and _is_non_far_area_key(str(k)):
             continue
         try:
             fv = float(v)
@@ -298,7 +312,11 @@ def build_excel_explanations(
     try:
         far_above_ground = float(far_above_ground)
     except Exception:
-        far_above_ground = _area_ratio_positive_sum(area_ratio, exclude_basement=True)
+        far_above_ground = _area_ratio_positive_sum(
+            area_ratio,
+            exclude_basement=True,
+            exclude_non_far=True,
+        )
     try:
         far_total_including_basement = float(far_total_including_basement)
     except Exception:
@@ -625,6 +643,21 @@ def _build_cost_breakdown_rows(
     _append_bua_row("retail", "Retail BUA", require_mixed_use=True)
     _append_bua_row("office", "Office BUA", require_mixed_use=True)
     _append_bua_row("basement", "Basement BUA")
+    try:
+        if land_use == "m":
+            if "upper_annex_non_far" in built_area and float(built_area.get("upper_annex_non_far") or 0.0) > 0:
+                rows.append(
+                    {
+                        "category": "cost",
+                        "key": "upper_annex_non_far_bua",
+                        "label": "Upper annex BUA (non-FAR)",
+                        "unit": "m²",
+                        "value": float(built_area.get("upper_annex_non_far") or 0.0),
+                        "note": explanations.get("upper_annex_non_far_bua"),
+                    }
+                )
+    except Exception:
+        pass
 
     return rows
 
@@ -649,6 +682,9 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
             unit_rate = float(shell_unit)
         elif key.lower().startswith("basement"):
             unit_rate = float(basement_unit)
+        elif _is_non_far_area_key(str(key)):
+            if unit_rate <= 0:
+                unit_rate = float(shell_unit)
         direct_cost[key] = built_area.get(key, 0.0) * unit_rate
 
     # --- Parking (required + provided) ---
@@ -667,6 +703,8 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
             if isinstance(key, str):
                 kk = key.strip().lower()
                 if _is_basement_area_ratio_key(kk) or ("parking" in kk) or ("carpark" in kk) or ("car_park" in kk):
+                    continue
+                if _is_non_far_area_key(kk):
                     continue
             cp = float(cp_density.get(key, 0.0) or 0.0)
             if cp > 0:
@@ -830,7 +868,11 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
 
     roi = (y1_noi / grand_total_capex) if grand_total_capex > 0 else 0.0
 
-    far_above_ground = _area_ratio_positive_sum(area_ratio, exclude_basement=True)
+    far_above_ground = _area_ratio_positive_sum(
+        area_ratio,
+        exclude_basement=True,
+        exclude_non_far=True,
+    )
     far_total_including_basement = _area_ratio_positive_sum(area_ratio, exclude_basement=False)
 
     result = {
@@ -874,6 +916,15 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "far_above_ground": far_above_ground,
         "far_total_including_basement": far_total_including_basement,
     }
+
+    try:
+        result["non_far_area_ratio"] = {
+            k: float(v)
+            for k, v in area_ratio.items()
+            if isinstance(k, str) and _is_non_far_area_key(k)
+        }
+    except Exception:
+        pass
 
     explanations_en, explanations_ar = build_excel_explanations(site_area_m2, inputs, result)
     result["explanations"] = explanations_en
