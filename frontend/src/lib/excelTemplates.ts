@@ -78,6 +78,7 @@ export const TEMPLATE_M: ExcelInputs = {
     retail: 2600,
     office: 2400,
     basement: 2200,
+    upper_annex_non_far: 2200,
   },
   efficiency: {
     residential: 0.82,
