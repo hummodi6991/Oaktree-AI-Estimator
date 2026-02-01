@@ -361,13 +361,30 @@ def build_excel_explanations(
                     f"{_fmt_amount(site_area_m2)} م² × نسبة المساحة {ratio:.3f} = {_fmt_amount(area)} م²."
                 )
             elif key_lower == "upper_annex_non_far":
-                explanations_en[f"{key}_bua"] = (
-                    "Added +0.5 floor as non-FAR upper annex for mixed-use. Excluded from FAR."
-                )
-                explanations_ar[f"{key}_bua"] = (
-                    "تمت إضافة نصف طابق علوي كملحق غير محسوب في معامل البناء للاستخدام المختلط. "
-                    "مستبعد من معامل البناء."
-                )
+                coverage = 0.0
+                try:
+                    coverage = float(inputs.get("coverage_ratio") or 0.0)
+                except Exception:
+                    coverage = 0.0
+                if coverage > 0 and area > 0:
+                    explanations_en[f"{key}_bua"] = (
+                        "Upper annex (non-FAR) = site area × (0.5 × coverage). "
+                        f"= {_fmt_amount(site_area_m2)} × (0.5 × {coverage:.3f}) "
+                        f"= {_fmt_amount(area)} m². Excluded from FAR."
+                    )
+                    explanations_ar[f"{key}_bua"] = (
+                        "الملحق العلوي (غير محسوب في معامل البناء) = مساحة الأرض × (0.5 × نسبة التغطية). "
+                        f"= {_fmt_amount(site_area_m2)} × (0.5 × {coverage:.3f}) "
+                        f"= {_fmt_amount(area)} م². مستبعد من معامل البناء."
+                    )
+                else:
+                    explanations_en[f"{key}_bua"] = (
+                        "Upper annex (non-FAR) added for mixed-use. Excluded from FAR."
+                    )
+                    explanations_ar[f"{key}_bua"] = (
+                        "تمت إضافة الملحق العلوي (غير محسوب في معامل البناء) للاستخدام المختلط. "
+                        "مستبعد من معامل البناء."
+                    )
             elif key_lower.startswith("basement"):
                 explanations_en[f"{key}_bua"] = (
                     f"{_fmt_amount(site_area_m2)} m² × basement ratio {ratio:.3f} = {_fmt_amount(area)} m². "
