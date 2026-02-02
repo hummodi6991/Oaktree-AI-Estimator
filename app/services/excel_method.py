@@ -110,21 +110,25 @@ def _lookup_by_canon(d: dict[str, Any], key: Any, default: float = 0.0) -> float
         return float(default)
 
 
-def _choose_upper_annex_revenue_sink(area_ratio: dict[str, Any]) -> str | None:
+def _choose_upper_annex_revenue_sink(
+    area_ratio: dict[str, Any],
+    built_area_canon: dict[str, float] | None = None,
+) -> str | None:
     """
     Choose where the upper annex revenue should flow:
       1) residential (preferred)
       2) office (fallback)
       3) never retail
-    Returns the target key from area_ratio, or None if no suitable target exists.
+    Returns the target key from the selected inputs, or None if no suitable target exists.
     """
-    if not isinstance(area_ratio, dict) or not area_ratio:
+    source = built_area_canon if isinstance(built_area_canon, dict) and built_area_canon else area_ratio
+    if not isinstance(source, dict) or not source:
         return None
 
-    # Treat "present" as having a *positive* area_ratio entry.
+    # Treat "present" as having a *positive* area entry.
     # (Some callers/clients may keep keys with 0.0 values.)
     def _first_positive_key(pred) -> str | None:
-        for k, v in area_ratio.items():
+        for k, v in source.items():
             ck = _canon_key(k)
             if not ck:
                 continue
@@ -966,7 +970,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         upper_annex_ck = "upper_annex_non_far" if upper_annex_area > 1e-9 else None
 
         if upper_annex_area > 1e-9:
-            sink = _choose_upper_annex_revenue_sink(area_ratio)
+            sink = _choose_upper_annex_revenue_sink(area_ratio, built_area_canon)
             # Never flow to retail (even if only retail exists).
             # Also avoid self-flow (defensive).
             if sink and sink != "retail" and sink != upper_annex_ck:
