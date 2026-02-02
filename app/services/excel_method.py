@@ -943,15 +943,27 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     #   residential (preferred), else office, and never retail.
     built_area_for_revenue_canon = built_area_canon
     try:
-        # Identify upper annex by canonical key (handles casing/labels).
-        upper_annex_ck = None
-        for k in area_ratio.keys():
-            ck = _canon_key(k)
-            if ck == "upper_annex_non_far" or ("upper" in ck and "annex" in ck and "non" in ck):
-                upper_annex_ck = ck
+        # Identify upper annex in a way that cannot be "lost" by canonical aggregation.
+        #
+        # IMPORTANT:
+        # - `built_area` is keyed by the original area_ratio keys and always includes the annex key if present.
+        # - `built_area_canon` may omit non-FAR keys depending on canonicalization logic elsewhere.
+        #
+        upper_annex_raw_key: str | None = None
+        for k in (area_ratio or {}).keys():
+            kk = str(k).strip().lower()
+            if not kk:
+                continue
+            # be generous: any "upper"+"annex" pattern counts (non_far often present, but don't require it)
+            if ("upper" in kk and "annex" in kk) or (kk == "upper_annex_non_far"):
+                upper_annex_raw_key = str(k)
                 break
 
-        upper_annex_area = float(built_area_canon.get(upper_annex_ck, 0.0) or 0.0) if upper_annex_ck else 0.0
+        # Area from raw built_area (robust)
+        upper_annex_area = float(built_area.get(upper_annex_raw_key, 0.0) or 0.0) if upper_annex_raw_key else 0.0
+
+        # Canonical key name we will use in the revenue-only canon map
+        upper_annex_ck = "upper_annex_non_far" if upper_annex_area > 1e-9 else None
 
         if upper_annex_area > 1e-9:
             sink = _choose_upper_annex_revenue_sink(area_ratio)
@@ -962,17 +974,17 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
                 built_area_for_revenue_canon[sink] = (
                     float(built_area_for_revenue_canon.get(sink, 0.0) or 0.0) + upper_annex_area
                 )
-                if upper_annex_ck:
-                    built_area_for_revenue_canon[upper_annex_ck] = 0.0  # avoid double-counting revenue
+                # Ensure annex isn't double-counted in revenue even if canon map didn't originally have it.
+                built_area_for_revenue_canon[upper_annex_ck] = 0.0
                 revenue_meta["upper_annex_flow"] = {
-                    "from_key": upper_annex_ck,
+                    "from_key": upper_annex_raw_key,
                     "to_key": sink,
                     "area_m2": upper_annex_area,
                     "rule": "upper annex revenue -> residential else office; never retail",
                 }
             else:
                 revenue_meta["upper_annex_flow"] = {
-                    "from_key": upper_annex_ck,
+                    "from_key": upper_annex_raw_key,
                     "to_key": None,
                     "area_m2": upper_annex_area,
                     "rule": "no residential/office sink found; kept as-is (no retail fallback)",
