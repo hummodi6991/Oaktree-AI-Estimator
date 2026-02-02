@@ -1053,8 +1053,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   // Strip internal engine-plumbing notes from any explanation text shown in the UI.
   // These fragments are useful for debugging but reduce trust/clarity for users.
-  const stripInternalExplain = (note: unknown): unknown => {
-    if (typeof note !== "string") return note;
+  const stripInternalExplain = (note: unknown): string | null => {
+    if (typeof note !== "string") return null;
     const disallowedFragments = [
       "Above-ground FAR adjusted",
       "Floors scaling applied:",
@@ -1068,18 +1068,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   };
 
   const explanationsClean = (() => {
-    if (!explanations || typeof explanations !== "object") return explanations;
-    const next: Record<string, unknown> = { ...(explanations as Record<string, unknown>) };
-    // We only need to clean strings (unknown keys are fine).
-    for (const [k, v] of Object.entries(next)) {
-      next[k] = stripInternalExplain(v);
+    if (!explanations || typeof explanations !== "object") return {};
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(explanations as Record<string, unknown>)) {
+      const cleaned = stripInternalExplain(v);
+      if (cleaned) out[k] = cleaned;
     }
-    return next;
+    return out;
   })();
-  const explanationsDisplay = explanationsClean as Record<string, unknown>;
+  const explanationsDisplay: Record<string, string> = explanationsClean;
   const farNoteBase = (() => {
-    const note = explanationsDisplay?.effective_far_above_ground;
-    if (typeof note !== "string") return note;
+    const note = explanationsDisplay.effective_far_above_ground;
+    if (typeof note !== "string" || !note) return null;
     const disallowedFragments = ["Above-ground FAR adjusted"];
     const filtered = note
       .split("|")
@@ -1188,7 +1188,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const buaNote = (key: string) => {
     const noteKey = `${key}_bua`;
     const showScenarioScale = scenarioAreaRatio != null && key !== "basement";
-    if (explanationsDisplay?.[noteKey]) {
+    if (explanationsDisplay[noteKey]) {
       return (
         <>
           <div>{explanationsDisplay[noteKey]}</div>
@@ -1231,7 +1231,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   };
 
   const landNoteBase =
-    explanationsDisplay?.land_cost ||
+    explanationsDisplay.land_cost ||
     (siteArea && landPricePpm2
       ? t("excelNotes.landCost", {
         area: formatNumberValue(siteArea, 0),
@@ -1277,7 +1277,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const floorsNote = farManuallyOverridden ? floorsDisabledNote : floorsNoteBase;
 
   const fitoutNote =
-    explanationsDisplay?.fitout ||
+    explanationsDisplay.fitout ||
     (fitoutExcluded
       ? t("excelNotes.fitoutExcluded")
       : fitoutRate != null
@@ -1289,7 +1289,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const contingencyNote = contingencyExcluded
     ? t("excelNotes.contingencyExcluded")
-    : explanationsDisplay?.contingency ||
+    : explanationsDisplay.contingency ||
       t("excelNotes.contingency", {
         pct: formatPercentValue(contingencyPct),
         direct: formatNumberValue(constructionDirectTotal, 0),
@@ -1297,14 +1297,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       });
 
   const consultantsNote =
-    explanationsDisplay?.consultants ||
+    explanationsDisplay.consultants ||
     t("excelNotes.consultants", {
       base: formatNumberValue(consultantsBase, 0),
       pct: formatPercentValue(consultantsPct),
     });
 
   const transactionNote =
-    explanationsDisplay?.transaction_cost ||
+    explanationsDisplay.transaction_cost ||
     t("excelNotes.transaction", {
       land: formatNumberValue(landCostValue, 0),
       pct: formatPercentValue(transactionPct),
@@ -1320,7 +1320,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   });
 
   const directNote =
-    explanationsDisplay?.construction_direct ||
+    explanationsDisplay.construction_direct ||
     Object.keys(directCost)
       .map((key) => {
         const area = builtArea[key] ?? 0;
@@ -1337,7 +1337,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const upperAnnexCost = directCost.upper_annex_non_far;
   const upperAnnexUnitCost = resolvedUnitCost.upper_annex_non_far ?? 0;
   const upperAnnexCostNote =
-    explanationsDisplay?.upper_annex_non_far_cost ||
+    explanationsDisplay.upper_annex_non_far_cost ||
     (upperAnnexArea != null
       ? `${formatNumberValue(upperAnnexArea, 0)} m² × ${formatNumberValue(upperAnnexUnitCost, 0)} SAR/m².`
       : null);
@@ -1345,7 +1345,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const incomeNote = t("excel.year1IncomeNote");
 
   const parkingIncomeExplanation =
-    typeof explanationsDisplay?.parking_income === "string" ? explanationsDisplay.parking_income : null;
+    explanationsDisplay.parking_income ?? null;
   const effectiveIncomePctRaw =
     usedInputs?.y1_income_effective_pct ??
     inputs?.y1_income_effective_pct ??
@@ -1394,7 +1394,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       excelBreakdown?.y1_noi ??
       (y1IncomeEffective || 0) - (opexCostResolved || 0)) as number;
   const y1IncomeEffectiveNote =
-    explanationsDisplay?.y1_income_effective ||
+    explanationsDisplay.y1_income_effective ||
     t("excelNotes.effectiveIncome", {
       pct: formatPercentValue(effectiveIncomeFactor, 0),
     });
@@ -2118,9 +2118,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     <tr>
                       <td style={itemColumnStyle}>{t("excel.upperAnnexNonFarBua")}</td>
                       <td style={amountColumnStyle}>{formatArea(upperAnnexArea)}</td>
-                      <td style={calcColumnStyle}>
-                        {explanationsDisplay?.upper_annex_non_far_bua}
-                      </td>
+                      <td style={calcColumnStyle}>{explanationsDisplay.upper_annex_non_far_bua}</td>
                     </tr>
                   )}
                   <tr>
