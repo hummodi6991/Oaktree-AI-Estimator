@@ -1732,7 +1732,17 @@ def create_estimate(
                         excel_inputs.get("parking_supply_layout_efficiency")
                         or DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
                     ),
-                    "unit": "fraction or m²/space (gross)",
+                    # IMPORTANT: estimate_line.unit is a short VARCHAR (historically <=16 chars).
+                    # Keep unit compact to avoid DB persistence failures.
+                    # When > 1.0 we interpret this as effective gross m² per space.
+                    "unit": (
+                        "m²/space"
+                        if float(
+                            excel_inputs.get("parking_supply_layout_efficiency")
+                            or DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
+                        ) > 1.0
+                        else "fraction"
+                    ),
                     "source_type": "Assumption",
                 },
             ],
