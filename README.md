@@ -177,7 +177,12 @@ You can control the behavior with these optional keys:
 - `parking_apply` (bool, default `true`)
 - `parking_minimum_policy` (`"auto_add_basement"` | `"flag_only"` | `"disabled"`)
 - `parking_supply_gross_m2_per_space` (float, default `30`)
-- `parking_supply_layout_efficiency` (float, default `1.0`)
+- `parking_supply_layout_efficiency` (float, default `55`)
+  - If `<= 1.0`: treated as a **layout efficiency fraction** (e.g. 0.85)
+    and spaces are computed as: `parking_area * efficiency / gross_m2_per_space`
+  - If `> 1.0`: treated as an **effective gross m² per space** (e.g. 55),
+    and spaces are computed as: `parking_area / effective_gross_m2_per_space`
+  - The default `55` is calibrated to real Riyadh basement layouts (~34–36 spaces per ~1,980 m²)
 - `parking_assumed_avg_apartment_m2` (float, default `120`) – only used if `unit_mix` is missing/empty.
 
 ### Outputs
