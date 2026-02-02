@@ -1050,8 +1050,35 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     (isArabic
       ? breakdown.explanations_ar ?? breakdown.explanations_en ?? breakdown.explanations
       : breakdown.explanations_en ?? breakdown.explanations) || {};
+
+  // Strip internal engine-plumbing notes from any explanation text shown in the UI.
+  // These fragments are useful for debugging but reduce trust/clarity for users.
+  const stripInternalExplain = (note: unknown): unknown => {
+    if (typeof note !== "string") return note;
+    const disallowedFragments = [
+      "Above-ground FAR adjusted",
+      "Floors scaling applied:",
+      "Auto-added basement area to meet parking minimums:",
+    ];
+    const filtered = note
+      .split("|")
+      .map((part) => part.trim())
+      .filter((part) => !disallowedFragments.some((fragment) => part.startsWith(fragment)));
+    return filtered.join(" | ");
+  };
+
+  const explanationsClean = (() => {
+    if (!explanations || typeof explanations !== "object") return explanations;
+    const next: Record<string, unknown> = { ...(explanations as Record<string, unknown>) };
+    // We only need to clean strings (unknown keys are fine).
+    for (const [k, v] of Object.entries(next)) {
+      next[k] = stripInternalExplain(v);
+    }
+    return next;
+  })();
+  const explanationsDisplay = explanationsClean as Record<string, unknown>;
   const farNoteBase = (() => {
-    const note = explanations.effective_far_above_ground;
+    const note = explanationsDisplay?.effective_far_above_ground;
     if (typeof note !== "string") return note;
     const disallowedFragments = ["Above-ground FAR adjusted"];
     const filtered = note
@@ -1161,10 +1188,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const buaNote = (key: string) => {
     const noteKey = `${key}_bua`;
     const showScenarioScale = scenarioAreaRatio != null && key !== "basement";
-    if (explanations[noteKey]) {
+    if (explanationsDisplay?.[noteKey]) {
       return (
         <>
-          <div>{explanations[noteKey]}</div>
+          <div>{explanationsDisplay[noteKey]}</div>
           {showScenarioScale && (
             <div style={{ marginTop: 4 }}>
               Scenario scale: ×{formatNumberValue(scenarioAreaRatio, 2)}
@@ -1204,7 +1231,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   };
 
   const landNoteBase =
-    explanations.land_cost ||
+    explanationsDisplay?.land_cost ||
     (siteArea && landPricePpm2
       ? t("excelNotes.landCost", {
         area: formatNumberValue(siteArea, 0),
@@ -1250,7 +1277,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const floorsNote = farManuallyOverridden ? floorsDisabledNote : floorsNoteBase;
 
   const fitoutNote =
-    explanations.fitout ||
+    explanationsDisplay?.fitout ||
     (fitoutExcluded
       ? t("excelNotes.fitoutExcluded")
       : fitoutRate != null
@@ -1262,7 +1289,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
 
   const contingencyNote = contingencyExcluded
     ? t("excelNotes.contingencyExcluded")
-    : explanations.contingency ||
+    : explanationsDisplay?.contingency ||
       t("excelNotes.contingency", {
         pct: formatPercentValue(contingencyPct),
         direct: formatNumberValue(constructionDirectTotal, 0),
@@ -1270,14 +1297,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       });
 
   const consultantsNote =
-    explanations.consultants ||
+    explanationsDisplay?.consultants ||
     t("excelNotes.consultants", {
       base: formatNumberValue(consultantsBase, 0),
       pct: formatPercentValue(consultantsPct),
     });
 
   const transactionNote =
-    explanations.transaction_cost ||
+    explanationsDisplay?.transaction_cost ||
     t("excelNotes.transaction", {
       land: formatNumberValue(landCostValue, 0),
       pct: formatPercentValue(transactionPct),
@@ -1293,7 +1320,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   });
 
   const directNote =
-    explanations.construction_direct ||
+    explanationsDisplay?.construction_direct ||
     Object.keys(directCost)
       .map((key) => {
         const area = builtArea[key] ?? 0;
@@ -1310,7 +1337,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const upperAnnexCost = directCost.upper_annex_non_far;
   const upperAnnexUnitCost = resolvedUnitCost.upper_annex_non_far ?? 0;
   const upperAnnexCostNote =
-    explanations.upper_annex_non_far_cost ||
+    explanationsDisplay?.upper_annex_non_far_cost ||
     (upperAnnexArea != null
       ? `${formatNumberValue(upperAnnexArea, 0)} m² × ${formatNumberValue(upperAnnexUnitCost, 0)} SAR/m².`
       : null);
@@ -1318,7 +1345,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const incomeNote = t("excel.year1IncomeNote");
 
   const parkingIncomeExplanation =
-    typeof explanations?.parking_income === "string" ? explanations.parking_income : null;
+    typeof explanationsDisplay?.parking_income === "string" ? explanationsDisplay.parking_income : null;
   const effectiveIncomePctRaw =
     usedInputs?.y1_income_effective_pct ??
     inputs?.y1_income_effective_pct ??
@@ -1367,7 +1394,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       excelBreakdown?.y1_noi ??
       (y1IncomeEffective || 0) - (opexCostResolved || 0)) as number;
   const y1IncomeEffectiveNote =
-    explanations?.y1_income_effective ||
+    explanationsDisplay?.y1_income_effective ||
     t("excelNotes.effectiveIncome", {
       pct: formatPercentValue(effectiveIncomeFactor, 0),
     });
@@ -2091,7 +2118,9 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     <tr>
                       <td style={itemColumnStyle}>{t("excel.upperAnnexNonFarBua")}</td>
                       <td style={amountColumnStyle}>{formatArea(upperAnnexArea)}</td>
-                      <td style={calcColumnStyle}>{explanations.upper_annex_non_far_bua}</td>
+                      <td style={calcColumnStyle}>
+                        {explanationsDisplay?.upper_annex_non_far_bua}
+                      </td>
                     </tr>
                   )}
                   <tr>
@@ -2114,7 +2143,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       {formatCurrencySAR(excelResult.costs.construction_direct_cost)}
                     </td>
                     <td style={calcColumnStyle}>
-                      {explanations.construction_direct
+                      {explanationsDisplay?.construction_direct
                         ? directNote
                         : directNote
                         ? `${directNote}; ${t("excel.constructionDirectDefault")}`
