@@ -121,15 +121,36 @@ def _choose_upper_annex_revenue_sink(area_ratio: dict[str, Any]) -> str | None:
     if not isinstance(area_ratio, dict) or not area_ratio:
         return None
 
-    canon_keys = {_canon_key(k) for k in area_ratio.keys()}
+    # Treat "present" as having a *positive* area_ratio entry.
+    # (Some callers/clients may keep keys with 0.0 values.)
+    def _first_positive_key(pred) -> str | None:
+        for k, v in area_ratio.items():
+            ck = _canon_key(k)
+            if not ck:
+                continue
+            if not pred(ck):
+                continue
+            try:
+                fv = float(v or 0.0)
+            except Exception:
+                continue
+            if fv > 1e-9:
+                return ck
+        return None
 
     # 1) Residential first
-    if "residential" in canon_keys:
-        return "residential"
+    res_ck = _first_positive_key(
+        lambda ck: ck == "residential"
+        or ck.startswith("residential")
+        or ck in {"res", "housing"}
+    )
+    if res_ck:
+        return res_ck
 
     # 2) Office next
-    if "office" in canon_keys:
-        return "office"
+    office_ck = _first_positive_key(lambda ck: ck == "office" or ck.startswith("office"))
+    if office_ck:
+        return office_ck
 
     return None
 
@@ -922,7 +943,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     #   residential (preferred), else office, and never retail.
     built_area_for_revenue_canon = built_area_canon
     try:
-        # identify upper annex by canonical key (handles casing/labels)
+        # Identify upper annex by canonical key (handles casing/labels).
         upper_annex_ck = None
         for k in area_ratio.keys():
             ck = _canon_key(k)
@@ -934,10 +955,13 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
 
         if upper_annex_area > 1e-9:
             sink = _choose_upper_annex_revenue_sink(area_ratio)
-            # Never flow to retail (even if only retail exists)
-            if sink and sink != "retail":
+            # Never flow to retail (even if only retail exists).
+            # Also avoid self-flow (defensive).
+            if sink and sink != "retail" and sink != upper_annex_ck:
                 built_area_for_revenue_canon = copy.deepcopy(built_area_canon)
-                built_area_for_revenue_canon[sink] = float(built_area_for_revenue_canon.get(sink, 0.0) or 0.0) + upper_annex_area
+                built_area_for_revenue_canon[sink] = (
+                    float(built_area_for_revenue_canon.get(sink, 0.0) or 0.0) + upper_annex_area
+                )
                 if upper_annex_ck:
                     built_area_for_revenue_canon[upper_annex_ck] = 0.0  # avoid double-counting revenue
                 revenue_meta["upper_annex_flow"] = {
