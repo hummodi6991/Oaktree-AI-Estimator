@@ -980,20 +980,33 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     except Exception as exc:
         revenue_meta["upper_annex_flow_error"] = str(exc)
 
-    # IMPORTANT: compute revenue using canonical keys so casing/labels from UI don't break rent/efficiency lookup.
-    nla: dict[str, float] = {}
-    for key in area_ratio.keys():
-        ck = _canon_key(key)
-        area_m2 = float(built_area_for_revenue_canon.get(ck, 0.0) or 0.0)
+    # IMPORTANT:
+    # Compute revenue using CANONICAL keys, then expose a stable `nla` keyed by canonical component.
+    # This prevents key-shape mismatches (e.g., UI keys vs template keys) from nullifying the annex flow.
+    nla_canon: dict[str, float] = {}
+    for ck, area_m2 in (built_area_for_revenue_canon or {}).items():
         eff = _lookup_by_canon(efficiency, ck, 0.0)
-        nla[key] = area_m2 * eff
+        nla_canon[ck] = float(area_m2 or 0.0) * float(eff or 0.0)
+
+    # Back-compat: also provide `nla` under canonical names used by the UI ("residential", "retail", "office", etc.)
+    nla: dict[str, float] = dict(nla_canon)
 
     rent_applied: dict[str, float] = {}
-    for key in set(rent_rates.keys()) | set(area_ratio.keys()):
-        ck = _canon_key(key)
-        rent_applied[key] = _lookup_by_canon(rent_rates, ck, 0.0) * re_scalar
+    # Apply rent using canonical keys too
+    rent_keys: set[str] = set()
+    if isinstance(rent_rates, dict):
+        rent_keys |= {_canon_key(k) for k in rent_rates.keys()}
+    if isinstance(built_area_for_revenue_canon, dict):
+        rent_keys |= set(built_area_for_revenue_canon.keys())
+    rent_keys.discard(None)
+    for ck in rent_keys:
+        rent_applied[ck] = _lookup_by_canon(rent_rates, ck, 0.0) * re_scalar
 
-    y1_income_components = {key: nla.get(key, 0.0) * rent_applied.get(key, 0.0) for key in area_ratio.keys()}
+    # Revenue by canonical component
+    y1_income_components = {
+        ck: float(nla.get(ck, 0.0) or 0.0) * float(rent_applied.get(ck, 0.0) or 0.0)
+        for ck in (built_area_for_revenue_canon or {}).keys()
+    }
     base_y1_income = sum(y1_income_components.values())
 
     # Optional: surface revenue_meta if your function already returns a meta dict.
@@ -1005,6 +1018,20 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
             resolved_inputs["meta"] = existing_meta
         else:
             resolved_inputs["meta"] = {"revenue": revenue_meta}
+    except Exception:
+        pass
+
+    # Debug visibility (safe): expose what happened so the UI / memo can confirm the flow.
+    # This does NOT affect calculations.
+    try:
+        resolved_inputs.setdefault("meta", {})
+        if isinstance(resolved_inputs["meta"], dict):
+            resolved_inputs["meta"].setdefault("revenue", {})
+            if isinstance(resolved_inputs["meta"]["revenue"], dict):
+                resolved_inputs["meta"]["revenue"].update(revenue_meta)
+                resolved_inputs["meta"]["revenue"]["built_area_for_revenue_canon"] = dict(built_area_for_revenue_canon or {})
+                resolved_inputs["meta"]["revenue"]["nla_canon"] = dict(nla_canon or {})
+                resolved_inputs["meta"]["revenue"]["rent_applied_canon"] = dict(rent_applied or {})
     except Exception:
         pass
 
