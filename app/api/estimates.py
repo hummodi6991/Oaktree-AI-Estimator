@@ -1732,7 +1732,7 @@ def create_estimate(
                         excel_inputs.get("parking_supply_layout_efficiency")
                         or DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
                     ),
-                    "unit": "fraction",
+                    "unit": "fraction or m²/space (gross)",
                     "source_type": "Assumption",
                 },
             ],

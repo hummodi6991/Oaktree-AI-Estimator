@@ -37,13 +37,32 @@ RIYADH_PARKING_RULESET_SOURCE_URL = "https://trc.alriyadh.gov.sa/pdf/ParkingCalc
 # which inflates provided spaces (it ignores ramps/cores/columns/aisles/pedestrian paths).
 #
 # IBP-style preconcept capacity implicitly bakes in circulation loss. We mirror this by
-# applying a layout efficiency haircut before converting area -> stalls.
+# allowing layout efficiency to be expressed as either:
+#   - a fractional efficiency (0-1), or
+#   - a gross m² per space (>= 1), representing total basement area per stall.
 #
-# NOTE: gross_m2_per_space remains the stall-module gross (stall + aisle module). The
-# layout efficiency represents the fraction of the counted parking area that actually
-# becomes stall modules.
+# NOTE: gross_m2_per_space remains the stall-module gross (stall + aisle module). When
+# layout_efficiency >= 1, it is treated as the effective gross m² per stall.
 DEFAULT_PARKING_SUPPLY_GROSS_M2_PER_SPACE = 30.0
-DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY = 0.88
+"""
+Parking efficiency assumptions (sqm / space, GROSS).
+
+This value represents TOTAL basement area per parking space, inclusive of:
+  - drive aisles
+  - ramps
+  - columns
+  - stairs & elevator cores
+  - circulation / dead space
+
+Calibrated from real MOD architectural basement layouts in Riyadh:
+  - Parcel area ≈ 1,980 sqm
+  - Basement capacity = 34–36 parking spaces
+  - Observed efficiency ≈ 55–58 sqm / space
+
+We adopt 55 sqm / space as a realistic, investor-grade baseline.
+"""
+
+DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY = 55.0
 
 
 def _norm(s: Any) -> str:
@@ -173,15 +192,41 @@ def provided_spaces_from_area(
     eff = _float(layout_efficiency, DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY)
     if eff <= 0:
         eff = DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
+    if eff > 1.0:
+        effective_gross_m2_per_space = eff
+        if effective_gross_m2_per_space <= 0:
+            return 0, {
+                "gross_m2_per_space": g,
+                "layout_efficiency": None,
+                "effective_gross_m2_per_space": effective_gross_m2_per_space,
+                "provided_raw": 0.0,
+                "layout_efficiency_mode": "gross_m2_per_space",
+            }
+        provided_raw = float(parking_area_m2) / effective_gross_m2_per_space
+        return _floor_int(provided_raw), {
+            "gross_m2_per_space": g,
+            "layout_efficiency": None,
+            "effective_gross_m2_per_space": effective_gross_m2_per_space,
+            "provided_raw": provided_raw,
+            "layout_efficiency_mode": "gross_m2_per_space",
+        }
+
     eff = _clamp(eff, 0.0, 1.0)
-    if g <= 0:
-        return 0, {"gross_m2_per_space": g, "layout_efficiency": eff, "provided_raw": 0.0}
+    if g <= 0 or eff <= 0:
+        return 0, {
+            "gross_m2_per_space": g,
+            "layout_efficiency": eff,
+            "effective_gross_m2_per_space": None,
+            "provided_raw": 0.0,
+            "layout_efficiency_mode": "fraction",
+        }
     provided_raw = float(parking_area_m2) * eff / g
     return _floor_int(provided_raw), {
         "gross_m2_per_space": g,
         "layout_efficiency": eff,
         "effective_gross_m2_per_space": (g / eff) if eff > 0 else None,
         "provided_raw": provided_raw,
+        "layout_efficiency_mode": "fraction",
     }
 
 
@@ -338,7 +383,7 @@ def ensure_parking_minimums(
       - parking_apply: bool (default True for Riyadh)
       - parking_minimum_policy: 'auto_add_basement' (default) | 'flag_only' | 'disabled'
       - parking_supply_gross_m2_per_space: float (default 30)
-      - parking_supply_layout_efficiency: float (default 0.88)
+      - parking_supply_layout_efficiency: float (default 55)
       - parking_assumed_avg_apartment_m2: float (default 120)
 
     The function sets:
@@ -429,9 +474,15 @@ def ensure_parking_minimums(
         )
         if layout_eff <= 0:
             layout_eff = DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
-        layout_eff = _clamp(layout_eff, 0.0, 1.0)
+        if layout_eff > 1.0:
+            effective_gross_m2_per_space = layout_eff
+        else:
+            layout_eff = _clamp(layout_eff, 0.0, 1.0)
+            effective_gross_m2_per_space = (
+                gross_m2_per_space / max(layout_eff, 1e-9) if layout_eff > 0 else 0.0
+            )
 
-        basement_area_added_m2 = float(deficit) * gross_m2_per_space / max(layout_eff, 1e-9)
+        basement_area_added_m2 = float(deficit) * effective_gross_m2_per_space
         add_ratio = basement_area_added_m2 / max(float(site_area_m2), 1e-9)
 
         ar_new[basement_key_used] = basement_ratio_before + add_ratio

@@ -793,7 +793,8 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     parking_supply_layout_efficiency = float(
         resolved_inputs.get("parking_supply_layout_efficiency") or DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
     )
-    parking_supply_layout_efficiency = max(0.0, min(parking_supply_layout_efficiency, 1.0))
+    if parking_supply_layout_efficiency <= 0:
+        parking_supply_layout_efficiency = DEFAULT_PARKING_SUPPLY_LAYOUT_EFFICIENCY
     parking_area_m2 = 0.0
     parking_area_by_key: Dict[str, float] = {}
     for key, area in built_area.items():
@@ -805,10 +806,17 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
             if a > 0:
                 parking_area_by_key[key] = a
                 parking_area_m2 += a
-    if parking_supply_gross_m2_per_space > 0:
-        parking_provided_raw = (
-            parking_area_m2 * parking_supply_layout_efficiency / parking_supply_gross_m2_per_space
+    if parking_supply_layout_efficiency > 1.0:
+        effective_gross_m2_per_space = parking_supply_layout_efficiency
+    else:
+        parking_supply_layout_efficiency = max(0.0, min(parking_supply_layout_efficiency, 1.0))
+        effective_gross_m2_per_space = (
+            parking_supply_gross_m2_per_space / parking_supply_layout_efficiency
+            if parking_supply_layout_efficiency > 0
+            else 0.0
         )
+    if effective_gross_m2_per_space > 0:
+        parking_provided_raw = parking_area_m2 / effective_gross_m2_per_space
     else:
         parking_provided_raw = 0.0
     parking_provided_spaces = int(math.floor(parking_provided_raw + 1e-9))
