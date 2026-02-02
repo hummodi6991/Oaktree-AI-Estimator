@@ -1,3 +1,4 @@
+import copy
 import math
 from typing import Any, Dict
 
@@ -66,6 +67,37 @@ def _is_non_far_area_key(key: str) -> bool:
     if not k:
         return False
     return ("non_far" in k) or ("annex" in k) or ("upper_annex" in k)
+
+
+def _choose_upper_annex_revenue_sink(area_ratio: dict[str, Any]) -> str | None:
+    """
+    Choose where the upper annex revenue should flow:
+      1) residential (preferred)
+      2) office (fallback)
+      3) never retail
+    Returns the target key from area_ratio, or None if no suitable target exists.
+    """
+    if not isinstance(area_ratio, dict) or not area_ratio:
+        return None
+
+    keys = [k for k in area_ratio.keys() if isinstance(k, str)]
+    keys_l = [(k, k.lower().strip()) for k in keys]
+
+    # 1) Residential first (exclude any retail-ish keys)
+    for k, kl in keys_l:
+        if "res" in kl or "residential" in kl:
+            if "retail" in kl:
+                continue
+            return k
+
+    # 2) Office next (exclude any retail-ish keys)
+    for k, kl in keys_l:
+        if "office" in kl:
+            if "retail" in kl:
+                continue
+            return k
+
+    return None
 
 
 def _area_ratio_positive_sum(
@@ -722,6 +754,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     efficiency = resolved_inputs.get("efficiency", {}) or {}
     rent_rates = resolved_inputs.get("rent_sar_m2_yr", {}) or {}
     re_scalar = float(resolved_inputs.get("re_price_index_scalar") or 1.0)
+    revenue_meta: dict[str, Any] = {}
 
     built_area = {key: float(area_ratio.get(key, 0.0)) * float(site_area_m2) for key in area_ratio.keys()}
     shell_unit = (unit_cost.get("residential") or 0.0)
@@ -847,13 +880,68 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         + transaction_cost
     )
 
-    nla = {key: built_area.get(key, 0.0) * float(efficiency.get(key, 0.0)) for key in area_ratio.keys()}
+    # --- Revenue-only reallocation for upper annex (non-FAR) ---
+    #
+    # Keep construction/cost accounting as-is (built_area / direct_cost).
+    # But for revenue, treat the upper annex as part of:
+    #   residential (preferred), else office, and never retail.
+    built_area_for_revenue = built_area
+    try:
+        upper_annex_key = None
+        for k in area_ratio.keys():
+            if isinstance(k, str) and k.lower().strip() == "upper_annex_non_far":
+                upper_annex_key = k
+                break
+        if upper_annex_key:
+            upper_annex_area = float(built_area.get(upper_annex_key, 0.0) or 0.0)
+        else:
+            upper_annex_area = 0.0
+
+        if upper_annex_area > 1e-9:
+            sink = _choose_upper_annex_revenue_sink(area_ratio)
+            # Never flow to retail: guard even if caller had only retail keys.
+            if sink is not None and isinstance(sink, str) and ("retail" not in sink.lower()):
+                built_area_for_revenue = copy.deepcopy(built_area)
+                built_area_for_revenue[sink] = float(built_area_for_revenue.get(sink, 0.0) or 0.0) + upper_annex_area
+                built_area_for_revenue[upper_annex_key] = 0.0  # avoid double-counting revenue
+                revenue_meta["upper_annex_flow"] = {
+                    "from_key": upper_annex_key,
+                    "to_key": sink,
+                    "area_m2": upper_annex_area,
+                    "rule": "upper annex revenue -> residential else office; never retail",
+                }
+            else:
+                revenue_meta["upper_annex_flow"] = {
+                    "from_key": upper_annex_key,
+                    "to_key": None,
+                    "area_m2": upper_annex_area,
+                    "rule": "no residential/office sink found; kept as-is (no retail fallback)",
+                }
+    except Exception as exc:
+        revenue_meta["upper_annex_flow_error"] = str(exc)
+
+    nla = {
+        key: float(built_area_for_revenue.get(key, 0.0) or 0.0) * float(efficiency.get(key, 0.0) or 0.0)
+        for key in area_ratio.keys()
+    }
     rent_applied = {
         key: float(rent_rates.get(key, 0.0)) * re_scalar
         for key in set(rent_rates.keys()) | set(area_ratio.keys())
     }
     y1_income_components = {key: nla.get(key, 0.0) * rent_applied.get(key, 0.0) for key in area_ratio.keys()}
     base_y1_income = sum(y1_income_components.values())
+
+    # Optional: surface revenue_meta if your function already returns a meta dict.
+    # If you already have a meta/notes structure, merge it there instead of creating a new field.
+    try:
+        existing_meta = resolved_inputs.get("meta")
+        if isinstance(existing_meta, dict):
+            existing_meta = {**existing_meta, "revenue": {**existing_meta.get("revenue", {}), **revenue_meta}}
+            resolved_inputs["meta"] = existing_meta
+        else:
+            resolved_inputs["meta"] = {"revenue": revenue_meta}
+    except Exception:
+        pass
 
     def _infer_parking_landuse_code() -> str | None:
         explicit_keys = ("land_use_code", "landuse_code", "land_use", "landuse")
