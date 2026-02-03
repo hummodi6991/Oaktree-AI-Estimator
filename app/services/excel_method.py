@@ -979,7 +979,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
                     float(built_area_for_revenue_canon.get(sink, 0.0) or 0.0) + upper_annex_area
                 )
                 # Ensure annex isn't double-counted in revenue even if canon map didn't originally have it.
-                built_area_for_revenue_canon[upper_annex_ck] = 0.0
+                built_area_for_revenue_canon.pop(upper_annex_ck, None)
                 revenue_meta["upper_annex_flow"] = {
                     "from_key": upper_annex_raw_key,
                     "to_key": sink,
