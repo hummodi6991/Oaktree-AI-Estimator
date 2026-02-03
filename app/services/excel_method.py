@@ -143,18 +143,18 @@ def _choose_upper_annex_revenue_sink(
         return None
 
     # 1) Residential first
-    res_ck = _first_positive_key(
+    res_present = _first_positive_key(
         lambda ck: ck == "residential"
         or ck.startswith("residential")
         or ck in {"res", "housing"}
     )
-    if res_ck:
-        return res_ck
+    if res_present:
+        return "residential"
 
     # 2) Office next
-    office_ck = _first_positive_key(lambda ck: ck == "office" or ck.startswith("office"))
-    if office_ck:
-        return office_ck
+    office_present = _first_positive_key(lambda ck: ck == "office" or ck.startswith("office"))
+    if office_present:
+        return "office"
 
     return None
 
