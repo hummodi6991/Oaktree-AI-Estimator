@@ -806,6 +806,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
 
     resolved_inputs = dict(inputs or {})
     area_ratio = resolved_inputs.get("area_ratio", {}) or {}
+    non_far_area_ratio = resolved_inputs.get("non_far_area_ratio", {}) or {}
     unit_cost_raw = resolved_inputs.get("unit_cost", {}) or {}
     unit_cost = dict(unit_cost_raw) if isinstance(unit_cost_raw, dict) else {}
     resolved_inputs["unit_cost"] = unit_cost
@@ -954,14 +955,24 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         # - `built_area_canon` may omit non-FAR keys depending on canonicalization logic elsewhere.
         #
         upper_annex_raw_key: str | None = None
-        for k in (area_ratio or {}).keys():
+
+        def _match_upper_annex_key(k: Any) -> bool:
             kk = str(k).strip().lower()
             if not kk:
-                continue
-            # be generous: any "upper"+"annex" pattern counts (non_far often present, but don't require it)
-            if ("upper" in kk and "annex" in kk) or (kk == "upper_annex_non_far"):
-                upper_annex_raw_key = str(k)
+                return False
+            # Be generous: any "upper"+"annex" pattern counts (non_far often present, but don't require it)
+            return ("upper" in kk and "annex" in kk) or (kk == "upper_annex_non_far")
+
+        for src in (area_ratio or {}, non_far_area_ratio or {}, built_area or {}):
+            for k in src.keys():
+                if _match_upper_annex_key(k):
+                    upper_annex_raw_key = str(k)
+                    break
+            if upper_annex_raw_key:
                 break
+
+        if not upper_annex_raw_key and isinstance(built_area, dict) and "upper_annex_non_far" in built_area:
+            upper_annex_raw_key = "upper_annex_non_far"
 
         # Area from raw built_area (robust)
         upper_annex_area = float(built_area.get(upper_annex_raw_key, 0.0) or 0.0) if upper_annex_raw_key else 0.0
@@ -993,6 +1004,13 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
                     "area_m2": upper_annex_area,
                     "rule": "no residential/office sink found; kept as-is (no retail fallback)",
                 }
+        else:
+            revenue_meta["upper_annex_flow"] = {
+                "from_key": upper_annex_raw_key,
+                "to_key": None,
+                "area_m2": float(upper_annex_area or 0.0),
+                "rule": "upper annex not detected or zero area; no revenue flow applied",
+            }
     except Exception as exc:
         revenue_meta["upper_annex_flow_error"] = str(exc)
 
@@ -1177,6 +1195,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         "opex_pct": opex_pct,
         "opex_cost": opex_cost,
         "y1_noi": y1_noi,
+        "revenue_meta": revenue_meta,
         "rent_applied_sar_m2_yr": rent_applied,
         "parking_income_y1": parking_income_y1,
         "parking_income_meta": parking_income_meta,
