@@ -1046,6 +1046,22 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const nla = breakdown.nla || {};
   const directCost = breakdown.direct_cost || {};
   const incomeComponents = breakdown.y1_income_components || {};
+  const upperAnnexFlow = breakdown?.revenue_meta?.upper_annex_flow;
+  const upperAnnexSink = typeof upperAnnexFlow?.to_key === "string" ? upperAnnexFlow.to_key : "";
+  const upperAnnexAreaM2 =
+    typeof upperAnnexFlow?.area_m2 === "number" ? upperAnnexFlow.area_m2 : 0;
+  const upperAnnexNlaAddedM2 =
+    typeof upperAnnexFlow?.nla_added_m2 === "number" ? upperAnnexFlow.nla_added_m2 : 0;
+  const showUpperAnnexHint =
+    upperAnnexAreaM2 > 1e-6 &&
+    (upperAnnexSink === "residential" || upperAnnexSink === "office");
+  const fmtM2 = (value: number) =>
+    new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
+  const upperAnnexHintText = showUpperAnnexHint
+    ? `Includes upper annex: +${fmtM2(upperAnnexAreaM2)} m²${
+      upperAnnexNlaAddedM2 > 1e-6 ? ` (≈ ${fmtM2(upperAnnexNlaAddedM2)} m² NLA)` : ""
+    }`
+    : "";
   const explanations =
     (isArabic
       ? breakdown.explanations_ar ?? breakdown.explanations_en ?? breakdown.explanations
@@ -1551,6 +1567,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     Number(farDraft) <= 0 ||
     (displayedFar != null && Number(farDraft) === Number(displayedFar));
   const revenueItems = Object.keys(incomeComponents || {}).map((key) => {
+    const isUpperAnnexSink = showUpperAnnexHint && key === upperAnnexSink;
     const nlaVal = nla[key] ?? 0;
     const efficiencyVal = efficiency[key] ?? null;
     const baseArea = builtArea[key] ?? null;
@@ -1572,6 +1589,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       key,
       amount: incomeComponents[key] ?? 0,
       note: resolveRevenueNote(key, baseNote, incomeComponents[key] ?? 0),
+      upperAnnexHint: isUpperAnnexSink ? upperAnnexHintText : null,
     };
   });
   const summaryText =
@@ -2298,7 +2316,25 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                 <tbody>
                   {revenueItems.map((item) => (
                     <tr key={item.key}>
-                      <td style={itemColumnStyle}>{item.key.replace(/_/g, " ")}</td>
+                      <td style={itemColumnStyle}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <span>{item.key.replace(/_/g, " ")}</span>
+                          {item.upperAnnexHint ? (
+                            <span
+                              style={{
+                                fontSize: "0.75rem",
+                                opacity: 0.85,
+                                lineHeight: 1.2,
+                              }}
+                              title={
+                                "Upper annex (non-FAR) is excluded from FAR/cost structure but is counted for revenue by flowing into the dominant component (residential, else office)."
+                              }
+                            >
+                              {item.upperAnnexHint}
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
                       <td style={amountColumnStyle}>{formatCurrencySAR(item.amount || 0)}</td>
                       <td style={calcColumnStyle}>{item.note}</td>
                     </tr>
