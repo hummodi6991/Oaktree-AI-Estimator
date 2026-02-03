@@ -1046,6 +1046,16 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         annex_nla = upper_annex_area_m2 * eff_sink
         nla_canon[upper_annex_sink] = base_sink_nla + annex_nla
 
+        # DEBUG: snapshot right after annex application (to detect later overwrites)
+        try:
+            revenue_meta.setdefault("upper_annex_flow", {})
+            revenue_meta["upper_annex_flow"]["nla_sink_after_m2"] = float(
+                nla_canon.get(upper_annex_sink, 0.0) or 0.0
+            )
+            revenue_meta["nla_canon_after_annex"] = dict(nla_canon)
+        except Exception:
+            pass
+
         # Ensure annex never appears as its own revenue component in NLA
         nla_canon.pop("upper_annex_non_far", None)
 
