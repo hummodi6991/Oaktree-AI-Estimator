@@ -947,6 +947,9 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     # But for revenue, treat the upper annex as part of:
     #   residential (preferred), else office, and never retail.
     built_area_for_revenue_canon = built_area_canon
+    # Keep a handle to the sink + annex area so we can add annex NLA explicitly (robustness).
+    upper_annex_sink: str | None = None
+    upper_annex_area_m2: float = 0.0
     try:
         # Identify upper annex in a way that cannot be "lost" by canonical aggregation.
         #
@@ -976,6 +979,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
 
         # Area from raw built_area (robust)
         upper_annex_area = float(built_area.get(upper_annex_raw_key, 0.0) or 0.0) if upper_annex_raw_key else 0.0
+        upper_annex_area_m2 = float(upper_annex_area or 0.0)
 
         # Canonical key name we will use in the revenue-only canon map
         upper_annex_ck = "upper_annex_non_far" if upper_annex_area > 1e-9 else None
@@ -985,6 +989,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
             # Never flow to retail (even if only retail exists).
             # Also avoid self-flow (defensive).
             if sink and sink != "retail" and sink != upper_annex_ck:
+                upper_annex_sink = sink
                 built_area_for_revenue_canon = copy.deepcopy(built_area_canon)
                 built_area_for_revenue_canon[sink] = (
                     float(built_area_for_revenue_canon.get(sink, 0.0) or 0.0) + upper_annex_area
@@ -1017,10 +1022,37 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     # IMPORTANT:
     # Compute revenue using CANONICAL keys, then expose a stable `nla` keyed by canonical component.
     # This prevents key-shape mismatches (e.g., UI keys vs template keys) from nullifying the annex flow.
-    nla_canon: dict[str, float] = {}
-    for ck, area_m2 in (built_area_for_revenue_canon or {}).items():
+    # Step 1: compute base NLA from the base (pre-flow) canonical built areas.
+    nla_canon_base: dict[str, float] = {}
+    for ck, area_m2 in (built_area_canon or {}).items():
         eff = _lookup_by_canon(efficiency, ck, 0.0)
-        nla_canon[ck] = float(area_m2 or 0.0) * float(eff or 0.0)
+        nla_canon_base[ck] = float(area_m2 or 0.0) * float(eff or 0.0)
+
+    # Step 2: start NLA from base.
+    nla_canon: dict[str, float] = dict(nla_canon_base)
+
+    # Step 3: if annex flowed to a sink, add its NLA explicitly using the sink's effective efficiency.
+    # This avoids any weirdness where sink efficiency lookup changes when we mutate built area maps.
+    if upper_annex_sink and upper_annex_area_m2 > 1e-9:
+        sink_area_base = float((built_area_canon or {}).get(upper_annex_sink, 0.0) or 0.0)
+        sink_nla_base = float((nla_canon_base or {}).get(upper_annex_sink, 0.0) or 0.0)
+        if sink_area_base > 1e-9:
+            eff_sink = sink_nla_base / sink_area_base
+        else:
+            eff_sink = float(_lookup_by_canon(efficiency, upper_annex_sink, 0.0) or 0.0)
+
+        nla_canon[upper_annex_sink] = float(nla_canon.get(upper_annex_sink, 0.0) or 0.0) + (upper_annex_area_m2 * eff_sink)
+
+        # Ensure annex never appears as its own revenue component in NLA
+        nla_canon.pop("upper_annex_non_far", None)
+
+        # Also store debug fields to confirm the exact NLA uplift
+        try:
+            revenue_meta.setdefault("upper_annex_flow", {})
+            revenue_meta["upper_annex_flow"]["eff_sink_used"] = eff_sink
+            revenue_meta["upper_annex_flow"]["nla_added_m2"] = upper_annex_area_m2 * eff_sink
+        except Exception:
+            pass
 
     # Back-compat: also provide `nla` under canonical names used by the UI ("residential", "retail", "office", etc.)
     nla: dict[str, float] = dict(nla_canon)
@@ -1039,7 +1071,7 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
     # Revenue by canonical component
     y1_income_components = {
         ck: float(nla.get(ck, 0.0) or 0.0) * float(rent_applied.get(ck, 0.0) or 0.0)
-        for ck in (built_area_for_revenue_canon or {}).keys()
+        for ck in nla.keys()
     }
     base_y1_income = sum(y1_income_components.values())
 
