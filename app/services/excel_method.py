@@ -978,14 +978,23 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
             upper_annex_raw_key = "upper_annex_non_far"
 
         # Area from raw built_area (robust)
-        # Upper annex area is NON-FAR and comes from non_far_area_ratio, not area_ratio
-        if upper_annex_raw_key and isinstance(non_far_area_ratio, dict):
-            upper_annex_area = (
-                float(non_far_area_ratio.get(upper_annex_raw_key, 0.0) or 0.0)
-                * float(site_area_m2)
-            )
-        else:
-            upper_annex_area = 0.0
+        # Upper annex area is NON-FAR.
+        # Some callers store it in `non_far_area_ratio` (ratio), others store it directly in `area_ratio`
+        # which then appears in `built_area` (area). Support both.
+        upper_annex_area = 0.0
+        if upper_annex_raw_key:
+            # 1) Prefer explicit non_far_area_ratio (ratio * site area)
+            if isinstance(non_far_area_ratio, dict) and upper_annex_raw_key in non_far_area_ratio:
+                try:
+                    upper_annex_area = float(non_far_area_ratio.get(upper_annex_raw_key) or 0.0) * float(site_area_m2)
+                except Exception:
+                    upper_annex_area = 0.0
+            # 2) Fallback: area already computed from area_ratio keys
+            if upper_annex_area <= 1e-9 and isinstance(built_area, dict):
+                try:
+                    upper_annex_area = float(built_area.get(upper_annex_raw_key, 0.0) or 0.0)
+                except Exception:
+                    upper_annex_area = 0.0
         upper_annex_area_m2 = float(upper_annex_area or 0.0)
 
         # Canonical key name we will use in the revenue-only canon map
