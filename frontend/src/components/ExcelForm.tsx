@@ -1763,9 +1763,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           >
             {t("common.apply")}
           </button>
-          <div className="excel-form__hint">
-            Tip: disabling a component removes it from BUA/cost/revenue (it does not auto-redistribute).
-          </div>
         </div>
       </div>
 
