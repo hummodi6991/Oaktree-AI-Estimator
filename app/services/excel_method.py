@@ -1041,7 +1041,10 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         else:
             eff_sink = float(_lookup_by_canon(efficiency, upper_annex_sink, 0.0) or 0.0)
 
-        nla_canon[upper_annex_sink] = float(nla_canon.get(upper_annex_sink, 0.0) or 0.0) + (upper_annex_area_m2 * eff_sink)
+        # IMPORTANT: assign from base, not from current, to avoid any later overwrites / key-shape issues.
+        base_sink_nla = float((nla_canon_base or {}).get(upper_annex_sink, 0.0) or 0.0)
+        annex_nla = upper_annex_area_m2 * eff_sink
+        nla_canon[upper_annex_sink] = base_sink_nla + annex_nla
 
         # Ensure annex never appears as its own revenue component in NLA
         nla_canon.pop("upper_annex_non_far", None)
@@ -1050,7 +1053,8 @@ def compute_excel_estimate(site_area_m2: float, inputs: Dict[str, Any]) -> Dict[
         try:
             revenue_meta.setdefault("upper_annex_flow", {})
             revenue_meta["upper_annex_flow"]["eff_sink_used"] = eff_sink
-            revenue_meta["upper_annex_flow"]["nla_added_m2"] = upper_annex_area_m2 * eff_sink
+            revenue_meta["upper_annex_flow"]["nla_added_m2"] = annex_nla
+            revenue_meta["upper_annex_flow"]["nla_sink_after_m2"] = nla_canon.get(upper_annex_sink, 0.0)
         except Exception:
             pass
 
