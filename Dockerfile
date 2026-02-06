@@ -23,7 +23,7 @@ COPY alembic.ini .
 COPY models/ ./models/
 COPY README.md .
 
-# Bring in the compiled UI (includes public/ assets like static-tiles)
+# Bring in the compiled UI (includes public assets)
 COPY --from=webbuild /web/frontend/dist /app/frontend/dist
 
 EXPOSE 8000
