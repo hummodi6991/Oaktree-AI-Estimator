@@ -129,6 +129,8 @@ cp .env.development.example .env.development
 npm run dev
 ```
 
+Note: the UI now uses the live Esri basemap only; offline static tiles have been deprecated.
+
 If you're using Codespaces, the FastAPI URL will look like:
 
 ```

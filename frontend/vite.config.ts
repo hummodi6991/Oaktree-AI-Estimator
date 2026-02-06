@@ -8,7 +8,6 @@ export default defineConfig({
     port: 5173,
     watch: {
       ignored: [
-        "**/public/static-tiles/**",
         "**/node_modules/**",
         "**/.git/**",
       ],
