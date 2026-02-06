@@ -101,7 +101,7 @@
     "unitCostRetail": "Retail (SAR/m²)",
     "unitCostOffice": "Office (SAR/m²)",
     "unitCostBasement": "Basement (SAR/m²)",
-    "unitCostUpperAnnexNonFar": "Upper annex (non-FAR) unit cost",
+    "unitCostUpperAnnexNonFar": "Upper annex (non-FAR) unit cost (SAR/m²)",
     "upperAnnexNonFarCost": "Upper annex construction cost (non-FAR)",
     "fitout": "Fit-out",
     "fitoutIncluded": "Included",
