@@ -73,7 +73,7 @@ class SpaFallbackMiddleware(BaseHTTPMiddleware):
         if response.status_code != 404:
             return response
 
-        static_path = "index.html" if path == "/" else path.lstrip("/")
+        static_path = "index.html"
         try:
             static_response = await self.static_app.get_response(
                 static_path, request.scope
@@ -81,20 +81,10 @@ class SpaFallbackMiddleware(BaseHTTPMiddleware):
         except Exception as exc:
             logger.warning("SPA fallback failed for %s: %s", static_path, exc)
             return response
-        if static_response.status_code != 404:
-            return static_response
-
-        try:
-            index_response = await self.static_app.get_response(
-                "index.html", request.scope
-            )
-        except Exception as exc:
-            logger.warning("SPA fallback failed for index.html: %s", exc)
-            return response
-        if index_response.status_code == 404:
+        if static_response.status_code == 404:
             return response
 
-        return index_response
+        return static_response
 
 
 @app.on_event("startup")
