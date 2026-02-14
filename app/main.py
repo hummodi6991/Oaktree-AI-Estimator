@@ -73,7 +73,7 @@ class SpaFallbackMiddleware(BaseHTTPMiddleware):
         if response.status_code != 404:
             return response
 
-        static_path = "index.html" if path == "/" else path.lstrip("/")
+        static_path = "index.html"
         try:
             static_response = await self.static_app.get_response(
                 static_path, request.scope
