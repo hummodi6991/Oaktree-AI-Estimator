@@ -1,6 +1,0 @@
-.nav {display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:16px;align-items:center;background:var(--v2-color-header);color:#fff;padding:14px 20px;}
-.title{font-size:1.1rem;font-weight:700}
-.subtitle{font-size:.8rem;color:var(--v2-color-header-muted)}
-.search{width:100%;padding:10px 12px;border-radius:999px;border:none;background:#fff;color:#24342d}
-.right{display:flex;justify-content:flex-end;gap:18px;font-weight:600}
-@media (max-width:900px){.nav{grid-template-columns:1fr;}.right{justify-content:flex-start}}
