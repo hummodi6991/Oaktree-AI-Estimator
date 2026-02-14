@@ -1,0 +1,6 @@
+.page{background:var(--v2-color-bg);min-height:100vh}
+.container{padding:16px;display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px}
+.main{display:flex;flex-direction:column;gap:12px}
+.mapWrap{border-radius:var(--v2-radius-md);overflow:hidden;box-shadow:var(--v2-shadow-card)}
+.sidebar{align-self:start}
+@media (max-width:1100px){.container{grid-template-columns:1fr}.sidebar{position:static}}

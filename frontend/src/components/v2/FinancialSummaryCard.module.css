@@ -1,0 +1,5 @@
+.card{background:var(--v2-color-surface);border-radius:var(--v2-radius-md);box-shadow:var(--v2-shadow-card);padding:16px;position:sticky;top:16px}
+.row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eee}
+.row:last-child{border-bottom:none}
+.title{margin:0 0 10px 0}
+@media (max-width:1100px){.card{position:static}}

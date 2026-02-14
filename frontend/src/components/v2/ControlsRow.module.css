@@ -1,0 +1,8 @@
+.grid{display:grid;grid-template-columns:1.2fr 1fr;gap:16px;margin-bottom:16px}
+.card{background:var(--v2-color-surface);border-radius:var(--v2-radius-md);box-shadow:var(--v2-shadow-card);padding:16px}
+.label{font-size:.85rem;color:var(--v2-color-muted);display:block;margin:8px 0 4px}
+.input,.select{width:100%;padding:10px;border:1px solid var(--v2-color-border);border-radius:8px}
+.buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.btn{padding:9px 12px;border-radius:8px;border:1px solid var(--v2-color-border);background:#fff}
+.costRow{display:flex;justify-content:space-between;border-bottom:1px solid #eee;padding:7px 0}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
