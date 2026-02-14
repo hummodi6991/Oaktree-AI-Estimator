@@ -13,7 +13,6 @@ import type { ParcelSummary } from "./api";
 import { getAdminUsageSummary } from "./api";
 import LanguageSwitcher from "./components/LanguageSwitcher";
 import { formatAreaM2 } from "./i18n/format";
-import DashboardV2 from "./pages/DashboardV2";
 
 function App() {
   const [parcel, setParcel] = useState<ParcelSummary | null>(null);
@@ -194,43 +193,8 @@ function App() {
   );
 }
 
-function V2WithAccessGate() {
-  const [hasApiKey, setHasApiKey] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return Boolean(window.localStorage.getItem("oaktree_api_key"));
-  });
-
-  useEffect(() => {
-    function handleStorage(event: StorageEvent) {
-      if (event.key === "oaktree_api_key") setHasApiKey(Boolean(event.newValue));
-    }
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, []);
-
-  const handleAccessCodeSubmit = useCallback((code: string) => {
-    window.localStorage.setItem("oaktree_api_key", code);
-    setHasApiKey(Boolean(code));
-  }, []);
-
-  return (
-    <>
-      <DashboardV2 />
-      <AccessCodeModal isOpen={!hasApiKey} onSubmit={handleAccessCodeSubmit} />
-    </>
-  );
-}
-
-function isDashboardV2Enabled() {
-  if (typeof window !== "undefined") {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("ui") === "v2") return true;
-  }
-  return String(import.meta.env.VITE_UI_V2 || "").toLowerCase() === "true";
-}
-
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {isDashboardV2Enabled() ? <V2WithAccessGate /> : <App />}
+    <App />
   </React.StrictMode>,
 );
