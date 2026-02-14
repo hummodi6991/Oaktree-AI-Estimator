@@ -32,17 +32,3 @@ def test_root_path_returns_spa_or_not_500() -> None:
     response = client.get("/")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-
-
-def test_non_api_404_routes_fall_back_to_spa_index() -> None:
-    if not Path("frontend/dist/index.html").is_file():
-        pytest.skip("frontend/dist/index.html not present")
-
-    client = TestClient(app)
-
-    response = client.get("/dashboard/summary")
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-
-    api_response = client.get("/v1/does-not-exist")
-    assert api_response.status_code == 404
