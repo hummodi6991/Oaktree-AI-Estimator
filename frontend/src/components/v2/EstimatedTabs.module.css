@@ -1,0 +1,6 @@
+.wrap{background:var(--v2-color-surface);border-radius:var(--v2-radius-md);overflow:hidden;box-shadow:var(--v2-shadow-card)}
+.title{background:var(--v2-color-accent);color:#fff;padding:10px 14px;font-weight:700}
+.tabs{display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid var(--v2-color-border)}
+.tab{padding:7px 10px;border:1px solid var(--v2-color-border);background:#fff;border-radius:999px;cursor:pointer}
+.active{background:var(--v2-color-accent-soft);border-color:var(--v2-color-accent)}
+.content{padding:14px}

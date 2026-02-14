@@ -1,0 +1,4 @@
+.strip{display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--v2-color-strip);padding:12px 16px;border-radius:var(--v2-radius-md);margin:16px 0}
+.text{font-weight:600}
+.actions{display:flex;gap:8px}
+.btn{padding:8px 12px;border-radius:8px;border:1px solid #9e947a;background:#fff;cursor:pointer}
