@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
 
-import "./ExcelForm.css";
+import "../styles/excel-form.css";
 
 import { downloadMemoPdf, landPrice, makeEstimate, runScenario, trackEvent } from "../api";
 import {
@@ -20,6 +20,11 @@ import { applyPatch } from "../utils/applyPatch";
 import { formatPercentDraftFromFraction, resolveFractionFromDraftPercent } from "../utils/opex";
 import MicroFeedbackPrompt from "./MicroFeedbackPrompt";
 import ScenarioModal from "./ScenarioModal";
+import Button from "./ui/Button";
+import Checkbox from "./ui/Checkbox";
+import Field from "./ui/Field";
+import Input from "./ui/Input";
+import Select from "./ui/Select";
 
 const PROVIDERS = [
   {
@@ -196,6 +201,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   const [provider, setProvider] = useState<(typeof PROVIDERS)[number]["value"]>("blended_v1");
   const [price, setPrice] = useState<number | null>(null);
   const [suggestedPrice, setSuggestedPrice] = useState<number | null>(null);
+  const [showLandPriceOverride, setShowLandPriceOverride] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [includeFitout, setIncludeFitout] = useState(true);
   const [includeContingency, setIncludeContingency] = useState(true);
@@ -387,6 +393,12 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   useEffect(() => {
     setOverrideLandUse(normalizedPropLandUse);
   }, [normalizedPropLandUse]);
+
+  useEffect(() => {
+    if ((inputs.land_price_sar_m2 ?? 0) > 0) {
+      setShowLandPriceOverride(true);
+    }
+  }, [inputs.land_price_sar_m2]);
 
   useEffect(() => {
     setBaseInputs(cloneTemplate(templateForLandUse(effectiveLandUse)));
@@ -1610,171 +1622,149 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       : unitCostFields.filter((field) => field.key === "residential" || field.key === "basement");
   return (
     <div>
-      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span>{t("excel.providerLabel")}</span>
-          <select
-            value={provider}
-            onChange={(event) => {
-              const nextProvider = event.target.value as any;
-              setProvider(nextProvider);
-              void trackEvent("ui_change_provider", { meta: { provider: nextProvider } });
-            }}
-          >
-            {PROVIDERS.map((item) => (
-              <option key={item.value} value={item.value}>
-                {t(item.labelKey)}
-              </option>
-            ))}
-          </select>
-          <button onClick={fetchPrice}>{t("excel.fetchPrice")}</button>
-          {price != null && (
-            <strong>
-              {t("excel.suggestedPrice", {
-                price: formatNumberValue(price, 0),
-                provider: providerLabel,
-              })}
-            </strong>
-          )}
-          {fetchError && <span style={{ color: "#fca5a5" }}>{t("common.errorPrefix")} {fetchError}</span>}
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <label style={{ opacity: 0.85 }}>{t("excel.overrideLandUse")}</label>
-          <select
-            value={overrideLandUse ?? ""}
-            onChange={(event) => {
-              const value = (event.target.value || "").trim().toLowerCase();
-              if (!value) {
-                setOverrideLandUse(null);
-                return;
-              }
-              if (value === "s" || value === "m") {
-                setOverrideLandUse(value as LandUseCode);
-              }
-            }}
-            title={t("excel.overrideLandUseHint")}
-          >
-            <option value="">{t("excel.autoUseParcel")}</option>
-            <option value="s">{t("excel.landUseOption", { code: "s", label: t("app.landUse.residential") })}</option>
-            <option value="m">{t("excel.landUseOption", { code: "m", label: t("app.landUse.mixed") })}</option>
-          </select>
-          <span style={{ opacity: 0.75, fontSize: "0.8rem" }}>
-            {t("excel.activeTemplate")} <strong>{effectiveLandUse}</strong>
-          </span>
-        </div>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, color: "white" }}>
-          <span>{t("excel.overrideLandPrice")}</span>
-          <input
-            type="number"
-            value={inputs.land_price_sar_m2 ?? ""}
-            onChange={(event) => {
-              const prevValue = inputsRef.current?.land_price_sar_m2 ?? null;
-              const nextValue = event.target.value === "" ? 0 : Number(event.target.value);
-              applyInputPatch({ land_price_sar_m2: nextValue });
-              if (prevValue !== nextValue) {
-                void trackEvent("ui_override_land_price", {
-                  meta: {
-                    from: prevValue,
-                    to: nextValue,
-                  },
-                });
-              }
-            }}
-            style={{ padding: "4px 6px", borderRadius: 4, border: "1px solid rgba(255,255,255,0.2)" }}
-          />
-          <span style={{ fontSize: "0.8rem", color: "#cbd5f5" }}>
-            {suggestedPrice != null
-              ? t("excel.suggestedFromFetch", {
-                price: formatNumberValue(suggestedPrice, 0),
-                provider: providerLabel,
-              })
-              : t("excel.notFetched")}
-          </span>
-        </label>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <span style={{ color: "white", fontWeight: 600 }}>{t("excel.unitCostTitle")}</span>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-              gap: 8,
-            }}
-          >
-            {activeUnitCostFields.map((field) => (
-              <label
-                key={field.key}
-                style={{ display: "flex", flexDirection: "column", gap: 4, color: "white" }}
+      <div className="excel-controls-row">
+        <div className="excel-controls-row__left">
+          <div className="excel-controls-row__grid">
+            <Field label={t("excel.providerLabel").replace(/:$/, "")}>
+              <Select
+                value={provider}
+                onChange={(event) => {
+                  const nextProvider = event.target.value as any;
+                  setProvider(nextProvider);
+                  void trackEvent("ui_change_provider", { meta: { provider: nextProvider } });
+                }}
+                fullWidth
               >
-                <span style={{ fontSize: "0.85rem", color: "#cbd5f5" }}>{field.label}</span>
-                <input
-                  type="number"
-                  step="1"
-                  min="0"
-                  value={unitCostInputs[field.key] ?? ""}
-                  onChange={(event) => updateUnitCost(field.key, event.target.value)}
-                  style={{ padding: "4px 6px", borderRadius: 4, border: "1px solid rgba(255,255,255,0.2)" }}
-                />
-              </label>
-            ))}
-          </div>
-        </div>
-      </div>
+                {PROVIDERS.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {t(item.labelKey)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
 
-      <div className="excel-form__section">
-        <div className="excel-form__section-title">Program components</div>
-        <div className="excel-form__component-toggles">
-          <label className="excel-form__checkbox">
-            <input
-              type="checkbox"
+            <Field label={t("excel.overrideLandUse").replace(/:$/, "")}>
+              <Select
+                value={overrideLandUse ?? ""}
+                onChange={(event) => {
+                  const value = (event.target.value || "").trim().toLowerCase();
+                  if (!value) {
+                    setOverrideLandUse(null);
+                    return;
+                  }
+                  if (value === "s" || value === "m") {
+                    setOverrideLandUse(value as LandUseCode);
+                  }
+                }}
+                title={t("excel.overrideLandUseHint")}
+                fullWidth
+              >
+                <option value="">{t("excel.autoUseParcel")}</option>
+                <option value="s">{t("excel.landUseOption", { code: "s", label: t("app.landUse.residential") })}</option>
+                <option value="m">{t("excel.landUseOption", { code: "m", label: t("app.landUse.mixed") })}</option>
+              </Select>
+            </Field>
+
+            {showLandPriceOverride ? (
+              <Field
+                label={t("excel.overrideLandPrice")}
+                hint={
+                  suggestedPrice != null
+                    ? t("excel.suggestedFromFetch", {
+                      price: formatNumberValue(suggestedPrice, 0),
+                      provider: providerLabel,
+                    })
+                    : t("excel.notFetched")
+                }
+              >
+                <Input
+                  type="number"
+                  fullWidth
+                  value={inputs.land_price_sar_m2 ?? ""}
+                  onChange={(event) => {
+                    const prevValue = inputsRef.current?.land_price_sar_m2 ?? null;
+                    const nextValue = event.target.value === "" ? 0 : Number(event.target.value);
+                    applyInputPatch({ land_price_sar_m2: nextValue });
+                    if (prevValue !== nextValue) {
+                      void trackEvent("ui_override_land_price", {
+                        meta: {
+                          from: prevValue,
+                          to: nextValue,
+                        },
+                      });
+                    }
+                  }}
+                />
+              </Field>
+            ) : (
+              <div style={{ display: "flex", alignItems: "end" }}>
+                <button
+                  type="button"
+                  className="excel-controls-row__inline-link"
+                  onClick={() => setShowLandPriceOverride(true)}
+                >
+                  {t("excel.overrideLandPrice")}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="excel-controls-row__actions">
+            <Button onClick={fetchPrice} variant="secondary">{t("excel.fetchPrice")}</Button>
+            <Checkbox
+              label={t("excel.componentResidential")}
               checked={componentsDraft.residential}
               onChange={() => toggleComponent("residential")}
             />
-            <span>Residential</span>
-          </label>
-          <label className="excel-form__checkbox">
-            <input
-              type="checkbox"
+            <Checkbox
+              label={t("excel.componentRetail")}
               checked={componentsDraft.retail}
               onChange={() => toggleComponent("retail")}
             />
-            <span>Retail</span>
-          </label>
-          <label className="excel-form__checkbox">
-            <input
-              type="checkbox"
+            <Checkbox
+              label={t("excel.componentOffice")}
               checked={componentsDraft.office}
               onChange={() => toggleComponent("office")}
             />
-            <span>Office</span>
-          </label>
-          <button
-            type="button"
-            onClick={applyComponents}
-            disabled={!componentsDirty}
-            style={{
-              background: componentsDirty ? "rgba(59,130,246,0.9)" : "rgba(148,163,184,0.2)",
-              color: "white",
-              border: "none",
-              borderRadius: 6,
-              padding: "4px 10px",
-              cursor: componentsDirty ? "pointer" : "not-allowed",
-              fontSize: "0.85rem",
-            }}
-          >
-            {t("common.apply")}
-          </button>
+            <Button type="button" onClick={applyComponents} disabled={!componentsDirty} variant="secondary">{t("common.apply")}</Button>
+            <Button onClick={handleEstimateClick}>{t("excel.calculateEstimate")}</Button>
+            <span className="excel-controls-row__status">
+              {t("excel.activeTemplate")} <strong>{effectiveLandUse}</strong>
+            </span>
+            {price != null && (
+              <span className="excel-controls-row__status">
+                {t("excel.suggestedPrice", {
+                  price: formatNumberValue(price, 0),
+                  provider: providerLabel,
+                })}
+              </span>
+            )}
+            {fetchError && <span style={{ color: "#b91c1c" }}>{t("common.errorPrefix")} {fetchError}</span>}
+          </div>
         </div>
+
+        <aside className="ot-card unit-cost-panel">
+          <h3 className="unit-cost-panel__title">{t("excel.unitCostTitle")}</h3>
+          <div className="unit-cost-panel__list">
+            {activeUnitCostFields.map((field) => (
+              <div key={field.key} className="unit-cost-panel__item">
+                <span>{field.label}</span>
+                <span className="unit-cost-panel__value">{formatNumberValue(unitCostInputs[field.key] ?? 0, 0)}</span>
+              </div>
+            ))}
+          </div>
+        </aside>
       </div>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12, alignItems: "center" }}>
-        <button onClick={handleEstimateClick}>{t("excel.calculateEstimate")}</button>
-        <button
+        <Button
           type="button"
           onClick={() => setIsScenarioOpen(true)}
           disabled={!estimateId || isScenarioSubmitting}
+          variant="secondary"
         >
           Scenario
-        </button>
+        </Button>
         {isScenarioActive && (
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span
@@ -1789,7 +1779,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             >
               Scenario active
             </span>
-            <button
+            <Button
               type="button"
               onClick={() => {
                 if (scenarioBaseResult) {
@@ -1798,41 +1788,28 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   setIsScenarioActive(false);
                 }
               }}
-              style={{
-                background: "transparent",
-                border: "none",
-                color: "#cbd5f5",
-                textDecoration: "underline",
-                cursor: "pointer",
-                padding: 0,
-                fontSize: "0.8rem",
-              }}
+              variant="secondary"
             >
               Reset scenario
-            </button>
+            </Button>
           </div>
         )}
         {estimateId && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <button type="button" onClick={handleExportPdf}>
+          <div className="excel-estimate-actions">
+            <Button type="button" onClick={handleExportPdf} variant="secondary">
               Export PDF
-            </button>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: "#cbd5f5" }}>
+            </Button>
+            <div className="excel-estimate-actions__meta">
               <span>Estimate ID: {estimateId}</span>
-              <button
+              <Button
                 type="button"
                 onClick={copyEstimateId}
                 aria-label="Copy estimate ID"
-                style={{
-                  border: "none",
-                  background: "transparent",
-                  color: "#cbd5f5",
-                  cursor: "pointer",
-                  padding: 0,
-                }}
+                variant="secondary"
+                className="excel-estimate-actions__copy"
               >
                 📋
-              </button>
+              </Button>
             </div>
           </div>
         )}
