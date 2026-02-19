@@ -1,0 +1,57 @@
+html,
+body {
+  font-family: var(--font-sans);
+  background: var(--background-bg-surface);
+  color: #0f172a;
+  line-height: 1.4;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.ot-card {
+  background: var(--background-bg-surface);
+  border: 1px solid var(--background-outlines);
+  border-radius: var(--radius-md);
+}
+
+.ot-input {
+  background: var(--background-bg-surface);
+  border: 1px solid var(--background-outlines);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.ot-btn-primary {
+  background: var(--button-primary-button);
+  color: #fff;
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ot-btn-primary:hover {
+  background: var(--button-primary-button-hover);
+}
+
+.ot-btn-secondary {
+  background: var(--button-secondary-button);
+  color: #14312c;
+  border: 1px solid var(--background-outlines);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ot-btn-secondary:hover {
+  background: var(--button-secondary-button-hover);
+}
