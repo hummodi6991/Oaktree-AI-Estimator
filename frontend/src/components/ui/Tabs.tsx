@@ -13,7 +13,7 @@ type TabsProps = {
 
 export default function Tabs({ items, value, onChange }: TabsProps) {
   return (
-    <div className="ot-tabs" role="tablist" aria-orientation="horizontal">
+    <div className="ot-tabs oak-tabs" role="tablist" aria-orientation="horizontal">
       {items.map((item) => {
         const isActive = item.id === value;
         return (
@@ -22,7 +22,7 @@ export default function Tabs({ items, value, onChange }: TabsProps) {
             type="button"
             role="tab"
             aria-selected={isActive}
-            className={`ot-tabs__tab${isActive ? " is-active" : ""}`}
+            className={`ot-tabs__tab oak-tab${isActive ? " is-active" : ""}`}
             onClick={() => onChange(item.id)}
           >
             {item.label}

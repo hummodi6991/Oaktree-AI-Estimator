@@ -10,9 +10,11 @@
 
 .calc-grid {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
-  gap: var(--space-16);
+  grid-template-columns: 1fr 360px;
+  gap: 32px;
   align-items: start;
+  padding-top: 14px;
+  padding-bottom: 28px;
 }
 
 .ot-tabs {

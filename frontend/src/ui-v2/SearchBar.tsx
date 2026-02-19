@@ -68,6 +68,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
   return (
     <div className="ui-v2-search" onBlur={() => window.setTimeout(() => setOpen(false), 120)}>
       <input
+        className="oak-search"
         type="search"
         value={query}
         onFocus={() => setOpen(items.length > 0 || Boolean(error))}

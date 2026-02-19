@@ -800,6 +800,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       }
       setPrice(ppm2);
       setSuggestedPrice(ppm2);
+      setShowLandPriceOverride(true);
       applyInputPatch({ land_price_sar_m2: ppm2 });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1539,10 +1540,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       : unitCostFields.filter((field) => field.key === "residential" || field.key === "basement");
   return (
     <div>
-      <section className={mode === "v2" ? "excel-v2-controls" : undefined}>
-        <div className="excel-controls-row">
+      <section className={mode === "v2" ? "excel-v2-controls oak-container" : undefined}>
+        <div className={`excel-controls-row ${mode === "v2" ? "oak-controls-grid" : ""}`}>
         <div className="excel-controls-row__left">
-          <div className="excel-controls-row__grid">
+          <div className={`excel-controls-row__grid ${mode === "v2" ? "oak-form-grid" : ""}`}>
             <Field label={t("excel.providerLabel").replace(/:$/, "")}>
               <Select
                 value={provider}
@@ -1614,20 +1615,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                   }}
                 />
               </Field>
-            ) : (
-              <div style={{ display: "flex", alignItems: "end" }}>
-                <button
-                  type="button"
-                  className="excel-controls-row__inline-link"
-                  onClick={() => setShowLandPriceOverride(true)}
-                >
-                  {t("excel.overrideLandPrice")}
-                </button>
-              </div>
-            )}
+            ) : null}
           </div>
 
-          <div className="excel-controls-row__actions">
+          <div className={`excel-controls-row__actions ${mode === "v2" ? "oak-choice-row" : ""}`}>
             <Button onClick={fetchPrice} variant="secondary">{t("excel.fetchPrice")}</Button>
             <Checkbox
               label={t("excel.componentResidential")}
@@ -1742,9 +1733,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
       {showCalculations && excelResult && (
         <section className="calc-section">
-          <h3 className="calc-header">{t("excel.calculationsTitle")}</h3>
+          <h3 className="calc-header oak-section-bar">{t("excel.calculationsTitle")}</h3>
           <Tabs
             items={[
+              { id: "summary", label: isArabic ? "الملخص" : "Summary" },
               { id: "financial", label: t("excel.financialBreakdown") },
               { id: "revenue", label: t("excel.revenueBreakdown") },
               { id: "parking", label: t("parking.title") },
@@ -1755,6 +1747,25 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
           <div className="calc-grid">
             <Card>
+              {activeCalcTab === "summary" && (
+                <div className="oak-card">
+                  <h4 className="oak-card-title">{t("excel.financialSummaryTitle")}</h4>
+                  <div className="oak-stats">
+                    <div className="oak-stat">
+                      <div className="oak-stat-value">{formatCurrencySAR(excelResult.costs.land_cost)}</div>
+                      <div className="oak-stat-label">{t("excel.landCost")}</div>
+                    </div>
+                    <div className="oak-stat">
+                      <div className="oak-stat-value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</div>
+                      <div className="oak-stat-label">{t("excel.totalCapex")}</div>
+                    </div>
+                    <div className="oak-stat">
+                      <div className="oak-stat-value">{formatPercentValue(excelResult.roi)}</div>
+                      <div className="oak-stat-label">{t("excel.unleveredRoi")}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
               {activeCalcTab === "financial" && (
             <div>
               <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.costBreakdown")}</h4>
@@ -2269,15 +2280,17 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
               {activeCalcTab === "parking" && <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />}
             </Card>
-            <Card title={t("excel.financialSummaryTitle")}>
-              <div className="calc-summary-list">
-                <div className="calc-summary-row"><span>{t("excel.landCost")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.land_cost)}</span></div>
-                <div className="calc-summary-row"><span>{t("excel.totalCapex")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span></div>
-                <div className="calc-summary-row"><span>{t("excel.year1Income")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.y1_income)}</span></div>
-                <div className="calc-summary-row"><span>{t("excel.noiYear1")}</span><span className="calc-summary-value">{formatCurrencySAR(y1NoiResolved)}</span></div>
-                <div className="calc-summary-row"><span>{t("excel.unleveredRoi")}</span><span className="calc-summary-value">{formatPercentValue(excelResult.roi)}</span></div>
-              </div>
-            </Card>
+            <div className="oak-right-panel">
+              <Card title={t("excel.financialSummaryTitle")}>
+                <div className="calc-summary-list">
+                  <div className="calc-summary-row"><span>{t("excel.landCost")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.land_cost)}</span></div>
+                  <div className="calc-summary-row"><span>{t("excel.totalCapex")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span></div>
+                  <div className="calc-summary-row"><span>{t("excel.year1Income")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.y1_income)}</span></div>
+                  <div className="calc-summary-row"><span>{t("excel.noiYear1")}</span><span className="calc-summary-value">{formatCurrencySAR(y1NoiResolved)}</span></div>
+                  <div className="calc-summary-row"><span>{t("excel.unleveredRoi")}</span><span className="calc-summary-value">{formatPercentValue(excelResult.roi)}</span></div>
+                </div>
+              </Card>
+            </div>
           </div>
           {summaryText && (
             <div className="calc-summary-divider">

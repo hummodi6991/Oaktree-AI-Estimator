@@ -11,6 +11,7 @@ import "./App.css";
 import "./index.css";
 import "./styles/figma-tokens.css";
 import "./styles/global.css";
+import "./styles/design-system.css";
 import type { ParcelSummary } from "./api";
 import { getAdminUsageSummary } from "./api";
 import LanguageSwitcher from "./components/LanguageSwitcher";
@@ -23,6 +24,16 @@ import ParcelInfoBar from "./ui-v2/ParcelInfoBar";
 import AnalysisLayout from "./ui-v2/AnalysisLayout";
 import type { SearchItem } from "./types/search";
 import "./styles/ui-v2.css";
+import i18n from "i18next";
+
+function applyLocaleAttrs() {
+  const lng = i18n.language || "en";
+  document.documentElement.lang = lng;
+  document.documentElement.dir = lng === "ar" ? "rtl" : "ltr";
+}
+
+applyLocaleAttrs();
+i18n.on("languageChanged", applyLocaleAttrs);
 
 function App() {
   const [parcel, setParcel] = useState<ParcelSummary | null>(null);
