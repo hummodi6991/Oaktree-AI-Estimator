@@ -50,7 +50,15 @@ function App() {
 
   const uiV2 = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
-    return import.meta.env.VITE_UI_V2 === "1" || params.get("ui") === "v2";
+    const uiParam = (params.get("ui") || "").toLowerCase();
+
+    if (uiParam === "legacy") return false;
+    if (uiParam === "v2") return true;
+
+    if (import.meta.env.VITE_UI_V2 === "0") return false;
+    if (import.meta.env.VITE_UI_V2 === "1") return true;
+
+    return true;
   }, []);
 
   const extractStatus = (error: unknown): number | null => {
