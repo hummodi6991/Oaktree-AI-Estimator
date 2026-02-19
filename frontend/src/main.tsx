@@ -9,10 +9,13 @@ import AdminAnalyticsModal from "./components/AdminAnalyticsModal";
 import "./i18n";
 import "./App.css";
 import "./index.css";
+import "./styles/figma-tokens.css";
+import "./styles/global.css";
 import type { ParcelSummary } from "./api";
 import { getAdminUsageSummary } from "./api";
 import LanguageSwitcher from "./components/LanguageSwitcher";
 import { formatAreaM2 } from "./i18n/format";
+import DesignTokenPreview from "./dev/DesignTokenPreview";
 
 function App() {
   const [parcel, setParcel] = useState<ParcelSummary | null>(null);
@@ -189,6 +192,7 @@ function App() {
       </div>
       <AccessCodeModal isOpen={!hasApiKey} onSubmit={handleAccessCodeSubmit} />
       <AdminAnalyticsModal isOpen={isAdminModalOpen} onClose={() => setIsAdminModalOpen(false)} />
+      {import.meta.env.DEV ? <DesignTokenPreview /> : null}
     </>
   );
 }
