@@ -6,6 +6,12 @@
   --background-outlines: #d7d7d7;
   --background-bg-surface: #ffffff;
 
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+
+  --input-focus-ring: var(--background-primary-elevated);
+
   --button-primary-button: var(--background-primary);
   --button-primary-button-hover: var(--background-primary-elevated);
   --button-secondary-button: var(--background-secondary);
