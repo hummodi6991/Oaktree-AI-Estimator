@@ -1,0 +1,478 @@
+/* Oaktree Estimator – Design System (from Figma Export.zip) */
+
+:root {
+  /* === Semantic tokens (from Figma Variables screenshots) === */
+  --oak-primary: #14312c;            /* primary */
+  --oak-primary-elevated: #3a524e;   /* primary-elevated */
+  --oak-secondary: #fffbea;          /* secondary */
+  --oak-secondary-elevated: #efecdc; /* secondary-elevated */
+  --oak-outlines: #d7d7d7;           /* outlines */
+  --oak-bg-surface: #ffffff;         /* bg-surface */
+
+  /* === Text (from Colors.png) === */
+  --oak-text-dark: #171717;
+  --oak-text-gray: #4c4c4c;
+  --oak-text-light: #828282;
+
+  /* === Status (from Colors.png) === */
+  --oak-success: #16a34a;
+  --oak-warning: #f59e0b;
+  --oak-error: #d4183d;
+  --oak-info: #3b82f6;
+
+  /* === Typography (from Typography.png) === */
+  --oak-font: "Heebo", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+
+  --oak-fs-xs: 12px;
+  --oak-fs-sm: 14px;
+  --oak-fs-base: 16px;
+  --oak-fs-lg: 18px;
+  --oak-fs-xl: 20px;
+  --oak-fs-2xl: 22px;
+  --oak-fs-3xl: 24px;
+
+  --oak-fw-regular: 400;
+  --oak-fw-medium: 500;
+  --oak-fw-semibold: 600;
+  --oak-fw-bold: 700;
+
+  /* === Spacing & Corners (from Spacing.png) === */
+  --oak-gap: 16px;
+  --oak-radius: 8px;
+
+  /* === Shadows (match Card layout feel) === */
+  --oak-shadow-card: 0 1px 2px rgba(0,0,0,0.05), 0 1px 8px rgba(0,0,0,0.04);
+  --oak-shadow-elevated: 0 2px 10px rgba(0,0,0,0.10);
+
+  /* Container padding like the desktop comps */
+  --oak-page-pad-x: 32px;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--oak-font);
+  font-size: var(--oak-fs-base);
+  color: var(--oak-text-dark);
+  background: var(--oak-bg-surface);
+}
+button, input, select, textarea { font-family: var(--oak-font); }
+
+/* Responsive page padding (matches iPad comp spacing) */
+.oak-container {
+  width: 100%;
+  padding-left: var(--oak-page-pad-x);
+  padding-right: var(--oak-page-pad-x);
+}
+@media (max-width: 1024px) {
+  :root { --oak-page-pad-x: 16px; }
+}
+
+/* =========================================
+   Buttons (from Buttons.png)
+========================================= */
+.oak-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--oak-radius);
+  border: 1px solid transparent;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  font-weight: var(--oak-fw-medium);
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+.oak-btn:active { transform: translateY(1px); }
+
+.oak-btn--sm { height: 32px; padding: 0 12px; font-size: var(--oak-fs-sm); }
+.oak-btn--md { height: 40px; padding: 0 14px; font-size: var(--oak-fs-sm); }
+.oak-btn--lg { height: 44px; padding: 0 16px; font-size: var(--oak-fs-base); }
+
+.oak-btn--primary {
+  background: var(--oak-primary);
+  color: #fff;
+}
+.oak-btn--primary:hover { background: var(--oak-primary-elevated); }
+
+.oak-btn--secondary {
+  background: var(--oak-secondary);
+  color: var(--oak-text-dark);
+  border-color: transparent;
+}
+.oak-btn--secondary:hover { background: var(--oak-secondary-elevated); }
+
+.oak-btn--tertiary {
+  background: #fff;
+  color: var(--oak-text-dark);
+  border-color: var(--oak-outlines);
+}
+.oak-btn--tertiary:hover { background: #fafafa; }
+
+.oak-btn--ghost {
+  background: transparent;
+  color: var(--oak-text-dark);
+  border-color: transparent;
+}
+.oak-btn--ghost:hover { text-decoration: underline; }
+
+.oak-btn:disabled,
+.oak-btn[aria-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Icon-only button (matches small square icon next to Hide/Show Map) */
+.oak-icon-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+}
+.oak-icon-btn svg { width: 18px; height: 18px; }
+
+/* =========================================
+   Inputs (from Inputs.png)
+========================================= */
+.oak-field { display: grid; gap: 6px; }
+.oak-label {
+  font-size: var(--oak-fs-xs);
+  color: var(--oak-text-gray);
+  font-weight: var(--oak-fw-medium);
+}
+
+.oak-input, .oak-select {
+  height: 40px;
+  border-radius: var(--oak-radius);
+  border: 1px solid var(--oak-outlines);
+  background: #fff;
+  padding: 0 12px;
+  font-size: var(--oak-fs-sm);
+  color: var(--oak-text-dark);
+  outline: none;
+}
+.oak-input::placeholder { color: var(--oak-text-light); }
+
+.oak-input:focus, .oak-select:focus {
+  border-color: var(--oak-primary);
+  box-shadow: 0 0 0 3px rgba(20,49,44,0.12);
+}
+
+.oak-input:disabled, .oak-select:disabled {
+  background: #f6f6f6;
+  color: var(--oak-text-light);
+}
+
+.oak-help { font-size: var(--oak-fs-xs); color: var(--oak-text-light); }
+.oak-error { font-size: var(--oak-fs-xs); color: var(--oak-error); }
+.oak-input--error, .oak-select--error { border-color: var(--oak-error); }
+
+/* Use native accent-color for checkbox/radio styling (simple + matches green checks) */
+.oak-choice-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.oak-choice { display: inline-flex; align-items: center; gap: 8px; font-size: var(--oak-fs-sm); }
+.oak-choice input { accent-color: var(--oak-primary); }
+
+/* Percent input group used in Revenue → Income Summary */
+.oak-input-group {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--oak-outlines);
+  border-radius: var(--oak-radius);
+  overflow: hidden;
+  height: 36px;
+  background: #fff;
+}
+.oak-input-group input {
+  border: 0;
+  outline: none;
+  width: 64px;
+  padding: 0 10px;
+  font-size: var(--oak-fs-sm);
+}
+.oak-input-group span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  background: #dcdcdc;
+  color: var(--oak-text-dark);
+  font-size: var(--oak-fs-sm);
+}
+
+/* =========================================
+   Cards (from Card layout.png)
+========================================= */
+.oak-card {
+  background: #fff;
+  border-radius: var(--oak-radius);
+  border: 1px solid rgba(0,0,0,0.06);
+  box-shadow: var(--oak-shadow-card);
+  padding: 16px;
+}
+.oak-card--bordered { box-shadow: none; border: 1px solid var(--oak-outlines); }
+.oak-card--elevated { box-shadow: var(--oak-shadow-elevated); border: 1px solid rgba(0,0,0,0.06); }
+
+.oak-card-title {
+  margin: 0 0 10px 0;
+  font-size: var(--oak-fs-lg);
+  font-weight: var(--oak-fw-semibold);
+  color: var(--oak-primary-elevated);
+}
+
+/* Stat blocks inside summary cards */
+.oak-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+}
+.oak-stat {
+  padding: 8px 0;
+}
+.oak-stat + .oak-stat {
+  border-left: 1px solid var(--oak-outlines);
+  padding-left: 16px;
+}
+[dir="rtl"] .oak-stat + .oak-stat {
+  border-left: 0;
+  border-right: 1px solid var(--oak-outlines);
+  padding-left: 0;
+  padding-right: 16px;
+}
+.oak-stat-value {
+  font-size: var(--oak-fs-xl);
+  font-weight: var(--oak-fw-semibold);
+  color: var(--oak-primary-elevated);
+}
+.oak-stat-label { font-size: var(--oak-fs-sm); color: var(--oak-text-gray); }
+
+/* =========================================
+   Tabs (from Desktop -5)
+========================================= */
+.oak-tabs {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--oak-outlines);
+}
+.oak-tab {
+  position: relative;
+  padding: 10px 14px;
+  font-size: var(--oak-fs-sm);
+  color: var(--oak-text-gray);
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+}
+.oak-tab[aria-selected="true"] {
+  background: var(--oak-secondary);
+  color: var(--oak-text-dark);
+  font-weight: var(--oak-fw-medium);
+}
+.oak-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 2px;
+  background: var(--oak-primary);
+}
+
+/* =========================================
+   Accordion (from Accordion*.png)
+========================================= */
+.oak-accordion {
+  border-top: 1px solid var(--oak-outlines);
+}
+.oak-acc-section {
+  border-bottom: 1px solid var(--oak-outlines);
+}
+.oak-acc-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0;
+  cursor: pointer;
+  font-weight: var(--oak-fw-medium);
+  color: var(--oak-text-dark);
+}
+.oak-acc-summary:hover { text-decoration: underline; }
+.oak-acc-body { padding: 6px 0 0 0; }
+
+.oak-row {
+  display: grid;
+  grid-template-columns: 1fr auto 28px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--oak-outlines);
+  font-size: var(--oak-fs-sm);
+}
+.oak-row:first-child { border-top: 0; }
+.oak-row-label { color: var(--oak-text-dark); }
+.oak-row-value { color: var(--oak-text-dark); }
+.oak-row-icon { display: flex; justify-content: flex-end; color: var(--oak-text-gray); }
+
+.oak-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--oak-secondary-elevated);
+  color: var(--oak-text-dark);
+  font-size: var(--oak-fs-xs);
+  margin-left: 10px;
+}
+[dir="rtl"] .oak-badge { margin-left: 0; margin-right: 10px; }
+
+/* =========================================
+   Layout (from Desktop + iPad comps)
+========================================= */
+.oak-topbar {
+  background: var(--oak-primary);
+  color: #fff;
+}
+.oak-topbar-inner {
+  display: grid;
+  grid-template-columns: 1fr minmax(240px, 560px) 1fr;
+  align-items: center;
+  gap: 16px;
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+@media (max-width: 1024px) {
+  .oak-topbar-inner {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+.oak-brand-title {
+  font-size: var(--oak-fs-xl);
+  font-weight: var(--oak-fw-semibold);
+  line-height: 1.1;
+}
+.oak-brand-subtitle {
+  margin-top: 4px;
+  font-size: var(--oak-fs-sm);
+  opacity: 0.9;
+}
+
+.oak-search {
+  width: 100%;
+  height: 40px;
+  border-radius: var(--oak-radius);
+  border: 0;
+  outline: none;
+  padding: 0 14px;
+  background: var(--oak-primary-elevated);
+  color: #fff;
+  font-size: var(--oak-fs-sm);
+}
+.oak-search::placeholder { color: rgba(255,255,255,0.75); }
+
+.oak-top-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+@media (max-width: 1024px) {
+  .oak-top-actions { justify-content: flex-start; }
+}
+
+.oak-infobar {
+  background: var(--oak-secondary);
+}
+.oak-infobar-inner {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding-top: 12px;
+  padding-bottom: 12px;
+  font-size: var(--oak-fs-sm);
+  color: var(--oak-text-dark);
+}
+.oak-infobar-actions {
+  position: absolute;
+  right: var(--oak-page-pad-x);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+[dir="rtl"] .oak-infobar-actions {
+  right: auto;
+  left: var(--oak-page-pad-x);
+}
+
+.oak-controls-grid {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 32px;
+  padding-top: 18px;
+  padding-bottom: 18px;
+}
+@media (max-width: 1024px) {
+  .oak-controls-grid { grid-template-columns: 1fr; }
+}
+
+.oak-form-grid {
+  display: grid;
+  grid-template-columns: 280px 280px 280px auto;
+  gap: 16px;
+  align-items: end;
+}
+@media (max-width: 1200px) {
+  .oak-form-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 720px) {
+  .oak-form-grid { grid-template-columns: 1fr; }
+}
+
+.oak-section-bar {
+  margin-top: 18px;
+  background: var(--oak-primary);
+  color: #fff;
+  border-radius: var(--oak-radius);
+  padding: 12px 16px;
+  font-size: var(--oak-fs-sm);
+  font-weight: var(--oak-fw-medium);
+}
+
+.oak-results-grid {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 32px;
+  padding-top: 14px;
+  padding-bottom: 28px;
+}
+@media (max-width: 1024px) {
+  .oak-results-grid { grid-template-columns: 1fr; }
+}
+
+.oak-right-panel {
+  border-left: 1px solid var(--oak-outlines);
+  padding-left: 24px;
+}
+[dir="rtl"] .oak-right-panel {
+  border-left: 0;
+  border-right: 1px solid var(--oak-outlines);
+  padding-left: 0;
+  padding-right: 24px;
+}
+@media (max-width: 1024px) {
+  .oak-right-panel {
+    border-left: 0;
+    padding-left: 0;
+    border-top: 1px solid var(--oak-outlines);
+    padding-top: 18px;
+  }
+  [dir="rtl"] .oak-right-panel {
+    border-right: 0;
+    padding-right: 0;
+  }
+}
