@@ -135,7 +135,8 @@
       "blended_v1": "Blended v1 (Suhail + Aqar)",
       "suhail": "Suhail (متوسط الحي)",
       "kaggle_hedonic_v0": "نموذج هدونيك (مدرب جزئيًا على بيانات Kaggle)"
-    }
+    },
+    "unitCostTitleV2": "تكاليف وحدة الإنشاء (ر.س/م²)"
   },
   "excelNotes": {
     "siteAreaRatio": "مساحة الموقع {{area}} م² × نسبة المساحة {{ratio}}",
@@ -179,6 +180,8 @@
     "viewGuide": "عرض دليل المواقف"
   },
   "ui": {
+    "showMap": "إظهار الخريطة",
+    "hideMap": "إخفاء الخريطة",
     "brandName": "مجموعة أوكتري",
     "heroTitle": "من الرؤية إلى الإرث",
     "heroSubtitle": "منصة استثمارية منتقاة لصياغة مشاريع تحولية في المملكة العربية السعودية.",

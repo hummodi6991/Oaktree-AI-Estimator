@@ -135,7 +135,8 @@
       "blended_v1": "Blended v1 (Suhail + Aqar)",
       "suhail": "Suhail (district median)",
       "kaggle_hedonic_v0": "Hedonic model (trained partly on Kaggle data)"
-    }
+    },
+    "unitCostTitleV2": "Construction unit costs (SAR/m²)"
   },
   "excelNotes": {
     "siteAreaRatio": "{{area}} m² × ratio {{ratio}}",
@@ -179,6 +180,8 @@
     "viewGuide": "View parking guide"
   },
   "ui": {
+    "showMap": "Show Map",
+    "hideMap": "Hide Map",
     "brandName": "Oaktree Group",
     "heroTitle": "From Vision to Legacy",
     "heroSubtitle": "A curated investment console to sculpt transformative developments across the Kingdom of Saudi Arabia.",

@@ -149,29 +149,39 @@
   border-radius: var(--radius-lg);
 }
 
-.ui-v2-map {
+.ui-v2-map-wrap {
   transition: height 250ms ease;
   overflow: hidden;
 }
 
-.ui-v2-map.ui-v2-map--hidden {
+.ui-v2-map-wrap--hidden {
   height: 0 !important;
+}
+
+.ui-v2-map-canvas {
+  border-radius: var(--radius-lg);
 }
 
 .ui-v2-content {
   margin-top: var(--space-24);
   display: flex;
   flex-direction: column;
+  gap: var(--space-24);
+}
+
+.ui-v2-analysis-layout {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-16);
 }
 
-.ui-v2-form-wrap {
-  width: min(1200px, 100%);
+.ui-v2-form-wrap,
+.ui-v2-parcelbar {
+  width: min(1240px, 100%);
   margin: 0 auto;
 }
 
 .ui-v2-parcelbar {
-  width: min(1200px, 100%);
   margin: 0 auto;
   background: var(--background-bg-surface);
   border: 1px solid var(--background-outlines);
@@ -252,4 +262,36 @@
 
 .ui-v2-empty-state__tile small {
   color: var(--text-secondary);
+}
+
+
+.excel-v2-controls {
+  background: var(--background-bg-surface);
+  border: 1px solid var(--background-outlines);
+  border-radius: var(--radius-md);
+  padding: var(--space-16);
+}
+
+.excel-v2-controls .excel-controls-row {
+  gap: var(--space-24);
+  margin-bottom: 0;
+}
+
+.excel-v2-controls .unit-cost-panel {
+  border: 1px solid var(--background-outlines);
+  box-shadow: none;
+}
+
+.excel-v2-controls .unit-cost-panel__title {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.excel-v2-controls .unit-cost-panel__item {
+  border-top: 1px solid var(--background-outlines);
+}
+
+.excel-v2-controls .unit-cost-panel__value {
+  text-align: right;
+  min-width: 84px;
 }
