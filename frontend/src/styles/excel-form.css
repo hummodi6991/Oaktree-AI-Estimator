@@ -1,0 +1,153 @@
+.excel-controls-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-24);
+  align-items: start;
+  margin-bottom: var(--space-16);
+}
+
+.excel-controls-row__left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.excel-controls-row__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: var(--space-12);
+  align-items: end;
+}
+
+.excel-controls-row__actions {
+  display: flex;
+  gap: var(--space-12);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.excel-controls-row__inline-link {
+  border: 0;
+  background: transparent;
+  color: #14312c;
+  text-decoration: underline;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.excel-controls-row__status {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.unit-cost-panel {
+  padding: var(--space-16);
+}
+
+.unit-cost-panel__title {
+  margin: 0 0 var(--space-12);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.unit-cost-panel__list {
+  display: flex;
+  flex-direction: column;
+}
+
+.unit-cost-panel__item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: var(--space-8) 0;
+  border-top: 1px solid var(--background-outlines);
+  font-size: 14px;
+}
+
+.unit-cost-panel__item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.unit-cost-panel__value {
+  font-weight: 600;
+}
+
+.ot-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ot-input--full {
+  width: 100%;
+}
+
+.ot-select {
+  appearance: none;
+  background-image: url('data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="12" height="8" viewBox="0 0 12 8" fill="none"%3E%3Cpath d="M1 1.5L6 6.5L11 1.5" stroke="%23707070" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/%3E%3C/svg%3E');
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px;
+}
+
+.ot-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.ot-field__label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ot-field__hint {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.ot-checkbox {
+  display: inline-flex;
+  gap: var(--space-8);
+  align-items: center;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.excel-estimate-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+.excel-estimate-actions__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: 12px;
+  color: #475569;
+}
+
+.excel-estimate-actions__copy {
+  min-width: auto;
+  padding: 6px 10px;
+  line-height: 1;
+}
+
+@media (max-width: 1200px) {
+  .excel-controls-row {
+    grid-template-columns: 1fr;
+  }
+
+  .excel-controls-row__grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .excel-controls-row__grid {
+    grid-template-columns: 1fr;
+  }
+}
