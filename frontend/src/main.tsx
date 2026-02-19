@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { useTranslation } from "react-i18next";
 
@@ -16,6 +16,11 @@ import { getAdminUsageSummary } from "./api";
 import LanguageSwitcher from "./components/LanguageSwitcher";
 import { formatAreaM2 } from "./i18n/format";
 import DesignTokenPreview from "./dev/DesignTokenPreview";
+import AppShell from "./ui-v2/AppShell";
+import HeaderBar from "./ui-v2/HeaderBar";
+import EmptyState from "./ui-v2/EmptyState";
+import type { SearchItem } from "./types/search";
+import "./styles/ui-v2.css";
 
 function App() {
   const [parcel, setParcel] = useState<ParcelSummary | null>(null);
@@ -27,6 +32,12 @@ function App() {
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
   const hasApiKey = Boolean(apiKey);
   const { t } = useTranslation();
+  const [searchTarget, setSearchTarget] = useState<SearchItem | null>(null);
+
+  const uiV2 = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return import.meta.env.VITE_UI_V2 === "1" || params.get("ui") === "v2";
+  }, []);
 
   const extractStatus = (error: unknown): number | null => {
     if (error instanceof Error) {
@@ -132,7 +143,7 @@ function App() {
     setParcel(null);
   }, []);
 
-  return (
+  const legacyContent = (
     <>
       <header className="app-header">
         <div className="app-header__actions">
@@ -190,6 +201,29 @@ function App() {
           </>
         ) : null}
       </div>
+    </>
+  );
+
+  return (
+    <>
+      {uiV2 ? (
+        <AppShell
+          header={<HeaderBar onSearchSelect={(item) => setSearchTarget(item)} />}
+          map={
+            <Map
+              onParcel={(selectedParcel) => {
+                setParcel(selectedParcel);
+              }}
+              showSearchBar={false}
+              focusTarget={searchTarget}
+              mapHeight="52vh"
+            />
+          }
+          content={parcel ? <ExcelForm parcel={parcel} /> : <EmptyState />}
+        />
+      ) : (
+        legacyContent
+      )}
       <AccessCodeModal isOpen={!hasApiKey} onSubmit={handleAccessCodeSubmit} />
       <AdminAnalyticsModal isOpen={isAdminModalOpen} onClose={() => setIsAdminModalOpen(false)} />
       {import.meta.env.DEV ? <DesignTokenPreview /> : null}
