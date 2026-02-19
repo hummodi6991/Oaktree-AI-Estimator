@@ -1,4 +1,5 @@
 import type { SearchItem } from "../types/search";
+import LanguageSwitcher from "../components/LanguageSwitcher";
 import SearchBar from "./SearchBar";
 
 type HeaderBarProps = {
@@ -16,9 +17,9 @@ export default function HeaderBar({ onSearchSelect }: HeaderBarProps) {
         <SearchBar onSelect={onSearchSelect} />
       </div>
       <div className="ui-v2-header__actions">
-        <button type="button" className="ui-v2-header__language">
-          EN
-        </button>
+        <div className="ui-v2-header__language">
+          <LanguageSwitcher />
+        </div>
         <button type="button" className="ui-v2-header__user">
           <span className="ui-v2-header__avatar" aria-hidden="true">
             OT
