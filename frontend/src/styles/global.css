@@ -2,7 +2,7 @@ html,
 body {
   font-family: var(--font-sans);
   background: var(--background-bg-surface);
-  color: #0f172a;
+  color: var(--text-primary);
   line-height: 1.4;
   margin: 0;
   padding: 0;
@@ -26,7 +26,18 @@ body {
   border-radius: var(--radius-md);
   padding: 10px 12px;
   font: inherit;
+  color: var(--text-primary);
 }
+
+.ot-input:focus {
+  outline: 2px solid var(--input-focus-ring);
+  outline-offset: 1px;
+}
+
+.ot-input--md {
+  min-height: 40px;
+}
+
 
 .ot-btn-primary {
   background: var(--button-primary-button);
@@ -44,7 +55,7 @@ body {
 
 .ot-btn-secondary {
   background: var(--button-secondary-button);
-  color: #14312c;
+  color: var(--background-primary);
   border: 1px solid var(--background-outlines);
   border-radius: var(--radius-md);
   padding: 10px 14px;
@@ -54,4 +65,69 @@ body {
 
 .ot-btn-secondary:hover {
   background: var(--button-secondary-button-hover);
+}
+
+.ot-btn {
+  font: inherit;
+  cursor: pointer;
+}
+
+.ot-btn--md {
+  min-height: 40px;
+}
+
+.ot-btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  text-decoration: underline;
+}
+
+.ot-btn-ghost:hover {
+  color: var(--text-primary);
+}
+
+.ot-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+.ot-input--sm {
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 14px;
+}
+
+.ot-btn--sm {
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+.ot-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.ot-toggle-chip {
+  border: 1px solid var(--background-outlines);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ot-toggle-chip.is-active {
+  background: var(--background-secondary-elevated);
+  color: var(--text-primary);
 }

@@ -27,8 +27,10 @@ import Checkbox from "./ui/Checkbox";
 import Field from "./ui/Field";
 import Input from "./ui/Input";
 import Select from "./ui/Select";
+import Radio from "./ui/Radio";
 import Table from "./ui/Table";
 import Tabs from "./ui/Tabs";
+import ToggleChip from "./ui/ToggleChip";
 
 const PROVIDERS = [
   {
@@ -1345,16 +1347,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       land: formatNumberValue(landCostValue, 0),
       pct: formatPercentValue(transactionPct),
     });
-  const inclusionToggleStyle = (included: boolean) => ({
-    border: "1px solid rgba(255,255,255,0.2)",
-    background: included ? "rgba(16,185,129,0.15)" : "rgba(248,113,113,0.1)",
-    color: "white",
-    padding: "4px 8px",
-    borderRadius: 999,
-    cursor: "pointer",
-    fontSize: "0.8rem",
-  });
-
   const directNote =
     explanationsDisplay.construction_direct ||
     Object.keys(directCost)
@@ -1447,70 +1439,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     }
     return t("excelNotes.revenueNoteDash");
   };
-
-  const farEditInputStyle = {
-    width: "160px",
-    padding: "6px 10px",
-    borderRadius: 6,
-    border: "1px solid rgba(255,255,255,0.3)",
-    background: "rgba(0,0,0,0.25)",
-    color: "white",
-    fontSize: "15px",
-    fontWeight: 500,
-    textAlign: "right" as const,
-  };
-  const floorsInputStyle = {
-    width: "110px",
-    padding: "4px 6px",
-    borderRadius: 6,
-    border: "1px solid rgba(255,255,255,0.2)",
-    background: "rgba(0,0,0,0.15)",
-    color: "white",
-    fontSize: "14px",
-    textAlign: "right" as const,
-  };
-  const coverageInputStyle = {
-    width: "72px",
-    padding: "4px 6px",
-    borderRadius: 6,
-    border: "1px solid rgba(255,255,255,0.2)",
-    background: "rgba(0,0,0,0.15)",
-    color: "white",
-    fontSize: "14px",
-    textAlign: "right" as const,
-  };
-  const floorsApplyButtonStyle = {
-    padding: "4px 8px",
-    borderRadius: 6,
-    border: "1px solid rgba(255,255,255,0.2)",
-    background: "rgba(255,255,255,0.08)",
-    color: "white",
-    cursor: "pointer",
-  } as const;
-  const farEditButtonStyle = {
-    border: "none",
-    padding: "4px 8px",
-    minHeight: 32,
-    borderRadius: 999,
-    color: "#f8fafc",
-    textDecoration: "underline",
-    background: "rgba(148,163,184,0.2)",
-    font: "inherit",
-    cursor: "pointer",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-  } as const;
-  const farEditActionStyle = {
-    padding: "4px 10px",
-    minHeight: 32,
-    borderRadius: 6,
-    border: "1px solid rgba(255,255,255,0.2)",
-    fontSize: "0.8rem",
-    fontWeight: 600,
-    cursor: "pointer",
-  } as const;
-  const farErrorStyle = { color: "#fca5a5", fontSize: "0.75rem", marginTop: 4 } as const;
 
   const resetFarDraft = () => {
     setFarDraft(displayedFar != null ? String(displayedFar) : "");
@@ -1839,17 +1767,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   <tr>
                     <td className="col-item">Coverage</td>
                     <td className="col-num">
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "flex-end",
-                          gap: 8,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <input
+                      <div className="calc-inline-controls">
+                        <Input
                           type="number"
+                          size="sm"
                           min={0.1}
                           max={100}
                           step="0.1"
@@ -1866,27 +1787,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                               commitCoverage();
                             }
                           }}
-                          style={coverageInputStyle}
+                          className="calc-input-coverage"
                           aria-label="Coverage ratio"
                         />
-                        <span style={{ opacity: 0.75 }}>%</span>
-                        <button
-                          type="button"
-                          onClick={commitCoverage}
-                          disabled={coverageApplyDisabled}
-                          style={{
-                            ...floorsApplyButtonStyle,
-                            cursor: coverageApplyDisabled ? "not-allowed" : "pointer",
-                            opacity: coverageApplyDisabled ? 0.6 : 1,
-                          }}
-                        >
+                        <span>%</span>
+                        <Button type="button" size="sm" variant="secondary" onClick={commitCoverage} disabled={coverageApplyDisabled}>
                           {t("common.apply")}
-                        </button>
+                        </Button>
                       </div>
                     </td>
                     <td className="col-calc">
                       <div>Used with FAR to infer above-ground floors.</div>
-                      {coverageEditError && <div style={farErrorStyle}>{coverageEditError}</div>}
+                      {coverageEditError && <div className="calc-error">{coverageEditError}</div>}
                     </td>
                   </tr>
                   {farAboveGround != null && (
@@ -1894,9 +1806,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                       <td className="col-item">{t("excel.effectiveFar")}</td>
                       <td className="col-num">
                         {isEditingFar ? (
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }}>
-                            <input
+                          <div className="calc-inline-controls">
+                            <Input
                               type="number"
+                              size="sm"
                               step="0.01"
                               data-field="effective_far"
                               value={farDraft}
@@ -1911,44 +1824,21 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                                   cancelFarEdit();
                                 }
                               }}
-                              style={farEditInputStyle}
+                              className="calc-input-far"
                               autoFocus
                             />
-                            <button
-                              type="button"
-                              onClick={applyFarEdit}
-                              disabled={farApplyDisabled}
-                              style={{
-                                ...farEditActionStyle,
-                                background: "rgba(59,130,246,0.9)",
-                                color: "white",
-                                opacity: farApplyDisabled ? 0.5 : 1,
-                              }}
-                            >
+                            <Button type="button" size="sm" variant="secondary" onClick={applyFarEdit} disabled={farApplyDisabled}>
                               {t("excel.apply")}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={cancelFarEdit}
-                              style={{
-                                ...farEditActionStyle,
-                                background: "rgba(148,163,184,0.2)",
-                                color: "white",
-                              }}
-                            >
+                            </Button>
+                            <Button type="button" size="sm" variant="ghost" onClick={cancelFarEdit}>
                               {t("excel.cancel")}
-                            </button>
+                            </Button>
                           </div>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={startFarEdit}
-                            style={farEditButtonStyle}
-                            title={t("excel.farEditHint")}
-                          >
+                          <Button type="button" size="sm" variant="ghost" onClick={startFarEdit} title={t("excel.farEditHint")}>
                             <span>{formatNumberValue(displayedFar, 3)}</span>
                             <span style={{ fontSize: "0.8rem", opacity: 0.85 }}>{t("excel.farEdit")}</span>
-                          </button>
+                          </Button>
                         )}
                       </td>
                       <td className="col-calc">
@@ -1956,7 +1846,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         {!isEditingFar && (
                           <div style={{ marginTop: 6 }}>{t("excel.farEditHintInline")}</div>
                         )}
-                        {farEditError && <div style={farErrorStyle}>{farEditError}</div>}
+                        {farEditError && <div className="calc-error">{farEditError}</div>}
                       </td>
                     </tr>
                   )}
@@ -1972,17 +1862,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   <tr>
                     <td className="col-item">Floors (above-ground)</td>
                     <td className="col-num">
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "flex-end",
-                          gap: 8,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <input
+                      <div className="calc-inline-controls">
+                        <Input
                           type="number"
+                          size="sm"
                           min={0.1}
                           step="0.1"
                           value={floorsDraft}
@@ -1998,69 +1881,41 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                               commitFloors();
                             }
                           }}
-                          style={{
-                            ...floorsInputStyle,
-                          }}
+                          className="calc-input-floors"
                           aria-label="Floors above ground"
                         />
-                        <button
-                          type="button"
-                          onClick={commitFloors}
-                          disabled={floorsApplyDisabled}
-                          style={{
-                            ...floorsApplyButtonStyle,
-                            cursor: floorsApplyDisabled ? "not-allowed" : "pointer",
-                            opacity: floorsApplyDisabled ? 0.6 : 1,
-                          }}
-                        >
+                        <Button type="button" size="sm" variant="secondary" onClick={commitFloors} disabled={floorsApplyDisabled}>
                           {t("common.apply")}
-                        </button>
+                        </Button>
                       </div>
                     </td>
                     <td className="col-calc">
                       {floorsNote}
-                      {floorsEditError && <div style={farErrorStyle}>{floorsEditError}</div>}
+                      {floorsEditError && <div className="calc-error">{floorsEditError}</div>}
                     </td>
                   </tr>
                   <tr>
                     <td className="col-item">Massing locks</td>
                     <td className="col-num">
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "flex-end",
-                          gap: 12,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          <input
-                            type="radio"
-                            name="massing-lock"
-                            checked={massingLock === "floors"}
-                            onChange={() => applyInputPatch({ massing_lock: "floors" })}
-                          />
-                          Lock floors
-                        </label>
-                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          <input
-                            type="radio"
-                            name="massing-lock"
-                            checked={massingLock === "far"}
-                            onChange={() => applyInputPatch({ massing_lock: "far" })}
-                          />
-                          Lock FAR
-                        </label>
-                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                          <input
-                            type="radio"
-                            name="massing-lock"
-                            checked={massingLock === "coverage"}
-                            onChange={() => applyInputPatch({ massing_lock: "coverage" })}
-                          />
-                          Lock coverage
-                        </label>
+                      <div className="calc-inline-controls">
+                        <Radio
+                          name="massing-lock"
+                          checked={massingLock === "floors"}
+                          onChange={() => applyInputPatch({ massing_lock: "floors" })}
+                          label="Lock floors"
+                        />
+                        <Radio
+                          name="massing-lock"
+                          checked={massingLock === "far"}
+                          onChange={() => applyInputPatch({ massing_lock: "far" })}
+                          label="Lock FAR"
+                        />
+                        <Radio
+                          name="massing-lock"
+                          checked={massingLock === "coverage"}
+                          onChange={() => applyInputPatch({ massing_lock: "coverage" })}
+                          label="Lock coverage"
+                        />
                       </div>
                     </td>
                     <td className="col-calc">Choose a single driver for massing updates.</td>
@@ -2140,13 +1995,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         }}
                       >
                         <span>{t("excel.fitout")}</span>
-                        <button
-                          type="button"
+                        <ToggleChip
+                          active={includeFitout}
                           onClick={() => handleFitoutToggle(!includeFitout)}
-                          style={inclusionToggleStyle(includeFitout)}
-                        >
-                          {includeFitout ? t("excel.fitoutIncluded") : t("excel.fitoutExcluded")}
-                        </button>
+                          label={includeFitout ? t("excel.fitoutIncluded") : t("excel.fitoutExcluded")}
+                        />
                       </div>
                     </td>
                     <td className="col-num">
@@ -2167,13 +2020,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         }}
                       >
                         <span>{t("excel.contingency")}</span>
-                        <button
-                          type="button"
+                        <ToggleChip
+                          active={includeContingency}
                           onClick={() => handleContingencyToggle(!includeContingency)}
-                          style={inclusionToggleStyle(includeContingency)}
-                        >
-                          {includeContingency ? t("excel.fitoutIncluded") : t("excel.fitoutExcluded")}
-                        </button>
+                          label={includeContingency ? t("excel.fitoutIncluded") : t("excel.fitoutExcluded")}
+                        />
                       </div>
                     </td>
                     <td className="col-num">
@@ -2203,13 +2054,11 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         }}
                       >
                         <span>{t("excel.feasibilityFee")}</span>
-                        <button
-                          type="button"
+                        <ToggleChip
+                          active={includeFeasibility}
                           onClick={() => handleFeasibilityToggle(!includeFeasibility)}
-                          style={inclusionToggleStyle(includeFeasibility)}
-                        >
-                          {includeFeasibility ? t("excel.fitoutIncluded") : t("excel.fitoutExcluded")}
-                        </button>
+                          label={includeFeasibility ? t("excel.fitoutIncluded") : t("excel.fitoutExcluded")}
+                        />
                       </div>
                     </td>
                     <td className="col-num">
@@ -2308,9 +2157,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     <td className="col-item">
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span>{t("excel.year1IncomeEffective")}</span>
-                        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.9rem" }}>
-                          <input
+                        <label className="calc-inline-controls">
+                          <Input
                             type="number"
+                            size="sm"
                             min={0}
                             max={100}
                             step={1}
@@ -2322,34 +2172,20 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                                 commitEffectiveIncomePct();
                               }
                             }}
-                            style={{
-                              width: 72,
-                              padding: "4px 6px",
-                              borderRadius: 4,
-                              border: "1px solid rgba(255,255,255,0.2)",
-                              background: "rgba(0,0,0,0.15)",
-                              color: "white",
-                            }}
+                            className="calc-input-coverage"
                             aria-label={t("excel.effectiveIncomePct")}
                           />
-                          <span style={{ opacity: 0.75 }}>%</span>
+                          <span>%</span>
                         </label>
-                        <button
+                        <Button
                           type="button"
+                          size="sm"
+                          variant="secondary"
                           onClick={() => commitEffectiveIncomePct()}
                           disabled={effectiveIncomeApplyDisabled}
-                          style={{
-                            padding: "4px 8px",
-                            borderRadius: 6,
-                            border: "1px solid rgba(255,255,255,0.2)",
-                            background: "rgba(255,255,255,0.08)",
-                            color: "white",
-                            cursor: effectiveIncomeApplyDisabled ? "not-allowed" : "pointer",
-                            opacity: effectiveIncomeApplyDisabled ? 0.6 : 1,
-                          }}
                         >
                           {t("common.apply")}
-                        </button>
+                        </Button>
                       </div>
                     </td>
                     <td className="col-num">
@@ -2368,9 +2204,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         }}
                       >
                         <span>{t("excel.opex")}</span>
-                        <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          <input
+                        <div className="calc-inline-controls">
+                          <Input
                             type="number"
+                            size="sm"
                             step="0.1"
                             min={0}
                             max={100}
@@ -2382,41 +2219,25 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                                 commitOpexPct();
                               }
                             }}
-                            style={{
-                              width: 72,
-                              padding: "4px 6px",
-                              borderRadius: 6,
-                              border: "1px solid rgba(255,255,255,0.2)",
-                              background: "rgba(0,0,0,0.15)",
-                              color: "white",
-                            }}
+                            className="calc-input-coverage"
                             aria-label={t("excel.opex")}
                             disabled={!includeOpex}
                           />
-                          <span style={{ opacity: 0.75 }}>%</span>
-                          <button
+                          <span>%</span>
+                          <Button
                             type="button"
+                            size="sm"
+                            variant="secondary"
                             onClick={() => commitOpexPct()}
                             disabled={opexApplyDisabled}
-                            style={{
-                              padding: "4px 8px",
-                              borderRadius: 6,
-                              border: "1px solid rgba(255,255,255,0.2)",
-                              background: "rgba(255,255,255,0.08)",
-                              color: "white",
-                              cursor: opexApplyDisabled ? "not-allowed" : "pointer",
-                              opacity: opexApplyDisabled ? 0.6 : 1,
-                            }}
                           >
                             {t("common.apply")}
-                          </button>
-                          <button
-                            type="button"
+                          </Button>
+                          <ToggleChip
+                            active={includeOpex}
                             onClick={() => handleOpexToggle(!includeOpex)}
-                            style={inclusionToggleStyle(includeOpex)}
-                          >
-                            {includeOpex ? t("excel.included") : t("excel.excluded")}
-                          </button>
+                            label={includeOpex ? t("excel.included") : t("excel.excluded")}
+                          />
                         </div>
                       </div>
                     </td>
@@ -2456,13 +2277,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             </Card>
           </div>
           {summaryText && (
-            <div
-              style={{
-                marginTop: "0.75rem",
-                paddingTop: "0.75rem",
-                borderTop: "1px solid rgba(255,255,255,0.08)",
-              }}
-            >
+            <div className="calc-summary-divider">
               <h5 style={{ margin: "0 0 0.35rem 0", fontSize: "0.95rem" }}>
                 {t("excel.executiveSummary")}
               </h5>
