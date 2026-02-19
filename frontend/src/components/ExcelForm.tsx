@@ -3,6 +3,7 @@ import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
 
 import "../styles/excel-form.css";
+import "../styles/calculations.css";
 
 import { downloadMemoPdf, landPrice, makeEstimate, runScenario, trackEvent } from "../api";
 import {
@@ -21,10 +22,13 @@ import { formatPercentDraftFromFraction, resolveFractionFromDraftPercent } from 
 import MicroFeedbackPrompt from "./MicroFeedbackPrompt";
 import ScenarioModal from "./ScenarioModal";
 import Button from "./ui/Button";
+import Card from "./ui/Card";
 import Checkbox from "./ui/Checkbox";
 import Field from "./ui/Field";
 import Input from "./ui/Input";
 import Select from "./ui/Select";
+import Table from "./ui/Table";
+import Tabs from "./ui/Tabs";
 
 const PROVIDERS = [
   {
@@ -302,6 +306,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
   }, [inputs]);
   const [error, setError] = useState<string | null>(null);
   const [excelResult, setExcelResult] = useState<ExcelResult | null>(null);
+  const [showCalculations, setShowCalculations] = useState(false);
+  const [activeCalcTab, setActiveCalcTab] = useState("financial");
   const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
     String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
   );
@@ -802,6 +808,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     if (!parcel) return;
     setError(null);
     setExcelResult(null);
+    setShowCalculations(false);
     setEstimateId(null);
     setScenarioBaseResult(null);
     setIsScenarioActive(false);
@@ -861,6 +868,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         totals: result?.totals,
         notes: result?.notes,
       });
+      setShowCalculations(true);
       const usedAreaRatio = result?.used_inputs?.area_ratio;
       if (usedAreaRatio && Object.keys(usedAreaRatio).length > 0) {
         setOverrides((prev) => {
@@ -1440,26 +1448,6 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
     return t("excelNotes.revenueNoteDash");
   };
 
-  const noteStyle = { fontSize: "0.8rem", color: "#cbd5f5" } as const;
-  const baseCellStyle = { padding: "0.65rem 0.75rem", verticalAlign: "top" } as const;
-  const itemColumnStyle = { ...baseCellStyle, paddingLeft: 0 } as const;
-  const amountColumnStyle = {
-    ...baseCellStyle,
-    textAlign: "right",
-    paddingRight: "1.5rem",
-    direction: "ltr",
-    unicodeBidi: "plaintext",
-  } as const;
-  const calcColumnStyle = {
-    ...baseCellStyle,
-    ...noteStyle,
-    paddingLeft: "1rem",
-    lineHeight: 1.5,
-    wordBreak: "break-word",
-  } as const;
-  const itemHeaderStyle = { ...itemColumnStyle, fontWeight: 600 } as const;
-  const amountHeaderStyle = { ...baseCellStyle, textAlign: "right", paddingRight: "1.5rem", fontWeight: 600 } as const;
-  const calcHeaderStyle = { ...baseCellStyle, textAlign: "left", fontWeight: 600, paddingLeft: "1rem" } as const;
   const farEditInputStyle = {
     width: "160px",
     padding: "6px 10px",
@@ -1821,44 +1809,36 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         </div>
       )}
 
-      {excelResult && (
-        <div
-          style={{
-            marginTop: "1rem",
-            padding: "1rem",
-            borderRadius: "0.5rem",
-            background: "rgba(0,0,0,0.3)",
-            color: "white",
-            maxWidth: "100%",
-            fontSize: "0.9rem",
-          }}
-        >
-          <h3 style={{ marginTop: 0, marginBottom: "0.5rem" }}>
-            {t("excel.financialBreakdown")}
-          </h3>
+      {showCalculations && excelResult && (
+        <section className="calc-section">
+          <h3 className="calc-header">{t("excel.calculationsTitle")}</h3>
+          <Tabs
+            items={[
+              { id: "financial", label: t("excel.financialBreakdown") },
+              { id: "revenue", label: t("excel.revenueBreakdown") },
+              { id: "parking", label: t("parking.title") },
+            ]}
+            value={activeCalcTab}
+            onChange={setActiveCalcTab}
+          />
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-              gap: "1rem",
-              alignItems: "start",
-            }}
-          >
-            <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "0.75rem" }}>
+          <div className="calc-grid">
+            <Card>
+              {activeCalcTab === "financial" && (
+            <div>
               <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.costBreakdown")}</h4>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <Table>
                 <thead>
                   <tr>
-                    <th style={itemHeaderStyle}>{t("excel.item")}</th>
-                    <th style={amountHeaderStyle}>{t("excel.amount")}</th>
-                    <th style={calcHeaderStyle}>{t("excel.calculation")}</th>
+                    <th className="col-item">{t("excel.item")}</th>
+                    <th className="col-num">{t("excel.amount")}</th>
+                    <th className="col-calc">{t("excel.calculation")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr>
-                    <td style={itemColumnStyle}>Coverage</td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-item">Coverage</td>
+                    <td className="col-num">
                       <div
                         style={{
                           display: "flex",
@@ -1904,15 +1884,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         </button>
                       </div>
                     </td>
-                    <td style={calcColumnStyle}>
+                    <td className="col-calc">
                       <div>Used with FAR to infer above-ground floors.</div>
                       {coverageEditError && <div style={farErrorStyle}>{coverageEditError}</div>}
                     </td>
                   </tr>
                   {farAboveGround != null && (
                     <tr>
-                      <td style={itemColumnStyle}>{t("excel.effectiveFar")}</td>
-                      <td style={amountColumnStyle}>
+                      <td className="col-item">{t("excel.effectiveFar")}</td>
+                      <td className="col-num">
                         {isEditingFar ? (
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6 }}>
                             <input
@@ -1971,7 +1951,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                           </button>
                         )}
                       </td>
-                      <td style={calcColumnStyle}>
+                      <td className="col-calc">
                         {farNote}
                         {!isEditingFar && (
                           <div style={{ marginTop: 6 }}>{t("excel.farEditHintInline")}</div>
@@ -1981,17 +1961,17 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </tr>
                   )}
                   <tr>
-                    <td style={itemColumnStyle}>Implied floors</td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-item">Implied floors</td>
+                    <td className="col-num">
                       {impliedFloors != null && Number.isFinite(impliedFloors)
                         ? formatNumberValue(impliedFloors, 1)
                         : "—"}
                     </td>
-                    <td style={calcColumnStyle}>FAR ÷ coverage.</td>
+                    <td className="col-calc">FAR ÷ coverage.</td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>Floors (above-ground)</td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-item">Floors (above-ground)</td>
+                    <td className="col-num">
                       <div
                         style={{
                           display: "flex",
@@ -2037,14 +2017,14 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         </button>
                       </div>
                     </td>
-                    <td style={calcColumnStyle}>
+                    <td className="col-calc">
                       {floorsNote}
                       {floorsEditError && <div style={farErrorStyle}>{floorsEditError}</div>}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>Massing locks</td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-item">Massing locks</td>
+                    <td className="col-num">
                       <div
                         style={{
                           display: "flex",
@@ -2083,56 +2063,56 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         </label>
                       </div>
                     </td>
-                    <td style={calcColumnStyle}>Choose a single driver for massing updates.</td>
+                    <td className="col-calc">Choose a single driver for massing updates.</td>
                   </tr>
                   {components.residential && (
                     <tr>
-                      <td style={itemColumnStyle}>{t("excel.residentialBua")}</td>
-                      <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.residential)}</td>
-                      <td style={calcColumnStyle}>{buaNote("residential")}</td>
+                      <td className="col-item">{t("excel.residentialBua")}</td>
+                      <td className="col-num">{formatArea(displayedBuiltArea.residential)}</td>
+                      <td className="col-calc">{buaNote("residential")}</td>
                     </tr>
                   )}
                   {effectiveLandUse === "m" && builtArea.retail !== undefined && (
                     <tr>
-                      <td style={itemColumnStyle}>{t("excel.retailBua")}</td>
-                      <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.retail)}</td>
-                      <td style={calcColumnStyle}>{buaNote("retail")}</td>
+                      <td className="col-item">{t("excel.retailBua")}</td>
+                      <td className="col-num">{formatArea(displayedBuiltArea.retail)}</td>
+                      <td className="col-calc">{buaNote("retail")}</td>
                     </tr>
                   )}
                   {effectiveLandUse === "m" && builtArea.office !== undefined && (
                     <tr>
-                      <td style={itemColumnStyle}>{t("excel.officeBua")}</td>
-                      <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.office)}</td>
-                      <td style={calcColumnStyle}>{buaNote("office")}</td>
+                      <td className="col-item">{t("excel.officeBua")}</td>
+                      <td className="col-num">{formatArea(displayedBuiltArea.office)}</td>
+                      <td className="col-calc">{buaNote("office")}</td>
                     </tr>
                   )}
                   {effectiveLandUse === "m" && upperAnnexArea != null && upperAnnexArea > 0 && (
                     <tr>
-                      <td style={itemColumnStyle}>{t("excel.upperAnnexNonFarBua")}</td>
-                      <td style={amountColumnStyle}>{formatArea(upperAnnexArea)}</td>
-                      <td style={calcColumnStyle}>{explanationsDisplay.upper_annex_non_far_bua}</td>
+                      <td className="col-item">{t("excel.upperAnnexNonFarBua")}</td>
+                      <td className="col-num">{formatArea(upperAnnexArea)}</td>
+                      <td className="col-calc">{explanationsDisplay.upper_annex_non_far_bua}</td>
                     </tr>
                   )}
                   <tr>
-                    <td style={itemColumnStyle}>{t("excel.basementBua")}</td>
-                    <td style={amountColumnStyle}>{formatArea(displayedBuiltArea.basement)}</td>
-                    <td style={calcColumnStyle}>{buaNote("basement")}</td>
+                    <td className="col-item">{t("excel.basementBua")}</td>
+                    <td className="col-num">{formatArea(displayedBuiltArea.basement)}</td>
+                    <td className="col-calc">{buaNote("basement")}</td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>{t("excel.landCost")}</td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-item">{t("excel.landCost")}</td>
+                    <td className="col-num">
                       {formatCurrencySAR(excelResult.costs.land_cost)}
                     </td>
-                    <td style={calcColumnStyle}>
+                    <td className="col-calc">
                       {landNote}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>{t("excel.constructionDirect")}</td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-item">{t("excel.constructionDirect")}</td>
+                    <td className="col-num">
                       {formatCurrencySAR(excelResult.costs.construction_direct_cost)}
                     </td>
-                    <td style={calcColumnStyle}>
+                    <td className="col-calc">
                       {explanationsDisplay?.construction_direct
                         ? directNote
                         : directNote
@@ -2142,15 +2122,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   </tr>
                   {effectiveLandUse === "m" && upperAnnexArea != null && upperAnnexArea > 0 && (
                     <tr>
-                      <td style={itemColumnStyle}>{t("excel.upperAnnexNonFarCost")}</td>
-                      <td style={amountColumnStyle}>
+                      <td className="col-item">{t("excel.upperAnnexNonFarCost")}</td>
+                      <td className="col-num">
                         {formatCurrencySAR(upperAnnexCost ?? 0)}
                       </td>
-                      <td style={calcColumnStyle}>{upperAnnexCostNote}</td>
+                      <td className="col-calc">{upperAnnexCostNote}</td>
                     </tr>
                   )}
                   <tr>
-                    <td style={itemColumnStyle}>
+                    <td className="col-item">
                       <div
                         style={{
                           display: "flex",
@@ -2169,15 +2149,15 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         </button>
                       </div>
                     </td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-num">
                       {formatCurrencySAR(excelResult.costs.fitout_cost)}
                     </td>
-                    <td style={calcColumnStyle}>
+                    <td className="col-calc">
                       {fitoutNote}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>
+                    <td className="col-item">
                       <div
                         style={{
                           display: "flex",
@@ -2196,24 +2176,24 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         </button>
                       </div>
                     </td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-num">
                       {formatCurrencySAR(excelResult.costs.contingency_cost)}
                     </td>
-                    <td style={calcColumnStyle}>
+                    <td className="col-calc">
                       {contingencyNote}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>{t("excel.consultants")}</td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-item">{t("excel.consultants")}</td>
+                    <td className="col-num">
                       {formatCurrencySAR(excelResult.costs.consultants_cost)}
                     </td>
-                    <td style={calcColumnStyle}>
+                    <td className="col-calc">
                       {consultantsNote}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>
+                    <td className="col-item">
                       <div
                         style={{
                           display: "flex",
@@ -2232,10 +2212,10 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         </button>
                       </div>
                     </td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-num">
                       {formatCurrencySAR(excelResult.costs.feasibility_fee)}
                     </td>
-                    <td style={calcColumnStyle}>
+                    <td className="col-calc">
                       {feasibilityExcluded
                         ? t("excelNotes.feasibilityExcluded")
                         : t("excelNotes.feasibility", {
@@ -2245,30 +2225,32 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>{t("excel.transactionCosts")}</td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-item">{t("excel.transactionCosts")}</td>
+                    <td className="col-num">
                       {formatCurrencySAR(excelResult.costs.transaction_cost)}
                     </td>
-                    <td style={calcColumnStyle}>
+                    <td className="col-calc">
                       {transactionNote}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>
+                    <td className="col-item">
                       <strong>{t("excel.totalCapex")}</strong>
                     </td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-num">
                       <strong>{formatCurrencySAR(excelResult.costs.grand_total_capex)}</strong>
                     </td>
-                    <td style={calcColumnStyle}>
+                    <td className="col-calc">
                       {t("excel.totalCapexNote")}
                     </td>
                   </tr>
                 </tbody>
-              </table>
+              </Table>
             </div>
+              )}
 
-            <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "0.75rem" }}>
+              {activeCalcTab === "revenue" && (
+            <div>
               <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.revenueBreakdown")}</h4>
               {rentMeta?.provider === "REGA" && residentialRentMo != null && (
                 <p style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.8rem", color: "#cbd5f5" }}>
@@ -2279,18 +2261,18 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                   })}
                 </p>
               )}
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <Table>
                 <thead>
                   <tr>
-                    <th style={itemHeaderStyle}>{t("excel.item")}</th>
-                    <th style={amountHeaderStyle}>{t("excel.amount")}</th>
-                    <th style={calcHeaderStyle}>{t("excel.calculation")}</th>
+                    <th className="col-item">{t("excel.item")}</th>
+                    <th className="col-num">{t("excel.amount")}</th>
+                    <th className="col-calc">{t("excel.calculation")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {revenueItems.map((item) => (
                     <tr key={item.key}>
-                      <td style={itemColumnStyle}>
+                      <td className="col-item">
                         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                           <span>{item.key.replace(/_/g, " ")}</span>
                           {item.upperAnnexHint ? (
@@ -2309,21 +2291,21 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                           ) : null}
                         </div>
                       </td>
-                      <td style={amountColumnStyle}>{formatCurrencySAR(item.amount || 0)}</td>
-                      <td style={calcColumnStyle}>{item.note}</td>
+                      <td className="col-num">{formatCurrencySAR(item.amount || 0)}</td>
+                      <td className="col-calc">{item.note}</td>
                     </tr>
                   ))}
                   <tr>
-                    <td style={itemColumnStyle}>{t("excel.year1Income")}</td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-item">{t("excel.year1Income")}</td>
+                    <td className="col-num">
                       {formatCurrencySAR(excelResult.costs.y1_income)}
                     </td>
-                    <td style={calcColumnStyle}>
+                    <td className="col-calc">
                       {incomeNote || t("excel.year1IncomeNote")}
                     </td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>
+                    <td className="col-item">
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span>{t("excel.year1IncomeEffective")}</span>
                         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "0.9rem" }}>
@@ -2370,13 +2352,13 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         </button>
                       </div>
                     </td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-num">
                       {formatCurrencySAR(excelResult.costs.y1_income_effective ?? 0)}
                     </td>
-                    <td style={calcColumnStyle}>{y1IncomeEffectiveNote}</td>
+                    <td className="col-calc">{y1IncomeEffectiveNote}</td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>
+                    <td className="col-item">
                       <div
                         style={{
                           display: "flex",
@@ -2438,29 +2420,41 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
                         </div>
                       </div>
                     </td>
-                    <td style={amountColumnStyle}>{formatCurrencySAR(opexCostResolved)}</td>
-                    <td style={calcColumnStyle}>{opexNote}</td>
+                    <td className="col-num">{formatCurrencySAR(opexCostResolved)}</td>
+                    <td className="col-calc">{opexNote}</td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>{t("excel.noiYear1")}</td>
-                    <td style={amountColumnStyle}>{formatCurrencySAR(y1NoiResolved)}</td>
-                    <td style={calcColumnStyle}>{t("excelNotes.noiYear1")}</td>
+                    <td className="col-item">{t("excel.noiYear1")}</td>
+                    <td className="col-num">{formatCurrencySAR(y1NoiResolved)}</td>
+                    <td className="col-calc">{t("excelNotes.noiYear1")}</td>
                   </tr>
                   <tr>
-                    <td style={itemColumnStyle}>
+                    <td className="col-item">
                       <strong>{t("excel.unleveredRoi")}</strong>
                     </td>
-                    <td style={amountColumnStyle}>
+                    <td className="col-num">
                       <strong>{formatPercentValue(excelResult.roi)}</strong>
                     </td>
-                    <td style={calcColumnStyle}>{t("excelNotes.roiNoiFormula")}</td>
+                    <td className="col-calc">{t("excelNotes.roiNoiFormula")}</td>
                   </tr>
                 </tbody>
-              </table>
+              </Table>
 
             </div>
+              )}
+
+              {activeCalcTab === "parking" && <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />}
+            </Card>
+            <Card title={t("excel.financialSummaryTitle")}>
+              <div className="calc-summary-list">
+                <div className="calc-summary-row"><span>{t("excel.landCost")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.land_cost)}</span></div>
+                <div className="calc-summary-row"><span>{t("excel.totalCapex")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span></div>
+                <div className="calc-summary-row"><span>{t("excel.year1Income")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.y1_income)}</span></div>
+                <div className="calc-summary-row"><span>{t("excel.noiYear1")}</span><span className="calc-summary-value">{formatCurrencySAR(y1NoiResolved)}</span></div>
+                <div className="calc-summary-row"><span>{t("excel.unleveredRoi")}</span><span className="calc-summary-value">{formatPercentValue(excelResult.roi)}</span></div>
+              </div>
+            </Card>
           </div>
-          <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
           {summaryText && (
             <div
               style={{
@@ -2476,7 +2470,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
             </div>
           )}
           <div ref={feedbackSentinelRef} style={{ height: 1 }} />
-        </div>
+        </section>
       )}
       <ScenarioModal
         isOpen={isScenarioOpen}

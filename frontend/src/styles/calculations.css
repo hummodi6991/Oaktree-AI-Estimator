@@ -1,0 +1,125 @@
+.calc-section {
+  margin-top: var(--space-24);
+}
+
+.calc-header {
+  margin: 0 0 var(--space-16);
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.calc-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: var(--space-16);
+  align-items: start;
+}
+
+.ot-tabs {
+  display: flex;
+  gap: var(--space-16);
+  border-bottom: 1px solid var(--background-outlines);
+  margin-bottom: var(--space-12);
+}
+
+.ot-tabs__tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  padding: var(--space-12) 0;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+}
+
+.ot-tabs__tab.is-active {
+  color: #0f172a;
+  border-color: #14312c;
+  font-weight: 700;
+}
+
+.calc-card__header {
+  padding: var(--space-16) var(--space-16) 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.calc-card__body {
+  padding: var(--space-16);
+}
+
+.calc-card__footer {
+  border-top: 1px solid var(--background-outlines);
+  padding: var(--space-12) var(--space-16);
+}
+
+.calc-table-wrap {
+  overflow-x: auto;
+}
+
+.calc-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.calc-table th,
+.calc-table td {
+  border-bottom: 1px solid var(--background-outlines);
+  padding: 10px 8px;
+  vertical-align: top;
+}
+
+.calc-table th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #475569;
+}
+
+.calc-table td {
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.calc-table .col-num,
+.calc-table td.col-num {
+  text-align: right;
+}
+
+.calc-table .col-item,
+.calc-table .col-calc {
+  text-align: left;
+}
+
+.calc-summary-list {
+  display: grid;
+  gap: var(--space-12);
+}
+
+.calc-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  border-bottom: 1px solid var(--background-outlines);
+  padding-bottom: var(--space-8);
+}
+
+.calc-summary-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.calc-summary-value {
+  font-weight: 700;
+}
+
+@media (max-width: 960px) {
+  .calc-grid {
+    grid-template-columns: 1fr;
+  }
+}

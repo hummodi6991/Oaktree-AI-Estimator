@@ -77,6 +77,8 @@
     "componentRetail": "Retail",
     "componentOffice": "Office",
     "financialBreakdown": "Financial breakdown",
+    "calculationsTitle": "Calculations",
+    "financialSummaryTitle": "Financial Summary",
     "costBreakdown": "Cost breakdown",
     "revenueBreakdown": "Revenue breakdown",
     "item": "Item",
