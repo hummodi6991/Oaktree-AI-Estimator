@@ -19,6 +19,7 @@ import DesignTokenPreview from "./dev/DesignTokenPreview";
 import AppShell from "./ui-v2/AppShell";
 import HeaderBar from "./ui-v2/HeaderBar";
 import EmptyState from "./ui-v2/EmptyState";
+import ParcelInfoBar from "./ui-v2/ParcelInfoBar";
 import type { SearchItem } from "./types/search";
 import "./styles/ui-v2.css";
 
@@ -33,6 +34,7 @@ function App() {
   const hasApiKey = Boolean(apiKey);
   const { t } = useTranslation();
   const [searchTarget, setSearchTarget] = useState<SearchItem | null>(null);
+  const [isMapHidden, setIsMapHidden] = useState(false);
 
   const uiV2 = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -76,6 +78,8 @@ function App() {
     }
     return t("common.notAvailable");
   })();
+
+  const methodLabel = formatLanduseMethod(parcel?.landuse_method);
 
   useEffect(() => {
     function handleStorage(event: StorageEvent) {
@@ -127,6 +131,12 @@ function App() {
       setIsAdminModalOpen(false);
     }
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (!parcel) {
+      setIsMapHidden(false);
+    }
+  }, [parcel]);
 
   const handleAccessCodeSubmit = useCallback((code: string) => {
     window.localStorage.setItem("oaktree_api_key", code);
@@ -210,16 +220,36 @@ function App() {
         <AppShell
           header={<HeaderBar onSearchSelect={(item) => setSearchTarget(item)} />}
           map={
-            <Map
-              onParcel={(selectedParcel) => {
-                setParcel(selectedParcel);
-              }}
-              showSearchBar={false}
-              focusTarget={searchTarget}
-              mapHeight="52vh"
-            />
+            <div className={`ui-v2-map ${isMapHidden ? "ui-v2-map--hidden" : ""}`}>
+              <Map
+                onParcel={(selectedParcel) => {
+                  setParcel(selectedParcel);
+                }}
+                showSearchBar={false}
+                focusTarget={searchTarget}
+                mapHeight={isMapHidden ? "0px" : "52vh"}
+                mapContainerClassName="ui-v2-map"
+              />
+            </div>
           }
-          content={parcel ? <ExcelForm parcel={parcel} /> : <EmptyState />}
+          content={
+            parcel ? (
+              <>
+                <ParcelInfoBar
+                  parcel={parcel}
+                  landUseLabel={codeLabel}
+                  methodLabel={methodLabel}
+                  onToggleMap={() => setIsMapHidden((current) => !current)}
+                  isMapHidden={isMapHidden}
+                />
+                <div className="ui-v2-form-wrap">
+                  <ExcelForm parcel={parcel} />
+                </div>
+              </>
+            ) : (
+              <EmptyState />
+            )
+          }
         />
       ) : (
         legacyContent
