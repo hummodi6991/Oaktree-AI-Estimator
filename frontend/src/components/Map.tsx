@@ -16,9 +16,14 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { buildApiUrl, collateParcels, identify, trackEvent } from "../api";
 import type { CollateResponse, ParcelSummary } from "../api";
 import MapSearchBar from "./MapSearchBar";
+import type { SearchItem } from "../types/search";
 
 type MapProps = {
   onParcel: (parcel: ParcelSummary | null) => void;
+  showSearchBar?: boolean;
+  focusTarget?: SearchItem | null;
+  mapHeight?: string | number;
+  mapContainerClassName?: string;
 };
 
 type StatusMessage = { key: string; options?: Record<string, unknown> } | { raw: string };
@@ -197,6 +202,11 @@ function ensureLayerOrder(map: maplibregl.Map) {
   });
 }
 
+function getSafeMaxZoom(map: maplibregl.Map) {
+  const maxZ = map.getMaxZoom?.() ?? 18;
+  return Math.min(maxZ, 18);
+}
+
 function tolForZoom(zoom: number) {
   if (zoom <= 12) return 40;
   if (zoom <= 14) return 25;
@@ -284,7 +294,13 @@ function wireHover(
   };
 }
 
-export default function Map({ onParcel }: MapProps) {
+export default function Map({
+  onParcel,
+  showSearchBar = true,
+  focusTarget = null,
+  mapHeight = "60vh",
+  mapContainerClassName,
+}: MapProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -553,6 +569,24 @@ export default function Map({ onParcel }: MapProps) {
     source?.setData(selectedParcelsGeojson);
   }, [multiSelectMode, selectedParcelsGeojson]);
 
+  useEffect(() => {
+    if (!focusTarget) return;
+    const map = mapRef.current;
+    if (!map) return;
+    const safeMax = getSafeMaxZoom(map);
+    if (focusTarget.bbox && focusTarget.bbox.length === 4) {
+      map.fitBounds(
+        [
+          [focusTarget.bbox[0], focusTarget.bbox[1]],
+          [focusTarget.bbox[2], focusTarget.bbox[3]],
+        ],
+        { padding: 40, duration: 600, maxZoom: safeMax },
+      );
+      return;
+    }
+    map.flyTo({ center: focusTarget.center, zoom: Math.min(16, safeMax), duration: 600 });
+  }, [focusTarget]);
+
   const handleClearSelection = () => {
     setSelectedParcelIds([]);
     setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
@@ -599,12 +633,13 @@ export default function Map({ onParcel }: MapProps) {
   return (
     <div>
       <div style={{ position: "relative" }}>
-        <MapSearchBar mapRef={mapRef} />
+        {showSearchBar ? <MapSearchBar mapRef={mapRef} /> : null}
         <div
           ref={containerRef}
+          className={mapContainerClassName}
           style={{
             width: "100%",
-            height: "60vh",
+            height: mapHeight,
             borderRadius: 12,
             overflow: "hidden",
             boxShadow: "0 1px 2px rgba(16, 24, 40, 0.08)",
