@@ -133,6 +133,7 @@ function centroidFromGeometry(geometry?: Geometry | null): Centroid | null {
 type ExcelFormProps = {
   parcel: any;
   landUseOverride?: string;
+  mode?: "legacy" | "v2";
 };
 
 type MassingLock = "far" | "floors" | "coverage";
@@ -202,7 +203,7 @@ const roundTo = (value: number, digits = 1) => {
   return Math.round(value * factor) / factor;
 };
 
-export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
+export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: ExcelFormProps) {
   const { t, i18n } = useTranslation();
   const [provider, setProvider] = useState<(typeof PROVIDERS)[number]["value"]>("blended_v1");
   const [price, setPrice] = useState<number | null>(null);
@@ -1538,7 +1539,8 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
       : unitCostFields.filter((field) => field.key === "residential" || field.key === "basement");
   return (
     <div>
-      <div className="excel-controls-row">
+      <section className={mode === "v2" ? "excel-v2-controls" : undefined}>
+        <div className="excel-controls-row">
         <div className="excel-controls-row__left">
           <div className="excel-controls-row__grid">
             <Field label={t("excel.providerLabel").replace(/:$/, "")}>
@@ -1660,7 +1662,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
         </div>
 
         <aside className="ot-card unit-cost-panel">
-          <h3 className="unit-cost-panel__title">{t("excel.unitCostTitle")}</h3>
+          <h3 className="unit-cost-panel__title">{mode === "v2" ? t("excel.unitCostTitleV2") : t("excel.unitCostTitle")}</h3>
           <div className="unit-cost-panel__list">
             {activeUnitCostFields.map((field) => (
               <div key={field.key} className="unit-cost-panel__item">
@@ -1671,6 +1673,7 @@ export default function ExcelForm({ parcel, landUseOverride }: ExcelFormProps) {
           </div>
         </aside>
       </div>
+      </section>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12, alignItems: "center" }}>
         <Button

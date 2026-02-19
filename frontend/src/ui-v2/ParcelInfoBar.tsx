@@ -37,7 +37,7 @@ export default function ParcelInfoBar({
         | <b>{t("app.landUseLabel")}:</b> {landUseLabel} | <b>{t("app.methodLabel")}:</b> {methodLabel}
       </div>
       <button type="button" className="ui-v2-parcelbar__btn" onClick={onToggleMap}>
-        {isMapHidden ? "Show Map" : "Hide Map"}
+        {isMapHidden ? t("ui.showMap") : t("ui.hideMap")}
       </button>
     </div>
   );

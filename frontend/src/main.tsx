@@ -20,6 +20,7 @@ import AppShell from "./ui-v2/AppShell";
 import HeaderBar from "./ui-v2/HeaderBar";
 import EmptyState from "./ui-v2/EmptyState";
 import ParcelInfoBar from "./ui-v2/ParcelInfoBar";
+import AnalysisLayout from "./ui-v2/AnalysisLayout";
 import type { SearchItem } from "./types/search";
 import "./styles/ui-v2.css";
 
@@ -220,7 +221,7 @@ function App() {
         <AppShell
           header={<HeaderBar onSearchSelect={(item) => setSearchTarget(item)} />}
           map={
-            <div className={`ui-v2-map ${isMapHidden ? "ui-v2-map--hidden" : ""}`}>
+            <div className={`ui-v2-map-wrap ${isMapHidden ? "ui-v2-map-wrap--hidden" : ""}`}>
               <Map
                 onParcel={(selectedParcel) => {
                   setParcel(selectedParcel);
@@ -228,24 +229,22 @@ function App() {
                 showSearchBar={false}
                 focusTarget={searchTarget}
                 mapHeight={isMapHidden ? "0px" : "52vh"}
-                mapContainerClassName="ui-v2-map"
+                mapContainerClassName="ui-v2-map-canvas"
               />
             </div>
           }
           content={
             parcel ? (
-              <>
-                <ParcelInfoBar
+              <AnalysisLayout
+                top={<ParcelInfoBar
                   parcel={parcel}
                   landUseLabel={codeLabel}
                   methodLabel={methodLabel}
                   onToggleMap={() => setIsMapHidden((current) => !current)}
                   isMapHidden={isMapHidden}
-                />
-                <div className="ui-v2-form-wrap">
-                  <ExcelForm parcel={parcel} />
-                </div>
-              </>
+                />}
+                controls={<ExcelForm parcel={parcel} mode="v2" />}
+              />
             ) : (
               <EmptyState />
             )
