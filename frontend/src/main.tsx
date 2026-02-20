@@ -247,6 +247,7 @@ function App() {
                   setParcel(selectedParcel);
                 }}
                 showSearchBar={false}
+                showSelectionUi={false}
                 focusTarget={searchTarget}
                 mapHeight={isMapHidden ? "0px" : "52vh"}
                 mapContainerClassName="ui-v2-map-canvas"
