@@ -1,3 +1,36 @@
+/* Figma: compact component options row under provider */
+.excel-components-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+.excel-components-row__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.excel-components-row__label {
+  font-size: 12px;
+  line-height: 16px;
+  color: rgba(15, 23, 42, 0.85);
+}
+
+/* Keep it visually light in v2 (no chip background) */
+.excel-components-row .ot-checkbox,
+.excel-components-row input[type="checkbox"] {
+  transform: translateY(0.5px);
+}
+
+/* RTL: keep spacing natural */
+html[dir="rtl"] .excel-components-row {
+  flex-direction: row;
+}
+
 /* Figma-exact Controls row grid (v2) — apply to the inner grid, not the page wrapper */
 .excel-controls-row__grid--v2 {
   grid-template-columns: 220px 260px 260px auto;
@@ -116,6 +149,29 @@ html[dir="rtl"] .excel-controls-row__grid--v2 .ot-select {
   align-items: start;
   margin-bottom: var(--space-16);
 }
+
+/* Figma: unit costs are stacked (label on top, value below), left-aligned */
+.unit-cost-panel__item {
+  display: block;
+}
+
+.unit-cost-panel__label {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: rgba(15, 23, 42, 0.9);
+}
+
+.unit-cost-panel__value {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: rgba(15, 23, 42, 0.75);
+  text-align: left;
+}
+
+html[dir="rtl"] .unit-cost-panel__value { text-align: right; }
 
 .excel-controls-row__left {
   display: flex;

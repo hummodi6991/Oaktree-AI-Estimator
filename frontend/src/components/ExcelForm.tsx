@@ -31,7 +31,6 @@ import Select from "./ui/Select";
 import Radio from "./ui/Radio";
 import Table from "./ui/Table";
 import Tabs from "./ui/Tabs";
-import ToggleChip from "./ui/ToggleChip";
 
 const PROVIDERS = [
   {
@@ -1598,6 +1597,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               </Field>
             </div>
 
+
             <div className={mode === "v2" ? "excel-v2-field" : undefined}>
               <Field label={t("excel.overrideLandUse").replace(/:$/, "")}>
                 <Select
@@ -1662,21 +1662,49 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
           <div className={`excel-controls-row__actions ${mode === "v2" ? "oak-choice-row" : ""}`}>
             <Button onClick={fetchPrice} variant="secondary" className="oak-btn oak-btn-secondary">{t("excel.fetchPrice")}</Button>
-            <Checkbox
-              label={t("excel.componentResidential")}
-              checked={componentsDraft.residential}
-              onChange={() => toggleComponentForMode("residential")}
-            />
-            <Checkbox
-              label={t("excel.componentRetail")}
-              checked={componentsDraft.retail}
-              onChange={() => toggleComponentForMode("retail")}
-            />
-            <Checkbox
-              label={t("excel.componentOffice")}
-              checked={componentsDraft.office}
-              onChange={() => toggleComponentForMode("office")}
-            />
+            {mode === "v2" ? (
+              <div className="excel-components-row" aria-label="Components">
+                <label className="excel-components-row__item">
+                  <Checkbox
+                    checked={componentsDraft.residential}
+                    onChange={() => toggleComponentForMode("residential")}
+                  />
+                  <span className="excel-components-row__label">{t("excel.componentResidential")}</span>
+                </label>
+                <label className="excel-components-row__item">
+                  <Checkbox
+                    checked={componentsDraft.retail}
+                    onChange={() => toggleComponentForMode("retail")}
+                  />
+                  <span className="excel-components-row__label">{t("excel.componentRetail")}</span>
+                </label>
+                <label className="excel-components-row__item">
+                  <Checkbox
+                    checked={componentsDraft.office}
+                    onChange={() => toggleComponentForMode("office")}
+                  />
+                  <span className="excel-components-row__label">{t("excel.componentOffice")}</span>
+                </label>
+              </div>
+            ) : (
+              <>
+                <Checkbox
+                  label={t("excel.componentResidential")}
+                  checked={componentsDraft.residential}
+                  onChange={() => toggleComponentForMode("residential")}
+                />
+                <Checkbox
+                  label={t("excel.componentRetail")}
+                  checked={componentsDraft.retail}
+                  onChange={() => toggleComponentForMode("retail")}
+                />
+                <Checkbox
+                  label={t("excel.componentOffice")}
+                  checked={componentsDraft.office}
+                  onChange={() => toggleComponentForMode("office")}
+                />
+              </>
+            )}
             {mode !== "v2" ? (
               <Button type="button" onClick={applyComponents} disabled={!componentsDirty} variant="secondary">{t("common.apply")}</Button>
             ) : null}
@@ -1705,8 +1733,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               <div key={field.key} className="unit-cost-panel__item">
                 <div className="unit-cost-panel__label">{field.label}</div>
                 <div className="unit-cost-panel__value">
-                  {formatNumberValue(unitCostInputs[field.key] ?? 0, 0)}
-                  <span className="unit-cost-panel__value-unit"> SAR</span>
+                  {formatNumberValue(unitCostInputs[field.key] ?? 0, 0)} SAR
                 </div>
               </div>
             ))}
