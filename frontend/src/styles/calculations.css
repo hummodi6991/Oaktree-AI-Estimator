@@ -1,3 +1,69 @@
+/* v2 Calculations panel — match Figma tokens (semantic) */
+:root {
+  /* These mirror the Figma semantic tokens you shared (background/outline/text) */
+  --ot-bg-surface: #ffffff;
+  --ot-outline: #d7d7d7;
+
+  /* Text */
+  --ot-text: rgba(15, 23, 42, 0.95);
+  --ot-text-muted: rgba(15, 23, 42, 0.6);
+  --ot-text-soft: rgba(15, 23, 42, 0.7);
+
+  /* Dividers */
+  --ot-divider: rgba(148, 163, 184, 0.25);
+
+  /* Spacing */
+  --ot-space-1: 4px;
+  --ot-space-2: 8px;
+  --ot-space-3: 12px;
+}
+
+.calc-panel {
+  width: 100%;
+}
+
+.calc-panel__subtitle {
+  margin-top: var(--ot-space-1);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ot-text-muted);
+}
+
+.calc-panel__rows {
+  margin-top: var(--ot-space-3);
+}
+
+.calc-panel__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--ot-space-2) 0;
+  border-top: 1px solid var(--ot-divider);
+}
+
+.calc-panel__row.is-first {
+  border-top: none;
+}
+
+.calc-panel__label {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ot-text-soft);
+}
+
+.calc-panel__value {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--ot-text);
+  text-align: right;
+}
+
+/* RTL polish (Figma RTL should look identical) */
+html[dir="rtl"] .calc-panel__value {
+  text-align: left;
+}
+
 .calc-section {
   margin-top: var(--space-24);
 }
