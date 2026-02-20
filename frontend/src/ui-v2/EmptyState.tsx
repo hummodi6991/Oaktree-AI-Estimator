@@ -1,4 +1,4 @@
-import { CalculatorIcon, ChartBarSquareIcon, ScaleIcon } from "@heroicons/react/24/outline";
+import { CalculatorIcon, ChartBarSquareIcon, ScaleIcon, SparklesIcon } from "@heroicons/react/24/outline";
 
 const TILES = [
   { title: "Cost & Revenue Calculations", Icon: CalculatorIcon },
@@ -9,10 +9,12 @@ const TILES = [
 export default function EmptyState() {
   return (
     <section className="ui-v2-empty-state" aria-label="Empty analysis state">
+      <div className="ui-v2-empty-state__icon" aria-hidden="true">
+        <SparklesIcon width={24} height={24} />
+      </div>
       <h2>Select one or multiple parcel(s) to begin analysis</h2>
       <p>
-        Begin by selecting parcels directly on the map or through search. Your estimate and breakdown modules will
-        appear here once a selection is active.
+        Choose a parcel to start development assumptions and view financial projections.
       </p>
       <div className="ui-v2-empty-state__tiles">
         {TILES.map((tile) => (

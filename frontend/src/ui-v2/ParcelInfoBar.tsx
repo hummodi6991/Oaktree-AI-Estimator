@@ -39,11 +39,11 @@ export default function ParcelInfoBar({
         | <b>{t("app.landUseLabel")}:</b> {landUseLabel} | <b>{t("app.methodLabel")}:</b> {methodLabel}
       </div>
       <div className="oak-infobar-actions">
-        <button type="button" className="oak-btn oak-btn--secondary oak-btn--md" onClick={onToggleMap}>
-          {isMapHidden ? t("ui.showMap") : t("ui.hideMap")}
-        </button>
         <button type="button" className="oak-btn oak-btn--tertiary oak-btn--md oak-icon-btn" aria-label="Export">
           <ArrowUpTrayIcon />
+        </button>
+        <button type="button" className="oak-btn oak-btn--primary oak-btn--md" onClick={onToggleMap}>
+          {isMapHidden ? t("ui.showMap") : t("ui.hideMap")}
         </button>
       </div>
       </div>

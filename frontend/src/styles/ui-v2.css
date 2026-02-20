@@ -254,3 +254,122 @@
   text-align: right;
   min-width: 84px;
 }
+
+/* Incremental redesign overrides (reference-matched) */
+.ui-v2-shell {
+  background: #efefef;
+  color: #222;
+}
+
+.oak-topbar {
+  background: #113a33;
+}
+
+.oak-topbar-inner {
+  grid-template-columns: minmax(220px, 1fr) minmax(360px, 520px) minmax(220px, 1fr);
+}
+
+.oak-brand-title {
+  font-size: 34px;
+  font-weight: 700;
+}
+
+.oak-brand-subtitle {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.oak-search {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+}
+
+.ui-v2-header__user-chip {
+  background: transparent;
+  border: 0;
+  color: #fff;
+}
+
+.ui-v2-header__avatar {
+  width: 34px;
+  height: 34px;
+  background: rgba(255, 255, 255, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.ui-v2-map-hero,
+.ui-v2-map-canvas {
+  border-radius: 0;
+}
+
+.ui-v2-empty-state {
+  background: #efefef;
+  border: 0;
+  max-width: none;
+  border-radius: 0;
+  padding-top: 40px;
+}
+
+.ui-v2-empty-state__icon {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  margin-bottom: 10px;
+  color: #686868;
+}
+
+.ui-v2-empty-state p {
+  max-width: 420px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.ui-v2-empty-state__tiles {
+  width: fit-content;
+  margin: 0 auto;
+  gap: 12px;
+}
+
+.ui-v2-empty-state__tile {
+  min-height: 84px;
+  min-width: 150px;
+  border: 0;
+  background: #e2dfd2;
+  text-align: center;
+  align-items: center;
+  justify-content: center;
+}
+
+.ui-v2-empty-state__tile span {
+  font-size: 14px;
+  font-weight: 500;
+  color: #4f4f4f;
+}
+
+.oak-infobar {
+  background: #e8e5d7;
+}
+
+.ui-v2-parcelbar__left {
+  text-align: center;
+  font-size: 18px;
+}
+
+.oak-infobar-actions .oak-btn--tertiary {
+  background: transparent;
+  border: 1px solid rgba(20, 49, 44, 0.3);
+}
+
+.excel-v2-controls,
+.excel-v2-controls .unit-cost-panel {
+  background: #efefef;
+  border: 0;
+  box-shadow: none;
+}
