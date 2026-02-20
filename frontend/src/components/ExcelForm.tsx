@@ -1660,7 +1660,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
             ) : null}
           </div>
 
-          <div className={`excel-controls-row__actions ${mode === "v2" ? "oak-choice-row" : ""}`}>
+          <div
+            className={`excel-controls-row__actions ${mode === "v2" ? "excel-controls-row__actions--v2" : ""}`}
+          >
             <Button onClick={fetchPrice} variant="secondary" className="oak-btn oak-btn-secondary">{t("excel.fetchPrice")}</Button>
             {mode === "v2" ? (
               <div className="excel-components-row" aria-label="Components">
