@@ -417,15 +417,101 @@
   padding-top: 10px;
 }
 
+.excel-v2-controls .excel-controls-row {
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 44px;
+}
+
+.excel-v2-controls .excel-controls-row__grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 14px;
+  row-gap: 12px;
+}
+
+.excel-v2-controls .excel-v2-field--price {
+  grid-column: 1;
+}
+
+.excel-v2-controls .ot-field__label {
+  font-size: 36px;
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+  color: #1f3f3a;
+  font-weight: 700;
+}
+
+.excel-v2-controls .ot-field__hint {
+  font-size: 32px;
+  line-height: 1.12;
+  color: #5f5f5f;
+  font-weight: 600;
+}
+
+.excel-v2-controls .oak-input,
+.excel-v2-controls .oak-select {
+  height: 64px;
+  border-radius: 14px;
+  border-color: #d1d1d1;
+  background: #fff;
+  font-size: 38px;
+  line-height: 1.1;
+  font-weight: 600;
+  padding: 0 18px;
+}
+
+.excel-v2-controls .excel-controls-row__actions {
+  margin-top: 14px;
+  gap: 20px;
+  align-items: center;
+}
+
+.excel-v2-controls .oak-btn {
+  height: 64px;
+  border-radius: 16px;
+  font-size: 40px;
+  line-height: 1;
+  font-weight: 700;
+  padding: 0 28px;
+}
+
+.excel-v2-controls .oak-btn-secondary {
+  background: #f3f0dd;
+  border: 1px solid transparent;
+  color: #17322d;
+}
+
+.excel-v2-controls .oak-btn-primary {
+  background: #113a33;
+}
+
+.excel-v2-controls .ot-checkbox {
+  gap: 10px;
+  font-size: 40px;
+  color: #1b2a2e;
+  font-weight: 500;
+}
+
+.excel-v2-controls .ot-checkbox input {
+  width: 34px;
+  height: 34px;
+  accent-color: #1f85ef;
+}
+
 .unit-cost-panel__title {
   color: #2f4d48;
-  font-size: 24px;
+  font-size: 58px;
   margin-bottom: 12px;
 }
 
 .unit-cost-panel__item {
-  font-size: 14px;
-  padding: 10px 0;
+  font-size: 47px;
+  padding: 16px 0;
+  color: #262626;
+}
+
+.unit-cost-panel__value {
+  font-weight: 700;
+  color: #2d2d2d;
 }
 
 .excel-controls-row__actions {
@@ -437,6 +523,17 @@
 }
 
 @media (max-width: 1200px) {
+  .excel-v2-controls .excel-controls-row {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .excel-v2-controls .ot-field__label,
+  .excel-v2-controls .ot-field__hint,
+  .excel-v2-controls .oak-input,
+  .excel-v2-controls .oak-select,
+  .excel-v2-controls .oak-btn,
+  .excel-v2-controls .ot-checkbox,
   .oak-brand-title,
   .ui-v2-parcelbar__left,
   .unit-cost-panel__title,

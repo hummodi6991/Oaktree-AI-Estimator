@@ -1577,80 +1577,86 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
         <div className={`excel-controls-row ${mode === "v2" ? "oak-controls-grid" : ""}`}>
         <div className="excel-controls-row__left">
           <div className={`excel-controls-row__grid ${mode === "v2" ? "oak-form-grid" : ""}`}>
-            <Field label={t("excel.providerLabel").replace(/:$/, "")}>
-              <Select
-                className="oak-select"
-                value={provider}
-                onChange={(event) => {
-                  const nextProvider = event.target.value as any;
-                  setProvider(nextProvider);
-                  void trackEvent("ui_change_provider", { meta: { provider: nextProvider } });
-                }}
-                fullWidth
-              >
-                {PROVIDERS.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {t(item.labelKey)}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
-            <Field label={t("excel.overrideLandUse").replace(/:$/, "")}>
-              <Select
-                className="oak-select"
-                value={overrideLandUse ?? ""}
-                onChange={(event) => {
-                  const value = (event.target.value || "").trim().toLowerCase();
-                  if (!value) {
-                    setOverrideLandUse(null);
-                    return;
-                  }
-                  if (value === "s" || value === "m") {
-                    setOverrideLandUse(value as LandUseCode);
-                  }
-                }}
-                title={t("excel.overrideLandUseHint")}
-                fullWidth
-              >
-                <option value="">{t("excel.autoUseParcel")}</option>
-                <option value="s">{t("excel.landUseOption", { code: "s", label: t("app.landUse.residential") })}</option>
-                <option value="m">{t("excel.landUseOption", { code: "m", label: t("app.landUse.mixed") })}</option>
-              </Select>
-            </Field>
-
-            {showLandPriceOverride ? (
-              <Field
-                label={t("excel.overrideLandPrice")}
-                hint={
-                  suggestedPrice != null
-                    ? t("excel.suggestedFromFetch", {
-                      price: formatNumberValue(suggestedPrice, 0),
-                      provider: providerLabel,
-                    })
-                    : t("excel.notFetched")
-                }
-              >
-                <Input
-                  className="oak-input"
-                  type="number"
-                  fullWidth
-                  value={inputs.land_price_sar_m2 ?? ""}
+            <div className={mode === "v2" ? "excel-v2-field" : undefined}>
+              <Field label={t("excel.providerLabel").replace(/:$/, "")}>
+                <Select
+                  className="oak-select"
+                  value={provider}
                   onChange={(event) => {
-                    const prevValue = inputsRef.current?.land_price_sar_m2 ?? null;
-                    const nextValue = event.target.value === "" ? 0 : Number(event.target.value);
-                    applyInputPatch({ land_price_sar_m2: nextValue });
-                    if (prevValue !== nextValue) {
-                      void trackEvent("ui_override_land_price", {
-                        meta: {
-                          from: prevValue,
-                          to: nextValue,
-                        },
-                      });
+                    const nextProvider = event.target.value as any;
+                    setProvider(nextProvider);
+                    void trackEvent("ui_change_provider", { meta: { provider: nextProvider } });
+                  }}
+                  fullWidth
+                >
+                  {PROVIDERS.map((item) => (
+                    <option key={item.value} value={item.value}>
+                      {t(item.labelKey)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+
+            <div className={mode === "v2" ? "excel-v2-field" : undefined}>
+              <Field label={t("excel.overrideLandUse").replace(/:$/, "")}>
+                <Select
+                  className="oak-select"
+                  value={overrideLandUse ?? ""}
+                  onChange={(event) => {
+                    const value = (event.target.value || "").trim().toLowerCase();
+                    if (!value) {
+                      setOverrideLandUse(null);
+                      return;
+                    }
+                    if (value === "s" || value === "m") {
+                      setOverrideLandUse(value as LandUseCode);
                     }
                   }}
-                />
+                  title={t("excel.overrideLandUseHint")}
+                  fullWidth
+                >
+                  <option value="">{t("excel.autoUseParcel")}</option>
+                  <option value="s">{t("excel.landUseOption", { code: "s", label: t("app.landUse.residential") })}</option>
+                  <option value="m">{t("excel.landUseOption", { code: "m", label: t("app.landUse.mixed") })}</option>
+                </Select>
               </Field>
+            </div>
+
+            {showLandPriceOverride ? (
+              <div className={mode === "v2" ? "excel-v2-field excel-v2-field--price" : undefined}>
+                <Field
+                  label={t("excel.overrideLandPrice")}
+                  hint={
+                    suggestedPrice != null
+                      ? t("excel.suggestedFromFetch", {
+                        price: formatNumberValue(suggestedPrice, 0),
+                        provider: providerLabel,
+                      })
+                      : t("excel.notFetched")
+                  }
+                >
+                  <Input
+                    className="oak-input"
+                    type="number"
+                    fullWidth
+                    value={inputs.land_price_sar_m2 ?? ""}
+                    onChange={(event) => {
+                      const prevValue = inputsRef.current?.land_price_sar_m2 ?? null;
+                      const nextValue = event.target.value === "" ? 0 : Number(event.target.value);
+                      applyInputPatch({ land_price_sar_m2: nextValue });
+                      if (prevValue !== nextValue) {
+                        void trackEvent("ui_override_land_price", {
+                          meta: {
+                            from: prevValue,
+                            to: nextValue,
+                          },
+                        });
+                      }
+                    }}
+                  />
+                </Field>
+              </div>
             ) : null}
           </div>
 
