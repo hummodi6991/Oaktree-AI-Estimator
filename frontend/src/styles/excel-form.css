@@ -1,3 +1,114 @@
+/* Figma-exact Controls row grid (v2) — apply to the inner grid, not the page wrapper */
+.excel-controls-row__grid--v2 {
+  grid-template-columns: 220px 260px 260px auto;
+  gap: 12px;
+  align-items: end;
+}
+
+/* On narrower widths, wrap cleanly like Figma */
+@media (max-width: 1160px) {
+  .excel-controls-row__grid--v2 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* Field label + helper text rhythm */
+.excel-controls-row__grid--v2 .ot-field {
+  gap: 6px;
+}
+
+.excel-controls-row__grid--v2 .ot-field label,
+.excel-controls-row__grid--v2 .ot-field__label {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: rgba(15, 23, 42, 0.85);
+}
+
+/* Inputs/Selects: match Figma height + radius + outline */
+.excel-controls-row__grid--v2 .ot-input,
+.excel-controls-row__grid--v2 .ot-select,
+.excel-controls-row__grid--v2 input[type="text"],
+.excel-controls-row__grid--v2 input[type="number"],
+.excel-controls-row__grid--v2 select {
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: #fff;
+  padding: 0 12px;
+  font-size: 13px;
+  line-height: 18px;
+  color: rgba(15, 23, 42, 0.95);
+}
+
+.excel-controls-row__grid--v2 .ot-input:focus,
+.excel-controls-row__grid--v2 .ot-select:focus,
+.excel-controls-row__grid--v2 input[type="text"]:focus,
+.excel-controls-row__grid--v2 input[type="number"]:focus,
+.excel-controls-row__grid--v2 select:focus {
+  outline: none;
+  border-color: rgba(20, 49, 44, 0.55);
+  box-shadow: 0 0 0 3px rgba(20, 49, 44, 0.12);
+}
+
+/* Buttons: match Figma sizes + rounded corners */
+.excel-controls-row__grid--v2 .ot-btn,
+.excel-controls-row__grid--v2 .oak-btn {
+  height: 36px;
+  border-radius: 10px;
+  padding: 0 14px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+/* Primary action (Calculate Estimate) */
+.excel-controls-row__grid--v2 .oak-btn-primary,
+.excel-controls-row__grid--v2 .ot-btn--primary {
+  background: #14312c;
+  border: 1px solid #14312c;
+  color: #fff;
+}
+
+.excel-controls-row__grid--v2 .oak-btn-primary:hover,
+.excel-controls-row__grid--v2 .ot-btn--primary:hover {
+  filter: brightness(0.95);
+}
+
+/* Secondary action (Fetch land price) should look like Figma’s light button */
+.excel-controls-row__grid--v2 .ot-btn--secondary,
+.excel-controls-row__grid--v2 .oak-btn-secondary {
+  background: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  color: rgba(15, 23, 42, 0.9);
+}
+
+.excel-controls-row__grid--v2 .ot-btn--secondary:hover,
+.excel-controls-row__grid--v2 .oak-btn-secondary:hover {
+  background: rgba(148, 163, 184, 0.1);
+}
+
+/* Compact inline status text in v2 */
+.excel-controls-row__grid--v2 .excel-controls-row__status {
+  font-size: 12px;
+  line-height: 16px;
+  color: rgba(15, 23, 42, 0.65);
+  opacity: 1;
+}
+
+/* Keep the chevron aligned in select with new height */
+.excel-controls-row__grid--v2 .ot-select {
+  background-position: right 12px center;
+  padding-right: 34px;
+}
+
+/* RTL tweaks */
+html[dir="rtl"] .excel-controls-row__grid--v2 .ot-select {
+  background-position: left 12px center;
+  padding-left: 34px;
+  padding-right: 12px;
+}
+
 .excel-controls-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
