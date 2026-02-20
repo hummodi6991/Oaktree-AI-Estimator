@@ -266,6 +266,21 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     });
   };
 
+  const toggleComponentForMode = (key: keyof ProgramComponents) => {
+    if (mode !== "v2") {
+      toggleComponent(key);
+      return;
+    }
+
+    setComponentsDraft((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      if (!next.residential && !next.retail && !next.office) return prev;
+      setComponents(next);
+      applyInputPatch({ components: next }, Boolean(excelResultRef.current));
+      return next;
+    });
+  };
+
   const applyComponents = () => {
     setComponents(componentsDraft);
     applyInputPatch({ components: componentsDraft }, Boolean(excelResult));
@@ -1644,24 +1659,28 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
             <Checkbox
               label={t("excel.componentResidential")}
               checked={componentsDraft.residential}
-              onChange={() => toggleComponent("residential")}
+              onChange={() => toggleComponentForMode("residential")}
             />
             <Checkbox
               label={t("excel.componentRetail")}
               checked={componentsDraft.retail}
-              onChange={() => toggleComponent("retail")}
+              onChange={() => toggleComponentForMode("retail")}
             />
             <Checkbox
               label={t("excel.componentOffice")}
               checked={componentsDraft.office}
-              onChange={() => toggleComponent("office")}
+              onChange={() => toggleComponentForMode("office")}
             />
-            <Button type="button" onClick={applyComponents} disabled={!componentsDirty} variant="secondary">{t("common.apply")}</Button>
+            {mode !== "v2" ? (
+              <Button type="button" onClick={applyComponents} disabled={!componentsDirty} variant="secondary">{t("common.apply")}</Button>
+            ) : null}
             <Button onClick={handleEstimateClick} className="oak-btn oak-btn-primary">{t("excel.calculateEstimate")}</Button>
-            <span className="excel-controls-row__status">
-              {t("excel.activeTemplate")} <strong>{effectiveLandUse}</strong>
-            </span>
-            {price != null && (
+            {mode !== "v2" ? (
+              <span className="excel-controls-row__status">
+                {t("excel.activeTemplate")} <strong>{effectiveLandUse}</strong>
+              </span>
+            ) : null}
+            {mode !== "v2" && price != null && (
               <span className="excel-controls-row__status">
                 {t("excel.suggestedPrice", {
                   price: formatNumberValue(price, 0),
