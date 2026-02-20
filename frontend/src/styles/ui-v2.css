@@ -266,25 +266,31 @@
 }
 
 .oak-topbar-inner {
-  grid-template-columns: minmax(220px, 1fr) minmax(320px, 520px) minmax(220px, 1fr);
-  gap: 18px;
+  grid-template-columns: minmax(260px, 1fr) minmax(340px, 470px) minmax(260px, 1fr);
+  gap: 14px;
 }
 
 .oak-brand-title {
-  font-size: 30px;
+  font-size: 36px;
   font-weight: 700;
   line-height: 1.05;
 }
 
 .oak-brand-subtitle {
-  font-size: 13px;
+  margin-top: 4px;
+  font-size: 16px;
+  line-height: 1.2;
   color: rgba(255, 255, 255, 0.9);
 }
 
 .oak-search {
-  height: 44px;
+  height: 50px;
   background: rgba(255, 255, 255, 0.16);
   border-radius: 6px;
+}
+
+.oak-search::placeholder {
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .ui-v2-header__user-chip {
@@ -320,6 +326,10 @@
 .oak-top-actions .oak-btn--secondary {
   border: 0;
   background: rgba(255, 255, 255, 0.14);
+}
+
+.oak-top-actions {
+  gap: 16px;
 }
 
 .ui-v2-map-hero,
@@ -378,6 +388,8 @@
 .ui-v2-parcelbar__left {
   text-align: center;
   font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
 .oak-infobar-actions .oak-btn--tertiary {
@@ -393,30 +405,21 @@
 }
 
 .oak-topbar-inner {
-  padding-top: 10px;
-  padding-bottom: 10px;
-}
-
-.oak-top-actions {
-  gap: 14px;
+  padding-top: 18px;
+  padding-bottom: 18px;
 }
 
 .oak-infobar-inner {
-  min-height: 78px;
-}
-
-.ui-v2-parcelbar__left {
-  font-size: 18px;
-  font-weight: 600;
+  min-height: 84px;
 }
 
 .excel-v2-controls {
-  padding-top: 20px;
+  padding-top: 10px;
 }
 
 .unit-cost-panel__title {
   color: #2f4d48;
-  font-size: 40px;
+  font-size: 24px;
   margin-bottom: 12px;
 }
 
