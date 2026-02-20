@@ -21,7 +21,7 @@ import { applyPatch } from "../utils/applyPatch";
 import { formatPercentDraftFromFraction, resolveFractionFromDraftPercent } from "../utils/opex";
 import MicroFeedbackPrompt from "./MicroFeedbackPrompt";
 import ScenarioModal from "./ScenarioModal";
-import { EstimateCalculationsPanel } from "./EstimateCalculationsPanel";
+import EstimateCalculationsPanel from "./EstimateCalculationsPanel";
 import Button from "./ui/Button";
 import Card from "./ui/Card";
 import Checkbox from "./ui/Checkbox";
@@ -1708,7 +1708,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               </div>
             ))}
           </div>
-          {excelResult && (
+          {showCalculations && excelResult && (
             <div style={{ marginTop: 12 }}>
               <EstimateCalculationsPanel estimate={excelResult} />
             </div>
