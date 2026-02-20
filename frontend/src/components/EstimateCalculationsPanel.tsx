@@ -77,7 +77,11 @@ export default function EstimateCalculationsPanel({ estimate }: Props) {
   const fitout = excel.fitout_cost ?? cost.fitout_cost;
   const contingency = excel.contingency_cost ?? cost.contingency_cost;
   const consultants = excel.consultants_cost ?? cost.consultants_cost;
-  const feasibility = excel.feasibility_fee ?? cost.feasibility_fee;
+  const feasibility =
+    (excel as AnyObj).feasibility_fee ??
+    (excel as AnyObj).feasibility_fee_sar ??
+    (cost as AnyObj).feasibility_fee ??
+    (cost as AnyObj).feasibility_fee_sar;
   const transaction = excel.transaction_cost ?? cost.transaction_cost;
   const totalCapex = excel.grand_total_capex ?? cost.grand_total_capex;
 
@@ -122,25 +126,14 @@ export default function EstimateCalculationsPanel({ estimate }: Props) {
   if (roi !== undefined) rows.push({ label: "ROI", value: fmtPct01(roi) });
 
   return (
-    <div className="ot-card" style={{ width: "100%" }}>
+    <div className="ot-card calc-panel" aria-label="Calculations panel">
       <h3 className="unit-cost-panel__title">Calculations</h3>
-      <div style={{ fontSize: 12, color: "rgba(15, 23, 42, 0.6)", marginTop: 4 }}>
-        Auto-populated from the estimate output
-      </div>
-      <div style={{ marginTop: 12 }}>
+      <div className="calc-panel__subtitle">Auto-populated from the estimate output</div>
+      <div className="calc-panel__rows">
         {rows.map((row, idx) => (
-          <div
-            key={row.label}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "8px 0",
-              borderTop: idx === 0 ? "none" : "1px solid rgba(148,163,184,0.25)",
-            }}
-          >
-            <div style={{ fontSize: 12, color: "rgba(15, 23, 42, 0.7)" }}>{row.label}</div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(15, 23, 42, 0.95)" }}>{row.value}</div>
+          <div key={row.label} className={`calc-panel__row ${idx === 0 ? "is-first" : ""}`}>
+            <div className="calc-panel__label">{row.label}</div>
+            <div className="calc-panel__value">{row.value}</div>
           </div>
         ))}
       </div>
