@@ -1539,6 +1539,23 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     effectiveLandUse === "m"
       ? unitCostFields
       : unitCostFields.filter((field) => field.key === "residential" || field.key === "basement");
+  const totalIncomeByClass =
+    (incomeComponents?.residential ?? 0) + (incomeComponents?.retail ?? 0) + (incomeComponents?.office ?? 0);
+  const revenueMixItems = [
+    { key: "residential", label: t("excel.componentResidential") },
+    { key: "retail", label: t("excel.componentRetail") },
+    { key: "office", label: t("excel.componentOffice") },
+  ].map((item) => {
+    const income = Number(incomeComponents?.[item.key] ?? 0);
+    const pct = totalIncomeByClass > 0 ? income / totalIncomeByClass : 0;
+    return { ...item, pct };
+  });
+  const effectiveIncome = excelResult?.costs?.y1_income_effective ?? 0;
+  const expenseRatio = effectiveIncome > 0 ? opexCostResolved / effectiveIncome : 0;
+  const incomeMargin = effectiveIncome > 0 ? y1NoiResolved / effectiveIncome : 0;
+  const totalCapex = excelResult?.costs?.grand_total_capex ?? 0;
+  const yieldNoi = totalCapex > 0 ? y1NoiResolved / totalCapex : 0;
+
   return (
     <div>
       <section className={mode === "v2" ? "excel-v2-controls oak-container" : undefined}>
@@ -2290,13 +2307,49 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               {activeCalcTab === "parking" && <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />}
             </Card>
             <div className="oak-right-panel">
-              <Card title={t("excel.financialSummaryTitle")}>
+              <Card title={t("excel.financialSummaryTitle")} className="oak-financial-summary">
                 <div className="calc-summary-list">
-                  <div className="calc-summary-row"><span>{t("excel.landCost")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.land_cost)}</span></div>
-                  <div className="calc-summary-row"><span>{t("excel.totalCapex")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span></div>
-                  <div className="calc-summary-row"><span>{t("excel.year1Income")}</span><span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.y1_income)}</span></div>
-                  <div className="calc-summary-row"><span>{t("excel.noiYear1")}</span><span className="calc-summary-value">{formatCurrencySAR(y1NoiResolved)}</span></div>
-                  <div className="calc-summary-row"><span>{t("excel.unleveredRoi")}</span><span className="calc-summary-value">{formatPercentValue(excelResult.roi)}</span></div>
+                  <div className="calc-summary-row">
+                    <span className="calc-summary-key">{t("excel.totalCapex")}</span>
+                    <span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
+                  </div>
+                  <div className="calc-summary-row">
+                    <span className="calc-summary-key">{t("excel.year1Income")}</span>
+                    <span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
+                  </div>
+                  <div className="calc-summary-row">
+                    <span className="calc-summary-key">{t("excel.noiYear1")}</span>
+                    <span className="calc-summary-value">{formatCurrencySAR(y1NoiResolved)}</span>
+                  </div>
+                  <div className="calc-summary-row calc-summary-row--split">
+                    <div>
+                      <span className="calc-summary-key">{t("excel.unleveredRoi")}</span>
+                      <span className="calc-summary-value">{formatPercentValue(excelResult.roi)}</span>
+                    </div>
+                    <div>
+                      <span className="calc-summary-key">{t("excel.yield")}</span>
+                      <span className="calc-summary-value">{formatPercentValue(yieldNoi, 1)}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="calc-key-ratios">
+                  <h5>{t("excel.keyRatios")}</h5>
+                  <div className="calc-key-ratios__group">
+                    <span>{t("excel.revenueMix")}</span>
+                    {revenueMixItems.map((item) => (
+                      <p key={item.key}>
+                        {item.label} {formatPercentValue(item.pct, 0)}
+                      </p>
+                    ))}
+                  </div>
+                  <div className="calc-key-ratios__group">
+                    <span>{t("excel.expenseRatio")}</span>
+                    <p>{t("excel.expenseRatioValue", { pct: formatPercentValue(expenseRatio, 1), label: t("excel.opex") })}</p>
+                  </div>
+                  <div className="calc-key-ratios__group">
+                    <span>{t("excel.incomeMargin")}</span>
+                    <p>{t("excel.incomeMarginValue", { pct: formatPercentValue(incomeMargin, 1), label: t("excel.noiMargin") })}</p>
+                  </div>
                 </div>
               </Card>
             </div>
