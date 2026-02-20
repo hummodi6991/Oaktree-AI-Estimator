@@ -21,6 +21,7 @@ import type { SearchItem } from "../types/search";
 type MapProps = {
   onParcel: (parcel: ParcelSummary | null) => void;
   showSearchBar?: boolean;
+  showSelectionUi?: boolean;
   focusTarget?: SearchItem | null;
   mapHeight?: string | number;
   mapContainerClassName?: string;
@@ -297,6 +298,7 @@ function wireHover(
 export default function Map({
   onParcel,
   showSearchBar = true,
+  showSelectionUi = true,
   focusTarget = null,
   mapHeight = "60vh",
   mapContainerClassName,
@@ -665,77 +667,81 @@ export default function Map({
           </div>
         )}
       </div>
-      <div style={{ marginTop: 6, fontSize: "0.85rem", color: "rgba(71, 84, 103, 0.9)" }}>
-        {t("map.disclaimer")}
-      </div>
-      {renderStatus && (
-        <div
-          role="status"
-          aria-live="polite"
-          style={{
-            marginTop: 8,
-            padding: "6px 10px",
-            borderRadius: 8,
-            background: "rgba(17, 24, 39, 0.04)",
-            color: "#475467",
-            fontSize: "0.95rem",
-          }}
-        >
-          {renderStatus}
-        </div>
-      )}
-      <div
-        style={{
-          marginTop: 12,
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 10,
-          alignItems: "center",
-        }}
-      >
-        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input
-            type="checkbox"
-            checked={multiSelectMode}
-            onChange={(event) => {
-              setMultiSelectMode(event.target.checked);
-              setCollateStatus(null);
-              if (!event.target.checked && selectedParcelIds.length > 1) {
-                // When leaving multi-select, keep only the most recent selection if available
-                const lastId = selectedParcelIds[selectedParcelIds.length - 1];
-                const lastFeature = selectedParcelsGeojson.features.find(
-                  (f) => (f.properties as any)?.id === lastId,
-                );
-                setSelectedParcelIds(lastId ? [lastId] : []);
-                setSelectedParcelsGeojson(
-                  lastFeature
-                    ? { type: "FeatureCollection", features: [lastFeature] }
-                    : { type: "FeatureCollection", features: [] },
-                );
-              }
+      {showSelectionUi ? (
+        <>
+          <div style={{ marginTop: 6, fontSize: "0.85rem", color: "rgba(71, 84, 103, 0.9)" }}>
+            {t("map.disclaimer")}
+          </div>
+          {renderStatus && (
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                marginTop: 8,
+                padding: "6px 10px",
+                borderRadius: 8,
+                background: "rgba(17, 24, 39, 0.04)",
+                color: "#475467",
+                fontSize: "0.95rem",
+              }}
+            >
+              {renderStatus}
+            </div>
+          )}
+          <div
+            style={{
+              marginTop: 12,
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 10,
+              alignItems: "center",
             }}
-          />
-          <span>{t("map.controls.multiSelect")}</span>
-        </label>
-        <button type="button" onClick={handleClearSelection} disabled={!selectedParcelIds.length}>
-          {t("map.controls.clearSelection")}
-        </button>
-        <button
-          type="button"
-          onClick={handleCollate}
-          disabled={selectedParcelIds.length < 2 || collating}
-        >
-          {collating ? t("map.controls.merging") : t("map.controls.mergeParcels")}
-        </button>
-        <span style={{ fontSize: "0.9rem", color: "#475467" }}>
-          {selectedList}
-        </span>
-      </div>
-      {renderCollateStatus && (
-        <div style={{ marginTop: 8, color: "#475467", fontSize: "0.95rem" }}>
-          {renderCollateStatus}
-        </div>
-      )}
+          >
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={multiSelectMode}
+                onChange={(event) => {
+                  setMultiSelectMode(event.target.checked);
+                  setCollateStatus(null);
+                  if (!event.target.checked && selectedParcelIds.length > 1) {
+                    // When leaving multi-select, keep only the most recent selection if available
+                    const lastId = selectedParcelIds[selectedParcelIds.length - 1];
+                    const lastFeature = selectedParcelsGeojson.features.find(
+                      (f) => (f.properties as any)?.id === lastId,
+                    );
+                    setSelectedParcelIds(lastId ? [lastId] : []);
+                    setSelectedParcelsGeojson(
+                      lastFeature
+                        ? { type: "FeatureCollection", features: [lastFeature] }
+                        : { type: "FeatureCollection", features: [] },
+                    );
+                  }
+                }}
+              />
+              <span>{t("map.controls.multiSelect")}</span>
+            </label>
+            <button type="button" onClick={handleClearSelection} disabled={!selectedParcelIds.length}>
+              {t("map.controls.clearSelection")}
+            </button>
+            <button
+              type="button"
+              onClick={handleCollate}
+              disabled={selectedParcelIds.length < 2 || collating}
+            >
+              {collating ? t("map.controls.merging") : t("map.controls.mergeParcels")}
+            </button>
+            <span style={{ fontSize: "0.9rem", color: "#475467" }}>
+              {selectedList}
+            </span>
+          </div>
+          {renderCollateStatus && (
+            <div style={{ marginTop: 8, color: "#475467", fontSize: "0.95rem" }}>
+              {renderCollateStatus}
+            </div>
+          )}
+        </>
+      ) : null}
     </div>
   );
 }
