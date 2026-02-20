@@ -1,3 +1,83 @@
+/* ---------------------------------------------------------
+   Figma: v2 Actions Row (Fetch + components + calculate)
+   --------------------------------------------------------- */
+
+.excel-controls-row__actions--v2 {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: nowrap;
+}
+
+@media (max-width: 980px) {
+  .excel-controls-row__actions--v2 {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+}
+
+/* Ensure buttons in v2 actions row match Figma sizing */
+.excel-controls-row__actions--v2 .oak-btn,
+.excel-controls-row__actions--v2 .ot-btn {
+  height: 36px;
+  border-radius: 10px;
+  padding: 0 14px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+/* Make Calculate feel like the primary Figma button even if not using Button variants */
+.excel-controls-row__actions--v2 .oak-btn-primary {
+  background: #14312c;
+  border: 1px solid #14312c;
+  color: #fff;
+}
+.excel-controls-row__actions--v2 .oak-btn-primary:hover {
+  filter: brightness(0.95);
+}
+
+/* Secondary button matches the light Figma button */
+.excel-controls-row__actions--v2 .oak-btn-secondary {
+  background: #fff;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  color: rgba(15, 23, 42, 0.9);
+}
+.excel-controls-row__actions--v2 .oak-btn-secondary:hover {
+  background: rgba(148, 163, 184, 0.10);
+}
+
+/* ---------------------------------------------------------
+   Figma: compact component checkboxes
+   --------------------------------------------------------- */
+.excel-controls-row__actions--v2 .excel-components-row {
+  margin-top: 0;            /* sit inline with buttons */
+  gap: 12px;
+  padding: 0 2px;
+}
+
+.excel-controls-row__actions--v2 .excel-components-row__item {
+  gap: 6px;
+}
+
+.excel-controls-row__actions--v2 .excel-components-row__label {
+  font-size: 12px;
+  line-height: 16px;
+  color: rgba(15, 23, 42, 0.80);
+}
+
+/* Neutralize “blue-heavy” checkbox look inside this row */
+.excel-controls-row__actions--v2 input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #14312c; /* neutral primary from Figma */
+}
+
+/* RTL: keep order but allow natural spacing */
+html[dir="rtl"] .excel-controls-row__actions--v2 {
+  flex-direction: row;
+}
+
 /* Figma: compact component options row under provider */
 .excel-components-row {
   display: flex;
