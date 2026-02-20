@@ -31,6 +31,7 @@ import Select from "./ui/Select";
 import Radio from "./ui/Radio";
 import Table from "./ui/Table";
 import Tabs from "./ui/Tabs";
+import ToggleChip from "./ui/ToggleChip";
 
 const PROVIDERS = [
   {
@@ -1668,6 +1669,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               <div className="excel-components-row" aria-label="Components">
                 <label className="excel-components-row__item">
                   <Checkbox
+                    label=""
                     checked={componentsDraft.residential}
                     onChange={() => toggleComponentForMode("residential")}
                   />
@@ -1675,6 +1677,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 </label>
                 <label className="excel-components-row__item">
                   <Checkbox
+                    label=""
                     checked={componentsDraft.retail}
                     onChange={() => toggleComponentForMode("retail")}
                   />
@@ -1682,6 +1685,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 </label>
                 <label className="excel-components-row__item">
                   <Checkbox
+                    label=""
                     checked={componentsDraft.office}
                     onChange={() => toggleComponentForMode("office")}
                   />
