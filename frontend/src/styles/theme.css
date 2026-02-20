@@ -1,0 +1,97 @@
+:root {
+  --bg-surface: #ffffff;
+  --background-outlines: #d7d7d7;
+  --background-secondary: #fffbea;
+  --background-secondary-elevated: #ffecdc;
+
+  --button-primary: #14312c;
+  --button-primary-hover: #3a524e;
+  --text-primary: #14312c;
+  --text-muted: #5b6b68;
+}
+
+html,
+body {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: "Heebo", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+.oak-input,
+.oak-select {
+  height: 34px;
+  border: 1px solid var(--background-outlines);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.oak-input:focus,
+.oak-select:focus {
+  border-color: var(--button-primary);
+  box-shadow: 0 0 0 2px rgba(20, 49, 44, 0.12);
+}
+
+.oak-btn {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.oak-btn-primary {
+  background: var(--button-primary);
+  color: #fff;
+}
+
+.oak-btn-primary:hover {
+  background: var(--button-primary-hover);
+}
+
+.oak-btn-secondary {
+  background: var(--background-secondary);
+  border-color: var(--background-outlines);
+  color: var(--text-primary);
+}
+
+.oak-card {
+  border: 1px solid var(--background-outlines);
+  border-radius: 12px;
+  background: var(--bg-surface);
+}
+
+.oak-card-header {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--background-outlines);
+  font-weight: 700;
+}
+
+.oak-card-body {
+  padding: 12px 14px;
+}
+
+.oak-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(215, 215, 215, 0.6);
+}
+
+.oak-row:last-child {
+  border-bottom: none;
+}
+
+.oak-k {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.oak-v {
+  font-weight: 700;
+}
