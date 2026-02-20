@@ -1,17 +1,24 @@
 .calc-section {
-  margin-top: var(--space-24);
+  margin-top: 10px;
 }
 
 .calc-header {
-  margin: 0 0 var(--space-16);
-  font-size: 24px;
+  margin: 0 0 10px;
+  font-size: 20px;
   font-weight: 700;
+}
+
+.calc-header.oak-section-bar {
+  background: #14312c;
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
 }
 
 .calc-grid {
   display: grid;
-  grid-template-columns: 1fr 360px;
-  gap: 32px;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 28px;
   align-items: start;
   padding-top: 14px;
   padding-bottom: 28px;
@@ -28,16 +35,16 @@
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
-  padding: var(--space-12) 0;
+  padding: 9px 18px;
   font: inherit;
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: #333;
   cursor: pointer;
 }
 
 .ot-tabs__tab.is-active {
-  color: var(--text-primary);
+  background: #e5e2d4;
   border-color: var(--background-primary);
   font-weight: 700;
 }
@@ -102,7 +109,6 @@
   text-align: left;
 }
 
-
 .calc-inline-controls {
   display: flex;
   align-items: center;
@@ -123,35 +129,6 @@
   border-top: 1px solid var(--background-outlines);
 }
 
-@media (max-width: 960px) {
-  .calc-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.calc-section {
-  margin-top: 8px;
-}
-
-.calc-header {
-  margin-bottom: 10px;
-}
-
-.calc-grid {
-  grid-template-columns: minmax(0, 1fr) 420px;
-  gap: 28px;
-}
-
-.ot-tabs__tab {
-  padding: 9px 18px;
-  border-bottom-width: 3px;
-  color: #333;
-}
-
-.ot-tabs__tab.is-active {
-  background: #e5e2d4;
-}
-
 .oak-right-panel {
   border-left: 1px solid #d2d2d2;
   padding-left: 0;
@@ -166,7 +143,7 @@
 .oak-financial-summary .calc-card__header {
   padding: 0 0 12px;
   color: #2f4d48;
-  font-size: 24px;
+  font-size: 36px;
   font-weight: 700;
 }
 
@@ -195,7 +172,7 @@
 .calc-summary-value {
   display: block;
   margin-top: 3px;
-  font-size: 32px;
+  font-size: 18px;
   font-weight: 500;
   color: #1d1d1d;
 }
@@ -233,4 +210,14 @@
   margin: 4px 0;
   font-size: 13px;
   color: #1f1f1f;
+}
+
+@media (max-width: 960px) {
+  .calc-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .oak-right-panel {
+    border-left: 0;
+  }
 }

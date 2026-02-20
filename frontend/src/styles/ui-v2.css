@@ -266,16 +266,19 @@
 }
 
 .oak-topbar-inner {
-  grid-template-columns: minmax(220px, 1fr) minmax(360px, 520px) minmax(220px, 1fr);
+  grid-template-columns: minmax(260px, 1fr) minmax(360px, 520px) minmax(260px, 1fr);
+  align-items: center;
 }
 
 .oak-brand-title {
-  font-size: 34px;
+  font-size: 43px;
   font-weight: 700;
+  line-height: 1.1;
 }
 
 .oak-brand-subtitle {
-  font-size: 18px;
+  margin-top: 2px;
+  font-size: 27px;
   color: rgba(255, 255, 255, 0.86);
 }
 
@@ -288,6 +291,8 @@
   background: transparent;
   border: 0;
   color: #fff;
+  font-size: 20px;
+  gap: 10px;
 }
 
 .ui-v2-header__avatar {
@@ -375,34 +380,33 @@
 }
 
 .oak-topbar-inner {
-  padding-top: 12px;
-  padding-bottom: 12px;
+  padding-top: 14px;
+  padding-bottom: 14px;
 }
 
-.oak-brand-title {
-  font-size: 44px;
-  line-height: 1.1;
-}
 
-.oak-brand-subtitle {
-  font-size: 20px;
-}
 
 .oak-top-actions {
   gap: 14px;
 }
 
 .oak-search {
-  height: 42px;
+  height: 56px;
+  font-size: 20px;
+  padding-inline: 18px;
 }
 
 .oak-infobar-inner {
   min-height: 78px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 18px;
+  align-items: center;
 }
 
 .ui-v2-parcelbar__left {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 36px;
+  font-weight: 700;
 }
 
 .excel-v2-controls {
@@ -426,6 +430,58 @@
 
 .oak-btn {
   border-radius: 10px;
+}
+
+.oak-top-actions .oak-btn--secondary {
+  height: 42px;
+  font-size: 18px;
+}
+
+.oak-infobar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.oak-infobar-actions .oak-btn--primary {
+  min-width: 124px;
+  height: 46px;
+  font-size: 24px;
+}
+
+.oak-infobar-actions .oak-icon-btn {
+  width: 44px;
+  height: 44px;
+}
+
+.ui-v2-search__loading {
+  font-size: 14px;
+}
+
+@media (max-width: 1600px) {
+  .oak-brand-title { font-size: 32px; }
+  .oak-brand-subtitle { font-size: 16px; }
+  .oak-search { font-size: 14px; height: 44px; }
+  .ui-v2-parcelbar__left { font-size: 21px; }
+  .oak-infobar-actions .oak-btn--primary { font-size: 14px; height: 40px; }
+}
+
+@media (max-width: 1200px) {
+  .oak-topbar-inner {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .oak-top-actions {
+    justify-content: flex-start;
+  }
+  .oak-infobar-inner {
+    grid-template-columns: 1fr;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .ui-v2-parcelbar__left {
+    text-align: left;
+  }
 }
 
 @media (max-width: 1200px) {

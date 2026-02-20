@@ -32,9 +32,7 @@ export default function HeaderBar({ onSearchSelect }: HeaderBarProps) {
             <span>{isArabic ? "English" : "العربية"}</span>
           </button>
           <button type="button" className="oak-btn oak-btn--tertiary oak-btn--md ui-v2-header__user-chip">
-            <span className="ui-v2-header__avatar" aria-hidden="true">
-              OT
-            </span>
+            <span className="ui-v2-header__avatar" aria-hidden="true">OT</span>
             <span>{userDisplayName}</span>
             <ChevronDownIcon width={14} height={14} />
           </button>

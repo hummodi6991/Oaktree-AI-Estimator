@@ -151,3 +151,57 @@
     grid-template-columns: 1fr;
   }
 }
+
+
+/* v2 layout tuning to match reference */
+.excel-v2-controls .oak-controls-grid {
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 32px;
+}
+
+.excel-v2-controls .oak-form-grid {
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.excel-v2-controls .excel-controls-row__actions {
+  gap: 14px;
+}
+
+.excel-v2-controls .excel-controls-row__actions .oak-choice {
+  font-size: 13px;
+}
+
+.excel-v2-controls .excel-controls-row__actions .oak-btn-primary {
+  min-width: 130px;
+}
+
+.excel-v2-controls .unit-cost-panel {
+  background: transparent;
+  padding-top: 2px;
+}
+
+.excel-v2-controls .unit-cost-panel__title {
+  color: #1e3e39;
+  font-size: 41px;
+  margin-bottom: 8px;
+}
+
+.excel-v2-controls .unit-cost-panel__item {
+  font-size: 31px;
+  padding: 11px 0;
+}
+
+.excel-v2-controls .unit-cost-panel__value {
+  font-weight: 500;
+}
+
+@media (max-width: 1600px) {
+  .excel-v2-controls .unit-cost-panel__title {
+    font-size: 32px;
+  }
+
+  .excel-v2-controls .unit-cost-panel__item {
+    font-size: 22px;
+  }
+}
