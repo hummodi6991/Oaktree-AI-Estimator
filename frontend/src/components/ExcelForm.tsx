@@ -259,15 +259,11 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   }, [components]);
 
   const toggleComponent = (key: keyof ProgramComponents) => {
-    const next = { ...componentsDraft, [key]: !componentsDraft[key] };
-    if (!next.residential && !next.retail && !next.office) return;
-
-    setComponentsDraft(next);
-
-    if (mode === "v2") {
-      setComponents(next);
-      applyInputPatch({ components: next }, Boolean(excelResult));
-    }
+    setComponentsDraft((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      if (!next.residential && !next.retail && !next.office) return prev;
+      return next;
+    });
   };
 
   const applyComponents = () => {
@@ -1608,7 +1604,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               </Select>
             </Field>
 
-            {(showLandPriceOverride || mode === "v2") ? (
+            {showLandPriceOverride ? (
               <Field
                 label={t("excel.overrideLandPrice")}
                 hint={
@@ -1660,7 +1656,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               checked={componentsDraft.office}
               onChange={() => toggleComponent("office")}
             />
-            {mode !== "v2" ? <Button type="button" onClick={applyComponents} disabled={!componentsDirty} variant="secondary">{t("common.apply")}</Button> : null}
+            <Button type="button" onClick={applyComponents} disabled={!componentsDirty} variant="secondary">{t("common.apply")}</Button>
             <Button onClick={handleEstimateClick} className="oak-btn oak-btn-primary">{t("excel.calculateEstimate")}</Button>
             <span className="excel-controls-row__status">
               {t("excel.activeTemplate")} <strong>{effectiveLandUse}</strong>
