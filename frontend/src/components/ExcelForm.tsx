@@ -1574,9 +1574,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   return (
     <div>
       <section className={mode === "v2" ? "excel-v2-controls oak-container" : undefined}>
-        <div className={`excel-controls-row ${mode === "v2" ? "oak-controls-grid" : ""}`}>
-        <div className="excel-controls-row__left">
-          <div className={`excel-controls-row__grid ${mode === "v2" ? "oak-form-grid" : ""}`}>
+        <div className="excel-controls-row">
+          <div className="excel-controls-row__left">
+            <div className={`excel-controls-row__grid ${mode === "v2" ? "excel-controls-row__grid--v2" : ""}`}>
             <div className={mode === "v2" ? "excel-v2-field" : undefined}>
               <Field label={t("excel.providerLabel").replace(/:$/, "")}>
                 <Select
