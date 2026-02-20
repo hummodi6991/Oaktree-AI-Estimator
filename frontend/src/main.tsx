@@ -248,7 +248,7 @@ function App() {
                 }}
                 showSearchBar={false}
                 focusTarget={searchTarget}
-                mapHeight={isMapHidden ? "0px" : "52vh"}
+                mapHeight={isMapHidden ? "0px" : "54vh"}
                 mapContainerClassName="ui-v2-map-canvas"
               />
             </div>
