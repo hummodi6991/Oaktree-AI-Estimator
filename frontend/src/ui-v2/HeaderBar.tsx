@@ -10,6 +10,7 @@ type HeaderBarProps = {
 export default function HeaderBar({ onSearchSelect }: HeaderBarProps) {
   const { i18n } = useTranslation();
   const isArabic = i18n.language.startsWith("ar");
+  const userDisplayName = "Oaktree Team";
 
   return (
     <header className="oak-topbar">
@@ -34,7 +35,7 @@ export default function HeaderBar({ onSearchSelect }: HeaderBarProps) {
             <span className="ui-v2-header__avatar" aria-hidden="true">
               OT
             </span>
-            <span>Oaktree Team</span>
+            <span>{userDisplayName}</span>
             <ChevronDownIcon width={14} height={14} />
           </button>
         </div>
