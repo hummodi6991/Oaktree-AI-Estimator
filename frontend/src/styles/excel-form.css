@@ -47,32 +47,44 @@
 }
 
 .unit-cost-panel__title {
-  margin: 0 0 var(--space-12);
-  font-size: 15px;
-  font-weight: 700;
+  margin: 0;
 }
 
 .unit-cost-panel__list {
-  display: flex;
-  flex-direction: column;
+  margin-top: 12px;
 }
 
 .unit-cost-panel__item {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-12);
-  padding: var(--space-8) 0;
-  border-top: 1px solid var(--background-outlines);
-  font-size: 14px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
 }
 
 .unit-cost-panel__item:first-child {
-  border-top: 0;
-  padding-top: 0;
+  border-top: none;
+}
+
+.unit-cost-panel__label {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: rgba(15, 23, 42, 0.9);
 }
 
 .unit-cost-panel__value {
-  font-weight: 600;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: rgba(15, 23, 42, 0.75);
+}
+
+.unit-cost-panel__value-unit {
+  font-weight: 500;
+  color: rgba(15, 23, 42, 0.75);
+}
+
+html[dir="rtl"] .unit-cost-panel__value {
+  text-align: right;
 }
 
 .ot-btn:disabled {

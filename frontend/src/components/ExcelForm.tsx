@@ -1703,8 +1703,11 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
           <div className="unit-cost-panel__list">
             {activeUnitCostFields.map((field) => (
               <div key={field.key} className="unit-cost-panel__item">
-                <span>{field.label}</span>
-                <span className="unit-cost-panel__value">{formatNumberValue(unitCostInputs[field.key] ?? 0, 0)}</span>
+                <div className="unit-cost-panel__label">{field.label}</div>
+                <div className="unit-cost-panel__value">
+                  {formatNumberValue(unitCostInputs[field.key] ?? 0, 0)}
+                  <span className="unit-cost-panel__value-unit"> SAR</span>
+                </div>
               </div>
             ))}
           </div>
