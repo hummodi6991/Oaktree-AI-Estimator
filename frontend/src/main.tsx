@@ -10,6 +10,7 @@ import "./i18n";
 import "./App.css";
 import "./index.css";
 import "./styles/figma-tokens.css";
+import "./styles/theme.css";
 import "./styles/global.css";
 import "./styles/design-system.css";
 import type { ParcelSummary } from "./api";

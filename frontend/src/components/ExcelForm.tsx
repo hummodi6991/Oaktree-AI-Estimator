@@ -21,6 +21,7 @@ import { applyPatch } from "../utils/applyPatch";
 import { formatPercentDraftFromFraction, resolveFractionFromDraftPercent } from "../utils/opex";
 import MicroFeedbackPrompt from "./MicroFeedbackPrompt";
 import ScenarioModal from "./ScenarioModal";
+import { EstimateCalculationsPanel } from "./EstimateCalculationsPanel";
 import Button from "./ui/Button";
 import Card from "./ui/Card";
 import Checkbox from "./ui/Checkbox";
@@ -1546,6 +1547,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
           <div className={`excel-controls-row__grid ${mode === "v2" ? "oak-form-grid" : ""}`}>
             <Field label={t("excel.providerLabel").replace(/:$/, "")}>
               <Select
+                className="oak-select"
                 value={provider}
                 onChange={(event) => {
                   const nextProvider = event.target.value as any;
@@ -1564,6 +1566,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
             <Field label={t("excel.overrideLandUse").replace(/:$/, "")}>
               <Select
+                className="oak-select"
                 value={overrideLandUse ?? ""}
                 onChange={(event) => {
                   const value = (event.target.value || "").trim().toLowerCase();
@@ -1597,6 +1600,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 }
               >
                 <Input
+                  className="oak-input"
                   type="number"
                   fullWidth
                   value={inputs.land_price_sar_m2 ?? ""}
@@ -1619,7 +1623,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
           </div>
 
           <div className={`excel-controls-row__actions ${mode === "v2" ? "oak-choice-row" : ""}`}>
-            <Button onClick={fetchPrice} variant="secondary">{t("excel.fetchPrice")}</Button>
+            <Button onClick={fetchPrice} variant="secondary" className="oak-btn oak-btn-secondary">{t("excel.fetchPrice")}</Button>
             <Checkbox
               label={t("excel.componentResidential")}
               checked={componentsDraft.residential}
@@ -1636,7 +1640,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               onChange={() => toggleComponent("office")}
             />
             <Button type="button" onClick={applyComponents} disabled={!componentsDirty} variant="secondary">{t("common.apply")}</Button>
-            <Button onClick={handleEstimateClick}>{t("excel.calculateEstimate")}</Button>
+            <Button onClick={handleEstimateClick} className="oak-btn oak-btn-primary">{t("excel.calculateEstimate")}</Button>
             <span className="excel-controls-row__status">
               {t("excel.activeTemplate")} <strong>{effectiveLandUse}</strong>
             </span>
@@ -1662,6 +1666,11 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               </div>
             ))}
           </div>
+          {excelResult && (
+            <div style={{ marginTop: 12 }}>
+              <EstimateCalculationsPanel estimate={excelResult} />
+            </div>
+          )}
         </aside>
       </div>
       </section>
