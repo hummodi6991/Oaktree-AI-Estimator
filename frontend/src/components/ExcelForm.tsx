@@ -1668,26 +1668,32 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
             {mode === "v2" ? (
               <div className="excel-components-row" aria-label="Components">
                 <label className="excel-components-row__item">
-                  <Checkbox
-                    label=""
+                  <input
+                    className="excel-components-row__checkbox"
+                    type="checkbox"
                     checked={componentsDraft.residential}
                     onChange={() => toggleComponentForMode("residential")}
+                    aria-label={t("excel.componentResidential")}
                   />
                   <span className="excel-components-row__label">{t("excel.componentResidential")}</span>
                 </label>
                 <label className="excel-components-row__item">
-                  <Checkbox
-                    label=""
+                  <input
+                    className="excel-components-row__checkbox"
+                    type="checkbox"
                     checked={componentsDraft.retail}
                     onChange={() => toggleComponentForMode("retail")}
+                    aria-label={t("excel.componentRetail")}
                   />
                   <span className="excel-components-row__label">{t("excel.componentRetail")}</span>
                 </label>
                 <label className="excel-components-row__item">
-                  <Checkbox
-                    label=""
+                  <input
+                    className="excel-components-row__checkbox"
+                    type="checkbox"
                     checked={componentsDraft.office}
                     onChange={() => toggleComponentForMode("office")}
+                    aria-label={t("excel.componentOffice")}
                   />
                   <span className="excel-components-row__label">{t("excel.componentOffice")}</span>
                 </label>

@@ -1,3 +1,22 @@
+/* Figma: v2 component checkboxes are compact + neutral */
+.excel-components-row__checkbox {
+  width: 14px;
+  height: 14px;
+  accent-color: #14312c;
+  cursor: pointer;
+}
+
+/* Make the click target feel like Figma (label clickable, no weird selection) */
+.excel-components-row__item {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Slight baseline alignment polish */
+.excel-components-row__checkbox {
+  transform: translateY(0.5px);
+}
+
 /* ---------------------------------------------------------
    Figma: v2 Actions Row (Fetch + components + calculate)
    --------------------------------------------------------- */
@@ -66,11 +85,11 @@
   color: rgba(15, 23, 42, 0.80);
 }
 
-/* Neutralize “blue-heavy” checkbox look inside this row */
+/* If any native checkbox appears here, keep it Figma sized */
 .excel-controls-row__actions--v2 input[type="checkbox"] {
   width: 14px;
   height: 14px;
-  accent-color: #14312c; /* neutral primary from Figma */
+  accent-color: #14312c;
 }
 
 /* RTL: keep order but allow natural spacing */
