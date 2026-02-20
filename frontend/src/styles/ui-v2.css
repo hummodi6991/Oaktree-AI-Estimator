@@ -373,3 +373,71 @@
   border: 0;
   box-shadow: none;
 }
+
+.oak-topbar-inner {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.oak-brand-title {
+  font-size: 44px;
+  line-height: 1.1;
+}
+
+.oak-brand-subtitle {
+  font-size: 20px;
+}
+
+.oak-top-actions {
+  gap: 14px;
+}
+
+.oak-search {
+  height: 42px;
+}
+
+.oak-infobar-inner {
+  min-height: 78px;
+}
+
+.ui-v2-parcelbar__left {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.excel-v2-controls {
+  padding-top: 20px;
+}
+
+.unit-cost-panel__title {
+  color: #2f4d48;
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+
+.unit-cost-panel__item {
+  font-size: 14px;
+  padding: 10px 0;
+}
+
+.excel-controls-row__actions {
+  margin-top: 6px;
+}
+
+.oak-btn {
+  border-radius: 10px;
+}
+
+@media (max-width: 1200px) {
+  .oak-brand-title,
+  .ui-v2-parcelbar__left,
+  .unit-cost-panel__title,
+  .unit-cost-panel__item,
+  .oak-financial-summary .calc-card__header,
+  .calc-key-ratios h5,
+  .calc-key-ratios__group > span,
+  .calc-key-ratios__group p,
+  .calc-summary-value {
+    font-size: inherit;
+  }
+}
