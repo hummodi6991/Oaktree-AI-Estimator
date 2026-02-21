@@ -1,3 +1,119 @@
+:root {
+  --bg-primary: #14312C;
+  --bg-primary-elevated: #3A524E;
+  --bg-secondary: #FFFBEA;
+  --bg-secondary-elevated: #FFECDC;
+  --outline: #D7D7D7;
+  --surface: #FFFFFF;
+
+  --text-dark: #171717;
+  --text-gray: #4C4C4C;
+  --text-light: #828282;
+  --text-inverse: #FFFFFF;
+
+  --success: #16A34A;
+  --warning: #F59E0B;
+  --error: #D4183D;
+  --info: #3B82F6;
+
+  --fs-xs: 12px;
+  --fs-sm: 14px;
+  --fs-base: 16px;
+  --fs-lg: 18px;
+  --fs-xl: 20px;
+  --fs-2xl: 22px;
+  --fs-3xl: 24px;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+
+  --radius-8: 8px;
+
+  --shadow-elevated: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+/* --- UI v2 base primitives (Figma parity) --- */
+.ui-v2-shell,
+.ui-v2-root {
+  font-family: "Heebo", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: var(--text-dark);
+}
+
+.ui-v2-card {
+  background: var(--surface);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-8);
+}
+
+.ui-v2-card--elevated {
+  box-shadow: var(--shadow-elevated);
+}
+
+.ui-v2-btn {
+  height: 40px;
+  border-radius: var(--radius-8);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  padding: 0 var(--space-16);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  cursor: pointer;
+}
+
+.ui-v2-btn--primary {
+  background: var(--bg-primary);
+  border: 1px solid var(--bg-primary);
+  color: var(--text-inverse);
+}
+
+.ui-v2-btn--primary:hover {
+  background: var(--bg-primary-elevated);
+  border-color: var(--bg-primary-elevated);
+}
+
+.ui-v2-btn--ghost {
+  background: transparent;
+  border: 1px solid var(--outline);
+  color: var(--text-dark);
+}
+
+.ui-v2-btn--soft {
+  background: var(--bg-secondary-elevated);
+  border: 1px solid var(--bg-secondary-elevated);
+  color: var(--text-dark);
+}
+
+.ui-v2-input,
+.ui-v2-select {
+  height: 40px;
+  border-radius: var(--radius-8);
+  border: 1px solid var(--outline);
+  background: var(--surface);
+  font-size: var(--fs-sm);
+  padding: 0 var(--space-12);
+  color: var(--text-dark);
+}
+
+.ui-v2-input::placeholder {
+  color: var(--text-light);
+}
+
+.ui-v2-btn:focus-visible,
+.ui-v2-input:focus-visible,
+.ui-v2-select:focus-visible {
+  outline: 2px solid rgba(20, 49, 44, 0.35);
+  outline-offset: 2px;
+}
+
 .ui-v2-shell {
   min-height: 100vh;
   background: var(--background-secondary);
