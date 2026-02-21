@@ -895,3 +895,84 @@
     justify-content: flex-start;
   }
 }
+
+.excel-v2-controls__grid {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: var(--space-24);
+  align-items: start;
+}
+
+.excel-v2-controls__left {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+}
+
+.excel-v2-controls__row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-16);
+  align-items: end;
+}
+
+.excel-v2-controls__row--two {
+  grid-template-columns: 1fr;
+}
+
+.excel-v2-controls__actionsRow {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.excel-v2-controls__fetchAction {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+}
+
+@media (max-width: 1100px) {
+  .excel-v2-controls__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .excel-v2-controls__row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.excel-v2-controls__right .unit-cost-panel {
+  background: var(--surface);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-8);
+  padding: var(--space-16);
+}
+
+.excel-v2-controls__right .unit-cost-panel__title {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  margin: 0 0 var(--space-12) 0;
+}
+
+.excel-v2-controls__right .unit-cost-panel__item {
+  padding: var(--space-12) 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.excel-v2-controls__right .unit-cost-panel__item:first-of-type {
+  border-top: none;
+}
+
+.excel-v2-controls__right .unit-cost-panel__label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-dark);
+}
+
+.excel-v2-controls__right .unit-cost-panel__value {
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+  color: var(--text-gray);
+}
