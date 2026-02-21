@@ -1572,6 +1572,43 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const incomeMargin = effectiveIncome > 0 ? y1NoiResolved / effectiveIncome : 0;
   const totalCapex = excelResult?.costs?.grand_total_capex ?? 0;
   const yieldNoi = totalCapex > 0 ? y1NoiResolved / totalCapex : 0;
+  const resolveAverageUnitSize = (...candidates: Array<number | null | undefined>) => {
+    for (const candidate of candidates) {
+      if (candidate == null) continue;
+      const numeric = Number(candidate);
+      if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    }
+    return null;
+  };
+  const averageUnitSizeItems = [
+    {
+      key: "residential",
+      label: t("excel.componentResidential"),
+      value: resolveAverageUnitSize(
+        excelResult?.totals?.residential_avg_unit_size_m2 as number | undefined,
+        excelResult?.totals?.residential_average_unit_size_m2 as number | undefined,
+        excelResult?.notes?.residential_avg_unit_size_m2 as number | undefined,
+      ),
+    },
+    {
+      key: "retail",
+      label: t("excel.componentRetail"),
+      value: resolveAverageUnitSize(
+        excelResult?.totals?.retail_avg_unit_size_m2 as number | undefined,
+        excelResult?.totals?.retail_average_unit_size_m2 as number | undefined,
+        excelResult?.notes?.retail_avg_unit_size_m2 as number | undefined,
+      ),
+    },
+    {
+      key: "office",
+      label: t("excel.componentOffice"),
+      value: resolveAverageUnitSize(
+        excelResult?.totals?.office_avg_unit_size_m2 as number | undefined,
+        excelResult?.totals?.office_average_unit_size_m2 as number | undefined,
+        excelResult?.notes?.office_avg_unit_size_m2 as number | undefined,
+      ),
+    },
+  ];
   const selectedResultsTab: ResultTab = mode === "v2" ? activeV2Tab : activeCalcTab;
 
   return (
@@ -1989,7 +2026,72 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
           <div className={mode === "v2" ? "calc-grid ui-v2-results__panel" : "calc-grid"} role={mode === "v2" ? "tabpanel" : undefined}>
             <Card>
-              {selectedResultsTab === "summary" && (
+              {mode === "v2" && selectedResultsTab === "summary" ? (
+                <div className="ui-v2-summary-grid">
+                  <div className="ui-v2-summary-left">
+                    <div className="ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
+                      <div className="ui-v2-summary-card__title">{isArabic ? "توزيع الوحدات" : "Unit Mix"}</div>
+                      {revenueMixItems.map((item) => (
+                        <div key={item.key} className="ui-v2-mix-row">
+                          <span className="ui-v2-mix-row__label">{item.label}</span>
+                          <span className="ui-v2-mix-row__val">{formatPercentValue(item.pct, 0)}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
+                      <div className="ui-v2-summary-card__title">{isArabic ? "متوسط مساحة الوحدة" : "Average Unit Size"}</div>
+                      {averageUnitSizeItems.map((item) => (
+                        <div key={item.key} className="ui-v2-mix-row">
+                          <span className="ui-v2-mix-row__label">{item.label}</span>
+                          <span className="ui-v2-mix-row__val">
+                            {item.value == null ? "—" : `${formatNumberValue(item.value, 0)} m²`}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
+                      <div className="ui-v2-summary-card__title">{isArabic ? "العائد" : "Yield"}</div>
+                      <div className="ui-v2-mix-row">
+                        <span className="ui-v2-mix-row__label">{t("excel.yield")}</span>
+                        <span className="ui-v2-mix-row__val">{formatPercentValue(yieldNoi, 1)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="ui-v2-summary-right ui-v2-card ui-v2-card--elevated">
+                    <div className="ui-v2-summary-right__title">{t("excel.financialSummaryTitle")}</div>
+
+                    <div className="ui-v2-kv">
+                      <div className="ui-v2-kv__row">
+                        <span className="ui-v2-kv__key">{t("excel.totalCapex")}</span>
+                        <span className="ui-v2-kv__val">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
+                      </div>
+                      <div className="ui-v2-kv__row">
+                        <span className="ui-v2-kv__key">{t("excel.year1Income")}</span>
+                        <span className="ui-v2-kv__val">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
+                      </div>
+                      <div className="ui-v2-kv__row">
+                        <span className="ui-v2-kv__key">{t("excel.noiYear1")}</span>
+                        <span className="ui-v2-kv__val">{formatCurrencySAR(y1NoiResolved)}</span>
+                      </div>
+
+                      <div className="ui-v2-kv__row ui-v2-kv__row--split">
+                        <div>
+                          <span className="ui-v2-kv__key">{t("excel.unleveredRoi")}</span>
+                          <span className="ui-v2-kv__val">{formatPercentValue(excelResult.roi)}</span>
+                        </div>
+                        <div>
+                          <span className="ui-v2-kv__key">{t("excel.yield")}</span>
+                          <span className="ui-v2-kv__val">{formatPercentValue(yieldNoi, 1)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                selectedResultsTab === "summary" && (
                 <div className="oak-card">
                   <h4 className="oak-card-title">{t("excel.financialSummaryTitle")}</h4>
                   <div className="oak-stats">
@@ -2007,6 +2109,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                     </div>
                   </div>
                 </div>
+                )
               )}
               {selectedResultsTab === "financial" && (
             <div>
@@ -2522,7 +2625,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
               {selectedResultsTab === "parking" && <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />}
             </Card>
-            <div className="oak-right-panel">
+            {!(mode === "v2" && selectedResultsTab === "summary") && <div className="oak-right-panel">
               <Card title={t("excel.financialSummaryTitle")} className="oak-financial-summary">
                 <div className="calc-summary-list">
                   <div className="calc-summary-row">
@@ -2568,7 +2671,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                   </div>
                 </div>
               </Card>
-            </div>
+            </div>}
           </div>
           {summaryText && (
             <div className="calc-summary-divider">
