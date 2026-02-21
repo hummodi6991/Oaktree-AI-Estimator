@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
+import { ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 
 import "../styles/excel-form.css";
 import "../styles/calculations.css";
@@ -329,6 +330,11 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const [showCalculations, setShowCalculations] = useState(false);
   const [activeCalcTab, setActiveCalcTab] = useState<ResultTab>("financial");
   const [activeV2Tab, setActiveV2Tab] = useState<ResultTab>("summary");
+  const [v2FinancialOpen, setV2FinancialOpen] = useState<Record<string, boolean>>({
+    construction: true,
+    soft: true,
+    land: true,
+  });
   const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
     String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
   );
@@ -2112,6 +2118,160 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 )
               )}
               {selectedResultsTab === "financial" && (
+                mode === "v2" ? (
+                  <div>
+                    <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.costBreakdown")}</h4>
+                    {(() => {
+                      const directConstruction = excelResult.costs.construction_direct_cost ?? 0;
+                      const fitoutCost = excelResult.costs.fitout_cost ?? 0;
+                      const contingencyCost = excelResult.costs.contingency_cost ?? 0;
+                      const consultantsCost = excelResult.costs.consultants_cost ?? 0;
+                      const feasibilityFee = excelResult.costs.feasibility_fee ?? 0;
+                      const landCostAmount = excelResult.costs.land_cost ?? 0;
+                      const transactionCost = excelResult.costs.transaction_cost ?? 0;
+                      const totalCapex = excelResult.costs.grand_total_capex ?? 0;
+                      const v2Costs = excelResult.costs as Record<string, number | undefined>;
+                      const constructionSubtotal =
+                        v2Costs.sub_total ??
+                        v2Costs.construction_subtotal ??
+                        (directConstruction + fitoutCost);
+                      const constructionTotal = constructionSubtotal;
+                      const softTotal = contingencyCost + consultantsCost + feasibilityFee;
+                      const landTotal = landCostAmount + transactionCost;
+                      const constructionTitle = isArabic ? "تكاليف البناء" : "Construction Costs";
+                      const softTitle = isArabic ? "التكاليف غير المباشرة" : "Soft Costs";
+                      const landTitle = isArabic ? "تكاليف الأرض والمعاملة" : "Land & Transaction Costs";
+                      const subtotalLabel = isArabic ? "المجموع الفرعي" : "Subtotal";
+                      const directConstructionLabel = i18n.exists("excel.directConstruction")
+                        ? t("excel.directConstruction")
+                        : isArabic
+                          ? "التنفيذ المباشر"
+                          : "Direct construction";
+                      const fitoutLabel = i18n.exists("excel.fitout")
+                        ? t("excel.fitout")
+                        : isArabic
+                          ? "التشطيب"
+                          : "Fit-out";
+                      const feasibilityFeeLabel = i18n.exists("excel.feasibilityFee")
+                        ? t("excel.feasibilityFee")
+                        : isArabic
+                          ? "رسوم دراسة الجدوى"
+                          : "Feasibility fee";
+
+                      return (
+                        <div className="ui-v2-accordion">
+                          <div>
+                            <button
+                              type="button"
+                              className="ui-v2-accordion__head"
+                              data-open={v2FinancialOpen.construction ? "true" : "false"}
+                              onClick={() =>
+                                setV2FinancialOpen((prev) => ({ ...prev, construction: !prev.construction }))
+                              }
+                            >
+                              {v2FinancialOpen.construction ? (
+                                <ChevronDownIcon className="ui-v2-accordion__chev" />
+                              ) : (
+                                <ChevronRightIcon className="ui-v2-accordion__chev" />
+                              )}
+                              <span className="ui-v2-accordion__title">{constructionTitle}</span>
+                              <span className="ui-v2-accordion__total">{formatCurrencySAR(constructionTotal)}</span>
+                            </button>
+                            {v2FinancialOpen.construction && (
+                              <div className="ui-v2-accordion__body">
+                                <div className="ui-v2-kv2">
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{directConstructionLabel}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(directConstruction)}</span>
+                                  </div>
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{fitoutLabel}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(fitoutCost)}</span>
+                                  </div>
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{subtotalLabel}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(constructionSubtotal)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <button
+                              type="button"
+                              className="ui-v2-accordion__head"
+                              data-open={v2FinancialOpen.soft ? "true" : "false"}
+                              onClick={() => setV2FinancialOpen((prev) => ({ ...prev, soft: !prev.soft }))}
+                            >
+                              {v2FinancialOpen.soft ? (
+                                <ChevronDownIcon className="ui-v2-accordion__chev" />
+                              ) : (
+                                <ChevronRightIcon className="ui-v2-accordion__chev" />
+                              )}
+                              <span className="ui-v2-accordion__title">{softTitle}</span>
+                              <span className="ui-v2-accordion__total">{formatCurrencySAR(softTotal)}</span>
+                            </button>
+                            {v2FinancialOpen.soft && (
+                              <div className="ui-v2-accordion__body">
+                                <div className="ui-v2-kv2">
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{t("excel.contingency")}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(contingencyCost)}</span>
+                                  </div>
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{t("excel.consultants")}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(consultantsCost)}</span>
+                                  </div>
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{feasibilityFeeLabel}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(feasibilityFee)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <button
+                              type="button"
+                              className="ui-v2-accordion__head"
+                              data-open={v2FinancialOpen.land ? "true" : "false"}
+                              onClick={() => setV2FinancialOpen((prev) => ({ ...prev, land: !prev.land }))}
+                            >
+                              {v2FinancialOpen.land ? (
+                                <ChevronDownIcon className="ui-v2-accordion__chev" />
+                              ) : (
+                                <ChevronRightIcon className="ui-v2-accordion__chev" />
+                              )}
+                              <span className="ui-v2-accordion__title">{landTitle}</span>
+                              <span className="ui-v2-accordion__total">{formatCurrencySAR(landTotal)}</span>
+                            </button>
+                            {v2FinancialOpen.land && (
+                              <div className="ui-v2-accordion__body">
+                                <div className="ui-v2-kv2">
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{t("excel.landCost")}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(landCostAmount)}</span>
+                                  </div>
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{t("excel.transactionCosts")}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(transactionCost)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="ui-v2-totalRow">
+                            <span className="ui-v2-totalRow__key">{t("excel.totalCapex")}</span>
+                            <span className="ui-v2-totalRow__val">{formatCurrencySAR(totalCapex)}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                ) : (
             <div>
               <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.costBreakdown")}</h4>
               <Table>
@@ -2455,6 +2615,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 </tbody>
               </Table>
             </div>
+                )
               )}
 
               {selectedResultsTab === "revenue" && (

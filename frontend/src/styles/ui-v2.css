@@ -1137,3 +1137,103 @@
     gap: var(--space-8);
   }
 }
+
+.ui-v2-accordion {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.ui-v2-accordion__head {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-8);
+  padding: var(--space-12) var(--space-16);
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  cursor: pointer;
+}
+
+.ui-v2-accordion__chev {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.ui-v2-accordion__title {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-dark);
+}
+
+.ui-v2-accordion__total {
+  margin-inline-start: auto;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-dark);
+}
+
+.ui-v2-accordion__body {
+  margin-top: -8px;
+  padding: 0 var(--space-16) var(--space-12) var(--space-16);
+}
+
+.ui-v2-kv2 {
+  background: var(--surface);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius-8);
+  padding: var(--space-12) var(--space-12);
+}
+
+.ui-v2-kv2__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-16);
+  padding: 10px 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.ui-v2-kv2__row:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.ui-v2-kv2__key {
+  color: var(--text-gray);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.ui-v2-kv2__val {
+  color: var(--text-dark);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  text-align: end;
+}
+
+.ui-v2-totalRow {
+  background: var(--bg-secondary-elevated);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius-8);
+  padding: var(--space-12) var(--space-16);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-16);
+}
+
+.ui-v2-totalRow__key {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-dark);
+}
+
+.ui-v2-totalRow__val {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  color: var(--text-dark);
+}
