@@ -22,30 +22,31 @@ export default function ParcelInfoBar({
   const primaryArea = parcel.parcel_area_m2 ?? parcel.area_m2 ?? null;
   const footprintArea = parcel.footprint_area_m2 ?? null;
   const showFootprint = footprintArea != null && Number.isFinite(footprintArea) && parcel.parcel_area_m2 != null;
+  const areaValue = formatAreaM2(primaryArea, { maximumFractionDigits: 0 }, t("common.notAvailable"));
+  const areaLabel = showFootprint
+    ? `${areaValue} (${t("app.footprintLabel")}: ${formatAreaM2(
+        footprintArea,
+        { maximumFractionDigits: 0 },
+        t("common.notAvailable"),
+      )})`
+    : areaValue;
+  const parcelSummary = [
+    `${t("app.parcelLabel")}: ${parcel.parcel_id}`,
+    `${t("app.areaLabel")}: ${areaLabel}`,
+    `${t("app.landUseLabel")}: ${landUseLabel}`,
+    `${t("app.methodLabel")}: ${methodLabel}`,
+  ].join(" | ");
 
   return (
-    <div className="oak-infobar">
-      <div className="oak-container oak-infobar-inner">
-      <div className="ui-v2-parcelbar__left">
-        <b>{t("app.parcelLabel")}:</b> {parcel.parcel_id} | <b>{t("app.areaLabel")}:</b>{" "}
-        {formatAreaM2(primaryArea, { maximumFractionDigits: 0 }, t("common.notAvailable"))}
-        {showFootprint
-          ? ` (${t("app.footprintLabel")}: ${formatAreaM2(
-              footprintArea,
-              { maximumFractionDigits: 0 },
-              t("common.notAvailable"),
-            )})`
-          : ""}{" "}
-        | <b>{t("app.landUseLabel")}:</b> {landUseLabel} | <b>{t("app.methodLabel")}:</b> {methodLabel}
-      </div>
-      <div className="oak-infobar-actions">
-        <button type="button" className="oak-btn oak-btn--tertiary oak-btn--md oak-icon-btn" aria-label="Export">
-          <ArrowUpTrayIcon />
+    <div className="ui-v2-parcelstrip">
+      <div className="ui-v2-parcelstrip__left">{parcelSummary}</div>
+      <div className="ui-v2-parcelstrip__actions">
+        <button className="ui-v2-parcelstrip__iconBtn" type="button" aria-label="Export">
+          <ArrowUpTrayIcon width={18} height={18} />
         </button>
-        <button type="button" className="oak-btn oak-btn--primary oak-btn--md" onClick={onToggleMap}>
+        <button className="ui-v2-parcelstrip__primaryBtn" type="button" onClick={onToggleMap}>
           {isMapHidden ? t("ui.showMap") : t("ui.hideMap")}
         </button>
-      </div>
       </div>
     </div>
   );
