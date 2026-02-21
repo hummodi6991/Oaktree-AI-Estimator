@@ -1574,189 +1574,289 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   return (
     <div>
       <section className={mode === "v2" ? "excel-v2-controls oak-container" : undefined}>
-        <div className="excel-controls-row">
-          <div className="excel-controls-row__left">
-            <div className={`excel-controls-row__grid ${mode === "v2" ? "excel-controls-row__grid--v2" : ""}`}>
-            <div className={mode === "v2" ? "excel-v2-field" : undefined}>
-              <Field label={t("excel.providerLabel").replace(/:$/, "")}>
-                <Select
-                  className="oak-select"
-                  value={provider}
-                  onChange={(event) => {
-                    const nextProvider = event.target.value as any;
-                    setProvider(nextProvider);
-                    void trackEvent("ui_change_provider", { meta: { provider: nextProvider } });
-                  }}
-                  fullWidth
-                >
-                  {PROVIDERS.map((item) => (
-                    <option key={item.value} value={item.value}>
-                      {t(item.labelKey)}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-
-
-            <div className={mode === "v2" ? "excel-v2-field" : undefined}>
-              <Field label={t("excel.overrideLandUse").replace(/:$/, "")}>
-                <Select
-                  className="oak-select"
-                  value={overrideLandUse ?? ""}
-                  onChange={(event) => {
-                    const value = (event.target.value || "").trim().toLowerCase();
-                    if (!value) {
-                      setOverrideLandUse(null);
-                      return;
-                    }
-                    if (value === "s" || value === "m") {
-                      setOverrideLandUse(value as LandUseCode);
-                    }
-                  }}
-                  title={t("excel.overrideLandUseHint")}
-                  fullWidth
-                >
-                  <option value="">{t("excel.autoUseParcel")}</option>
-                  <option value="s">{t("excel.landUseOption", { code: "s", label: t("app.landUse.residential") })}</option>
-                  <option value="m">{t("excel.landUseOption", { code: "m", label: t("app.landUse.mixed") })}</option>
-                </Select>
-              </Field>
-            </div>
-
-            {showLandPriceOverride ? (
-              <div className={mode === "v2" ? "excel-v2-field excel-v2-field--price" : undefined}>
-                <Field
-                  label={t("excel.overrideLandPrice")}
-                  hint={
-                    suggestedPrice != null
-                      ? t("excel.suggestedFromFetch", {
-                        price: formatNumberValue(suggestedPrice, 0),
-                        provider: providerLabel,
-                      })
-                      : t("excel.notFetched")
-                  }
-                >
-                  <Input
-                    className="oak-input"
-                    type="number"
-                    fullWidth
-                    value={inputs.land_price_sar_m2 ?? ""}
-                    onChange={(event) => {
-                      const prevValue = inputsRef.current?.land_price_sar_m2 ?? null;
-                      const nextValue = event.target.value === "" ? 0 : Number(event.target.value);
-                      applyInputPatch({ land_price_sar_m2: nextValue });
-                      if (prevValue !== nextValue) {
-                        void trackEvent("ui_override_land_price", {
-                          meta: {
-                            from: prevValue,
-                            to: nextValue,
-                          },
-                        });
+        {mode === "v2" ? (
+          <div className="excel-v2-controls__grid">
+            <div className="excel-v2-controls__left">
+              <div className="excel-v2-controls__row">
+                <div className="excel-v2-field">
+                  <Field label={t("excel.providerLabel").replace(/:$/, "")}>
+                    <Select
+                      className="oak-select"
+                      value={provider}
+                      onChange={(event) => {
+                        const nextProvider = event.target.value as any;
+                        setProvider(nextProvider);
+                        void trackEvent("ui_change_provider", { meta: { provider: nextProvider } });
+                      }}
+                      fullWidth
+                    >
+                      {PROVIDERS.map((item) => (
+                        <option key={item.value} value={item.value}>
+                          {t(item.labelKey)}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                </div>
+                <div className="excel-v2-field">
+                  <Field label={t("excel.overrideLandUse").replace(/:$/, "")}>
+                    <Select
+                      className="oak-select"
+                      value={overrideLandUse ?? ""}
+                      onChange={(event) => {
+                        const value = (event.target.value || "").trim().toLowerCase();
+                        if (!value) {
+                          setOverrideLandUse(null);
+                          return;
+                        }
+                        if (value === "s" || value === "m") {
+                          setOverrideLandUse(value as LandUseCode);
+                        }
+                      }}
+                      title={t("excel.overrideLandUseHint")}
+                      fullWidth
+                    >
+                      <option value="">{t("excel.autoUseParcel")}</option>
+                      <option value="s">{t("excel.landUseOption", { code: "s", label: t("app.landUse.residential") })}</option>
+                      <option value="m">{t("excel.landUseOption", { code: "m", label: t("app.landUse.mixed") })}</option>
+                    </Select>
+                  </Field>
+                </div>
+                {showLandPriceOverride ? (
+                  <div className="excel-v2-field excel-v2-field--price">
+                    <Field
+                      label={t("excel.overrideLandPrice")}
+                      hint={
+                        suggestedPrice != null
+                          ? t("excel.suggestedFromFetch", {
+                            price: formatNumberValue(suggestedPrice, 0),
+                            provider: providerLabel,
+                          })
+                          : t("excel.notFetched")
                       }
-                    }}
-                  />
-                </Field>
-              </div>
-            ) : null}
-          </div>
-
-          <div
-            className={`excel-controls-row__actions ${mode === "v2" ? "excel-controls-row__actions--v2" : ""}`}
-          >
-            <Button onClick={fetchPrice} variant="secondary" className="oak-btn oak-btn-secondary">{t("excel.fetchPrice")}</Button>
-            {mode === "v2" ? (
-              <div className="excel-components-row" aria-label="Components">
-                <label className="excel-components-row__item">
-                  <input
-                    className="excel-components-row__checkbox"
-                    type="checkbox"
-                    checked={componentsDraft.residential}
-                    onChange={() => toggleComponentForMode("residential")}
-                    aria-label={t("excel.componentResidential")}
-                  />
-                  <span className="excel-components-row__label">{t("excel.componentResidential")}</span>
-                </label>
-                <label className="excel-components-row__item">
-                  <input
-                    className="excel-components-row__checkbox"
-                    type="checkbox"
-                    checked={componentsDraft.retail}
-                    onChange={() => toggleComponentForMode("retail")}
-                    aria-label={t("excel.componentRetail")}
-                  />
-                  <span className="excel-components-row__label">{t("excel.componentRetail")}</span>
-                </label>
-                <label className="excel-components-row__item">
-                  <input
-                    className="excel-components-row__checkbox"
-                    type="checkbox"
-                    checked={componentsDraft.office}
-                    onChange={() => toggleComponentForMode("office")}
-                    aria-label={t("excel.componentOffice")}
-                  />
-                  <span className="excel-components-row__label">{t("excel.componentOffice")}</span>
-                </label>
-              </div>
-            ) : (
-              <>
-                <Checkbox
-                  label={t("excel.componentResidential")}
-                  checked={componentsDraft.residential}
-                  onChange={() => toggleComponentForMode("residential")}
-                />
-                <Checkbox
-                  label={t("excel.componentRetail")}
-                  checked={componentsDraft.retail}
-                  onChange={() => toggleComponentForMode("retail")}
-                />
-                <Checkbox
-                  label={t("excel.componentOffice")}
-                  checked={componentsDraft.office}
-                  onChange={() => toggleComponentForMode("office")}
-                />
-              </>
-            )}
-            {mode !== "v2" ? (
-              <Button type="button" onClick={applyComponents} disabled={!componentsDirty} variant="secondary">{t("common.apply")}</Button>
-            ) : null}
-            <Button onClick={handleEstimateClick} className="oak-btn oak-btn-primary">{t("excel.calculateEstimate")}</Button>
-            {mode !== "v2" ? (
-              <span className="excel-controls-row__status">
-                {t("excel.activeTemplate")} <strong>{effectiveLandUse}</strong>
-              </span>
-            ) : null}
-            {mode !== "v2" && price != null && (
-              <span className="excel-controls-row__status">
-                {t("excel.suggestedPrice", {
-                  price: formatNumberValue(price, 0),
-                  provider: providerLabel,
-                })}
-              </span>
-            )}
-            {fetchError && <span style={{ color: "#b91c1c" }}>{t("common.errorPrefix")} {fetchError}</span>}
-          </div>
-        </div>
-
-        <aside className="ot-card unit-cost-panel">
-          <h3 className="unit-cost-panel__title">{mode === "v2" ? t("excel.unitCostTitleV2") : t("excel.unitCostTitle")}</h3>
-          <div className="unit-cost-panel__list">
-            {activeUnitCostFields.map((field) => (
-              <div key={field.key} className="unit-cost-panel__item">
-                <div className="unit-cost-panel__label">{field.label}</div>
-                <div className="unit-cost-panel__value">
-                  {formatNumberValue(unitCostInputs[field.key] ?? 0, 0)} SAR
+                    >
+                      <Input
+                        className="oak-input"
+                        type="number"
+                        fullWidth
+                        value={inputs.land_price_sar_m2 ?? ""}
+                        onChange={(event) => {
+                          const prevValue = inputsRef.current?.land_price_sar_m2 ?? null;
+                          const nextValue = event.target.value === "" ? 0 : Number(event.target.value);
+                          applyInputPatch({ land_price_sar_m2: nextValue });
+                          if (prevValue !== nextValue) {
+                            void trackEvent("ui_override_land_price", {
+                              meta: {
+                                from: prevValue,
+                                to: nextValue,
+                              },
+                            });
+                          }
+                        }}
+                      />
+                    </Field>
+                  </div>
+                ) : (
+                  <div />
+                )}
+                <div className="excel-v2-controls__fetchAction">
+                  <Button onClick={fetchPrice} variant="secondary" className="oak-btn oak-btn-secondary">{t("excel.fetchPrice")}</Button>
                 </div>
               </div>
-            ))}
-          </div>
-          {showCalculations && excelResult && (
-            <div style={{ marginTop: 12 }}>
-              <EstimateCalculationsPanel estimate={excelResult} />
+              <div className="excel-v2-controls__row excel-v2-controls__row--two">
+                <div className="excel-components-row" aria-label="Components">
+                  <label className="excel-components-row__item">
+                    <input
+                      className="excel-components-row__checkbox"
+                      type="checkbox"
+                      checked={componentsDraft.residential}
+                      onChange={() => toggleComponentForMode("residential")}
+                      aria-label={t("excel.componentResidential")}
+                    />
+                    <span className="excel-components-row__label">{t("excel.componentResidential")}</span>
+                  </label>
+                  <label className="excel-components-row__item">
+                    <input
+                      className="excel-components-row__checkbox"
+                      type="checkbox"
+                      checked={componentsDraft.retail}
+                      onChange={() => toggleComponentForMode("retail")}
+                      aria-label={t("excel.componentRetail")}
+                    />
+                    <span className="excel-components-row__label">{t("excel.componentRetail")}</span>
+                  </label>
+                  <label className="excel-components-row__item">
+                    <input
+                      className="excel-components-row__checkbox"
+                      type="checkbox"
+                      checked={componentsDraft.office}
+                      onChange={() => toggleComponentForMode("office")}
+                      aria-label={t("excel.componentOffice")}
+                    />
+                    <span className="excel-components-row__label">{t("excel.componentOffice")}</span>
+                  </label>
+                </div>
+              </div>
+              <div className="excel-v2-controls__actionsRow">
+                <Button onClick={handleEstimateClick} className="oak-btn oak-btn-primary">{t("excel.calculateEstimate")}</Button>
+              </div>
+              {fetchError && <span style={{ color: "#b91c1c" }}>{t("common.errorPrefix")} {fetchError}</span>}
             </div>
-          )}
-        </aside>
-      </div>
+            <aside className="excel-v2-controls__right">
+              <div className="ot-card unit-cost-panel">
+                <h3 className="unit-cost-panel__title">{t("excel.unitCostTitleV2")}</h3>
+                <div className="unit-cost-panel__list">
+                  {activeUnitCostFields.map((field) => (
+                    <div key={field.key} className="unit-cost-panel__item">
+                      <div className="unit-cost-panel__label">{field.label}</div>
+                      <div className="unit-cost-panel__value">
+                        {formatNumberValue(unitCostInputs[field.key] ?? 0, 0)} SAR
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </aside>
+          </div>
+        ) : (
+          <>
+            <div className="excel-controls-row">
+              <div className="excel-controls-row__left">
+                <div className="excel-controls-row__grid">
+                  <div>
+                    <Field label={t("excel.providerLabel").replace(/:$/, "")}>
+                      <Select
+                        className="oak-select"
+                        value={provider}
+                        onChange={(event) => {
+                          const nextProvider = event.target.value as any;
+                          setProvider(nextProvider);
+                          void trackEvent("ui_change_provider", { meta: { provider: nextProvider } });
+                        }}
+                        fullWidth
+                      >
+                        {PROVIDERS.map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {t(item.labelKey)}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+                  <div>
+                    <Field label={t("excel.overrideLandUse").replace(/:$/, "")}>
+                      <Select
+                        className="oak-select"
+                        value={overrideLandUse ?? ""}
+                        onChange={(event) => {
+                          const value = (event.target.value || "").trim().toLowerCase();
+                          if (!value) {
+                            setOverrideLandUse(null);
+                            return;
+                          }
+                          if (value === "s" || value === "m") {
+                            setOverrideLandUse(value as LandUseCode);
+                          }
+                        }}
+                        title={t("excel.overrideLandUseHint")}
+                        fullWidth
+                      >
+                        <option value="">{t("excel.autoUseParcel")}</option>
+                        <option value="s">{t("excel.landUseOption", { code: "s", label: t("app.landUse.residential") })}</option>
+                        <option value="m">{t("excel.landUseOption", { code: "m", label: t("app.landUse.mixed") })}</option>
+                      </Select>
+                    </Field>
+                  </div>
+                  {showLandPriceOverride ? (
+                    <div>
+                      <Field
+                        label={t("excel.overrideLandPrice")}
+                        hint={
+                          suggestedPrice != null
+                            ? t("excel.suggestedFromFetch", {
+                              price: formatNumberValue(suggestedPrice, 0),
+                              provider: providerLabel,
+                            })
+                            : t("excel.notFetched")
+                        }
+                      >
+                        <Input
+                          className="oak-input"
+                          type="number"
+                          fullWidth
+                          value={inputs.land_price_sar_m2 ?? ""}
+                          onChange={(event) => {
+                            const prevValue = inputsRef.current?.land_price_sar_m2 ?? null;
+                            const nextValue = event.target.value === "" ? 0 : Number(event.target.value);
+                            applyInputPatch({ land_price_sar_m2: nextValue });
+                            if (prevValue !== nextValue) {
+                              void trackEvent("ui_override_land_price", {
+                                meta: {
+                                  from: prevValue,
+                                  to: nextValue,
+                                },
+                              });
+                            }
+                          }}
+                        />
+                      </Field>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="excel-controls-row__actions">
+                  <Button onClick={fetchPrice} variant="secondary" className="oak-btn oak-btn-secondary">{t("excel.fetchPrice")}</Button>
+                  <Checkbox
+                    label={t("excel.componentResidential")}
+                    checked={componentsDraft.residential}
+                    onChange={() => toggleComponentForMode("residential")}
+                  />
+                  <Checkbox
+                    label={t("excel.componentRetail")}
+                    checked={componentsDraft.retail}
+                    onChange={() => toggleComponentForMode("retail")}
+                  />
+                  <Checkbox
+                    label={t("excel.componentOffice")}
+                    checked={componentsDraft.office}
+                    onChange={() => toggleComponentForMode("office")}
+                  />
+                  <Button type="button" onClick={applyComponents} disabled={!componentsDirty} variant="secondary">{t("common.apply")}</Button>
+                  <Button onClick={handleEstimateClick} className="oak-btn oak-btn-primary">{t("excel.calculateEstimate")}</Button>
+                  <span className="excel-controls-row__status">
+                    {t("excel.activeTemplate")} <strong>{effectiveLandUse}</strong>
+                  </span>
+                  {price != null && (
+                    <span className="excel-controls-row__status">
+                      {t("excel.suggestedPrice", {
+                        price: formatNumberValue(price, 0),
+                        provider: providerLabel,
+                      })}
+                    </span>
+                  )}
+                  {fetchError && <span style={{ color: "#b91c1c" }}>{t("common.errorPrefix")} {fetchError}</span>}
+                </div>
+              </div>
+            </div>
+            <aside className="ot-card unit-cost-panel">
+              <h3 className="unit-cost-panel__title">{t("excel.unitCostTitle")}</h3>
+              <div className="unit-cost-panel__list">
+                {activeUnitCostFields.map((field) => (
+                  <div key={field.key} className="unit-cost-panel__item">
+                    <div className="unit-cost-panel__label">{field.label}</div>
+                    <div className="unit-cost-panel__value">
+                      {formatNumberValue(unitCostInputs[field.key] ?? 0, 0)} SAR
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {showCalculations && excelResult && (
+                <div style={{ marginTop: 12 }}>
+                  <EstimateCalculationsPanel estimate={excelResult} />
+                </div>
+              )}
+            </aside>
+          </>
+        )}
       </section>
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12, alignItems: "center" }}>
