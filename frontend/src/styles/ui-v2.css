@@ -1275,3 +1275,21 @@
   border-top: none;
   padding-top: 0;
 }
+
+.ui-v2-parkingOverview {
+  padding: var(--space-16);
+}
+
+.ui-v2-parkingOverview__title {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--text-dark);
+  margin-bottom: var(--space-12);
+}
+
+.ui-v2-parkingBodyCard {
+  padding: var(--space-12);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius-8);
+  background: var(--surface);
+}
