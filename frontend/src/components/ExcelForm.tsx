@@ -335,6 +335,11 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     soft: true,
     land: true,
   });
+  const [v2RevenueOpen, setV2RevenueOpen] = useState<Record<string, boolean>>({
+    income: true,
+    opex: true,
+    noi: false,
+  });
   const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
     String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
   );
@@ -1541,11 +1546,21 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     });
     return {
       key,
+      label: key.replace(/_/g, " "),
       amount: incomeComponents[key] ?? 0,
       note: resolveRevenueNote(key, baseNote, incomeComponents[key] ?? 0),
       upperAnnexHint: isUpperAnnexSink ? upperAnnexHintText : null,
     };
   });
+  const includedBadge = <span className="ui-v2-pill">{isArabic ? "مُدرج" : "Included"}</span>;
+  const prettifyRevenueKey = (key: string) => key.replace(/_/g, " ");
+  const hasIncludedComponent = (key: string) => {
+    const lowerKey = key.toLowerCase();
+    if (lowerKey.includes("residential") && componentsDraft.residential) return true;
+    if (lowerKey.includes("retail") && componentsDraft.retail) return true;
+    if (lowerKey.includes("office") && componentsDraft.office) return true;
+    return false;
+  };
   const summaryText =
     (isArabic
       ? notes.summary_ar ?? notes.summary_en ?? notes.summary
@@ -2630,6 +2645,135 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                   })}
                 </p>
               )}
+              {mode === "v2" ? (
+                <div className="ui-v2-accordion">
+                  <section>
+                    <button
+                      type="button"
+                      className="ui-v2-accordion__head"
+                      data-open={v2RevenueOpen.income ? "true" : "false"}
+                      onClick={() =>
+                        setV2RevenueOpen((prev) => ({
+                          ...prev,
+                          income: !prev.income,
+                        }))
+                      }
+                    >
+                      {v2RevenueOpen.income ? (
+                        <ChevronDownIcon className="ui-v2-accordion__chev" />
+                      ) : (
+                        <ChevronRightIcon className="ui-v2-accordion__chev" />
+                      )}
+                      <span className="ui-v2-accordion__title">{t("excel.year1Income")}</span>
+                      <span className="ui-v2-accordion__total">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
+                    </button>
+                    {v2RevenueOpen.income && (
+                      <div className="ui-v2-accordion__body">
+                        <div className="ui-v2-kv2">
+                          {revenueItems.map((item) => (
+                            <div key={item.key} className="ui-v2-kv2__row">
+                              <span className="ui-v2-kv2__key ui-v2-rowLabel">
+                                <span>{prettifyRevenueKey(item.label || item.key)}</span>
+                                {hasIncludedComponent(item.key) ? includedBadge : null}
+                              </span>
+                              <span className="ui-v2-kv2__val">{formatCurrencySAR(item.amount || 0)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </section>
+
+                  <section>
+                    <button
+                      type="button"
+                      className="ui-v2-accordion__head"
+                      data-open={v2RevenueOpen.opex ? "true" : "false"}
+                      onClick={() =>
+                        setV2RevenueOpen((prev) => ({
+                          ...prev,
+                          opex: !prev.opex,
+                        }))
+                      }
+                    >
+                      {v2RevenueOpen.opex ? (
+                        <ChevronDownIcon className="ui-v2-accordion__chev" />
+                      ) : (
+                        <ChevronRightIcon className="ui-v2-accordion__chev" />
+                      )}
+                      <span className="ui-v2-accordion__title">{t("excel.opex")}</span>
+                      <span className="ui-v2-accordion__total">{formatCurrencySAR(opexCostResolved)}</span>
+                    </button>
+                    {v2RevenueOpen.opex && (
+                      <div className="ui-v2-accordion__body">
+                        <div className="ui-v2-kv2">
+                          <div className="ui-v2-kv2__row">
+                            <span className="ui-v2-kv2__key ui-v2-rowLabel">
+                              <span>{t("excel.opex")}</span>
+                              {includedBadge}
+                            </span>
+                            <span className="ui-v2-kv2__val">{formatCurrencySAR(opexCostResolved)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+
+                  <section>
+                    <button
+                      type="button"
+                      className="ui-v2-accordion__head"
+                      data-open={v2RevenueOpen.noi ? "true" : "false"}
+                      onClick={() =>
+                        setV2RevenueOpen((prev) => ({
+                          ...prev,
+                          noi: !prev.noi,
+                        }))
+                      }
+                    >
+                      {v2RevenueOpen.noi ? (
+                        <ChevronDownIcon className="ui-v2-accordion__chev" />
+                      ) : (
+                        <ChevronRightIcon className="ui-v2-accordion__chev" />
+                      )}
+                      <span className="ui-v2-accordion__title">{t("excel.noiYear1")}</span>
+                      <span className="ui-v2-accordion__total">{formatCurrencySAR(y1NoiResolved)}</span>
+                    </button>
+                    {v2RevenueOpen.noi && (
+                      <div className="ui-v2-accordion__body">
+                        <div className="ui-v2-kv2">
+                          <div className="ui-v2-kv2__row">
+                            <span className="ui-v2-kv2__key ui-v2-rowLabel">
+                              <span>{t("excel.noiYear1")}</span>
+                              {includedBadge}
+                            </span>
+                            <span className="ui-v2-kv2__val">{formatCurrencySAR(y1NoiResolved)}</span>
+                          </div>
+                          <div className="ui-v2-kv2__row">
+                            <span className="ui-v2-kv2__key">{t("excel.unleveredRoi")}</span>
+                            <span className="ui-v2-kv2__val">{formatPercentValue(excelResult.roi)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+
+                  <div className="ui-v2-totalRow ui-v2-totalRow--stack">
+                    <div className="ui-v2-totalRow__stackRow">
+                      <span>{t("excel.year1Income")}</span>
+                      <strong>{formatCurrencySAR(excelResult.costs.y1_income)}</strong>
+                    </div>
+                    <div className="ui-v2-totalRow__stackRow">
+                      <span>{t("excel.noiYear1")}</span>
+                      <strong>{formatCurrencySAR(y1NoiResolved)}</strong>
+                    </div>
+                    <div className="ui-v2-totalRow__stackRow">
+                      <span>{t("excel.unleveredRoi")}</span>
+                      <strong>{formatPercentValue(excelResult.roi)}</strong>
+                    </div>
+                  </div>
+                </div>
+              ) : (
               <Table>
                 <thead>
                   <tr>
@@ -2780,6 +2924,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                   </tr>
                 </tbody>
               </Table>
+              )}
 
             </div>
               )}
