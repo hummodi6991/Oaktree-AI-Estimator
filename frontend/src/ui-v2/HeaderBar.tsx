@@ -13,7 +13,7 @@ export default function HeaderBar({ onSearchSelect }: HeaderBarProps) {
   const userDisplayName = "Asad ur rehman";
 
   return (
-    <header className="oak-topbar">
+    <header className="oak-topbar ui-v2-header">
       <div className="oak-container oak-topbar-inner">
         <div>
           <div className="oak-brand-title">Oaktree Estimator</div>
