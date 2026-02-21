@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
-import styles from "./ExcelFormTarget.module.css";
 
 import "../styles/excel-form.css";
 import "../styles/calculations.css";
@@ -1574,7 +1573,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
   return (
     <div>
-      <section className={mode === "v2" ? `excel-v2-controls oak-container ${styles.targetControls}` : undefined}>
+      <section className={mode === "v2" ? "excel-v2-controls oak-container" : undefined}>
         <div className="excel-controls-row">
           <div className="excel-controls-row__left">
             <div className={`excel-controls-row__grid ${mode === "v2" ? "excel-controls-row__grid--v2" : ""}`}>
@@ -1826,7 +1825,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       )}
 
       {showCalculations && excelResult && (
-        <section className={mode === "v2" ? `calc-section ${styles.targetCalculations}` : "calc-section"}>
+        <section className="calc-section">
           <h3 className="calc-header oak-section-bar">{t("excel.calculationsTitle")}</h3>
           <Tabs
             items={[
