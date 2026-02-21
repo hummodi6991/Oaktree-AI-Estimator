@@ -331,14 +331,12 @@
 }
 
 .oak-infobar-inner {
-  min-height: 56px;
-  padding-top: 8px;
-  padding-bottom: 8px;
+  min-height: 72px;
 }
 
 .ui-v2-parcelbar__left {
   text-align: center;
-  font-size: clamp(15px, 1.1vw, 18px);
+  font-size: 34px;
   font-weight: 600;
   line-height: 1.35;
 }
@@ -489,11 +487,11 @@
   }
 
   .ui-v2-parcelbar__left {
-    font-size: 15px;
+    font-size: 18px;
   }
 
   .unit-cost-panel__title {
-    font-size: 20px;
+    font-size: 28px;
   }
 
   .unit-cost-panel__label {
