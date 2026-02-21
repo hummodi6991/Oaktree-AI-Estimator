@@ -2145,7 +2145,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               {selectedResultsTab === "financial" && (
                 mode === "v2" ? (
                   <div>
-                    <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.costBreakdown")}</h4>
+                    <h4 className="ui-v2-sectionTitle">{t("excel.costBreakdown")}</h4>
                     {(() => {
                       const directConstruction = excelResult.costs.construction_direct_cost ?? 0;
                       const fitoutCost = excelResult.costs.fitout_cost ?? 0;
@@ -2645,7 +2645,11 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
               {selectedResultsTab === "revenue" && (
             <div>
-              <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.revenueBreakdown")}</h4>
+              {mode === "v2" ? (
+                <h4 className="ui-v2-sectionTitle">{t("excel.revenueBreakdown")}</h4>
+              ) : (
+                <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.revenueBreakdown")}</h4>
+              )}
               {rentMeta?.provider === "REGA" && residentialRentMo != null && (
                 <p style={{ marginTop: 0, marginBottom: "0.75rem", fontSize: "0.8rem", color: "#cbd5f5" }}>
                   {t("excel.regaNote", {
@@ -2963,7 +2967,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
                     return (
                       <div>
-                        <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("parking.title")}</h4>
+                        <h4 className="ui-v2-sectionTitle">{t("parking.title")}</h4>
 
                         <div className="ui-v2-card ui-v2-card--elevated ui-v2-parkingOverview">
                           <div className="ui-v2-parkingOverview__title">
@@ -2993,7 +2997,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                           </div>
                         </div>
 
-                        <div className="ui-v2-accordion" style={{ marginTop: "0.75rem" }}>
+                        <div className="ui-v2-accordion ui-v2-accordion--spaced">
                           <button
                             type="button"
                             className="ui-v2-accordion__head"
