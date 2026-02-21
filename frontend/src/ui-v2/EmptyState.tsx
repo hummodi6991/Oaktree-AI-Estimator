@@ -1,27 +1,26 @@
-import { CalculatorIcon, ChartBarSquareIcon, ScaleIcon, SparklesIcon } from "@heroicons/react/24/outline";
+import { ArrowsRightLeftIcon, CalculatorIcon, Squares2X2Icon } from "@heroicons/react/24/outline";
 
 const TILES = [
   { title: "Cost & Revenue Calculations", Icon: CalculatorIcon },
-  { title: "Detailed Breakdown", Icon: ChartBarSquareIcon },
-  { title: "Scenario Comparison", Icon: ScaleIcon },
+  { title: "Detailed Breakdown", Icon: Squares2X2Icon },
+  { title: "Scenario Comparison", Icon: ArrowsRightLeftIcon },
 ];
 
 export default function EmptyState() {
   return (
-    <section className="ui-v2-empty-state" aria-label="Empty analysis state">
-      <div className="ui-v2-empty-state__icon" aria-hidden="true">
-        <SparklesIcon width={24} height={24} />
+    <section className="ui-v2-empty" aria-label="Empty analysis state">
+      <div className="ui-v2-empty__copy">
+        <h2 className="ui-v2-empty__title">Select one or multiple parcel(s) to begin analysis</h2>
+        <p className="ui-v2-empty__subtitle">
+          Choose parcel to start development assumptions and view financial projects.
+        </p>
       </div>
-      <h2>Select one or multiple parcel(s) to begin analysis</h2>
-      <p>
-        Choose a parcel to start development assumptions and view financial projections.
-      </p>
-      <div className="ui-v2-empty-state__tiles">
+      <div className="ui-v2-empty__tiles">
         {TILES.map((tile) => (
-          <button key={tile.title} type="button" className="ui-v2-empty-state__tile">
-            <tile.Icon width={20} height={20} />
-            <span>{tile.title}</span>
-          </button>
+          <div key={tile.title} className="ui-v2-empty__tile ui-v2-card">
+            <tile.Icon className="ui-v2-empty__tileIcon" aria-hidden="true" />
+            <div className="ui-v2-empty__tileTitle">{tile.title}</div>
+          </div>
         ))}
       </div>
     </section>
