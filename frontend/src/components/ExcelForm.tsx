@@ -340,6 +340,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     opex: true,
     noi: false,
   });
+  const [v2ParkingOpen, setV2ParkingOpen] = useState<Record<string, boolean>>({
+    assumptions: true,
+    details: false,
+  });
   const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
     String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
   );
@@ -1469,6 +1473,12 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       return trimmedExplanation || baseNote;
     }
     return t("excelNotes.revenueNoteDash");
+  };
+
+  const toNumericOrNull = (value: unknown) => {
+    if (value == null || value === "") return null;
+    const numeric = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
   };
 
   const resetFarDraft = () => {
@@ -2929,7 +2939,112 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
             </div>
               )}
 
-              {selectedResultsTab === "parking" && <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />}
+              {selectedResultsTab === "parking" &&
+                (mode !== "v2" ? (
+                  <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
+                ) : (
+                  (() => {
+                    const parkingTotals = (excelResult.totals ?? {}) as Record<string, unknown>;
+                    const parkingNotes = (excelResult.notes ?? {}) as Record<string, unknown>;
+                    const requiredSpaces =
+                      toNumericOrNull(parkingTotals.parking_required) ??
+                      toNumericOrNull(parkingTotals.total_parking_required) ??
+                      toNumericOrNull(parkingNotes.parking_required);
+                    const providedSpaces =
+                      toNumericOrNull(parkingTotals.parking_provided) ??
+                      toNumericOrNull(parkingTotals.total_parking_provided) ??
+                      toNumericOrNull(parkingNotes.parking_provided);
+                    const deltaSpaces =
+                      toNumericOrNull(parkingTotals.parking_delta) ??
+                      toNumericOrNull(parkingTotals.parking_shortfall) ??
+                      (requiredSpaces != null && providedSpaces != null
+                        ? providedSpaces - requiredSpaces
+                        : null);
+
+                    return (
+                      <div>
+                        <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("parking.title")}</h4>
+
+                        <div className="ui-v2-card ui-v2-card--elevated ui-v2-parkingOverview">
+                          <div className="ui-v2-parkingOverview__title">
+                            {isArabic ? "ملخص المواقف" : "Parking Overview"}
+                          </div>
+                          <div className="ui-v2-kv2">
+                            <div className="ui-v2-kv2__row">
+                              <span className="ui-v2-kv2__key">{isArabic ? "المطلوب" : "Required"}</span>
+                              <span className="ui-v2-kv2__val">
+                                {requiredSpaces != null ? formatNumberValue(requiredSpaces, 0) : "—"}
+                              </span>
+                            </div>
+                            <div className="ui-v2-kv2__row">
+                              <span className="ui-v2-kv2__key">{isArabic ? "المتوفر" : "Provided"}</span>
+                              <span className="ui-v2-kv2__val">
+                                {providedSpaces != null ? formatNumberValue(providedSpaces, 0) : "—"}
+                              </span>
+                            </div>
+                            <div className="ui-v2-kv2__row">
+                              <span className="ui-v2-kv2__key">
+                                {isArabic ? "العجز/الفائض" : "Shortfall / Surplus"}
+                              </span>
+                              <span className="ui-v2-kv2__val">
+                                {deltaSpaces != null ? formatNumberValue(deltaSpaces, 0) : "—"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="ui-v2-accordion" style={{ marginTop: "0.75rem" }}>
+                          <button
+                            type="button"
+                            className="ui-v2-accordion__head"
+                            data-open={v2ParkingOpen.assumptions ? "true" : "false"}
+                            onClick={() =>
+                              setV2ParkingOpen((prev) => ({ ...prev, assumptions: !prev.assumptions }))
+                            }
+                          >
+                            {v2ParkingOpen.assumptions ? (
+                              <ChevronDownIcon className="ui-v2-accordion__chev" />
+                            ) : (
+                              <ChevronRightIcon className="ui-v2-accordion__chev" />
+                            )}
+                            <span className="ui-v2-accordion__title">
+                              {isArabic ? "الافتراضات" : "Assumptions"}
+                            </span>
+                            <span className="ui-v2-pill">{isArabic ? "مضمن" : "Included"}</span>
+                          </button>
+                          {v2ParkingOpen.assumptions && (
+                            <div className="ui-v2-accordion__body">
+                              <div className="ui-v2-card ui-v2-parkingBodyCard">
+                                <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
+                              </div>
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            className="ui-v2-accordion__head"
+                            data-open={v2ParkingOpen.details ? "true" : "false"}
+                            onClick={() => setV2ParkingOpen((prev) => ({ ...prev, details: !prev.details }))}
+                          >
+                            {v2ParkingOpen.details ? (
+                              <ChevronDownIcon className="ui-v2-accordion__chev" />
+                            ) : (
+                              <ChevronRightIcon className="ui-v2-accordion__chev" />
+                            )}
+                            <span className="ui-v2-accordion__title">{isArabic ? "التفاصيل" : "Details"}</span>
+                          </button>
+                          {v2ParkingOpen.details && (
+                            <div className="ui-v2-accordion__body">
+                              <div className="ui-v2-card ui-v2-parkingBodyCard">
+                                <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()
+                ))}
             </Card>
             {!(mode === "v2" && selectedResultsTab === "summary") && <div className="oak-right-panel">
               <Card title={t("excel.financialSummaryTitle")} className="oak-financial-summary">
