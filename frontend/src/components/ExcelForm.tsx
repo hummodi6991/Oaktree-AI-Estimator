@@ -138,6 +138,7 @@ type ExcelFormProps = {
 };
 
 type MassingLock = "far" | "floors" | "coverage";
+type ResultTab = "summary" | "financial" | "revenue" | "parking";
 
 const normalizeLandUse = (value?: string | null): LandUseCode | null => {
   const v = (value || "").trim().toLowerCase();
@@ -326,7 +327,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const [error, setError] = useState<string | null>(null);
   const [excelResult, setExcelResult] = useState<ExcelResult | null>(null);
   const [showCalculations, setShowCalculations] = useState(false);
-  const [activeCalcTab, setActiveCalcTab] = useState("financial");
+  const [activeCalcTab, setActiveCalcTab] = useState<ResultTab>("financial");
+  const [activeV2Tab, setActiveV2Tab] = useState<ResultTab>("summary");
   const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
     String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
   );
@@ -1570,6 +1572,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const incomeMargin = effectiveIncome > 0 ? y1NoiResolved / effectiveIncome : 0;
   const totalCapex = excelResult?.costs?.grand_total_capex ?? 0;
   const yieldNoi = totalCapex > 0 ? y1NoiResolved / totalCapex : 0;
+  const selectedResultsTab: ResultTab = mode === "v2" ? activeV2Tab : activeCalcTab;
 
   return (
     <div>
@@ -1925,22 +1928,68 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       )}
 
       {showCalculations && excelResult && (
-        <section className="calc-section">
-          <h3 className="calc-header oak-section-bar">{t("excel.calculationsTitle")}</h3>
-          <Tabs
-            items={[
-              { id: "summary", label: isArabic ? "الملخص" : "Summary" },
-              { id: "financial", label: t("excel.financialBreakdown") },
-              { id: "revenue", label: t("excel.revenueBreakdown") },
-              { id: "parking", label: t("parking.title") },
-            ]}
-            value={activeCalcTab}
-            onChange={setActiveCalcTab}
-          />
+        <section className={mode === "v2" ? "calc-section ui-v2-results" : "calc-section"}>
+          {mode === "v2" ? (
+            <>
+              <div className="ui-v2-results__titlebar">Estimated Calculations</div>
+              <div className="ui-v2-results__tabs" role="tablist" aria-label="Estimated calculations tabs">
+                <button
+                  type="button"
+                  role="tab"
+                  className="ui-v2-results__tab"
+                  data-active={activeV2Tab === "summary"}
+                  onClick={() => setActiveV2Tab("summary")}
+                >
+                  {isArabic ? "الملخص" : "Summary"}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  className="ui-v2-results__tab"
+                  data-active={activeV2Tab === "financial"}
+                  onClick={() => setActiveV2Tab("financial")}
+                >
+                  {t("excel.financialBreakdown")}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  className="ui-v2-results__tab"
+                  data-active={activeV2Tab === "revenue"}
+                  onClick={() => setActiveV2Tab("revenue")}
+                >
+                  {t("excel.revenueBreakdown")}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  className="ui-v2-results__tab"
+                  data-active={activeV2Tab === "parking"}
+                  onClick={() => setActiveV2Tab("parking")}
+                >
+                  {t("parking.title")}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h3 className="calc-header oak-section-bar">{t("excel.calculationsTitle")}</h3>
+              <Tabs
+                items={[
+                  { id: "summary", label: isArabic ? "الملخص" : "Summary" },
+                  { id: "financial", label: t("excel.financialBreakdown") },
+                  { id: "revenue", label: t("excel.revenueBreakdown") },
+                  { id: "parking", label: t("parking.title") },
+                ]}
+                value={activeCalcTab}
+                onChange={(id) => setActiveCalcTab(id as ResultTab)}
+              />
+            </>
+          )}
 
-          <div className="calc-grid">
+          <div className={mode === "v2" ? "calc-grid ui-v2-results__panel" : "calc-grid"} role={mode === "v2" ? "tabpanel" : undefined}>
             <Card>
-              {activeCalcTab === "summary" && (
+              {selectedResultsTab === "summary" && (
                 <div className="oak-card">
                   <h4 className="oak-card-title">{t("excel.financialSummaryTitle")}</h4>
                   <div className="oak-stats">
@@ -1959,7 +2008,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                   </div>
                 </div>
               )}
-              {activeCalcTab === "financial" && (
+              {selectedResultsTab === "financial" && (
             <div>
               <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.costBreakdown")}</h4>
               <Table>
@@ -2305,7 +2354,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
             </div>
               )}
 
-              {activeCalcTab === "revenue" && (
+              {selectedResultsTab === "revenue" && (
             <div>
               <h4 style={{ marginTop: 0, marginBottom: "0.5rem" }}>{t("excel.revenueBreakdown")}</h4>
               {rentMeta?.provider === "REGA" && residentialRentMo != null && (
@@ -2471,7 +2520,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
             </div>
               )}
 
-              {activeCalcTab === "parking" && <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />}
+              {selectedResultsTab === "parking" && <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />}
             </Card>
             <div className="oak-right-panel">
               <Card title={t("excel.financialSummaryTitle")} className="oak-financial-summary">
