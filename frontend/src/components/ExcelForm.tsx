@@ -2084,7 +2084,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
           )}
 
           <div className={mode === "v2" ? "calc-grid ui-v2-results__panel" : "calc-grid"} role={mode === "v2" ? "tabpanel" : undefined}>
-            <Card>
+            <Card className={mode === "v2" ? "ui-v2-resultsCard" : undefined}>
               {mode === "v2" && selectedResultsTab === "summary" ? (
                 <div className="ui-v2-summary-grid">
                   <div className="ui-v2-summary-left">
