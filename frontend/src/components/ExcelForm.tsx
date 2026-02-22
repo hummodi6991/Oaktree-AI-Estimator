@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
 import { ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 
 import "../styles/excel-form.css";
 import "../styles/calculations.css";
+import "../styles/ui-v2.css";
 
 import { landPrice, makeEstimate, runScenario, trackEvent } from "../api";
 import {
@@ -1662,6 +1663,28 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   };
   const selectedResultsTab: ResultTab = mode === "v2" ? activeV2Tab : activeCalcTab;
 
+  /**
+   * UI v2: summary layout wrapper (cleaner UI).
+   * Wrapper-only; it does not change calculation logic.
+   */
+  function Ui2SummaryLayout(props: {
+    header?: ReactNode;
+    tabs?: ReactNode;
+    leftCards?: ReactNode;
+    rightFinancial?: ReactNode;
+  }) {
+    return (
+      <div className="ui2-estimate-shell">
+        {props.header ? <div className="estimated-calculations__header ui2-estimates-header">{props.header}</div> : null}
+        {props.tabs ? <div className="estimated-calculations__tabs ui2-estimates-tabs">{props.tabs}</div> : null}
+        <div className="ui2-summary-grid">
+          <div className="ui2-kpi-grid">{props.leftCards}</div>
+          <div className="ui2-fin-card">{props.rightFinancial}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <section className={mode === "v2" ? "excel-v2-controls oak-container" : undefined}>
@@ -2022,12 +2045,15 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
           )}
 
           <div className={mode === "v2" ? "calc-grid ui-v2-results__panel" : "calc-grid"} role={mode === "v2" ? "tabpanel" : undefined}>
-            <Card className={mode === "v2" ? "ui-v2-resultsCard calc-grid__left" : undefined}>
-              {mode === "v2" && selectedResultsTab === "summary" ? (
-                <div className="atlas-summary-grid ui-v2-summary-grid">
-                  <div className="atlas-summary-left ui-v2-summary-left">
-                    <div className="atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
-                      <div className="atlas-card__title ui-v2-summary-card__title">{isArabic ? "توزيع الوحدات" : "Unit Mix"}</div>
+            {mode === "v2" && selectedResultsTab === "summary" ? (
+              <div className="ui-v2-resultsCard calc-grid__left">
+                <Ui2SummaryLayout
+                  header={null}
+                  tabs={null}
+                  leftCards={
+                  <>
+                    <div className="ui2-card atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
+                      <div className="ui2-card__title atlas-card__title ui-v2-summary-card__title">{isArabic ? "توزيع الوحدات" : "Unit Mix"}</div>
                       <div className="ui-v2-metric-grid" role="list" aria-label={isArabic ? "توزيع الوحدات" : "Unit mix"}>
                         {unitMixItems.map((item) => (
                           <div key={item.key} className="ui-v2-metric-grid__item" role="listitem">
@@ -2039,8 +2065,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       </div>
                     </div>
 
-                    <div className="atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
-                      <div className="atlas-card__title ui-v2-summary-card__title">{isArabic ? "متوسط مساحة الوحدة" : "Average Unit Size"}</div>
+                    <div className="ui2-card atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
+                      <div className="ui2-card__title atlas-card__title ui-v2-summary-card__title">{isArabic ? "متوسط مساحة الوحدة" : "Average Unit Size"}</div>
                       <div className="ui-v2-metric-grid" role="list" aria-label={isArabic ? "متوسط مساحة الوحدة" : "Average unit size"}>
                         {averageUnitSizeItems.map((item) => (
                           <div key={item.key} className="ui-v2-metric-grid__item" role="listitem">
@@ -2051,45 +2077,45 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       </div>
                     </div>
 
-                    <div className="atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
-                      <div className="atlas-card__title ui-v2-summary-card__title">{isArabic ? "العائد" : "Yield"}</div>
-                      <div className="atlas-yield-main">{yieldBandLabel[yieldBand]}</div>
-                      <div className="atlas-yield-helper">Unlevered Year 1 yield on cost</div>
+                    <div className="ui2-card atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
+                      <div className="ui2-card__title atlas-card__title ui-v2-summary-card__title">{isArabic ? "العائد" : "Yield"}</div>
+                      <div className="atlas-yield-main ui2-card__value">{yieldBandLabel[yieldBand]}</div>
+                      <div className="atlas-yield-helper ui2-card__sub">Unlevered Year 1 yield on cost</div>
                     </div>
-                  </div>
-
-                  <div className="atlas-summary-card atlas-card ui-v2-summary-right ui-v2-card ui-v2-card--elevated fin-summary">
-                    <div className="atlas-card__title ui-v2-summary-right__title fin-summary__title">{t("excel.financialSummaryTitle")}</div>
-
+                  </>
+                }
+                rightFinancial={
+                  <>
+                    <div className="ui2-fin-card__title atlas-card__title ui-v2-summary-right__title fin-summary__title">{t("excel.financialSummaryTitle")}</div>
                     <div className="ui-v2-kv">
-                      <div className="atlas-kv ui-v2-kv__row fin-summary__row">
-                        <span className="atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.totalCapex")}</span>
-                        <span className="atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
+                      <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
+                        <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.totalCapex")}</span>
+                        <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
                       </div>
-                      <div className="atlas-kv ui-v2-kv__row fin-summary__row">
-                        <span className="atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.year1Income")}</span>
-                        <span className="atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
+                      <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
+                        <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.year1Income")}</span>
+                        <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
                       </div>
-                      <div className="atlas-kv ui-v2-kv__row fin-summary__row">
-                        <span className="atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.noiYear1")}</span>
-                        <span className="atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(y1NoiResolved)}</span>
+                      <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
+                        <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.noiYear1")}</span>
+                        <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(y1NoiResolved)}</span>
                       </div>
-
-                      <div className="ui-v2-kv__row ui-v2-kv__row--split fin-summary__split">
-                        <div>
-                          <span className="ui-v2-kv__key fin-summary__label">{t("excel.unleveredRoi")}</span>
-                          <span className="ui-v2-kv__val fin-summary__value">{formatPercentValue(excelResult.roi)}</span>
-                        </div>
-                        <div>
-                          <span className="ui-v2-kv__key fin-summary__label">{t("excel.yield")}</span>
-                          <span className="ui-v2-kv__val fin-summary__value">{formatPercentValue(yieldNoi, 1)}</span>
-                        </div>
+                      <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
+                        <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.unleveredRoi")}</span>
+                        <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">{formatPercentValue(excelResult.roi)}</span>
+                      </div>
+                      <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
+                        <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.yield")}</span>
+                        <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">{formatPercentValue(yieldNoi, 1)}</span>
                       </div>
                     </div>
-                  </div>
-                </div>
-              ) : (
-                selectedResultsTab === "summary" && (
+                  </>
+                }
+              />
+              </div>
+            ) : (
+              <Card className={mode === "v2" ? "ui-v2-resultsCard calc-grid__left" : undefined}>
+                {selectedResultsTab === "summary" && (
                 <div className="oak-card">
                   <h4 className="oak-card-title">{t("excel.financialSummaryTitle")}</h4>
                   <div className="oak-stats">
@@ -2107,8 +2133,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                     </div>
                   </div>
                 </div>
-                )
-              )}
+                )}
               {selectedResultsTab === "financial" && (
                 mode === "v2" ? (
                   <div>
@@ -3377,7 +3402,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                     );
                   })()
                 ))}
-            </Card>
+              </Card>
+            )}
             {!(mode === "v2" && selectedResultsTab === "summary") && <div className="oak-right-panel calc-grid__right">
               <Card title={t("excel.financialSummaryTitle")} className="oak-financial-summary fin-summary">
                 <div className="calc-summary-list">
