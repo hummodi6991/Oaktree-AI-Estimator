@@ -2100,13 +2100,16 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.noiYear1")}</span>
                         <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(y1NoiResolved)}</span>
                       </div>
-                      <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
-                        <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.unleveredRoi")}</span>
-                        <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">{formatPercentValue(excelResult.roi)}</span>
-                      </div>
-                      <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
-                        <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.yield")}</span>
-                        <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">{formatPercentValue(yieldNoi, 1)}</span>
+                      {/* Match clean UI: ROI + Yield split row */}
+                      <div className="ui2-fin-split ui-v2-kv__row ui-v2-kv__row--split fin-summary__split">
+                        <div className="ui2-fin-split__col">
+                          <span className="ui2-fin-split__label ui-v2-kv__key fin-summary__label">{t("excel.unleveredRoi")}</span>
+                          <span className="ui2-fin-split__value ui-v2-kv__val fin-summary__value">{formatPercentValue(excelResult.roi)}</span>
+                        </div>
+                        <div className="ui2-fin-split__col">
+                          <span className="ui2-fin-split__label ui-v2-kv__key fin-summary__label">{t("excel.yield")}</span>
+                          <span className="ui2-fin-split__value ui-v2-kv__val fin-summary__value">{formatPercentValue(yieldNoi, 1)}</span>
+                        </div>
                       </div>
                     </div>
                   </>
