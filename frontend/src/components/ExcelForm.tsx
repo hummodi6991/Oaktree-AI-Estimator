@@ -337,10 +337,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     landAndConstruction: false,
     additionalCosts: true,
   });
-  const [v2RevenueOpen, setV2RevenueOpen] = useState<Record<string, boolean>>({
+  const [v2RevenueSections, setV2RevenueSections] = useState({
+    rental: true,
     income: true,
-    opex: true,
-    noi: false,
+    performance: false,
   });
   const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
     String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
@@ -2964,135 +2964,195 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 </p>
               )}
               {mode === "v2" ? (
-                <div className="ui-v2-accordion">
-                  <section>
+                <div className="ui-v2-accordionGroup">
+                  <div className="ui-v2-revSection">
                     <button
                       type="button"
-                      className="ui-v2-accordion__head"
-                      data-open={v2RevenueOpen.income ? "true" : "false"}
+                      className="ui-v2-accHead"
+                      data-open={v2RevenueSections.rental ? "true" : "false"}
                       onClick={() =>
-                        setV2RevenueOpen((prev) => ({
+                        setV2RevenueSections((prev) => ({
+                          ...prev,
+                          rental: !prev.rental,
+                        }))
+                      }
+                    >
+                      {v2RevenueSections.rental ? (
+                        <ChevronDownIcon className="ui-v2-accordion__chev" />
+                      ) : (
+                        <ChevronRightIcon className="ui-v2-accordion__chev" />
+                      )}
+                      <span className="ui-v2-accordion__title">Rental Revenue by Asset Class</span>
+                      <span className="ui-v2-accordion__total">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
+                    </button>
+                    {v2RevenueSections.rental && (
+                      <div className="ui-v2-accordion__body">
+                        <div className="ui-v2-rowList">
+                          {["residential", "retail", "office", "basement"].map((key) => {
+                            const item = revenueItems.find((revenueItem) => revenueItem.key === key);
+                            return (
+                              <div key={key} className="ui-v2-row">
+                                <span className="ui-v2-row__label">
+                                  <span>{prettifyRevenueKey(item?.label || key)}</span>
+                                  {item?.key && hasIncludedComponent(item.key) ? includedBadge : null}
+                                </span>
+                                <span className="ui-v2-row__val">{formatCurrencySAR(item?.amount || 0)}</span>
+                                <V2InfoTip label={`Info ${key}`} body={(item?.note || "").trim() || "—"} />
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {revenueItems.find((item) => item.upperAnnexHint)?.upperAnnexHint && (
+                          <div className="ui-v2-revNote">
+                            Note: {revenueItems.find((item) => item.upperAnnexHint)?.upperAnnexHint}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="ui-v2-revSection">
+                    <button
+                      type="button"
+                      className="ui-v2-accHead"
+                      data-open={v2RevenueSections.income ? "true" : "false"}
+                      onClick={() =>
+                        setV2RevenueSections((prev) => ({
                           ...prev,
                           income: !prev.income,
                         }))
                       }
                     >
-                      {v2RevenueOpen.income ? (
+                      {v2RevenueSections.income ? (
                         <ChevronDownIcon className="ui-v2-accordion__chev" />
                       ) : (
                         <ChevronRightIcon className="ui-v2-accordion__chev" />
                       )}
-                      <span className="ui-v2-accordion__title">{t("excel.year1Income")}</span>
-                      <span className="ui-v2-accordion__total">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
+                      <span className="ui-v2-accordion__title">Income Summary</span>
                     </button>
-                    {v2RevenueOpen.income && (
+                    {v2RevenueSections.income && (
                       <div className="ui-v2-accordion__body">
-                        <div className="ui-v2-kv2">
-                          {revenueItems.map((item) => (
-                            <div key={item.key} className="ui-v2-kv2__row">
-                              <span className="ui-v2-kv2__key ui-v2-rowLabel">
-                                <span>{prettifyRevenueKey(item.label || item.key)}</span>
-                                {hasIncludedComponent(item.key) ? includedBadge : null}
-                              </span>
-                              <span className="ui-v2-kv2__val">{formatCurrencySAR(item.amount || 0)}</span>
-                              <V2InfoTip label={`Info ${item.key}`} body={(item.note || "").trim() || "—"} />
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </section>
-
-                  <section>
-                    <button
-                      type="button"
-                      className="ui-v2-accordion__head"
-                      data-open={v2RevenueOpen.opex ? "true" : "false"}
-                      onClick={() =>
-                        setV2RevenueOpen((prev) => ({
-                          ...prev,
-                          opex: !prev.opex,
-                        }))
-                      }
-                    >
-                      {v2RevenueOpen.opex ? (
-                        <ChevronDownIcon className="ui-v2-accordion__chev" />
-                      ) : (
-                        <ChevronRightIcon className="ui-v2-accordion__chev" />
-                      )}
-                      <span className="ui-v2-accordion__title">{t("excel.opex")}</span>
-                      <span className="ui-v2-accordion__total">{formatCurrencySAR(opexCostResolved)}</span>
-                    </button>
-                    {v2RevenueOpen.opex && (
-                      <div className="ui-v2-accordion__body">
-                        <div className="ui-v2-kv2">
-                          <div className="ui-v2-kv2__row">
-                            <span className="ui-v2-kv2__key ui-v2-rowLabel">
-                              <span>{t("excel.opex")}</span>
-                              {includedBadge}
+                        <div className="ui-v2-rowList">
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">Annual Net Revenue</span>
+                            <span className="ui-v2-row__val">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
+                            <V2InfoTip label="Annual Net Revenue info" body={incomeNote || "—"} />
+                          </div>
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">Annual Net Income</span>
+                            <span className="ui-v2-row__val ui-v2-costRow__controls">
+                              {formatCurrencySAR(excelResult.costs.y1_income_effective ?? effectiveIncome)}
+                              <Input
+                                type="number"
+                                size="sm"
+                                min={0}
+                                max={100}
+                                step={1}
+                                value={effectiveIncomePctDraft}
+                                onChange={(event) => setEffectiveIncomePctDraft(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    commitEffectiveIncomePct();
+                                  }
+                                }}
+                                className="ui-v2-costInput"
+                                aria-label={t("excel.effectiveIncomePct")}
+                              />
+                              <span className="ui-v2-chip">%</span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => commitEffectiveIncomePct()}
+                                disabled={effectiveIncomeApplyDisabled}
+                              >
+                                {t("common.apply")}
+                              </Button>
                             </span>
-                            <span className="ui-v2-kv2__val">{formatCurrencySAR(opexCostResolved)}</span>
-                            <V2InfoTip label="OPEX info" body={opexNote} />
+                            <V2InfoTip label="Annual Net Income info" body={y1IncomeEffectiveNote || "—"} />
+                          </div>
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">OPEX</span>
+                            <span className="ui-v2-row__val ui-v2-costRow__controls">
+                              {formatCurrencySAR(opexCostResolved)}
+                              {includedBadge}
+                              <Input
+                                type="number"
+                                size="sm"
+                                step="0.1"
+                                min={0}
+                                max={100}
+                                value={opexPctDraft}
+                                onChange={(event) => setOpexPctDraft(event.target.value)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    commitOpexPct();
+                                  }
+                                }}
+                                className="ui-v2-costInput"
+                                aria-label={t("excel.opex")}
+                                disabled={!includeOpex}
+                              />
+                              <span className="ui-v2-chip">%</span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => commitOpexPct()}
+                                disabled={opexApplyDisabled}
+                              >
+                                {t("common.apply")}
+                              </Button>
+                            </span>
+                            <V2InfoTip label="OPEX info" body={opexNote || "—"} />
+                          </div>
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">Annual NOI</span>
+                            <span className="ui-v2-row__val">{formatCurrencySAR(y1NoiResolved)}</span>
+                            <V2InfoTip label="Annual NOI info" body={t("excelNotes.noiYear1")} />
                           </div>
                         </div>
                       </div>
                     )}
-                  </section>
+                  </div>
 
-                  <section>
+                  <div className="ui-v2-revSection">
                     <button
                       type="button"
-                      className="ui-v2-accordion__head"
-                      data-open={v2RevenueOpen.noi ? "true" : "false"}
+                      className="ui-v2-accHead"
+                      data-open={v2RevenueSections.performance ? "true" : "false"}
                       onClick={() =>
-                        setV2RevenueOpen((prev) => ({
+                        setV2RevenueSections((prev) => ({
                           ...prev,
-                          noi: !prev.noi,
+                          performance: !prev.performance,
                         }))
                       }
                     >
-                      {v2RevenueOpen.noi ? (
+                      {v2RevenueSections.performance ? (
                         <ChevronDownIcon className="ui-v2-accordion__chev" />
                       ) : (
                         <ChevronRightIcon className="ui-v2-accordion__chev" />
                       )}
-                      <span className="ui-v2-accordion__title">{t("excel.noiYear1")}</span>
-                      <span className="ui-v2-accordion__total">{formatCurrencySAR(y1NoiResolved)}</span>
+                      <span className="ui-v2-accordion__title">Investment Performance</span>
                     </button>
-                    {v2RevenueOpen.noi && (
+                    {v2RevenueSections.performance && (
                       <div className="ui-v2-accordion__body">
-                        <div className="ui-v2-kv2">
-                          <div className="ui-v2-kv2__row">
-                            <span className="ui-v2-kv2__key ui-v2-rowLabel">
-                              <span>{t("excel.noiYear1")}</span>
-                              {includedBadge}
-                            </span>
-                            <span className="ui-v2-kv2__val">{formatCurrencySAR(y1NoiResolved)}</span>
-                            <V2InfoTip label="NOI info" body={t("excelNotes.noiYear1")} />
-                          </div>
-                          <div className="ui-v2-kv2__row">
-                            <span className="ui-v2-kv2__key">{t("excel.unleveredRoi")}</span>
-                            <span className="ui-v2-kv2__val">{formatPercentValue(excelResult.roi)}</span>
+                        <div className="ui-v2-rowList">
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">ROI</span>
+                            <span className="ui-v2-row__val">{formatPercentValue(excelResult.roi)}</span>
                             <V2InfoTip label="ROI info" body={t("excelNotes.roiNoiFormula")} />
                           </div>
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">Yield</span>
+                            <span className="ui-v2-row__val">{formatPercentValue(yieldNoi, 1)}</span>
+                            <V2InfoTip label="Yield info" body="Yield is annual NOI divided by total CAPEX." />
+                          </div>
                         </div>
                       </div>
                     )}
-                  </section>
-
-                  <div className="ui-v2-totalRow ui-v2-totalRow--stack">
-                    <div className="ui-v2-totalRow__stackRow">
-                      <span>{t("excel.year1Income")}</span>
-                      <strong>{formatCurrencySAR(excelResult.costs.y1_income)}</strong>
-                    </div>
-                    <div className="ui-v2-totalRow__stackRow">
-                      <span>{t("excel.noiYear1")}</span>
-                      <strong>{formatCurrencySAR(y1NoiResolved)}</strong>
-                    </div>
-                    <div className="ui-v2-totalRow__stackRow">
-                      <span>{t("excel.unleveredRoi")}</span>
-                      <strong>{formatPercentValue(excelResult.roi)}</strong>
-                    </div>
                   </div>
                 </div>
               ) : (
