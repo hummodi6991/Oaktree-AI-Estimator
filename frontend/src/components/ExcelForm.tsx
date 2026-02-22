@@ -2300,18 +2300,182 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             </button>
                             {v2FinancialOpen.costBreakdown && (
                               <div className="ui-v2-accordion__body">
-                                <div className="ui-v2-kv2">
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{directConstructionLabel}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(directConstruction)}</span>
+                                <div className="ui-v2-rowList">
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">Coverage</span>
+                                    <span className="ui-v2-row__val ui-v2-costRow__controls">
+                                      <Input
+                                        type="number"
+                                        size="sm"
+                                        min={0}
+                                        max={100}
+                                        step="0.1"
+                                        value={coverageDraft}
+                                        onChange={(event) => {
+                                          setCoverageDraft(event.target.value);
+                                          if (coverageEditError) setCoverageEditError(null);
+                                        }}
+                                        onKeyDown={(event) => {
+                                          if (event.key === "Enter") {
+                                            event.preventDefault();
+                                            commitCoverage();
+                                          }
+                                        }}
+                                        aria-label="Coverage"
+                                        className="ui-v2-costInput"
+                                      />
+                                      <span className="ui-v2-chip">%</span>
+                                      <Button type="button" size="sm" variant="secondary" onClick={commitCoverage}>
+                                        {t("excel.apply")}
+                                      </Button>
+                                    </span>
+                                    <span className="ui-v2-info">
+                                      <button type="button" className="ui-v2-info__icon" aria-label="Coverage info">i</button>
+                                      <span className="ui-v2-info__tip" role="tooltip">Coverage affects built-up area allocation and parking.</span>
+                                    </span>
                                   </div>
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{fitoutLabel}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(fitoutCost)}</span>
+                                  {coverageEditError && (
+                                    <div className="ui-v2-costRow__error">
+                                      {coverageEditError}
+                                    </div>
+                                  )}
+
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">Effective FAR above ground</span>
+                                    <span className="ui-v2-row__val ui-v2-costRow__controls">
+                                      <Input
+                                        type="number"
+                                        size="sm"
+                                        min={0.1}
+                                        step="0.01"
+                                        value={farDraft.trim() === "" && displayedFar != null ? String(displayedFar) : farDraft}
+                                        onChange={(event) => {
+                                          setFarDraft(event.target.value);
+                                          if (farEditError) setFarEditError(null);
+                                        }}
+                                        onKeyDown={(event) => {
+                                          if (event.key === "Enter") {
+                                            event.preventDefault();
+                                            applyFarEdit();
+                                          }
+                                          if (event.key === "Escape") {
+                                            event.preventDefault();
+                                            resetFarDraft();
+                                          }
+                                        }}
+                                        aria-label="Effective FAR above ground"
+                                        className="ui-v2-costInput"
+                                      />
+                                      <Button type="button" size="sm" variant="secondary" onClick={applyFarEdit} disabled={farApplyDisabled}>
+                                        {t("excel.apply")}
+                                      </Button>
+                                    </span>
+                                    <span className="ui-v2-info">
+                                      <button type="button" className="ui-v2-info__icon" aria-label="Effective FAR info">i</button>
+                                      <span className="ui-v2-info__tip" role="tooltip">
+                                        <strong>How we calculated:</strong>
+                                        <span>
+                                          {farAboveGround != null
+                                            ? `Above-ground FAR = Σ(area ratios excluding basement) = ${formatNumberValue(farAboveGround, 2)}. Tap FAR to edit, then Apply.`
+                                            : "Above-ground FAR = Σ(area ratios excluding basement). Tap FAR to edit, then Apply."}
+                                        </span>
+                                      </span>
+                                    </span>
                                   </div>
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{subtotalLabel}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(constructionSubtotal)}</span>
+                                  {farEditError && (
+                                    <div className="ui-v2-costRow__error">
+                                      {farEditError}
+                                    </div>
+                                  )}
+
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">Implied floors</span>
+                                    <span className="ui-v2-row__val">
+                                      {(() => {
+                                        const impliedFloorsV2 =
+                                          toNumericOrNullValue(notesExcelBreakdown?.implied_floors) ??
+                                          toNumericOrNullValue(totalsSource?.implied_floors);
+                                        return impliedFloorsV2 != null ? formatNumberValue(impliedFloorsV2, 1) : "—";
+                                      })()}
+                                    </span>
+                                    <span className="ui-v2-info">
+                                      <button type="button" className="ui-v2-info__icon" aria-label="Implied floors info">i</button>
+                                      <span className="ui-v2-info__tip" role="tooltip">Implied floors derived from FAR and coverage.</span>
+                                    </span>
+                                  </div>
+
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">Floors above ground</span>
+                                    <span className="ui-v2-row__val ui-v2-costRow__controls">
+                                      <Input
+                                        type="number"
+                                        size="sm"
+                                        min={0.1}
+                                        step="0.1"
+                                        value={floorsDraft}
+                                        onChange={(event) => {
+                                          setFloorsDraft(event.target.value);
+                                          if (floorsEditError) setFloorsEditError(null);
+                                        }}
+                                        onKeyDown={(event) => {
+                                          if (event.key === "Enter") {
+                                            event.preventDefault();
+                                            commitFloors();
+                                          }
+                                        }}
+                                        aria-label="Floors above ground"
+                                        className="ui-v2-costInput"
+                                      />
+                                      <Button type="button" size="sm" variant="secondary" onClick={commitFloors} disabled={floorsApplyDisabled}>
+                                        {t("excel.apply")}
+                                      </Button>
+                                    </span>
+                                    <span className="ui-v2-info">
+                                      <button type="button" className="ui-v2-info__icon" aria-label="Floors above ground info">i</button>
+                                      <span className="ui-v2-info__tip" role="tooltip">Floors influence the effective FAR when scaling is enabled.</span>
+                                    </span>
+                                  </div>
+                                  {floorsEditError && (
+                                    <div className="ui-v2-costRow__error">
+                                      {floorsEditError}
+                                    </div>
+                                  )}
+
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">Massing locks</span>
+                                    <span className="ui-v2-row__val ui-v2-costRow__controls ui-v2-costRow__controls--radios">
+                                      <label className="ui-v2-radio">
+                                        <input
+                                          type="radio"
+                                          name="v2-massing-lock"
+                                          checked={massingLock === "floors"}
+                                          onChange={() => applyInputPatch({ massing_lock: "floors" }, true)}
+                                        />
+                                        <span>Lock Floors</span>
+                                      </label>
+                                      <label className="ui-v2-radio">
+                                        <input
+                                          type="radio"
+                                          name="v2-massing-lock"
+                                          checked={massingLock === "far"}
+                                          onChange={() => applyInputPatch({ massing_lock: "far" }, true)}
+                                        />
+                                        <span>Lock FAR</span>
+                                      </label>
+                                      <label className="ui-v2-radio">
+                                        <input
+                                          type="radio"
+                                          name="v2-massing-lock"
+                                          checked={massingLock === "coverage"}
+                                          onChange={() => applyInputPatch({ massing_lock: "coverage" }, true)}
+                                        />
+                                        <span>Lock Coverage</span>
+                                      </label>
+                                    </span>
+                                    <span className="ui-v2-info">
+                                      <button type="button" className="ui-v2-info__icon" aria-label="Massing locks info">i</button>
+                                      <span className="ui-v2-info__tip" role="tooltip">Choose which parameter stays fixed when adjusting others.</span>
+                                    </span>
                                   </div>
                                 </div>
                               </div>
