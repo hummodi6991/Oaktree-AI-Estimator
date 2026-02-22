@@ -80,6 +80,7 @@ type ExcelResult = {
   };
   totals?: EstimateTotals;
   notes?: EstimateNotes;
+  assumptions?: Array<Record<string, any>>;
   used_inputs?: {
     area_ratio?: Record<string, number | string>;
   };
@@ -1611,33 +1612,54 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     }
     return null;
   };
+  const averageUnitSizeAssumptionKeys: Record<string, string> = {
+    residential: "avg_unit_size_residential_m2",
+    retail: "avg_unit_size_retail_m2",
+    office: "avg_unit_size_office_m2",
+  };
+  const readAverageUnitSizeFromAssumptions = (key: string) => {
+    const assumptionKey = averageUnitSizeAssumptionKeys[key];
+    if (!assumptionKey || !Array.isArray(excelResult?.assumptions)) return null;
+    for (const assumption of excelResult.assumptions) {
+      if (!assumption || typeof assumption !== "object") continue;
+      const candidateKey =
+        typeof assumption.key === "string"
+          ? assumption.key
+          : typeof assumption.name === "string"
+            ? assumption.name
+            : null;
+      if (candidateKey !== assumptionKey) continue;
+      const assumptionValue =
+        assumption.value ?? assumption.val ?? assumption.default ?? assumption.assumed_value;
+      const numericValue = Number(assumptionValue);
+      if (Number.isFinite(numericValue) && numericValue > 0) return numericValue;
+    }
+    return null;
+  };
+  const readAverageUnitSize = (key: "residential" | "retail" | "office") =>
+    resolveAverageUnitSize(
+      readAverageUnitSizeFromAssumptions(key),
+      excelResult?.notes?.excel_breakdown?.avg_unit_m2?.[key] as number | undefined,
+      excelResult?.notes?.[`${key}_avg_unit_size_m2`] as number | undefined,
+      excelResult?.totals?.[`${key}_avg_unit_size_m2`] as number | undefined,
+      excelResult?.totals?.[`${key}_average_unit_size_m2`] as number | undefined,
+      excelResult?.notes?.[`${key}_average_unit_size_m2`] as number | undefined,
+    );
   const averageUnitSizeItems = [
     {
       key: "residential",
       label: t("excel.componentResidential"),
-      value: resolveAverageUnitSize(
-        excelResult?.totals?.residential_avg_unit_size_m2 as number | undefined,
-        excelResult?.totals?.residential_average_unit_size_m2 as number | undefined,
-        excelResult?.notes?.residential_avg_unit_size_m2 as number | undefined,
-      ),
+      value: readAverageUnitSize("residential"),
     },
     {
       key: "retail",
       label: t("excel.componentRetail"),
-      value: resolveAverageUnitSize(
-        excelResult?.totals?.retail_avg_unit_size_m2 as number | undefined,
-        excelResult?.totals?.retail_average_unit_size_m2 as number | undefined,
-        excelResult?.notes?.retail_avg_unit_size_m2 as number | undefined,
-      ),
+      value: readAverageUnitSize("retail"),
     },
     {
       key: "office",
       label: t("excel.componentOffice"),
-      value: resolveAverageUnitSize(
-        excelResult?.totals?.office_avg_unit_size_m2 as number | undefined,
-        excelResult?.totals?.office_average_unit_size_m2 as number | undefined,
-        excelResult?.notes?.office_avg_unit_size_m2 as number | undefined,
-      ),
+      value: readAverageUnitSize("office"),
     },
   ];
   const selectedResultsTab: ResultTab = mode === "v2" ? activeV2Tab : activeCalcTab;
