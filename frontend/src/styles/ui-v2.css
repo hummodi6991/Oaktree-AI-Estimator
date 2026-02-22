@@ -1252,8 +1252,23 @@
   padding: 10px 12px;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-12);
   cursor: pointer;
+}
+
+.ui-v2-revSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  margin-bottom: var(--space-16);
+}
+
+.ui-v2-revNote {
+  margin-top: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-gray);
+  line-height: 1.35;
 }
 
 .ui-v2-accHead:hover {
