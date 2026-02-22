@@ -10,14 +10,13 @@ type HeaderBarProps = {
 export default function HeaderBar({ onSearchSelect }: HeaderBarProps) {
   const { i18n } = useTranslation();
   const isArabic = i18n.language.startsWith("ar");
-  const userDisplayName = "Asad ur rehman";
+  const userDisplayName = "Oaktree User";
 
   return (
     <header className="oak-topbar ui-v2-header app-topbar">
       <div className="oak-container oak-topbar-inner">
         <div className="app-topbar__left">
-          <div className="oak-brand-title app-topbar__title">Oaktree Estimator</div>
-          <div className="oak-brand-subtitle app-topbar__subtitle">Riyadh Commercial Development</div>
+          <div className="oak-brand-title app-topbar__title">Oaktree Atlas</div>
         </div>
         <div className="app-topbar__center">
           <SearchBar onSelect={onSearchSelect} />
