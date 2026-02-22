@@ -3455,14 +3455,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               </Card>
             </div>}
           </div>
-          {summaryText && (
-            <div className="calc-summary-divider">
-              <h5 style={{ margin: "0 0 0.35rem 0", fontSize: "0.95rem" }}>
-                {t("excel.executiveSummary")}
-              </h5>
-              <p style={{ margin: 0, lineHeight: 1.4 }}>{summaryText}</p>
-            </div>
-          )}
           <div ref={feedbackSentinelRef} style={{ height: 1 }} />
         </section>
       )}
