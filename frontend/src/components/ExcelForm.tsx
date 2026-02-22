@@ -6,7 +6,7 @@ import { ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import "../styles/excel-form.css";
 import "../styles/calculations.css";
 
-import { downloadMemoPdf, landPrice, makeEstimate, runScenario, trackEvent } from "../api";
+import { landPrice, makeEstimate, runScenario, trackEvent } from "../api";
 import {
   cloneTemplate,
   ExcelInputs,
@@ -360,7 +360,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const [isScenarioOpen, setIsScenarioOpen] = useState(false);
   const [isScenarioSubmitting, setIsScenarioSubmitting] = useState(false);
   const [scenarioBaseResult, setScenarioBaseResult] = useState<ExcelResult | null>(null);
-  const [isScenarioActive, setIsScenarioActive] = useState(false);
   const excelResultRef = useRef<ExcelResult | null>(null);
   const unitCostInputs = inputs.unit_cost || {};
   const getBestAreaRatio = (): ExcelInputs["area_ratio"] | null => {
@@ -384,7 +383,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       setOverrideLandUse(null);
       setEstimateId(null);
       setScenarioBaseResult(null);
-      setIsScenarioActive(false);
     }
   }, [parcel]);
 
@@ -846,7 +844,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     setShowCalculations(false);
     setEstimateId(null);
     setScenarioBaseResult(null);
-    setIsScenarioActive(false);
     try {
       const resolvedComponents = currentInputs.components ?? components;
       const excelInputs = {
@@ -940,22 +937,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     }
   }
 
-  const handleExportPdf = async () => {
-    if (!estimateId) return;
-    try {
-      const blob = await downloadMemoPdf(estimateId);
-      const blobUrl = URL.createObjectURL(blob);
-      window.open(blobUrl, "_blank", "noopener,noreferrer");
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-      void trackEvent("ui_pdf_opened", {
-        estimateId,
-      });
-      openFeedback("pdf", estimateId);
-    } catch (err) {
-      setError("Unable to export PDF. Please try again.");
-    }
-  };
-
   const handleEstimateClick = () => {
     void trackEvent("ui_estimate_started", {
       meta: {
@@ -1045,7 +1026,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       if (typeof patch.provider === "string" && patch.provider.trim()) {
         setProvider(patch.provider.trim() as (typeof PROVIDERS)[number]["value"]);
       }
-      setIsScenarioActive(true);
       setIsScenarioOpen(false);
       void trackEvent("ui_scenario_run", {
         estimateId,
@@ -1056,15 +1036,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       setError(message);
     } finally {
       setIsScenarioSubmitting(false);
-    }
-  };
-
-  const copyEstimateId = async () => {
-    if (!estimateId || !navigator?.clipboard?.writeText) return;
-    try {
-      await navigator.clipboard.writeText(estimateId);
-    } catch (err) {
-      // no-op; clipboard may be blocked
     }
   };
 
@@ -1509,7 +1480,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       } as Partial<ExcelInputs>,
       true,
     );
-    setIsScenarioActive(false);
     setScenarioBaseResult(null);
     setIsEditingFar(false);
     setFarEditError(null);
@@ -1605,69 +1575,91 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     const pct = totalIncomeByClass > 0 ? income / totalIncomeByClass : 0;
     return { ...item, pct };
   });
+  const fixedAverageUnitSize: Record<"residential" | "retail" | "office", number> = {
+    residential: 120,
+    retail: 80,
+    office: 120,
+  };
+  const readUnitCountFromSummary = (key: "residential" | "retail" | "office") => {
+    const combinedSummary = [notes.summary_en, notes.summary_ar, notes.summary, excelResult?.summary]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ");
+    if (!combinedSummary) return null;
+    const patterns: Record<typeof key, RegExp> = {
+      residential: /(\d[\d,]*)\s+(?:residential\s+)?apartments?/i,
+      retail: /(\d[\d,]*)\s+(?:retail\s+)?units?/i,
+      office: /(\d[\d,]*)\s+(?:office\s+)?units?/i,
+    };
+    const match = combinedSummary.match(patterns[key]);
+    if (!match) return null;
+    const numeric = Number(match[1].replace(/,/g, ""));
+    return Number.isFinite(numeric) ? numeric : null;
+  };
+  const resolveUnitCount = (key: "residential" | "retail" | "office") => {
+    const fromSummary = readUnitCountFromSummary(key);
+    if (fromSummary != null) return fromSummary;
+    const area = Number(nla?.[key] ?? 0);
+    if (!Number.isFinite(area) || area <= 0) return 0;
+    return Math.floor(area / fixedAverageUnitSize[key]);
+  };
+  const unitMixItems = [
+    { key: "residential" as const, label: t("excel.componentResidential"), suffix: isArabic ? "شقة" : "Apartments" },
+    { key: "retail" as const, label: t("excel.componentRetail"), suffix: isArabic ? "وحدات" : "Units" },
+    { key: "office" as const, label: t("excel.componentOffice"), suffix: isArabic ? "وحدات" : "Units" },
+  ].map((item) => ({
+    ...item,
+    count: resolveUnitCount(item.key),
+  }));
   const effectiveIncome = excelResult?.costs?.y1_income_effective ?? 0;
   const expenseRatio = effectiveIncome > 0 ? opexCostResolved / effectiveIncome : 0;
   const incomeMargin = effectiveIncome > 0 ? y1NoiResolved / effectiveIncome : 0;
   const totalCapex = excelResult?.costs?.grand_total_capex ?? 0;
   const yieldNoi = totalCapex > 0 ? y1NoiResolved / totalCapex : 0;
-  const resolveAverageUnitSize = (...candidates: Array<number | null | undefined>) => {
-    for (const candidate of candidates) {
-      if (candidate == null) continue;
-      const numeric = Number(candidate);
-      if (Number.isFinite(numeric) && numeric > 0) return numeric;
-    }
-    return null;
-  };
-  const averageUnitSizeAssumptionKeys: Record<string, string> = {
-    residential: "avg_unit_size_residential_m2",
-    retail: "avg_unit_size_retail_m2",
-    office: "avg_unit_size_office_m2",
-  };
-  const readAverageUnitSizeFromAssumptions = (key: string) => {
-    const assumptionKey = averageUnitSizeAssumptionKeys[key];
-    if (!assumptionKey || !Array.isArray(excelResult?.assumptions)) return null;
-    for (const assumption of excelResult.assumptions) {
-      if (!assumption || typeof assumption !== "object") continue;
-      const candidateKey =
-        typeof assumption.key === "string"
-          ? assumption.key
-          : typeof assumption.name === "string"
-            ? assumption.name
-            : null;
-      if (candidateKey !== assumptionKey) continue;
-      const assumptionValue =
-        assumption.value ?? assumption.val ?? assumption.default ?? assumption.assumed_value;
-      const numericValue = Number(assumptionValue);
-      if (Number.isFinite(numericValue) && numericValue > 0) return numericValue;
-    }
-    return null;
-  };
-  const readAverageUnitSize = (key: "residential" | "retail" | "office") =>
-    resolveAverageUnitSize(
-      readAverageUnitSizeFromAssumptions(key),
-      excelResult?.notes?.excel_breakdown?.avg_unit_m2?.[key] as number | undefined,
-      excelResult?.notes?.[`${key}_avg_unit_size_m2`] as number | undefined,
-      excelResult?.totals?.[`${key}_avg_unit_size_m2`] as number | undefined,
-      excelResult?.totals?.[`${key}_average_unit_size_m2`] as number | undefined,
-      excelResult?.notes?.[`${key}_average_unit_size_m2`] as number | undefined,
-    );
   const averageUnitSizeItems = [
     {
       key: "residential",
       label: t("excel.componentResidential"),
-      value: readAverageUnitSize("residential"),
+      value: fixedAverageUnitSize.residential,
     },
     {
       key: "retail",
       label: t("excel.componentRetail"),
-      value: readAverageUnitSize("retail"),
+      value: fixedAverageUnitSize.retail,
     },
     {
       key: "office",
       label: t("excel.componentOffice"),
-      value: readAverageUnitSize("office"),
+      value: fixedAverageUnitSize.office,
     },
   ];
+  const roiBandRaw = (
+    notes?.roi_band ??
+    notes?.excel_breakdown?.roi_band ??
+    notes?.notes?.roi_band ??
+    notes?.summary_en ??
+    notes?.summary ??
+    ""
+  )
+    .toString()
+    .toLowerCase();
+  const yieldBand = roiBandRaw.includes("double-digit")
+    ? "double-digit"
+    : roiBandRaw.includes("mid-single-digit")
+      ? "mid-single-digit"
+      : roiBandRaw.includes("low-single-digit")
+        ? "low-single-digit"
+        : roiBandRaw.includes("negative")
+          ? "negative"
+          : roiBandRaw.includes("uncertain")
+            ? "uncertain"
+            : "mid-single-digit";
+  const yieldBandLabel: Record<string, string> = {
+    negative: "Negative",
+    "low-single-digit": "Low single digit",
+    "mid-single-digit": "Mid single digit",
+    "double-digit": "Double digit",
+    uncertain: "Uncertain",
+  };
   const selectedResultsTab: ResultTab = mode === "v2" ? activeV2Tab : activeCalcTab;
 
   return (
@@ -1936,13 +1928,13 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 </div>
               </div>
             </div>
-            <aside className="ot-card unit-cost-panel">
-              <h3 className="unit-cost-panel__title">{t("excel.unitCostTitle")}</h3>
+            <aside className="ot-card unit-cost-panel atlas-card">
+              <h3 className="unit-cost-panel__title atlas-card__title">{t("excel.unitCostTitle")}</h3>
               <div className="unit-cost-panel__list">
                 {activeUnitCostFields.map((field) => (
-                  <div key={field.key} className="unit-cost-panel__item">
-                    <div className="unit-cost-panel__label">{field.label}</div>
-                    <div className="unit-cost-panel__value">
+                  <div key={field.key} className="unit-cost-panel__item atlas-kv">
+                    <div className="unit-cost-panel__label atlas-kv__label">{field.label}</div>
+                    <div className="unit-cost-panel__value atlas-kv__value">
                       {formatNumberValue(unitCostInputs[field.key] ?? 0, 0)} SAR
                     </div>
                   </div>
@@ -1958,64 +1950,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
         )}
       </section>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12, alignItems: "center" }}>
-        <Button
-          type="button"
-          onClick={() => setIsScenarioOpen(true)}
-          disabled={!estimateId || isScenarioSubmitting}
-          variant="secondary"
-        >
-          Scenario
-        </Button>
-        {isScenarioActive && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span
-              style={{
-                padding: "4px 8px",
-                borderRadius: 999,
-                fontSize: "0.75rem",
-                border: "1px solid rgba(148,163,184,0.6)",
-                color: "#e2e8f0",
-                background: "rgba(148,163,184,0.2)",
-              }}
-            >
-              Scenario active
-            </span>
-            <Button
-              type="button"
-              onClick={() => {
-                if (scenarioBaseResult) {
-                  setExcelResult(scenarioBaseResult);
-                  setScenarioBaseResult(null);
-                  setIsScenarioActive(false);
-                }
-              }}
-              variant="secondary"
-            >
-              Reset scenario
-            </Button>
-          </div>
-        )}
-        {estimateId && (
-          <div className="excel-estimate-actions">
-            <Button type="button" onClick={handleExportPdf} variant="secondary">
-              Export PDF
-            </Button>
-            <div className="excel-estimate-actions__meta">
-              <span>Estimate ID: {estimateId}</span>
-              <Button
-                type="button"
-                onClick={copyEstimateId}
-                aria-label="Copy estimate ID"
-                variant="secondary"
-                className="excel-estimate-actions__copy"
-              >
-                📋
-              </Button>
-            </div>
-          </div>
-        )}
-      </div>
 
       {error && (
         <div style={{ marginTop: 12, color: "#fca5a5" }}>
@@ -2090,54 +2024,50 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
           <div className={mode === "v2" ? "calc-grid ui-v2-results__panel" : "calc-grid"} role={mode === "v2" ? "tabpanel" : undefined}>
             <Card className={mode === "v2" ? "ui-v2-resultsCard calc-grid__left" : undefined}>
               {mode === "v2" && selectedResultsTab === "summary" ? (
-                <div className="ui-v2-summary-grid">
-                  <div className="ui-v2-summary-left">
-                    <div className="ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
-                      <div className="ui-v2-summary-card__title">{isArabic ? "توزيع الوحدات" : "Unit Mix"}</div>
-                      {revenueMixItems.map((item) => (
-                        <div key={item.key} className="ui-v2-mix-row">
-                          <span className="ui-v2-mix-row__label">{item.label}</span>
-                          <span className="ui-v2-mix-row__val">{formatPercentValue(item.pct, 0)}</span>
+                <div className="atlas-summary-grid ui-v2-summary-grid">
+                  <div className="atlas-summary-left ui-v2-summary-left">
+                    <div className="atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
+                      <div className="atlas-card__title ui-v2-summary-card__title">{isArabic ? "توزيع الوحدات" : "Unit Mix"}</div>
+                      {unitMixItems.map((item) => (
+                        <div key={item.key} className="atlas-kv ui-v2-mix-row">
+                          <span className="atlas-kv__label ui-v2-mix-row__label">{item.label}</span>
+                          <span className="atlas-kv__value ui-v2-mix-row__val">{formatNumberValue(item.count, 0)} {item.suffix}</span>
                         </div>
                       ))}
                     </div>
 
-                    <div className="ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
-                      <div className="ui-v2-summary-card__title">{isArabic ? "متوسط مساحة الوحدة" : "Average Unit Size"}</div>
+                    <div className="atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
+                      <div className="atlas-card__title ui-v2-summary-card__title">{isArabic ? "متوسط مساحة الوحدة" : "Average Unit Size"}</div>
                       {averageUnitSizeItems.map((item) => (
-                        <div key={item.key} className="ui-v2-mix-row">
-                          <span className="ui-v2-mix-row__label">{item.label}</span>
-                          <span className="ui-v2-mix-row__val">
-                            {item.value == null ? "—" : `${formatNumberValue(item.value, 0)} m²`}
-                          </span>
+                        <div key={item.key} className="atlas-kv ui-v2-mix-row">
+                          <span className="atlas-kv__label ui-v2-mix-row__label">{item.label}</span>
+                          <span className="atlas-kv__value ui-v2-mix-row__val">{formatNumberValue(item.value, 0)} m²</span>
                         </div>
                       ))}
                     </div>
 
-                    <div className="ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
-                      <div className="ui-v2-summary-card__title">{isArabic ? "العائد" : "Yield"}</div>
-                      <div className="ui-v2-mix-row">
-                        <span className="ui-v2-mix-row__label">{t("excel.yield")}</span>
-                        <span className="ui-v2-mix-row__val">{formatPercentValue(yieldNoi, 1)}</span>
-                      </div>
+                    <div className="atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
+                      <div className="atlas-card__title ui-v2-summary-card__title">{isArabic ? "العائد" : "Yield"}</div>
+                      <div className="atlas-yield-main">{yieldBandLabel[yieldBand]}</div>
+                      <div className="atlas-yield-helper">Unlevered Year 1 yield on cost</div>
                     </div>
                   </div>
 
-                  <div className="ui-v2-summary-right ui-v2-card ui-v2-card--elevated fin-summary">
-                    <div className="ui-v2-summary-right__title fin-summary__title">{t("excel.financialSummaryTitle")}</div>
+                  <div className="atlas-summary-card atlas-card ui-v2-summary-right ui-v2-card ui-v2-card--elevated fin-summary">
+                    <div className="atlas-card__title ui-v2-summary-right__title fin-summary__title">{t("excel.financialSummaryTitle")}</div>
 
                     <div className="ui-v2-kv">
-                      <div className="ui-v2-kv__row fin-summary__row">
-                        <span className="ui-v2-kv__key fin-summary__label">{t("excel.totalCapex")}</span>
-                        <span className="ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
+                      <div className="atlas-kv ui-v2-kv__row fin-summary__row">
+                        <span className="atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.totalCapex")}</span>
+                        <span className="atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
                       </div>
-                      <div className="ui-v2-kv__row fin-summary__row">
-                        <span className="ui-v2-kv__key fin-summary__label">{t("excel.year1Income")}</span>
-                        <span className="ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
+                      <div className="atlas-kv ui-v2-kv__row fin-summary__row">
+                        <span className="atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.year1Income")}</span>
+                        <span className="atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
                       </div>
-                      <div className="ui-v2-kv__row fin-summary__row">
-                        <span className="ui-v2-kv__key fin-summary__label">{t("excel.noiYear1")}</span>
-                        <span className="ui-v2-kv__val fin-summary__value">{formatCurrencySAR(y1NoiResolved)}</span>
+                      <div className="atlas-kv ui-v2-kv__row fin-summary__row">
+                        <span className="atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.noiYear1")}</span>
+                        <span className="atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(y1NoiResolved)}</span>
                       </div>
 
                       <div className="ui-v2-kv__row ui-v2-kv__row--split fin-summary__split">

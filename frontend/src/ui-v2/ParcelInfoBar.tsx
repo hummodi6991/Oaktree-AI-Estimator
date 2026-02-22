@@ -39,6 +39,7 @@ export default function ParcelInfoBar({
 
   return (
     <div className="ui-v2-parcelstrip parcel-strip">
+      <div className="ui-v2-parcelstrip__spacer" aria-hidden="true" />
       <div className="ui-v2-parcelstrip__left parcel-strip__meta">{parcelSummary}</div>
       <div className="ui-v2-parcelstrip__actions parcel-strip__action">
         <button className="ui-v2-parcelstrip__iconBtn" type="button" aria-label="Export">
