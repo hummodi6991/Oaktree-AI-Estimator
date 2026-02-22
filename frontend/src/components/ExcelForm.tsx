@@ -2184,6 +2184,14 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       const transactionCost = excelResult.costs.transaction_cost ?? 0;
                       const totalCapex = excelResult.costs.grand_total_capex ?? 0;
                       const v2Costs = excelResult.costs as Record<string, number | undefined>;
+                      const hasDirectConstruction = typeof v2Costs.construction_direct_cost === "number";
+                      const hasFitoutConstruction = typeof v2Costs.fitout_cost === "number";
+                      const constructionCostAmount =
+                        v2Costs.construction_cost ??
+                        (hasDirectConstruction || hasFitoutConstruction
+                          ? (v2Costs.construction_direct_cost ?? 0) + (v2Costs.fitout_cost ?? 0)
+                          : undefined) ??
+                        directConstruction;
                       const notesExcelBreakdown = (excelResult.notes?.excel_breakdown || {}) as Record<string, any>;
                       const breakdownBua = (notesExcelBreakdown?.bua || {}) as Record<string, any>;
                       const breakdownBuiltUpAreas = (notesExcelBreakdown?.built_up_areas || {}) as Record<string, any>;
@@ -2519,6 +2527,22 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                               <div className="ui-v2-accordion__body">
                                 <div className="ui-v2-kv2">
                                   <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{t("excel.landCost")}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(landCostAmount)}</span>
+                                    <V2InfoTip
+                                      label={`${t("excel.landCost")} info`}
+                                      body="Land cost = site area × price per m² (+ adjustments)."
+                                    />
+                                  </div>
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">Construction</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(constructionCostAmount)}</span>
+                                    <V2InfoTip
+                                      label="Construction info"
+                                      body="Construction cost derived from unit costs × built-up area."
+                                    />
+                                  </div>
+                                  <div className="ui-v2-kv2__row">
                                     <span className="ui-v2-kv2__key">{directConstructionLabel}</span>
                                     <span className="ui-v2-kv2__val">{formatCurrencySAR(directConstruction)}</span>
                                     <V2InfoTip
@@ -2530,14 +2554,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                     <span className="ui-v2-kv2__key">{fitoutLabel}</span>
                                     <span className="ui-v2-kv2__val">{formatCurrencySAR(fitoutCost)}</span>
                                     <V2InfoTip label={`${fitoutLabel} info`} body="Additional cost line item included in CapEx." />
-                                  </div>
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{t("excel.landCost")}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(landCostAmount)}</span>
-                                    <V2InfoTip
-                                      label={`${t("excel.landCost")} info`}
-                                      body="Land cost = site area × price per m² (+ adjustments)."
-                                    />
                                   </div>
                                   <div className="ui-v2-kv2__row">
                                     <span className="ui-v2-kv2__key">{t("excel.transactionCosts")}</span>
