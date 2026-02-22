@@ -1325,10 +1325,10 @@
 }
 
 .ui-v2-kv2__row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-16);
+  display: grid;
+  grid-template-columns: 1fr auto 28px;
+  align-items: center;
+  gap: var(--space-12);
   padding: 10px 0;
   border-top: 1px solid rgba(0, 0, 0, 0.06);
 }
@@ -1349,6 +1349,7 @@
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   text-align: end;
+  white-space: nowrap;
 }
 
 .ui-v2-totalRow {
@@ -1524,6 +1525,16 @@
   cursor: help;
   background: var(--surface);
   padding: 0;
+}
+
+.ui-v2-info__icon:hover {
+  border-color: rgba(0,0,0,0.18);
+  color: var(--text-dark);
+}
+
+.ui-v2-info__icon:focus-visible {
+  outline: 2px solid rgba(20, 49, 44, 0.35);
+  outline-offset: 2px;
 }
 
 .ui-v2-info__tip {
