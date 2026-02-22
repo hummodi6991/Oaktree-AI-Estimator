@@ -332,9 +332,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const [activeCalcTab, setActiveCalcTab] = useState<ResultTab>("financial");
   const [activeV2Tab, setActiveV2Tab] = useState<ResultTab>("summary");
   const [v2FinancialOpen, setV2FinancialOpen] = useState<Record<string, boolean>>({
-    construction: true,
-    soft: true,
-    land: true,
+    costBreakdown: false,
+    builtUpAreas: true,
+    landAndConstruction: false,
+    additionalCosts: true,
   });
   const [v2RevenueOpen, setV2RevenueOpen] = useState<Record<string, boolean>>({
     income: true,
@@ -2178,6 +2179,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       const transactionCost = excelResult.costs.transaction_cost ?? 0;
                       const totalCapex = excelResult.costs.grand_total_capex ?? 0;
                       const v2Costs = excelResult.costs as Record<string, number | undefined>;
+                      const notesExcelBreakdown = (excelResult.notes?.excel_breakdown || {}) as Record<string, any>;
+                      const breakdownBua = (notesExcelBreakdown?.bua || {}) as Record<string, any>;
+                      const breakdownBuiltUpAreas = (notesExcelBreakdown?.built_up_areas || {}) as Record<string, any>;
+                      const totalsSource = (excelResult.totals || {}) as Record<string, any>;
                       const constructionSubtotal =
                         v2Costs.sub_total ??
                         v2Costs.construction_subtotal ??
@@ -2185,9 +2190,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       const constructionTotal = constructionSubtotal;
                       const softTotal = contingencyCost + consultantsCost + feasibilityFee;
                       const landTotal = landCostAmount + transactionCost;
-                      const constructionTitle = isArabic ? "تكاليف البناء" : "Construction Costs";
-                      const softTitle = isArabic ? "التكاليف غير المباشرة" : "Soft Costs";
-                      const landTitle = isArabic ? "تكاليف الأرض والمعاملة" : "Land & Transaction Costs";
+                      const costBreakdownTitle = isArabic ? "تفصيل التكاليف" : "Cost Breakdown";
+                      const builtUpAreasTitle = isArabic ? "المساحات المبنية" : "Built Up Areas";
+                      const landAndConstructionTitle = isArabic ? "تكلفة الأرض والبناء" : "Land and Construction Cost";
+                      const additionalCostsTitle = isArabic ? "تكاليف إضافية" : "Additional Costs";
                       const subtotalLabel = isArabic ? "المجموع الفرعي" : "Subtotal";
                       const directConstructionLabel = i18n.exists("excel.directConstruction")
                         ? t("excel.directConstruction")
@@ -2204,27 +2210,95 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         : isArabic
                           ? "رسوم دراسة الجدوى"
                           : "Feasibility fee";
+                      const toNumericOrNullValue = (value: unknown) => {
+                        if (value == null || value === "") return null;
+                        const numeric = typeof value === "number" ? value : Number(value);
+                        return Number.isFinite(numeric) ? numeric : null;
+                      };
+                      const resolveBuiltUpArea = (...values: unknown[]) => {
+                        for (const value of values) {
+                          const numeric = toNumericOrNullValue(value);
+                          if (numeric != null) return numeric;
+                        }
+                        return null;
+                      };
+                      const builtUpRows = [
+                        {
+                          key: "residential",
+                          label: "Residential BUA",
+                          value: resolveBuiltUpArea(
+                            notesExcelBreakdown.bua_residential_m2,
+                            breakdownBua.residential,
+                            breakdownBuiltUpAreas.residential,
+                            totalsSource.bua_residential_m2,
+                          ),
+                        },
+                        {
+                          key: "retail",
+                          label: "Retail BUA",
+                          value: resolveBuiltUpArea(
+                            notesExcelBreakdown.bua_retail_m2,
+                            breakdownBua.retail,
+                            breakdownBuiltUpAreas.retail,
+                            totalsSource.bua_retail_m2,
+                          ),
+                        },
+                        {
+                          key: "office",
+                          label: "Office BUA",
+                          value: resolveBuiltUpArea(
+                            notesExcelBreakdown.bua_office_m2,
+                            breakdownBua.office,
+                            breakdownBuiltUpAreas.office,
+                            totalsSource.bua_office_m2,
+                          ),
+                        },
+                        {
+                          key: "upperAnnex",
+                          label: "Upper annex non FAR +0.5 floor",
+                          value: resolveBuiltUpArea(
+                            notesExcelBreakdown.bua_upper_annex_non_far_m2,
+                            breakdownBua.upper_annex_non_far,
+                            breakdownBuiltUpAreas.upper_annex_non_far,
+                            totalsSource.bua_upper_annex_non_far_m2,
+                          ),
+                        },
+                        {
+                          key: "basement",
+                          label: "Basement BUA",
+                          value: resolveBuiltUpArea(
+                            notesExcelBreakdown.bua_basement_m2,
+                            breakdownBua.basement,
+                            breakdownBuiltUpAreas.basement,
+                            totalsSource.bua_basement_m2,
+                          ),
+                        },
+                      ];
+                      const farAboveGround = toNumericOrNullValue(notesExcelBreakdown?.far_above_ground);
+                      const builtUpTooltipBody = farAboveGround != null
+                        ? `Above-ground FAR = Σ(area ratios excluding basement) = ${formatNumberValue(farAboveGround, 2)}. Tap FAR to edit, then Apply.`
+                        : "Above-ground FAR = Σ(area ratios excluding basement). Tap FAR to edit, then Apply.";
 
                       return (
-                        <div className="ui-v2-accordion">
+                        <div className="ui-v2-accordionGroup">
                           <div>
                             <button
                               type="button"
-                              className="ui-v2-accordion__head"
-                              data-open={v2FinancialOpen.construction ? "true" : "false"}
+                              className="ui-v2-accHead"
+                              data-open={v2FinancialOpen.costBreakdown ? "true" : "false"}
                               onClick={() =>
-                                setV2FinancialOpen((prev) => ({ ...prev, construction: !prev.construction }))
+                                setV2FinancialOpen((prev) => ({ ...prev, costBreakdown: !prev.costBreakdown }))
                               }
                             >
-                              {v2FinancialOpen.construction ? (
+                              {v2FinancialOpen.costBreakdown ? (
                                 <ChevronDownIcon className="ui-v2-accordion__chev" />
                               ) : (
                                 <ChevronRightIcon className="ui-v2-accordion__chev" />
                               )}
-                              <span className="ui-v2-accordion__title">{constructionTitle}</span>
-                              <span className="ui-v2-accordion__total">{formatCurrencySAR(constructionTotal)}</span>
+                              <span className="ui-v2-accordion__title">{costBreakdownTitle}</span>
+                              <span className="ui-v2-accordion__total">{formatCurrencySAR(totalCapex)}</span>
                             </button>
-                            {v2FinancialOpen.construction && (
+                            {v2FinancialOpen.costBreakdown && (
                               <div className="ui-v2-accordion__body">
                                 <div className="ui-v2-kv2">
                                   <div className="ui-v2-kv2__row">
@@ -2247,19 +2321,103 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                           <div>
                             <button
                               type="button"
-                              className="ui-v2-accordion__head"
-                              data-open={v2FinancialOpen.soft ? "true" : "false"}
-                              onClick={() => setV2FinancialOpen((prev) => ({ ...prev, soft: !prev.soft }))}
+                              className="ui-v2-accHead"
+                              data-open={v2FinancialOpen.builtUpAreas ? "true" : "false"}
+                              onClick={() =>
+                                setV2FinancialOpen((prev) => ({ ...prev, builtUpAreas: !prev.builtUpAreas }))
+                              }
                             >
-                              {v2FinancialOpen.soft ? (
+                              {v2FinancialOpen.builtUpAreas ? (
                                 <ChevronDownIcon className="ui-v2-accordion__chev" />
                               ) : (
                                 <ChevronRightIcon className="ui-v2-accordion__chev" />
                               )}
-                              <span className="ui-v2-accordion__title">{softTitle}</span>
+                              <span className="ui-v2-accordion__title">{builtUpAreasTitle}</span>
+                            </button>
+                            {v2FinancialOpen.builtUpAreas && (
+                              <div className="ui-v2-accordion__body">
+                                <div className="ui-v2-rowList">
+                                  {builtUpRows.map((row) => (
+                                    <div className="ui-v2-row" key={row.key}>
+                                      <span className="ui-v2-row__label">{row.label}</span>
+                                      <span className="ui-v2-row__val">
+                                        {row.value != null ? formatAreaM2(row.value) : "—"}
+                                      </span>
+                                      <span className="ui-v2-info">
+                                        <button type="button" className="ui-v2-info__icon" aria-label={`Info for ${row.label}`}>
+                                          i
+                                        </button>
+                                        <span className="ui-v2-info__tip" role="tooltip">
+                                          <strong>How we calculated:</strong>
+                                          <span>{builtUpTooltipBody}</span>
+                                        </span>
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <button
+                              type="button"
+                              className="ui-v2-accHead"
+                              data-open={v2FinancialOpen.landAndConstruction ? "true" : "false"}
+                              onClick={() =>
+                                setV2FinancialOpen((prev) => ({ ...prev, landAndConstruction: !prev.landAndConstruction }))
+                              }
+                            >
+                              {v2FinancialOpen.landAndConstruction ? (
+                                <ChevronDownIcon className="ui-v2-accordion__chev" />
+                              ) : (
+                                <ChevronRightIcon className="ui-v2-accordion__chev" />
+                              )}
+                              <span className="ui-v2-accordion__title">{landAndConstructionTitle}</span>
+                              <span className="ui-v2-accordion__total">{formatCurrencySAR(landTotal + constructionTotal)}</span>
+                            </button>
+                            {v2FinancialOpen.landAndConstruction && (
+                              <div className="ui-v2-accordion__body">
+                                <div className="ui-v2-kv2">
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{directConstructionLabel}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(directConstruction)}</span>
+                                  </div>
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{fitoutLabel}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(fitoutCost)}</span>
+                                  </div>
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{t("excel.landCost")}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(landCostAmount)}</span>
+                                  </div>
+                                  <div className="ui-v2-kv2__row">
+                                    <span className="ui-v2-kv2__key">{t("excel.transactionCosts")}</span>
+                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(transactionCost)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div>
+                            <button
+                              type="button"
+                              className="ui-v2-accHead"
+                              data-open={v2FinancialOpen.additionalCosts ? "true" : "false"}
+                              onClick={() =>
+                                setV2FinancialOpen((prev) => ({ ...prev, additionalCosts: !prev.additionalCosts }))
+                              }
+                            >
+                              {v2FinancialOpen.additionalCosts ? (
+                                <ChevronDownIcon className="ui-v2-accordion__chev" />
+                              ) : (
+                                <ChevronRightIcon className="ui-v2-accordion__chev" />
+                              )}
+                              <span className="ui-v2-accordion__title">{additionalCostsTitle}</span>
                               <span className="ui-v2-accordion__total">{formatCurrencySAR(softTotal)}</span>
                             </button>
-                            {v2FinancialOpen.soft && (
+                            {v2FinancialOpen.additionalCosts && (
                               <div className="ui-v2-accordion__body">
                                 <div className="ui-v2-kv2">
                                   <div className="ui-v2-kv2__row">
@@ -2273,37 +2431,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                   <div className="ui-v2-kv2__row">
                                     <span className="ui-v2-kv2__key">{feasibilityFeeLabel}</span>
                                     <span className="ui-v2-kv2__val">{formatCurrencySAR(feasibilityFee)}</span>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-
-                          <div>
-                            <button
-                              type="button"
-                              className="ui-v2-accordion__head"
-                              data-open={v2FinancialOpen.land ? "true" : "false"}
-                              onClick={() => setV2FinancialOpen((prev) => ({ ...prev, land: !prev.land }))}
-                            >
-                              {v2FinancialOpen.land ? (
-                                <ChevronDownIcon className="ui-v2-accordion__chev" />
-                              ) : (
-                                <ChevronRightIcon className="ui-v2-accordion__chev" />
-                              )}
-                              <span className="ui-v2-accordion__title">{landTitle}</span>
-                              <span className="ui-v2-accordion__total">{formatCurrencySAR(landTotal)}</span>
-                            </button>
-                            {v2FinancialOpen.land && (
-                              <div className="ui-v2-accordion__body">
-                                <div className="ui-v2-kv2">
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{t("excel.landCost")}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(landCostAmount)}</span>
-                                  </div>
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{t("excel.transactionCosts")}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(transactionCost)}</span>
                                   </div>
                                 </div>
                               </div>
