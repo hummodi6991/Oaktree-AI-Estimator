@@ -103,7 +103,7 @@
   color: #fff;
 }
 .ui-v2-shell .app-topbar .oak-topbar-inner {
-  min-height: 84px;
+  min-height: 68px;
   display: grid;
   grid-template-columns: 1fr minmax(420px, 520px) 1fr;
   gap: var(--gap-16);
