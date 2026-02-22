@@ -2028,22 +2028,27 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                   <div className="atlas-summary-left ui-v2-summary-left">
                     <div className="atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
                       <div className="atlas-card__title ui-v2-summary-card__title">{isArabic ? "توزيع الوحدات" : "Unit Mix"}</div>
-                      {unitMixItems.map((item) => (
-                        <div key={item.key} className="atlas-kv ui-v2-mix-row">
-                          <span className="atlas-kv__label ui-v2-mix-row__label">{item.label}</span>
-                          <span className="atlas-kv__value ui-v2-mix-row__val">{formatNumberValue(item.count, 0)} {item.suffix}</span>
-                        </div>
-                      ))}
+                      <div className="ui-v2-metric-grid" role="list" aria-label={isArabic ? "توزيع الوحدات" : "Unit mix"}>
+                        {unitMixItems.map((item) => (
+                          <div key={item.key} className="ui-v2-metric-grid__item" role="listitem">
+                            <div className="ui-v2-metric-grid__value">{formatNumberValue(item.count, 0)}</div>
+                            <div className="ui-v2-metric-grid__label">{item.label}</div>
+                            <div className="ui-v2-metric-grid__sub">{item.suffix}</div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
 
                     <div className="atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
                       <div className="atlas-card__title ui-v2-summary-card__title">{isArabic ? "متوسط مساحة الوحدة" : "Average Unit Size"}</div>
-                      {averageUnitSizeItems.map((item) => (
-                        <div key={item.key} className="atlas-kv ui-v2-mix-row">
-                          <span className="atlas-kv__label ui-v2-mix-row__label">{item.label}</span>
-                          <span className="atlas-kv__value ui-v2-mix-row__val">{formatNumberValue(item.value, 0)} m²</span>
-                        </div>
-                      ))}
+                      <div className="ui-v2-metric-grid" role="list" aria-label={isArabic ? "متوسط مساحة الوحدة" : "Average unit size"}>
+                        {averageUnitSizeItems.map((item) => (
+                          <div key={item.key} className="ui-v2-metric-grid__item" role="listitem">
+                            <div className="ui-v2-metric-grid__value">{formatNumberValue(item.value, 0)} m²</div>
+                            <div className="ui-v2-metric-grid__label">{item.label}</div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
 
                     <div className="atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">

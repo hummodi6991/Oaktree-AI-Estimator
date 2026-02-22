@@ -1125,8 +1125,8 @@
 }
 
 .ui-v2-summary-left {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-16);
 }
 
@@ -1139,6 +1139,40 @@
   font-weight: var(--fw-semibold);
   color: var(--text-dark);
   margin-bottom: var(--space-12);
+}
+
+.ui-v2-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+}
+
+.ui-v2-metric-grid__item {
+  padding-right: 12px;
+}
+
+.ui-v2-metric-grid__item + .ui-v2-metric-grid__item {
+  border-left: 1px solid rgba(0, 0, 0, 0.12);
+  padding-left: 12px;
+}
+
+.ui-v2-metric-grid__value {
+  font-size: 36px;
+  line-height: 1.1;
+  font-weight: 700;
+  color: #1c2e31;
+}
+
+.ui-v2-metric-grid__label {
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+}
+
+.ui-v2-metric-grid__sub {
+  font-size: 14px;
+  color: #374151;
 }
 
 .ui-v2-mix-row {
@@ -1223,6 +1257,29 @@
 
   .ui-v2-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ui-v2-summary-left {
+    grid-template-columns: 1fr;
+  }
+
+  .ui-v2-metric-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-12);
+  }
+
+  .ui-v2-metric-grid__item,
+  .ui-v2-metric-grid__item + .ui-v2-metric-grid__item {
+    border-left: 0;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    padding-left: 0;
+    padding-right: 0;
+    padding-top: var(--space-8);
+  }
+
+  .ui-v2-metric-grid__item:first-child {
+    border-top: 0;
+    padding-top: 0;
   }
 }
 
