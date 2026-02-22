@@ -1238,6 +1238,34 @@
   gap: var(--space-12);
 }
 
+.ui-v2-accordionGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+
+.ui-v2-accHead {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-8);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  cursor: pointer;
+}
+
+.ui-v2-accHead:hover {
+  border-color: rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.ui-v2-accHead:focus-visible {
+  outline: 2px solid rgba(20, 49, 44, 0.35);
+  outline-offset: 2px;
+}
+
 .ui-v2-accordion--spaced {
   margin-top: var(--space-12);
 }
@@ -1365,6 +1393,89 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+
+.ui-v2-rowList {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: var(--radius-8);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.ui-v2-row {
+  display: grid;
+  grid-template-columns: 1fr auto 28px;
+  gap: var(--space-12);
+  padding: 10px 12px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  align-items: center;
+}
+
+.ui-v2-row:first-child {
+  border-top: none;
+}
+
+.ui-v2-row__label {
+  font-size: var(--fs-sm);
+  color: var(--text-dark);
+  font-weight: var(--fw-medium);
+}
+
+.ui-v2-row__val {
+  font-size: var(--fs-sm);
+  color: var(--text-gray);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+}
+
+.ui-v2-info {
+  position: relative;
+  display: inline-flex;
+  justify-content: center;
+}
+
+.ui-v2-info__icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid var(--outline);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: var(--text-gray);
+  cursor: help;
+  background: var(--surface);
+  padding: 0;
+}
+
+.ui-v2-info__tip {
+  position: absolute;
+  top: calc(100% + 8px);
+  inset-inline-end: 0;
+  width: max-content;
+  max-width: 360px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-8);
+  padding: 10px 12px;
+  color: var(--text-dark);
+  font-size: var(--fs-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 50;
+  display: grid;
+  gap: 4px;
+  line-height: 1.35;
+}
+
+.ui-v2-info:hover .ui-v2-info__tip,
+.ui-v2-info:focus-within .ui-v2-info__tip {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
 }
 
 .ui-v2-totalRow--stack {
