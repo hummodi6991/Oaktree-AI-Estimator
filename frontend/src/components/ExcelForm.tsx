@@ -342,10 +342,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     opex: true,
     noi: false,
   });
-  const [v2ParkingOpen, setV2ParkingOpen] = useState<Record<string, boolean>>({
-    assumptions: true,
-    details: false,
-  });
   const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
     String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
   );
@@ -3270,90 +3266,95 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       toNumericOrNull(parkingTotals.parking_provided) ??
                       toNumericOrNull(parkingTotals.total_parking_provided) ??
                       toNumericOrNull(parkingNotes.parking_provided);
-                    const deltaSpaces =
-                      toNumericOrNull(parkingTotals.parking_delta) ??
-                      toNumericOrNull(parkingTotals.parking_shortfall) ??
+                    const deficit =
                       (requiredSpaces != null && providedSpaces != null
                         ? providedSpaces - requiredSpaces
                         : null);
+                    const compliant = deficit != null ? deficit >= 0 : null;
+                    const parkingAreaM2 =
+                      toNumericOrNull(parkingTotals.parking_area_counted_m2) ??
+                      toNumericOrNull(parkingNotes.parking_area_counted_m2);
+                    const policy =
+                      (parkingNotes.policy as string | undefined) ??
+                      (parkingTotals.policy as string | undefined);
+                    const autoAdjustment =
+                      (parkingNotes.auto_adjustment_note as string | undefined) ??
+                      (parkingNotes.auto_adjustment as string | undefined);
 
                     return (
                       <div>
-                        <h4 className="ui-v2-sectionTitle">{t("parking.title")}</h4>
+                        <div className="ui-v2-sectionTitle">Parking</div>
 
-                        <div className="ui-v2-card ui-v2-card--elevated ui-v2-parkingOverview">
-                          <div className="ui-v2-parkingOverview__title">
-                            {isArabic ? "ملخص المواقف" : "Parking Overview"}
-                          </div>
-                          <div className="ui-v2-kv2">
-                            <div className="ui-v2-kv2__row">
-                              <span className="ui-v2-kv2__key">{isArabic ? "المطلوب" : "Required"}</span>
-                              <span className="ui-v2-kv2__val">
-                                {requiredSpaces != null ? formatNumberValue(requiredSpaces, 0) : "—"}
-                              </span>
-                            </div>
-                            <div className="ui-v2-kv2__row">
-                              <span className="ui-v2-kv2__key">{isArabic ? "المتوفر" : "Provided"}</span>
-                              <span className="ui-v2-kv2__val">
-                                {providedSpaces != null ? formatNumberValue(providedSpaces, 0) : "—"}
-                              </span>
-                            </div>
-                            <div className="ui-v2-kv2__row">
-                              <span className="ui-v2-kv2__key">
-                                {isArabic ? "العجز/الفائض" : "Shortfall / Surplus"}
-                              </span>
-                              <span className="ui-v2-kv2__val">
-                                {deltaSpaces != null ? formatNumberValue(deltaSpaces, 0) : "—"}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="ui-v2-accordion ui-v2-accordion--spaced">
-                          <button
-                            type="button"
-                            className="ui-v2-accordion__head"
-                            data-open={v2ParkingOpen.assumptions ? "true" : "false"}
-                            onClick={() =>
-                              setV2ParkingOpen((prev) => ({ ...prev, assumptions: !prev.assumptions }))
-                            }
-                          >
-                            {v2ParkingOpen.assumptions ? (
-                              <ChevronDownIcon className="ui-v2-accordion__chev" />
-                            ) : (
-                              <ChevronRightIcon className="ui-v2-accordion__chev" />
-                            )}
-                            <span className="ui-v2-accordion__title">
-                              {isArabic ? "الافتراضات" : "Assumptions"}
+                        <div className="ui-v2-rowList">
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">Required spaces (Riyadh minimum)</span>
+                            <span className="ui-v2-row__val">
+                              {requiredSpaces != null ? formatNumberValue(requiredSpaces, 0) : "—"}
                             </span>
-                            <span className="ui-v2-pill">{isArabic ? "مضمن" : "Included"}</span>
-                          </button>
-                          {v2ParkingOpen.assumptions && (
-                            <div className="ui-v2-accordion__body">
-                              <div className="ui-v2-card ui-v2-parkingBodyCard">
-                                <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
-                              </div>
-                            </div>
-                          )}
+                            <V2InfoTip
+                              label="Required spaces info"
+                              body="Calculated from Riyadh municipality minimum parking ratios per use."
+                            />
+                          </div>
 
-                          <button
-                            type="button"
-                            className="ui-v2-accordion__head"
-                            data-open={v2ParkingOpen.details ? "true" : "false"}
-                            onClick={() => setV2ParkingOpen((prev) => ({ ...prev, details: !prev.details }))}
-                          >
-                            {v2ParkingOpen.details ? (
-                              <ChevronDownIcon className="ui-v2-accordion__chev" />
-                            ) : (
-                              <ChevronRightIcon className="ui-v2-accordion__chev" />
-                            )}
-                            <span className="ui-v2-accordion__title">{isArabic ? "التفاصيل" : "Details"}</span>
-                          </button>
-                          {v2ParkingOpen.details && (
-                            <div className="ui-v2-accordion__body">
-                              <div className="ui-v2-card ui-v2-parkingBodyCard">
-                                <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
-                              </div>
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">Provided spaces (from basement/parking area)</span>
+                            <span className="ui-v2-row__val">
+                                {providedSpaces != null ? formatNumberValue(providedSpaces, 0) : "—"}
+                            </span>
+                            <V2InfoTip
+                              label="Provided spaces info"
+                              body="Derived from allocated basement/parking area divided by m² per space."
+                            />
+                          </div>
+
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">Deficit</span>
+                            <span className="ui-v2-row__val">
+                              {deficit != null ? formatNumberValue(deficit, 0) : "—"}
+                            </span>
+                            <V2InfoTip label="Deficit info" body="Provided spaces minus required spaces." />
+                          </div>
+
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">Compliant</span>
+                            <span className="ui-v2-row__val">
+                              {compliant != null ? (compliant ? "Yes" : "No") : "—"}
+                            </span>
+                            <V2InfoTip
+                              label="Compliance info"
+                              body="Project is compliant when provided spaces ≥ required spaces."
+                            />
+                          </div>
+
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">Parking area counted (m²)</span>
+                            <span className="ui-v2-row__val">
+                              {parkingAreaM2 != null ? formatAreaM2(parkingAreaM2) : "—"}
+                            </span>
+                            <V2InfoTip
+                              label="Parking area info"
+                              body="Total parking area counted in compliance calculation."
+                            />
+                          </div>
+
+                          <div className="ui-v2-row">
+                            <span className="ui-v2-row__label">Policy</span>
+                            <span className="ui-v2-row__val">{policy ?? "—"}</span>
+                            <V2InfoTip
+                              label="Policy info"
+                              body="Parking adjustment policy applied during calculation."
+                            />
+                          </div>
+
+                          {autoAdjustment && (
+                            <div className="ui-v2-row">
+                              <span className="ui-v2-row__label">Auto-adjustment</span>
+                              <span className="ui-v2-row__val">{autoAdjustment}</span>
+                              <V2InfoTip
+                                label="Auto adjustment info"
+                                body="Automatic adjustment applied to meet parking requirements."
+                              />
                             </div>
                           )}
                         </div>
