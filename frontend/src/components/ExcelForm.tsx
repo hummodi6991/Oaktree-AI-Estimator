@@ -1676,7 +1676,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
         {mode === "v2" ? (
           <div className="excel-v2-controls__grid">
             <div className="excel-v2-controls__left">
-              <div className="excel-v2-controls__row">
+              <div className="excel-v2-controls__row excel-controls-row">
                 <div className="excel-v2-field">
                   <Field label={t("excel.providerLabel").replace(/:$/, "")}>
                     <Select
@@ -1796,7 +1796,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                   </label>
                 </div>
               </div>
-              <div className="excel-v2-controls__actionsRow">
+              <div className="excel-v2-controls__actionsRow excel-controls-actions">
                 <Button onClick={handleEstimateClick} className="oak-btn oak-btn-primary">{t("excel.calculateEstimate")}</Button>
               </div>
               {fetchError && <span style={{ color: "#b91c1c" }}>{t("common.errorPrefix")} {fetchError}</span>}
@@ -2024,16 +2024,17 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       )}
 
       {showCalculations && excelResult && (
-        <section className={mode === "v2" ? "calc-section ui-v2-results" : "calc-section"}>
+        <section className={mode === "v2" ? "calc-section ui-v2-results calc-shell" : "calc-section"}>
           {mode === "v2" ? (
             <>
-              <div className="ui-v2-results__titlebar">Estimated Calculations</div>
-              <div className="ui-v2-results__tabs" role="tablist" aria-label="Estimated calculations tabs">
+              <div className="ui-v2-results__titlebar calc-shell__header">Estimated Calculations</div>
+              <div className="ui-v2-results__tabs calc-shell__tabs calc-tabs" role="tablist" aria-label="Estimated calculations tabs">
                 <button
                   type="button"
                   role="tab"
-                  className="ui-v2-results__tab"
+                  className={`ui-v2-results__tab calc-tab ${activeV2Tab === "summary" ? "calc-tab--active" : ""}`}
                   data-active={activeV2Tab === "summary"}
+                  aria-selected={activeV2Tab === "summary"}
                   onClick={() => setActiveV2Tab("summary")}
                 >
                   {isArabic ? "الملخص" : "Summary"}
@@ -2041,8 +2042,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 <button
                   type="button"
                   role="tab"
-                  className="ui-v2-results__tab"
+                  className={`ui-v2-results__tab calc-tab ${activeV2Tab === "financial" ? "calc-tab--active" : ""}`}
                   data-active={activeV2Tab === "financial"}
+                  aria-selected={activeV2Tab === "financial"}
                   onClick={() => setActiveV2Tab("financial")}
                 >
                   {t("excel.financialBreakdown")}
@@ -2050,8 +2052,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 <button
                   type="button"
                   role="tab"
-                  className="ui-v2-results__tab"
+                  className={`ui-v2-results__tab calc-tab ${activeV2Tab === "revenue" ? "calc-tab--active" : ""}`}
                   data-active={activeV2Tab === "revenue"}
+                  aria-selected={activeV2Tab === "revenue"}
                   onClick={() => setActiveV2Tab("revenue")}
                 >
                   {t("excel.revenueBreakdown")}
@@ -2059,8 +2062,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 <button
                   type="button"
                   role="tab"
-                  className="ui-v2-results__tab"
+                  className={`ui-v2-results__tab calc-tab ${activeV2Tab === "parking" ? "calc-tab--active" : ""}`}
                   data-active={activeV2Tab === "parking"}
+                  aria-selected={activeV2Tab === "parking"}
                   onClick={() => setActiveV2Tab("parking")}
                 >
                   {t("parking.title")}
@@ -2084,7 +2088,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
           )}
 
           <div className={mode === "v2" ? "calc-grid ui-v2-results__panel" : "calc-grid"} role={mode === "v2" ? "tabpanel" : undefined}>
-            <Card className={mode === "v2" ? "ui-v2-resultsCard" : undefined}>
+            <Card className={mode === "v2" ? "ui-v2-resultsCard calc-grid__left" : undefined}>
               {mode === "v2" && selectedResultsTab === "summary" ? (
                 <div className="ui-v2-summary-grid">
                   <div className="ui-v2-summary-left">
@@ -2119,31 +2123,31 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                     </div>
                   </div>
 
-                  <div className="ui-v2-summary-right ui-v2-card ui-v2-card--elevated">
-                    <div className="ui-v2-summary-right__title">{t("excel.financialSummaryTitle")}</div>
+                  <div className="ui-v2-summary-right ui-v2-card ui-v2-card--elevated fin-summary">
+                    <div className="ui-v2-summary-right__title fin-summary__title">{t("excel.financialSummaryTitle")}</div>
 
                     <div className="ui-v2-kv">
-                      <div className="ui-v2-kv__row">
-                        <span className="ui-v2-kv__key">{t("excel.totalCapex")}</span>
-                        <span className="ui-v2-kv__val">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
+                      <div className="ui-v2-kv__row fin-summary__row">
+                        <span className="ui-v2-kv__key fin-summary__label">{t("excel.totalCapex")}</span>
+                        <span className="ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
                       </div>
-                      <div className="ui-v2-kv__row">
-                        <span className="ui-v2-kv__key">{t("excel.year1Income")}</span>
-                        <span className="ui-v2-kv__val">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
+                      <div className="ui-v2-kv__row fin-summary__row">
+                        <span className="ui-v2-kv__key fin-summary__label">{t("excel.year1Income")}</span>
+                        <span className="ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
                       </div>
-                      <div className="ui-v2-kv__row">
-                        <span className="ui-v2-kv__key">{t("excel.noiYear1")}</span>
-                        <span className="ui-v2-kv__val">{formatCurrencySAR(y1NoiResolved)}</span>
+                      <div className="ui-v2-kv__row fin-summary__row">
+                        <span className="ui-v2-kv__key fin-summary__label">{t("excel.noiYear1")}</span>
+                        <span className="ui-v2-kv__val fin-summary__value">{formatCurrencySAR(y1NoiResolved)}</span>
                       </div>
 
-                      <div className="ui-v2-kv__row ui-v2-kv__row--split">
+                      <div className="ui-v2-kv__row ui-v2-kv__row--split fin-summary__split">
                         <div>
-                          <span className="ui-v2-kv__key">{t("excel.unleveredRoi")}</span>
-                          <span className="ui-v2-kv__val">{formatPercentValue(excelResult.roi)}</span>
+                          <span className="ui-v2-kv__key fin-summary__label">{t("excel.unleveredRoi")}</span>
+                          <span className="ui-v2-kv__val fin-summary__value">{formatPercentValue(excelResult.roi)}</span>
                         </div>
                         <div>
-                          <span className="ui-v2-kv__key">{t("excel.yield")}</span>
-                          <span className="ui-v2-kv__val">{formatPercentValue(yieldNoi, 1)}</span>
+                          <span className="ui-v2-kv__key fin-summary__label">{t("excel.yield")}</span>
+                          <span className="ui-v2-kv__val fin-summary__value">{formatPercentValue(yieldNoi, 1)}</span>
                         </div>
                       </div>
                     </div>
@@ -3439,34 +3443,34 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                   })()
                 ))}
             </Card>
-            {!(mode === "v2" && selectedResultsTab === "summary") && <div className="oak-right-panel">
-              <Card title={t("excel.financialSummaryTitle")} className="oak-financial-summary">
+            {!(mode === "v2" && selectedResultsTab === "summary") && <div className="oak-right-panel calc-grid__right">
+              <Card title={t("excel.financialSummaryTitle")} className="oak-financial-summary fin-summary">
                 <div className="calc-summary-list">
-                  <div className="calc-summary-row">
-                    <span className="calc-summary-key">{t("excel.totalCapex")}</span>
-                    <span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
+                  <div className="calc-summary-row fin-summary__row">
+                    <span className="calc-summary-key fin-summary__label">{t("excel.totalCapex")}</span>
+                    <span className="calc-summary-value fin-summary__value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
                   </div>
-                  <div className="calc-summary-row">
-                    <span className="calc-summary-key">{t("excel.year1Income")}</span>
-                    <span className="calc-summary-value">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
+                  <div className="calc-summary-row fin-summary__row">
+                    <span className="calc-summary-key fin-summary__label">{t("excel.year1Income")}</span>
+                    <span className="calc-summary-value fin-summary__value">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
                   </div>
-                  <div className="calc-summary-row">
-                    <span className="calc-summary-key">{t("excel.noiYear1")}</span>
-                    <span className="calc-summary-value">{formatCurrencySAR(y1NoiResolved)}</span>
+                  <div className="calc-summary-row fin-summary__row">
+                    <span className="calc-summary-key fin-summary__label">{t("excel.noiYear1")}</span>
+                    <span className="calc-summary-value fin-summary__value">{formatCurrencySAR(y1NoiResolved)}</span>
                   </div>
-                  <div className="calc-summary-row calc-summary-row--split">
-                    <div>
-                      <span className="calc-summary-key">{t("excel.unleveredRoi")}</span>
-                      <span className="calc-summary-value">{formatPercentValue(excelResult.roi)}</span>
+                  <div className="calc-summary-row calc-summary-row--split fin-summary__split">
+                    <div className="fin-summary__split-col">
+                      <span className="calc-summary-key fin-summary__label">{t("excel.unleveredRoi")}</span>
+                      <span className="calc-summary-value fin-summary__value">{formatPercentValue(excelResult.roi)}</span>
                     </div>
-                    <div>
-                      <span className="calc-summary-key">{t("excel.yield")}</span>
-                      <span className="calc-summary-value">{formatPercentValue(yieldNoi, 1)}</span>
+                    <div className="fin-summary__split-col">
+                      <span className="calc-summary-key fin-summary__label">{t("excel.yield")}</span>
+                      <span className="calc-summary-value fin-summary__value">{formatPercentValue(yieldNoi, 1)}</span>
                     </div>
                   </div>
                 </div>
-                <div className="calc-key-ratios">
-                  <h5>{t("excel.keyRatios")}</h5>
+                <div className="calc-key-ratios fin-summary__key-ratios">
+                  <h5 className="fin-summary__section-title">{t("excel.keyRatios")}</h5>
                   <div className="calc-key-ratios__group">
                     <span>{t("excel.revenueMix")}</span>
                     {revenueMixItems.map((item) => (

@@ -38,9 +38,9 @@ export default function ParcelInfoBar({
   ].join(" | ");
 
   return (
-    <div className="ui-v2-parcelstrip">
-      <div className="ui-v2-parcelstrip__left">{parcelSummary}</div>
-      <div className="ui-v2-parcelstrip__actions">
+    <div className="ui-v2-parcelstrip parcel-strip">
+      <div className="ui-v2-parcelstrip__left parcel-strip__meta">{parcelSummary}</div>
+      <div className="ui-v2-parcelstrip__actions parcel-strip__action">
         <button className="ui-v2-parcelstrip__iconBtn" type="button" aria-label="Export">
           <ArrowUpTrayIcon width={18} height={18} />
         </button>

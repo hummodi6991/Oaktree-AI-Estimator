@@ -25,6 +25,7 @@ import ParcelInfoBar from "./ui-v2/ParcelInfoBar";
 import AnalysisLayout from "./ui-v2/AnalysisLayout";
 import type { SearchItem } from "./types/search";
 import "./styles/ui-v2.css";
+import "./styles/ui-figma.css";
 import i18n from "i18next";
 
 function applyLocaleAttrs() {

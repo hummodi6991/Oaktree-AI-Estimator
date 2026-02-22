@@ -1,0 +1,173 @@
+:root {
+  --figma-green: #123b35;
+  --figma-green-2: #0f2f2a;
+  --figma-beige: #ede6d6;
+  --figma-page: #fafaf9;
+  --figma-panel: #ffffff;
+  --figma-border: #e6e6e6;
+  --figma-divider: #e9e9e9;
+  --figma-text: #1f2937;
+  --figma-muted: #6b7280;
+  --r-6: 6px;
+  --r-8: 8px;
+  --h-control: 34px;
+  --pad-8: 8px;
+  --pad-12: 12px;
+  --pad-16: 16px;
+  --gap-12: 12px;
+  --gap-16: 16px;
+  --gap-20: 20px;
+}
+
+.ui-v2-shell {
+  font-family: "Heebo", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: var(--figma-text);
+  background: var(--figma-page);
+}
+
+
+.ui-v2-shell .btn,
+.ui-v2-shell .oak-btn,
+.ui-v2-shell button.btn {
+  height: var(--h-control);
+  border-radius: var(--r-8);
+  font-weight: 600;
+  padding: 0 var(--pad-16);
+  box-shadow: none;
+}
+
+.ui-v2-shell .btn-primary,
+.ui-v2-shell .oak-btn-primary,
+.ui-v2-shell .btn.btn-primary {
+  background: var(--figma-green);
+  border-color: var(--figma-green);
+  color: #fff;
+}
+.ui-v2-shell .btn-primary:hover,
+.ui-v2-shell .oak-btn-primary:hover { background: var(--figma-green-2); border-color: var(--figma-green-2); }
+
+.ui-v2-shell .btn-secondary,
+.ui-v2-shell .oak-btn-secondary {
+  background: #fff;
+  border: 1px solid var(--figma-border);
+  color: var(--figma-text);
+}
+
+.ui-v2-shell .input,
+.ui-v2-shell .select,
+.ui-v2-shell .oak-input,
+.ui-v2-shell .oak-select,
+.ui-v2-shell .ot-input,
+.ui-v2-shell .ot-select {
+  height: var(--h-control);
+  border-radius: var(--r-6);
+  border: 1px solid var(--figma-border);
+}
+
+.ui-v2-shell .input:focus,
+.ui-v2-shell .select:focus,
+.ui-v2-shell .oak-input:focus,
+.ui-v2-shell .oak-select:focus,
+.ui-v2-shell .ot-input:focus,
+.ui-v2-shell .ot-select:focus {
+  outline: 2px solid rgba(18, 59, 53, 0.2);
+  outline: 2px solid color-mix(in srgb, var(--figma-green) 20%, transparent);
+  outline-offset: 1px;
+}
+
+.ui-v2-shell .panel,
+.ui-v2-shell .ot-card,
+.ui-v2-shell .ui-v2-card {
+  background: var(--figma-panel);
+  border: 1px solid var(--figma-border);
+  border-radius: var(--r-8);
+  box-shadow: none;
+}
+
+.ui-v2-shell .section-divider,
+.ui-v2-shell hr { border-color: var(--figma-divider); }
+
+.ui-v2-shell .pill,
+.ui-v2-shell .ui-v2-pill,
+.ui-v2-shell .pill--muted {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #efeadc;
+  border: 1px solid #ddd6c4;
+  color: #665b45;
+}
+
+.ui-v2-shell .app-topbar {
+  background: var(--figma-green);
+  color: #fff;
+}
+.ui-v2-shell .app-topbar .oak-topbar-inner {
+  min-height: 84px;
+  display: grid;
+  grid-template-columns: 1fr minmax(420px, 520px) 1fr;
+  gap: var(--gap-16);
+  align-items: center;
+}
+.ui-v2-shell .app-topbar__center { display: flex; justify-content: center; }
+.ui-v2-shell .app-topbar__right { justify-content: flex-end; }
+.ui-v2-shell .app-topbar__title { font-size: 18px; }
+.ui-v2-shell .app-topbar__subtitle { opacity: 0.9; }
+.ui-v2-shell .app-topbar__search .oak-search { border-radius: var(--r-6); height: var(--h-control); background: rgba(255,255,255,.16); }
+
+.ui-v2-shell .parcel-strip {
+  background: #f3ead7;
+  border-bottom: 1px solid #ece4d2;
+}
+.ui-v2-shell .parcel-strip__meta { text-align: center; font-weight: 600; }
+.ui-v2-shell .parcel-strip__action .ui-v2-parcelstrip__primaryBtn {
+  background: #fff;
+  border: 1px solid var(--figma-border);
+  color: var(--figma-text);
+}
+
+.excel-v2-controls { padding-top: 14px; }
+.excel-controls-row { display: grid; grid-template-columns: repeat(4,minmax(160px,1fr)); gap: var(--gap-12); align-items: end; }
+.excel-controls-actions { margin-top: var(--gap-12); }
+
+.unit-cost-panel { border: 0; background: transparent; }
+.unit-cost-panel__title { font-size: 16px; font-weight: 700; color: #344; }
+.unit-cost-panel__item { padding: 8px 0; border-top: 1px solid var(--figma-divider); }
+.unit-cost-panel__item:first-child { border-top: 0; }
+.unit-cost-panel__label { font-size: 14px; font-weight: 600; }
+.unit-cost-panel__value { font-size: 14px; font-weight: 500; margin-top: 2px; }
+
+.calc-shell__header,
+.ui-v2-results__titlebar { background: var(--figma-green); border-radius: var(--r-8); color: #fff; }
+.calc-shell__tabs,
+.ui-v2-results__tabs { border-bottom: 1px solid var(--figma-divider); gap: 0; }
+.calc-tab,
+.ui-v2-results__tab { border-bottom: 2px solid transparent; }
+.calc-tab--active,
+.ui-v2-results__tab[data-active="true"] {
+  background: var(--figma-beige);
+  border-bottom-color: var(--figma-green);
+  color: var(--figma-text);
+}
+
+.ui-v2-results__panel.calc-grid { grid-template-columns: minmax(0, 1fr) 360px; gap: 0; }
+.calc-grid__left { border-right: 0; border-radius: 0; }
+.calc-grid__right,
+.ui-v2-shell .oak-right-panel { padding-left: 0; border-left: 1px solid var(--figma-divider); }
+
+.fin-summary {
+  border: 1px solid var(--figma-border);
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.fin-summary .calc-card__header,
+.fin-summary__title { font-size: 16px; font-weight: 700; color: #334a46; }
+.fin-summary__row { border-bottom: 1px solid var(--figma-divider); padding: 12px 0; }
+.fin-summary__label { font-size: 14px; font-weight: 700; }
+.fin-summary__value { font-size: 13px; font-weight: 500; margin-top: 2px; }
+.fin-summary__split { display: grid; grid-template-columns: 1fr 1fr; }
+.fin-summary__split-col + .fin-summary__split-col { border-left: 1px solid var(--figma-divider); padding-left: 20px; }
+.fin-summary__section-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
+.fin-summary__key-ratios .calc-key-ratios__group > span { color: #3b5551; font-size: 13px; }
+.fin-summary__key-ratios .calc-key-ratios__group p { font-size: 13px; color: #25333a; margin: 2px 0; }

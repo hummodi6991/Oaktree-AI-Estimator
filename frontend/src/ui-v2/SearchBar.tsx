@@ -66,7 +66,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
   }, [trimmed]);
 
   return (
-    <div className="ui-v2-search" onBlur={() => window.setTimeout(() => setOpen(false), 120)}>
+    <div className="ui-v2-search app-topbar__search" onBlur={() => window.setTimeout(() => setOpen(false), 120)}>
       <input
         className="oak-search"
         type="search"
