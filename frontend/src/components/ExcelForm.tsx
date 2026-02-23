@@ -1746,10 +1746,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       <div className="ui2-estimate-shell">
         {props.header ? <div className="estimated-calculations__header ui2-estimates-header">{props.header}</div> : null}
         {props.tabs ? <div className="estimated-calculations__tabs ui2-estimates-tabs">{props.tabs}</div> : null}
-        <div className="ui2-summary-grid">
-          <div className="ui2-kpi-grid">{props.leftCards}</div>
-          <div className="ui2-fin-card">{props.rightFinancial}</div>
-        </div>
+        {/* Deprecated for final layout: Summary tab now uses calc-grid right rail for financial summary */}
+        <div className="ui2-kpi-grid">{props.leftCards}</div>
       </div>
     );
   }
@@ -2115,12 +2113,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
           <div className={mode === "v2" ? "calc-grid ui-v2-results__panel" : "calc-grid"} role={mode === "v2" ? "tabpanel" : undefined}>
             {mode === "v2" && selectedResultsTab === "summary" ? (
-              <div className="ui-v2-resultsCard calc-grid__left">
-                <Ui2SummaryLayout
-                  header={null}
-                  tabs={null}
-                  leftCards={
-                  <>
+              <>
+                {/* LEFT column: KPI cards */}
+                <div className="ui-v2-resultsCard calc-grid__left">
+                  <div className="ui2-kpi-grid">
                     <div className="ui2-card atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
                       <div className="ui2-card__title atlas-card__title ui-v2-summary-card__title">{isArabic ? "توزيع الوحدات" : "Unit Mix"}</div>
                       <div className="ui-v2-metric-grid" role="list" aria-label={isArabic ? "توزيع الوحدات" : "Unit mix"}>
@@ -2151,11 +2147,14 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       <div className="atlas-yield-main ui2-card__value">{yieldBandLabel[yieldBand]}</div>
                       <div className="atlas-yield-helper ui2-card__sub">Unlevered Year 1 yield on cost</div>
                     </div>
-                  </>
-                }
-                rightFinancial={<V2FinancialSummaryCard />}
-              />
-              </div>
+                  </div>
+                </div>
+
+                {/* RIGHT column: Financial Summary (always on the right like clean UI) */}
+                <div className="oak-right-panel calc-grid__right ui2-right-rail">
+                  <V2FinancialSummaryCard className="ui2-right-rail__card" />
+                </div>
+              </>
             ) : (
               <Card className={mode === "v2" ? "ui-v2-resultsCard calc-grid__left" : undefined}>
                 {selectedResultsTab === "summary" && (
