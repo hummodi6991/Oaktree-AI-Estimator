@@ -1775,6 +1775,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const effectiveIncome = excelResult?.costs?.y1_income_effective ?? 0;
   const expenseRatio = effectiveIncome > 0 ? opexCostResolved / effectiveIncome : 0;
   const incomeMargin = effectiveIncome > 0 ? y1NoiUiClamped / effectiveIncome : 0;
+  const expenseRatioUi = uiIncludeOpex ? expenseRatio : 0;
+  const incomeMarginUi = uiIncludeOpex ? incomeMargin : 1;
   const totalCapex = excelResult?.costs?.grand_total_capex ?? 0;
   const yieldNoi = totalCapex > 0 ? y1NoiUiClamped / totalCapex : 0;
   const roiNoiUi = totalCapex > 0 ? y1NoiUiClamped / totalCapex : 0;
@@ -1847,7 +1849,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
           <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
             <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.noiYear1")}</span>
             <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">
-              {formatCurrencySAR(y1NoiResolved)}
+              {formatCurrencySAR(y1NoiUiClamped)}
             </span>
           </div>
 
@@ -1855,7 +1857,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
           <div className="ui2-fin-split ui-v2-kv__row ui-v2-kv__row--split fin-summary__split">
             <div className="ui2-fin-split__col">
               <span className="ui2-fin-split__label ui-v2-kv__key fin-summary__label">{t("excel.unleveredRoi")}</span>
-              <span className="ui2-fin-split__value ui-v2-kv__val fin-summary__value">{formatPercentValue(excelResult.roi)}</span>
+              <span className="ui2-fin-split__value ui-v2-kv__val fin-summary__value">{formatPercentValue(roiNoiUi)}</span>
             </div>
             <div className="ui2-fin-split__col">
               <span className="ui2-fin-split__label ui-v2-kv__key fin-summary__label">{t("excel.yield")}</span>
@@ -1877,11 +1879,11 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
           </div>
           <div className="calc-key-ratios__group">
             <span>{t("excel.expenseRatio")}</span>
-            <p>{t("excel.expenseRatioValue", { pct: formatPercentValue(expenseRatio, 1), label: t("excel.opex") })}</p>
+            <p>{t("excel.expenseRatioValue", { pct: formatPercentValue(expenseRatioUi, 1), label: t("excel.opex") })}</p>
           </div>
           <div className="calc-key-ratios__group">
             <span>{t("excel.incomeMargin")}</span>
-            <p>{t("excel.incomeMarginValue", { pct: formatPercentValue(incomeMargin, 1), label: t("excel.noiMargin") })}</p>
+            <p>{t("excel.incomeMarginValue", { pct: formatPercentValue(incomeMarginUi, 1), label: t("excel.noiMargin") })}</p>
           </div>
           {notes?.income_stability ? (
             <div className="calc-key-ratios__group">
