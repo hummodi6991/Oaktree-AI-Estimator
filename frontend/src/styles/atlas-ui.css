@@ -1,11 +1,11 @@
 .app-topbar {
-  min-height: 56px;
+  min-height: 48px;
 }
 
 .app-topbar .oak-topbar-inner {
-  min-height: 56px;
-  padding-top: 8px;
-  padding-bottom: 8px;
+  min-height: 48px;
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 .app-topbar__title {
