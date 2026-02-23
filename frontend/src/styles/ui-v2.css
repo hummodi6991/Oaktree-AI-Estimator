@@ -12,6 +12,7 @@
   --ui2-radius: 12px;
   --ui2-green: #143c34;
   --ui2-green-2: #0f2d27;
+  --ui2-right-rail-w: 360px;
 }
 
 /* v2-only background so we do not affect legacy screens */
@@ -73,12 +74,36 @@
   margin: 0 0 16px 0;
 }
 
+/* Right rail: shared width for Construction unit costs + Financial Summary */
+.excel-form--v2 .ui2-right-rail,
+.excel-form--v2 .excel-v2-controls__right,
+.excel-form--v2 .excel-v2-controls__aside {
+  width: var(--ui2-right-rail-w);
+}
+
+/* Ensure right rail aligns and doesn't jump */
+.excel-form--v2 .excel-v2-controls__grid {
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) var(--ui2-right-rail-w);
+}
+
+/* Keep right column on desktop/tablet; only stack on small phones */
+@media (max-width: 720px) {
+  .excel-form--v2 .excel-v2-controls__grid {
+    grid-template-columns: 1fr;
+  }
+  .excel-form--v2 .ui2-right-rail,
+  .excel-form--v2 .excel-v2-controls__right {
+    width: 100%;
+  }
+}
+
 /* Summary layout: left KPI cards + right Financial Summary */
 .excel-v2-results .ui2-summary-grid,
 .estimated-calculations .ui2-summary-grid,
 .estimated-calculations-v2 .ui2-summary-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) var(--ui2-right-rail-w);
   gap: 20px;
   align-items: start;
 }
@@ -195,6 +220,21 @@
   font-weight: 800;
   text-align: right;
   white-space: nowrap;
+}
+
+/* Key ratios inside v2 financial card */
+.excel-v2-results .ui2-fin-keyratios,
+.estimated-calculations .ui2-fin-keyratios,
+.estimated-calculations-v2 .ui2-fin-keyratios {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #eef2f0;
+}
+
+.excel-v2-results .ui2-fin-keyratios .fin-summary__section-title {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 /* ROI + Yield split row (match clean UI) */
