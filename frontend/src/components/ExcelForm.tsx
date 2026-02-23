@@ -1663,6 +1663,75 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   };
   const selectedResultsTab: ResultTab = mode === "v2" ? activeV2Tab : activeCalcTab;
 
+  function V2FinancialSummaryCard(props: { className?: string }) {
+    if (!excelResult) return null;
+    return (
+      <div className={props.className ? `ui2-fin-card ${props.className}` : "ui2-fin-card"}>
+        <div className="ui2-fin-card__title atlas-card__title fin-summary__title">{t("excel.financialSummaryTitle")}</div>
+
+        <div className="ui-v2-kv">
+          <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
+            <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.totalCapex")}</span>
+            <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">
+              {formatCurrencySAR(excelResult.costs.grand_total_capex)}
+            </span>
+          </div>
+          <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
+            <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.year1Income")}</span>
+            <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">
+              {formatCurrencySAR(excelResult.costs.y1_income)}
+            </span>
+          </div>
+          <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
+            <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.noiYear1")}</span>
+            <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">
+              {formatCurrencySAR(y1NoiResolved)}
+            </span>
+          </div>
+
+          {/* Match clean UI: ROI + Yield split row */}
+          <div className="ui2-fin-split ui-v2-kv__row ui-v2-kv__row--split fin-summary__split">
+            <div className="ui2-fin-split__col">
+              <span className="ui2-fin-split__label ui-v2-kv__key fin-summary__label">{t("excel.unleveredRoi")}</span>
+              <span className="ui2-fin-split__value ui-v2-kv__val fin-summary__value">{formatPercentValue(excelResult.roi)}</span>
+            </div>
+            <div className="ui2-fin-split__col">
+              <span className="ui2-fin-split__label ui-v2-kv__key fin-summary__label">{t("excel.yield")}</span>
+              <span className="ui2-fin-split__value ui-v2-kv__val fin-summary__value">{formatPercentValue(yieldNoi, 1)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Key ratios (match clean UI right panel) */}
+        <div className="calc-key-ratios fin-summary__key-ratios ui2-fin-keyratios">
+          <h5 className="fin-summary__section-title">{t("excel.keyRatios")}</h5>
+          <div className="calc-key-ratios__group">
+            <span>{t("excel.revenueMix")}</span>
+            {revenueMixItems.map((item) => (
+              <p key={item.key}>
+                {item.label} {formatPercentValue(item.pct, 0)}
+              </p>
+            ))}
+          </div>
+          <div className="calc-key-ratios__group">
+            <span>{t("excel.expenseRatio")}</span>
+            <p>{t("excel.expenseRatioValue", { pct: formatPercentValue(expenseRatio, 1), label: t("excel.opex") })}</p>
+          </div>
+          <div className="calc-key-ratios__group">
+            <span>{t("excel.incomeMargin")}</span>
+            <p>{t("excel.incomeMarginValue", { pct: formatPercentValue(incomeMargin, 1), label: t("excel.noiMargin") })}</p>
+          </div>
+          {notes?.income_stability ? (
+            <div className="calc-key-ratios__group">
+              <span>{t("excel.incomeStability")}</span>
+              <p>{notes.income_stability}</p>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
   /**
    * UI v2: summary layout wrapper (cleaner UI).
    * Wrapper-only; it does not change calculation logic.
@@ -2084,36 +2153,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                     </div>
                   </>
                 }
-                rightFinancial={
-                  <>
-                    <div className="ui2-fin-card__title atlas-card__title ui-v2-summary-right__title fin-summary__title">{t("excel.financialSummaryTitle")}</div>
-                    <div className="ui-v2-kv">
-                      <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
-                        <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.totalCapex")}</span>
-                        <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
-                      </div>
-                      <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
-                        <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.year1Income")}</span>
-                        <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
-                      </div>
-                      <div className="ui2-fin-row atlas-kv ui-v2-kv__row fin-summary__row">
-                        <span className="ui2-fin-row__label atlas-kv__label ui-v2-kv__key fin-summary__label">{t("excel.noiYear1")}</span>
-                        <span className="ui2-fin-row__value atlas-kv__value ui-v2-kv__val fin-summary__value">{formatCurrencySAR(y1NoiResolved)}</span>
-                      </div>
-                      {/* Match clean UI: ROI + Yield split row */}
-                      <div className="ui2-fin-split ui-v2-kv__row ui-v2-kv__row--split fin-summary__split">
-                        <div className="ui2-fin-split__col">
-                          <span className="ui2-fin-split__label ui-v2-kv__key fin-summary__label">{t("excel.unleveredRoi")}</span>
-                          <span className="ui2-fin-split__value ui-v2-kv__val fin-summary__value">{formatPercentValue(excelResult.roi)}</span>
-                        </div>
-                        <div className="ui2-fin-split__col">
-                          <span className="ui2-fin-split__label ui-v2-kv__key fin-summary__label">{t("excel.yield")}</span>
-                          <span className="ui2-fin-split__value ui-v2-kv__val fin-summary__value">{formatPercentValue(yieldNoi, 1)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                }
+                rightFinancial={<V2FinancialSummaryCard />}
               />
               </div>
             ) : (
@@ -3407,8 +3447,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 ))}
               </Card>
             )}
-            {!(mode === "v2" && selectedResultsTab === "summary") && <div className="oak-right-panel calc-grid__right">
-              <Card title={t("excel.financialSummaryTitle")} className="oak-financial-summary fin-summary">
+            {!(mode === "v2" && selectedResultsTab === "summary") && (
+            <div className="oak-right-panel calc-grid__right ui2-right-rail">
+              {/* Keep legacy card wrapper for non-summary tabs, but enforce fixed rail width + alignment */}
+              <Card title={t("excel.financialSummaryTitle")} className="oak-financial-summary fin-summary ui2-right-rail__card">
                 <div className="calc-summary-list">
                   <div className="calc-summary-row fin-summary__row">
                     <span className="calc-summary-key fin-summary__label">{t("excel.totalCapex")}</span>
@@ -3453,7 +3495,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                   </div>
                 </div>
               </Card>
-            </div>}
+            </div>
+            )}
           </div>
           <div ref={feedbackSentinelRef} style={{ height: 1 }} />
         </section>
