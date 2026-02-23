@@ -17,13 +17,23 @@
   --ui2-content-max: 1280px;
 }
 
-/* --- Investor-grade page framing: center content + keep right rail away from edge --- */
-.excel-form--v2 .calc-section.ui-v2-results {
-  max-width: var(--ui2-content-max);
-  margin-left: auto;
-  margin-right: auto;
-  padding-left: var(--ui2-page-gutter);
-  padding-right: var(--ui2-page-gutter);
+/* HARD WRAPPER: ensure the estimate results section is centered + padded (works even if other CSS overrides) */
+.excel-form--v2 section.calc-section.ui-v2-results {
+  max-width: var(--ui2-content-max) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: var(--ui2-page-gutter) !important;
+  padding-right: var(--ui2-page-gutter) !important;
+  box-sizing: border-box;
+}
+
+/* ALSO constrain the v2 controls block so “Construction unit costs” aligns with Financial Summary */
+.excel-form--v2 section.excel-v2-controls.oak-container {
+  max-width: var(--ui2-content-max) !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: var(--ui2-page-gutter) !important;
+  padding-right: var(--ui2-page-gutter) !important;
   box-sizing: border-box;
 }
 
@@ -178,12 +188,10 @@
   grid-template-columns: minmax(0, 1fr) var(--ui2-right-rail-w);
 }
 
-/* FIX: right rail is too flush to viewport edge on iPad/Safari.
-   Add a guaranteed right gutter at the column level (works even if outer max-width isn't applied). */
+/* KEY FIX: create an OUTER inset so the right rail/card itself is not flush to viewport edge */
 .excel-form--v2 .oak-right-panel.calc-grid__right,
 .excel-form--v2 .calc-grid__right.ui2-right-rail {
-  padding-right: var(--ui2-page-gutter);
-  box-sizing: border-box;
+  margin-right: var(--ui2-page-gutter);
 }
 
 /* Keep right column on desktop/tablet; only stack on small phones */
@@ -197,7 +205,7 @@
   }
   .excel-form--v2 .oak-right-panel.calc-grid__right,
   .excel-form--v2 .calc-grid__right.ui2-right-rail {
-    padding-right: 0;
+    margin-right: 0;
   }
 }
 
