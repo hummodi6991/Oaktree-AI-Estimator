@@ -14,13 +14,17 @@
   --ui2-green-2: #0f2d27;
   --ui2-right-rail-w: 360px;
   --ui2-page-gutter: 24px;
+  --ui2-content-max: 1280px;
 }
 
-/* Give the v2 results area consistent horizontal gutters */
-.excel-form--v2 .calc-section.ui-v2-results,
-.excel-form--v2 .ui-v2-results {
+/* --- Investor-grade page framing: center content + keep right rail away from edge --- */
+.excel-form--v2 .calc-section.ui-v2-results {
+  max-width: var(--ui2-content-max);
+  margin-left: auto;
+  margin-right: auto;
   padding-left: var(--ui2-page-gutter);
   padding-right: var(--ui2-page-gutter);
+  box-sizing: border-box;
 }
 
 /* The columns live inside this grid; add a hard right/left gutter here too.
@@ -28,8 +32,9 @@
 .excel-form--v2 .ui-v2-results__panel,
 .excel-form--v2 .calc-grid.ui-v2-results__panel,
 .excel-form--v2 .calc-grid {
-  padding-left: var(--ui2-page-gutter);
-  padding-right: var(--ui2-page-gutter);
+  /* Let the outer section own the gutters to avoid double-indentation */
+  padding-left: 0;
+  padding-right: 0;
   box-sizing: border-box;
 }
 
