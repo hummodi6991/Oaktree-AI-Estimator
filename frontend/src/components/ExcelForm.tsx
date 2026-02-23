@@ -343,6 +343,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     income: true,
     performance: false,
   });
+  const [v2ParkingSections, setV2ParkingSections] = useState({
+    requiredByComponent: true,
+    notes: true,
+  });
   const [effectiveIncomePctDraft, setEffectiveIncomePctDraft] = useState<string>(() =>
     String(normalizeEffectivePct(cloneTemplate(templateForLandUse(initialLandUse)).y1_income_effective_pct)),
   );
@@ -1449,6 +1453,92 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     if (value == null || value === "") return null;
     const numeric = typeof value === "number" ? value : Number(value);
     return Number.isFinite(numeric) ? numeric : null;
+  };
+
+  const boolOrNull = (value: unknown): boolean | null => {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["true", "yes", "y", "1", "compliant"].includes(normalized)) return true;
+      if (["false", "no", "n", "0", "noncompliant", "not_compliant"].includes(normalized)) return false;
+    }
+    return null;
+  };
+
+  const resolveParking = (result: ExcelResult) => {
+    const totals = (result?.totals ?? {}) as Record<string, unknown>;
+    const resultNotes = (result?.notes ?? {}) as Record<string, unknown>;
+    const breakdown = (resultNotes?.excel_breakdown ?? {}) as Record<string, unknown>;
+    const parkingMeta = (resultNotes?.parking ?? {}) as Record<string, unknown>;
+
+    const required =
+      toNumericOrNull(totals.parking_required_spaces) ??
+      toNumericOrNull(breakdown.parking_required_spaces) ??
+      toNumericOrNull(parkingMeta.required_spaces_final) ??
+      toNumericOrNull(parkingMeta.parking_required_spaces) ??
+      null;
+
+    const provided =
+      toNumericOrNull(totals.parking_provided_spaces) ??
+      toNumericOrNull(breakdown.parking_provided_spaces) ??
+      toNumericOrNull(parkingMeta.provided_spaces_final) ??
+      toNumericOrNull(parkingMeta.parking_provided_spaces) ??
+      null;
+
+    const deficit =
+      toNumericOrNull(totals.parking_deficit_spaces) ??
+      toNumericOrNull(breakdown.parking_deficit_spaces) ??
+      toNumericOrNull(parkingMeta.deficit_spaces_final) ??
+      toNumericOrNull(parkingMeta.parking_deficit_spaces) ??
+      (required != null && provided != null ? Math.max(0, required - provided) : null);
+
+    const compliant =
+      boolOrNull(totals.parking_compliant) ??
+      boolOrNull(breakdown.parking_compliant) ??
+      boolOrNull(parkingMeta.compliant) ??
+      (deficit != null ? deficit === 0 : null);
+
+    const parkingAreaM2 =
+      toNumericOrNull(breakdown.parking_area_m2) ??
+      toNumericOrNull(parkingMeta.parking_area_m2_final) ??
+      toNumericOrNull(parkingMeta.parking_area_m2) ??
+      null;
+
+    const policy =
+      (typeof parkingMeta.parking_minimum_policy === "string" ? parkingMeta.parking_minimum_policy : null) ??
+      (typeof parkingMeta.policy === "string" ? parkingMeta.policy : null);
+
+    const autoAdjustment =
+      (typeof parkingMeta.auto_adjustment === "string" ? parkingMeta.auto_adjustment : null) ??
+      (typeof parkingMeta.autoAdjustment === "string" ? parkingMeta.autoAdjustment : null);
+
+    const requiredByComponent =
+      breakdown.parking_required_by_component && typeof breakdown.parking_required_by_component === "object"
+        ? (breakdown.parking_required_by_component as Record<string, unknown>)
+        : null;
+
+    const warningCandidates = [
+      parkingMeta.warnings,
+      parkingMeta.warning,
+      resultNotes.parking_warnings,
+      breakdown.parking_warnings,
+      breakdown.warnings,
+    ];
+    const warnings = warningCandidates
+      .flatMap((candidate) => (Array.isArray(candidate) ? candidate : [candidate]))
+      .filter((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0);
+
+    return {
+      required,
+      provided,
+      deficit,
+      compliant,
+      parkingAreaM2,
+      policy,
+      autoAdjustment,
+      requiredByComponent,
+      warnings,
+    };
   };
 
   const resetFarDraft = () => {
@@ -3338,30 +3428,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                   <ParkingSummary totals={excelResult.totals} notes={excelResult.notes} />
                 ) : (
                   (() => {
-                    const parkingTotals = (excelResult.totals ?? {}) as Record<string, unknown>;
-                    const parkingNotes = (excelResult.notes ?? {}) as Record<string, unknown>;
-                    const requiredSpaces =
-                      toNumericOrNull(parkingTotals.parking_required) ??
-                      toNumericOrNull(parkingTotals.total_parking_required) ??
-                      toNumericOrNull(parkingNotes.parking_required);
-                    const providedSpaces =
-                      toNumericOrNull(parkingTotals.parking_provided) ??
-                      toNumericOrNull(parkingTotals.total_parking_provided) ??
-                      toNumericOrNull(parkingNotes.parking_provided);
-                    const deficit =
-                      (requiredSpaces != null && providedSpaces != null
-                        ? providedSpaces - requiredSpaces
-                        : null);
-                    const compliant = deficit != null ? deficit >= 0 : null;
-                    const parkingAreaM2 =
-                      toNumericOrNull(parkingTotals.parking_area_counted_m2) ??
-                      toNumericOrNull(parkingNotes.parking_area_counted_m2);
-                    const policy =
-                      (parkingNotes.policy as string | undefined) ??
-                      (parkingTotals.policy as string | undefined);
-                    const autoAdjustment =
-                      (parkingNotes.auto_adjustment_note as string | undefined) ??
-                      (parkingNotes.auto_adjustment as string | undefined);
+                    const parking = resolveParking(excelResult);
 
                     return (
                       <div>
@@ -3371,7 +3438,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                           <div className="ui-v2-row">
                             <span className="ui-v2-row__label">Required spaces (Riyadh minimum)</span>
                             <span className="ui-v2-row__val">
-                              {requiredSpaces != null ? formatNumberValue(requiredSpaces, 0) : "—"}
+                              {parking.required == null ? "—" : formatNumberValue(parking.required, 0)}
                             </span>
                             <V2InfoTip
                               label="Required spaces info"
@@ -3382,7 +3449,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                           <div className="ui-v2-row">
                             <span className="ui-v2-row__label">Provided spaces (from basement/parking area)</span>
                             <span className="ui-v2-row__val">
-                                {providedSpaces != null ? formatNumberValue(providedSpaces, 0) : "—"}
+                              {parking.provided == null ? "—" : formatNumberValue(parking.provided, 0)}
                             </span>
                             <V2InfoTip
                               label="Provided spaces info"
@@ -3393,26 +3460,26 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                           <div className="ui-v2-row">
                             <span className="ui-v2-row__label">Deficit</span>
                             <span className="ui-v2-row__val">
-                              {deficit != null ? formatNumberValue(deficit, 0) : "—"}
+                              {parking.deficit == null ? "—" : formatNumberValue(parking.deficit, 0)}
                             </span>
-                            <V2InfoTip label="Deficit info" body="Provided spaces minus required spaces." />
+                            <V2InfoTip label="Deficit info" body="Required spaces minus provided spaces." />
                           </div>
 
                           <div className="ui-v2-row">
                             <span className="ui-v2-row__label">Compliant</span>
                             <span className="ui-v2-row__val">
-                              {compliant != null ? (compliant ? "Yes" : "No") : "—"}
+                              {parking.compliant == null ? "—" : parking.compliant ? "Yes" : "No"}
                             </span>
                             <V2InfoTip
                               label="Compliance info"
-                              body="Project is compliant when provided spaces ≥ required spaces."
+                              body="Project is compliant when parking deficit is 0."
                             />
                           </div>
 
                           <div className="ui-v2-row">
                             <span className="ui-v2-row__label">Parking area counted (m²)</span>
                             <span className="ui-v2-row__val">
-                              {parkingAreaM2 != null ? formatAreaM2(parkingAreaM2) : "—"}
+                              {parking.parkingAreaM2 == null ? "—" : formatNumberValue(parking.parkingAreaM2, 0)}
                             </span>
                             <V2InfoTip
                               label="Parking area info"
@@ -3422,23 +3489,91 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
                           <div className="ui-v2-row">
                             <span className="ui-v2-row__label">Policy</span>
-                            <span className="ui-v2-row__val">{policy ?? "—"}</span>
+                            <span className="ui-v2-row__val">{parking.policy ?? "—"}</span>
                             <V2InfoTip
                               label="Policy info"
                               body="Parking adjustment policy applied during calculation."
                             />
                           </div>
+                        </div>
 
-                          {autoAdjustment && (
-                            <div className="ui-v2-row">
-                              <span className="ui-v2-row__label">Auto-adjustment</span>
-                              <span className="ui-v2-row__val">{autoAdjustment}</span>
-                              <V2InfoTip
-                                label="Auto adjustment info"
-                                body="Automatic adjustment applied to meet parking requirements."
-                              />
+                        {parking.autoAdjustment ? (
+                          <div className="ui-v2-revNote">Auto-adjustment applied: {parking.autoAdjustment}</div>
+                        ) : null}
+
+                        {parking.requiredByComponent ? (
+                          <div className="ui-v2-revSection">
+                            <button
+                              type="button"
+                              className="ui-v2-accHead"
+                              data-open={v2ParkingSections.requiredByComponent ? "true" : "false"}
+                              onClick={() =>
+                                setV2ParkingSections((prev) => ({
+                                  ...prev,
+                                  requiredByComponent: !prev.requiredByComponent,
+                                }))
+                              }
+                            >
+                              {v2ParkingSections.requiredByComponent ? (
+                                <ChevronDownIcon className="ui-v2-accordion__chev" />
+                              ) : (
+                                <ChevronRightIcon className="ui-v2-accordion__chev" />
+                              )}
+                              <span className="ui-v2-accordion__title">Required by component</span>
+                            </button>
+                            {v2ParkingSections.requiredByComponent ? (
+                              <div className="ui-v2-accordion__body">
+                                <div className="ui-v2-rowList">
+                                  {Object.entries(parking.requiredByComponent).map(([key, value]) => (
+                                    <div key={key} className="ui-v2-row">
+                                      <span className="ui-v2-row__label">{key}</span>
+                                      <span className="ui-v2-row__val">
+                                        {toNumericOrNull(value) == null ? "—" : formatNumberValue(toNumericOrNull(value), 0)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+
+                        <div className="ui-v2-revSection">
+                          <button
+                            type="button"
+                            className="ui-v2-accHead"
+                            data-open={v2ParkingSections.notes ? "true" : "false"}
+                            onClick={() =>
+                              setV2ParkingSections((prev) => ({
+                                ...prev,
+                                notes: !prev.notes,
+                              }))
+                            }
+                          >
+                            {v2ParkingSections.notes ? (
+                              <ChevronDownIcon className="ui-v2-accordion__chev" />
+                            ) : (
+                              <ChevronRightIcon className="ui-v2-accordion__chev" />
+                            )}
+                            <span className="ui-v2-accordion__title">Notes / warnings</span>
+                          </button>
+                          {v2ParkingSections.notes ? (
+                            <div className="ui-v2-accordion__body">
+                              {parking.warnings.length ? (
+                                <ul style={{ margin: 0, paddingInlineStart: "1.2rem" }}>
+                                  {parking.warnings.map((warning, idx) => (
+                                    <li key={`${warning}-${idx}`}>{warning}</li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <div className="ui-v2-rowList">
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">No parking warnings reported.</span>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                     );
