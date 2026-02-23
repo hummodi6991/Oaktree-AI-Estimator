@@ -177,15 +177,16 @@
   background: var(--ui2-card-bg);
   border: 1px solid var(--ui2-border);
   border-radius: var(--ui2-radius);
-  padding: 16px;
+  padding: 20px 20px;
+  margin-top: 4px;
 }
 
 .excel-v2-results .ui2-fin-card__title,
 .estimated-calculations .ui2-fin-card__title,
 .estimated-calculations-v2 .ui2-fin-card__title {
-  font-size: 16px;
-  font-weight: 800;
-  margin: 0 0 12px 0;
+  font-size: 17px;
+  font-weight: 900;
+  margin: 0 0 16px 0;
   color: #0f2d27;
 }
 
