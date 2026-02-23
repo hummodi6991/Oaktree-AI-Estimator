@@ -3248,7 +3248,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         <ChevronRightIcon className="ui-v2-accordion__chev" />
                       )}
                       <span className="ui-v2-accordion__title">Rental Revenue by Asset Class</span>
-                      <span className="ui-v2-accordion__total">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
                     </button>
                     {v2RevenueSections.rental && (
                       <div className="ui-v2-accordion__body">
