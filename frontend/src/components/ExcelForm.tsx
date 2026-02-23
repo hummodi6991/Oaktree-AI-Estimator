@@ -1541,6 +1541,37 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
         return null;
       })();
 
+    const usedInputs =
+      (result as any)?.used_inputs ??
+      (resultNotes as any)?.used_inputs ??
+      (breakdown as any)?.used_inputs ??
+      null;
+
+    const usedAreaRatio =
+      usedInputs?.area_ratio && typeof usedInputs.area_ratio === "object" ? usedInputs.area_ratio : null;
+
+    const siteAreaM2 =
+      toNumericOrNull((result as any)?.site_area_m2) ??
+      toNumericOrNull((result as any)?.totals?.site_area_m2) ??
+      toNumericOrNull((usedInputs as any)?.site_area_m2) ??
+      toNumericOrNull((resultNotes as any)?.site_area_m2) ??
+      null;
+
+    const basementRatio =
+      usedAreaRatio && typeof (usedAreaRatio as any).basement !== "undefined"
+        ? toNumericOrNull((usedAreaRatio as any).basement)
+        : null;
+
+    const baselineBasementAreaM2 =
+      siteAreaM2 != null ? siteAreaM2 * (basementRatio != null ? basementRatio : 1.0) : null;
+
+    const basementIncreaseFactor =
+      parkingAreaM2 != null && baselineBasementAreaM2 != null && baselineBasementAreaM2 > 0
+        ? parkingAreaM2 / baselineBasementAreaM2
+        : null;
+
+    const basementIncreased = basementIncreaseFactor != null ? basementIncreaseFactor > 1.001 : false;
+
     const requiredByComponent =
       breakdown.parking_required_by_component && typeof breakdown.parking_required_by_component === "object"
         ? (breakdown.parking_required_by_component as Record<string, unknown>)
@@ -1566,6 +1597,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       autoAdjustment: autoAdjustmentHeuristic,
       requiredByComponent,
       warnings,
+      baselineBasementAreaM2,
+      basementIncreaseFactor,
+      basementIncreased,
     };
   };
 
@@ -3519,6 +3553,15 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
                         {parking.autoAdjustment ? (
                           <div className="ui2-parking-auto-note">Auto-adjustment applied: {parking.autoAdjustment}</div>
+                        ) : parking.basementIncreased &&
+                          parking.baselineBasementAreaM2 != null &&
+                          parking.parkingAreaM2 != null ? (
+                          <div className="ui2-parking-auto-note">
+                            Auto-adjustment applied: increased basement/parking area from{" "}
+                            {formatNumberValue(parking.baselineBasementAreaM2, 0)} m² to{" "}
+                            {formatNumberValue(parking.parkingAreaM2, 0)} m² (×
+                            {parking.basementIncreaseFactor!.toFixed(3)})
+                          </div>
                         ) : null}
 
                         {parking.requiredByComponent ? (
