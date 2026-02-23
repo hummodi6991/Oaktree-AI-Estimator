@@ -57,6 +57,7 @@ type ExcelResult = {
   costs: {
     land_cost: number;
     construction_direct_cost: number;
+    upper_annex_non_far_cost?: number;
     fitout_cost: number;
     contingency_cost: number;
     consultants_cost: number;
@@ -1719,6 +1720,12 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       contingency?: number | null;
       consultants?: number | null;
       feasibility?: number | null;
+      fitoutEligibleAreaM2?: number | null;
+      fitoutRateSarM2?: number | null;
+      upperAnnexBuaM2?: number | null;
+      upperAnnexRateSarM2?: number | null;
+      upperAnnexConstruction?: number | null;
+      upperAnnexIncludedInDirect?: boolean;
       builtUpAreaValue?: number | null;
       builtUpAreaLabel?: string;
     },
@@ -1740,6 +1747,12 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     const contingency = context.contingency ?? null;
     const consultants = context.consultants ?? null;
     const feasibility = context.feasibility ?? null;
+    const fitoutEligibleAreaM2 = context.fitoutEligibleAreaM2 ?? null;
+    const fitoutRateSarM2 = context.fitoutRateSarM2 ?? null;
+    const upperAnnexBuaM2 = context.upperAnnexBuaM2 ?? null;
+    const upperAnnexRateSarM2 = context.upperAnnexRateSarM2 ?? null;
+    const upperAnnexConstruction = context.upperAnnexConstruction ?? null;
+    const upperAnnexIncludedInDirect = context.upperAnnexIncludedInDirect ?? false;
     const builtUpAreaValue = context.builtUpAreaValue ?? null;
     const builtUpAreaLabel = context.builtUpAreaLabel ?? "Built-up area";
 
@@ -1757,7 +1770,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       case "direct_construction_sar":
         return `Formula: Direct construction = Σ(BUA component × unit cost). Inputs: modeled built-up areas and unit rates by use. Result: ${fmtSar(directConstruction)}.`;
       case "fitout_sar":
-        return `Formula: Fit-out = fit-out eligible area × fit-out rate. Inputs: scenario fit-out assumptions. Result: ${fmtSar(fitout)}.`;
+        return `Formula: Fit-out = fit-out eligible area × fit-out rate. Equation: ${fmtArea(fitoutEligibleAreaM2)} × ${fmtNum(fitoutRateSarM2, 0)} SAR/m² = ${fmtSar(fitout)} (above-ground only).`;
+      case "upper_annex_non_far_sar":
+        return `Formula: Upper annex construction = upper annex BUA × upper annex unit cost. Equation: ${fmtArea(upperAnnexBuaM2)} × ${fmtNum(upperAnnexRateSarM2, 0)} SAR/m² = ${fmtSar(upperAnnexConstruction)}.${upperAnnexIncludedInDirect ? " This amount is shown as a component included in Direct construction." : " This amount is shown as its own construction line item."}`;
       case "transaction_sar":
         return `Formula: Transaction costs = land cost × transaction %. Inputs: land cost = ${fmtSar(landCost)}, transaction % = ${fmtPct(transactionPct, 2)}. Result: ${fmtSar(transaction)}.`;
       case "contingency_sar":
@@ -2530,6 +2545,42 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         },
                       ];
                       const farAboveGround = toNumericOrNullValue(notesExcelBreakdown?.far_above_ground);
+                      const upperAnnexBuaM2 =
+                        builtUpRows.find((row) => row.key === "upperAnnex")?.value ??
+                        resolveBuiltUpArea(
+                          notesExcelBreakdown.upper_annex_bua_m2,
+                          notesExcelBreakdown.bua_upper_annex_non_far_m2,
+                          totalsSource.bua_upper_annex_non_far_m2,
+                          displayedBuiltArea.upper_annex_non_far,
+                        );
+                      const upperAnnexRateSarM2 = toNumericOrNullValue(
+                        notesExcelBreakdown.upper_annex_unit_cost_sar_m2 ??
+                        notesExcelBreakdown.unit_cost_upper_annex_non_far_sar_m2 ??
+                        resolvedUnitCost.upper_annex_non_far,
+                      );
+                      const upperAnnexConstructionFromResponse = toNumericOrNullValue(
+                        excelResult.costs.upper_annex_non_far_cost ??
+                        notesExcelBreakdown.upper_annex_non_far_cost ??
+                        notesExcelBreakdown.upper_annex_construction_cost_sar ??
+                        notesExcelBreakdown.cost_upper_annex_non_far,
+                      );
+                      const upperAnnexConstructionComputed =
+                        upperAnnexBuaM2 != null && upperAnnexRateSarM2 != null
+                          ? upperAnnexBuaM2 * upperAnnexRateSarM2
+                          : null;
+                      const upperAnnexConstruction = upperAnnexConstructionFromResponse ?? upperAnnexConstructionComputed;
+                      const directCostUpperAnnex = Object.entries(directCost || {}).find(([k]) =>
+                        k.toLowerCase().includes("upper_annex") || k.toLowerCase().includes("annex"),
+                      );
+                      const upperAnnexIncludedInDirect =
+                        directCostUpperAnnex != null ||
+                        (upperAnnexConstruction != null && directConstruction >= upperAnnexConstruction && directConstruction > 0);
+                      const upperAnnexConstructionLabel = isArabic
+                        ? "تكلفة إنشاء الملحق العلوي (غير محتسب في FAR)"
+                        : "Upper annex construction (non-FAR)";
+                      const upperAnnexIncludedLabel = isArabic
+                        ? "↳ تكلفة الملحق العلوي (مضمنة ضمن التنفيذ المباشر)"
+                        : "↳ Upper annex construction (included in Direct construction)";
                       const tooltipContext = {
                         coverageRatio,
                         effectiveFarAboveGround: displayedFar ?? farAboveGround,
@@ -2539,6 +2590,12 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         landCost: landCostAmount,
                         directConstruction,
                         fitout: fitoutCost,
+                        fitoutEligibleAreaM2: fitoutArea,
+                        fitoutRateSarM2: fitoutRate,
+                        upperAnnexBuaM2,
+                        upperAnnexRateSarM2,
+                        upperAnnexConstruction,
+                        upperAnnexIncludedInDirect,
                         transaction: transactionCost,
                         transactionPct,
                         contingency: contingencyCost,
@@ -2783,31 +2840,54 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             </button>
                             {v2FinancialOpen.landAndConstruction && (
                               <div className="ui-v2-accordion__body">
-                                <div className="ui-v2-kv2">
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{t("excel.landCost")}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(landCostAmount)}</span>
+                                <div className="ui-v2-rowList">
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">{t("excel.landCost")}</span>
+                                    <span className="ui-v2-row__val">{formatCurrencySAR(landCostAmount)}</span>
                                     <V2InfoTip
                                       label={`${t("excel.landCost")} info`}
                                       body={getCostBreakdownExplanation("land_cost", tooltipContext)}
                                     />
                                   </div>
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{directConstructionLabel}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(directConstruction)}</span>
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">{directConstructionLabel}</span>
+                                    <span className="ui-v2-row__val">{formatCurrencySAR(directConstruction)}</span>
                                     <V2InfoTip
                                       label={`${directConstructionLabel} info`}
                                       body={getCostBreakdownExplanation("direct_construction_sar", tooltipContext)}
                                     />
                                   </div>
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{fitoutLabel}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(fitoutCost)}</span>
+                                  {upperAnnexIncludedInDirect ? (
+                                    <div className="ui-v2-row ui-v2-row--subitem">
+                                      <span className="ui-v2-row__label">{upperAnnexIncludedLabel}</span>
+                                      <span className="ui-v2-row__val">
+                                        {upperAnnexConstruction != null ? formatCurrencySAR(upperAnnexConstruction) : "—"}
+                                      </span>
+                                      <V2InfoTip
+                                        label={`${upperAnnexConstructionLabel} info`}
+                                        body={getCostBreakdownExplanation("upper_annex_non_far_sar", tooltipContext)}
+                                      />
+                                    </div>
+                                  ) : (
+                                    <div className="ui-v2-row">
+                                      <span className="ui-v2-row__label">{upperAnnexConstructionLabel}</span>
+                                      <span className="ui-v2-row__val">
+                                        {upperAnnexConstruction != null ? formatCurrencySAR(upperAnnexConstruction) : "—"}
+                                      </span>
+                                      <V2InfoTip
+                                        label={`${upperAnnexConstructionLabel} info`}
+                                        body={getCostBreakdownExplanation("upper_annex_non_far_sar", tooltipContext)}
+                                      />
+                                    </div>
+                                  )}
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">{fitoutLabel}</span>
+                                    <span className="ui-v2-row__val">{formatCurrencySAR(fitoutCost)}</span>
                                     <V2InfoTip label={`${fitoutLabel} info`} body={getCostBreakdownExplanation("fitout_sar", tooltipContext)} />
                                   </div>
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{t("excel.transactionCosts")}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(transactionCost)}</span>
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">{t("excel.transactionCosts")}</span>
+                                    <span className="ui-v2-row__val">{formatCurrencySAR(transactionCost)}</span>
                                     <V2InfoTip
                                       label={`${t("excel.transactionCosts")} info`}
                                       body={getCostBreakdownExplanation("transaction_sar", tooltipContext)}
@@ -2836,20 +2916,20 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             </button>
                             {v2FinancialOpen.additionalCosts && (
                               <div className="ui-v2-accordion__body">
-                                <div className="ui-v2-kv2">
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{t("excel.contingency")}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(contingencyCost)}</span>
+                                <div className="ui-v2-rowList">
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">{t("excel.contingency")}</span>
+                                    <span className="ui-v2-row__val">{formatCurrencySAR(contingencyCost)}</span>
                                     <V2InfoTip label={`${t("excel.contingency")} info`} body={getCostBreakdownExplanation("contingency_sar", tooltipContext)} />
                                   </div>
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{t("excel.consultants")}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(consultantsCost)}</span>
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">{t("excel.consultants")}</span>
+                                    <span className="ui-v2-row__val">{formatCurrencySAR(consultantsCost)}</span>
                                     <V2InfoTip label={`${t("excel.consultants")} info`} body={getCostBreakdownExplanation("consultants_sar", tooltipContext)} />
                                   </div>
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">{feasibilityFeeLabel}</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(feasibilityFee)}</span>
+                                  <div className="ui-v2-row">
+                                    <span className="ui-v2-row__label">{feasibilityFeeLabel}</span>
+                                    <span className="ui-v2-row__val">{formatCurrencySAR(feasibilityFee)}</span>
                                     <V2InfoTip label={`${feasibilityFeeLabel} info`} body={getCostBreakdownExplanation("feasibility_sar", tooltipContext)} />
                                   </div>
                                 </div>
