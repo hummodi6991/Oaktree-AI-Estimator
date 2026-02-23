@@ -1040,6 +1040,17 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
   const breakdown = excelResult?.breakdown || {};
   const notes = excelResult?.notes || {};
+  const upperAnnexFlowToKey =
+    (breakdown as Record<string, any>)?.revenue_meta?.upper_annex_flow?.to_key ??
+    (notes as Record<string, any>)?.excel_breakdown?.revenue_meta?.upper_annex_flow?.to_key ??
+    (notes as Record<string, any>)?.notes?.excel_breakdown?.revenue_meta?.upper_annex_flow?.to_key ??
+    null;
+  const upperAnnexAllocatedLabel =
+    upperAnnexFlowToKey === "residential"
+      ? t("excel.componentResidential")
+      : upperAnnexFlowToKey === "office"
+        ? t("excel.componentOffice")
+        : null;
   const scenario =
     notes?.scenario_overrides ?? notes?.notes?.scenario_overrides ?? null;
   const builtArea = breakdown.built_area || {};
@@ -1072,7 +1083,12 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const directCost = breakdown.direct_cost || {};
   const incomeComponents = breakdown.y1_income_components || {};
   const upperAnnexFlow = breakdown?.revenue_meta?.upper_annex_flow;
-  const upperAnnexSink = typeof upperAnnexFlow?.to_key === "string" ? upperAnnexFlow.to_key : "";
+  const upperAnnexSink =
+    typeof upperAnnexFlowToKey === "string"
+      ? upperAnnexFlowToKey
+      : typeof upperAnnexFlow?.to_key === "string"
+        ? upperAnnexFlow.to_key
+        : "";
   const upperAnnexAreaM2 =
     typeof upperAnnexFlow?.area_m2 === "number" ? upperAnnexFlow.area_m2 : 0;
   const upperAnnexNlaAddedM2 =
@@ -3173,6 +3189,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         {revenueItems.find((item) => item.upperAnnexHint)?.upperAnnexHint && (
                           <div className="ui-v2-revNote">
                             Note: {revenueItems.find((item) => item.upperAnnexHint)?.upperAnnexHint}
+                            {upperAnnexAllocatedLabel ? ` — allocated to ${upperAnnexAllocatedLabel}` : ""}
                           </div>
                         )}
                       </div>
