@@ -1926,6 +1926,38 @@
   flex-wrap: wrap;
 }
 
+
+.ui-v2-lockPills {
+  gap: 8px;
+}
+
+.ui-v2-lockPill {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: var(--bg-secondary-elevated);
+  color: var(--text-dark);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.ui-v2-lockPill:hover {
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+.ui-v2-lockPill:focus-visible {
+  outline: 2px solid rgba(20, 49, 44, 0.35);
+  outline-offset: 1px;
+}
+
+.ui-v2-lockPill.is-active {
+  background: rgba(231, 216, 189, 0.55);
+  border-color: rgba(20, 49, 44, 0.35);
+  color: #14312c;
+}
 .ui-v2-costInput {
   width: 84px;
   height: 32px;
