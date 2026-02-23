@@ -218,7 +218,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const [includeFitout, setIncludeFitout] = useState(true);
   const [includeContingency, setIncludeContingency] = useState(true);
   const [includeFeasibility, setIncludeFeasibility] = useState(true);
-  const [includeOpex, setIncludeOpex] = useState(true);
+  const [uiIncludeOpex, setUiIncludeOpex] = useState(true);
   const normalizedParcelLandUse = normalizeLandUse(parcel?.landuse_code);
   const normalizedPropLandUse = normalizeLandUse(landUseOverride);
   const initialLandUse = normalizedPropLandUse ?? normalizedParcelLandUse ?? "s";
@@ -466,10 +466,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       nextPatch.fitout_rate = includeFitout ? template.fitout_rate : 0;
       nextPatch.contingency_pct = includeContingency ? template.contingency_pct : 0;
       nextPatch.feasibility_fee_pct = includeFeasibility ? template.feasibility_fee_pct : 0;
-      nextPatch.opex_pct = includeOpex ? template.opex_pct : 0;
+      nextPatch.opex_pct = template.opex_pct;
       return applyPatch(prev, nextPatch);
     });
-  }, [effectiveLandUse, includeFitout, includeContingency, includeFeasibility, includeOpex]);
+  }, [effectiveLandUse, includeFitout, includeContingency, includeFeasibility]);
 
   useEffect(() => {
     const normalized = normalizeEffectivePct(inputs?.y1_income_effective_pct as number | undefined);
@@ -597,13 +597,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   };
 
   const handleOpexToggle = (checked: boolean) => {
-    setIncludeOpex(checked);
-    applyInputPatch(
-      {
-        opex_pct: checked ? templateForLandUse(effectiveLandUse).opex_pct : 0,
-      },
-      Boolean(excelResult),
-    );
+    setUiIncludeOpex(checked);
   };
 
   const resolveEffectivePctFromDraft = (draft: string) => {
@@ -1395,10 +1389,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     !excelResult || resolveEffectivePctFromDraft(effectiveIncomePctDraft) === committedEffectiveIncomePct;
   const opexDraftValue = resolveOpexPctFromDraft(opexPctDraft);
   const committedOpexPct = Math.max(0, Math.min(inputsRef.current?.opex_pct ?? 0, 1));
-  const opexApplyDisabled =
-    !includeOpex ||
-    opexDraftValue == null ||
-    Math.abs(opexDraftValue - committedOpexPct) < 1e-6;
+  const opexApplyDisabled = opexDraftValue == null || Math.abs(opexDraftValue - committedOpexPct) < 1e-6;
   const coverageDraftValue = resolveCoverageFromDraft(coverageDraft);
   const committedCoverageRatio =
     normalizeCoverageRatio(inputsRef.current?.coverage_ratio ?? null) ?? defaultCoverageRatio;
@@ -1430,6 +1421,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     (excelResult?.costs?.y1_noi ??
       excelBreakdown?.y1_noi ??
       (y1IncomeEffective || 0) - (opexCostResolved || 0)) as number;
+  const y1NoiUi = uiIncludeOpex ? y1NoiResolved : y1IncomeEffective;
+  const y1NoiUiClamped = Math.max(0, y1NoiUi);
   const y1IncomeEffectiveNote =
     explanationsDisplay.y1_income_effective ||
     t("excelNotes.effectiveIncome", {
@@ -1765,9 +1758,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   }));
   const effectiveIncome = excelResult?.costs?.y1_income_effective ?? 0;
   const expenseRatio = effectiveIncome > 0 ? opexCostResolved / effectiveIncome : 0;
-  const incomeMargin = effectiveIncome > 0 ? y1NoiResolved / effectiveIncome : 0;
+  const incomeMargin = effectiveIncome > 0 ? y1NoiUiClamped / effectiveIncome : 0;
   const totalCapex = excelResult?.costs?.grand_total_capex ?? 0;
-  const yieldNoi = totalCapex > 0 ? y1NoiResolved / totalCapex : 0;
+  const yieldNoi = totalCapex > 0 ? y1NoiUiClamped / totalCapex : 0;
+  const roiNoiUi = totalCapex > 0 ? y1NoiUiClamped / totalCapex : 0;
   const averageUnitSizeItems = [
     {
       key: "residential",
@@ -3168,7 +3162,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                               <div key={key} className="ui-v2-row">
                                 <span className="ui-v2-row__label">
                                   <span>{prettifyRevenueKey(item?.label || key)}</span>
-                                  {item?.key && hasIncludedComponent(item.key) ? includedBadge : null}
+                                  {item?.key && !["residential", "retail", "office"].includes(item.key) && hasIncludedComponent(item.key) ? includedBadge : null}
                                 </span>
                                 <span className="ui-v2-row__val">{formatCurrencySAR(item?.amount || 0)}</span>
                                 <V2InfoTip label={`Info ${key}`} body={(item?.note || "").trim() || "—"} />
@@ -3250,7 +3244,15 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             <span className="ui-v2-row__label">OPEX</span>
                             <span className="ui-v2-row__val ui-v2-costRow__controls">
                               {formatCurrencySAR(opexCostResolved)}
-                              {includedBadge}
+                              <button
+                                type="button"
+                                className={`ui2-pill ui2-pill--included ${uiIncludeOpex ? "is-active" : "is-inactive"}`}
+                                aria-pressed={uiIncludeOpex}
+                                title={uiIncludeOpex ? t("excel.opexIncludedHelp") : t("excel.opexExcludedHelp")}
+                                onClick={() => handleOpexToggle(!uiIncludeOpex)}
+                              >
+                                {uiIncludeOpex ? t("excel.included") : t("excel.excluded")}
+                              </button>
                               <Input
                                 type="number"
                                 size="sm"
@@ -3267,7 +3269,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                 }}
                                 className="ui-v2-costInput"
                                 aria-label={t("excel.opex")}
-                                disabled={!includeOpex}
                               />
                               <span className="ui-v2-chip">%</span>
                               <Button
@@ -3284,7 +3285,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                           </div>
                           <div className="ui-v2-row">
                             <span className="ui-v2-row__label">Annual NOI</span>
-                            <span className="ui-v2-row__val">{formatCurrencySAR(y1NoiResolved)}</span>
+                            <span className="ui-v2-row__val">{formatCurrencySAR(y1NoiUiClamped)}</span>
                             <V2InfoTip label="Annual NOI info" body={t("excelNotes.noiYear1")} />
                           </div>
                         </div>
@@ -3316,7 +3317,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         <div className="ui-v2-rowList">
                           <div className="ui-v2-row">
                             <span className="ui-v2-row__label">ROI</span>
-                            <span className="ui-v2-row__val">{formatPercentValue(excelResult.roi)}</span>
+                            <span className="ui-v2-row__val">{formatPercentValue(roiNoiUi)}</span>
                             <V2InfoTip label="ROI info" body={t("excelNotes.roiNoiFormula")} />
                           </div>
                           <div className="ui-v2-row">
@@ -3441,7 +3442,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             }}
                             className="calc-input-coverage"
                             aria-label={t("excel.opex")}
-                            disabled={!includeOpex}
                           />
                           <span>%</span>
                           <Button
@@ -3454,9 +3454,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             {t("common.apply")}
                           </Button>
                           <ToggleChip
-                            active={includeOpex}
-                            onClick={() => handleOpexToggle(!includeOpex)}
-                            label={includeOpex ? t("excel.included") : t("excel.excluded")}
+                            active={uiIncludeOpex}
+                            onClick={() => handleOpexToggle(!uiIncludeOpex)}
+                            label={uiIncludeOpex ? t("excel.included") : t("excel.excluded")}
                           />
                         </div>
                       </div>
@@ -3466,7 +3466,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                   </tr>
                   <tr>
                     <td className="col-item">{t("excel.noiYear1")}</td>
-                    <td className="col-num">{formatCurrencySAR(y1NoiResolved)}</td>
+                    <td className="col-num">{formatCurrencySAR(y1NoiUiClamped)}</td>
                     <td className="col-calc">{t("excelNotes.noiYear1")}</td>
                   </tr>
                   <tr>
@@ -3474,7 +3474,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       <strong>{t("excel.unleveredRoi")}</strong>
                     </td>
                     <td className="col-num">
-                      <strong>{formatPercentValue(excelResult.roi)}</strong>
+                      <strong>{formatPercentValue(roiNoiUi)}</strong>
                     </td>
                     <td className="col-calc">{t("excelNotes.roiNoiFormula")}</td>
                   </tr>

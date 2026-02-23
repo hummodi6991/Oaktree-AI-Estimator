@@ -1939,6 +1939,44 @@
   width: 84px;
 }
 
+
+.ui2-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.ui2-pill--included.is-active {
+  background: rgba(231, 216, 189, 0.55);
+  color: #2a2a2a;
+}
+
+.ui2-pill--included.is-inactive {
+  background: rgba(240, 240, 240, 0.9);
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.ui2-pill.is-clickable {
+  cursor: pointer;
+}
+
+.ui2-pill.is-clickable:hover {
+  filter: brightness(0.98);
+}
+
+.ui2-pill.is-clickable:active {
+  transform: translateY(0.5px);
+}
+
+.ui2-pill.is-clickable:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.08);
+}
 .ui-v2-chip {
   height: 32px;
   padding: 0 10px;

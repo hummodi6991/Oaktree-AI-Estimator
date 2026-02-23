@@ -125,6 +125,8 @@
     "noiYear1": "Annual NOI",
     "included": "Included",
     "excluded": "Excluded",
+    "opexIncludedHelp": "OPEX is deducted from NOI (net operating income). Click to exclude OPEX for gross yield view.",
+    "opexExcludedHelp": "OPEX is NOT deducted from NOI (gross yield view). Click to include OPEX for net yield view.",
     "effectiveIncomePct": "Annual net income percentage",
     "unleveredRoi": "ROI",
     "yield": "Yield",
