@@ -15,6 +15,51 @@
   --ui2-right-rail-w: 360px;
 }
 
+/* ==========================================================================
+   Tooltip/InfoTip layering fix: prevent clipping/underlap in card + rail layouts.
+   ========================================================================== */
+
+.ui-v2-results__panel,
+.calc-grid,
+.calc-grid__left,
+.calc-grid__right,
+.ui-v2-resultsCard,
+.ui2-right-rail,
+.ui2-right-rail__card,
+.excel-v2-controls,
+.excel-v2-controls__left,
+.excel-v2-controls__right,
+.ui2-fin-card {
+  position: relative;
+}
+
+.ui-v2-info__tip,
+.oak-tooltip,
+.oak-popover,
+.ui-v2-tooltip,
+.ui-v2-popover,
+.info-tip,
+.infoTip,
+.oak-infoTip,
+[role="tooltip"] {
+  position: relative;
+  z-index: 9999 !important;
+}
+
+/* Row/card wrappers where info tips are likely to appear. Keep visible for popovers. */
+.ui-v2-resultsCard,
+.ui2-fin-card,
+.excel-v2-controls,
+.excel-v2-controls__left,
+.excel-v2-controls__right,
+.ui-v2-rowList,
+.ui-v2-kv,
+.ui-v2-kv2,
+.calc-grid__left,
+.calc-grid__right {
+  overflow: visible;
+}
+
 /* v2-only background so we do not affect legacy screens */
 .excel-form--v2 {
   background: var(--ui2-bg);
