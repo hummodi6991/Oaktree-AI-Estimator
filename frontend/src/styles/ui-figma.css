@@ -117,7 +117,7 @@
 
 .ui-v2-shell .parcel-strip {
   background: #f3ead7;
-  border-bottom: 1px solid #ece4d2;
+  border-bottom: 0;
 }
 .ui-v2-shell .parcel-strip__meta { text-align: center; font-weight: 600; }
 .ui-v2-shell .parcel-strip__action .ui-v2-parcelstrip__primaryBtn {
