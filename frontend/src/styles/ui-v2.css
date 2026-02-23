@@ -1901,6 +1901,15 @@
   border-top: none;
 }
 
+.ui-v2-row--subitem {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.ui-v2-row--subitem .ui-v2-row__label {
+  padding-inline-start: 14px;
+  color: var(--text-gray);
+}
+
 .ui-v2-row__label {
   font-size: var(--fs-sm);
   color: var(--text-dark);
