@@ -1,11 +1,16 @@
-.app-topbar {
-  min-height: 48px;
+.ui-v2-shell {
+  --atlas-header-height: 48px;
 }
 
-.app-topbar .oak-topbar-inner {
-  min-height: 48px;
+.ui-v2-shell .app-topbar {
+  min-height: var(--atlas-header-height);
+}
+
+.ui-v2-shell .app-topbar .oak-topbar-inner {
+  min-height: var(--atlas-header-height);
   padding-top: 4px;
   padding-bottom: 4px;
+  align-items: center;
 }
 
 .app-topbar__title {
@@ -21,6 +26,7 @@
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
+  border: 0;
 }
 
 .ui-v2-parcelstrip__left {
@@ -36,6 +42,35 @@
 .ui-v2-parcelstrip__actions {
   justify-self: end;
   justify-content: flex-end;
+}
+
+.ui-v2-shell .ui-v2-content,
+.ui-v2-shell .ui-v2-analysis-layout,
+.ui-v2-shell .ui-v2-form-wrap {
+  background: transparent;
+}
+
+.ui-v2-shell .ui2-fin-card__title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+
+.ui-v2-shell .ui2-fin-row {
+  padding: 11px 0;
+}
+
+.ui-v2-shell .ui2-fin-row__label,
+.ui-v2-shell .ui2-fin-split__label {
+  font-size: 14px;
+  color: #3b4d48;
+  font-weight: 600;
+}
+
+.ui-v2-shell .ui2-fin-row__value,
+.ui-v2-shell .ui2-fin-split__value {
+  font-size: 15px;
+  font-weight: 700;
 }
 
 .atlas-card {
