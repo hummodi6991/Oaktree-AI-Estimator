@@ -13,6 +13,14 @@
   --ui2-green: #143c34;
   --ui2-green-2: #0f2d27;
   --ui2-right-rail-w: 360px;
+  --ui2-page-gutter: 24px;
+}
+
+/* Give the v2 results area consistent horizontal gutters */
+.excel-form--v2 .calc-section.ui-v2-results,
+.excel-form--v2 .ui-v2-results {
+  padding-left: var(--ui2-page-gutter);
+  padding-right: var(--ui2-page-gutter);
 }
 
 /* ==========================================================================
@@ -147,6 +155,22 @@
 .excel-form--v2 .excel-v2-controls__grid {
   align-items: start;
   grid-template-columns: minmax(0, 1fr) var(--ui2-right-rail-w);
+}
+
+/* Ensure right rail never touches the viewport edge */
+.excel-form--v2 .ui2-right-rail {
+  padding-right: var(--ui2-page-gutter);
+}
+
+/* If the right rail is already inside a padded container, keep it clean */
+.excel-form--v2 .calc-grid__right.ui2-right-rail {
+  box-sizing: border-box;
+}
+
+@media (max-width: 720px) {
+  .excel-form--v2 .ui2-right-rail {
+    padding-right: 0;
+  }
 }
 
 /* Keep right column on desktop/tablet; only stack on small phones */
