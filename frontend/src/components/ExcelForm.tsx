@@ -1511,10 +1511,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       toNumericOrNull(parkingMeta.parking_area_m2) ??
       null;
 
-    const policy =
-      (typeof parkingMeta.parking_minimum_policy === "string" ? parkingMeta.parking_minimum_policy : null) ??
-      (typeof parkingMeta.policy === "string" ? parkingMeta.policy : null);
-
     const autoAdjustment = firstString(
       parkingMeta.auto_adjustment_note,
       parkingMeta.auto_adjustment,
@@ -1523,6 +1519,27 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       breakdown.auto_adjustment_note,
       resultNotes.parking_auto_adjustment_note,
     );
+
+    // Heuristic fallback: some backend versions store the string under different breakdown keys.
+    const autoAdjustmentHeuristic =
+      autoAdjustment ??
+      (() => {
+        for (const v of Object.values(breakdown)) {
+          if (typeof v !== "string") continue;
+          const s = v.trim();
+          if (!s) continue;
+          const l = s.toLowerCase();
+          if (
+            l.includes("auto-adjustment") ||
+            l.includes("auto adjustment") ||
+            l.includes("added") ||
+            l.includes("basement")
+          ) {
+            return s;
+          }
+        }
+        return null;
+      })();
 
     const requiredByComponent =
       breakdown.parking_required_by_component && typeof breakdown.parking_required_by_component === "object"
@@ -1546,8 +1563,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       deficit,
       compliant,
       parkingAreaM2,
-      policy,
-      autoAdjustment,
+      autoAdjustment: autoAdjustmentHeuristic,
       requiredByComponent,
       warnings,
     };
@@ -3499,14 +3515,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             />
                           </div>
 
-                          <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">Policy</span>
-                            <span className="ui-v2-row__val">{parking.policy ?? "—"}</span>
-                            <V2InfoTip
-                              label="Policy info"
-                              body="Parking adjustment policy applied during calculation."
-                            />
-                          </div>
                         </div>
 
                         {parking.autoAdjustment ? (
