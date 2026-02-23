@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
 import { ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
@@ -1703,6 +1703,85 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       </span>
     </span>
   );
+  const getCostBreakdownExplanation = (
+    key: string,
+    context: {
+      coverageRatio?: number | null;
+      effectiveFarAboveGround?: number | null;
+      floorsAboveGround?: number | null;
+      siteArea?: number | null;
+      landPriceSarPerM2?: number | null;
+      landCost?: number | null;
+      directConstruction?: number | null;
+      fitout?: number | null;
+      transaction?: number | null;
+      transactionPct?: number | null;
+      contingency?: number | null;
+      consultants?: number | null;
+      feasibility?: number | null;
+      builtUpAreaValue?: number | null;
+      builtUpAreaLabel?: string;
+    },
+  ) => {
+    const fmtNum = (value: number | null, digits = 2) => (value == null ? "—" : formatNumberValue(value, digits));
+    const fmtPct = (value: number | null, digits = 1) => (value == null ? "—" : formatPercentValue(value, digits));
+    const fmtSar = (value: number | null) => (value == null ? "—" : formatCurrencySAR(value));
+    const fmtArea = (value: number | null) => (value == null ? "—" : formatAreaM2(value));
+    const coverageRatio = context.coverageRatio ?? null;
+    const effectiveFarAboveGround = context.effectiveFarAboveGround ?? null;
+    const floorsAboveGround = context.floorsAboveGround ?? null;
+    const siteArea = context.siteArea ?? null;
+    const landPriceSarPerM2 = context.landPriceSarPerM2 ?? null;
+    const landCost = context.landCost ?? null;
+    const directConstruction = context.directConstruction ?? null;
+    const fitout = context.fitout ?? null;
+    const transaction = context.transaction ?? null;
+    const transactionPct = context.transactionPct ?? null;
+    const contingency = context.contingency ?? null;
+    const consultants = context.consultants ?? null;
+    const feasibility = context.feasibility ?? null;
+    const builtUpAreaValue = context.builtUpAreaValue ?? null;
+    const builtUpAreaLabel = context.builtUpAreaLabel ?? "Built-up area";
+
+    switch (key) {
+      case "coverage_pct":
+        return `Formula: Coverage % = coverage ratio × 100. Inputs: coverage ratio = ${fmtNum(coverageRatio, 3)}. Result: ${fmtPct(coverageRatio, 1)}.`;
+      case "effective_far_above_ground":
+        return `Formula: Effective FAR above ground = Σ(area ratios excluding basement). Inputs: FAR above ground (Σ ratios) = ${fmtNum(effectiveFarAboveGround, 3)}. Result: ${fmtNum(effectiveFarAboveGround, 3)} (ratio).`;
+      case "floors_above_ground":
+        return `Formula: Floors above ground = FAR ÷ coverage. Inputs: FAR = ${fmtNum(effectiveFarAboveGround, 3)}, coverage ratio = ${fmtNum(coverageRatio, 3)}. Result: ${fmtNum(floorsAboveGround, 1)} = ${fmtNum(effectiveFarAboveGround, 3)} ÷ ${fmtNum(coverageRatio, 2)} floors.`;
+      case "massing_lock":
+        return "Formula: Selected lock keeps one massing variable fixed while recalculating the others. Inputs: lock choice + edited field. Result: consistent FAR/floors/coverage relationship.";
+      case "land_cost":
+        return `Formula: Land cost = site area × land price per m². Inputs: site area = ${fmtNum(siteArea, 0)} m², land price = ${fmtNum(landPriceSarPerM2, 0)} SAR/m². Result: ${fmtSar(landCost)}.`;
+      case "direct_construction_sar":
+        return `Formula: Direct construction = Σ(BUA component × unit cost). Inputs: modeled built-up areas and unit rates by use. Result: ${fmtSar(directConstruction)}.`;
+      case "fitout_sar":
+        return `Formula: Fit-out = fit-out eligible area × fit-out rate. Inputs: scenario fit-out assumptions. Result: ${fmtSar(fitout)}.`;
+      case "transaction_sar":
+        return `Formula: Transaction costs = land cost × transaction %. Inputs: land cost = ${fmtSar(landCost)}, transaction % = ${fmtPct(transactionPct, 2)}. Result: ${fmtSar(transaction)}.`;
+      case "contingency_sar":
+        return `Formula: Contingency = contingency % × (direct construction + fit-out). Inputs: direct construction = ${fmtSar(directConstruction)}, fit-out = ${fmtSar(fitout)}. Result: ${fmtSar(contingency)}.`;
+      case "consultants_sar":
+        return `Formula: Consultants = consultants % × construction base. Inputs: construction base from model outputs. Result: ${fmtSar(consultants)}.`;
+      case "feasibility_sar":
+        return `Formula: Feasibility fee = configured fee rule from inputs. Inputs: scenario feasibility settings. Result: ${fmtSar(feasibility)}.`;
+      case "bua_value":
+        return `Formula: ${builtUpAreaLabel} = site area × area ratio (plus scenario scaling where applicable). Inputs: modeled ratios and site area. Result: ${fmtArea(builtUpAreaValue)}.`;
+      default:
+        return "Formula and inputs are derived from the current estimate response and active scenario overrides.";
+    }
+  };
+  const massingLockOrder: MassingLock[] = ["floors", "far", "coverage"];
+  const handleMassingLockArrowNav = (current: MassingLock, event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const currentIndex = massingLockOrder.indexOf(current);
+    if (currentIndex < 0) return;
+    const delta = event.key === "ArrowRight" ? 1 : -1;
+    const nextIndex = (currentIndex + delta + massingLockOrder.length) % massingLockOrder.length;
+    applyInputPatch({ massing_lock: massingLockOrder[nextIndex] }, true);
+  };
   const hasIncludedComponent = (key: string) => {
     const lowerKey = key.toLowerCase();
     if (lowerKey.includes("residential") && componentsDraft.residential) return true;
@@ -2353,31 +2432,14 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       const landCostAmount = excelResult.costs.land_cost ?? 0;
                       const transactionCost = excelResult.costs.transaction_cost ?? 0;
                       const totalCapex = excelResult.costs.grand_total_capex ?? 0;
-                      const v2Costs = excelResult.costs as Record<string, number | undefined>;
-                      const hasDirectConstruction = typeof v2Costs.construction_direct_cost === "number";
-                      const hasFitoutConstruction = typeof v2Costs.fitout_cost === "number";
-                      const constructionCostAmount =
-                        v2Costs.construction_cost ??
-                        (hasDirectConstruction || hasFitoutConstruction
-                          ? (v2Costs.construction_direct_cost ?? 0) + (v2Costs.fitout_cost ?? 0)
-                          : undefined) ??
-                        directConstruction;
                       const notesExcelBreakdown = (excelResult.notes?.excel_breakdown || {}) as Record<string, any>;
                       const breakdownBua = (notesExcelBreakdown?.bua || {}) as Record<string, any>;
                       const breakdownBuiltUpAreas = (notesExcelBreakdown?.built_up_areas || {}) as Record<string, any>;
                       const totalsSource = (excelResult.totals || {}) as Record<string, any>;
-                      const constructionSubtotal =
-                        v2Costs.sub_total ??
-                        v2Costs.construction_subtotal ??
-                        (directConstruction + fitoutCost);
-                      const constructionTotal = constructionSubtotal;
-                      const softTotal = contingencyCost + consultantsCost + feasibilityFee;
-                      const landTotal = landCostAmount + transactionCost;
                       const costBreakdownTitle = isArabic ? "تفصيل التكاليف" : "Cost Breakdown";
                       const builtUpAreasTitle = isArabic ? "المساحات المبنية" : "Built Up Areas";
                       const landAndConstructionTitle = isArabic ? "تكلفة الأرض والبناء" : "Land and Construction Cost";
                       const additionalCostsTitle = isArabic ? "تكاليف إضافية" : "Additional Costs";
-                      const subtotalLabel = isArabic ? "المجموع الفرعي" : "Subtotal";
                       const directConstructionLabel = i18n.exists("excel.directConstruction")
                         ? t("excel.directConstruction")
                         : isArabic
@@ -2414,6 +2476,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             breakdownBua.residential,
                             breakdownBuiltUpAreas.residential,
                             totalsSource.bua_residential_m2,
+                            displayedBuiltArea.residential,
+                            builtArea.residential,
                           ),
                         },
                         {
@@ -2424,6 +2488,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             breakdownBua.retail,
                             breakdownBuiltUpAreas.retail,
                             totalsSource.bua_retail_m2,
+                            displayedBuiltArea.retail,
+                            builtArea.retail,
                           ),
                         },
                         {
@@ -2434,6 +2500,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             breakdownBua.office,
                             breakdownBuiltUpAreas.office,
                             totalsSource.bua_office_m2,
+                            displayedBuiltArea.office,
+                            builtArea.office,
                           ),
                         },
                         {
@@ -2444,6 +2512,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             breakdownBua.upper_annex_non_far,
                             breakdownBuiltUpAreas.upper_annex_non_far,
                             totalsSource.bua_upper_annex_non_far_m2,
+                            displayedBuiltArea.upper_annex_non_far,
+                            builtArea.upper_annex_non_far,
                           ),
                         },
                         {
@@ -2454,13 +2524,27 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             breakdownBua.basement,
                             breakdownBuiltUpAreas.basement,
                             totalsSource.bua_basement_m2,
+                            displayedBuiltArea.basement,
+                            builtArea.basement,
                           ),
                         },
                       ];
                       const farAboveGround = toNumericOrNullValue(notesExcelBreakdown?.far_above_ground);
-                      const builtUpTooltipBody = farAboveGround != null
-                        ? `Above-ground FAR = Σ(area ratios excluding basement) = ${formatNumberValue(farAboveGround, 2)}. Tap FAR to edit, then Apply.`
-                        : "Above-ground FAR = Σ(area ratios excluding basement). Tap FAR to edit, then Apply.";
+                      const tooltipContext = {
+                        coverageRatio,
+                        effectiveFarAboveGround: displayedFar ?? farAboveGround,
+                        floorsAboveGround: impliedFloors,
+                        siteArea,
+                        landPriceSarPerM2: landPricePpm2,
+                        landCost: landCostAmount,
+                        directConstruction,
+                        fitout: fitoutCost,
+                        transaction: transactionCost,
+                        transactionPct,
+                        contingency: contingencyCost,
+                        consultants: consultantsCost,
+                        feasibility: feasibilityFee,
+                      };
 
                       return (
                         <div className="ui-v2-accordionGroup">
@@ -2479,7 +2563,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                 <ChevronRightIcon className="ui-v2-accordion__chev" />
                               )}
                               <span className="ui-v2-accordion__title">{costBreakdownTitle}</span>
-                              <span className="ui-v2-accordion__total">{formatCurrencySAR(totalCapex)}</span>
                             </button>
                             {v2FinancialOpen.costBreakdown && (
                               <div className="ui-v2-accordion__body">
@@ -2512,7 +2595,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         {t("excel.apply")}
                                       </Button>
                                     </span>
-                                    <V2InfoTip label="Coverage info" body="Coverage affects built-up area allocation and parking." />
+                                    <V2InfoTip label="Coverage info" body={getCostBreakdownExplanation("coverage_pct", tooltipContext)} />
                                   </div>
                                   {coverageEditError && (
                                     <div className="ui-v2-costRow__error">
@@ -2550,26 +2633,16 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         {t("excel.apply")}
                                       </Button>
                                     </span>
-                                    <V2InfoTip label="Effective FAR info" body={builtUpTooltipBody} />
+                                    <V2InfoTip
+                                      label="Effective FAR info"
+                                      body={getCostBreakdownExplanation("effective_far_above_ground", tooltipContext)}
+                                    />
                                   </div>
                                   {farEditError && (
                                     <div className="ui-v2-costRow__error">
                                       {farEditError}
                                     </div>
                                   )}
-
-                                  <div className="ui-v2-row">
-                                    <span className="ui-v2-row__label">Implied floors</span>
-                                    <span className="ui-v2-row__val">
-                                      {(() => {
-                                        const impliedFloorsV2 =
-                                          toNumericOrNullValue(notesExcelBreakdown?.implied_floors) ??
-                                          toNumericOrNullValue(totalsSource?.implied_floors);
-                                        return impliedFloorsV2 != null ? formatNumberValue(impliedFloorsV2, 1) : "—";
-                                      })()}
-                                    </span>
-                                    <V2InfoTip label="Implied floors info" body="Implied floors derived from FAR and coverage." />
-                                  </div>
 
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">Floors above ground</span>
@@ -2597,7 +2670,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         {t("excel.apply")}
                                       </Button>
                                     </span>
-                                    <V2InfoTip label="Floors above ground info" body="Floors influence the effective FAR when scaling is enabled." />
+                                    <V2InfoTip
+                                      label="Floors above ground info"
+                                      body={getCostBreakdownExplanation("floors_above_ground", tooltipContext)}
+                                    />
                                   </div>
                                   {floorsEditError && (
                                     <div className="ui-v2-costRow__error">
@@ -2607,36 +2683,42 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">Massing locks</span>
-                                    <span className="ui-v2-row__val ui-v2-costRow__controls ui-v2-costRow__controls--radios">
-                                      <label className="ui-v2-radio">
-                                        <input
-                                          type="radio"
-                                          name="v2-massing-lock"
-                                          checked={massingLock === "floors"}
-                                          onChange={() => applyInputPatch({ massing_lock: "floors" }, true)}
-                                        />
-                                        <span>Lock Floors</span>
-                                      </label>
-                                      <label className="ui-v2-radio">
-                                        <input
-                                          type="radio"
-                                          name="v2-massing-lock"
-                                          checked={massingLock === "far"}
-                                          onChange={() => applyInputPatch({ massing_lock: "far" }, true)}
-                                        />
-                                        <span>Lock FAR</span>
-                                      </label>
-                                      <label className="ui-v2-radio">
-                                        <input
-                                          type="radio"
-                                          name="v2-massing-lock"
-                                          checked={massingLock === "coverage"}
-                                          onChange={() => applyInputPatch({ massing_lock: "coverage" }, true)}
-                                        />
-                                        <span>Lock Coverage</span>
-                                      </label>
+                                    <span className="ui-v2-row__val ui-v2-costRow__controls ui-v2-lockPills" role="radiogroup" aria-label="Massing locks">
+                                      <button
+                                        type="button"
+                                        className={`ui-v2-lockPill ${massingLock === "floors" ? "is-active" : ""}`}
+                                        role="radio"
+                                        aria-checked={massingLock === "floors"}
+                                        tabIndex={massingLock === "floors" ? 0 : -1}
+                                        onKeyDown={(event) => handleMassingLockArrowNav("floors", event)}
+                                        onClick={() => applyInputPatch({ massing_lock: "floors" }, true)}
+                                      >
+                                        Lock Floors
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={`ui-v2-lockPill ${massingLock === "far" ? "is-active" : ""}`}
+                                        role="radio"
+                                        aria-checked={massingLock === "far"}
+                                        tabIndex={massingLock === "far" ? 0 : -1}
+                                        onKeyDown={(event) => handleMassingLockArrowNav("far", event)}
+                                        onClick={() => applyInputPatch({ massing_lock: "far" }, true)}
+                                      >
+                                        Lock FAR
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className={`ui-v2-lockPill ${massingLock === "coverage" ? "is-active" : ""}`}
+                                        role="radio"
+                                        aria-checked={massingLock === "coverage"}
+                                        tabIndex={massingLock === "coverage" ? 0 : -1}
+                                        onKeyDown={(event) => handleMassingLockArrowNav("coverage", event)}
+                                        onClick={() => applyInputPatch({ massing_lock: "coverage" }, true)}
+                                      >
+                                        Lock Coverage
+                                      </button>
                                     </span>
-                                    <V2InfoTip label="Massing locks info" body="Choose which parameter stays fixed when adjusting others." />
+                                    <V2InfoTip label="Massing locks info" body={getCostBreakdownExplanation("massing_lock", tooltipContext)} />
                                   </div>
                                 </div>
                               </div>
@@ -2668,7 +2750,14 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                       <span className="ui-v2-row__val">
                                         {row.value != null ? formatAreaM2(row.value) : "—"}
                                       </span>
-                                      <V2InfoTip label={`Info for ${row.label}`} body={builtUpTooltipBody} />
+                                      <V2InfoTip
+                                        label={`Info for ${row.label}`}
+                                        body={getCostBreakdownExplanation("bua_value", {
+                                          ...tooltipContext,
+                                          builtUpAreaLabel: row.label,
+                                          builtUpAreaValue: row.value,
+                                        })}
+                                      />
                                     </div>
                                   ))}
                                 </div>
@@ -2691,7 +2780,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                 <ChevronRightIcon className="ui-v2-accordion__chev" />
                               )}
                               <span className="ui-v2-accordion__title">{landAndConstructionTitle}</span>
-                              <span className="ui-v2-accordion__total">{formatCurrencySAR(landTotal + constructionTotal)}</span>
                             </button>
                             {v2FinancialOpen.landAndConstruction && (
                               <div className="ui-v2-accordion__body">
@@ -2701,15 +2789,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                     <span className="ui-v2-kv2__val">{formatCurrencySAR(landCostAmount)}</span>
                                     <V2InfoTip
                                       label={`${t("excel.landCost")} info`}
-                                      body="Land cost = site area × price per m² (+ adjustments)."
-                                    />
-                                  </div>
-                                  <div className="ui-v2-kv2__row">
-                                    <span className="ui-v2-kv2__key">Construction</span>
-                                    <span className="ui-v2-kv2__val">{formatCurrencySAR(constructionCostAmount)}</span>
-                                    <V2InfoTip
-                                      label="Construction info"
-                                      body="Construction cost derived from unit costs × built-up area."
+                                      body={getCostBreakdownExplanation("land_cost", tooltipContext)}
                                     />
                                   </div>
                                   <div className="ui-v2-kv2__row">
@@ -2717,20 +2797,20 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                     <span className="ui-v2-kv2__val">{formatCurrencySAR(directConstruction)}</span>
                                     <V2InfoTip
                                       label={`${directConstructionLabel} info`}
-                                      body="Construction cost derived from unit costs × built-up area."
+                                      body={getCostBreakdownExplanation("direct_construction_sar", tooltipContext)}
                                     />
                                   </div>
                                   <div className="ui-v2-kv2__row">
                                     <span className="ui-v2-kv2__key">{fitoutLabel}</span>
                                     <span className="ui-v2-kv2__val">{formatCurrencySAR(fitoutCost)}</span>
-                                    <V2InfoTip label={`${fitoutLabel} info`} body="Additional cost line item included in CapEx." />
+                                    <V2InfoTip label={`${fitoutLabel} info`} body={getCostBreakdownExplanation("fitout_sar", tooltipContext)} />
                                   </div>
                                   <div className="ui-v2-kv2__row">
                                     <span className="ui-v2-kv2__key">{t("excel.transactionCosts")}</span>
                                     <span className="ui-v2-kv2__val">{formatCurrencySAR(transactionCost)}</span>
                                     <V2InfoTip
                                       label={`${t("excel.transactionCosts")} info`}
-                                      body="Additional cost line item included in CapEx."
+                                      body={getCostBreakdownExplanation("transaction_sar", tooltipContext)}
                                     />
                                   </div>
                                 </div>
@@ -2753,7 +2833,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                 <ChevronRightIcon className="ui-v2-accordion__chev" />
                               )}
                               <span className="ui-v2-accordion__title">{additionalCostsTitle}</span>
-                              <span className="ui-v2-accordion__total">{formatCurrencySAR(softTotal)}</span>
                             </button>
                             {v2FinancialOpen.additionalCosts && (
                               <div className="ui-v2-accordion__body">
@@ -2761,17 +2840,17 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                   <div className="ui-v2-kv2__row">
                                     <span className="ui-v2-kv2__key">{t("excel.contingency")}</span>
                                     <span className="ui-v2-kv2__val">{formatCurrencySAR(contingencyCost)}</span>
-                                    <V2InfoTip label={`${t("excel.contingency")} info`} body="Additional cost line item included in CapEx." />
+                                    <V2InfoTip label={`${t("excel.contingency")} info`} body={getCostBreakdownExplanation("contingency_sar", tooltipContext)} />
                                   </div>
                                   <div className="ui-v2-kv2__row">
                                     <span className="ui-v2-kv2__key">{t("excel.consultants")}</span>
                                     <span className="ui-v2-kv2__val">{formatCurrencySAR(consultantsCost)}</span>
-                                    <V2InfoTip label={`${t("excel.consultants")} info`} body="Additional cost line item included in CapEx." />
+                                    <V2InfoTip label={`${t("excel.consultants")} info`} body={getCostBreakdownExplanation("consultants_sar", tooltipContext)} />
                                   </div>
                                   <div className="ui-v2-kv2__row">
                                     <span className="ui-v2-kv2__key">{feasibilityFeeLabel}</span>
                                     <span className="ui-v2-kv2__val">{formatCurrencySAR(feasibilityFee)}</span>
-                                    <V2InfoTip label={`${feasibilityFeeLabel} info`} body="Additional cost line item included in CapEx." />
+                                    <V2InfoTip label={`${feasibilityFeeLabel} info`} body={getCostBreakdownExplanation("feasibility_sar", tooltipContext)} />
                                   </div>
                                 </div>
                               </div>
