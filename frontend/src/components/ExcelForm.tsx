@@ -1471,6 +1471,13 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     const breakdown = (resultNotes?.excel_breakdown ?? {}) as Record<string, unknown>;
     const parkingMeta = (resultNotes?.parking ?? {}) as Record<string, unknown>;
 
+    const firstString = (...vals: unknown[]): string | null => {
+      for (const v of vals) {
+        if (typeof v === "string" && v.trim().length) return v.trim();
+      }
+      return null;
+    };
+
     const required =
       toNumericOrNull(totals.parking_required_spaces) ??
       toNumericOrNull(breakdown.parking_required_spaces) ??
@@ -1508,9 +1515,14 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       (typeof parkingMeta.parking_minimum_policy === "string" ? parkingMeta.parking_minimum_policy : null) ??
       (typeof parkingMeta.policy === "string" ? parkingMeta.policy : null);
 
-    const autoAdjustment =
-      (typeof parkingMeta.auto_adjustment === "string" ? parkingMeta.auto_adjustment : null) ??
-      (typeof parkingMeta.autoAdjustment === "string" ? parkingMeta.autoAdjustment : null);
+    const autoAdjustment = firstString(
+      parkingMeta.auto_adjustment_note,
+      parkingMeta.auto_adjustment,
+      parkingMeta.autoAdjustment,
+      breakdown.parking_auto_adjustment_note,
+      breakdown.auto_adjustment_note,
+      resultNotes.parking_auto_adjustment_note,
+    );
 
     const requiredByComponent =
       breakdown.parking_required_by_component && typeof breakdown.parking_required_by_component === "object"
@@ -3498,7 +3510,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         </div>
 
                         {parking.autoAdjustment ? (
-                          <div className="ui-v2-revNote">Auto-adjustment applied: {parking.autoAdjustment}</div>
+                          <div className="ui2-parking-auto-note">Auto-adjustment applied: {parking.autoAdjustment}</div>
                         ) : null}
 
                         {parking.requiredByComponent ? (
