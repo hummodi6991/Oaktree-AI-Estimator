@@ -178,6 +178,14 @@
   grid-template-columns: minmax(0, 1fr) var(--ui2-right-rail-w);
 }
 
+/* FIX: right rail is too flush to viewport edge on iPad/Safari.
+   Add a guaranteed right gutter at the column level (works even if outer max-width isn't applied). */
+.excel-form--v2 .oak-right-panel.calc-grid__right,
+.excel-form--v2 .calc-grid__right.ui2-right-rail {
+  padding-right: var(--ui2-page-gutter);
+  box-sizing: border-box;
+}
+
 /* Keep right column on desktop/tablet; only stack on small phones */
 @media (max-width: 720px) {
   .excel-form--v2 .excel-v2-controls__grid {
@@ -186,6 +194,10 @@
   .excel-form--v2 .ui2-right-rail,
   .excel-form--v2 .excel-v2-controls__right {
     width: 100%;
+  }
+  .excel-form--v2 .oak-right-panel.calc-grid__right,
+  .excel-form--v2 .calc-grid__right.ui2-right-rail {
+    padding-right: 0;
   }
 }
 
