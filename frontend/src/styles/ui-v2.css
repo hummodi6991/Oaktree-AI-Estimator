@@ -23,6 +23,22 @@
   padding-right: var(--ui2-page-gutter);
 }
 
+/* The columns live inside this grid; add a hard right/left gutter here too.
+   This prevents the Financial Summary rail from touching the viewport edge. */
+.excel-form--v2 .ui-v2-results__panel,
+.excel-form--v2 .calc-grid.ui-v2-results__panel,
+.excel-form--v2 .calc-grid {
+  padding-left: var(--ui2-page-gutter);
+  padding-right: var(--ui2-page-gutter);
+  box-sizing: border-box;
+}
+
+/* If any parent sets width: 100% with no padding, this ensures gutters still apply */
+.excel-form--v2 .calc-grid__left,
+.excel-form--v2 .calc-grid__right {
+  box-sizing: border-box;
+}
+
 /* ==========================================================================
    Tooltip/InfoTip layering fix: prevent clipping/underlap in card + rail layouts.
    ========================================================================== */
@@ -155,22 +171,6 @@
 .excel-form--v2 .excel-v2-controls__grid {
   align-items: start;
   grid-template-columns: minmax(0, 1fr) var(--ui2-right-rail-w);
-}
-
-/* Ensure right rail never touches the viewport edge */
-.excel-form--v2 .ui2-right-rail {
-  padding-right: var(--ui2-page-gutter);
-}
-
-/* If the right rail is already inside a padded container, keep it clean */
-.excel-form--v2 .calc-grid__right.ui2-right-rail {
-  box-sizing: border-box;
-}
-
-@media (max-width: 720px) {
-  .excel-form--v2 .ui2-right-rail {
-    padding-right: 0;
-  }
 }
 
 /* Keep right column on desktop/tablet; only stack on small phones */
