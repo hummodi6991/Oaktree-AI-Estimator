@@ -2200,7 +2200,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       )}
 
       {showCalculations && excelResult && (
-        <section className={mode === "v2" ? "calc-section ui-v2-results calc-shell" : "calc-section"}>
+        <section className={mode === "v2" ? "calc-section ui-v2-results calc-shell oak-container" : "calc-section"}>
           {mode === "v2" ? (
             <>
               <div className="ui-v2-results__titlebar calc-shell__header">Estimated Calculations</div>
