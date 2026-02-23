@@ -1367,28 +1367,38 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       land: formatNumberValue(landCostValue, 0),
       pct: formatPercentValue(transactionPct),
     });
-  const directNote =
-    explanationsDisplay.construction_direct ||
-    Object.keys(directCost)
-      .map((key) => {
-        const area = builtArea[key] ?? 0;
-        const costPerUnit = resolvedUnitCost[key] ?? 0;
-        return t("excelNotes.directItem", {
-          key,
-          area: formatNumberValue(area, 0),
-          cost: formatNumberValue(costPerUnit, 0),
-        });
-      })
-      .filter(Boolean)
-      .join("; ");
+  const coverageCalculationNote = explanationsDisplay.coverage_pct || t("excelNotes.coverageMassing");
+  const massingLockCalculationNote = explanationsDisplay.massing_lock || t("excelNotes.massingLocks");
+  const computedDirectBreakdown = Object.keys(directCost)
+    .map((key) => {
+      const area = builtArea[key] ?? 0;
+      const costPerUnit = resolvedUnitCost[key] ?? 0;
+      return t("excelNotes.directItem", {
+        key,
+        area: formatNumberValue(area, 0),
+        cost: formatNumberValue(costPerUnit, 0),
+      });
+    })
+    .filter(Boolean)
+    .join("; ");
+  const directConstructionCalculationNote =
+    (typeof explanationsDisplay.construction_direct === "string" && explanationsDisplay.construction_direct.trim()) ||
+    computedDirectBreakdown ||
+    t("excel.constructionDirectDefault");
   const upperAnnexArea = displayedBuiltArea.upper_annex_non_far;
   const upperAnnexCost = directCost.upper_annex_non_far;
   const upperAnnexUnitCost = resolvedUnitCost.upper_annex_non_far ?? 0;
   const upperAnnexCostNote =
-    explanationsDisplay.upper_annex_non_far_cost ||
+    (typeof explanationsDisplay.upper_annex_non_far_cost === "string" && explanationsDisplay.upper_annex_non_far_cost.trim()) ||
     (upperAnnexArea != null
       ? `${formatNumberValue(upperAnnexArea, 0)} m² × ${formatNumberValue(upperAnnexUnitCost, 0)} SAR/m².`
       : null);
+  const feasibilityNote = feasibilityExcluded
+    ? t("excelNotes.feasibilityExcluded")
+    : t("excelNotes.feasibility", {
+      land: formatNumberValue(landCostValue, 0),
+      pct: formatPercentValue(feasibilityPct, 1),
+    });
 
   const incomeNote = t("excel.year1IncomeNote");
 
@@ -1695,98 +1705,15 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   });
   const includedBadge = <span className="ui-v2-pill">{isArabic ? "مُدرج" : "Included"}</span>;
   const prettifyRevenueKey = (key: string) => key.replace(/_/g, " ");
-  const V2InfoTip = ({ label, body }: { label: string; body: string }) => (
+  const V2InfoTip = ({ label, body }: { label: string; body: ReactNode }) => (
     <span className="ui-v2-info">
       <button type="button" className="ui-v2-info__icon" aria-label={label}>i</button>
       <span className="ui-v2-info__tip" role="tooltip">
         <strong>How we calculated:</strong>
-        <span>{body}</span>
+        <span>{body || "—"}</span>
       </span>
     </span>
   );
-  const getCostBreakdownExplanation = (
-    key: string,
-    context: {
-      coverageRatio?: number | null;
-      effectiveFarAboveGround?: number | null;
-      floorsAboveGround?: number | null;
-      siteArea?: number | null;
-      landPriceSarPerM2?: number | null;
-      landCost?: number | null;
-      directConstruction?: number | null;
-      fitout?: number | null;
-      transaction?: number | null;
-      transactionPct?: number | null;
-      contingency?: number | null;
-      consultants?: number | null;
-      feasibility?: number | null;
-      fitoutEligibleAreaM2?: number | null;
-      fitoutRateSarM2?: number | null;
-      upperAnnexBuaM2?: number | null;
-      upperAnnexRateSarM2?: number | null;
-      upperAnnexConstruction?: number | null;
-      upperAnnexIncludedInDirect?: boolean;
-      builtUpAreaValue?: number | null;
-      builtUpAreaLabel?: string;
-    },
-  ) => {
-    const fmtNum = (value: number | null, digits = 2) => (value == null ? "—" : formatNumberValue(value, digits));
-    const fmtPct = (value: number | null, digits = 1) => (value == null ? "—" : formatPercentValue(value, digits));
-    const fmtSar = (value: number | null) => (value == null ? "—" : formatCurrencySAR(value));
-    const fmtArea = (value: number | null) => (value == null ? "—" : formatAreaM2(value));
-    const coverageRatio = context.coverageRatio ?? null;
-    const effectiveFarAboveGround = context.effectiveFarAboveGround ?? null;
-    const floorsAboveGround = context.floorsAboveGround ?? null;
-    const siteArea = context.siteArea ?? null;
-    const landPriceSarPerM2 = context.landPriceSarPerM2 ?? null;
-    const landCost = context.landCost ?? null;
-    const directConstruction = context.directConstruction ?? null;
-    const fitout = context.fitout ?? null;
-    const transaction = context.transaction ?? null;
-    const transactionPct = context.transactionPct ?? null;
-    const contingency = context.contingency ?? null;
-    const consultants = context.consultants ?? null;
-    const feasibility = context.feasibility ?? null;
-    const fitoutEligibleAreaM2 = context.fitoutEligibleAreaM2 ?? null;
-    const fitoutRateSarM2 = context.fitoutRateSarM2 ?? null;
-    const upperAnnexBuaM2 = context.upperAnnexBuaM2 ?? null;
-    const upperAnnexRateSarM2 = context.upperAnnexRateSarM2 ?? null;
-    const upperAnnexConstruction = context.upperAnnexConstruction ?? null;
-    const upperAnnexIncludedInDirect = context.upperAnnexIncludedInDirect ?? false;
-    const builtUpAreaValue = context.builtUpAreaValue ?? null;
-    const builtUpAreaLabel = context.builtUpAreaLabel ?? "Built-up area";
-
-    switch (key) {
-      case "coverage_pct":
-        return `Formula: Coverage % = coverage ratio × 100. Inputs: coverage ratio = ${fmtNum(coverageRatio, 3)}. Result: ${fmtPct(coverageRatio, 1)}.`;
-      case "effective_far_above_ground":
-        return `Formula: Effective FAR above ground = Σ(area ratios excluding basement). Inputs: FAR above ground (Σ ratios) = ${fmtNum(effectiveFarAboveGround, 3)}. Result: ${fmtNum(effectiveFarAboveGround, 3)} (ratio).`;
-      case "floors_above_ground":
-        return `Formula: Floors above ground = FAR ÷ coverage. Inputs: FAR = ${fmtNum(effectiveFarAboveGround, 3)}, coverage ratio = ${fmtNum(coverageRatio, 3)}. Result: ${fmtNum(floorsAboveGround, 1)} = ${fmtNum(effectiveFarAboveGround, 3)} ÷ ${fmtNum(coverageRatio, 2)} floors.`;
-      case "massing_lock":
-        return "Formula: Selected lock keeps one massing variable fixed while recalculating the others. Inputs: lock choice + edited field. Result: consistent FAR/floors/coverage relationship.";
-      case "land_cost":
-        return `Formula: Land cost = site area × land price per m². Inputs: site area = ${fmtNum(siteArea, 0)} m², land price = ${fmtNum(landPriceSarPerM2, 0)} SAR/m². Result: ${fmtSar(landCost)}.`;
-      case "direct_construction_sar":
-        return `Formula: Direct construction = Σ(BUA component × unit cost). Inputs: modeled built-up areas and unit rates by use. Result: ${fmtSar(directConstruction)}.`;
-      case "fitout_sar":
-        return `Formula: Fit-out = fit-out eligible area × fit-out rate. Equation: ${fmtArea(fitoutEligibleAreaM2)} × ${fmtNum(fitoutRateSarM2, 0)} SAR/m² = ${fmtSar(fitout)} (above-ground only).`;
-      case "upper_annex_non_far_sar":
-        return `Formula: Upper annex construction = upper annex BUA × upper annex unit cost. Equation: ${fmtArea(upperAnnexBuaM2)} × ${fmtNum(upperAnnexRateSarM2, 0)} SAR/m² = ${fmtSar(upperAnnexConstruction)}.${upperAnnexIncludedInDirect ? " This amount is shown as a component included in Direct construction." : " This amount is shown as its own construction line item."}`;
-      case "transaction_sar":
-        return `Formula: Transaction costs = land cost × transaction %. Inputs: land cost = ${fmtSar(landCost)}, transaction % = ${fmtPct(transactionPct, 2)}. Result: ${fmtSar(transaction)}.`;
-      case "contingency_sar":
-        return `Formula: Contingency = contingency % × (direct construction + fit-out). Inputs: direct construction = ${fmtSar(directConstruction)}, fit-out = ${fmtSar(fitout)}. Result: ${fmtSar(contingency)}.`;
-      case "consultants_sar":
-        return `Formula: Consultants = consultants % × construction base. Inputs: construction base from model outputs. Result: ${fmtSar(consultants)}.`;
-      case "feasibility_sar":
-        return `Formula: Feasibility fee = configured fee rule from inputs. Inputs: scenario feasibility settings. Result: ${fmtSar(feasibility)}.`;
-      case "bua_value":
-        return `Formula: ${builtUpAreaLabel} = site area × area ratio (plus scenario scaling where applicable). Inputs: modeled ratios and site area. Result: ${fmtArea(builtUpAreaValue)}.`;
-      default:
-        return "Formula and inputs are derived from the current estimate response and active scenario overrides.";
-    }
-  };
   const massingLockOrder: MassingLock[] = ["floors", "far", "coverage"];
   const handleMassingLockArrowNav = (current: MassingLock, event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -2581,27 +2508,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       const upperAnnexIncludedLabel = isArabic
                         ? "↳ تكلفة الملحق العلوي (مضمنة ضمن التنفيذ المباشر)"
                         : "↳ Upper annex construction (included in Direct construction)";
-                      const tooltipContext = {
-                        coverageRatio,
-                        effectiveFarAboveGround: displayedFar ?? farAboveGround,
-                        floorsAboveGround: impliedFloors,
-                        siteArea,
-                        landPriceSarPerM2: landPricePpm2,
-                        landCost: landCostAmount,
-                        directConstruction,
-                        fitout: fitoutCost,
-                        fitoutEligibleAreaM2: fitoutArea,
-                        fitoutRateSarM2: fitoutRate,
-                        upperAnnexBuaM2,
-                        upperAnnexRateSarM2,
-                        upperAnnexConstruction,
-                        upperAnnexIncludedInDirect,
-                        transaction: transactionCost,
-                        transactionPct,
-                        contingency: contingencyCost,
-                        consultants: consultantsCost,
-                        feasibility: feasibilityFee,
-                      };
 
                       return (
                         <div className="ui-v2-accordionGroup">
@@ -2652,7 +2558,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         {t("excel.apply")}
                                       </Button>
                                     </span>
-                                    <V2InfoTip label="Coverage info" body={getCostBreakdownExplanation("coverage_pct", tooltipContext)} />
+                                    <V2InfoTip label="Coverage info" body={coverageCalculationNote} />
                                   </div>
                                   {coverageEditError && (
                                     <div className="ui-v2-costRow__error">
@@ -2692,7 +2598,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                     </span>
                                     <V2InfoTip
                                       label="Effective FAR info"
-                                      body={getCostBreakdownExplanation("effective_far_above_ground", tooltipContext)}
+                                      body={farNote}
                                     />
                                   </div>
                                   {farEditError && (
@@ -2729,7 +2635,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                     </span>
                                     <V2InfoTip
                                       label="Floors above ground info"
-                                      body={getCostBreakdownExplanation("floors_above_ground", tooltipContext)}
+                                      body={floorsNote}
                                     />
                                   </div>
                                   {floorsEditError && (
@@ -2775,7 +2681,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         Lock Coverage
                                       </button>
                                     </span>
-                                    <V2InfoTip label="Massing locks info" body={getCostBreakdownExplanation("massing_lock", tooltipContext)} />
+                                    <V2InfoTip label="Massing locks info" body={massingLockCalculationNote} />
                                   </div>
                                 </div>
                               </div>
@@ -2807,14 +2713,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                       <span className="ui-v2-row__val">
                                         {row.value != null ? formatAreaM2(row.value) : "—"}
                                       </span>
-                                      <V2InfoTip
-                                        label={`Info for ${row.label}`}
-                                        body={getCostBreakdownExplanation("bua_value", {
-                                          ...tooltipContext,
-                                          builtUpAreaLabel: row.label,
-                                          builtUpAreaValue: row.value,
-                                        })}
-                                      />
+                                      <V2InfoTip label={`Info for ${row.label}`} body={buaNote(row.key)} />
                                     </div>
                                   ))}
                                 </div>
@@ -2846,7 +2745,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                     <span className="ui-v2-row__val">{formatCurrencySAR(landCostAmount)}</span>
                                     <V2InfoTip
                                       label={`${t("excel.landCost")} info`}
-                                      body={getCostBreakdownExplanation("land_cost", tooltipContext)}
+                                      body={landNote}
                                     />
                                   </div>
                                   <div className="ui-v2-row">
@@ -2854,7 +2753,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                     <span className="ui-v2-row__val">{formatCurrencySAR(directConstruction)}</span>
                                     <V2InfoTip
                                       label={`${directConstructionLabel} info`}
-                                      body={getCostBreakdownExplanation("direct_construction_sar", tooltipContext)}
+                                      body={directConstructionCalculationNote}
                                     />
                                   </div>
                                   {upperAnnexIncludedInDirect ? (
@@ -2865,7 +2764,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                       </span>
                                       <V2InfoTip
                                         label={`${upperAnnexConstructionLabel} info`}
-                                        body={getCostBreakdownExplanation("upper_annex_non_far_sar", tooltipContext)}
+                                        body={upperAnnexCostNote ?? "—"}
                                       />
                                     </div>
                                   ) : (
@@ -2876,21 +2775,21 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                       </span>
                                       <V2InfoTip
                                         label={`${upperAnnexConstructionLabel} info`}
-                                        body={getCostBreakdownExplanation("upper_annex_non_far_sar", tooltipContext)}
+                                        body={upperAnnexCostNote ?? "—"}
                                       />
                                     </div>
                                   )}
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">{fitoutLabel}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(fitoutCost)}</span>
-                                    <V2InfoTip label={`${fitoutLabel} info`} body={getCostBreakdownExplanation("fitout_sar", tooltipContext)} />
+                                    <V2InfoTip label={`${fitoutLabel} info`} body={fitoutNote} />
                                   </div>
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">{t("excel.transactionCosts")}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(transactionCost)}</span>
                                     <V2InfoTip
                                       label={`${t("excel.transactionCosts")} info`}
-                                      body={getCostBreakdownExplanation("transaction_sar", tooltipContext)}
+                                      body={transactionNote}
                                     />
                                   </div>
                                 </div>
@@ -2920,17 +2819,17 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">{t("excel.contingency")}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(contingencyCost)}</span>
-                                    <V2InfoTip label={`${t("excel.contingency")} info`} body={getCostBreakdownExplanation("contingency_sar", tooltipContext)} />
+                                    <V2InfoTip label={`${t("excel.contingency")} info`} body={contingencyNote} />
                                   </div>
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">{t("excel.consultants")}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(consultantsCost)}</span>
-                                    <V2InfoTip label={`${t("excel.consultants")} info`} body={getCostBreakdownExplanation("consultants_sar", tooltipContext)} />
+                                    <V2InfoTip label={`${t("excel.consultants")} info`} body={consultantsNote} />
                                   </div>
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">{feasibilityFeeLabel}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(feasibilityFee)}</span>
-                                    <V2InfoTip label={`${feasibilityFeeLabel} info`} body={getCostBreakdownExplanation("feasibility_sar", tooltipContext)} />
+                                    <V2InfoTip label={`${feasibilityFeeLabel} info`} body={feasibilityNote} />
                                   </div>
                                 </div>
                               </div>
@@ -2990,7 +2889,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       </div>
                     </td>
                     <td className="col-calc">
-                      <div>Used with FAR to infer above-ground floors.</div>
+                      <div>{coverageCalculationNote}</div>
                       {coverageEditError && <div className="calc-error">{coverageEditError}</div>}
                     </td>
                   </tr>
@@ -3111,7 +3010,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         />
                       </div>
                     </td>
-                    <td className="col-calc">Choose a single driver for massing updates.</td>
+                    <td className="col-calc">{massingLockCalculationNote}</td>
                   </tr>
                   {components.residential && (
                     <tr>
@@ -3161,11 +3060,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       {formatCurrencySAR(excelResult.costs.construction_direct_cost)}
                     </td>
                     <td className="col-calc">
-                      {explanationsDisplay?.construction_direct
-                        ? directNote
-                        : directNote
-                        ? `${directNote}; ${t("excel.constructionDirectDefault")}`
-                        : t("excel.constructionDirectDefault")}
+                      {directConstructionCalculationNote}
                     </td>
                   </tr>
                   {effectiveLandUse === "m" && upperAnnexArea != null && upperAnnexArea > 0 && (
@@ -3258,12 +3153,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       {formatCurrencySAR(excelResult.costs.feasibility_fee)}
                     </td>
                     <td className="col-calc">
-                      {feasibilityExcluded
-                        ? t("excelNotes.feasibilityExcluded")
-                        : t("excelNotes.feasibility", {
-                          land: formatNumberValue(landCostValue, 0),
-                          pct: formatPercentValue(feasibilityPct, 1),
-                        })}
+                      {feasibilityNote}
                     </td>
                   </tr>
                   <tr>

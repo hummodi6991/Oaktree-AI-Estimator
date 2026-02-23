@@ -171,7 +171,9 @@
     "noiYear1": "Annual net income − OPEX.",
     "revenueNoteDash": "—",
     "totalCapexFormula": "{{pct}} of Year 1 net income ÷ total capex",
-    "roiNoiFormula": "Annual NOI ÷ total capex"
+    "roiNoiFormula": "Annual NOI ÷ total capex",
+    "coverageMassing": "Used with FAR to infer above-ground floors.",
+    "massingLocks": "Choose a single driver for massing updates."
   },
   "parking": {
     "title": "Parking",
