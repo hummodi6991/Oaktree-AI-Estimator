@@ -1646,8 +1646,9 @@
   padding: 10px 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--space-12);
+  text-align: left;
   cursor: pointer;
 }
 
@@ -1708,9 +1709,19 @@
 }
 
 .ui-v2-accordion__title {
+  margin: 0;
+  flex: 1 1 auto;
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
   color: var(--text-dark);
+}
+
+.ui2-parking-auto-note {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #eef2f0;
+  color: #30423c;
+  font-size: 13px;
 }
 
 .ui-v2-accordion__total {
