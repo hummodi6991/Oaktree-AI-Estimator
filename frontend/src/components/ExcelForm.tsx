@@ -3446,55 +3446,45 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                 ))}
               </Card>
             )}
-            {!(mode === "v2" && selectedResultsTab === "summary") && (
-            <div className="oak-right-panel calc-grid__right ui2-right-rail">
-              {/* Keep legacy card wrapper for non-summary tabs, but enforce fixed rail width + alignment */}
-              <Card title={t("excel.financialSummaryTitle")} className="oak-financial-summary fin-summary ui2-right-rail__card">
-                <div className="calc-summary-list">
-                  <div className="calc-summary-row fin-summary__row">
-                    <span className="calc-summary-key fin-summary__label">{t("excel.totalCapex")}</span>
-                    <span className="calc-summary-value fin-summary__value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
-                  </div>
-                  <div className="calc-summary-row fin-summary__row">
-                    <span className="calc-summary-key fin-summary__label">{t("excel.year1Income")}</span>
-                    <span className="calc-summary-value fin-summary__value">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
-                  </div>
-                  <div className="calc-summary-row fin-summary__row">
-                    <span className="calc-summary-key fin-summary__label">{t("excel.noiYear1")}</span>
-                    <span className="calc-summary-value fin-summary__value">{formatCurrencySAR(y1NoiResolved)}</span>
-                  </div>
-                  <div className="calc-summary-row calc-summary-row--split fin-summary__split">
-                    <div className="fin-summary__split-col">
-                      <span className="calc-summary-key fin-summary__label">{t("excel.unleveredRoi")}</span>
-                      <span className="calc-summary-value fin-summary__value">{formatPercentValue(excelResult.roi)}</span>
-                    </div>
-                    <div className="fin-summary__split-col">
-                      <span className="calc-summary-key fin-summary__label">{t("excel.yield")}</span>
-                      <span className="calc-summary-value fin-summary__value">{formatPercentValue(yieldNoi, 1)}</span>
-                    </div>
-                  </div>
+            {/* Right rail financial summary:
+                - v2: ALWAYS render the same V2FinancialSummaryCard for every tab
+                - legacy: keep legacy right panel (handled elsewhere / legacy layout) */}
+            {mode === "v2" ? (
+              // Summary tab already renders its own right rail earlier; avoid double rendering
+              selectedResultsTab === "summary" ? null : (
+                <div className="oak-right-panel calc-grid__right ui2-right-rail">
+                  <V2FinancialSummaryCard className="ui2-right-rail__card" />
                 </div>
-                <div className="calc-key-ratios fin-summary__key-ratios">
-                  <h5 className="fin-summary__section-title">{t("excel.keyRatios")}</h5>
-                  <div className="calc-key-ratios__group">
-                    <span>{t("excel.revenueMix")}</span>
-                    {revenueMixItems.map((item) => (
-                      <p key={item.key}>
-                        {item.label} {formatPercentValue(item.pct, 0)}
-                      </p>
-                    ))}
+              )
+            ) : (
+              <div className="oak-right-panel calc-grid__right">
+                <Card title={t("excel.financialSummaryTitle")} className="oak-financial-summary fin-summary">
+                  <div className="calc-summary-list">
+                    <div className="calc-summary-row fin-summary__row">
+                      <span className="calc-summary-key fin-summary__label">{t("excel.totalCapex")}</span>
+                      <span className="calc-summary-value fin-summary__value">{formatCurrencySAR(excelResult.costs.grand_total_capex)}</span>
+                    </div>
+                    <div className="calc-summary-row fin-summary__row">
+                      <span className="calc-summary-key fin-summary__label">{t("excel.year1Income")}</span>
+                      <span className="calc-summary-value fin-summary__value">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
+                    </div>
+                    <div className="calc-summary-row fin-summary__row">
+                      <span className="calc-summary-key fin-summary__label">{t("excel.noiYear1")}</span>
+                      <span className="calc-summary-value fin-summary__value">{formatCurrencySAR(y1NoiResolved)}</span>
+                    </div>
+                    <div className="calc-summary-row calc-summary-row--split fin-summary__split">
+                      <div className="fin-summary__split-col">
+                        <span className="calc-summary-key fin-summary__label">{t("excel.unleveredRoi")}</span>
+                        <span className="calc-summary-value fin-summary__value">{formatPercentValue(excelResult.roi)}</span>
+                      </div>
+                      <div className="fin-summary__split-col">
+                        <span className="calc-summary-key fin-summary__label">{t("excel.yield")}</span>
+                        <span className="calc-summary-value fin-summary__value">{formatPercentValue(yieldNoi, 1)}</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="calc-key-ratios__group">
-                    <span>{t("excel.expenseRatio")}</span>
-                    <p>{t("excel.expenseRatioValue", { pct: formatPercentValue(expenseRatio, 1), label: t("excel.opex") })}</p>
-                  </div>
-                  <div className="calc-key-ratios__group">
-                    <span>{t("excel.incomeMargin")}</span>
-                    <p>{t("excel.incomeMarginValue", { pct: formatPercentValue(incomeMargin, 1), label: t("excel.noiMargin") })}</p>
-                  </div>
-                </div>
-              </Card>
-            </div>
+                </Card>
+              </div>
             )}
           </div>
           <div ref={feedbackSentinelRef} style={{ height: 1 }} />
