@@ -46,6 +46,15 @@
   z-index: 9999 !important;
 }
 
+/* Ensure the actual popover panel (inside the info tip) floats above everything */
+.ui-v2-info__tip .ui-v2-info__popover,
+.ui-v2-info__tip .ui-v2-info__panel,
+.ui-v2-info__tip .ui-v2-info__content,
+.ui-v2-info__tip [role="tooltip"] {
+  position: absolute !important;
+  z-index: 10000 !important;
+}
+
 /* Row/card wrappers where info tips are likely to appear. Keep visible for popovers. */
 .ui-v2-resultsCard,
 .ui2-fin-card,
@@ -58,6 +67,14 @@
 .calc-grid__left,
 .calc-grid__right {
   overflow: visible;
+}
+
+/* If any parent row/card becomes a stacking context, keep tip above */
+.ui-v2-row,
+.ui-v2-rowList,
+.ui-v2-kv,
+.ui-v2-kv2 {
+  overflow: visible !important;
 }
 
 /* v2-only background so we do not affect legacy screens */
