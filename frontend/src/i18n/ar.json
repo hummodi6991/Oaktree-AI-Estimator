@@ -146,7 +146,8 @@
       "suhail": "Suhail (متوسط الحي)",
       "kaggle_hedonic_v0": "نموذج هدونيك (مدرب جزئيًا على بيانات Kaggle)"
     },
-    "unitCostTitleV2": "تكاليف وحدة الإنشاء (ر.س/م²)"
+    "unitCostTitleV2": "تكاليف وحدة الإنشاء (ر.س/م²)",
+    "manualEdited": "يدوي"
   },
   "excelNotes": {
     "siteAreaRatio": "مساحة الموقع {{area}} م² × نسبة المساحة {{ratio}}",

@@ -342,11 +342,41 @@ html[dir="rtl"] .unit-cost-panel__value { text-align: right; }
   line-height: 16px;
   font-weight: 500;
   color: rgba(15, 23, 42, 0.75);
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .unit-cost-panel__value-unit {
   font-weight: 500;
   color: rgba(15, 23, 42, 0.75);
+}
+
+.unit-cost-panel__input {
+  width: 130px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 2px;
+  background: transparent;
+  text-align: right;
+  font: inherit;
+  color: inherit;
+}
+
+.unit-cost-panel__input:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.unit-cost-panel__input--error {
+  border-color: rgba(220, 38, 38, 0.8);
+}
+
+.unit-cost-panel__edited {
+  font-size: 11px;
+  color: rgba(15, 23, 42, 0.45);
 }
 
 html[dir="rtl"] .unit-cost-panel__value {
