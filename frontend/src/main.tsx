@@ -9,6 +9,7 @@ import AdminAnalyticsModal from "./components/AdminAnalyticsModal";
 import "./i18n";
 import "./App.css";
 import "./index.css";
+import "./ui-fixes.css";
 import "./styles/figma-tokens.css";
 import "./styles/theme.css";
 import "./styles/global.css";
