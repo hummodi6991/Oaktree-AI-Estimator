@@ -210,6 +210,24 @@ const roundTo = (value: number, digits = 1) => {
   return Math.round(value * factor) / factor;
 };
 
+const clampTo2Decimals = (raw: string) => {
+  const cleaned = raw
+    .replace(/[^\d.]/g, "")
+    .replace(/^(\.)/, "0.")
+    .replace(/(\..*)\./g, "$1");
+  const [intPart, decPart] = cleaned.split(".");
+  if (decPart == null) return intPart ?? "";
+  return `${intPart ?? "0"}.${decPart.slice(0, 2)}`;
+};
+
+const normalize2Decimals = (raw: string) => {
+  const trimmed = raw.trim();
+  if (trimmed === "" || trimmed === ".") return null;
+  const v = Number(trimmed);
+  if (!Number.isFinite(v)) return null;
+  return Math.round(v * 100) / 100;
+};
+
 export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: ExcelFormProps) {
   const { t, i18n } = useTranslation();
   const [provider, setProvider] = useState<(typeof PROVIDERS)[number]["value"]>("blended_v1");
@@ -1646,7 +1664,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   };
 
   const applyFarEdit = () => {
-    const targetFar = Number(farDraft);
+    const targetFar = normalize2Decimals(farDraft);
     if (!Number.isFinite(targetFar) || targetFar <= 0) {
       setFarEditError(t("excel.farEditErrorInvalid"));
       return;
@@ -1685,9 +1703,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   };
   const farApplyDisabled =
     farDraft.trim() === "" ||
-    !Number.isFinite(Number(farDraft)) ||
-    Number(farDraft) <= 0 ||
-    (displayedFar != null && Number(farDraft) === Number(displayedFar));
+    !Number.isFinite(normalize2Decimals(farDraft)) ||
+    (normalize2Decimals(farDraft) ?? 0) <= 0 ||
+    (displayedFar != null && normalize2Decimals(farDraft) === roundTo(Number(displayedFar), 2));
   const revenueItems = Object.keys(incomeComponents || {}).map((key) => {
     const isUpperAnnexSink = showUpperAnnexHint && key === upperAnnexSink;
     const nlaVal = nla[key] ?? 0;
@@ -2640,14 +2658,18 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                     <span className="ui-v2-row__label">Effective FAR above ground</span>
                                     <span className="ui-v2-row__val ui-v2-costRow__controls">
                                       <Input
-                                        type="number"
+                                        type="text"
+                                        inputMode="decimal"
+                                        pattern="^\\d*(\\.\\d{0,2})?$"
                                         size="sm"
-                                        min={0.1}
-                                        step="0.01"
                                         value={farDraft.trim() === "" && displayedFar != null ? String(displayedFar) : farDraft}
                                         onChange={(event) => {
-                                          setFarDraft(event.target.value);
+                                          setFarDraft(clampTo2Decimals(event.target.value));
                                           if (farEditError) setFarEditError(null);
+                                        }}
+                                        onBlur={() => {
+                                          const normalized = normalize2Decimals(farDraft);
+                                          if (normalized != null) setFarDraft(String(normalized));
                                         }}
                                         onKeyDown={(event) => {
                                           if (event.key === "Enter") {
@@ -2970,12 +2992,20 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         {isEditingFar ? (
                           <div className="calc-inline-controls">
                             <Input
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
+                              pattern="^\\d*(\\.\\d{0,2})?$"
                               size="sm"
-                              step="0.01"
                               data-field="effective_far"
                               value={farDraft}
-                              onChange={(event) => setFarDraft(event.target.value)}
+                              onChange={(event) => {
+                                setFarDraft(clampTo2Decimals(event.target.value));
+                                if (farEditError) setFarEditError(null);
+                              }}
+                              onBlur={() => {
+                                const normalized = normalize2Decimals(farDraft);
+                                if (normalized != null) setFarDraft(String(normalized));
+                              }}
                               onKeyDown={(event) => {
                                 if (event.key === "Enter") {
                                   event.preventDefault();
