@@ -297,10 +297,12 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const effectiveLandUse: LandUseCode = overrideLandUse ?? normalizedParcelLandUse ?? "s";
   const parcelIdentityRef = useRef<string | null>(null);
   const [estimateId, setEstimateId] = useState<string | null>(null);
+  const feedbackEnabled = false;
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [feedbackContext, setFeedbackContext] = useState<"estimate" | "pdf">("estimate");
   const feedbackSentinelRef = useRef<HTMLDivElement | null>(null);
   const feedbackEligibleRef = useRef(false);
+  const feedbackShownForEstimateRef = useRef<Record<string, true>>({});
   const [hasUserScrolled, setHasUserScrolled] = useState(false);
   const [estimateCompletedAt, setEstimateCompletedAt] = useState<number | null>(null);
   const [isFeedbackTimeReady, setIsFeedbackTimeReady] = useState(false);
@@ -408,7 +410,17 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     window.localStorage.setItem(getFeedbackDismissedKey(id), String(Date.now()));
   };
   const openFeedback = (context: "estimate" | "pdf", id?: string | null) => {
-    if (!id || hasFeedbackKey(id) || hasRecentFeedbackDismissal(id) || isFeedbackOpen) return;
+    if (!feedbackEnabled) return;
+    if (
+      !id ||
+      hasFeedbackKey(id) ||
+      hasRecentFeedbackDismissal(id) ||
+      feedbackShownForEstimateRef.current[id] ||
+      isFeedbackOpen
+    ) {
+      return;
+    }
+    feedbackShownForEstimateRef.current[id] = true;
     setFeedbackContext(context);
     setIsFeedbackOpen(true);
     void trackEvent("ui_feedback_shown", {
@@ -418,12 +430,14 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   };
   const handleFeedbackDismiss = () => {
     if (estimateId) {
+      feedbackShownForEstimateRef.current[estimateId] = true;
       markFeedbackDismissed(estimateId);
     }
     setIsFeedbackOpen(false);
   };
   const handleFeedbackSubmit = () => {
     if (estimateId) {
+      feedbackShownForEstimateRef.current[estimateId] = true;
       markFeedbackKey(estimateId);
     }
     setIsFeedbackOpen(false);
@@ -497,6 +511,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
   useEffect(() => {
     excelResultRef.current = excelResult;
+    if (!feedbackEnabled) return;
     if (!excelResult) return;
     const handleScroll = () => setHasUserScrolled(true);
     const windowScrollOptions: AddEventListenerOptions = { passive: true, once: true };
@@ -511,11 +526,13 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
   useEffect(() => {
     if (
+      !feedbackEnabled ||
       !excelResult ||
       !estimateId ||
       isFeedbackOpen ||
       hasFeedbackKey(estimateId) ||
-      hasRecentFeedbackDismissal(estimateId)
+      hasRecentFeedbackDismissal(estimateId) ||
+      feedbackShownForEstimateRef.current[estimateId]
     ) {
       return;
     }
@@ -3805,7 +3822,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               </div>
             )}
           </div>
-          <div ref={feedbackSentinelRef} style={{ height: 1 }} />
+          {feedbackEnabled ? <div ref={feedbackSentinelRef} style={{ height: 1 }} /> : null}
         </section>
       )}
       <ScenarioModal
@@ -3815,13 +3832,15 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
         onClose={() => setIsScenarioOpen(false)}
         onSubmit={handleScenarioSubmit}
       />
-      <MicroFeedbackPrompt
-        isOpen={isFeedbackOpen}
-        context={feedbackContext}
-        estimateId={estimateId}
-        onDismiss={handleFeedbackDismiss}
-        onSubmit={handleFeedbackSubmit}
-      />
+      {feedbackEnabled ? (
+        <MicroFeedbackPrompt
+          isOpen={isFeedbackOpen}
+          context={feedbackContext}
+          estimateId={estimateId}
+          onDismiss={handleFeedbackDismiss}
+          onSubmit={handleFeedbackSubmit}
+        />
+      ) : null}
     </div>
   );
 }
