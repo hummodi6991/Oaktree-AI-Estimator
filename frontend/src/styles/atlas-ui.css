@@ -76,6 +76,13 @@
   box-shadow: none !important;
 }
 
+/* Remove top halo when controls columns inherit card shadow under parcel strip */
+.ui-v2-shell .ui-v2-analysis-layout > .ui-v2-parcelstrip + .ui-v2-form-wrap .excel-v2-controls,
+.ui-v2-shell .ui-v2-analysis-layout > .ui-v2-parcelstrip + .ui-v2-form-wrap .excel-v2-controls__left,
+.ui-v2-shell .ui-v2-analysis-layout > .ui-v2-parcelstrip + .ui-v2-form-wrap .excel-v2-controls__right {
+  box-shadow: none !important;
+}
+
 .ui-v2-shell .ui2-fin-card__title {
   font-size: 16px;
   font-weight: 700;
