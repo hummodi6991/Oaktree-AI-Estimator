@@ -2664,13 +2664,17 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         inputMode="decimal"
                                         pattern="^\\d*(\\.\\d{0,2})?$"
                                         size="sm"
-                                        value={farDraft.trim() === "" && displayedFar != null ? String(displayedFar) : farDraft}
+                                        /* IMPORTANT:
+                                           Do NOT fallback to displayedFar when the user clears the field.
+                                           Prefill happens in startFarEdit()/resetFarDraft(), not here. */
+                                        value={farDraft}
                                         onChange={(event) => {
                                           setFarDraft(clampTo2Decimals(event.target.value));
                                           if (farEditError) setFarEditError(null);
                                         }}
                                         onBlur={() => {
                                           const normalized = normalize2Decimals(farDraft);
+                                          // If user cleared it, keep it empty (don't reinsert anything).
                                           if (normalized != null) setFarDraft(String(normalized));
                                         }}
                                         onKeyDown={(event) => {
