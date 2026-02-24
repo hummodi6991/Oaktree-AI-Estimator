@@ -7,7 +7,32 @@
   box-shadow: none !important;
 }
 
-/* If the line is coming from the panel below (top border), remove it too. */
+/* Sometimes the seam is a pseudo-element or an inner wrapper on the parcel strip */
+.oaktree-parcel-summary::before,
+.oaktree-parcel-summary::after {
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Keep this fix seam-scoped; avoid global shell background overrides. */
+
+/* Remove any gap between parcel strip and the next section */
+.ui-v2-analysis-layout > .oaktree-parcel-summary {
+  margin-bottom: 0 !important;
+}
+
+/* Preferred: if form-wrap is truly the next sibling */
 .ui-v2-analysis-layout > .oaktree-parcel-summary + .ui-v2-form-wrap {
   border-top: 0 !important;
+  box-shadow: none !important;
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+/* Fallback: if there’s an extra wrapper between them (not a direct sibling) */
+.ui-v2-analysis-layout .oaktree-parcel-summary + .ui-v2-form-wrap {
+  border-top: 0 !important;
+  box-shadow: none !important;
+  margin-top: 0 !important;
+  padding-top: 0 !important;
 }
