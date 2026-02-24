@@ -45,9 +45,13 @@
 }
 
 .ui-v2-shell .ui-v2-content,
-.ui-v2-shell .ui-v2-analysis-layout,
 .ui-v2-shell .ui-v2-form-wrap {
   background: transparent;
+}
+
+/* Ensure entire analysis layout renders on gray fabric */
+.ui-v2-shell .ui-v2-analysis-layout {
+  background: var(--background-fabric, #f3f4f6) !important;
 }
 
 .ui-v2-shell .ui-v2-analysis-layout > .ui-v2-parcelstrip {
