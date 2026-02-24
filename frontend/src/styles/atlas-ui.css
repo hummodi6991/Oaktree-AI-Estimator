@@ -54,15 +54,26 @@
   background: var(--background-fabric, #f3f4f6) !important;
 }
 
+/* --- Seam killer: eliminate any top border/shadow/padding that can render as a 1px line --- */
 .ui-v2-shell .ui-v2-analysis-layout > .ui-v2-parcelstrip {
-  border-bottom: 0;
-  box-shadow: none;
-  margin-bottom: 0;
+  border-bottom: 0 !important;
+  box-shadow: none !important;
+  margin-bottom: 0 !important;
 }
 
 .ui-v2-shell .ui-v2-analysis-layout > .ui-v2-parcelstrip + .ui-v2-form-wrap {
-  background: transparent;
-  padding-top: 0;
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+  border-top: 0 !important;
+  box-shadow: none !important;
+  background: var(--background-fabric, #f3f4f6) !important;
+}
+
+/* If the seam is coming from the first child inside the form wrap, kill it too */
+.ui-v2-shell .ui-v2-analysis-layout > .ui-v2-parcelstrip + .ui-v2-form-wrap > *:first-child {
+  margin-top: 0 !important;
+  border-top: 0 !important;
+  box-shadow: none !important;
 }
 
 .ui-v2-shell .ui2-fin-card__title {
