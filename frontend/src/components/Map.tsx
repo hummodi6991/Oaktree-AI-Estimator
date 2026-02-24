@@ -331,11 +331,13 @@ export default function Map({
   const hoverDataRef = useRef<FeatureCollection<Geometry, GeoJsonProperties>>(EMPTY_FEATURE_COLLECTION);
   const parcelPropertiesLoggedRef = useRef(false);
 
-  const MULTI_HINT_KEY = "oaktree_v2_multi_select_hint_dismissed";
-  const [showMultiHint, setShowMultiHint] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(MULTI_HINT_KEY) !== "1";
-  });
+  const [showMultiHint, setShowMultiHint] = useState(true);
+
+  const isMultiSelectModifier = (evt: unknown): boolean => {
+    if (!evt || typeof evt !== "object") return false;
+    const keyEvent = evt as { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean };
+    return Boolean(keyEvent.shiftKey || keyEvent.ctrlKey || keyEvent.metaKey);
+  };
 
   const renderStatus = useMemo(() => {
     if (!status) return null;
@@ -421,14 +423,7 @@ export default function Map({
           : [...currentIds, nextParcel.parcel_id as string];
         setSelectedParcelIds(nextIds);
 
-        if (uiVariantRef.current === "v2" && nextIds.length >= 2) {
-          try {
-            window.localStorage.setItem(MULTI_HINT_KEY, "1");
-          } catch {
-            // ignore localStorage errors
-          }
-          setShowMultiHint(false);
-        }
+        if (uiVariantRef.current === "v2" && nextIds.length >= 2) setShowMultiHint(false);
 
         if (alreadySelected) {
           setStatus({ key: "map.status.removedSelection", options: { id: formatParcelId(nextParcel.parcel_id) } });
@@ -576,7 +571,8 @@ export default function Map({
           parcel_method: identifyParcel.parcel_method ?? null,
         };
 
-        const shiftMultiSelect = uiVariantRef.current === "v2" && Boolean(e.originalEvent.shiftKey);
+        const shiftMultiSelect =
+          uiVariantRef.current === "v2" && isMultiSelectModifier((e as { originalEvent?: unknown })?.originalEvent);
         if (uiVariantRef.current === "v2" && !shiftMultiSelect) {
           setSelectedParcelIds([]);
           setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
@@ -801,11 +797,6 @@ export default function Map({
               type="button"
               className="v2-map-hint__dismiss"
               onClick={() => {
-                try {
-                  window.localStorage.setItem(MULTI_HINT_KEY, "1");
-                } catch {
-                  // ignore localStorage errors
-                }
                 setShowMultiHint(false);
               }}
               aria-label={t("map.controls.dismissHint", { defaultValue: "Dismiss hint" })}
