@@ -1665,7 +1665,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
   const applyFarEdit = () => {
     const targetFar = normalize2Decimals(farDraft);
-    if (!Number.isFinite(targetFar) || targetFar <= 0) {
+    if (targetFar == null || !Number.isFinite(targetFar) || targetFar <= 0) {
       setFarEditError(t("excel.farEditErrorInvalid"));
       return;
     }
@@ -1701,11 +1701,13 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     setFarDraft(String(displayedFar));
     setIsEditingFar(true);
   };
+  const normalizedFarDraft = normalize2Decimals(farDraft);
   const farApplyDisabled =
     farDraft.trim() === "" ||
-    !Number.isFinite(normalize2Decimals(farDraft)) ||
-    (normalize2Decimals(farDraft) ?? 0) <= 0 ||
-    (displayedFar != null && normalize2Decimals(farDraft) === roundTo(Number(displayedFar), 2));
+    normalizedFarDraft == null ||
+    !Number.isFinite(normalizedFarDraft) ||
+    normalizedFarDraft <= 0 ||
+    (displayedFar != null && normalizedFarDraft === roundTo(Number(displayedFar), 2));
   const revenueItems = Object.keys(incomeComponents || {}).map((key) => {
     const isUpperAnnexSink = showUpperAnnexHint && key === upperAnnexSink;
     const nlaVal = nla[key] ?? 0;
