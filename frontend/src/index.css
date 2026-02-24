@@ -1,3 +1,21 @@
+/* ------------------------------------------------------------
+   UI polish
+   Remove the off‑white spacer band under the parcel-info (beige)
+   bar by matching the app shell background to the estimator
+   “fabric” gray.
+   ------------------------------------------------------------ */
+html,
+body,
+#root {
+  background-color: #efefef;
+}
+
+/* If the App root wrapper sets its own background, force it too
+   (this is what shows through the vertical gap between sections). */
+#root > div {
+  background-color: #efefef;
+}
+
 :root {
   font-family: "Inter", "Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   line-height: 1.6;
