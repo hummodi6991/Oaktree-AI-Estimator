@@ -1,3 +1,9 @@
+/* Ensure the parent layout has the same fabric background so any flex/grid "gap"
+   between children doesn't render as a white separator line. */
+.ui-v2-analysis-layout {
+  background: var(--background-fabric, #f3f4f6);
+}
+
 /* UI polish: remove the thick separator line between the beige parcel info bar
    and the gray form background (seen on iPad + desktop). */
 
@@ -27,6 +33,12 @@
   box-shadow: none !important;
   margin-top: 0 !important;
   padding-top: 0 !important;
+}
+
+/* Extra guard: sometimes the first child panel inside the form wrap draws the seam */
+.ui-v2-analysis-layout > .oaktree-parcel-summary + .ui-v2-form-wrap > *:first-child {
+  border-top: 0 !important;
+  box-shadow: none !important;
 }
 
 /* Fallback: if there’s an extra wrapper between them (not a direct sibling) */
