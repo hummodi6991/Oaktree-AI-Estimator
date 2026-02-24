@@ -250,6 +250,7 @@ function App() {
                 }}
                 showSearchBar={false}
                 showSelectionUi={false}
+                uiVariant="v2"
                 focusTarget={searchTarget}
                 mapHeight={isMapHidden ? "0px" : "52vh"}
                 mapContainerClassName="ui-v2-map-canvas"
