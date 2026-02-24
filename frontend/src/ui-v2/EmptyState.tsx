@@ -12,7 +12,7 @@ export default function EmptyState() {
       <div className="ui-v2-empty__copy">
         <h2 className="ui-v2-empty__title">Select one or multiple parcel(s) to begin analysis</h2>
         <p className="ui-v2-empty__subtitle">
-          Choose parcel to start development assumptions and view financial projects.
+          Ctrl +Click (desktop) or Long-press (touch) to multi-select.
         </p>
       </div>
       <div className="ui-v2-empty__tiles">
