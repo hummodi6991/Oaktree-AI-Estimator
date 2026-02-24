@@ -13,8 +13,9 @@ import {
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { buildApiUrl, collateParcels, identify, trackEvent } from "../api";
-import type { CollateResponse, ParcelSummary } from "../api";
+import { buildApiUrl, trackEvent } from "../api";
+import type { ParcelSummary } from "../api";
+import { collateParcels, identifyPoint, type CollateResponse } from "../lib/api/geo";
 import MapSearchBar from "./MapSearchBar";
 import type { SearchItem } from "../types/search";
 
@@ -25,6 +26,7 @@ type MapProps = {
   focusTarget?: SearchItem | null;
   mapHeight?: string | number;
   mapContainerClassName?: string;
+  uiVariant?: "legacy" | "v2";
 };
 
 type StatusMessage = { key: string; options?: Record<string, unknown> } | { raw: string };
@@ -113,21 +115,23 @@ function setHoverGeometry(
   source?.setData(data);
 }
 
-function ensureSelectionLayers(map: maplibregl.Map) {
+function ensureSelectionLayers(map: maplibregl.Map, variant: "legacy" | "v2") {
   if (!map.getSource(SELECT_SOURCE_ID)) {
     map.addSource(SELECT_SOURCE_ID, {
       type: "geojson",
       data: { type: "FeatureCollection", features: [] },
     });
 
+    const isV2 = variant === "v2";
+
     map.addLayer({
       id: SELECT_FILL_LAYER_ID,
       type: "fill",
       source: SELECT_SOURCE_ID,
       paint: {
-        "fill-color": "#2f7bff",
-        "fill-opacity": 0.35,
-        "fill-outline-color": "#1f5fd6",
+        "fill-color": isV2 ? "#335c4f" : "#2f7bff",
+        "fill-opacity": isV2 ? 0.18 : 0.35,
+        "fill-outline-color": isV2 ? "#21443a" : "#1f5fd6",
       },
     });
 
@@ -136,9 +140,9 @@ function ensureSelectionLayers(map: maplibregl.Map) {
       type: "line",
       source: SELECT_SOURCE_ID,
       paint: {
-        "line-color": "#1f5fd6",
-        "line-width": 2.5,
-        "line-opacity": 0.9,
+        "line-color": isV2 ? "#21443a" : "#1f5fd6",
+        "line-width": isV2 ? 2 : 2.5,
+        "line-opacity": isV2 ? 0.85 : 0.9,
       },
     });
   }
@@ -302,6 +306,7 @@ export default function Map({
   focusTarget = null,
   mapHeight = "60vh",
   mapContainerClassName,
+  uiVariant = "legacy",
 }: MapProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -318,11 +323,19 @@ export default function Map({
   const [selectionMethod, setSelectionMethod] = useState<"feature" | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number | null>(null);
   const onParcelRef = useRef(onParcel);
+  const uiVariantRef = useRef<"legacy" | "v2">(uiVariant);
+  const suppressNextClickRef = useRef(false);
   const multiSelectModeRef = useRef(multiSelectMode);
   const selectedParcelIdsRef = useRef(selectedParcelIds);
   const currentParcelRef = useRef<ParcelSummary | null>(null);
   const hoverDataRef = useRef<FeatureCollection<Geometry, GeoJsonProperties>>(EMPTY_FEATURE_COLLECTION);
   const parcelPropertiesLoggedRef = useRef(false);
+
+  const MULTI_HINT_KEY = "oaktree_v2_multi_select_hint_dismissed";
+  const [showMultiHint, setShowMultiHint] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(MULTI_HINT_KEY) !== "1";
+  });
 
   const renderStatus = useMemo(() => {
     if (!status) return null;
@@ -352,6 +365,10 @@ export default function Map({
     selectedParcelIdsRef.current = selectedParcelIds;
   }, [selectedParcelIds]);
 
+  useEffect(() => {
+    uiVariantRef.current = uiVariant;
+  }, [uiVariant]);
+
   const formatParcelId = (value?: string | null) => {
     if (!value) {
       return "";
@@ -363,12 +380,20 @@ export default function Map({
     return value;
   };
 
-  const applyParcelSelection = (parcel: ParcelSummary, geometry: Geometry | null, method: "feature") => {
+  const applyParcelSelection = (
+    parcel: ParcelSummary,
+    geometry: Geometry | null,
+    method: "feature",
+    options?: { appendSelection?: boolean },
+  ) => {
+    const appendSelection = Boolean(options?.appendSelection);
     const nextParcel = geometry ? { ...parcel, geometry } : parcel;
-    currentParcelRef.current = nextParcel;
-    onParcelRef.current(nextParcel);
-    setSelectionMethod(method);
-    if (nextParcel.parcel_id) {
+    if (!appendSelection) {
+      currentParcelRef.current = nextParcel;
+      onParcelRef.current(nextParcel);
+      setSelectionMethod(method);
+    }
+    if (!appendSelection && nextParcel.parcel_id) {
       void trackEvent("ui_parcel_selected", {
         meta: {
           parcel_id: nextParcel.parcel_id,
@@ -383,7 +408,7 @@ export default function Map({
       return;
     }
 
-    if (multiSelectModeRef.current) {
+    if (appendSelection || multiSelectModeRef.current) {
       if (!nextParcel.parcel_id) {
         setStatus({ key: "map.status.missingId" });
         return;
@@ -395,6 +420,15 @@ export default function Map({
           ? currentIds.filter((id) => id !== nextParcel.parcel_id)
           : [...currentIds, nextParcel.parcel_id as string];
         setSelectedParcelIds(nextIds);
+
+        if (uiVariantRef.current === "v2" && nextIds.length >= 2) {
+          try {
+            window.localStorage.setItem(MULTI_HINT_KEY, "1");
+          } catch {
+            // ignore localStorage errors
+          }
+          setShowMultiHint(false);
+        }
 
         if (alreadySelected) {
           setStatus({ key: "map.status.removedSelection", options: { id: formatParcelId(nextParcel.parcel_id) } });
@@ -496,7 +530,7 @@ export default function Map({
 
     map.on("load", () => {
       ensureHoverLayers(map);
-      ensureSelectionLayers(map);
+      ensureSelectionLayers(map, uiVariantRef.current);
       ensureLayerOrder(map);
       handleZoom();
       disposeHover = wireHover(map, hoverDataRef);
@@ -505,7 +539,7 @@ export default function Map({
 
     map.on("style.load", () => {
       ensureHoverLayers(map);
-      ensureSelectionLayers(map);
+      ensureSelectionLayers(map, uiVariantRef.current);
       const selectSource = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
       selectSource?.setData(selectedParcelsGeojson);
       const hoverSource = map.getSource(HOVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
@@ -520,7 +554,12 @@ export default function Map({
     map.on("click", async (e) => {
       setCollateStatus(null);
       try {
-        const identifyResult = await identify(e.lngLat.lng, e.lngLat.lat);
+        if (suppressNextClickRef.current) {
+          suppressNextClickRef.current = false;
+          return;
+        }
+
+        const identifyResult = await identifyPoint(e.lngLat.lng, e.lngLat.lat);
         if (!identifyResult?.found || !identifyResult.parcel || !isArcgisParcel(identifyResult.parcel)) {
           setStatus({ key: "map.status.notFound" });
           const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource;
@@ -537,7 +576,12 @@ export default function Map({
           parcel_method: identifyParcel.parcel_method ?? null,
         };
 
-        applyParcelSelection(parcel, geometry, "feature");
+        const shiftMultiSelect = uiVariantRef.current === "v2" && Boolean(e.originalEvent.shiftKey);
+        if (uiVariantRef.current === "v2" && !shiftMultiSelect) {
+          setSelectedParcelIds([]);
+          setSelectedParcelsGeojson({ type: "FeatureCollection", features: [] });
+        }
+        applyParcelSelection(parcel, geometry, "feature", { appendSelection: shiftMultiSelect });
       } catch (err) {
         if (disposed) return;
         console.error(err);
@@ -545,10 +589,87 @@ export default function Map({
       }
     });
 
+    let touchTimer: number | null = null;
+    let touchStartPoint: { x: number; y: number } | null = null;
+    let touchMoved = false;
+
+    const clearTouchTimer = () => {
+      if (touchTimer != null) window.clearTimeout(touchTimer);
+      touchTimer = null;
+      touchStartPoint = null;
+      touchMoved = false;
+    };
+
+    const handleTouchStart = (e: maplibregl.MapTouchEvent) => {
+      if (uiVariantRef.current !== "v2") return;
+      const oe = e?.originalEvent as TouchEvent | undefined;
+      if (oe?.touches && oe.touches.length !== 1) return;
+
+      touchMoved = false;
+      touchStartPoint = { x: e.point.x, y: e.point.y };
+
+      touchTimer = window.setTimeout(async () => {
+        if (touchMoved) return;
+        suppressNextClickRef.current = true;
+
+        try {
+          const identifyResult = await identifyPoint(e.lngLat.lng, e.lngLat.lat);
+          if (!identifyResult?.found || !identifyResult.parcel || !isArcgisParcel(identifyResult.parcel)) {
+            setStatus({ key: "map.status.notFound" });
+            return;
+          }
+
+          const identifyParcel = identifyResult.parcel;
+          const geometry = transformGeometryToWgs84(identifyParcel.geometry as Geometry | null);
+          const parcel: ParcelSummary = {
+            ...identifyParcel,
+            geometry,
+            parcel_area_m2: identifyParcel.parcel_area_m2 ?? identifyParcel.area_m2 ?? null,
+            parcel_method: identifyParcel.parcel_method ?? null,
+          };
+
+          applyParcelSelection(parcel, geometry, "feature", { appendSelection: true });
+        } catch (err) {
+          console.error(err);
+          setStatus({ key: "map.status.loadError" });
+        } finally {
+          window.setTimeout(() => {
+            suppressNextClickRef.current = false;
+          }, 300);
+        }
+      }, 480);
+    };
+
+    const handleTouchMove = (e: maplibregl.MapTouchEvent) => {
+      if (uiVariantRef.current !== "v2") return;
+      if (!touchStartPoint) return;
+      const dx = e.point.x - touchStartPoint.x;
+      const dy = e.point.y - touchStartPoint.y;
+      if (Math.sqrt(dx * dx + dy * dy) > 18) {
+        touchMoved = true;
+        clearTouchTimer();
+      }
+    };
+
+    const handleTouchEnd = () => {
+      clearTouchTimer();
+    };
+
+    map.on("touchstart", handleTouchStart);
+    map.on("touchmove", handleTouchMove);
+    map.on("touchend", handleTouchEnd);
+    map.on("touchcancel", handleTouchEnd);
+    map.on("dragstart", clearTouchTimer);
+
     return () => {
       disposed = true;
       map.off("zoom", handleZoom);
       map.off("idle", logParcelPropertiesOnce);
+      map.off("touchstart", handleTouchStart);
+      map.off("touchmove", handleTouchMove);
+      map.off("touchend", handleTouchEnd);
+      map.off("touchcancel", handleTouchEnd);
+      map.off("dragstart", clearTouchTimer);
       disposeHover?.();
       mapRef.current = null;
       map.remove();
@@ -632,6 +753,9 @@ export default function Map({
     ? t("map.status.selectedList", { list: selectedParcelIds.map((id) => formatParcelId(id)).join(", ") })
     : t("map.status.noneSelected");
 
+  const showV2Chip = uiVariant === "v2" && selectedParcelIds.length >= 2;
+  const showV2Hint = uiVariant === "v2" && showMultiHint && !showV2Chip;
+
   return (
     <div>
       <div style={{ position: "relative" }}>
@@ -664,6 +788,52 @@ export default function Map({
             }}
           >
             Zoom: {zoomLevel.toFixed(1)}
+          </div>
+        )}
+        {showV2Hint && (
+          <div className="v2-map-hint" role="note">
+            <span className="v2-map-hint__text">
+              {t("map.controls.multiSelectHint", {
+                defaultValue: "Tip: Shift+Click (desktop) or Long-press (touch) to multi-select",
+              })}
+            </span>
+            <button
+              type="button"
+              className="v2-map-hint__dismiss"
+              onClick={() => {
+                try {
+                  window.localStorage.setItem(MULTI_HINT_KEY, "1");
+                } catch {
+                  // ignore localStorage errors
+                }
+                setShowMultiHint(false);
+              }}
+              aria-label={t("map.controls.dismissHint", { defaultValue: "Dismiss hint" })}
+              title={t("map.controls.dismissHint", { defaultValue: "Dismiss" })}
+            >
+              ×
+            </button>
+          </div>
+        )}
+        {showV2Chip && (
+          <div className="v2-map-chip" role="status" aria-live="polite">
+            <span className="v2-map-chip__count">{t("map.controls.selectedCount", { count: selectedParcelIds.length, defaultValue: `Selected: ${selectedParcelIds.length}` })}</span>
+            <button
+              type="button"
+              className="v2-map-chip__btn v2-map-chip__btn--primary"
+              onClick={handleCollate}
+              disabled={collating}
+            >
+              {collating ? t("map.controls.collating", { defaultValue: "Collating…" }) : t("map.controls.collate", { defaultValue: "Collate" })}
+            </button>
+            <button
+              type="button"
+              className="v2-map-chip__btn v2-map-chip__btn--ghost"
+              onClick={handleClearSelection}
+              disabled={collating}
+            >
+              {t("map.controls.clearSelection", { defaultValue: "Clear" })}
+            </button>
           </div>
         )}
       </div>
