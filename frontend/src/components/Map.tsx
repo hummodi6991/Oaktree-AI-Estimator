@@ -790,7 +790,7 @@ export default function Map({
           <div className="v2-map-hint" role="note">
             <span className="v2-map-hint__text">
               {t("map.controls.multiSelectHint", {
-                defaultValue: "Tip: Shift+Click (desktop) or Long-press (touch) to multi-select",
+                defaultValue: "Tip: Ctrl+Click (desktop) or Long-press (touch) to multi-select",
               })}
             </span>
             <button
