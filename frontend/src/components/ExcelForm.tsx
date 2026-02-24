@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type { Geometry } from "geojson";
 import { useTranslation } from "react-i18next";
 import { ChevronDownIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
@@ -143,6 +143,7 @@ type ExcelFormProps = {
 
 type MassingLock = "far" | "floors" | "coverage";
 type ResultTab = "summary" | "financial" | "revenue" | "parking";
+type UnitCostFieldKey = "residential" | "retail" | "office" | "basement" | "upper_annex_non_far";
 
 const normalizeLandUse = (value?: string | null): LandUseCode | null => {
   const v = (value || "").trim().toLowerCase();
@@ -291,15 +292,6 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     applyInputPatch({ components: componentsDraft }, Boolean(excelResult));
   };
 
-  const updateUnitCost = (key: string, value: string) => {
-    const nextValue = value === "" ? 0 : Number(value);
-    applyInputPatch({
-      unit_cost: {
-        [key]: nextValue,
-      },
-    });
-  };
-
   // User override from dropdown; null means "use inferred"
   const [overrideLandUse, setOverrideLandUse] = useState<LandUseCode | null>(normalizedPropLandUse);
   const effectiveLandUse: LandUseCode = overrideLandUse ?? normalizedParcelLandUse ?? "s";
@@ -366,6 +358,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const [isScenarioOpen, setIsScenarioOpen] = useState(false);
   const [isScenarioSubmitting, setIsScenarioSubmitting] = useState(false);
   const [scenarioBaseResult, setScenarioBaseResult] = useState<ExcelResult | null>(null);
+  const [unitCostDrafts, setUnitCostDrafts] = useState<Partial<Record<UnitCostFieldKey, string>>>({});
+  const [unitCostFocused, setUnitCostFocused] = useState<Partial<Record<UnitCostFieldKey, boolean>>>({});
+  const [unitCostErrors, setUnitCostErrors] = useState<Partial<Record<UnitCostFieldKey, boolean>>>({});
   const excelResultRef = useRef<ExcelResult | null>(null);
   const unitCostInputs = inputs.unit_cost || {};
   const getBestAreaRatio = (): ExcelInputs["area_ratio"] | null => {
@@ -1736,7 +1731,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       ? notes.summary_ar ?? notes.summary_en ?? notes.summary
       : notes.summary_en ?? notes.summary ?? excelResult?.summary
     )?.trim() || (excelResult ? t("excel.summaryRoi", { value: formatPercentValue(excelResult.roi) }) : "");
-  const unitCostFields = [
+  const unitCostFields: Array<{ key: UnitCostFieldKey; label: string }> = [
     { key: "residential", label: t("excel.unitCostResidential") },
     { key: "retail", label: t("excel.unitCostRetail") },
     { key: "office", label: t("excel.unitCostOffice") },
@@ -1747,6 +1742,78 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     effectiveLandUse === "m"
       ? unitCostFields
       : unitCostFields.filter((field) => field.key === "residential" || field.key === "basement");
+  const resetUnitCostDraftState = (key: UnitCostFieldKey) => {
+    setUnitCostDrafts((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const handleUnitCostFocus = (key: UnitCostFieldKey) => {
+    setUnitCostFocused((prev) => ({ ...prev, [key]: true }));
+    setUnitCostDrafts((prev) => ({ ...prev, [key]: String(unitCostInputs[key] ?? 0) }));
+    setUnitCostErrors((prev) => ({ ...prev, [key]: false }));
+  };
+
+  const handleUnitCostChange = (key: UnitCostFieldKey, value: string) => {
+    setUnitCostDrafts((prev) => ({ ...prev, [key]: value }));
+    if (unitCostErrors[key]) {
+      setUnitCostErrors((prev) => ({ ...prev, [key]: false }));
+    }
+  };
+
+  const commitUnitCostEdit = (key: UnitCostFieldKey, event: FocusEvent<HTMLInputElement>) => {
+    setUnitCostFocused((prev) => ({ ...prev, [key]: false }));
+    const rawValue = event.target.value.trim();
+    const parsed = rawValue === "" ? Number(baseInputsRef.current.unit_cost?.[key] ?? 0) : Number(rawValue.replace(/,/g, ""));
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      setUnitCostErrors((prev) => ({ ...prev, [key]: true }));
+      resetUnitCostDraftState(key);
+      return;
+    }
+    applyInputPatch({
+      unit_cost: {
+        ...(inputsRef.current.unit_cost ?? {}),
+        [key]: parsed,
+      },
+    } as Partial<ExcelInputs>);
+    setUnitCostErrors((prev) => ({ ...prev, [key]: false }));
+    resetUnitCostDraftState(key);
+  };
+
+  const renderUnitCostInput = (field: { key: UnitCostFieldKey; label: string }, itemClassName = "") => {
+    const key = field.key;
+    const isFocused = Boolean(unitCostFocused[key]);
+    const currentValue = unitCostInputs[key] ?? 0;
+    const draftValue = unitCostDrafts[key] ?? "";
+    const displayValue = isFocused ? draftValue : formatNumberValue(currentValue, 0);
+    const baseValue = baseInputs.unit_cost?.[key];
+    const isEdited = Number.isFinite(baseValue) && currentValue !== baseValue;
+
+    return (
+      <div key={field.key} className={`unit-cost-panel__item ${itemClassName}`.trim()}>
+        <div className="unit-cost-panel__label atlas-kv__label">{field.label}</div>
+        <div className="unit-cost-panel__value atlas-kv__value">
+          <input
+            type="text"
+            inputMode="decimal"
+            className={`unit-cost-panel__input ${unitCostErrors[key] ? "unit-cost-panel__input--error" : ""}`}
+            value={displayValue}
+            aria-label={field.label}
+            aria-invalid={unitCostErrors[key] ? "true" : "false"}
+            onFocus={() => handleUnitCostFocus(key)}
+            onBlur={(event) => commitUnitCostEdit(key, event)}
+            onChange={(event) => handleUnitCostChange(key, event.target.value)}
+          />
+          <span className="unit-cost-panel__value-unit">SAR</span>
+          {isEdited && <span className="unit-cost-panel__edited">{t("excel.manualEdited")}</span>}
+        </div>
+      </div>
+    );
+  };
+
   const totalIncomeByClass =
     (incomeComponents?.residential ?? 0) + (incomeComponents?.retail ?? 0) + (incomeComponents?.office ?? 0);
   const revenueMixItems = [
@@ -2072,14 +2139,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
               <div className="ot-card unit-cost-panel">
                 <h3 className="unit-cost-panel__title">{t("excel.unitCostTitleV2")}</h3>
                 <div className="unit-cost-panel__list">
-                  {activeUnitCostFields.map((field) => (
-                    <div key={field.key} className="unit-cost-panel__item">
-                      <div className="unit-cost-panel__label">{field.label}</div>
-                      <div className="unit-cost-panel__value">
-                        {formatNumberValue(unitCostInputs[field.key] ?? 0, 0)} SAR
-                      </div>
-                    </div>
-                  ))}
+                  {activeUnitCostFields.map((field) => renderUnitCostInput(field))}
                 </div>
               </div>
             </aside>
@@ -2206,14 +2266,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
             <aside className="ot-card unit-cost-panel atlas-card">
               <h3 className="unit-cost-panel__title atlas-card__title">{t("excel.unitCostTitle")}</h3>
               <div className="unit-cost-panel__list">
-                {activeUnitCostFields.map((field) => (
-                  <div key={field.key} className="unit-cost-panel__item atlas-kv">
-                    <div className="unit-cost-panel__label atlas-kv__label">{field.label}</div>
-                    <div className="unit-cost-panel__value atlas-kv__value">
-                      {formatNumberValue(unitCostInputs[field.key] ?? 0, 0)} SAR
-                    </div>
-                  </div>
-                ))}
+                {activeUnitCostFields.map((field) => renderUnitCostInput(field, "atlas-kv"))}
               </div>
               {showCalculations && excelResult && (
                 <div style={{ marginTop: 12 }}>
