@@ -316,6 +316,13 @@ html[dir="rtl"] .unit-cost-panel__value { text-align: right; }
   margin: 0;
 }
 
+.unit-cost-panel__note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: rgba(15, 23, 42, 0.6);
+}
+
 .unit-cost-panel__list {
   margin-top: 12px;
 }

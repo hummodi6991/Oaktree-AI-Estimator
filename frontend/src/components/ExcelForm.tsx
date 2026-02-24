@@ -2175,6 +2175,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
             <aside className="excel-v2-controls__right">
               <div className="ot-card unit-cost-panel">
                 <h3 className="unit-cost-panel__title">{t("excel.unitCostTitleV2")}</h3>
+                <p className="unit-cost-panel__note">{t("excel.unitCostEditableNote")}</p>
                 <div className="unit-cost-panel__list">
                   {activeUnitCostFields.map((field) => renderUnitCostInput(field))}
                 </div>
@@ -2302,6 +2303,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
             </div>
             <aside className="ot-card unit-cost-panel atlas-card">
               <h3 className="unit-cost-panel__title atlas-card__title">{t("excel.unitCostTitle")}</h3>
+              <p className="unit-cost-panel__note">{t("excel.unitCostEditableNote")}</p>
               <div className="unit-cost-panel__list">
                 {activeUnitCostFields.map((field) => renderUnitCostInput(field, "atlas-kv"))}
               </div>

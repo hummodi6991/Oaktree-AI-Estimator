@@ -147,7 +147,8 @@
       "kaggle_hedonic_v0": "Hedonic model (trained partly on Kaggle data)"
     },
     "unitCostTitleV2": "Construction unit costs (SAR/m²)",
-    "manualEdited": "Manual"
+    "manualEdited": "Manual",
+    "unitCostEditableNote": "Values are editable."
   },
   "excelNotes": {
     "siteAreaRatio": "{{area}} m² × ratio {{ratio}}",
