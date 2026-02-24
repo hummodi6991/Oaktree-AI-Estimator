@@ -1,0 +1,13 @@
+/* UI polish: remove the thick separator line between the beige parcel info bar
+   and the gray form background (seen on iPad + desktop). */
+
+.oaktree-parcel-summary {
+  /* The “thick line” is usually a hard bottom shadow (blur=0) or border. */
+  border-bottom: 0 !important;
+  box-shadow: none !important;
+}
+
+/* If the line is coming from the panel below (top border), remove it too. */
+.ui-v2-analysis-layout > .oaktree-parcel-summary + .ui-v2-form-wrap {
+  border-top: 0 !important;
+}

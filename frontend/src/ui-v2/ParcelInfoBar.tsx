@@ -38,7 +38,7 @@ export default function ParcelInfoBar({
   ].join(" | ");
 
   return (
-    <div className="ui-v2-parcelstrip parcel-strip">
+    <div className="ui-v2-parcelstrip parcel-strip oaktree-parcel-summary">
       <div className="ui-v2-parcelstrip__spacer" aria-hidden="true" />
       <div className="ui-v2-parcelstrip__left parcel-strip__meta">{parcelSummary}</div>
       <div className="ui-v2-parcelstrip__actions parcel-strip__action">
