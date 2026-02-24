@@ -33,6 +33,12 @@
   box-shadow: none !important;
   margin-top: 0 !important;
   padding-top: 0 !important;
+
+  /* Seam killer (gray side): pull the gray fabric up by 1px to cover any Safari subpixel seam */
+  position: relative;
+  top: -1px;
+  padding-top: 1px !important; /* keep content from jumping up visually */
+  z-index: 1;
 }
 
 /* Extra guard: sometimes the first child panel inside the form wrap draws the seam */
@@ -47,4 +53,10 @@
   box-shadow: none !important;
   margin-top: 0 !important;
   padding-top: 0 !important;
+
+  /* Same seam killer for non-direct sibling layouts */
+  position: relative;
+  top: -1px;
+  padding-top: 1px !important;
+  z-index: 1;
 }
