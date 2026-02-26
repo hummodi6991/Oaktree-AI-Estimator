@@ -381,6 +381,20 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const [unitCostDrafts, setUnitCostDrafts] = useState<Partial<Record<UnitCostFieldKey, string>>>({});
   const [unitCostFocused, setUnitCostFocused] = useState<Partial<Record<UnitCostFieldKey, boolean>>>({});
   const [unitCostErrors, setUnitCostErrors] = useState<Partial<Record<UnitCostFieldKey, boolean>>>({});
+  // --- Effective FAR defaulting (UI only) ---
+  const effectiveFarTouchedRef = useRef(false);
+  const effectiveFarSeedKeyRef = useRef<string>("");
+
+  const normalizeLandUseCode = (v: any) => String(v || "").trim().toLowerCase();
+  const defaultEffectiveFarAboveGroundFor = (landUseCode: any) => {
+    const code = normalizeLandUseCode(landUseCode) || "m";
+    if (code === "s") return 1.3;
+    if (code === "m") return 1.8;
+    return null;
+  };
+
+  const effectiveFarSeedKey = `${parcel?.id ?? parcel?.parcel_id ?? ""}::${normalizeLandUseCode(effectiveLandUse) || "m"}`;
+
   const excelResultRef = useRef<ExcelResult | null>(null);
   const unitCostInputs = inputs.unit_cost || {};
   const getBestAreaRatio = (): ExcelInputs["area_ratio"] | null => {
@@ -498,6 +512,26 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       return applyPatch(prev, nextPatch);
     });
   }, [effectiveLandUse, includeFitout, includeContingency, includeFeasibility]);
+
+  useEffect(() => {
+    if (effectiveFarTouchedRef.current) return;
+    if (effectiveFarSeedKeyRef.current === effectiveFarSeedKey) return;
+
+    const targetFar = defaultEffectiveFarAboveGroundFor(effectiveLandUse);
+    if (targetFar == null) return;
+
+    const scaled = resolveScaledAreaRatio(targetFar);
+    if (!scaled) return;
+
+    effectiveFarSeedKeyRef.current = effectiveFarSeedKey;
+    applyInputPatch(
+      {
+        area_ratio: scaled.nextAreaRatio,
+        disable_placeholder_area_ratio_scaling: true,
+      },
+      Boolean(excelResultRef.current),
+    );
+  }, [effectiveFarSeedKey, effectiveLandUse]);
 
   useEffect(() => {
     const normalized = normalizeEffectivePct(inputs?.y1_income_effective_pct as number | undefined);
@@ -1669,6 +1703,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       setFarEditError(t("excel.farEditErrorInvalid"));
       return;
     }
+    effectiveFarTouchedRef.current = true;
     const scaled = resolveScaledAreaRatio(targetFar);
     if (!scaled) {
       setFarEditError(t("excel.farEditErrorMissing"));
@@ -3007,6 +3042,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                               data-field="effective_far"
                               value={farDraft}
                               onChange={(event) => {
+                                effectiveFarTouchedRef.current = true;
                                 setFarDraft(clampTo2Decimals(event.target.value));
                                 if (farEditError) setFarEditError(null);
                               }}
