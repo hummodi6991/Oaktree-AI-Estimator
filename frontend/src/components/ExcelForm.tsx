@@ -528,6 +528,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       {
         area_ratio: scaled.nextAreaRatio,
         disable_placeholder_area_ratio_scaling: true,
+        ...(normalizeLandUseCode(effectiveLandUse) === "m" ? { disable_floors_scaling: true } : {}),
       },
       Boolean(excelResultRef.current),
     );
@@ -710,12 +711,15 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const coverageRatio = normalizeCoverageRatio(inputs.coverage_ratio ?? null) ?? defaultCoverageRatio;
 
   const resolveScaledAreaRatio = (targetFar: number) => {
-    const baseRatio = resolveAreaRatioBase([
+    const templateAreaRatio = cloneTemplate(templateForLandUse(effectiveLandUse)).area_ratio;
+    const preferredBaseRatio = resolveAreaRatioBase([
       excelResultRef.current?.used_inputs?.area_ratio,
       inputsRef.current?.area_ratio,
-      templateForLandUse(effectiveLandUse).area_ratio,
+      templateAreaRatio,
     ]);
-    return scaleAboveGroundAreaRatio(baseRatio, targetFar);
+    const scaledPreferred = scaleAboveGroundAreaRatio(preferredBaseRatio, targetFar);
+    if (scaledPreferred) return scaledPreferred;
+    return scaleAboveGroundAreaRatio(templateAreaRatio, targetFar);
   };
 
   const commitEffectiveIncomePct = (draftOverride?: string) => {
