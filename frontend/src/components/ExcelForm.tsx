@@ -418,6 +418,13 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       setOverrideLandUse(null);
       setEstimateId(null);
       setScenarioBaseResult(null);
+
+      // Reset Effective FAR state per parcel selection so defaults reseed on parcel change.
+      effectiveFarTouchedRef.current = false;
+      effectiveFarSeedKeyRef.current = "";
+      setIsEditingFar(false);
+      setFarEditError(null);
+      setFarDraft("");
     }
   }, [parcel]);
 
