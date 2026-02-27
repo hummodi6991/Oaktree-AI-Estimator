@@ -9,35 +9,80 @@
         "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
       ],
       "tileSize": 256,
-      "attribution": "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+      "attribution": "Tiles \u00a9 Esri \u2014 Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
     },
     "oaktree_parcels": {
       "type": "vector",
-      "tiles": ["/v1/tiles/parcels/{z}/{x}/{y}.pbf"],
+      "tiles": [
+        "/v1/tiles/parcels/{z}/{x}/{y}.pbf"
+      ],
       "minzoom": 0,
       "maxzoom": 19
     },
     "oaktree_district_labels": {
       "type": "vector",
-      "tiles": ["/v1/tiles/district-labels/{z}/{x}/{y}.pbf"],
+      "tiles": [
+        "/v1/tiles/district-labels/{z}/{x}/{y}.pbf"
+      ],
       "minzoom": 0,
       "maxzoom": 19
     }
   },
   "layers": [
-    { "id": "background", "type": "background", "paint": { "background-color": "#000000" } },
-    { "id": "esri", "type": "raster", "source": "esri_world_imagery", "minzoom": 0, "maxzoom": 19 },
     {
-      "id": "oaktree-parcels-s-fill",
+      "id": "background",
+      "type": "background",
+      "paint": {
+        "background-color": "#000000"
+      }
+    },
+    {
+      "id": "esri",
+      "type": "raster",
+      "source": "esri_world_imagery",
+      "minzoom": 0,
+      "maxzoom": 19
+    },
+    {
+      "id": "oaktree-parcels-class-fill",
       "type": "fill",
       "source": "oaktree_parcels",
       "source-layer": "parcels",
       "minzoom": 15,
-      "filter": ["==", ["downcase", ["get", "classification"]], "s"],
       "paint": {
-        "fill-color": "#FFD54F",
-        "fill-opacity": 0.28
-      }
+        "fill-color": [
+          "match",
+          [
+            "to-string",
+            [
+              "get",
+              "classification"
+            ]
+          ],
+          "1000",
+          "#FFD54F",
+          "2000",
+          "#3B82F6",
+          "3000",
+          "#22C55E",
+          "4000",
+          "#A855F7",
+          "#94A3B8"
+        ],
+        "fill-opacity": 0.28,
+        "fill-outline-color": "rgba(255,255,255,0.35)"
+      },
+      "filter": [
+        "!=",
+        [
+          "to-string",
+          [
+            "get",
+            "classification"
+          ]
+        ],
+        "7500"
+      ]
     },
     {
       "id": "oaktree-district-labels",
@@ -46,9 +91,29 @@
       "source-layer": "district_labels",
       "minzoom": 11,
       "layout": {
-        "text-field": ["get", "label"],
-        "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 11, 12, 14, 14, 16, 16],
+        "text-field": [
+          "get",
+          "label"
+        ],
+        "text-font": [
+          "Open Sans Regular",
+          "Arial Unicode MS Regular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          12,
+          14,
+          14,
+          16,
+          16
+        ],
         "text-anchor": "center",
         "text-allow-overlap": false,
         "text-ignore-placement": false
