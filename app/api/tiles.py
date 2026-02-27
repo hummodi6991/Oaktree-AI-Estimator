@@ -275,6 +275,71 @@ def _arcgis_tile_generalization(z: int) -> tuple[float | None, int | None]:
     return None, None
 
 
+_DISTRICT_LABEL_TILE_SQL = text(
+    """
+    WITH tile AS (
+      SELECT ST_SetSRID(ST_TileEnvelope(:z,:x,:y), 3857) AS geom3857
+    ),
+    candidates AS (
+      SELECT
+        id::text AS id,
+        layer_name,
+        COALESCE(
+          NULLIF(properties->>'district_ar',''),
+          NULLIF(properties->>'name_ar',''),
+          NULLIF(properties->>'district_raw',''),
+          NULLIF(properties->>'name',''),
+          NULLIF(properties->>'district',''),
+          'District'
+        )::text AS label,
+        COALESCE(
+          NULLIF(properties->>'point_count','')::int,
+          NULLIF(properties->>'points_count','')::int,
+          NULLIF(properties->>'n_points','')::int,
+          NULLIF(properties->>'count','')::int,
+          0
+        ) AS point_count,
+        ST_Transform(
+          ST_PointOnSurface(ST_SetSRID(ST_GeomFromGeoJSON(geometry::text), 4326)),
+          3857
+        ) AS geom3857,
+        CASE WHEN layer_name = 'osm_districts' THEN 0 ELSE 1 END AS src_rank
+      FROM public.external_feature
+      WHERE layer_name IN ('osm_districts', 'aqar_district_hulls')
+        AND geometry IS NOT NULL
+        AND id IS NOT NULL
+    ),
+    dedup AS (
+      SELECT DISTINCT ON (lower(label))
+        id,
+        label,
+        geom3857,
+        point_count,
+        src_rank
+      FROM candidates
+      WHERE geom3857 IS NOT NULL
+      ORDER BY lower(label), src_rank ASC, point_count DESC
+    ),
+    capped AS (
+      SELECT id, label, geom3857
+      FROM dedup
+      ORDER BY point_count DESC, src_rank ASC, label ASC
+      LIMIT 300
+    ),
+    mvtgeom AS (
+      SELECT
+        d.id,
+        d.label,
+        ST_AsMVTGeom(d.geom3857, t.geom3857, 4096, 64, true) AS geom
+      FROM capped d, tile t
+      WHERE d.geom3857 && t.geom3857
+    )
+    SELECT ST_AsMVT(mvtgeom, 'district_labels', 4096, 'geom') AS tile
+    FROM mvtgeom;
+    """
+)
+
+
 @router.get("/tiles/parcels/{z}/{x}/{y}.pbf")
 @router.get("/v1/tiles/parcels/{z}/{x}/{y}.pbf")
 def parcel_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
@@ -393,4 +458,32 @@ def suhail_parcel_rot_tile(
         payload,
         media_type="application/x-protobuf",
         headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/tiles/district-labels/{z}/{x}/{y}.pbf")
+@router.get("/v1/tiles/district-labels/{z}/{x}/{y}.pbf")
+def district_labels_tile(z: int, x: int, y: int, db: Session = Depends(get_db)):
+    """Vector tiles for district label points."""
+    try:
+        tile_bytes = db.execute(
+            _DISTRICT_LABEL_TILE_SQL, {"z": z, "x": x, "y": y}
+        ).scalar()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"failed to render district labels tile: {exc}"
+        )
+
+    payload = bytes(tile_bytes or b"")
+    if not payload:
+        return Response(
+            _empty_mvt("district_labels"),
+            media_type="application/x-protobuf",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
+    return Response(
+        payload,
+        media_type="application/x-protobuf",
+        headers={"Cache-Control": "public, max-age=3600"},
     )

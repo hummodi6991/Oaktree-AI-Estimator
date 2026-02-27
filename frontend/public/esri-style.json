@@ -1,6 +1,7 @@
 {
   "version": 8,
   "name": "Esri World Imagery",
+  "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
   "sources": {
     "esri_world_imagery": {
       "type": "raster",
@@ -9,10 +10,55 @@
       ],
       "tileSize": 256,
       "attribution": "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+    },
+    "oaktree_parcels": {
+      "type": "vector",
+      "tiles": ["/v1/tiles/parcels/{z}/{x}/{y}.pbf"],
+      "minzoom": 0,
+      "maxzoom": 19
+    },
+    "oaktree_district_labels": {
+      "type": "vector",
+      "tiles": ["/v1/tiles/district-labels/{z}/{x}/{y}.pbf"],
+      "minzoom": 0,
+      "maxzoom": 19
     }
   },
   "layers": [
     { "id": "background", "type": "background", "paint": { "background-color": "#000000" } },
-    { "id": "esri", "type": "raster", "source": "esri_world_imagery", "minzoom": 0, "maxzoom": 19 }
+    { "id": "esri", "type": "raster", "source": "esri_world_imagery", "minzoom": 0, "maxzoom": 19 },
+    {
+      "id": "oaktree-parcels-s-fill",
+      "type": "fill",
+      "source": "oaktree_parcels",
+      "source-layer": "parcels",
+      "minzoom": 15,
+      "filter": ["==", ["downcase", ["get", "classification"]], "s"],
+      "paint": {
+        "fill-color": "#FFD54F",
+        "fill-opacity": 0.28
+      }
+    },
+    {
+      "id": "oaktree-district-labels",
+      "type": "symbol",
+      "source": "oaktree_district_labels",
+      "source-layer": "district_labels",
+      "minzoom": 11,
+      "layout": {
+        "text-field": ["get", "label"],
+        "text-font": ["Open Sans Regular", "Arial Unicode MS Regular"],
+        "text-size": ["interpolate", ["linear"], ["zoom"], 11, 12, 14, 14, 16, 16],
+        "text-anchor": "center",
+        "text-allow-overlap": false,
+        "text-ignore-placement": false
+      },
+      "paint": {
+        "text-color": "#ffffff",
+        "text-halo-color": "#000000",
+        "text-halo-width": 1.2,
+        "text-halo-blur": 0.2
+      }
+    }
   ]
 }
