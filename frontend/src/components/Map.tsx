@@ -37,6 +37,7 @@ const SELECT_LINE_LAYER_ID = "selected-parcel-line";
 const HOVER_SOURCE_ID = "parcel-hover-src";
 const HOVER_CASING_LAYER_ID = "parcel-hover-casing";
 const HOVER_LINE_LAYER_ID = "parcel-hover-line";
+const DISTRICT_LABELS_LAYER_ID = "oaktree-district-labels";
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
 
@@ -198,6 +199,7 @@ function ensureLayerOrder(map: maplibregl.Map) {
     HOVER_LINE_LAYER_ID,
     SELECT_FILL_LAYER_ID,
     SELECT_LINE_LAYER_ID,
+    DISTRICT_LABELS_LAYER_ID,
   ];
 
   order.forEach((layerId) => {
