@@ -384,12 +384,22 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   // --- Effective FAR defaulting (UI only) ---
   const effectiveFarTouchedRef = useRef(false);
   const effectiveFarSeedKeyRef = useRef<string>("");
+  // --- Coverage defaulting (UI only) ---
+  const coverageTouchedRef = useRef(false);
+  const coverageSeedKeyRef = useRef<string>("");
 
   const normalizeLandUseCode = (v: any) => String(v || "").trim().toLowerCase();
   const defaultEffectiveFarAboveGroundFor = (landUseCode: any) => {
     const code = normalizeLandUseCode(landUseCode) || "m";
     if (code === "s") return 1.3;
     if (code === "m") return 1.8;
+    return null;
+  };
+
+  const defaultCoverageRatioFor = (landUseCode: any) => {
+    const code = normalizeLandUseCode(landUseCode) || "m";
+    if (code === "s") return 0.6;
+    if (code === "m") return 0.6;
     return null;
   };
 
@@ -425,6 +435,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       setIsEditingFar(false);
       setFarEditError(null);
       setFarDraft("");
+
+      // Reset coverage state per parcel selection so defaults reseed on parcel change.
+      coverageTouchedRef.current = false;
+      coverageSeedKeyRef.current = "";
     }
   }, [parcel]);
 
@@ -504,9 +518,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       if (currentLandPrice > 0) {
         nextPatch.land_price_sar_m2 = currentLandPrice;
       }
-      const defaultCoverage = effectiveLandUse === "m" ? 0.6 : 0.6;
+      const defaultCoverage = defaultCoverageRatioFor(effectiveLandUse);
       const currentCoverage = normalizeCoverageRatio(inputsRef.current?.coverage_ratio ?? null);
-      if (prev.coverage_ratio == null && currentCoverage == null) {
+      if (defaultCoverage != null && prev.coverage_ratio == null && currentCoverage == null) {
         nextPatch.coverage_ratio = defaultCoverage;
       }
       if (prev.massing_lock == null && inputsRef.current?.massing_lock == null) {
@@ -540,6 +554,22 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       Boolean(excelResultRef.current),
     );
   }, [effectiveFarSeedKey, effectiveLandUse]);
+
+  useEffect(() => {
+    const geometrySignature = parcel?.geometry ? JSON.stringify(parcel.geometry) : "";
+    const seedKey = `${parcel?.parcel_id || ""}::${geometrySignature}::cov`;
+    if (coverageTouchedRef.current) return;
+    if (coverageSeedKeyRef.current === seedKey) return;
+
+    const targetCoverage = defaultCoverageRatioFor(effectiveLandUse);
+    if (targetCoverage == null) return;
+
+    coverageSeedKeyRef.current = seedKey;
+    applyInputPatch(
+      { coverage_ratio: targetCoverage },
+      Boolean(excelResultRef.current),
+    );
+  }, [effectiveLandUse, parcel]);
 
   useEffect(() => {
     const normalized = normalizeEffectivePct(inputs?.y1_income_effective_pct as number | undefined);
@@ -714,7 +744,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     return effectiveLandUse === "m" ? 3.5 : null;
   }, [effectiveLandUse, floorsAdjustmentValue, inputs?.desired_floors_above_ground]);
   const massingLock = resolveMassingLock(inputs.massing_lock ?? null);
-  const defaultCoverageRatio = effectiveLandUse === "m" ? 0.6 : 0.6;
+  const defaultCoverageRatio = defaultCoverageRatioFor(effectiveLandUse) ?? 0.6;
   const coverageRatio = normalizeCoverageRatio(inputs.coverage_ratio ?? null) ?? defaultCoverageRatio;
 
   const resolveScaledAreaRatio = (targetFar: number) => {
@@ -758,6 +788,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   };
 
   const commitCoverage = () => {
+    coverageTouchedRef.current = true;
     const resolved = resolveCoverageFromDraft(coverageDraft);
     if (resolved == null) {
       setCoverageEditError("Enter a percent greater than 0 and up to 100.");
@@ -860,7 +891,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       return;
     }
     const committedCoverage =
-      normalizeCoverageRatio(inputsRef.current?.coverage_ratio ?? null) ?? (effectiveLandUse === "m" ? 0.6 : 0.7);
+      normalizeCoverageRatio(inputsRef.current?.coverage_ratio ?? null) ??
+      (defaultCoverageRatioFor(effectiveLandUse) ?? 0.6);
     const targetFar = resolved * committedCoverage;
     const scaled = resolveScaledAreaRatio(targetFar);
     if (!scaled) {
@@ -2679,6 +2711,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         step="0.1"
                                         value={coverageDraft}
                                         onChange={(event) => {
+                                          coverageTouchedRef.current = true;
                                           setCoverageDraft(event.target.value);
                                           if (coverageEditError) setCoverageEditError(null);
                                         }}
@@ -3014,6 +3047,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                           step="0.1"
                           value={coverageDraft}
                           onChange={(event) => {
+                            coverageTouchedRef.current = true;
                             setCoverageDraft(event.target.value);
                             if (coverageEditError) {
                               setCoverageEditError(null);
