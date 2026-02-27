@@ -210,6 +210,11 @@ app.include_router(analytics_router, prefix="/v1", dependencies=deps)
 app.include_router(search_router, prefix="/v1")
 
 app.include_router(ingest_router, dependencies=deps)
-app.include_router(tiles_router, prefix="", dependencies=deps)
+
+# IMPORTANT:
+# Vector/raster tiles must be public because MapLibre/Mapbox GL requests tiles directly
+# from style sources and cannot attach custom auth headers.
+# If tiles are protected, map overlays and labels fail to render due to 401 responses.
+app.include_router(tiles_router, prefix="")
 # Always expose geo routes; they already try PostGIS first and fall back to ArcGIS/external.
 app.include_router(geo_router, prefix="/v1", dependencies=deps)
