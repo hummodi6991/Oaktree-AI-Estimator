@@ -126,7 +126,9 @@
           "label"
         ],
         "text-font": [
-          "Klokantech Noto Sans Regular"
+          "Klokantech Noto Sans Arabic Regular",
+          "Klokantech Noto Sans Regular",
+          "Open Sans Regular"
         ],
         "text-size": [
           "interpolate",
