@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { Map as MapLibreMap, NavigationControl } from "maplibre-gl";
-import rtlTextPlugin from "@mapbox/mapbox-gl-rtl-text";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import type { Feature, Polygon } from "geojson";
 import type { IControl, LngLatLike } from "maplibre-gl";
@@ -13,9 +12,19 @@ import { installParcelDebugLogging, installParcelLayerPersistence } from "./map/
 import MapSearchBar from "./components/MapSearchBar";
 
 
+// Proper Arabic shaping (joins letters) for MapLibre:
+const RTL_TEXT_PLUGIN_URL =
+  "https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.3.0/dist/mapbox-gl-rtl-text.js";
 const mapLibreWithRtl = maplibregl as any;
-if (mapLibreWithRtl.getRTLTextPluginStatus?.() !== "loaded") {
-  mapLibreWithRtl.setRTLTextPlugin(rtlTextPlugin, null, true);
+if (typeof window !== "undefined") {
+  try {
+    const status = mapLibreWithRtl.getRTLTextPluginStatus?.();
+    if (status !== "loaded" && status !== "loading") {
+      mapLibreWithRtl.setRTLTextPlugin(RTL_TEXT_PLUGIN_URL, null, true);
+    }
+  } catch {
+    // non-fatal
+  }
 }
 
 type MapProps = { polygon?: Polygon | null; onPolygon: (geometry: Polygon | null) => void; };
