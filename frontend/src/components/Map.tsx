@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import maplibregl from "maplibre-gl";
-import rtlTextPlugin from "@mapbox/mapbox-gl-rtl-text";
 import proj4 from "proj4";
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from "geojson";
 import { useTranslation } from "react-i18next";
@@ -20,9 +19,20 @@ import { collateParcels, identifyPoint, type CollateResponse } from "../lib/api/
 import MapSearchBar from "./MapSearchBar";
 import type { SearchItem } from "../types/search";
 
+// Proper Arabic shaping (joins letters) for MapLibre:
+// MapLibre expects a URL to a plugin JS file (NOT an imported module object).
+const RTL_TEXT_PLUGIN_URL =
+  "https://unpkg.com/@mapbox/mapbox-gl-rtl-text@0.3.0/dist/mapbox-gl-rtl-text.js";
 const mapLibreWithRtl = maplibregl as any;
-if (mapLibreWithRtl.getRTLTextPluginStatus?.() !== "loaded") {
-  mapLibreWithRtl.setRTLTextPlugin(rtlTextPlugin, null, true);
+if (typeof window !== "undefined") {
+  try {
+    const status = mapLibreWithRtl.getRTLTextPluginStatus?.();
+    if (status !== "loaded" && status !== "loading") {
+      mapLibreWithRtl.setRTLTextPlugin(RTL_TEXT_PLUGIN_URL, null, true);
+    }
+  } catch {
+    // non-fatal; labels will just render unshaped if plugin can't load
+  }
 }
 
 type MapProps = {
