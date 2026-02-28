@@ -1,7 +1,7 @@
 {
   "version": 8,
   "name": "Esri World Imagery",
-  "glyphs": "https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
+  "glyphs": "/glyphs/{fontstack}/{range}.pbf",
   "sources": {
     "esri_world_imagery": {
       "type": "raster",
@@ -126,9 +126,7 @@
           "label"
         ],
         "text-font": [
-          "Klokantech Noto Sans Arabic Regular",
-          "Klokantech Noto Sans Regular",
-          "Open Sans Regular"
+          "NotoNaskhArabic-Regular"
         ],
         "text-size": [
           "interpolate",
