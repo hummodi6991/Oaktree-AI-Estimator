@@ -285,8 +285,11 @@ _DISTRICT_LABEL_TILE_SQL = text(
         id::text AS id,
         layer_name,
         COALESCE(
-          NULLIF(properties->>'district_ar',''),
-          NULLIF(properties->>'name_ar',''),
+          -- Prefer English labels to avoid Arabic shaping/glyph issues in MapLibre.
+          NULLIF(properties->>'district_en',''),
+          NULLIF(properties->>'name_en',''),
+
+          -- Fallbacks (may be Arabic or mixed depending on source ingestion)
           NULLIF(properties->>'district_raw',''),
           NULLIF(properties->>'name',''),
           NULLIF(properties->>'district',''),
