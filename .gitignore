@@ -10,3 +10,7 @@ data/*
 !data/samples/**
 __pycache__/
 mlruns/
+
+# Frontend generated font/glyph assets
+frontend/public/glyphs/
+frontend/assets/fonts/*.ttf
