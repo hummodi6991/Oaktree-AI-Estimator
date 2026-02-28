@@ -34,12 +34,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate local glyphs (Arabic)
-        run: |
-          bash scripts/build-glyphs.sh
-          test -s "frontend/public/glyphs/NotoNaskhArabic-Regular/0-255.pbf"
-          test -s "frontend/public/glyphs/NotoNaskhArabic-Regular/1536-1791.pbf"
-
       # 1) Tooling
       - name: Install CLI tooling (aliyun, kubectl, jq)
         run: |

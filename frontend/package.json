@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build:glyphs": "bash ../scripts/build-glyphs.sh",
-    "build": "tsc && vite build",
+    "build": "npm run build:glyphs && tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run"
   },
