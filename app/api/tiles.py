@@ -284,8 +284,13 @@ _DISTRICT_LABEL_TILE_SQL = text(
       SELECT
         id::text AS id,
         layer_name,
-        -- Final label: prefer English tags when present; otherwise fall back to whatever exists.
+        -- Final label: prefer Arabic (standard). English/latin only as fallback.
         COALESCE(
+          NULLIF(properties->>'district_ar',''),
+          NULLIF(properties->>'name_ar',''),
+          NULLIF(properties->>'district_raw',''),
+          NULLIF(properties->>'name',''),
+          NULLIF(properties->>'district',''),
           NULLIF(properties->>'name:en',''),
           NULLIF(properties->>'alt_name:en',''),
           NULLIF(properties->>'official_name:en',''),
@@ -293,9 +298,6 @@ _DISTRICT_LABEL_TILE_SQL = text(
           NULLIF(properties->>'name:latin',''),
           NULLIF(properties->>'district_en',''),
           NULLIF(properties->>'name_en',''),
-          NULLIF(properties->>'district_raw',''),
-          NULLIF(properties->>'name',''),
-          NULLIF(properties->>'district',''),
           'District'
         )::text AS label,
         COALESCE(

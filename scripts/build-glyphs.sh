@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "[build-glyphs] ERROR: docker not found; cannot generate glyphs"
+  exit 1
+fi
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OUT_DIR="$REPO_ROOT/frontend/public/glyphs"
+FONT_DIR="$REPO_ROOT/frontend/assets/fonts"
+FONT_FILE="$FONT_DIR/NotoNaskhArabic-Regular.ttf"
+FONT_STACK="NotoNaskhArabic-Regular"
+
+mkdir -p "$OUT_DIR" "$FONT_DIR"
+
+if [ ! -f "$FONT_FILE" ]; then
+  curl -fsSL -o "$FONT_FILE" \
+    "https://raw.githubusercontent.com/googlefonts/noto-fonts/main/hinted/ttf/NotoNaskhArabic/NotoNaskhArabic-Regular.ttf"
+fi
+
+docker run --rm -v "$REPO_ROOT:/work" -w /work openmaptiles/fonts \
+  generate --font "/work/frontend/assets/fonts/NotoNaskhArabic-Regular.ttf" \
+  --name "$FONT_STACK" \
+  --output "/work/frontend/public/glyphs"
+
+test -s "$OUT_DIR/$FONT_STACK/0-255.pbf"
+test -s "$OUT_DIR/$FONT_STACK/1536-1791.pbf"
+echo "[build-glyphs] ok"
