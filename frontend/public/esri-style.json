@@ -48,7 +48,7 @@
       "type": "fill",
       "source": "oaktree_parcels",
       "source-layer": "parcels",
-      "minzoom": 15,
+      "minzoom": 12,
       "paint": {
         "fill-color": [
           "match",
@@ -69,8 +69,38 @@
           "#A855F7",
           "#94A3B8"
         ],
-        "fill-opacity": 0.28,
-        "fill-outline-color": "rgba(255,255,255,0.35)"
+        "fill-opacity": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          12,
+          0.08,
+          13,
+          0.14,
+          14,
+          0.2,
+          15,
+          0.28
+        ],
+        "fill-outline-color": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          12,
+          "rgba(255,255,255,0.10)",
+          14,
+          "rgba(255,255,255,0.20)",
+          15,
+          "rgba(255,255,255,0.35)"
+        ]
       },
       "filter": [
         "!=",
@@ -89,7 +119,7 @@
       "type": "symbol",
       "source": "oaktree_district_labels",
       "source-layer": "district_labels",
-      "minzoom": 11,
+      "minzoom": 10,
       "layout": {
         "text-field": [
           "get",
@@ -107,6 +137,8 @@
           [
             "zoom"
           ],
+          10,
+          11,
           11,
           12,
           14,
