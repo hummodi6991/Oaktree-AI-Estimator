@@ -1,7 +1,7 @@
 {
   "version": 8,
   "name": "Esri World Imagery",
-  "glyphs": "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
+  "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
   "sources": {
     "esri_world_imagery": {
       "type": "raster",
