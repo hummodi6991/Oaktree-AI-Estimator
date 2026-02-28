@@ -539,6 +539,15 @@ export default function Map({
       handleZoom();
       disposeHover = wireHover(map, hoverDataRef);
       map.on("idle", logParcelPropertiesOnce);
+
+      // Sanity log (one-time): confirms the style layers exist at runtime
+      // so we can distinguish "not in style" vs "layer order / paint issue".
+      try {
+        console.info("[map] has class fill layer:", Boolean(map.getLayer(PARCELS_CLASS_FILL_LAYER_ID)));
+        console.info("[map] has district labels layer:", Boolean(map.getLayer(DISTRICT_LABELS_LAYER_ID)));
+      } catch (e) {
+        console.warn("[map] layer sanity check failed:", e);
+      }
     });
 
     map.on("style.load", () => {
