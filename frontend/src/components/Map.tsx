@@ -477,22 +477,18 @@ export default function Map({
     if (typeof window === "undefined") {
       return { url };
     }
+    const rawUrl = String(url || "");
+    const isBackendRequest = rawUrl.startsWith("/v1/");
+    const normalizedUrl = isBackendRequest ? new URL(rawUrl, window.location.origin).toString() : rawUrl;
+
     const apiKey = window.localStorage.getItem("oaktree_api_key");
     if (!apiKey) {
-      return { url };
+      return { url: normalizedUrl };
     }
-    let resolved: URL | null = null;
-    try {
-      resolved = new URL(url, window.location.origin);
-    } catch {
-      resolved = null;
+    if (isBackendRequest) {
+      return { url: normalizedUrl, headers: { "X-API-Key": apiKey } };
     }
-    const isRelativeBackend = url.startsWith("/v1/");
-    const isSameOrigin = resolved?.origin === window.location.origin;
-    if (isRelativeBackend || isSameOrigin) {
-      return { url, headers: { "X-API-Key": apiKey } };
-    }
-    return { url };
+    return { url: normalizedUrl };
   };
 
   useEffect(() => {
