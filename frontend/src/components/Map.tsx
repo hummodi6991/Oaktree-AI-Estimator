@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import maplibregl from "maplibre-gl";
+import rtlTextPlugin from "@mapbox/mapbox-gl-rtl-text";
 import proj4 from "proj4";
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from "geojson";
 import { useTranslation } from "react-i18next";
@@ -18,6 +19,11 @@ import type { ParcelSummary } from "../api";
 import { collateParcels, identifyPoint, type CollateResponse } from "../lib/api/geo";
 import MapSearchBar from "./MapSearchBar";
 import type { SearchItem } from "../types/search";
+
+const mapLibreWithRtl = maplibregl as any;
+if (mapLibreWithRtl.getRTLTextPluginStatus?.() !== "loaded") {
+  mapLibreWithRtl.setRTLTextPlugin(rtlTextPlugin, null, true);
+}
 
 type MapProps = {
   onParcel: (parcel: ParcelSummary | null) => void;
