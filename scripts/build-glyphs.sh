@@ -32,6 +32,20 @@ docker run --rm \
   jmbarbier/fontnik:latest \
   /fonts/input /fonts/output
 
+# fontnik names the output folder based on the font's internal family name (often with spaces),
+# not necessarily the input folder name. Normalize to our expected stack key.
+if [ ! -d "$OUT_DIR/$FONT_STACK" ]; then
+  # Pick the most recently modified directory in OUT_DIR as the generator output.
+  GEN_DIR="$(ls -1dt "$OUT_DIR"/*/ 2>/dev/null | head -n 1 | sed 's:/*$::')"
+  if [ -z "${GEN_DIR:-}" ] || [ ! -d "$GEN_DIR" ]; then
+    echo "[build-glyphs] ERROR: no glyph output directory found in $OUT_DIR"
+    exit 1
+  fi
+  echo "[build-glyphs] renaming glyph dir: $(basename "$GEN_DIR") -> $FONT_STACK"
+  rm -rf "$OUT_DIR/$FONT_STACK"
+  mv "$GEN_DIR" "$OUT_DIR/$FONT_STACK"
+fi
+
 test -s "$OUT_DIR/$FONT_STACK/0-255.pbf"
 test -s "$OUT_DIR/$FONT_STACK/1536-1791.pbf"
 echo "[build-glyphs] ok"
