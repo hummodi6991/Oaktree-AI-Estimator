@@ -36,6 +36,7 @@ jobs:
 
       - name: Generate local glyphs (Arabic)
         run: |
+          docker pull jmbarbier/fontnik:latest
           bash scripts/build-glyphs.sh
           test -s "frontend/public/glyphs/NotoNaskhArabic-Regular/0-255.pbf"
           test -s "frontend/public/glyphs/NotoNaskhArabic-Regular/1536-1791.pbf"
