@@ -34,6 +34,7 @@ type StatusMessage = { key: string; options?: Record<string, unknown> } | { raw:
 const SELECT_SOURCE_ID = "selected-parcel-src";
 const SELECT_FILL_LAYER_ID = "selected-parcel-fill";
 const SELECT_LINE_LAYER_ID = "selected-parcel-line";
+const PARCELS_CLASS_FILL_LAYER_ID = "oaktree-parcels-class-fill";
 const HOVER_SOURCE_ID = "parcel-hover-src";
 const HOVER_CASING_LAYER_ID = "parcel-hover-casing";
 const HOVER_LINE_LAYER_ID = "parcel-hover-line";
@@ -193,6 +194,7 @@ function ensureHoverLayers(map: maplibregl.Map) {
 
 function ensureLayerOrder(map: maplibregl.Map) {
   const order = [
+    PARCELS_CLASS_FILL_LAYER_ID,
     PARCELS_MIXEDUSE_LAYER_ID,
     PARCELS_OUTLINE_LAYER_ID,
     HOVER_CASING_LAYER_ID,
@@ -507,6 +509,11 @@ export default function Map({
     installParcelLayerPersistence(map);
     installParcelDebugLogging(map);
 
+    // Keep style-defined parcel and district layers above runtime overlays after layer/source churn.
+    const reapplyLayerOrder = () => ensureLayerOrder(map);
+    map.on("idle", reapplyLayerOrder);
+    map.on("styledata", reapplyLayerOrder);
+
     let disposed = false;
     let disposeHover: (() => void) | null = null;
 
@@ -663,6 +670,8 @@ export default function Map({
       disposed = true;
       map.off("zoom", handleZoom);
       map.off("idle", logParcelPropertiesOnce);
+      map.off("idle", reapplyLayerOrder);
+      map.off("styledata", reapplyLayerOrder);
       map.off("touchstart", handleTouchStart);
       map.off("touchmove", handleTouchMove);
       map.off("touchend", handleTouchEnd);
