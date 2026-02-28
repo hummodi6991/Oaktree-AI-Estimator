@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl, { Map as MapLibreMap, NavigationControl } from "maplibre-gl";
+import rtlTextPlugin from "@mapbox/mapbox-gl-rtl-text";
 import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import type { Feature, Polygon } from "geojson";
 import type { IControl, LngLatLike } from "maplibre-gl";
@@ -10,6 +11,12 @@ import "./Map.css";
 import { formatNumber } from "./i18n/format";
 import { installParcelDebugLogging, installParcelLayerPersistence } from "./map/parcelLayers";
 import MapSearchBar from "./components/MapSearchBar";
+
+
+const mapLibreWithRtl = maplibregl as any;
+if (mapLibreWithRtl.getRTLTextPluginStatus?.() !== "loaded") {
+  mapLibreWithRtl.setRTLTextPlugin(rtlTextPlugin, null, true);
+}
 
 type MapProps = { polygon?: Polygon | null; onPolygon: (geometry: Polygon | null) => void; };
 
