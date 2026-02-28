@@ -277,13 +277,6 @@ def _arcgis_tile_generalization(z: int) -> tuple[float | None, int | None]:
 
 _DISTRICT_LABEL_TILE_SQL = text(
     """
-    -- Arabic -> Latin transliteration (simple 1:1 mapping).
-    -- Notes:
-    --  * This is intentionally lightweight (no extra deps, no MVT decode/re-encode).
-    --  * translate() is 1-to-1 char mapping (not digraphs like "kh"), but good enough
-    --    for readable Latin district labels and avoids Arabic glyph/shaping issues.
-    --
-    -- Also maps Arabic-Indic digits to Western digits.
     WITH tile AS (
       SELECT ST_SetSRID(ST_TileEnvelope(:z,:x,:y), 3857) AS geom3857
     ),
@@ -291,18 +284,7 @@ _DISTRICT_LABEL_TILE_SQL = text(
       SELECT
         id::text AS id,
         layer_name,
-
-        -- Build an Arabic source label (district_raw/name often Arabic)
-        COALESCE(
-          NULLIF(properties->>'district_ar',''),
-          NULLIF(properties->>'name_ar',''),
-          NULLIF(properties->>'district_raw',''),
-          NULLIF(properties->>'name',''),
-          NULLIF(properties->>'district',''),
-          ''
-        )::text AS label_ar,
-
-        -- Prefer real English labels when present.
+        -- Final label: prefer English tags when present; otherwise fall back to whatever exists.
         COALESCE(
           NULLIF(properties->>'name:en',''),
           NULLIF(properties->>'alt_name:en',''),
@@ -311,36 +293,11 @@ _DISTRICT_LABEL_TILE_SQL = text(
           NULLIF(properties->>'name:latin',''),
           NULLIF(properties->>'district_en',''),
           NULLIF(properties->>'name_en',''),
-          ''
-        )::text AS label_en,
-
-        -- Transliterate Arabic -> Latin (simple 1:1 mapping), normalize spaces.
-        NULLIF(
-          regexp_replace(
-            trim(
-              translate(
-                COALESCE(
-                  NULLIF(properties->>'district_ar',''),
-                  NULLIF(properties->>'name_ar',''),
-                  NULLIF(properties->>'district_raw',''),
-                  NULLIF(properties->>'name',''),
-                  NULLIF(properties->>'district',''),
-                  ''
-                ),
-                -- Minimal safe mapping (common Arabic letters + digits). MUST be 1:1 length.
-                'ابتثجحخدذرزسشصضطظعغفقكلمنهويىةؤئأإآء٠١٢٣٤٥٦٧٨٩',
-                'abttjhhddrrzssssdttzeggfqklmnhwyyyaoyaaaa0123456789'
-              )
-            ),
-            '\\s+',
-            ' ',
-            'g'
-          ),
-          ''
-        )::text AS label_lat,
-
-        -- Final label: prefer real English, else transliteration, else fallback.
-        COALESCE(NULLIF(label_en,''), NULLIF(label_lat,''), 'District')::text AS label,
+          NULLIF(properties->>'district_raw',''),
+          NULLIF(properties->>'name',''),
+          NULLIF(properties->>'district',''),
+          'District'
+        )::text AS label,
         COALESCE(
           NULLIF(properties->>'point_count','')::int,
           NULLIF(properties->>'points_count','')::int,
