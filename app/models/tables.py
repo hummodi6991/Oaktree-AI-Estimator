@@ -311,6 +311,8 @@ class RestaurantPOI(Base):
     source = Column(String(32), nullable=False)  # overture, osm, hungerstation, talabat, mrsool
     lat = Column(Numeric(10, 7), nullable=False)
     lon = Column(Numeric(10, 7), nullable=False)
+    # PostGIS geometry(Point, 4326) — auto-populated by DB trigger from lat/lon.
+    # Managed via raw SQL in the migration; not mapped by GeoAlchemy2.
     rating = Column(Numeric(3, 2))
     review_count = Column(Integer)
     price_level = Column(Integer)  # 1-4
@@ -341,7 +343,7 @@ class PopulationDensity(Base):
 
 
 class LocationScore(Base):
-    """Pre-computed restaurant location profitability score per H3 cell and category."""
+    """Pre-computed restaurant location demand-potential score per H3 cell and category."""
 
     __tablename__ = "location_score"
 

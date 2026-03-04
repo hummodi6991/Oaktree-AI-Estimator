@@ -1,12 +1,18 @@
-"""restaurant location finder tables: restaurant_poi, population_density, location_score"""
+"""restaurant location finder tables: restaurant_poi, population_density, location_score
+
+Revision ID: 0010_restaurant_location_tables
+Revises: 20260202_search_index_mat
+Create Date: 2026-03-04
+"""
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 
 
 revision = "0010_restaurant_location_tables"
-down_revision = "0009_tax_rules"
+down_revision = "20260202_search_index_mat"
 branch_labels = None
 depends_on = None
 
@@ -30,6 +36,34 @@ def upgrade() -> None:
         sa.Column("raw", JSONB),
         sa.Column("observed_at", sa.DateTime),
     )
+
+    # Add PostGIS geometry column (Point, SRID 4326)
+    op.execute(
+        "SELECT AddGeometryColumn('public', 'restaurant_poi', 'geom', 4326, 'POINT', 2);"
+    )
+
+    # GiST spatial index for efficient distance / within queries
+    op.execute(
+        "CREATE INDEX ix_restaurant_poi_geom_gist "
+        "ON restaurant_poi USING GIST (geom);"
+    )
+
+    # Auto-populate geom from lat/lon on INSERT/UPDATE
+    op.execute("""
+        CREATE OR REPLACE FUNCTION restaurant_poi_set_geom()
+        RETURNS trigger AS $$
+        BEGIN
+            NEW.geom := ST_SetSRID(ST_MakePoint(NEW.lon::float, NEW.lat::float), 4326);
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql;
+    """)
+    op.execute("""
+        CREATE TRIGGER trg_restaurant_poi_geom
+        BEFORE INSERT OR UPDATE OF lat, lon ON restaurant_poi
+        FOR EACH ROW EXECUTE FUNCTION restaurant_poi_set_geom();
+    """)
+
     op.create_index("ix_restaurant_poi_category", "restaurant_poi", ["category"])
     op.create_index("ix_restaurant_poi_source", "restaurant_poi", ["source"])
     op.create_index("ix_restaurant_poi_district", "restaurant_poi", ["district"])
@@ -67,6 +101,9 @@ def downgrade() -> None:
     op.drop_index("ix_location_score_category_h3", table_name="location_score")
     op.drop_table("location_score")
     op.drop_table("population_density")
+    op.execute("DROP TRIGGER IF EXISTS trg_restaurant_poi_geom ON restaurant_poi;")
+    op.execute("DROP FUNCTION IF EXISTS restaurant_poi_set_geom();")
+    op.execute("DROP INDEX IF EXISTS ix_restaurant_poi_geom_gist;")
     op.drop_index("ix_restaurant_poi_district", table_name="restaurant_poi")
     op.drop_index("ix_restaurant_poi_source", table_name="restaurant_poi")
     op.drop_index("ix_restaurant_poi_category", table_name="restaurant_poi")

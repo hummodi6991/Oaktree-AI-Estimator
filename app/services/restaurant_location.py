@@ -1,9 +1,12 @@
 """
 Restaurant Location Scoring Engine.
 
-Computes a 0-100 profitability score for a given restaurant category
+Computes a 0-100 demand-potential score for a given restaurant category
 at a specific location, factoring in competition, population, traffic,
 commercial density, delivery demand, competitor ratings, and rent.
+
+NOTE: This is a demand-potential proxy, not a profitability predictor.
+True profitability requires merchant outcome data (sales, order volumes).
 """
 
 from __future__ import annotations
@@ -57,12 +60,13 @@ class LocationScoreResult:
 _COUNT_NEARBY_SQL = text("""
     SELECT id, name, category, rating, source, lat, lon,
            ST_Distance(
-               ST_SetSRID(ST_MakePoint(lon::float, lat::float), 4326)::geography,
+               geom::geography,
                ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography
            ) AS distance_m
     FROM restaurant_poi
-    WHERE ST_DWithin(
-        ST_SetSRID(ST_MakePoint(lon::float, lat::float), 4326)::geography,
+    WHERE geom IS NOT NULL
+      AND ST_DWithin(
+        geom::geography,
         ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
         :radius_m
     )
@@ -286,7 +290,7 @@ def score_location(
     weights: dict[str, float] | None = None,
 ) -> LocationScoreResult:
     """
-    Compute a 0-100 profitability score for a restaurant category at a given location.
+    Compute a 0-100 demand-potential score for a restaurant category at a given location.
     """
     w = weights or DEFAULT_WEIGHTS
 

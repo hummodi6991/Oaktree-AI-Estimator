@@ -4,9 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       geotiff_url:
-        description: "URL to the HDX population density GeoTIFF (leave empty for default Saudi Arabia dataset)"
+        description: "Override URL to a population density GeoTIFF (leave empty to use pinned Saudi Arabia dataset)"
         required: false
         default: ""
+
+# Pinned dataset: Meta High Resolution Population Density Maps — Saudi Arabia
+# Source: https://data.humdata.org/dataset/saudi-arabia-high-resolution-population-density-maps-demographic-estimates
+env:
+  DEFAULT_GEOTIFF_URL: "https://data.humdata.org/dataset/14b288ca-1855-4025-9f01-41cba548e6f6/resource/83552c4b-3dc0-4c2a-807f-56e1e8e206ae/download/sau_general_2020_geotiff.zip"
 
 jobs:
   ingest:
@@ -47,16 +52,31 @@ jobs:
       - name: Run Alembic migrations
         run: alembic upgrade head
 
-      - name: Download population GeoTIFF
+      - name: Download and extract population GeoTIFF
         run: |
           mkdir -p data
           GEOTIFF_URL="${{ github.event.inputs.geotiff_url }}"
           if [ -z "$GEOTIFF_URL" ]; then
-            echo "No GeoTIFF URL provided. Provide a direct download link to a HDX population density GeoTIFF."
-            echo "Example: https://data.humdata.org/dataset/saudi-arabia-high-resolution-population-density-maps"
-            exit 1
+            GEOTIFF_URL="${DEFAULT_GEOTIFF_URL}"
+            echo "Using pinned Saudi Arabia population density dataset"
           fi
-          curl -L -o data/population_density.tif "$GEOTIFF_URL"
+          echo "Downloading: $GEOTIFF_URL"
+          curl -L -o data/population_density_archive.zip "$GEOTIFF_URL"
+          # Extract if ZIP, otherwise assume raw GeoTIFF
+          if file data/population_density_archive.zip | grep -q 'Zip archive'; then
+            unzip -o data/population_density_archive.zip -d data/
+            # Find the .tif file (HDX packages nest the TIF inside the ZIP)
+            TIFF_FILE=$(find data/ -name '*.tif' -type f | head -1)
+            if [ -z "$TIFF_FILE" ]; then
+              echo "ERROR: No .tif file found in archive"
+              exit 1
+            fi
+            mv "$TIFF_FILE" data/population_density.tif
+          else
+            mv data/population_density_archive.zip data/population_density.tif
+          fi
+          echo "GeoTIFF ready: data/population_density.tif"
+          ls -lh data/population_density.tif
 
       - name: Ingest population density
         run: python -m app.ingest.population_density data/population_density.tif

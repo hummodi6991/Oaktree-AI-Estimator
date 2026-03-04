@@ -36,7 +36,7 @@ class ScoreRequest(BaseModel):
 
 
 class ScoreResponse(BaseModel):
-    score: float = Field(..., description="Overall profitability score (0-100)")
+    score: float = Field(..., description="Overall demand-potential score (0-100)")
     factors: dict[str, float] = Field(default_factory=dict, description="Individual factor scores")
     confidence: float = Field(..., description="Score confidence (0-1)")
     nearby_competitors: list[dict[str, Any]] = Field(default_factory=list)
@@ -63,8 +63,11 @@ class CategoryResponse(BaseModel):
 @router.post("/restaurant/score", response_model=ScoreResponse)
 def score_restaurant_location(req: ScoreRequest, db: Session = Depends(get_db)):
     """
-    Compute a profitability score for a restaurant category at a given location.
+    Compute a demand-potential score for a restaurant category at a given location.
     Returns the overall score, individual factor breakdown, and nearby competitors.
+
+    NOTE: This is a demand-potential proxy based on observable market signals,
+    not a profitability prediction. True profitability requires merchant outcome data.
     """
     result = score_location(
         db=db,

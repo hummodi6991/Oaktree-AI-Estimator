@@ -1,12 +1,17 @@
 """
-ML model training for restaurant location profitability scoring.
+ML model training for restaurant location demand-potential scoring.
 
-Trains a GradientBoostingRegressor to predict location profitability
+Trains a GradientBoostingRegressor to calibrate location demand-potential
 scores based on features like competition density, population,
 traffic, and commercial density.
 
-Feature importances from the trained model automatically discover
-optimal weights for each factor per restaurant category.
+IMPORTANT: This model learns a *demand-potential proxy* — it predicts
+where restaurant demand is likely based on existing POI density and
+ratings. It is NOT a profitability predictor. True profitability
+requires outcome signals (merchant sales, order volumes) that are
+not available in public data. Feature importances from the trained
+model reveal which observable factors correlate most with proven
+restaurant demand per category.
 
 Follows the same pattern as hedonic_train.py.
 """
@@ -43,9 +48,10 @@ def _build_training_df(db: Session) -> pd.DataFrame:
     """
     Build training data from restaurant POI density.
 
-    Training target: delivery demand proxy — areas with many highly-rated
+    Training target: demand-potential proxy — areas with many highly-rated
     restaurants of a given category indicate proven demand. We use
-    restaurant count × avg rating as a composite target.
+    restaurant count x avg rating as a composite proxy. This is NOT a
+    profitability label; true profitability requires merchant sales data.
     """
     try:
         import h3
@@ -140,7 +146,7 @@ def _build_training_df(db: Session) -> pd.DataFrame:
 
 
 def train_and_save() -> dict:
-    """Train the restaurant location scoring model and save artifacts."""
+    """Train the restaurant location demand-potential model and save artifacts."""
     os.makedirs(MODEL_DIR, exist_ok=True)
 
     db = SessionLocal()
@@ -204,7 +210,7 @@ def train_and_save() -> dict:
     with open(META_PATH, "w") as f:
         json.dump(meta, f, indent=2)
 
-    with mlflow.start_run(run_name="restaurant_score_v0"):
+    with mlflow.start_run(run_name="restaurant_demand_potential_v0"):
         mlflow.log_params({
             "model": "GradientBoostingRegressor",
             "n_estimators": 100,
