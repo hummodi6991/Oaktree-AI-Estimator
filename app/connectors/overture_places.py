@@ -45,15 +45,13 @@ def extract_restaurants_duckdb() -> Iterator[dict[str, Any]]:
     Returns an iterator of dicts suitable for upserting into ``restaurant_poi``.
     """
     try:
-        import duckdb
+        from app.connectors.duckdb_conn import get_duckdb_connection
     except ImportError:
         logger.error("duckdb is not installed — run: pip install duckdb")
         return
 
     min_lon, min_lat, max_lon, max_lat = RIYADH_BBOX
-    con = duckdb.connect()
-    con.execute("INSTALL httpfs; LOAD httpfs;")
-    con.execute("SET s3_region='us-west-2';")
+    con = get_duckdb_connection()
 
     query = f"""
         SELECT
