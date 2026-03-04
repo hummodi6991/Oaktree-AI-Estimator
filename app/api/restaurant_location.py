@@ -428,8 +428,26 @@ def get_data_sources(db: Session = Depends(get_db)):
 
     total_pois = sum(source_counts.values())
 
+    # Google Reviews enrichment coverage
+    google_enriched_count = 0
+    google_fresh_count = 0
+    try:
+        google_enriched_count = db.execute(
+            sa_text("SELECT count(*) FROM restaurant_poi WHERE google_place_id IS NOT NULL")
+        ).scalar() or 0
+        google_fresh_count = db.execute(
+            sa_text(
+                "SELECT count(*) FROM restaurant_poi"
+                " WHERE google_fetched_at >= now() - interval '30 days'"
+            )
+        ).scalar() or 0
+    except Exception:
+        pass
+
     return {
         "total_pois": total_pois,
         "sources": platforms,
         "platform_count": len(SCRAPER_REGISTRY),
+        "google_enriched_count": google_enriched_count,
+        "google_fresh_count": google_fresh_count,
     }

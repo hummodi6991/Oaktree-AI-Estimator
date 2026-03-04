@@ -320,12 +320,16 @@ class RestaurantPOI(Base):
     district = Column(String(128))
     raw = Column(JSONB)
     observed_at = Column(DateTime)
+    google_place_id = Column(Text)
+    google_fetched_at = Column(DateTime(timezone=True))
+    google_confidence = Column(Numeric)
 
     __table_args__ = (
         Index("ix_restaurant_poi_category", "category"),
         Index("ix_restaurant_poi_source", "source"),
         Index("ix_restaurant_poi_district", "district"),
         Index("ix_restaurant_poi_chain_name", "chain_name"),
+        Index("ix_restaurant_poi_google_place_id", "google_place_id"),
     )
 
 
