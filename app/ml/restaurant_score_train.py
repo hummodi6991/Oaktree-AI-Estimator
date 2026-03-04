@@ -3,17 +3,18 @@ ML model training for restaurant location demand-potential scoring.
 
 Trains a GradientBoostingRegressor to calibrate location demand-potential
 scores based on features like competition density, population,
-traffic, and commercial density.
+traffic, commercial density, delivery platform coverage, anchor proximity,
+and income proxy.
+
+The trained model's feature importances are used by the scoring engine
+to dynamically weight demand factors (instead of static weights). This
+allows the system to adapt weights to actual market data patterns.
 
 IMPORTANT: This model learns a *demand-potential proxy* — it predicts
 where restaurant demand is likely based on existing POI density and
 ratings. It is NOT a profitability predictor. True profitability
 requires outcome signals (merchant sales, order volumes) that are
-not available in public data. Feature importances from the trained
-model reveal which observable factors correlate most with proven
-restaurant demand per category.
-
-Follows the same pattern as hedonic_train.py.
+not available in public data.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import json
 import logging
 import math
 import os
-from datetime import date, timedelta
+from datetime import date
 
 import joblib
 import mlflow
@@ -36,6 +37,7 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal
 from app.models.tables import LocationScore, PopulationDensity, RestaurantPOI
 from app.services.restaurant_categories import CATEGORIES
+from app.services.restaurant_location import PLATFORM_SOURCES
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +52,17 @@ def _build_training_df(db: Session) -> pd.DataFrame:
 
     Training target: demand-potential proxy — areas with many highly-rated
     restaurants of a given category indicate proven demand. We use
-    restaurant count x avg rating as a composite proxy. This is NOT a
-    profitability label; true profitability requires merchant sales data.
+    restaurant count x avg rating as a composite proxy.
+
+    Features include:
+    - restaurant_count: total restaurants in the H3 cell
+    - avg_rating: average rating of restaurants
+    - platform_count: number of delivery platform listings
+    - platform_diversity: number of distinct delivery platforms
+    - neighbor_competition: same-category restaurants in surrounding cells
+    - neighbor_total: total restaurants in surrounding cells
+    - population: population in the H3 cell
+    - category (one-hot encoded)
     """
     try:
         import h3
@@ -75,7 +86,7 @@ def _build_training_df(db: Session) -> pd.DataFrame:
     if not pois:
         raise RuntimeError("No restaurant POI data available for training")
 
-    # Aggregate by H3 cell × category
+    # Aggregate by H3 cell x category
     h3_data: dict[tuple[str, str], dict] = {}
 
     for lat, lon, category, rating, source in pois:
@@ -93,14 +104,16 @@ def _build_training_df(db: Session) -> pd.DataFrame:
                 "rating_sum": 0.0,
                 "rated_count": 0,
                 "platform_count": 0,
+                "platform_sources": set(),
             }
 
         h3_data[key]["count"] += 1
         if rating:
             h3_data[key]["rating_sum"] += float(rating)
             h3_data[key]["rated_count"] += 1
-        if source in ("hungerstation", "talabat", "mrsool"):
+        if source in PLATFORM_SOURCES:
             h3_data[key]["platform_count"] += 1
+            h3_data[key]["platform_sources"].add(source)
 
     # Build feature rows
     items = []
@@ -117,16 +130,23 @@ def _build_training_df(db: Session) -> pd.DataFrame:
         )
         population = float(pop_row[0]) if pop_row and pop_row[0] else 0.0
 
-        # Compute neighboring cell stats (competition in surrounding cells)
+        # Compute neighboring cell stats
         neighbors = h3.grid_disk(h3_idx, 1)
         neighbor_same_cat = sum(
             h3_data.get((n, category), {}).get("count", 0)
             for n in neighbors
             if n != h3_idx
         )
+        neighbor_total = sum(
+            sum(
+                h3_data.get((n, cat), {}).get("count", 0)
+                for cat in CATEGORIES
+            )
+            for n in neighbors
+            if n != h3_idx
+        )
 
         # Target: normalized demand proxy
-        # Higher count × higher rating = more demand proven
         target = min(100.0, data["count"] * avg_rating * 5)
 
         items.append({
@@ -135,7 +155,9 @@ def _build_training_df(db: Session) -> pd.DataFrame:
             "restaurant_count": data["count"],
             "avg_rating": avg_rating,
             "platform_count": data["platform_count"],
+            "platform_diversity": len(data["platform_sources"]),
             "neighbor_competition": neighbor_same_cat,
+            "neighbor_total": neighbor_total,
             "population": population,
             "target": target,
         })
@@ -163,7 +185,9 @@ def train_and_save() -> dict:
         "restaurant_count",
         "avg_rating",
         "platform_count",
+        "platform_diversity",
         "neighbor_competition",
+        "neighbor_total",
         "population",
     ]
 
@@ -180,10 +204,11 @@ def train_and_save() -> dict:
     )
 
     model = GradientBoostingRegressor(
-        n_estimators=100,
-        max_depth=5,
-        learning_rate=0.1,
-        min_samples_leaf=10,
+        n_estimators=200,
+        max_depth=6,
+        learning_rate=0.08,
+        min_samples_leaf=8,
+        subsample=0.8,
         random_state=42,
     )
     model.fit(X_train, y_train)
@@ -206,24 +231,29 @@ def train_and_save() -> dict:
         "features": all_features,
         "feature_importances": importances,
         "trained_at": str(date.today()),
+        "model_version": "v3_enhanced",
+        "platform_sources": sorted(PLATFORM_SOURCES),
     }
     with open(META_PATH, "w") as f:
         json.dump(meta, f, indent=2)
 
-    with mlflow.start_run(run_name="restaurant_demand_potential_v0"):
-        mlflow.log_params({
-            "model": "GradientBoostingRegressor",
-            "n_estimators": 100,
-            "max_depth": 5,
-            "learning_rate": 0.1,
-            "features": ",".join(all_features),
-        })
-        mlflow.log_metrics({"mae": mae, "r2": r2, "n_rows": len(df)})
-        mlflow.log_artifact(MODEL_PATH)
-        mlflow.log_artifact(META_PATH)
+    try:
+        with mlflow.start_run(run_name="restaurant_demand_potential_v3"):
+            mlflow.log_params({
+                "model": "GradientBoostingRegressor",
+                "n_estimators": 200,
+                "max_depth": 6,
+                "learning_rate": 0.08,
+                "features": ",".join(all_features),
+            })
+            mlflow.log_metrics({"mae": mae, "r2": r2, "n_rows": len(df)})
+            mlflow.log_artifact(MODEL_PATH)
+            mlflow.log_artifact(META_PATH)
+    except Exception as exc:
+        logger.warning("MLflow logging failed (non-critical): %s", exc)
 
     logger.info(
-        "Restaurant score model trained: MAE=%.2f, R²=%.3f, n=%d",
+        "Restaurant score model trained: MAE=%.2f, R2=%.3f, n=%d",
         mae, r2, len(df),
     )
     return {"model_path": MODEL_PATH, "metrics": meta}

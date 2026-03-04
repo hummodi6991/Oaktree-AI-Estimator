@@ -2,7 +2,8 @@
 API endpoints for the Restaurant Location Finder feature.
 
 Provides scoring, heatmap generation, category listing,
-competitor lookup, and parcel scoring.
+competitor lookup, parcel scoring, top-parcel recommendation,
+AI weight introspection, and data-source registry.
 """
 
 from __future__ import annotations
@@ -18,7 +19,12 @@ from sqlalchemy.orm import Session
 from app.db.deps import get_db
 from app.services.restaurant_categories import list_categories
 from app.services.restaurant_heatmap import generate_heatmap
-from app.services.restaurant_location import score_location
+from app.services.restaurant_location import (
+    COST_WEIGHTS,
+    DEMAND_WEIGHTS,
+    get_ai_weights,
+    score_location,
+)
 
 router = APIRouter(tags=["restaurant-location"])
 logger = logging.getLogger(__name__)
@@ -58,6 +64,8 @@ class ScoreRequest(BaseModel):
     lon: float = Field(..., ge=44, le=50, description="Longitude (Riyadh range)")
     category: str = Field(..., description="Restaurant category key")
     radius_m: float = Field(1000, ge=100, le=5000, description="Search radius in meters")
+    chain_name: Optional[str] = Field(None, description="Specific chain name for gap analysis")
+    use_ai_weights: bool = Field(True, description="Use AI-predicted factor weights when available")
 
 
 class ScoreResponse(BaseModel):
@@ -71,19 +79,32 @@ class ScoreResponse(BaseModel):
     )
     confidence: float = Field(..., description="Score confidence (0-1)")
     nearby_competitors: list[dict[str, Any]] = Field(default_factory=list)
-    model_version: str = "weighted_v2"
+    model_version: str = "weighted_v3"
+    ai_weights_used: bool = False
 
 
 class ParcelScoreRequest(BaseModel):
     parcel_id: Optional[str] = None
     geometry: Optional[dict] = None
     category: str
+    chain_name: Optional[str] = None
 
 
 class CategoryResponse(BaseModel):
     key: str
     name_en: str
     name_ar: str
+
+
+class TopParcelsRequest(BaseModel):
+    category: str = Field(..., description="Restaurant category key")
+    chain_name: Optional[str] = Field(None, description="Specific chain to check gap for")
+    limit: int = Field(20, ge=1, le=100, description="Number of top parcels to return")
+    min_lat: float = Field(24.5, description="Bounding box min latitude")
+    max_lat: float = Field(24.95, description="Bounding box max latitude")
+    min_lon: float = Field(46.5, description="Bounding box min longitude")
+    max_lon: float = Field(46.95, description="Bounding box max longitude")
+    resolution: int = Field(8, ge=7, le=9, description="H3 resolution for grid")
 
 
 # ---------------------------------------------------------------------------
@@ -99,8 +120,8 @@ def score_restaurant_location(req: ScoreRequest, db: Session = Depends(get_db)):
     Returns demand_score, cost_penalty, and composite opportunity_score,
     plus per-factor breakdown with weighted contributions and nearby competitors.
 
-    NOTE: This is a demand-potential proxy based on observable market signals,
-    not a profitability prediction.
+    When ``use_ai_weights`` is true (default), the trained ML model's feature
+    importances are used to dynamically weight demand factors.
     """
     result = score_location(
         db=db,
@@ -108,6 +129,8 @@ def score_restaurant_location(req: ScoreRequest, db: Session = Depends(get_db)):
         lon=req.lon,
         category=req.category,
         radius_m=req.radius_m,
+        chain_name=req.chain_name,
+        use_ai_weights=req.use_ai_weights,
     )
     return ScoreResponse(
         opportunity_score=result.opportunity_score,
@@ -118,6 +141,7 @@ def score_restaurant_location(req: ScoreRequest, db: Session = Depends(get_db)):
         confidence=result.confidence,
         nearby_competitors=result.nearby_competitors,
         model_version=result.model_version,
+        ai_weights_used=result.ai_weights_used,
     )
 
 
@@ -220,7 +244,7 @@ def score_restaurant_parcel(req: ParcelScoreRequest, db: Session = Depends(get_d
     if lat is None or lon is None:
         raise HTTPException(status_code=400, detail="Cannot determine location")
 
-    result = score_location(db, lat, lon, req.category)
+    result = score_location(db, lat, lon, req.category, chain_name=req.chain_name)
     return {
         "parcel_id": req.parcel_id,
         "lat": lat,
@@ -234,4 +258,178 @@ def score_restaurant_parcel(req: ParcelScoreRequest, db: Session = Depends(get_d
         "confidence": result.confidence,
         "nearby_competitors": result.nearby_competitors,
         "model_version": result.model_version,
+        "ai_weights_used": result.ai_weights_used,
+    }
+
+
+# ---------------------------------------------------------------------------
+# NEW: Top-parcels recommendation
+# ---------------------------------------------------------------------------
+
+
+@router.post("/restaurant/top-parcels")
+def find_top_parcels(req: TopParcelsRequest, db: Session = Depends(get_db)):
+    """
+    Find the best H3 cells (candidate locations) for a restaurant category
+    within a bounding box. Returns top-N cells sorted by opportunity score.
+
+    This endpoint evaluates a grid of H3 hexagonal cells and returns
+    the highest-scoring locations — ideal for identifying where to open
+    a new restaurant branch.
+    """
+    try:
+        import h3
+    except ImportError:
+        raise HTTPException(status_code=500, detail="h3 library not installed")
+
+    lon_span = req.max_lon - req.min_lon
+    lat_span = req.max_lat - req.min_lat
+    if lon_span > 0.6 or lat_span > 0.6:
+        raise HTTPException(
+            status_code=400,
+            detail="Bounding box too large. Max 0.6 degree span for top-parcels.",
+        )
+
+    bbox_polygon = {
+        "type": "Polygon",
+        "coordinates": [[
+            [req.min_lon, req.min_lat],
+            [req.max_lon, req.min_lat],
+            [req.max_lon, req.max_lat],
+            [req.min_lon, req.max_lat],
+            [req.min_lon, req.min_lat],
+        ]],
+    }
+
+    try:
+        cells = list(h3.geo_to_cells(bbox_polygon, req.resolution))
+    except Exception:
+        cells = []
+        lat_step = (req.max_lat - req.min_lat) / 15
+        lon_step = (req.max_lon - req.min_lon) / 15
+        for i in range(16):
+            for j in range(16):
+                lat = req.min_lat + i * lat_step
+                lon = req.min_lon + j * lon_step
+                cells.append(h3.latlng_to_cell(lat, lon, req.resolution))
+        cells = list(set(cells))
+
+    # Cap at 300 cells to keep response time reasonable
+    cells = cells[:300]
+
+    scored: list[dict[str, Any]] = []
+    for h3_idx in cells:
+        lat, lon = h3.cell_to_latlng(h3_idx)
+        result = score_location(
+            db, lat, lon, req.category,
+            chain_name=req.chain_name,
+        )
+        scored.append({
+            "h3_index": h3_idx,
+            "lat": round(lat, 6),
+            "lon": round(lon, 6),
+            "opportunity_score": result.opportunity_score,
+            "demand_score": result.demand_score,
+            "cost_penalty": result.cost_penalty,
+            "confidence": result.confidence,
+            "top_factors": [
+                c for c in result.contributions[:3]
+            ],
+            "competitor_count": len(result.nearby_competitors),
+            "model_version": result.model_version,
+        })
+
+    # Sort by score descending and take top-N
+    scored.sort(key=lambda x: x["opportunity_score"], reverse=True)
+    top = scored[:req.limit]
+
+    return {
+        "category": req.category,
+        "chain_name": req.chain_name,
+        "total_cells_evaluated": len(cells),
+        "resolution": req.resolution,
+        "parcels": top,
+    }
+
+
+# ---------------------------------------------------------------------------
+# NEW: AI weights introspection
+# ---------------------------------------------------------------------------
+
+
+@router.get("/restaurant/ai-weights")
+def get_ai_weight_info():
+    """
+    Return the current factor weights used by the scoring engine.
+    If an AI model is available, returns both AI-predicted and static defaults.
+    """
+    ai_w = get_ai_weights()
+    return {
+        "ai_model_available": ai_w is not None,
+        "static_demand_weights": DEMAND_WEIGHTS,
+        "static_cost_weights": COST_WEIGHTS,
+        "ai_demand_weights": ai_w,
+        "description": (
+            "When AI weights are available, the scoring engine uses "
+            "feature importances from the trained GradientBoosting model "
+            "to dynamically weight demand factors. This adapts to real "
+            "market data patterns rather than relying on static assumptions."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# NEW: Data sources registry
+# ---------------------------------------------------------------------------
+
+
+@router.get("/restaurant/data-sources")
+def get_data_sources(db: Session = Depends(get_db)):
+    """
+    Return metadata about all data sources used by the restaurant
+    location finder, including scraper coverage and data freshness.
+    """
+    from app.connectors.delivery_platforms import SCRAPER_REGISTRY
+    from sqlalchemy import text as sa_text
+
+    # Get per-source counts from the database
+    source_counts: dict[str, int] = {}
+    try:
+        rows = db.execute(
+            sa_text("SELECT source, COUNT(*) as cnt FROM restaurant_poi GROUP BY source")
+        ).fetchall()
+        for row in rows:
+            source_counts[row[0]] = row[1]
+    except Exception:
+        pass
+
+    platforms = []
+    for source, meta in SCRAPER_REGISTRY.items():
+        platforms.append({
+            "source": source,
+            "label": meta["label"],
+            "url": meta["url"],
+            "poi_count": source_counts.get(source, 0),
+            "status": "active" if source_counts.get(source, 0) > 0 else "pending",
+        })
+
+    # Add non-platform sources
+    for extra_source, label in [
+        ("overture", "Overture Maps"),
+        ("osm", "OpenStreetMap"),
+    ]:
+        platforms.append({
+            "source": extra_source,
+            "label": label,
+            "url": "",
+            "poi_count": source_counts.get(extra_source, 0),
+            "status": "active" if source_counts.get(extra_source, 0) > 0 else "pending",
+        })
+
+    total_pois = sum(source_counts.values())
+
+    return {
+        "total_pois": total_pois,
+        "sources": platforms,
+        "platform_count": len(SCRAPER_REGISTRY),
     }
