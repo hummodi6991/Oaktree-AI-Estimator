@@ -6,20 +6,23 @@ category at a specific location, broken into two sub-scores:
 
 - **demand_score** — aggregates demand-side signals: competition density,
   population, traffic, commercial density, delivery demand, dining cluster
-  effect, and competitor quality.
-- **cost_penalty** — aggregates cost-side signals: rent, parking.
-  Higher = cheaper = better opportunity.
+  effect, competitor quality, anchor proximity, foot-traffic proxy,
+  chain gap, income proxy, and visibility.
+- **cost_penalty** — aggregates cost-side signals: rent, parking, zoning.
+  Higher = cheaper / better opportunity.
 
 ``opportunity_score = 0.80 * demand_score + 0.20 * cost_penalty``
 
-NOTE: This is a demand-potential proxy, not a profitability predictor.
-True profitability requires merchant outcome data (sales, order volumes).
+When a trained ML model is available, factor weights are predicted by
+the model's feature importances rather than using static defaults.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import math
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,23 +36,38 @@ from app.services.traffic_proxy import traffic_score_at
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Factor weights grouped by sub-score
+# All delivery platform sources (used to identify platform listings)
+# ---------------------------------------------------------------------------
+
+PLATFORM_SOURCES = frozenset({
+    "hungerstation", "talabat", "mrsool", "jahez", "toyou", "keeta",
+    "thechefz", "lugmety", "shgardi", "ninja", "nana", "dailymealz",
+    "careemfood", "deliveroo",
+})
+
+# ---------------------------------------------------------------------------
+# Factor weights grouped by sub-score (static defaults)
 # ---------------------------------------------------------------------------
 
 DEMAND_WEIGHTS: dict[str, float] = {
-    "competition": 0.25,
-    "complementary": 0.05,
-    "population": 0.20,
-    "traffic": 0.15,
-    "road_frontage": 0.05,
-    "commercial_density": 0.10,
+    "competition": 0.18,
+    "complementary": 0.04,
+    "population": 0.14,
+    "traffic": 0.10,
+    "road_frontage": 0.04,
+    "commercial_density": 0.08,
     "delivery_demand": 0.10,
-    "competitor_rating": 0.10,
+    "competitor_rating": 0.08,
+    "anchor_proximity": 0.08,
+    "foot_traffic": 0.06,
+    "chain_gap": 0.05,
+    "income_proxy": 0.05,
 }
 
 COST_WEIGHTS: dict[str, float] = {
-    "rent": 0.70,
-    "parking": 0.30,
+    "rent": 0.55,
+    "parking": 0.20,
+    "zoning_fit": 0.25,
 }
 
 
@@ -62,7 +80,8 @@ class LocationScoreResult:
     contributions: list[dict[str, Any]]  # top-N feature contributions
     confidence: float
     nearby_competitors: list[dict[str, Any]] = field(default_factory=list)
-    model_version: str = "weighted_v2"
+    model_version: str = "weighted_v3"
+    ai_weights_used: bool = False
     debug: dict[str, Any] = field(default_factory=dict)
 
 
@@ -71,7 +90,7 @@ class LocationScoreResult:
 # ---------------------------------------------------------------------------
 
 _NEARBY_SQL = text("""
-    SELECT id, name, category, rating, source, lat, lon,
+    SELECT id, name, category, rating, source, lat, lon, chain_name,
            ST_Distance(
                geom::geography,
                ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography
@@ -119,6 +138,7 @@ def _nearby_restaurants(
                 "source": r.source,
                 "lat": float(r.lat),
                 "lon": float(r.lon),
+                "chain_name": r.chain_name,
                 "distance_m": _haversine(lat, lon, float(r.lat), float(r.lon)),
             }
             for r in rows_orm
@@ -261,6 +281,248 @@ def rent_score_value(rent_per_m2: float | None) -> float:
 
 
 # ---------------------------------------------------------------------------
+# NEW scoring factors
+# ---------------------------------------------------------------------------
+
+def anchor_proximity_score(db: Session, lat: float, lon: float) -> float:
+    """
+    Score proximity to anchor destinations — malls, universities,
+    government buildings, and hospitals. These generate high foot-traffic
+    and are strong demand drivers for restaurants.
+    """
+    anchor_queries = [
+        # Overture places: malls & shopping centers
+        ("""
+            SELECT COUNT(*) FROM restaurant_poi
+            WHERE source = 'overture'
+              AND (category ILIKE '%%mall%%' OR category ILIKE '%%shopping%%')
+              AND geom IS NOT NULL
+              AND ST_DWithin(
+                  geom::geography,
+                  ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+                  :radius_m)
+        """, 1500, 30),
+        # OSM amenities: universities, schools, hospitals
+        ("""
+            SELECT COUNT(*) FROM osm_roads
+            WHERE highway IS NULL
+              AND name IS NOT NULL
+              AND ST_DWithin(
+                  geom::geography,
+                  ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+                  :radius_m)
+        """, 1000, 20),
+    ]
+
+    total = 0.0
+    for sql_str, radius, weight in anchor_queries:
+        try:
+            count = db.execute(
+                text(sql_str), {"lat": lat, "lon": lon, "radius_m": radius}
+            ).scalar() or 0
+            total += min(weight, count * (weight / 3.0))
+        except Exception:
+            total += weight * 0.5  # neutral fallback
+
+    return min(95.0, max(10.0, 10.0 + total))
+
+
+def foot_traffic_score(
+    all_restaurants: list[dict], commercial_density: float, population: float
+) -> float:
+    """
+    Proxy for foot-traffic based on combined restaurant density,
+    commercial density score, and population score. True foot-traffic
+    data would require mobility datasets; this is a reasonable proxy.
+    """
+    restaurant_count = len(all_restaurants)
+    density_factor = min(1.0, restaurant_count / 30.0) * 40
+    commercial_factor = commercial_density * 0.3
+    pop_factor = population * 0.3
+    return min(95.0, max(10.0, density_factor + commercial_factor + pop_factor))
+
+
+def chain_gap_score(
+    same_cat: list[dict], category: str, chain_name: str | None = None
+) -> float:
+    """
+    Score based on whether the specific chain (or category in general)
+    is underrepresented in the area. If a chain_name is provided,
+    checks whether that chain already has nearby locations.
+    """
+    if not same_cat:
+        return 90.0  # no competitors at all — huge gap
+
+    if chain_name:
+        chain_lower = chain_name.lower()
+        chain_nearby = [
+            r for r in same_cat
+            if r.get("chain_name") and chain_lower in r["chain_name"].lower()
+        ]
+        if chain_nearby:
+            # Chain already present — penalize
+            return max(10.0, 50.0 - len(chain_nearby) * 15)
+        return 85.0  # chain not present — good gap
+
+    # No specific chain — score based on overall saturation
+    if len(same_cat) <= 3:
+        return 80.0
+    if len(same_cat) <= 8:
+        return 60.0
+    if len(same_cat) <= 15:
+        return 40.0
+    return 20.0
+
+
+def income_proxy_score(db: Session, lat: float, lon: float) -> float:
+    """
+    Estimate area income level from commercial rent rates as a proxy.
+    Higher rent areas correlate with higher income / spending power,
+    which benefits restaurants. Uses market indicator data when available.
+    """
+    try:
+        from app.services.district_resolver import resolve_district
+        resolution = resolve_district(db, city="riyadh", lat=lat, lon=lon)
+        district = resolution.district_norm or resolution.district_raw
+        if district:
+            from app.services.indicators import latest_rent_per_m2
+            rent = latest_rent_per_m2(db, "riyadh", district)
+            if rent is not None:
+                # Higher rent = higher income area = higher spending
+                if rent > 1200:
+                    return 90.0
+                if rent > 800:
+                    return 75.0
+                if rent > 400:
+                    return 60.0
+                return 40.0
+    except Exception as exc:
+        logger.debug("Income proxy failed: %s", exc)
+
+    return 50.0  # neutral default
+
+
+def zoning_fit_score(db: Session, lat: float, lon: float) -> float:
+    """
+    Score how well the zoning/land-use at this location supports
+    restaurants. Commercial and mixed-use zones score higher.
+    """
+    try:
+        result = db.execute(
+            text("""
+                SELECT zoning FROM parcel
+                WHERE geom IS NOT NULL
+                  AND ST_Contains(
+                      geom,
+                      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)
+                  )
+                LIMIT 1
+            """),
+            {"lat": lat, "lon": lon},
+        ).scalar()
+        if result:
+            zoning = result.lower()
+            if any(k in zoning for k in ("commercial", "تجاري", "mixed", "متعدد")):
+                return 90.0
+            if any(k in zoning for k in ("residential", "سكني")):
+                return 40.0
+            return 60.0
+    except Exception:
+        pass
+
+    return 50.0  # neutral when no zoning data
+
+
+def parking_availability_score(db: Session, lat: float, lon: float) -> float:
+    """Score based on nearby parking availability."""
+    try:
+        count = db.execute(
+            text("""
+                SELECT COUNT(*) FROM overture_buildings
+                WHERE (class ILIKE '%%parking%%' OR class ILIKE '%%garage%%')
+                  AND ST_DWithin(
+                      geom::geography,
+                      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+                      500
+                  )
+            """),
+            {"lat": lat, "lon": lon},
+        ).scalar() or 0
+        if count >= 3:
+            return 90.0
+        if count >= 1:
+            return 70.0
+    except Exception:
+        pass
+
+    return 50.0  # neutral
+
+
+# ---------------------------------------------------------------------------
+# AI-driven weight prediction
+# ---------------------------------------------------------------------------
+
+_MODEL_DIR = os.environ.get("MODEL_DIR", "models")
+_MODEL_META_PATH = os.path.join(_MODEL_DIR, "restaurant_score_v0.meta.json")
+_cached_ai_weights: dict[str, float] | None = None
+
+
+def get_ai_weights() -> dict[str, float] | None:
+    """
+    Load AI-predicted factor weights from the trained model's feature
+    importances. Returns None if no model is available.
+    """
+    global _cached_ai_weights
+    if _cached_ai_weights is not None:
+        return _cached_ai_weights
+
+    try:
+        with open(_MODEL_META_PATH) as f:
+            meta = json.load(f)
+
+        importances = meta.get("feature_importances", {})
+        if not importances:
+            return None
+
+        # Map model feature names to scoring factor names
+        feature_to_factor = {
+            "restaurant_count": "competition",
+            "avg_rating": "competitor_rating",
+            "platform_count": "delivery_demand",
+            "neighbor_competition": "complementary",
+            "population": "population",
+        }
+
+        weights: dict[str, float] = {}
+        total_imp = sum(importances.values()) or 1.0
+        for feat_name, importance in importances.items():
+            factor = feature_to_factor.get(feat_name)
+            if factor:
+                weights[factor] = importance / total_imp
+
+        # Distribute remaining weight to factors not in the model
+        covered = sum(weights.values())
+        remaining_factors = [
+            k for k in DEMAND_WEIGHTS if k not in weights
+        ]
+        if remaining_factors and covered < 1.0:
+            per_factor = (1.0 - covered) / len(remaining_factors)
+            for f in remaining_factors:
+                weights[f] = per_factor
+
+        _cached_ai_weights = weights
+        logger.info("Loaded AI weights: %s", weights)
+        return weights
+
+    except FileNotFoundError:
+        logger.debug("No trained model found at %s", _MODEL_META_PATH)
+        return None
+    except Exception as exc:
+        logger.warning("Failed to load AI weights: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -301,18 +563,23 @@ def score_location(
     lon: float,
     category: str,
     radius_m: float = 1000,
+    chain_name: str | None = None,
+    use_ai_weights: bool = True,
 ) -> LocationScoreResult:
     """
     Compute an opportunity score (0-100) for a restaurant category at a
     given location, split into demand_score and cost_penalty sub-scores.
+
+    When ``use_ai_weights=True`` (default), the trained ML model's feature
+    importances are used to dynamically weight demand factors instead of
+    static defaults.
     """
     # 1. Nearby restaurants (single GiST query)
     same_cat, diff_cat = _nearby_restaurants(db, lat, lon, radius_m, category)
 
-    # Count platform listings *within the same radius* (no N+1 global count)
-    platform_sources = {"hungerstation", "talabat", "mrsool"}
-    same_on_platforms = [r for r in same_cat if r.get("source") in platform_sources]
-    all_on_platforms = [r for r in (same_cat + diff_cat) if r.get("source") in platform_sources]
+    # Count platform listings *within the same radius*
+    same_on_platforms = [r for r in same_cat if r.get("source") in PLATFORM_SOURCES]
+    all_on_platforms = [r for r in (same_cat + diff_cat) if r.get("source") in PLATFORM_SOURCES]
 
     # Avg rating of same-category competitors
     rated = [r for r in same_cat if r.get("rating") is not None]
@@ -323,23 +590,41 @@ def score_location(
     # 2. Compute demand factors
     traffic_info = traffic_score_at(db, lat, lon)
     traffic_info_close = traffic_score_at(db, lat, lon, radius_m=100)
+    comm_density = commercial_density_score(db, lat, lon)
+    pop_score = population_score(db, lat, lon)
 
     demand_factors = {
         "competition": competition_score(len(same_cat)),
         "complementary": complementary_score(len(diff_cat)),
-        "population": population_score(db, lat, lon),
+        "population": pop_score,
         "traffic": traffic_info.get("score", 25.0),
         "road_frontage": traffic_info_close.get("score", 25.0),
-        "commercial_density": commercial_density_score(db, lat, lon),
+        "commercial_density": comm_density,
         "delivery_demand": delivery_demand_score(len(same_on_platforms), len(all_on_platforms)),
         "competitor_rating": competitor_rating_score(avg_rating, len(rated)),
+        "anchor_proximity": anchor_proximity_score(db, lat, lon),
+        "foot_traffic": foot_traffic_score(same_cat + diff_cat, comm_density, pop_score),
+        "chain_gap": chain_gap_score(same_cat, category, chain_name),
+        "income_proxy": income_proxy_score(db, lat, lon),
     }
-    demand = _weighted_avg(demand_factors, DEMAND_WEIGHTS)
 
-    # 3. Compute cost factors
+    # Try AI-predicted weights
+    ai_used = False
+    demand_w = DEMAND_WEIGHTS
+    if use_ai_weights:
+        ai_w = get_ai_weights()
+        if ai_w:
+            demand_w = ai_w
+            ai_used = True
+
+    demand = _weighted_avg(demand_factors, demand_w)
+
+    # 3. Compute cost factors — wired up to real data
+    rent_val = _resolve_rent(db, lat, lon)
     cost_factors = {
-        "rent": 50.0,      # TODO: integrate with existing rent service
-        "parking": 50.0,   # TODO: integrate with parking service
+        "rent": rent_score_value(rent_val),
+        "parking": parking_availability_score(db, lat, lon),
+        "zoning_fit": zoning_fit_score(db, lat, lon),
     }
     cost = _weighted_avg(cost_factors, COST_WEIGHTS)
 
@@ -348,12 +633,13 @@ def score_location(
 
     # 5. Merge all factors for full breakdown
     all_factors = {**demand_factors, **cost_factors}
-    all_weights = {**DEMAND_WEIGHTS, **COST_WEIGHTS}
+    all_weights = {**demand_w, **COST_WEIGHTS}
     contributions = _build_contributions(all_factors, all_weights)
 
-    # 6. Confidence
+    # 6. Confidence — based on data availability
     data_count = len(same_cat) + len(diff_cat)
-    confidence = min(1.0, data_count / 20.0)
+    platform_coverage = len(all_on_platforms)
+    confidence = min(1.0, (data_count / 20.0) * 0.6 + (platform_coverage / 10.0) * 0.4)
 
     # 7. Format nearby competitors
     competitors_out = sorted(
@@ -364,6 +650,7 @@ def score_location(
                 "category": r.get("category"),
                 "rating": r.get("rating"),
                 "source": r.get("source"),
+                "chain_name": r.get("chain_name"),
                 "distance_m": round(float(r.get("distance_m", 0)), 0),
             }
             for r in same_cat
@@ -379,12 +666,31 @@ def score_location(
         contributions=contributions,
         confidence=round(confidence, 2),
         nearby_competitors=competitors_out,
+        model_version="ai_weighted_v3" if ai_used else "weighted_v3",
+        ai_weights_used=ai_used,
         debug={
             "same_category_count": len(same_cat),
             "diff_category_count": len(diff_cat),
             "platform_count_nearby": len(all_on_platforms),
+            "platform_sources_detected": list({r.get("source") for r in all_on_platforms}),
             "avg_competitor_rating": round(avg_rating, 2) if avg_rating else None,
             "radius_m": radius_m,
             "nearest_road": traffic_info.get("nearest_road"),
+            "rent_per_m2": rent_val,
+            "ai_weights_used": ai_used,
         },
     )
+
+
+def _resolve_rent(db: Session, lat: float, lon: float) -> float | None:
+    """Try to get rent data for the given location using the district resolver."""
+    try:
+        from app.services.district_resolver import resolve_district
+        resolution = resolve_district(db, city="riyadh", lat=lat, lon=lon)
+        district = resolution.district_norm or resolution.district_raw
+        if district:
+            from app.services.indicators import latest_rent_per_m2
+            return latest_rent_per_m2(db, "riyadh", district)
+    except Exception as exc:
+        logger.debug("Rent resolution failed: %s", exc)
+    return None

@@ -53,10 +53,26 @@ jobs:
             models/restaurant_score_v0.meta.json
           retention-days: 90
 
-      - name: Print model metrics
+      - name: Print model metrics and feature importances
         run: |
           if [ -f models/restaurant_score_v0.meta.json ]; then
-            cat models/restaurant_score_v0.meta.json
+            echo "=== Model Metrics ==="
+            python -c "
+          import json
+          with open('models/restaurant_score_v0.meta.json') as f:
+              meta = json.load(f)
+          print(f'MAE: {meta[\"mae\"]:.3f}')
+          print(f'R2:  {meta[\"r2\"]:.3f}')
+          print(f'Training rows: {meta[\"n_rows\"]}')
+          print(f'Model version: {meta.get(\"model_version\", \"unknown\")}')
+          print()
+          print('=== Feature Importances (AI weights) ===')
+          imps = meta.get('feature_importances', {})
+          for feat, imp in sorted(imps.items(), key=lambda x: -x[1]):
+              print(f'  {feat}: {imp:.4f}')
+          print()
+          print(f'Platform sources: {meta.get(\"platform_sources\", [])}')
+          "
           else
             echo "No model metrics file found"
           fi

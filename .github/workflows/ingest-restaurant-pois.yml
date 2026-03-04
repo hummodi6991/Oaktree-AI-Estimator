@@ -16,9 +16,13 @@ on:
         type: boolean
         default: true
       delivery:
-        description: "Include delivery platform scraping"
+        description: "Include delivery platform scraping (all 16 platforms)"
         type: boolean
         default: true
+      delivery_platforms:
+        description: "Specific delivery platforms (comma-separated, e.g. hungerstation,jahez,keeta). Empty = all."
+        required: false
+        default: ""
   schedule:
     - cron: "0 3 * * 1"  # Weekly Monday 03:00 UTC
 
@@ -32,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -70,10 +74,9 @@ jobs:
       - name: Resolve source list
         id: sources
         run: |
-          # For scheduled runs: all sources
-          # For workflow_dispatch: respect individual toggles
           if [ "${{ github.event_name }}" = "schedule" ]; then
             echo "list=overture,osm,delivery" >> "$GITHUB_OUTPUT"
+            echo "delivery_platforms=" >> "$GITHUB_OUTPUT"
           else
             LIST=""
             if [ "${{ github.event.inputs.overture }}" = "true" ]; then LIST="${LIST}overture,"; fi
@@ -81,6 +84,7 @@ jobs:
             if [ "${{ github.event.inputs.delivery }}" = "true" ]; then LIST="${LIST}delivery,"; fi
             FINAL="${LIST:-${{ github.event.inputs.sources }}}"
             echo "list=${FINAL%,}" >> "$GITHUB_OUTPUT"
+            echo "delivery_platforms=${{ github.event.inputs.delivery_platforms }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Ingest restaurant POIs
@@ -99,6 +103,11 @@ jobs:
           sources = [s.strip() for s in sources if s.strip()]
           print(f'Sources to ingest: {sources}')
 
+          delivery_filter = '${{ steps.sources.outputs.delivery_platforms }}'.strip()
+          delivery_sources = [s.strip() for s in delivery_filter.split(',') if s.strip()] if delivery_filter else None
+          if delivery_sources:
+              print(f'Delivery platforms filter: {delivery_sources}')
+
           db = SessionLocal()
           results = {}
           try:
@@ -107,13 +116,13 @@ jobs:
               if 'osm' in sources:
                   results['osm'] = ingest_osm_restaurants(db)
               if 'delivery' in sources:
-                  results['delivery_platforms'] = ingest_delivery_platforms(db)
+                  results['delivery_platforms'] = ingest_delivery_platforms(db, sources=delivery_sources)
               print(f'Ingestion complete: {results}')
           finally:
               db.close()
           "
 
-      - name: Smoke test
+      - name: Smoke test — category breakdown
         run: |
           python -c "
           from app.db.session import SessionLocal
@@ -125,5 +134,17 @@ jobs:
               print(f'{row[0]}: {row[1]}')
               total += row[1]
           print(f'Total: {total}')
+          db.close()
+          "
+
+      - name: Smoke test — source breakdown
+        run: |
+          python -c "
+          from app.db.session import SessionLocal
+          from sqlalchemy import text
+          db = SessionLocal()
+          result = db.execute(text('SELECT source, count(*) FROM restaurant_poi GROUP BY source ORDER BY count DESC')).fetchall()
+          for row in result:
+              print(f'{row[0]}: {row[1]}')
           db.close()
           "

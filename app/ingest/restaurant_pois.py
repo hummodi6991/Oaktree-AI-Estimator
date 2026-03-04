@@ -2,9 +2,9 @@
 Ingestion pipeline for restaurant POI data from multiple sources.
 
 Sources:
-- Overture Maps Places (DuckDB → S3)
+- Overture Maps Places (DuckDB -> S3)
 - OSM (Overpass API)
-- Delivery platforms (HungerStation, Talabat, Mrsool)
+- Delivery platforms (16 platforms via SCRAPER_REGISTRY)
 """
 
 from __future__ import annotations
@@ -143,22 +143,23 @@ def ingest_osm_restaurants(db: Session) -> int:
     return n
 
 
-def ingest_delivery_platforms(db: Session) -> int:
-    """Ingest restaurant POIs from delivery platform scrapers."""
-    from app.connectors.delivery_platforms import (
-        scrape_hungerstation_riyadh,
-        scrape_mrsool_riyadh,
-        scrape_talabat_riyadh,
-    )
+def ingest_delivery_platforms(db: Session, sources: list[str] | None = None) -> int:
+    """
+    Ingest restaurant POIs from delivery platform scrapers.
+
+    Uses the SCRAPER_REGISTRY to dynamically discover all available
+    scrapers. Pass ``sources`` to restrict to specific platforms.
+    """
+    from app.connectors.delivery_platforms import SCRAPER_REGISTRY
 
     n = 0
-    for scraper, source in [
-        (scrape_hungerstation_riyadh, "hungerstation"),
-        (scrape_talabat_riyadh, "talabat"),
-        (scrape_mrsool_riyadh, "mrsool"),
-    ]:
+    for source, entry in SCRAPER_REGISTRY.items():
+        if sources and source not in sources:
+            continue
+
+        scraper_fn = entry["fn"]
         try:
-            for rec in scraper():
+            for rec in scraper_fn():
                 category = normalize_category(rec.get("category_raw"))
                 poi = {
                     "id": rec["id"],
