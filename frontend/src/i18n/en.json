@@ -339,6 +339,26 @@
       "viewSource": "View source"
     }
   },
+  "restaurant": {
+    "title": "Restaurant Location Finder",
+    "subtitle": "Find the best parcel in Riyadh for a new restaurant branch.",
+    "categoryLabel": "Restaurant category",
+    "scoreLocation": "Score this location",
+    "scoring": "Scoring\u2026",
+    "showHeatmap": "Show heatmap",
+    "hideHeatmap": "Hide heatmap",
+    "loadingHeatmap": "Loading heatmap\u2026",
+    "overallScore": "Opportunity score",
+    "demandScore": "Demand",
+    "costScore": "Cost",
+    "confidence": "Confidence",
+    "factorBreakdown": "Factor breakdown",
+    "nearbyCompetitors": "Nearby competitors",
+    "competitorName": "Name",
+    "competitorRating": "Rating",
+    "competitorDistance": "Distance",
+    "competitorSource": "Source"
+  },
   "mapDraw": {
     "toolbar": {
       "startPolygon": "Start polygon",

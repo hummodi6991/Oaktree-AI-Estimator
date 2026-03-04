@@ -1,0 +1,84 @@
+name: Ingest Population Density (HDX)
+
+on:
+  workflow_dispatch:
+    inputs:
+      geotiff_url:
+        description: "Override URL to a population density GeoTIFF (leave empty to use pinned Saudi Arabia dataset)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 5 1 */3 *"  # Quarterly: 1st of Jan/Apr/Jul/Oct at 05:00 UTC
+
+# Pinned dataset: Meta High Resolution Population Density Maps — Saudi Arabia
+# Source: https://data.humdata.org/dataset/saudi-arabia-high-resolution-population-density-maps-demographic-estimates
+env:
+  DEFAULT_GEOTIFF_URL: "https://data.humdata.org/dataset/14b288ca-1855-4025-9f01-41cba548e6f6/resource/83552c4b-3dc0-4c2a-807f-56e1e8e206ae/download/sau_general_2020_geotiff.zip"
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install rasterio h3 numpy
+
+      - name: Configure DB env
+        env:
+          PGHOST_S: ${{ secrets.POSTGRES_HOST }}
+          PGPORT_S: ${{ secrets.POSTGRES_PORT }}
+          PGDB_S:   ${{ secrets.POSTGRES_DB }}
+          PGUSER_S: ${{ secrets.POSTGRES_USER }}
+          PGPASS_S: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          {
+            echo "POSTGRES_HOST=${PGHOST_S}"
+            echo "POSTGRES_PORT=${PGPORT_S}"
+            echo "POSTGRES_DB=${PGDB_S}"
+            echo "POSTGRES_USER=${PGUSER_S}"
+            echo "POSTGRES_PASSWORD=${PGPASS_S}"
+          } >> "$GITHUB_ENV"
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Download and extract population GeoTIFF
+        run: |
+          mkdir -p data
+          GEOTIFF_URL="${{ github.event.inputs.geotiff_url }}"
+          if [ -z "$GEOTIFF_URL" ]; then
+            GEOTIFF_URL="${DEFAULT_GEOTIFF_URL}"
+            echo "Using pinned Saudi Arabia population density dataset"
+          fi
+          echo "Downloading: $GEOTIFF_URL"
+          curl -L -o data/population_density_archive.zip "$GEOTIFF_URL"
+          # Extract if ZIP, otherwise assume raw GeoTIFF
+          if file data/population_density_archive.zip | grep -q 'Zip archive'; then
+            unzip -o data/population_density_archive.zip -d data/
+            # Find the .tif file (HDX packages nest the TIF inside the ZIP)
+            TIFF_FILE=$(find data/ -name '*.tif' -type f | head -1)
+            if [ -z "$TIFF_FILE" ]; then
+              echo "ERROR: No .tif file found in archive"
+              exit 1
+            fi
+            mv "$TIFF_FILE" data/population_density.tif
+          else
+            mv data/population_density_archive.zip data/population_density.tif
+          fi
+          echo "GeoTIFF ready: data/population_density.tif"
+          ls -lh data/population_density.tif
+
+      - name: Ingest population density
+        run: python -m app.ingest.population_density data/population_density.tif
