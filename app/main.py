@@ -23,7 +23,6 @@ from app.api.search import router as search_router
 from app.api.restaurant_location import router as restaurant_router
 from app.api.tiles import router as tiles_router
 from app.telemetry import setup_otel_if_configured
-from app.security.auth import MODE as AUTH_MODE
 from app.security.auth_context import set_auth_context
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -194,9 +193,9 @@ def serve_spa_root() -> Response:
     )
 
 app.include_router(health_router, prefix="")  # public
-deps: list = []  # stays empty unless AUTH_MODE != disabled (kept simple)
-if AUTH_MODE != "disabled":
-    deps = [Depends(set_auth_context)]
+# Always attach auth dependency; auth.require() reads AUTH_MODE at runtime
+# so disabled mode passes through as anonymous.
+deps = [Depends(set_auth_context)]
 
 app.include_router(indices_router, prefix="/v1", dependencies=deps)
 app.include_router(comps_router, prefix="/v1", dependencies=deps)

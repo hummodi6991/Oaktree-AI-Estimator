@@ -871,7 +871,7 @@ def create_estimate(
         notes_payload = {"bands": payload_bands, "notes": result["notes"]}
         persisted = False
         auth_payload = getattr(request.state, "auth", None) or {}
-        if auth.MODE == "disabled":
+        if auth.get_mode() == "disabled":
             user_id = "anonymous"
         else:
             user_id = auth_payload.get("sub") or "api"
@@ -977,7 +977,7 @@ def create_estimate(
     def _log_estimate_result_event(result: dict[str, Any]) -> None:
         try:
             auth_payload = getattr(request.state, "auth", None) or {}
-            if auth.MODE == "disabled":
+            if auth.get_mode() == "disabled":
                 user_id = "anonymous"
                 is_admin = False
             else:

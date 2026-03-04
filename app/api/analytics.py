@@ -63,7 +63,7 @@ def log_analytics_event(
 
     try:
         auth_payload = getattr(request.state, "auth", None) or {}
-        if auth.MODE == "disabled":
+        if auth.get_mode() == "disabled":
             user_id = "anonymous"
             is_admin = False
         else:

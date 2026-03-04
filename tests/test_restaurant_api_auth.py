@@ -1,36 +1,28 @@
 """Tests for restaurant API endpoints under AUTH_MODE=api_key.
 
-Requires env vars: AUTH_MODE=api_key, API_KEY=test-key
-(set by the test-auth CI job).
+auth.require() reads AUTH_MODE from env at runtime, so we use monkeypatch to
+set AUTH_MODE=api_key and API_KEY=test-key for the scope of each test.  This
+keeps auth tests self-contained and prevents env leakage to other tests.
 """
 
-import importlib
-import os
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-
-def _make_client():
-    """Build a fresh TestClient after reloading auth so module-level MODE picks up env."""
-    import app.security.auth as auth_mod
-
-    importlib.reload(auth_mod)
-
-    import app.main as main_mod
-
-    importlib.reload(main_mod)
-    return TestClient(main_mod.app, raise_server_exceptions=False)
+_TEST_API_KEY = "test-key"
+AUTH_HEADER = {"x-api-key": _TEST_API_KEY}
 
 
 @pytest.fixture()
-def auth_client():
-    return _make_client()
+def auth_client(monkeypatch):
+    """TestClient with AUTH_MODE=api_key forced via monkeypatch."""
+    monkeypatch.setenv("AUTH_MODE", "api_key")
+    monkeypatch.setenv("API_KEY", _TEST_API_KEY)
 
+    from app.main import app
 
-API_KEY = os.getenv("API_KEY", "test-key")
-AUTH_HEADER = {"x-api-key": API_KEY}
+    return TestClient(app, raise_server_exceptions=False)
 
 
 class TestUnauthenticatedReturns401:
