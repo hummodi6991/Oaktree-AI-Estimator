@@ -1,0 +1,100 @@
+name: Enrich Google Reviews
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Max rows to enrich (0 = unlimited)"
+        type: number
+        default: 500
+      force:
+        description: "Re-enrich even if recently fetched"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 5 * * 3"  # Weekly Wednesday 05:00 UTC
+
+concurrency:
+  group: enrich-google-reviews
+  cancel-in-progress: false
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Configure DB env
+        env:
+          PGHOST_S: ${{ secrets.POSTGRES_HOST }}
+          PGPORT_S: ${{ secrets.POSTGRES_PORT }}
+          PGDB_S:   ${{ secrets.POSTGRES_DB }}
+          PGUSER_S: ${{ secrets.POSTGRES_USER }}
+          PGPASS_S: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          {
+            echo "POSTGRES_HOST=${PGHOST_S}"
+            echo "POSTGRES_PORT=${PGPORT_S}"
+            echo "POSTGRES_DB=${PGDB_S}"
+            echo "POSTGRES_USER=${PGUSER_S}"
+            echo "POSTGRES_PASSWORD=${PGPASS_S}"
+          } >> "$GITHUB_ENV"
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Resolve inputs
+        id: inputs
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "limit=0" >> "$GITHUB_OUTPUT"
+            echo "force=false" >> "$GITHUB_OUTPUT"
+          else
+            LIMIT="${{ github.event.inputs.limit }}"
+            echo "limit=${LIMIT:-500}" >> "$GITHUB_OUTPUT"
+            echo "force=${{ github.event.inputs.force }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Enrich restaurant POIs with Google Reviews
+        env:
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+        run: |
+          ARGS=""
+          LIMIT="${{ steps.inputs.outputs.limit }}"
+          if [ "$LIMIT" != "0" ] && [ -n "$LIMIT" ]; then
+            ARGS="$ARGS --limit $LIMIT"
+          fi
+          if [ "${{ steps.inputs.outputs.force }}" = "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          python -m app.ingest.google_reviews_enrich $ARGS
+
+      - name: Smoke test — enrichment coverage
+        run: |
+          python -c "
+          from app.db.session import SessionLocal
+          from sqlalchemy import text
+          db = SessionLocal()
+          total = db.execute(text('SELECT count(*) FROM restaurant_poi')).scalar()
+          enriched = db.execute(text('SELECT count(*) FROM restaurant_poi WHERE google_place_id IS NOT NULL')).scalar()
+          fresh = db.execute(text(\"\"\"SELECT count(*) FROM restaurant_poi WHERE google_fetched_at >= now() - interval '30 days'\"\"\")).scalar()
+          print(f'Total POIs: {total}')
+          print(f'Google enriched: {enriched}')
+          print(f'Fresh (last 30d): {fresh}')
+          if total > 0:
+              print(f'Coverage: {enriched/total*100:.1f}%')
+          db.close()
+          "
