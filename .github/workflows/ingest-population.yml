@@ -7,6 +7,8 @@ on:
         description: "Override URL to a population density GeoTIFF (leave empty to use pinned Saudi Arabia dataset)"
         required: false
         default: ""
+  schedule:
+    - cron: "0 5 1 */3 *"  # Quarterly: 1st of Jan/Apr/Jul/Oct at 05:00 UTC
 
 # Pinned dataset: Meta High Resolution Population Density Maps — Saudi Arabia
 # Source: https://data.humdata.org/dataset/saudi-arabia-high-resolution-population-density-maps-demographic-estimates

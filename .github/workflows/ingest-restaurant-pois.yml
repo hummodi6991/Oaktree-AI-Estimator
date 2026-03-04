@@ -4,17 +4,35 @@ on:
   workflow_dispatch:
     inputs:
       sources:
-        description: "Comma-separated sources to ingest: overture,osm,delivery (empty = all)"
+        description: "Comma-separated sources to ingest (default: all)"
         required: false
-        default: ""
+        default: "overture,osm,delivery"
+      overture:
+        description: "Include Overture Maps data"
+        type: boolean
+        default: true
+      osm:
+        description: "Include OpenStreetMap data"
+        type: boolean
+        default: true
+      delivery:
+        description: "Include delivery platform scraping"
+        type: boolean
+        default: true
   schedule:
     - cron: "0 3 * * 1"  # Weekly Monday 03:00 UTC
+
+# Prevent two ingestion runs from overlapping
+concurrency:
+  group: ingest-restaurant-pois
+  cancel-in-progress: false
 
 jobs:
   ingest:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -49,34 +67,51 @@ jobs:
       - name: Run Alembic migrations
         run: alembic upgrade head
 
+      - name: Resolve source list
+        id: sources
+        run: |
+          # For scheduled runs: all sources
+          # For workflow_dispatch: respect individual toggles
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "list=overture,osm,delivery" >> "$GITHUB_OUTPUT"
+          else
+            LIST=""
+            if [ "${{ github.event.inputs.overture }}" = "true" ]; then LIST="${LIST}overture,"; fi
+            if [ "${{ github.event.inputs.osm }}" = "true" ]; then LIST="${LIST}osm,"; fi
+            if [ "${{ github.event.inputs.delivery }}" = "true" ]; then LIST="${LIST}delivery,"; fi
+            FINAL="${LIST:-${{ github.event.inputs.sources }}}"
+            echo "list=${FINAL%,}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Ingest restaurant POIs
         run: |
           python -c "
+          import logging
+          logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s')
           from app.db.session import SessionLocal
-          from app.ingest.restaurant_pois import ingest_all, ingest_overture_restaurants, ingest_osm_restaurants, ingest_delivery_platforms
-          import os
+          from app.ingest.restaurant_pois import (
+              ingest_overture_restaurants,
+              ingest_osm_restaurants,
+              ingest_delivery_platforms,
+          )
 
-          sources = os.getenv('INPUT_SOURCES', '').strip()
+          sources = '${{ steps.sources.outputs.list }}'.split(',')
+          sources = [s.strip() for s in sources if s.strip()]
+          print(f'Sources to ingest: {sources}')
+
           db = SessionLocal()
+          results = {}
           try:
-              if not sources:
-                  results = ingest_all(db)
-              else:
-                  results = {}
-                  for src in sources.split(','):
-                      src = src.strip()
-                      if src == 'overture':
-                          results['overture'] = ingest_overture_restaurants(db)
-                      elif src == 'osm':
-                          results['osm'] = ingest_osm_restaurants(db)
-                      elif src == 'delivery':
-                          results['delivery_platforms'] = ingest_delivery_platforms(db)
+              if 'overture' in sources:
+                  results['overture'] = ingest_overture_restaurants(db)
+              if 'osm' in sources:
+                  results['osm'] = ingest_osm_restaurants(db)
+              if 'delivery' in sources:
+                  results['delivery_platforms'] = ingest_delivery_platforms(db)
               print(f'Ingestion complete: {results}')
           finally:
               db.close()
           "
-        env:
-          INPUT_SOURCES: ${{ github.event.inputs.sources }}
 
       - name: Smoke test
         run: |
@@ -85,7 +120,10 @@ jobs:
           from sqlalchemy import text
           db = SessionLocal()
           result = db.execute(text('SELECT category, count(*) FROM restaurant_poi GROUP BY category ORDER BY count DESC')).fetchall()
+          total = 0
           for row in result:
               print(f'{row[0]}: {row[1]}')
+              total += row[1]
+          print(f'Total: {total}')
           db.close()
           "

@@ -1,9 +1,16 @@
 """
 Restaurant Location Scoring Engine.
 
-Computes a 0-100 demand-potential score for a given restaurant category
-at a specific location, factoring in competition, population, traffic,
-commercial density, delivery demand, competitor ratings, and rent.
+Computes a composite *opportunity score* (0-100) for a given restaurant
+category at a specific location, broken into two sub-scores:
+
+- **demand_score** — aggregates demand-side signals: competition density,
+  population, traffic, commercial density, delivery demand, dining cluster
+  effect, and competitor quality.
+- **cost_penalty** — aggregates cost-side signals: rent, parking.
+  Higher = cheaper = better opportunity.
+
+``opportunity_score = 0.80 * demand_score + 0.20 * cost_penalty``
 
 NOTE: This is a demand-potential proxy, not a profitability predictor.
 True profitability requires merchant outcome data (sales, order volumes).
@@ -14,7 +21,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
@@ -26,38 +33,44 @@ from app.services.traffic_proxy import traffic_score_at
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Factor weights (MVP defaults — ML model replaces these in Phase 2)
+# Factor weights grouped by sub-score
 # ---------------------------------------------------------------------------
 
-DEFAULT_WEIGHTS: dict[str, float] = {
-    "competition": 0.20,
+DEMAND_WEIGHTS: dict[str, float] = {
+    "competition": 0.25,
     "complementary": 0.05,
-    "population": 0.15,
+    "population": 0.20,
     "traffic": 0.15,
     "road_frontage": 0.05,
     "commercial_density": 0.10,
     "delivery_demand": 0.10,
-    "competitor_rating": 0.05,
-    "rent": 0.10,
-    "parking": 0.05,
+    "competitor_rating": 0.10,
+}
+
+COST_WEIGHTS: dict[str, float] = {
+    "rent": 0.70,
+    "parking": 0.30,
 }
 
 
 @dataclass
 class LocationScoreResult:
-    overall_score: float
+    opportunity_score: float
+    demand_score: float
+    cost_penalty: float
     factors: dict[str, float]
+    contributions: list[dict[str, Any]]  # top-N feature contributions
     confidence: float
     nearby_competitors: list[dict[str, Any]] = field(default_factory=list)
-    model_version: str = "weighted_v1"
+    model_version: str = "weighted_v2"
     debug: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
-# Individual factor scoring functions
+# Nearby restaurants — single-query, uses GiST on geom
 # ---------------------------------------------------------------------------
 
-_COUNT_NEARBY_SQL = text("""
+_NEARBY_SQL = text("""
     SELECT id, name, category, rating, source, lat, lon,
            ST_Distance(
                geom::geography,
@@ -79,16 +92,15 @@ def _nearby_restaurants(
     lon: float,
     radius_m: float,
     category: str | None = None,
-) -> list[dict]:
-    """Query nearby restaurant POIs within radius."""
+) -> tuple[list[dict], list[dict]]:
+    """Query nearby restaurant POIs within radius.  Returns (same_cat, diff_cat)."""
     try:
         rows = db.execute(
-            _COUNT_NEARBY_SQL,
+            _NEARBY_SQL,
             {"lat": lat, "lon": lon, "radius_m": radius_m},
         ).mappings().all()
     except Exception as exc:
         logger.warning("Nearby restaurants query failed, falling back to ORM: %s", exc)
-        # Fallback: simple lat/lon bounding box (less accurate but works without PostGIS)
         deg_offset = radius_m / 111_000
         rows_orm = (
             db.query(RestaurantPOI)
@@ -134,23 +146,20 @@ def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
+# ---------------------------------------------------------------------------
+# Individual factor scoring functions
+# ---------------------------------------------------------------------------
+
+
 def competition_score(same_category_count: int) -> float:
-    """
-    Score 0-100 based on same-category competition density.
-    0 competitors → 100 (blue ocean), 20+ → low score.
-    """
+    """0 competitors -> 100 (blue ocean), 20+ -> low score."""
     if same_category_count == 0:
         return 100.0
-    # Exponential decay: score = 100 * exp(-0.15 * count)
     return max(5.0, 100.0 * math.exp(-0.15 * same_category_count))
 
 
 def complementary_score(diff_category_count: int) -> float:
-    """
-    Score 0-100 based on nearby restaurants of *different* categories.
-    A cluster of restaurants attracts foot traffic (dining destination effect).
-    Sweet spot: 5-15 nearby restaurants. Too many → diminishing returns.
-    """
+    """Dining-cluster effect: sweet spot is 5-15 nearby restaurants."""
     if diff_category_count == 0:
         return 20.0
     if diff_category_count <= 15:
@@ -159,20 +168,14 @@ def complementary_score(diff_category_count: int) -> float:
 
 
 def population_score(db: Session, lat: float, lon: float, radius_m: float = 2000) -> float:
-    """
-    Score 0-100 based on population density around the location.
-    Uses H3-indexed population data.
-    """
+    """Score based on H3-indexed population density."""
     try:
         import h3
-
         center_h3 = h3.latlng_to_cell(lat, lon, 8)
-        ring = h3.grid_disk(center_h3, int(radius_m / 460))  # ~460m per H3 res-8 cell
-        h3_indices = list(ring)
-
+        ring = h3.grid_disk(center_h3, int(radius_m / 460))
         pop_rows = (
             db.query(func.sum(PopulationDensity.population))
-            .filter(PopulationDensity.h3_index.in_(h3_indices))
+            .filter(PopulationDensity.h3_index.in_(list(ring)))
             .scalar()
         )
         total_pop = float(pop_rows or 0)
@@ -183,17 +186,13 @@ def population_score(db: Session, lat: float, lon: float, radius_m: float = 2000
         logger.warning("Population query failed: %s", exc)
         return 50.0
 
-    # Scale: 0 pop → 10, 5000 → 50, 20000+ → 95
     if total_pop <= 0:
         return 10.0
     return min(95.0, 10.0 + 85.0 * (1 - math.exp(-total_pop / 10000)))
 
 
 def commercial_density_score(db: Session, lat: float, lon: float, radius_m: float = 500) -> float:
-    """
-    Score 0-100 based on density of commercial/office buildings nearby.
-    Uses the existing Overture buildings table.
-    """
+    """Score based on density of commercial/office buildings (Overture)."""
     try:
         result = db.execute(
             text("""
@@ -212,40 +211,29 @@ def commercial_density_score(db: Session, lat: float, lon: float, radius_m: floa
         logger.debug("Commercial density query failed: %s", exc)
         return 50.0
 
-    # Scale: 0 buildings → 10, 50 → 60, 200+ → 95
     if count == 0:
         return 10.0
     return min(95.0, 10.0 + 85.0 * (1 - math.exp(-count / 80)))
 
 
 def delivery_demand_score(same_category_on_platforms: int, total_on_platforms: int) -> float:
-    """
-    Score 0-100 based on delivery platform presence in the area.
-    More delivery listings = proven delivery demand for the area.
-    """
+    """Score based on delivery-platform presence in the area."""
     if total_on_platforms == 0:
-        return 30.0  # no data — neutral
-    # Ratio of same-category to total
+        return 30.0
     ratio = same_category_on_platforms / max(1, total_on_platforms)
-    # Sweet spot: some demand but not oversaturated
     if ratio < 0.05:
-        return 70.0  # underserved category
+        return 70.0
     if ratio < 0.15:
-        return 85.0  # healthy demand
+        return 85.0
     if ratio < 0.30:
-        return 60.0  # moderate saturation
-    return 40.0  # oversaturated
+        return 60.0
+    return 40.0
 
 
 def competitor_rating_score(avg_rating: float | None, count: int) -> float:
-    """
-    Score 0-100 based on average rating of nearby competitors.
-    Low avg rating = opportunity (customers underserved).
-    High avg rating = stiff competition.
-    """
+    """Low avg rating = opportunity, high = tough competition."""
     if avg_rating is None or count == 0:
-        return 50.0  # no data
-    # Low ratings (< 3.5) = opportunity, high ratings (> 4.5) = tough competition
+        return 50.0
     if avg_rating < 3.0:
         return 90.0
     if avg_rating < 3.5:
@@ -258,13 +246,9 @@ def competitor_rating_score(avg_rating: float | None, count: int) -> float:
 
 
 def rent_score_value(rent_per_m2: float | None) -> float:
-    """
-    Score 0-100 based on commercial rent levels.
-    Lower rent → higher score (better margins).
-    """
+    """Lower rent -> higher score (better margins)."""
     if rent_per_m2 is None:
         return 50.0
-    # Riyadh commercial rent ranges roughly 200-2000 SAR/m2/year
     if rent_per_m2 < 300:
         return 90.0
     if rent_per_m2 < 600:
@@ -274,6 +258,36 @@ def rent_score_value(rent_per_m2: float | None) -> float:
     if rent_per_m2 < 1500:
         return 35.0
     return 20.0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _weighted_avg(scores: dict[str, float], weights: dict[str, float]) -> float:
+    total_w = sum(weights.get(k, 0) for k in scores)
+    if total_w <= 0:
+        return 50.0
+    return sum(weights.get(k, 0) * v for k, v in scores.items()) / total_w
+
+
+def _build_contributions(
+    factors: dict[str, float],
+    all_weights: dict[str, float],
+) -> list[dict[str, Any]]:
+    """Top-N feature contributions, sorted by weighted impact."""
+    items = []
+    total_w = sum(all_weights.values())
+    for k, v in factors.items():
+        w = all_weights.get(k, 0)
+        items.append({
+            "factor": k,
+            "score": round(v, 1),
+            "weight": round(w, 3),
+            "weighted_contribution": round(w * v / total_w, 1) if total_w else 0,
+        })
+    items.sort(key=lambda x: abs(x["weighted_contribution"]), reverse=True)
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -287,20 +301,18 @@ def score_location(
     lon: float,
     category: str,
     radius_m: float = 1000,
-    weights: dict[str, float] | None = None,
 ) -> LocationScoreResult:
     """
-    Compute a 0-100 demand-potential score for a restaurant category at a given location.
+    Compute an opportunity score (0-100) for a restaurant category at a
+    given location, split into demand_score and cost_penalty sub-scores.
     """
-    w = weights or DEFAULT_WEIGHTS
-
-    # 1. Nearby restaurants
+    # 1. Nearby restaurants (single GiST query)
     same_cat, diff_cat = _nearby_restaurants(db, lat, lon, radius_m, category)
+
+    # Count platform listings *within the same radius* (no N+1 global count)
     platform_sources = {"hungerstation", "talabat", "mrsool"}
     same_on_platforms = [r for r in same_cat if r.get("source") in platform_sources]
-    all_on_platforms_rows = db.query(RestaurantPOI).filter(
-        RestaurantPOI.source.in_(list(platform_sources))
-    ).count() if platform_sources else 0
+    all_on_platforms = [r for r in (same_cat + diff_cat) if r.get("source") in platform_sources]
 
     # Avg rating of same-category competitors
     rated = [r for r in same_cat if r.get("rating") is not None]
@@ -308,32 +320,42 @@ def score_location(
         sum(float(r["rating"]) for r in rated) / len(rated) if rated else None
     )
 
-    # 2. Compute each factor score
-    factors = {
+    # 2. Compute demand factors
+    traffic_info = traffic_score_at(db, lat, lon)
+    traffic_info_close = traffic_score_at(db, lat, lon, radius_m=100)
+
+    demand_factors = {
         "competition": competition_score(len(same_cat)),
         "complementary": complementary_score(len(diff_cat)),
         "population": population_score(db, lat, lon),
-        "traffic": traffic_score_at(db, lat, lon).get("score", 25.0),
-        "road_frontage": traffic_score_at(db, lat, lon, radius_m=100).get("score", 25.0),
+        "traffic": traffic_info.get("score", 25.0),
+        "road_frontage": traffic_info_close.get("score", 25.0),
         "commercial_density": commercial_density_score(db, lat, lon),
-        "delivery_demand": delivery_demand_score(len(same_on_platforms), all_on_platforms_rows),
+        "delivery_demand": delivery_demand_score(len(same_on_platforms), len(all_on_platforms)),
         "competitor_rating": competitor_rating_score(avg_rating, len(rated)),
-        "rent": 50.0,  # TODO: integrate with existing rent service when commercial rent data available
-        "parking": 50.0,  # TODO: integrate with parking service
     }
+    demand = _weighted_avg(demand_factors, DEMAND_WEIGHTS)
 
-    # 3. Weighted aggregation
-    total_weight = sum(w.get(k, 0) for k in factors)
-    if total_weight <= 0:
-        total_weight = 1.0
+    # 3. Compute cost factors
+    cost_factors = {
+        "rent": 50.0,      # TODO: integrate with existing rent service
+        "parking": 50.0,   # TODO: integrate with parking service
+    }
+    cost = _weighted_avg(cost_factors, COST_WEIGHTS)
 
-    overall = sum(w.get(k, 0) * v for k, v in factors.items()) / total_weight
+    # 4. Composite opportunity score
+    opportunity = 0.80 * demand + 0.20 * cost
 
-    # 4. Confidence based on data availability
+    # 5. Merge all factors for full breakdown
+    all_factors = {**demand_factors, **cost_factors}
+    all_weights = {**DEMAND_WEIGHTS, **COST_WEIGHTS}
+    contributions = _build_contributions(all_factors, all_weights)
+
+    # 6. Confidence
     data_count = len(same_cat) + len(diff_cat)
-    confidence = min(1.0, data_count / 20.0)  # need ~20 data points for high confidence
+    confidence = min(1.0, data_count / 20.0)
 
-    # 5. Format nearby competitors for response
+    # 7. Format nearby competitors
     competitors_out = sorted(
         [
             {
@@ -350,14 +372,19 @@ def score_location(
     )[:20]
 
     return LocationScoreResult(
-        overall_score=round(overall, 1),
-        factors={k: round(v, 1) for k, v in factors.items()},
+        opportunity_score=round(opportunity, 1),
+        demand_score=round(demand, 1),
+        cost_penalty=round(cost, 1),
+        factors={k: round(v, 1) for k, v in all_factors.items()},
+        contributions=contributions,
         confidence=round(confidence, 2),
         nearby_competitors=competitors_out,
         debug={
             "same_category_count": len(same_cat),
             "diff_category_count": len(diff_cat),
+            "platform_count_nearby": len(all_on_platforms),
             "avg_competitor_rating": round(avg_rating, 2) if avg_rating else None,
             "radius_m": radius_m,
+            "nearest_road": traffic_info.get("nearest_road"),
         },
     )

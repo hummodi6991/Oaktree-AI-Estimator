@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { fetchWithAuth, buildApiUrl } from "../api";
-import { formatNumber, formatPercent } from "../i18n/format";
+import { formatNumber } from "../i18n/format";
 
 type Category = { key: string; name_en: string; name_ar: string };
 
 type ScoreResult = {
-  score: number;
+  opportunity_score: number;
+  demand_score: number;
+  cost_penalty: number;
   factors: Record<string, number>;
+  contributions: Array<{
+    factor: string;
+    score: number;
+    weight: number;
+    weighted_contribution: number;
+  }>;
   confidence: number;
   nearby_competitors: Array<{
     id: string;
@@ -51,6 +59,7 @@ export default function RestaurantLocationPanel({ lat, lon, onHeatmapData }: Pro
   const isArabic = i18n.language.startsWith("ar");
 
   const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState<string>("burger");
   const [scoreResult, setScoreResult] = useState<ScoreResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -58,14 +67,21 @@ export default function RestaurantLocationPanel({ lat, lon, onHeatmapData }: Pro
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch categories on mount
+  // Fetch categories on mount — graceful degradation if API unavailable
   useEffect(() => {
+    setCategoriesLoading(true);
     fetchWithAuth(buildApiUrl("/v1/restaurant/categories"))
       .then((res) => res.json())
       .then((data) => {
-        if (Array.isArray(data)) setCategories(data);
+        if (Array.isArray(data) && data.length > 0) {
+          setCategories(data);
+          setSelectedCategory(data[0].key);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        // API unavailable — keep empty categories, user will see disabled selector
+      })
+      .finally(() => setCategoriesLoading(false));
   }, []);
 
   const handleScore = useCallback(async () => {
@@ -78,6 +94,10 @@ export default function RestaurantLocationPanel({ lat, lon, onHeatmapData }: Pro
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ lat, lon, category: selectedCategory }),
       });
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
       const data = await res.json();
       setScoreResult(data);
     } catch (e: any) {
@@ -93,9 +113,9 @@ export default function RestaurantLocationPanel({ lat, lon, onHeatmapData }: Pro
       onHeatmapData(null);
       return;
     }
-
     if (lat == null || lon == null) return;
     setHeatmapLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams({
         category: selectedCategory,
@@ -108,6 +128,10 @@ export default function RestaurantLocationPanel({ lat, lon, onHeatmapData }: Pro
       const res = await fetchWithAuth(
         buildApiUrl(`/v1/restaurant/heatmap?${params.toString()}`),
       );
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(detail || `HTTP ${res.status}`);
+      }
       const data = await res.json();
       onHeatmapData(data);
       setShowHeatmap(true);
@@ -120,7 +144,11 @@ export default function RestaurantLocationPanel({ lat, lon, onHeatmapData }: Pro
 
   const fallback = t("common.notAvailable");
   const fmtNum = (v: number | null | undefined, digits = 0) =>
-    formatNumber(v ?? null, { maximumFractionDigits: digits, minimumFractionDigits: digits }, fallback);
+    formatNumber(
+      v ?? null,
+      { maximumFractionDigits: digits, minimumFractionDigits: digits },
+      fallback,
+    );
 
   return (
     <section className="card" aria-labelledby="restaurant-location-heading">
@@ -139,11 +167,16 @@ export default function RestaurantLocationPanel({ lat, lon, onHeatmapData }: Pro
           <select
             id="restaurant-category"
             value={selectedCategory}
+            disabled={categoriesLoading || categories.length === 0}
             onChange={(e) => {
               setSelectedCategory(e.target.value);
               setScoreResult(null);
             }}
           >
+            {categoriesLoading && <option>{t("common.loading", "Loading...")}</option>}
+            {!categoriesLoading && categories.length === 0 && (
+              <option>{t("common.notAvailable")}</option>
+            )}
             {categories.map((c) => (
               <option key={c.key} value={c.key}>
                 {isArabic ? c.name_ar : c.name_en}
@@ -157,14 +190,14 @@ export default function RestaurantLocationPanel({ lat, lon, onHeatmapData }: Pro
         <button
           className="primary-button"
           onClick={handleScore}
-          disabled={loading || lat == null}
+          disabled={loading || lat == null || categoriesLoading || categories.length === 0}
         >
           {loading ? t("restaurant.scoring") : t("restaurant.scoreLocation")}
         </button>
         <button
           className="secondary-button"
           onClick={handleToggleHeatmap}
-          disabled={heatmapLoading || lat == null}
+          disabled={heatmapLoading || lat == null || categoriesLoading || categories.length === 0}
         >
           {heatmapLoading
             ? t("restaurant.loadingHeatmap")
@@ -178,20 +211,14 @@ export default function RestaurantLocationPanel({ lat, lon, onHeatmapData }: Pro
 
       {scoreResult && (
         <div className="card-subsection" style={{ marginTop: 16 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              marginBottom: 12,
-            }}
-          >
+          {/* Headline score circle + sub-scores */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
             <div
               style={{
                 width: 56,
                 height: 56,
                 borderRadius: "50%",
-                background: scoreColor(scoreResult.score),
+                background: scoreColor(scoreResult.opportunity_score),
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -200,13 +227,17 @@ export default function RestaurantLocationPanel({ lat, lon, onHeatmapData }: Pro
                 fontSize: 20,
               }}
             >
-              {Math.round(scoreResult.score)}
+              {Math.round(scoreResult.opportunity_score)}
             </div>
             <div>
               <div style={{ fontWeight: 600, fontSize: 16 }}>
                 {t("restaurant.overallScore")}
               </div>
               <div style={{ fontSize: 12, opacity: 0.7 }}>
+                {t("restaurant.demandScore", "Demand")}: {fmtNum(scoreResult.demand_score, 0)}
+                {" · "}
+                {t("restaurant.costScore", "Cost")}: {fmtNum(scoreResult.cost_penalty, 0)}
+                {" · "}
                 {t("restaurant.confidence")}: {fmtNum(scoreResult.confidence * 100, 0)}%
               </div>
             </div>
@@ -219,12 +250,7 @@ export default function RestaurantLocationPanel({ lat, lon, onHeatmapData }: Pro
               return (
                 <div
                   key={key}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontSize: 13,
-                  }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}
                 >
                   <span style={{ minWidth: 130 }}>
                     {label ? (isArabic ? label.ar : label.en) : key}

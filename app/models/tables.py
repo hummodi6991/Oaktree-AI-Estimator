@@ -325,6 +325,7 @@ class RestaurantPOI(Base):
         Index("ix_restaurant_poi_category", "category"),
         Index("ix_restaurant_poi_source", "source"),
         Index("ix_restaurant_poi_district", "district"),
+        Index("ix_restaurant_poi_chain_name", "chain_name"),
     )
 
 
@@ -352,6 +353,8 @@ class LocationScore(Base):
     h3_index = Column(String(16))
     category = Column(String(64), nullable=False)
     overall_score = Column(Numeric(5, 2))  # 0-100
+    demand_score = Column(Numeric(5, 2))  # 0-100 demand-potential component
+    cost_penalty = Column(Numeric(5, 2))  # 0-100 cost component (higher = cheaper = better)
     factors = Column(JSONB)  # {competition: 72, traffic: 85, ...}
     model_version = Column(String(32))
     computed_at = Column(DateTime)

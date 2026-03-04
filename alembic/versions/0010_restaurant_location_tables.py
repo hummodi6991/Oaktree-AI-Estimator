@@ -18,6 +18,7 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # ---- restaurant_poi ----
     op.create_table(
         "restaurant_poi",
         sa.Column("id", sa.String(128), primary_key=True),
@@ -37,18 +38,12 @@ def upgrade() -> None:
         sa.Column("observed_at", sa.DateTime),
     )
 
-    # Add PostGIS geometry column (Point, SRID 4326)
+    # PostGIS geometry column (Point, SRID 4326)
     op.execute(
         "SELECT AddGeometryColumn('public', 'restaurant_poi', 'geom', 4326, 'POINT', 2);"
     )
 
-    # GiST spatial index for efficient distance / within queries
-    op.execute(
-        "CREATE INDEX ix_restaurant_poi_geom_gist "
-        "ON restaurant_poi USING GIST (geom);"
-    )
-
-    # Auto-populate geom from lat/lon on INSERT/UPDATE
+    # Trigger: auto-populate geom from lat/lon on every INSERT or UPDATE
     op.execute("""
         CREATE OR REPLACE FUNCTION restaurant_poi_set_geom()
         RETURNS trigger AS $$
@@ -64,10 +59,22 @@ def upgrade() -> None:
         FOR EACH ROW EXECUTE FUNCTION restaurant_poi_set_geom();
     """)
 
+    # Now that trigger guarantees geom is always set, enforce NOT NULL
+    op.execute("ALTER TABLE restaurant_poi ALTER COLUMN geom SET NOT NULL;")
+
+    # Spatial index — enables GiST-accelerated ST_DWithin / ST_Distance
+    op.execute(
+        "CREATE INDEX ix_restaurant_poi_geom_gist "
+        "ON restaurant_poi USING GIST (geom);"
+    )
+
+    # B-tree indexes for common filter columns
     op.create_index("ix_restaurant_poi_category", "restaurant_poi", ["category"])
     op.create_index("ix_restaurant_poi_source", "restaurant_poi", ["source"])
     op.create_index("ix_restaurant_poi_district", "restaurant_poi", ["district"])
+    op.create_index("ix_restaurant_poi_chain_name", "restaurant_poi", ["chain_name"])
 
+    # ---- population_density ----
     op.create_table(
         "population_density",
         sa.Column("id", sa.Integer, primary_key=True),
@@ -79,6 +86,7 @@ def upgrade() -> None:
         sa.Column("observed_at", sa.DateTime),
     )
 
+    # ---- location_score ----
     op.create_table(
         "location_score",
         sa.Column("id", sa.Integer, primary_key=True),
@@ -86,6 +94,8 @@ def upgrade() -> None:
         sa.Column("h3_index", sa.String(16)),
         sa.Column("category", sa.String(64), nullable=False),
         sa.Column("overall_score", sa.Numeric(5, 2)),
+        sa.Column("demand_score", sa.Numeric(5, 2)),
+        sa.Column("cost_penalty", sa.Numeric(5, 2)),
         sa.Column("factors", JSONB),
         sa.Column("model_version", sa.String(32)),
         sa.Column("computed_at", sa.DateTime),
@@ -104,6 +114,7 @@ def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS trg_restaurant_poi_geom ON restaurant_poi;")
     op.execute("DROP FUNCTION IF EXISTS restaurant_poi_set_geom();")
     op.execute("DROP INDEX IF EXISTS ix_restaurant_poi_geom_gist;")
+    op.drop_index("ix_restaurant_poi_chain_name", table_name="restaurant_poi")
     op.drop_index("ix_restaurant_poi_district", table_name="restaurant_poi")
     op.drop_index("ix_restaurant_poi_source", table_name="restaurant_poi")
     op.drop_index("ix_restaurant_poi_category", table_name="restaurant_poi")

@@ -48,8 +48,13 @@ class TestScoreEndpoint:
         from app.services.restaurant_location import LocationScoreResult
 
         mock_score.return_value = LocationScoreResult(
-            overall_score=72.5,
+            opportunity_score=72.5,
+            demand_score=75.0,
+            cost_penalty=62.5,
             factors={"competition": 80, "traffic": 65},
+            contributions=[
+                {"factor": "competition", "score": 80, "weight": 0.25, "weighted_contribution": 20.0},
+            ],
             confidence=0.8,
             nearby_competitors=[],
         )
@@ -59,8 +64,11 @@ class TestScoreEndpoint:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["score"] == 72.5
+        assert data["opportunity_score"] == 72.5
+        assert data["demand_score"] == 75.0
+        assert data["cost_penalty"] == 62.5
         assert "factors" in data
+        assert "contributions" in data
         assert "confidence" in data
 
 
@@ -96,8 +104,13 @@ class TestScoreParcelEndpoint:
         from app.services.restaurant_location import LocationScoreResult
 
         mock_score.return_value = LocationScoreResult(
-            overall_score=65.0,
+            opportunity_score=65.0,
+            demand_score=68.0,
+            cost_penalty=55.0,
             factors={"competition": 70},
+            contributions=[
+                {"factor": "competition", "score": 70, "weight": 0.25, "weighted_contribution": 17.5},
+            ],
             confidence=0.6,
         )
         resp = client.post(
@@ -120,5 +133,5 @@ class TestScoreParcelEndpoint:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["score"] == 65.0
+        assert data["opportunity_score"] == 65.0
         assert data["category"] == "burger"

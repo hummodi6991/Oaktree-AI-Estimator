@@ -113,6 +113,8 @@ def generate_heatmap(
                     "properties": {
                         "h3_index": h3_idx,
                         "score": float(cached.overall_score),
+                        "demand_score": float(cached.demand_score) if cached.demand_score else None,
+                        "cost_penalty": float(cached.cost_penalty) if cached.cost_penalty else None,
                         "factors": cached.factors or {},
                         "category": category,
                         "lat": lat,
@@ -132,7 +134,9 @@ def generate_heatmap(
             .first()
         )
         if existing:
-            existing.overall_score = result.overall_score
+            existing.overall_score = result.opportunity_score
+            existing.demand_score = result.demand_score
+            existing.cost_penalty = result.cost_penalty
             existing.factors = result.factors
             existing.model_version = result.model_version
             existing.computed_at = datetime.now(timezone.utc)
@@ -141,7 +145,9 @@ def generate_heatmap(
                 LocationScore(
                     h3_index=h3_idx,
                     category=category,
-                    overall_score=result.overall_score,
+                    overall_score=result.opportunity_score,
+                    demand_score=result.demand_score,
+                    cost_penalty=result.cost_penalty,
                     factors=result.factors,
                     model_version=result.model_version,
                     computed_at=datetime.now(timezone.utc),
@@ -156,7 +162,9 @@ def generate_heatmap(
             },
             "properties": {
                 "h3_index": h3_idx,
-                "score": result.overall_score,
+                "score": result.opportunity_score,
+                "demand_score": result.demand_score,
+                "cost_penalty": result.cost_penalty,
                 "factors": result.factors,
                 "category": category,
                 "lat": lat,
