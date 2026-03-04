@@ -37,6 +37,38 @@ def _is_food_category(cat: str | None) -> bool:
     return any(kw in lower for kw in _FOOD_KEYWORDS)
 
 
+def _init_duckdb_extensions(con) -> None:
+    """Install and load required DuckDB extensions (httpfs, spatial).
+
+    Idempotent — safe to call multiple times on the same connection.
+    Raises ``RuntimeError`` with an actionable message if spatial cannot be loaded.
+    """
+    for ext in ("httpfs", "spatial"):
+        try:
+            con.execute(f"INSTALL {ext};")
+        except Exception:
+            # Already installed — not an error.
+            pass
+        try:
+            con.execute(f"LOAD {ext};")
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to LOAD the DuckDB '{ext}' extension. "
+                f"Ensure DuckDB is installed with extension support. "
+                f"Original error: {exc}"
+            ) from exc
+
+    # Self-check: verify ST_X is available after loading spatial.
+    try:
+        con.execute("SELECT ST_X(ST_Point(0, 0)) AS x;")
+    except Exception as exc:
+        raise RuntimeError(
+            "DuckDB spatial extension loaded but ST_X function is not available. "
+            "The spatial extension may be corrupt or incompatible with this DuckDB version. "
+            f"Original error: {exc}"
+        ) from exc
+
+
 def extract_restaurants_duckdb() -> Iterator[dict[str, Any]]:
     """
     Extract restaurant POIs from Overture Places Parquet via DuckDB.
@@ -52,7 +84,7 @@ def extract_restaurants_duckdb() -> Iterator[dict[str, Any]]:
 
     min_lon, min_lat, max_lon, max_lat = RIYADH_BBOX
     con = duckdb.connect()
-    con.execute("INSTALL httpfs; LOAD httpfs;")
+    _init_duckdb_extensions(con)
     con.execute("SET s3_region='us-west-2';")
 
     query = f"""
