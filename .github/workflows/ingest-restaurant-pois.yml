@@ -1,0 +1,91 @@
+name: Ingest Restaurant POIs
+
+on:
+  workflow_dispatch:
+    inputs:
+      sources:
+        description: "Comma-separated sources to ingest: overture,osm,delivery (empty = all)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 3 * * 1"  # Weekly Monday 03:00 UTC
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install duckdb pyarrow
+
+      - name: Configure DB env
+        env:
+          PGHOST_S: ${{ secrets.POSTGRES_HOST }}
+          PGPORT_S: ${{ secrets.POSTGRES_PORT }}
+          PGDB_S:   ${{ secrets.POSTGRES_DB }}
+          PGUSER_S: ${{ secrets.POSTGRES_USER }}
+          PGPASS_S: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          {
+            echo "POSTGRES_HOST=${PGHOST_S}"
+            echo "POSTGRES_PORT=${PGPORT_S}"
+            echo "POSTGRES_DB=${PGDB_S}"
+            echo "POSTGRES_USER=${PGUSER_S}"
+            echo "POSTGRES_PASSWORD=${PGPASS_S}"
+          } >> "$GITHUB_ENV"
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Ingest restaurant POIs
+        run: |
+          python -c "
+          from app.db.session import SessionLocal
+          from app.ingest.restaurant_pois import ingest_all, ingest_overture_restaurants, ingest_osm_restaurants, ingest_delivery_platforms
+          import os
+
+          sources = os.getenv('INPUT_SOURCES', '').strip()
+          db = SessionLocal()
+          try:
+              if not sources:
+                  results = ingest_all(db)
+              else:
+                  results = {}
+                  for src in sources.split(','):
+                      src = src.strip()
+                      if src == 'overture':
+                          results['overture'] = ingest_overture_restaurants(db)
+                      elif src == 'osm':
+                          results['osm'] = ingest_osm_restaurants(db)
+                      elif src == 'delivery':
+                          results['delivery_platforms'] = ingest_delivery_platforms(db)
+              print(f'Ingestion complete: {results}')
+          finally:
+              db.close()
+          "
+        env:
+          INPUT_SOURCES: ${{ github.event.inputs.sources }}
+
+      - name: Smoke test
+        run: |
+          python -c "
+          from app.db.session import SessionLocal
+          from sqlalchemy import text
+          db = SessionLocal()
+          result = db.execute(text('SELECT category, count(*) FROM restaurant_poi GROUP BY category ORDER BY count DESC')).fetchall()
+          for row in result:
+              print(f'{row[0]}: {row[1]}')
+          db.close()
+          "

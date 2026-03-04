@@ -339,6 +339,24 @@
       "viewSource": "عرض المصدر"
     }
   },
+  "restaurant": {
+    "title": "محدد موقع المطعم",
+    "subtitle": "اعثر على أفضل قطعة أرض في الرياض لفرع مطعم جديد.",
+    "categoryLabel": "فئة المطعم",
+    "scoreLocation": "تقييم هذا الموقع",
+    "scoring": "جارٍ التقييم\u2026",
+    "showHeatmap": "عرض الخريطة الحرارية",
+    "hideHeatmap": "إخفاء الخريطة الحرارية",
+    "loadingHeatmap": "جارٍ تحميل الخريطة الحرارية\u2026",
+    "overallScore": "درجة الربحية الإجمالية",
+    "confidence": "مستوى الثقة",
+    "factorBreakdown": "تفصيل العوامل",
+    "nearbyCompetitors": "المنافسون القريبون",
+    "competitorName": "الاسم",
+    "competitorRating": "التقييم",
+    "competitorDistance": "المسافة",
+    "competitorSource": "المصدر"
+  },
   "mapDraw": {
     "toolbar": {
       "startPolygon": "بدء رسم مضلع",

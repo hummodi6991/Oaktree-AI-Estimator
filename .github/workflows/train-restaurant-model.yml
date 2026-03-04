@@ -1,0 +1,62 @@
+name: Train Restaurant Location Model
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 0"  # Weekly Sunday 05:00 UTC
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install h3
+
+      - name: Configure DB env
+        env:
+          PGHOST_S: ${{ secrets.POSTGRES_HOST }}
+          PGPORT_S: ${{ secrets.POSTGRES_PORT }}
+          PGDB_S:   ${{ secrets.POSTGRES_DB }}
+          PGUSER_S: ${{ secrets.POSTGRES_USER }}
+          PGPASS_S: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          {
+            echo "POSTGRES_HOST=${PGHOST_S}"
+            echo "POSTGRES_PORT=${PGPORT_S}"
+            echo "POSTGRES_DB=${PGDB_S}"
+            echo "POSTGRES_USER=${PGUSER_S}"
+            echo "POSTGRES_PASSWORD=${PGPASS_S}"
+          } >> "$GITHUB_ENV"
+
+      - name: Train restaurant scoring model
+        run: python -m app.ml.restaurant_score_train
+
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: restaurant-score-model
+          path: |
+            models/restaurant_score_v0.pkl
+            models/restaurant_score_v0.meta.json
+          retention-days: 90
+
+      - name: Print model metrics
+        run: |
+          if [ -f models/restaurant_score_v0.meta.json ]; then
+            cat models/restaurant_score_v0.meta.json
+          else
+            echo "No model metrics file found"
+          fi

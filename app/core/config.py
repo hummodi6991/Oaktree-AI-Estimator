@@ -52,6 +52,10 @@ class Settings:
     SUHAIL_API_URL: str | None = os.getenv("SUHAIL_API_URL")
     SUHAIL_API_KEY: str | None = os.getenv("SUHAIL_API_KEY")
 
+    # Restaurant Location Finder — optional API keys for enrichment
+    GOOGLE_PLACES_API_KEY: str | None = os.getenv("GOOGLE_PLACES_API_KEY")
+    FOURSQUARE_API_KEY: str | None = os.getenv("FOURSQUARE_API_KEY")
+
     # Parcels identify service configuration
     PARCEL_TARGET_SRID: int = int(os.getenv("PARCEL_TARGET_SRID", "4326"))
     PARCEL_IDENTIFY_TOLERANCE_M: float = float(

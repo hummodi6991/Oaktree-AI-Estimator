@@ -291,3 +291,69 @@ class TaxRule(Base):
     __table_args__ = (
         Index("ix_tax_rule_type_rule_id", "tax_type", "rule_id", unique=True),
     )
+
+
+# ---------------------------------------------------------------------------
+# Restaurant Location Finder tables
+# ---------------------------------------------------------------------------
+
+
+class RestaurantPOI(Base):
+    """Restaurant point of interest aggregated from multiple data sources."""
+
+    __tablename__ = "restaurant_poi"
+
+    id = Column(String(128), primary_key=True)  # source:external_id
+    name = Column(String(256), nullable=False)
+    name_ar = Column(String(256))
+    category = Column(String(64), nullable=False)  # burger, pizza, traditional, etc.
+    subcategory = Column(String(64))
+    source = Column(String(32), nullable=False)  # overture, osm, hungerstation, talabat, mrsool
+    lat = Column(Numeric(10, 7), nullable=False)
+    lon = Column(Numeric(10, 7), nullable=False)
+    rating = Column(Numeric(3, 2))
+    review_count = Column(Integer)
+    price_level = Column(Integer)  # 1-4
+    chain_name = Column(String(128))
+    district = Column(String(128))
+    raw = Column(JSONB)
+    observed_at = Column(DateTime)
+
+    __table_args__ = (
+        Index("ix_restaurant_poi_category", "category"),
+        Index("ix_restaurant_poi_source", "source"),
+        Index("ix_restaurant_poi_district", "district"),
+    )
+
+
+class PopulationDensity(Base):
+    """Population density per H3 hex cell."""
+
+    __tablename__ = "population_density"
+
+    id = Column(Integer, primary_key=True)
+    h3_index = Column(String(16), unique=True, nullable=False)
+    lat = Column(Numeric(10, 7))
+    lon = Column(Numeric(10, 7))
+    population = Column(Numeric(10, 1))
+    source = Column(String(32))
+    observed_at = Column(DateTime)
+
+
+class LocationScore(Base):
+    """Pre-computed restaurant location profitability score per H3 cell and category."""
+
+    __tablename__ = "location_score"
+
+    id = Column(Integer, primary_key=True)
+    parcel_id = Column(String(64))
+    h3_index = Column(String(16))
+    category = Column(String(64), nullable=False)
+    overall_score = Column(Numeric(5, 2))  # 0-100
+    factors = Column(JSONB)  # {competition: 72, traffic: 85, ...}
+    model_version = Column(String(32))
+    computed_at = Column(DateTime)
+
+    __table_args__ = (
+        Index("ix_location_score_category_h3", "category", "h3_index"),
+    )

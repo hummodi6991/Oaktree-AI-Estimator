@@ -1,0 +1,62 @@
+name: Ingest Population Density (HDX)
+
+on:
+  workflow_dispatch:
+    inputs:
+      geotiff_url:
+        description: "URL to the HDX population density GeoTIFF (leave empty for default Saudi Arabia dataset)"
+        required: false
+        default: ""
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install rasterio h3 numpy
+
+      - name: Configure DB env
+        env:
+          PGHOST_S: ${{ secrets.POSTGRES_HOST }}
+          PGPORT_S: ${{ secrets.POSTGRES_PORT }}
+          PGDB_S:   ${{ secrets.POSTGRES_DB }}
+          PGUSER_S: ${{ secrets.POSTGRES_USER }}
+          PGPASS_S: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          {
+            echo "POSTGRES_HOST=${PGHOST_S}"
+            echo "POSTGRES_PORT=${PGPORT_S}"
+            echo "POSTGRES_DB=${PGDB_S}"
+            echo "POSTGRES_USER=${PGUSER_S}"
+            echo "POSTGRES_PASSWORD=${PGPASS_S}"
+          } >> "$GITHUB_ENV"
+
+      - name: Run Alembic migrations
+        run: alembic upgrade head
+
+      - name: Download population GeoTIFF
+        run: |
+          mkdir -p data
+          GEOTIFF_URL="${{ github.event.inputs.geotiff_url }}"
+          if [ -z "$GEOTIFF_URL" ]; then
+            echo "No GeoTIFF URL provided. Provide a direct download link to a HDX population density GeoTIFF."
+            echo "Example: https://data.humdata.org/dataset/saudi-arabia-high-resolution-population-density-maps"
+            exit 1
+          fi
+          curl -L -o data/population_density.tif "$GEOTIFF_URL"
+
+      - name: Ingest population density
+        run: python -m app.ingest.population_density data/population_density.tif

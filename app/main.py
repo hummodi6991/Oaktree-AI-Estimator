@@ -20,6 +20,7 @@ from app.api.indices import router as indices_router
 from app.api.ingest import router as ingest_router
 from app.api.metadata import router as metadata_router
 from app.api.search import router as search_router
+from app.api.restaurant_location import router as restaurant_router
 from app.api.tiles import router as tiles_router
 from app.telemetry import setup_otel_if_configured
 from app.security.auth import MODE as AUTH_MODE
@@ -218,3 +219,4 @@ app.include_router(ingest_router, dependencies=deps)
 app.include_router(tiles_router, prefix="")
 # Always expose geo routes; they already try PostGIS first and fall back to ArcGIS/external.
 app.include_router(geo_router, prefix="/v1", dependencies=deps)
+app.include_router(restaurant_router, prefix="/v1", dependencies=deps)
