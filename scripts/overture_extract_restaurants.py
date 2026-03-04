@@ -25,7 +25,7 @@ def main():
     args = parser.parse_args()
 
     try:
-        import duckdb
+        from app.connectors.duckdb_conn import get_duckdb_connection
     except ImportError:
         print("ERROR: duckdb is required. Install with: pip install duckdb", file=sys.stderr)
         sys.exit(1)
@@ -35,9 +35,7 @@ def main():
     # Riyadh bounding box
     min_lon, min_lat, max_lon, max_lat = 46.20, 24.20, 47.30, 25.10
 
-    con = duckdb.connect()
-    con.execute("INSTALL httpfs; LOAD httpfs;")
-    con.execute("SET s3_region='us-west-2';")
+    con = get_duckdb_connection()
 
     query = f"""
         SELECT
