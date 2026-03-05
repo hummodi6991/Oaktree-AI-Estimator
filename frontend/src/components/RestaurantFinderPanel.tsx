@@ -194,7 +194,7 @@ export default function RestaurantFinderPanel({
                     width: 48,
                     height: 48,
                     borderRadius: "50%",
-                    background: scoreColor(scoreResult.final_score),
+                    background: scoreColor(Number.isFinite(scoreResult.final_score) ? scoreResult.final_score : 0),
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -204,7 +204,7 @@ export default function RestaurantFinderPanel({
                     flexShrink: 0,
                   }}
                 >
-                  {Math.round(scoreResult.final_score)}
+                  {Math.round(Number.isFinite(scoreResult.final_score) ? scoreResult.final_score : 0)}
                 </div>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: "var(--oak-fs-sm)" }}>
@@ -218,9 +218,9 @@ export default function RestaurantFinderPanel({
                     }}
                   >
                     {t("restaurant.opportunityLabel", { defaultValue: "Opportunity" })}:{" "}
-                    {Math.round(scoreResult.opportunity_score)} ·{" "}
+                    {Math.round(Number.isFinite(scoreResult.opportunity_score) ? scoreResult.opportunity_score : 0)} ·{" "}
                     {t("restaurant.confidence", { defaultValue: "Confidence" })}:{" "}
-                    {Math.round(scoreResult.confidence_score)}
+                    {Math.round(Number.isFinite(scoreResult.confidence_score) ? scoreResult.confidence_score : 0)}
                   </div>
                 </div>
               </div>
@@ -366,7 +366,7 @@ export default function RestaurantFinderPanel({
                     width: 40,
                     height: 40,
                     borderRadius: "50%",
-                    background: scoreColor(cell.final_score),
+                    background: scoreColor(Number.isFinite(cell.final_score) ? cell.final_score : 0),
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -376,7 +376,7 @@ export default function RestaurantFinderPanel({
                     flexShrink: 0,
                   }}
                 >
-                  {Math.round(cell.final_score)}
+                  {Math.round(Number.isFinite(cell.final_score) ? cell.final_score : 0)}
                 </div>
                 <div>
                   <div
@@ -398,9 +398,9 @@ export default function RestaurantFinderPanel({
                     }}
                   >
                     {t("restaurant.opportunityLabel", { defaultValue: "Opportunity" })}:{" "}
-                    {Math.round(cell.opportunity_score)} ·{" "}
+                    {Math.round(Number.isFinite(cell.opportunity_score) ? cell.opportunity_score : 0)} ·{" "}
                     {t("restaurant.confidence", { defaultValue: "Confidence" })}:{" "}
-                    {Math.round(cell.confidence_score)}
+                    {Math.round(Number.isFinite(cell.confidence_score) ? cell.confidence_score : 0)}
                   </div>
                 </div>
               </button>
