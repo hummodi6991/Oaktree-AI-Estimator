@@ -10,6 +10,10 @@ import {
   PARCELS_MIXEDUSE_LAYER_ID,
   PARCELS_OUTLINE_LAYER_ID,
 } from "../map/parcelLayers";
+import {
+  setRestaurantHeatmapData,
+  RESTAURANT_HEAT_LAYER_ID,
+} from "../map/restaurantHeatLayer";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -43,6 +47,11 @@ type MapProps = {
   mapHeight?: string | number;
   mapContainerClassName?: string;
   uiVariant?: "legacy" | "v2";
+  restaurantHeatmapData?: GeoJSON.FeatureCollection | null;
+  restaurantMode?: boolean;
+  onRestaurantClick?: (lat: number, lng: number) => void;
+  highlightCell?: { lng: number; lat: number } | null;
+  mapInstanceRef?: React.MutableRefObject<maplibregl.Map | null>;
 };
 
 type StatusMessage = { key: string; options?: Record<string, unknown> } | { raw: string };
@@ -327,6 +336,11 @@ export default function Map({
   mapHeight = "60vh",
   mapContainerClassName,
   uiVariant = "legacy",
+  restaurantHeatmapData = null,
+  restaurantMode = false,
+  onRestaurantClick,
+  highlightCell = null,
+  mapInstanceRef,
 }: MapProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -350,6 +364,9 @@ export default function Map({
   const currentParcelRef = useRef<ParcelSummary | null>(null);
   const hoverDataRef = useRef<FeatureCollection<Geometry, GeoJsonProperties>>(EMPTY_FEATURE_COLLECTION);
   const parcelPropertiesLoggedRef = useRef(false);
+
+  const restaurantModeRef = useRef(restaurantMode);
+  const onRestaurantClickRef = useRef(onRestaurantClick);
 
   const [showMultiHint, setShowMultiHint] = useState(true);
 
@@ -390,6 +407,47 @@ export default function Map({
   useEffect(() => {
     uiVariantRef.current = uiVariant;
   }, [uiVariant]);
+
+  useEffect(() => {
+    restaurantModeRef.current = restaurantMode;
+  }, [restaurantMode]);
+
+  useEffect(() => {
+    onRestaurantClickRef.current = onRestaurantClick;
+  }, [onRestaurantClick]);
+
+  // Expose map instance to parent via ref
+  useEffect(() => {
+    if (mapInstanceRef) {
+      mapInstanceRef.current = mapRef.current;
+    }
+  });
+
+  // Sync restaurant heatmap data to map
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const apply = () => {
+      setRestaurantHeatmapData(map, restaurantHeatmapData ?? null);
+    };
+    if (map.isStyleLoaded()) {
+      apply();
+    } else {
+      map.once("load", apply);
+    }
+  }, [restaurantHeatmapData]);
+
+  // Highlight a specific cell on the map
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !highlightCell) return;
+    const safeMax = getSafeMaxZoom(map);
+    map.flyTo({
+      center: [highlightCell.lng, highlightCell.lat],
+      zoom: Math.min(16, safeMax),
+      duration: 800,
+    });
+  }, [highlightCell]);
 
   const formatParcelId = (value?: string | null) => {
     if (!value) {
@@ -576,8 +634,41 @@ export default function Map({
 
     map.on("zoom", handleZoom);
 
+    // Restaurant heatmap tooltip on hover
+    const heatmapPopup = new maplibregl.Popup({
+      closeButton: false,
+      closeOnClick: false,
+      className: "restaurant-heat-popup",
+    });
+
+    map.on("mousemove", RESTAURANT_HEAT_LAYER_ID, (e) => {
+      if (!e.features || e.features.length === 0) return;
+      map.getCanvas().style.cursor = "pointer";
+      const props = e.features[0].properties || {};
+      const finalScore = props.final_score ?? props.score ?? "—";
+      const confidence = props.confidence_score ?? props.confidence ?? "—";
+      heatmapPopup
+        .setLngLat(e.lngLat)
+        .setHTML(
+          `<div style="font-size:12px;line-height:1.4"><strong>Opportunity:</strong> ${typeof finalScore === "number" ? Math.round(finalScore) : finalScore}<br/><strong>Confidence:</strong> ${typeof confidence === "number" ? Math.round(confidence) : confidence}</div>`,
+        )
+        .addTo(map);
+    });
+
+    map.on("mouseleave", RESTAURANT_HEAT_LAYER_ID, () => {
+      map.getCanvas().style.cursor = "crosshair";
+      heatmapPopup.remove();
+    });
+
     map.on("click", async (e) => {
       setCollateStatus(null);
+
+      // Restaurant mode: forward click for scoring instead of parcel selection
+      if (restaurantModeRef.current && onRestaurantClickRef.current) {
+        onRestaurantClickRef.current(e.lngLat.lat, e.lngLat.lng);
+        return;
+      }
+
       try {
         if (suppressNextClickRef.current) {
           suppressNextClickRef.current = false;
@@ -699,7 +790,9 @@ export default function Map({
       map.off("touchcancel", handleTouchEnd);
       map.off("dragstart", clearTouchTimer);
       disposeHover?.();
+      heatmapPopup.remove();
       mapRef.current = null;
+      if (mapInstanceRef) mapInstanceRef.current = null;
       map.remove();
     };
   }, []);
