@@ -187,19 +187,39 @@ async def _enrich_one(
         return "error"
 
     # Normal path: Text Search -> pick best -> optionally Details
-    try:
-        candidates = await client.find_place_candidates(name, lat, lon)
-    except Exception as exc:
-        logger.warning("API error for POI %s: %s", poi.id, exc)
-        return "error"
+    # Strategy 1: type=restaurant, radius=500m (default)
+    # Strategy 2: no type filter, radius=500m (broader category match)
+    # Strategy 3: no type filter, radius=1500m (wider area)
+    _strategies = [
+        {"type_filter": "restaurant", "radius_m": 500},
+        {"type_filter": None, "radius_m": 500},
+        {"type_filter": None, "radius_m": 1500},
+    ]
 
-    if not candidates:
-        return "no_match"
+    best = None
+    confidence = 0.0
+    for strat in _strategies:
+        try:
+            candidates = await client.find_place_candidates(
+                name, lat, lon,
+                radius_m=strat["radius_m"],
+                type_filter=strat["type_filter"],
+            )
+        except Exception as exc:
+            logger.warning("API error for POI %s (strat=%s): %s", poi.id, strat, exc)
+            continue
 
-    best, confidence = pick_best_candidate(name, lat, lon, candidates)
+        if not candidates:
+            continue
+
+        best, confidence = pick_best_candidate(name, lat, lon, candidates)
+        if best is not None:
+            break
 
     if best is None:
-        return "skipped_low_conf"
+        # Mark as attempted so coverage counts this POI
+        poi.google_fetched_at = now
+        return "no_match"
 
     place_id = best["place_id"]
 

@@ -146,20 +146,27 @@ class AsyncGooglePlacesClient:
         lon: float,
         radius_m: int = 500,
         max_results: int = 5,
+        type_filter: str | None = "restaurant",
     ) -> list[dict]:
-        """Text Search for restaurant candidates, limited to max_results."""
-        cache_key = (name.strip().lower(), round(lat, 5), round(lon, 5))
+        """Text Search for restaurant candidates, limited to max_results.
+
+        When *type_filter* is ``None`` the ``type`` query-param is omitted so
+        that Google returns results across all establishment categories.
+        """
+        cache_key = (name.strip().lower(), round(lat, 5), round(lon, 5), type_filter or "", radius_m)
         if cache_key in _candidates_cache:
             return _candidates_cache[cache_key]
 
         key = _get_api_key()
-        params = {
+        params: dict[str, str] = {
             "query": name,
             "location": f"{lat},{lon}",
             "radius": str(radius_m),
-            "type": "restaurant",
             "key": key,
         }
+        if type_filter:
+            params["type"] = type_filter
+
         data = await self._request(f"{_BASE_URL}/textsearch/json", params)
 
         status = data.get("status", "")
@@ -260,16 +267,16 @@ def pick_best_candidate(
     lat: float,
     lon: float,
     candidates: list[dict],
-    max_distance_m: float = 250.0,
-    min_confidence: float = 0.4,
+    max_distance_m: float = 500.0,
+    min_confidence: float = 0.15,
 ) -> tuple[dict | None, float]:
     """
     Choose the best Google Places candidate for a restaurant POI.
 
-    For generic names, require closer distance (<=100m).
+    For generic names, require closer distance (<=150m).
     """
     generic = _is_generic_name(name)
-    effective_max_dist = 100.0 if generic else max_distance_m
+    effective_max_dist = 150.0 if generic else max_distance_m
 
     best: dict | None = None
     best_conf = 0.0
