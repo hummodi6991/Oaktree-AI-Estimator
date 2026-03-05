@@ -63,9 +63,27 @@ jobs:
             echo "Using pinned Saudi Arabia population density dataset"
           fi
           echo "Downloading: $GEOTIFF_URL"
-          curl -L -o data/population_density_archive.zip "$GEOTIFF_URL"
+          curl --fail --location --retry 6 --retry-all-errors \
+               --connect-timeout 20 --max-time 300 \
+               -H "User-Agent: Mozilla/5.0" --compressed \
+               -o data/population_density_archive.zip "$GEOTIFF_URL"
+
+          # Inspect downloaded file
+          ls -lh data/population_density_archive.zip
+          file data/population_density_archive.zip
+
+          # Reject HTML/text responses (CDN error pages, login walls, etc.)
+          FILE_TYPE=$(file data/population_density_archive.zip)
+          if echo "$FILE_TYPE" | grep -qiE 'HTML|ASCII text'; then
+            echo "::error::Download returned HTML/text instead of ZIP/TIF"
+            echo "--- First 200 bytes ---"
+            head -c 200 data/population_density_archive.zip
+            echo ""
+            exit 1
+          fi
+
           # Extract if ZIP, otherwise assume raw GeoTIFF
-          if file data/population_density_archive.zip | grep -q 'Zip archive'; then
+          if echo "$FILE_TYPE" | grep -q 'Zip archive'; then
             unzip -o data/population_density_archive.zip -d data/
             # Find the .tif file (HDX packages nest the TIF inside the ZIP)
             TIFF_FILE=$(find data/ -name '*.tif' -type f | head -1)
@@ -78,7 +96,21 @@ jobs:
             mv data/population_density_archive.zip data/population_density.tif
           fi
           echo "GeoTIFF ready: data/population_density.tif"
+
+      - name: Validate GeoTIFF
+        run: |
           ls -lh data/population_density.tif
+          file data/population_density.tif
+          python - <<'PY'
+          import rasterio, sys
+          path = "data/population_density.tif"
+          try:
+              with rasterio.open(path) as ds:
+                  print(f"Raster OK: {ds.driver} {ds.width}x{ds.height} bands={ds.count} crs={ds.crs}")
+          except Exception as e:
+              print(f"ERROR: GeoTIFF validation failed: {e}")
+              sys.exit(1)
+          PY
 
       - name: Ingest population density
         run: python -m app.ingest.population_density data/population_density.tif
