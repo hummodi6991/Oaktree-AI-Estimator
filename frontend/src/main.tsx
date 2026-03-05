@@ -1,11 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { useTranslation } from "react-i18next";
+import maplibregl from "maplibre-gl";
 
 import Map from "./components/Map";
 import ExcelForm from "./components/ExcelForm";
 import AccessCodeModal from "./components/AccessCodeModal";
 import AdminAnalyticsModal from "./components/AdminAnalyticsModal";
+import RestaurantFinderPanel from "./components/RestaurantFinderPanel";
 import "./i18n";
 import "./App.css";
 import "./index.css";
@@ -30,6 +32,8 @@ import "./styles/ui-figma.css";
 import "./styles/atlas-ui.css";
 import i18n from "i18next";
 
+type AnalysisMode = "feasibility" | "restaurant";
+
 function applyLocaleAttrs() {
   const lng = i18n.language || "en";
   document.documentElement.lang = lng;
@@ -51,6 +55,11 @@ function App() {
   const { t } = useTranslation();
   const [searchTarget, setSearchTarget] = useState<SearchItem | null>(null);
   const [isMapHidden, setIsMapHidden] = useState(false);
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("feasibility");
+  const [restaurantHeatmapData, setRestaurantHeatmapData] = useState<GeoJSON.FeatureCollection | null>(null);
+  const [restaurantClickedLocation, setRestaurantClickedLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [restaurantHighlightCell, setRestaurantHighlightCell] = useState<{ lng: number; lat: number } | null>(null);
+  const mapInstanceRef = useRef<maplibregl.Map | null>(null);
 
   const uiV2 = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -162,6 +171,20 @@ function App() {
     }
   }, [parcel]);
 
+  const handleRestaurantClick = useCallback((lat: number, lng: number) => {
+    setRestaurantClickedLocation({ lat, lng });
+  }, []);
+
+  const handleRestaurantFlyTo = useCallback((lng: number, lat: number) => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+    map.flyTo({ center: [lng, lat], zoom: 16, duration: 800 });
+  }, []);
+
+  const handleRestaurantHighlight = useCallback((lng: number, lat: number) => {
+    setRestaurantHighlightCell({ lng, lat });
+  }, []);
+
   const handleAccessCodeSubmit = useCallback((code: string) => {
     window.localStorage.setItem("oaktree_api_key", code);
     setApiKey(code);
@@ -244,22 +267,69 @@ function App() {
         <AppShell
           header={<HeaderBar onSearchSelect={(item) => setSearchTarget(item)} />}
           map={
-            <div className={`ui-v2-map-wrap ${isMapHidden ? "ui-v2-map-wrap--hidden" : ""}`}>
-              <Map
-                onParcel={(selectedParcel) => {
-                  setParcel(selectedParcel);
+            <>
+              {/* Analysis mode toggle */}
+              <div
+                style={{
+                  display: "flex",
+                  gap: 0,
+                  padding: "8px 24px",
+                  background: "var(--ui2-bg, #f5f7f6)",
+                  borderBottom: "1px solid var(--ui2-border, #e4e8e6)",
                 }}
-                showSearchBar={false}
-                showSelectionUi={false}
-                uiVariant="v2"
-                focusTarget={searchTarget}
-                mapHeight={isMapHidden ? "0px" : "52vh"}
-                mapContainerClassName="ui-v2-map-canvas"
-              />
-            </div>
+              >
+                <button
+                  type="button"
+                  className={`oak-btn oak-btn--sm ${analysisMode === "feasibility" ? "oak-btn--primary" : "oak-btn--tertiary"}`}
+                  style={{ borderRadius: "var(--oak-radius) 0 0 var(--oak-radius)" }}
+                  onClick={() => {
+                    setAnalysisMode("feasibility");
+                    setRestaurantHeatmapData(null);
+                    setRestaurantClickedLocation(null);
+                  }}
+                >
+                  {t("app.modeFeasibility", { defaultValue: "Development Feasibility" })}
+                </button>
+                <button
+                  type="button"
+                  className={`oak-btn oak-btn--sm ${analysisMode === "restaurant" ? "oak-btn--primary" : "oak-btn--tertiary"}`}
+                  style={{ borderRadius: "0 var(--oak-radius) var(--oak-radius) 0" }}
+                  onClick={() => setAnalysisMode("restaurant")}
+                >
+                  {t("app.modeRestaurant", { defaultValue: "Restaurant Finder" })}
+                </button>
+              </div>
+              <div className={`ui-v2-map-wrap ${isMapHidden ? "ui-v2-map-wrap--hidden" : ""}`}>
+                <Map
+                  onParcel={(selectedParcel) => {
+                    if (analysisMode !== "restaurant") {
+                      setParcel(selectedParcel);
+                    }
+                  }}
+                  showSearchBar={false}
+                  showSelectionUi={false}
+                  uiVariant="v2"
+                  focusTarget={searchTarget}
+                  mapHeight={isMapHidden ? "0px" : "52vh"}
+                  mapContainerClassName="ui-v2-map-canvas"
+                  restaurantHeatmapData={analysisMode === "restaurant" ? restaurantHeatmapData : null}
+                  restaurantMode={analysisMode === "restaurant"}
+                  onRestaurantClick={handleRestaurantClick}
+                  highlightCell={restaurantHighlightCell}
+                  mapInstanceRef={mapInstanceRef}
+                />
+              </div>
+            </>
           }
           content={
-            parcel ? (
+            analysisMode === "restaurant" ? (
+              <RestaurantFinderPanel
+                onHeatmapData={setRestaurantHeatmapData}
+                onFlyTo={handleRestaurantFlyTo}
+                onHighlightCell={handleRestaurantHighlight}
+                clickedLocation={restaurantClickedLocation}
+              />
+            ) : parcel ? (
               <AnalysisLayout
                 top={<ParcelInfoBar
                   parcel={parcel}

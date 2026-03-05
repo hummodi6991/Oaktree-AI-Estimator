@@ -28,7 +28,8 @@ export function setRestaurantHeatmapData(
     data: geojson,
   });
 
-  // Fill layer with color interpolated by score (0-100)
+  // Fill layer with color interpolated by final_score (0-100)
+  // Color ramp: low → light yellow, medium → orange, high → red
   map.addLayer({
     id: RESTAURANT_HEAT_LAYER_ID,
     type: "fill",
@@ -37,12 +38,12 @@ export function setRestaurantHeatmapData(
       "fill-color": [
         "interpolate",
         ["linear"],
-        ["get", "score"],
-        0, "#d73027",    // red — poor
-        25, "#fc8d59",   // orange
-        50, "#fee08b",   // yellow
-        75, "#91cf60",   // light green
-        100, "#1a9850",  // green — excellent
+        ["coalesce", ["get", "final_score"], ["get", "score"], 0],
+        0, "#ffffcc",    // light yellow — low
+        25, "#fed976",   // yellow
+        50, "#fd8d3c",   // orange — medium
+        75, "#e31a1c",   // red — high
+        100, "#b10026",  // dark red — very high
       ],
       "fill-opacity": 0.55,
     },
