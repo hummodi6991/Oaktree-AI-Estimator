@@ -69,15 +69,21 @@ class ScoreRequest(BaseModel):
 
 
 class ScoreResponse(BaseModel):
-    opportunity_score: float = Field(..., description="Combined opportunity score (0-100)")
+    opportunity_score: float = Field(..., description="Market opportunity score (0-100) — demand vs competition vs cost")
+    confidence_score: float = Field(0.0, description="Data-reliability score (0-100) — Google match, confidence, review volume")
+    final_score: float = Field(0.0, description="Ranking score (0-100) = opportunity dampened by confidence")
     demand_score: float = Field(..., description="Demand-potential sub-score (0-100)")
     cost_penalty: float = Field(..., description="Cost sub-score — higher = cheaper = better (0-100)")
     factors: dict[str, float] = Field(default_factory=dict, description="Individual factor scores")
     contributions: list[dict[str, Any]] = Field(
         default_factory=list,
-        description="Feature contributions sorted by weighted impact",
+        description="Market feature contributions sorted by weighted impact",
     )
-    confidence: float = Field(..., description="Score confidence (0-1)")
+    contributions_confidence: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Confidence/reliability feature contributions",
+    )
+    confidence: float = Field(..., description="Legacy score confidence (0-1)")
     nearby_competitors: list[dict[str, Any]] = Field(default_factory=list)
     model_version: str = "weighted_v3"
     ai_weights_used: bool = False
@@ -134,10 +140,13 @@ def score_restaurant_location(req: ScoreRequest, db: Session = Depends(get_db)):
     )
     return ScoreResponse(
         opportunity_score=result.opportunity_score,
+        confidence_score=result.confidence_score,
+        final_score=result.final_score,
         demand_score=result.demand_score,
         cost_penalty=result.cost_penalty,
         factors=result.factors,
         contributions=result.contributions,
+        contributions_confidence=result.contributions_confidence,
         confidence=result.confidence,
         nearby_competitors=result.nearby_competitors,
         model_version=result.model_version,
@@ -251,10 +260,13 @@ def score_restaurant_parcel(req: ParcelScoreRequest, db: Session = Depends(get_d
         "lon": lon,
         "category": req.category,
         "opportunity_score": result.opportunity_score,
+        "confidence_score": result.confidence_score,
+        "final_score": result.final_score,
         "demand_score": result.demand_score,
         "cost_penalty": result.cost_penalty,
         "factors": result.factors,
         "contributions": result.contributions,
+        "contributions_confidence": result.contributions_confidence,
         "confidence": result.confidence,
         "nearby_competitors": result.nearby_competitors,
         "model_version": result.model_version,
@@ -329,6 +341,8 @@ def find_top_parcels(req: TopParcelsRequest, db: Session = Depends(get_db)):
             "lat": round(lat, 6),
             "lon": round(lon, 6),
             "opportunity_score": result.opportunity_score,
+            "confidence_score": result.confidence_score,
+            "final_score": result.final_score,
             "demand_score": result.demand_score,
             "cost_penalty": result.cost_penalty,
             "confidence": result.confidence,
@@ -339,8 +353,8 @@ def find_top_parcels(req: TopParcelsRequest, db: Session = Depends(get_db)):
             "model_version": result.model_version,
         })
 
-    # Sort by score descending and take top-N
-    scored.sort(key=lambda x: x["opportunity_score"], reverse=True)
+    # Sort by final_score (opportunity dampened by confidence) descending
+    scored.sort(key=lambda x: x["final_score"], reverse=True)
     top = scored[:req.limit]
 
     return {
