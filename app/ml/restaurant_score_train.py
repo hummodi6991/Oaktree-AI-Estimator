@@ -59,12 +59,11 @@ def _build_training_df(db: Session) -> pd.DataFrame:
     """
     Build training data from restaurant POI density (Riyadh only).
 
-    Training target: demand-potential proxy — areas with many highly-rated
-    restaurants of a given category indicate proven demand. We use
-    restaurant count x avg rating as a composite proxy.
+    Training target: demand-per-restaurant proxy — log1p(google_review_count)
+    divided by max(1, restaurant_count), normalized to 0–100. This measures
+    review density per restaurant, avoiding leakage from restaurant_count.
 
     Features include:
-    - restaurant_count: total restaurants in the H3 cell
     - avg_rating: average rating of restaurants
     - platform_count: number of delivery platform listings
     - platform_diversity: number of distinct delivery platforms
@@ -215,8 +214,11 @@ def _build_training_df(db: Session) -> pd.DataFrame:
         )
         has_google = g["google_count"] / g["count"] if g["count"] > 0 else 0.0
 
-        # Target: normalized demand proxy
-        target = min(100.0, data["count"] * avg_rating * 5)
+        # Target: demand-per-restaurant proxy (review density)
+        # log1p(total_reviews) / max(1, restaurant_count) avoids leakage
+        raw_target = math.log1p(google_review_count) / max(1, data["count"])
+        # Will be normalized to 0–100 after all rows are collected
+        target = raw_target
 
         items.append({
             "h3_index": h3_idx,
@@ -238,6 +240,12 @@ def _build_training_df(db: Session) -> pd.DataFrame:
         })
 
     df = pd.DataFrame(items)
+
+    # Normalize target to 0–100 for UI friendliness
+    t_max = df["target"].max()
+    if t_max > 0:
+        df["target"] = (df["target"] / t_max) * 100.0
+
     logger.info("Built training DataFrame with %d rows (Riyadh only)", len(df))
     return df
 
@@ -257,7 +265,6 @@ def train_and_save() -> dict:
         return {"model_path": None, "metrics": {"error": "insufficient_data"}}
 
     feature_cols = [
-        "restaurant_count",
         "avg_rating",
         "platform_count",
         "platform_diversity",
@@ -312,7 +319,7 @@ def train_and_save() -> dict:
         "features": all_features,
         "feature_importances": importances,
         "trained_at": str(date.today()),
-        "model_version": "v4_google_riyadh",
+        "model_version": "v5_demand_per_restaurant",
         "platform_sources": sorted(PLATFORM_SOURCES),
         "training_bbox": {
             "lat_min": RIYADH_LAT_MIN,
@@ -326,7 +333,7 @@ def train_and_save() -> dict:
         json.dump(meta, f, indent=2)
 
     try:
-        with mlflow.start_run(run_name="restaurant_demand_potential_v4_google"):
+        with mlflow.start_run(run_name="restaurant_demand_potential_v5"):
             mlflow.log_params({
                 "model": "GradientBoostingRegressor",
                 "n_estimators": 200,
