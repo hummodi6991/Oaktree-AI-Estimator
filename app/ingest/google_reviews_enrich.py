@@ -12,6 +12,8 @@ Features:
   and token-bucket QPS control.
 - Optimized API calls: skips Place Details when Text Search already
   provides rating + review_count.
+- Multi-variant query strategy: tries name, name_ar, normalized name,
+  name + "Riyadh", and category-aware type filters to maximize matches.
 - Fast path: if a POI already has google_place_id, skips Text Search
   and only refreshes via Place Details when stale or --force.
 
@@ -38,6 +40,7 @@ from sqlalchemy.orm import Session
 
 from app.connectors.google_places_async import (
     AsyncGooglePlacesClient,
+    _build_name_variants,
     candidate_has_full_data,
     clear_caches,
     pick_best_candidate,
@@ -141,21 +144,23 @@ async def _enrich_one(
     poi: RestaurantPOI,
     client: AsyncGooglePlacesClient,
     force: bool,
-) -> str:
+) -> tuple[str, dict]:
     """
-    Enrich a single POI. Returns a status string:
-    'updated', 'skipped_existing', 'skipped_low_conf', 'no_match', 'error',
-    'details_refreshed'.
+    Enrich a single POI. Returns a tuple of (status, fallback_info):
+    - status: 'updated', 'skipped_existing', 'skipped_low_conf', 'no_match',
+              'error', 'details_refreshed'
+    - fallback_info: dict with query strategy details (empty for non-search paths)
     """
     name = poi.name or ""
     lat = float(poi.lat)
     lon = float(poi.lon)
     now = datetime.now(timezone.utc)
+    empty_fallback: dict = {}
 
     # Fast path: already has google_place_id and not stale -> skip
     if poi.google_place_id and not force:
         if poi.google_fetched_at and poi.google_fetched_at > now - timedelta(days=STALE_DAYS):
-            return "skipped_existing"
+            return "skipped_existing", empty_fallback
 
     # Fast path: has google_place_id, refresh via Details only (stale or force)
     if poi.google_place_id:
@@ -163,7 +168,7 @@ async def _enrich_one(
             details = await client.get_place_details(poi.google_place_id)
         except Exception as exc:
             logger.warning("Details refresh error for %s: %s", poi.id, exc)
-            return "error"
+            return "error", empty_fallback
 
         if details:
             poi.rating = details.get("rating") or poi.rating
@@ -183,23 +188,34 @@ async def _enrich_one(
                 "fetched_at": now.isoformat(),
             }
             poi.raw = existing_raw
-            return "details_refreshed"
-        return "error"
+            return "details_refreshed", empty_fallback
+        return "error", empty_fallback
 
-    # Normal path: Text Search -> pick best -> optionally Details
+    # Normal path: Multi-variant Text Search -> pick best -> optionally Details
+    name_ar = poi.name_ar if hasattr(poi, "name_ar") else None
+    category = poi.category if hasattr(poi, "category") else None
+    name_variants = _build_name_variants(name, name_ar)
+
     try:
-        candidates = await client.find_place_candidates(name, lat, lon)
+        candidates, fallback_info = await client.find_candidates_multi(
+            name_variants, lat, lon, category=category,
+        )
     except Exception as exc:
         logger.warning("API error for POI %s: %s", poi.id, exc)
-        return "error"
+        return "error", empty_fallback
 
     if not candidates:
-        return "no_match"
+        return "no_match", fallback_info
 
-    best, confidence = pick_best_candidate(name, lat, lon, candidates)
+    radius_escalated = fallback_info.get("radius_escalated", False)
+    best, confidence = pick_best_candidate(
+        name, lat, lon, candidates,
+        category=category,
+        radius_escalated=radius_escalated,
+    )
 
     if best is None:
-        return "skipped_low_conf"
+        return "skipped_low_conf", fallback_info
 
     place_id = best["place_id"]
 
@@ -207,13 +223,14 @@ async def _enrich_one(
     if candidate_has_full_data(best):
         details = best
     else:
+        # Fallback: call Details only when user_ratings_total is missing
         try:
             details = await client.get_place_details(place_id)
         except Exception as exc:
             logger.warning("Details API error for %s: %s", place_id, exc)
             details = best  # fall back to text search data
 
-    # Update the POI row
+    # Update the POI row — only set google_place_id/google_fetched_at on match
     poi.rating = details.get("rating") or best.get("rating")
     poi.review_count = details.get("user_ratings_total") or best.get("user_ratings_total")
     poi.price_level = details.get("price_level") or best.get("price_level")
@@ -232,10 +249,13 @@ async def _enrich_one(
         "formatted_address": details.get("formatted_address", ""),
         "confidence": confidence,
         "fetched_at": now.isoformat(),
+        "fallback_variant": fallback_info.get("variant_used"),
+        "fallback_type": fallback_info.get("type_used"),
+        "query_attempts": fallback_info.get("attempts", 1),
     }
     poi.raw = existing_raw
 
-    return "updated"
+    return "updated", fallback_info
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +278,12 @@ async def _enrich_batch_async(
         "skipped_low_conf": 0,
         "no_match": 0,
         "error": 0,
+        # Fallback stats
+        "fallback_used_name_ar": 0,
+        "fallback_used_riyadh_suffix": 0,
+        "fallback_removed_type": 0,
+        "fallback_radius_escalated": 0,
+        "total_query_attempts": 0,
     }
 
     tasks = [_enrich_one(poi, client, force) for poi in rows]
@@ -269,7 +295,19 @@ async def _enrich_batch_async(
             logger.warning("Unhandled error for POI %s: %s", poi.id, result)
             counts["error"] += 1
         else:
-            counts[result] = counts.get(result, 0) + 1
+            status, fallback_info = result
+            counts[status] = counts.get(status, 0) + 1
+            # Accumulate fallback stats
+            if fallback_info:
+                counts["total_query_attempts"] += fallback_info.get("attempts", 1)
+                if fallback_info.get("used_name_ar"):
+                    counts["fallback_used_name_ar"] += 1
+                if fallback_info.get("used_riyadh_suffix"):
+                    counts["fallback_used_riyadh_suffix"] += 1
+                if fallback_info.get("removed_type"):
+                    counts["fallback_removed_type"] += 1
+                if fallback_info.get("radius_escalated"):
+                    counts["fallback_radius_escalated"] += 1
 
     db.commit()
     return counts
@@ -305,6 +343,12 @@ async def run_async(
         "no_match": 0,
         "error": 0,
         "api_calls": 0,
+        # Fallback stats
+        "fallback_used_name_ar": 0,
+        "fallback_used_riyadh_suffix": 0,
+        "fallback_removed_type": 0,
+        "fallback_radius_escalated": 0,
+        "total_query_attempts": 0,
     }
     cursor: str | None = None
     start_time = time.monotonic()
@@ -352,7 +396,9 @@ async def run_async(
                 logger.info(
                     "Progress: processed=%d updated=%d refreshed=%d "
                     "skipped_existing=%d skipped_low_conf=%d no_match=%d "
-                    "errors=%d api_calls=%d cursor=%s elapsed=%.0fs",
+                    "errors=%d api_calls=%d cursor=%s elapsed=%.0fs | "
+                    "fallbacks: name_ar=%d riyadh=%d no_type=%d radius_up=%d "
+                    "avg_attempts=%.1f",
                     stats["processed"],
                     stats["updated"],
                     stats["details_refreshed"],
@@ -363,6 +409,11 @@ async def run_async(
                     stats["api_calls"],
                     cursor,
                     elapsed,
+                    stats["fallback_used_name_ar"],
+                    stats["fallback_used_riyadh_suffix"],
+                    stats["fallback_removed_type"],
+                    stats["fallback_radius_escalated"],
+                    (stats["total_query_attempts"] / max(stats["processed"], 1)),
                 )
 
                 if limit and total_processed >= limit:
