@@ -347,6 +347,17 @@ class PopulationDensity(Base):
     observed_at = Column(DateTime)
 
 
+class RestaurantHeatmapCache(Base):
+    """Cached city-wide opportunity heatmap payload per category + radius."""
+
+    __tablename__ = "restaurant_heatmap_cache"
+
+    category = Column(Text, primary_key=True)
+    radius_m = Column(Integer, primary_key=True)
+    computed_at = Column(DateTime(timezone=True), nullable=False)
+    payload = Column(JSONB, nullable=False)
+
+
 class LocationScore(Base):
     """Pre-computed restaurant location demand-potential score per H3 cell and category."""
 

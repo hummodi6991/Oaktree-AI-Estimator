@@ -25,6 +25,9 @@ from app.services.restaurant_location import (
     get_ai_weights,
     score_location,
 )
+from app.services.restaurant_opportunity_heatmap import (
+    generate_opportunity_heatmap,
+)
 
 router = APIRouter(tags=["restaurant-location"])
 logger = logging.getLogger(__name__)
@@ -464,4 +467,70 @@ def get_data_sources(db: Session = Depends(get_db)):
         "platform_count": len(SCRAPER_REGISTRY),
         "google_enriched_count": google_enriched_count,
         "google_fresh_count": google_fresh_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# NEW: City-wide underserved demand heatmap
+# ---------------------------------------------------------------------------
+
+
+@router.get("/restaurant/opportunity-heatmap")
+def get_opportunity_heatmap(
+    category: str = Query(..., description="Restaurant category key"),
+    radius_m: int = Query(1200, ge=100, le=5000, description="Search radius in meters"),
+    min_confidence: float = Query(0.3, ge=0.0, le=1.0, description="Minimum confidence score (0-1)"),
+    limit_cells: int = Query(5000, ge=1, le=10000, description="Max cells returned"),
+    cache_bust: bool = Query(False, description="Force recompute ignoring cache"),
+    db: Session = Depends(get_db),
+):
+    """
+    Generate a city-wide GeoJSON FeatureCollection heatmap of underserved
+    demand for a restaurant category across all Riyadh population H3 cells.
+
+    Each feature is a Point (H3 center) with opportunity, confidence, and
+    final scores plus competitor and population metrics.
+
+    Results are cached for 7 days per (category, radius_m).
+    """
+    return generate_opportunity_heatmap(
+        db=db,
+        category=category,
+        radius_m=radius_m,
+        min_confidence=min_confidence,
+        limit_cells=limit_cells,
+        cache_bust=cache_bust,
+    )
+
+
+@router.get("/restaurant/opportunity-top-cells")
+def get_opportunity_top_cells(
+    category: str = Query(..., description="Restaurant category key"),
+    radius_m: int = Query(1200, ge=100, le=5000, description="Search radius in meters"),
+    limit: int = Query(30, ge=1, le=100, description="Number of top cells"),
+    cache_bust: bool = Query(False, description="Force recompute ignoring cache"),
+    db: Session = Depends(get_db),
+):
+    """
+    Return the top-N underserved cells for a restaurant category,
+    sorted by underserved_index descending.
+
+    Uses the same cached heatmap data as /opportunity-heatmap.
+    """
+    result = generate_opportunity_heatmap(
+        db=db,
+        category=category,
+        radius_m=radius_m,
+        min_confidence=0.0,
+        limit_cells=5000,
+        cache_bust=cache_bust,
+    )
+
+    top = result.get("metadata", {}).get("top_underserved", [])[:limit]
+
+    return {
+        "category": category,
+        "radius_m": radius_m,
+        "count": len(top),
+        "cells": top,
     }
