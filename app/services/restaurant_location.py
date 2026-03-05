@@ -491,6 +491,12 @@ def get_ai_weights() -> dict[str, float] | None:
             "platform_count": "delivery_demand",
             "neighbor_competition": "complementary",
             "population": "population",
+            "google_rating": "competitor_rating",
+            "google_review_count": "delivery_demand",
+            "log_review_count": "delivery_demand",
+            "google_price_level": "income_proxy",
+            "google_confidence": "commercial_density",
+            "has_google": "commercial_density",
         }
 
         weights: dict[str, float] = {}
@@ -498,7 +504,7 @@ def get_ai_weights() -> dict[str, float] | None:
         for feat_name, importance in importances.items():
             factor = feature_to_factor.get(feat_name)
             if factor:
-                weights[factor] = importance / total_imp
+                weights[factor] = weights.get(factor, 0.0) + importance / total_imp
 
         # Distribute remaining weight to factors not in the model
         covered = sum(weights.values())
