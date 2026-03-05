@@ -76,7 +76,7 @@ _ARABIC_DIGIT_MAP = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 # Generic tokens to strip for similarity (both Arabic and English)
 _STRIP_TOKENS_AR = frozenset({
     "مطعم", "كافيه", "مقهى", "كوفي", "مطاعم", "كافيتريا",
-    "مخبز", "محل", "فرع", "الرياض", "السعودية", "شارع",
+    "مخبز", "حلويات", "عصير", "محل", "فرع", "الرياض", "السعودية", "شارع",
 })
 _STRIP_TOKENS_EN = frozenset({
     "restaurant", "restaurants", "cafe", "coffee", "juice",
@@ -179,6 +179,7 @@ def _build_name_variants(name: str, name_ar: str | None) -> list[str]:
 
     # 4. Name + "Riyadh" / name + "الرياض"
     _add(f"{name} Riyadh")
+    _add(f"{name} الرياض")
     if name_ar:
         _add(f"{name_ar} الرياض")
 
@@ -368,11 +369,10 @@ class AsyncGooglePlacesClient:
                     fallback_info["type_used"] = place_type
                     # Track which fallback was used
                     if variant != name_variants[0]:
-                        # Check if it's the Arabic variant
-                        if len(name_variants) > 1 and variant == name_variants[1]:
-                            fallback_info["used_name_ar"] = True
-                        elif "Riyadh" in variant or "الرياض" in variant:
+                        if "Riyadh" in variant or "الرياض" in variant:
                             fallback_info["used_riyadh_suffix"] = True
+                        elif name_ar and variant == name_ar:
+                            fallback_info["used_name_ar"] = True
                     if place_type is None:
                         fallback_info["removed_type"] = True
                     return candidates, fallback_info
