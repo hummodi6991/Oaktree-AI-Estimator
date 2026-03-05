@@ -1,4 +1,4 @@
-name: Ingest Population Density (HDX)
+name: Ingest Population Density
 
 on:
   workflow_dispatch:
@@ -10,10 +10,10 @@ on:
   schedule:
     - cron: "0 5 1 */3 *"  # Quarterly: 1st of Jan/Apr/Jul/Oct at 05:00 UTC
 
-# Pinned dataset: Meta High Resolution Population Density Maps — Saudi Arabia
-# Source: https://data.humdata.org/dataset/saudi-arabia-high-resolution-population-density-maps-demographic-estimates
+# Pinned dataset: WorldPop — Saudi Arabia 2020 population (constrained, UN-adjusted)
+# Source: https://data.worldpop.org/GIS/Population/Global_2000_2020_Constrained/2020/BSGM/SAU/
 env:
-  DEFAULT_GEOTIFF_URL: "https://data.humdata.org/dataset/14b288ca-1855-4025-9f01-41cba548e6f6/resource/83552c4b-3dc0-4c2a-807f-56e1e8e206ae/download/sau_general_2020_geotiff.zip"
+  DEFAULT_GEOTIFF_URL: "https://data.worldpop.org/GIS/Population/Global_2000_2020_Constrained/2020/BSGM/SAU/sau_ppp_2020_constrained.tif"
 
 jobs:
   ingest:
@@ -60,7 +60,7 @@ jobs:
           GEOTIFF_URL="${{ github.event.inputs.geotiff_url }}"
           if [ -z "$GEOTIFF_URL" ]; then
             GEOTIFF_URL="${DEFAULT_GEOTIFF_URL}"
-            echo "Using pinned Saudi Arabia population density dataset"
+            echo "Using pinned WorldPop Saudi Arabia population GeoTIFF (2020, constrained)"
           fi
           echo "Downloading: $GEOTIFF_URL"
           curl --fail --location --retry 6 --retry-all-errors \
