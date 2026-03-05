@@ -11,6 +11,10 @@ on:
         description: "Re-enrich even if recently fetched"
         type: boolean
         default: false
+      only_missing:
+        description: "Only enrich rows missing Google data (set false for a one-time full refresh)"
+        type: boolean
+        default: true
   schedule:
     - cron: "0 5 * * 3"  # Weekly Wednesday 05:00 UTC
 
@@ -62,10 +66,12 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             echo "limit=0" >> "$GITHUB_OUTPUT"
             echo "force=false" >> "$GITHUB_OUTPUT"
+            echo "only_missing=true" >> "$GITHUB_OUTPUT"
           else
             LIMIT="${{ github.event.inputs.limit }}"
             echo "limit=${LIMIT:-500}" >> "$GITHUB_OUTPUT"
             echo "force=${{ github.event.inputs.force }}" >> "$GITHUB_OUTPUT"
+            echo "only_missing=${{ github.event.inputs.only_missing }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Enrich restaurant POIs with Google Reviews
@@ -79,6 +85,9 @@ jobs:
           fi
           if [ "${{ steps.inputs.outputs.force }}" = "true" ]; then
             ARGS="$ARGS --force"
+          fi
+          if [ "${{ steps.inputs.outputs.only_missing }}" != "true" ]; then
+            ARGS="$ARGS --no-only-missing"
           fi
           python -m app.ingest.google_reviews_enrich $ARGS
 
