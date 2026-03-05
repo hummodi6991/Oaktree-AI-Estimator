@@ -56,6 +56,11 @@ class TestScoreEndpoint:
                 {"factor": "competition", "score": 80, "weight": 0.25, "weighted_contribution": 20.0},
             ],
             confidence=0.8,
+            confidence_score=65.0,
+            final_score=61.6,
+            contributions_confidence=[
+                {"factor": "has_google", "score": 0.8, "weight": 0.35, "weighted_contribution": 0.28},
+            ],
             nearby_competitors=[],
         )
         resp = client.post(
@@ -67,8 +72,11 @@ class TestScoreEndpoint:
         assert data["opportunity_score"] == 72.5
         assert data["demand_score"] == 75.0
         assert data["cost_penalty"] == 62.5
+        assert data["confidence_score"] == 65.0
+        assert data["final_score"] == 61.6
         assert "factors" in data
         assert "contributions" in data
+        assert "contributions_confidence" in data
         assert "confidence" in data
 
 
@@ -112,6 +120,9 @@ class TestScoreParcelEndpoint:
                 {"factor": "competition", "score": 70, "weight": 0.25, "weighted_contribution": 17.5},
             ],
             confidence=0.6,
+            confidence_score=50.0,
+            final_score=52.0,
+            contributions_confidence=[],
         )
         resp = client.post(
             "/v1/restaurant/score-parcel",

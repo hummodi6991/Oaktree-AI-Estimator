@@ -104,6 +104,10 @@ def generate_heatmap(
             )
             if cached and cached.overall_score is not None:
                 lat, lon = h3.cell_to_latlng(h3_idx)
+                # Reconstruct final_score from cached data if available
+                cached_factors = cached.factors or {}
+                cached_final = cached_factors.get("final_score", float(cached.overall_score))
+                cached_confidence = cached_factors.get("confidence_score", None)
                 features.append({
                     "type": "Feature",
                     "geometry": {
@@ -112,10 +116,13 @@ def generate_heatmap(
                     },
                     "properties": {
                         "h3_index": h3_idx,
-                        "score": float(cached.overall_score),
+                        "score": float(cached_final),
+                        "opportunity_score": float(cached.overall_score),
+                        "confidence_score": cached_confidence,
+                        "final_score": float(cached_final),
                         "demand_score": float(cached.demand_score) if cached.demand_score else None,
                         "cost_penalty": float(cached.cost_penalty) if cached.cost_penalty else None,
-                        "factors": cached.factors or {},
+                        "factors": cached_factors,
                         "category": category,
                         "lat": lat,
                         "lon": lon,
@@ -127,7 +134,12 @@ def generate_heatmap(
         lat, lon = h3.cell_to_latlng(h3_idx)
         result = score_location(db, lat, lon, category)
 
-        # Cache the result
+        # Cache the result — store final_score and confidence_score inside factors JSONB
+        factors_with_meta = {
+            **result.factors,
+            "final_score": result.final_score,
+            "confidence_score": result.confidence_score,
+        }
         existing = (
             db.query(LocationScore)
             .filter_by(h3_index=h3_idx, category=category)
@@ -137,7 +149,7 @@ def generate_heatmap(
             existing.overall_score = result.opportunity_score
             existing.demand_score = result.demand_score
             existing.cost_penalty = result.cost_penalty
-            existing.factors = result.factors
+            existing.factors = factors_with_meta
             existing.model_version = result.model_version
             existing.computed_at = datetime.now(timezone.utc)
         else:
@@ -148,7 +160,7 @@ def generate_heatmap(
                     overall_score=result.opportunity_score,
                     demand_score=result.demand_score,
                     cost_penalty=result.cost_penalty,
-                    factors=result.factors,
+                    factors=factors_with_meta,
                     model_version=result.model_version,
                     computed_at=datetime.now(timezone.utc),
                 )
@@ -162,7 +174,10 @@ def generate_heatmap(
             },
             "properties": {
                 "h3_index": h3_idx,
-                "score": result.opportunity_score,
+                "score": result.final_score,
+                "opportunity_score": result.opportunity_score,
+                "confidence_score": result.confidence_score,
+                "final_score": result.final_score,
                 "demand_score": result.demand_score,
                 "cost_penalty": result.cost_penalty,
                 "factors": result.factors,

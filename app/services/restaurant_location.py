@@ -79,6 +79,9 @@ class LocationScoreResult:
     factors: dict[str, float]
     contributions: list[dict[str, Any]]  # top-N feature contributions
     confidence: float
+    confidence_score: float = 0.0  # data-reliability score (0-100)
+    final_score: float = 0.0  # ranking score = opportunity * confidence blend
+    contributions_confidence: list[dict[str, Any]] = field(default_factory=list)
     nearby_competitors: list[dict[str, Any]] = field(default_factory=list)
     model_version: str = "weighted_v3"
     ai_weights_used: bool = False
@@ -484,7 +487,9 @@ def get_ai_weights() -> dict[str, float] | None:
         if not importances:
             return None
 
-        # Map model feature names to scoring factor names
+        # Map model feature names to scoring factor names.
+        # IMPORTANT: google_confidence and has_google are excluded from
+        # opportunity weights — they feed into confidence_score instead.
         feature_to_factor = {
             "restaurant_count": "competition",
             "avg_rating": "competitor_rating",
@@ -495,8 +500,7 @@ def get_ai_weights() -> dict[str, float] | None:
             "google_review_count": "delivery_demand",
             "log_review_count": "delivery_demand",
             "google_price_level": "income_proxy",
-            "google_confidence": "commercial_density",
-            "has_google": "commercial_density",
+            # "google_confidence" and "has_google" deliberately excluded
         }
 
         weights: dict[str, float] = {}
@@ -634,20 +638,36 @@ def score_location(
     }
     cost = _weighted_avg(cost_factors, COST_WEIGHTS)
 
-    # 4. Composite opportunity score
+    # 4. Composite opportunity score (market-only)
     opportunity = 0.80 * demand + 0.20 * cost
 
-    # 5. Merge all factors for full breakdown
+    # 5. Merge all factors for full breakdown (opportunity contributions)
     all_factors = {**demand_factors, **cost_factors}
     all_weights = {**demand_w, **COST_WEIGHTS}
     contributions = _build_contributions(all_factors, all_weights)
 
-    # 6. Confidence — based on data availability
+    # 6. Legacy confidence — based on data availability (kept for backward compat)
     data_count = len(same_cat) + len(diff_cat)
     platform_coverage = len(all_on_platforms)
     confidence = min(1.0, (data_count / 20.0) * 0.6 + (platform_coverage / 10.0) * 0.4)
 
-    # 7. Format nearby competitors
+    # 7. Confidence score — data reliability (0-1 then 0-100)
+    confidence_features = _compute_confidence_features(db, lat, lon, same_cat, diff_cat)
+    confidence_score_01 = _aggregate_confidence(confidence_features)
+    confidence_score_01 = max(0.0, min(1.0, confidence_score_01))
+    confidence_score_100 = round(confidence_score_01 * 100, 1)
+
+    # 8. Final ranking score: opportunity dampened by confidence
+    _CONFIDENCE_BASE = 0.60
+    final_score = round(
+        opportunity * (_CONFIDENCE_BASE + (1 - _CONFIDENCE_BASE) * confidence_score_01),
+        1,
+    )
+
+    # 9. Confidence contributions (rule-based, explainable)
+    contributions_confidence = _build_confidence_contributions(confidence_features)
+
+    # 10. Format nearby competitors
     competitors_out = sorted(
         [
             {
@@ -671,6 +691,9 @@ def score_location(
         factors={k: round(v, 1) for k, v in all_factors.items()},
         contributions=contributions,
         confidence=round(confidence, 2),
+        confidence_score=confidence_score_100,
+        final_score=final_score,
+        contributions_confidence=contributions_confidence,
         nearby_competitors=competitors_out,
         model_version="ai_weighted_v3" if ai_used else "weighted_v3",
         ai_weights_used=ai_used,
@@ -684,8 +707,143 @@ def score_location(
             "nearest_road": traffic_info.get("nearest_road"),
             "rent_per_m2": rent_val,
             "ai_weights_used": ai_used,
+            "confidence_features": confidence_features,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Confidence score helpers
+# ---------------------------------------------------------------------------
+
+# Weights for confidence sub-factors (must sum to 1.0)
+_CONF_WEIGHTS = {
+    "has_google": 0.35,
+    "google_confidence": 0.35,
+    "review_sufficiency": 0.30,
+}
+
+
+def _compute_confidence_features(
+    db: Session,
+    lat: float,
+    lon: float,
+    same_cat: list[dict],
+    diff_cat: list[dict],
+) -> dict[str, float]:
+    """
+    Compute confidence/reliability features for the scored location.
+    Returns dict of feature name -> value in [0, 1].
+    """
+    all_nearby = same_cat + diff_cat
+
+    # 1. has_google: fraction of nearby POIs with a google_place_id
+    google_count = 0
+    total_with_google_check = 0
+    if all_nearby:
+        ids = [r.get("id") for r in all_nearby if r.get("id")]
+        if ids:
+            try:
+                from sqlalchemy import text as sa_text
+                placeholders = ", ".join([f":id_{i}" for i in range(len(ids))])
+                params = {f"id_{i}": id_val for i, id_val in enumerate(ids)}
+                result = db.execute(
+                    sa_text(
+                        f"SELECT COUNT(*) FILTER (WHERE google_place_id IS NOT NULL),"
+                        f"       COUNT(*)"
+                        f" FROM restaurant_poi WHERE id IN ({placeholders})"
+                    ),
+                    params,
+                ).fetchone()
+                if result:
+                    google_count = result[0] or 0
+                    total_with_google_check = result[1] or 0
+            except Exception:
+                pass
+
+    has_google = (
+        google_count / total_with_google_check
+        if total_with_google_check > 0
+        else 0.0
+    )
+
+    # 2. google_confidence: average google_confidence of nearby POIs
+    avg_google_conf = 0.0
+    if all_nearby:
+        ids = [r.get("id") for r in all_nearby if r.get("id")]
+        if ids:
+            try:
+                from sqlalchemy import text as sa_text
+                placeholders = ", ".join([f":id_{i}" for i in range(len(ids))])
+                params = {f"id_{i}": id_val for i, id_val in enumerate(ids)}
+                result = db.execute(
+                    sa_text(
+                        f"SELECT AVG(google_confidence)"
+                        f" FROM restaurant_poi"
+                        f" WHERE id IN ({placeholders})"
+                        f"   AND google_confidence IS NOT NULL"
+                    ),
+                    params,
+                ).scalar()
+                avg_google_conf = float(result) if result else 0.0
+            except Exception:
+                pass
+
+    # Clamp to [0, 1] — google_confidence is stored as 0-1
+    google_conf_score = max(0.0, min(1.0, avg_google_conf))
+
+    # 3. review_sufficiency: log1p(review_count) / log1p(200) clamped to [0, 1]
+    total_reviews = 0
+    if all_nearby:
+        ids = [r.get("id") for r in all_nearby if r.get("id")]
+        if ids:
+            try:
+                from sqlalchemy import text as sa_text
+                placeholders = ", ".join([f":id_{i}" for i in range(len(ids))])
+                params = {f"id_{i}": id_val for i, id_val in enumerate(ids)}
+                result = db.execute(
+                    sa_text(
+                        f"SELECT COALESCE(SUM(review_count), 0)"
+                        f" FROM restaurant_poi WHERE id IN ({placeholders})"
+                    ),
+                    params,
+                ).scalar()
+                total_reviews = int(result) if result else 0
+            except Exception:
+                pass
+
+    review_sufficiency = min(1.0, math.log1p(total_reviews) / math.log1p(200))
+
+    return {
+        "has_google": round(has_google, 4),
+        "google_confidence": round(google_conf_score, 4),
+        "review_sufficiency": round(review_sufficiency, 4),
+    }
+
+
+def _aggregate_confidence(features: dict[str, float]) -> float:
+    """Weighted average of confidence features -> score in [0, 1]."""
+    total = sum(
+        _CONF_WEIGHTS.get(k, 0) * v for k, v in features.items()
+    )
+    return total
+
+
+def _build_confidence_contributions(
+    features: dict[str, float],
+) -> list[dict[str, Any]]:
+    """Explainable confidence contributions, sorted by weighted impact."""
+    items = []
+    for k, v in features.items():
+        w = _CONF_WEIGHTS.get(k, 0)
+        items.append({
+            "factor": k,
+            "score": round(v, 4),
+            "weight": round(w, 3),
+            "weighted_contribution": round(w * v, 4),
+        })
+    items.sort(key=lambda x: abs(x["weighted_contribution"]), reverse=True)
+    return items
 
 
 def _resolve_rent(db: Session, lat: float, lon: float) -> float | None:
