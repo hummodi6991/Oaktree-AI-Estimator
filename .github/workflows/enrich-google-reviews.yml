@@ -70,8 +70,8 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             echo "limit=0" >> "$GITHUB_OUTPUT"
             echo "force=false" >> "$GITHUB_OUTPUT"
-            echo "only_missing=true" >> "$GITHUB_OUTPUT"
-            echo "reset_cursor=false" >> "$GITHUB_OUTPUT"
+            echo "only_missing=false" >> "$GITHUB_OUTPUT"
+            echo "reset_cursor=true" >> "$GITHUB_OUTPUT"
           else
             LIMIT="${{ github.event.inputs.limit }}"
             echo "limit=${LIMIT:-500}" >> "$GITHUB_OUTPUT"
@@ -117,16 +117,24 @@ jobs:
           from app.db.session import SessionLocal
           from sqlalchemy import text
           db = SessionLocal()
-          total = db.execute(text('SELECT count(*) FROM restaurant_poi')).scalar()
-          enriched = db.execute(text('SELECT count(*) FROM restaurant_poi WHERE google_place_id IS NOT NULL')).scalar()
-          fresh = db.execute(text(\"\"\"SELECT count(*) FROM restaurant_poi WHERE google_fetched_at >= now() - interval '30 days'\"\"\")).scalar()
+          # Scope coverage to the Riyadh bbox used by the enrichment script
+          bbox = 'lat BETWEEN 24.20 AND 25.10 AND lon BETWEEN 46.20 AND 47.30'
+          total = db.execute(text(f'SELECT count(*) FROM restaurant_poi WHERE {bbox}')).scalar()
+          matched = db.execute(text(f'SELECT count(*) FROM restaurant_poi WHERE google_place_id IS NOT NULL AND {bbox}')).scalar()
+          attempted = db.execute(text(f'SELECT count(*) FROM restaurant_poi WHERE google_fetched_at IS NOT NULL AND {bbox}')).scalar()
+          fresh = db.execute(text(f\"\"\"SELECT count(*) FROM restaurant_poi WHERE google_fetched_at >= now() - interval '30 days' AND {bbox}\"\"\")).scalar()
           cursor_row = db.execute(text('SELECT last_cursor FROM google_reviews_enrich_state WHERE id = 1')).first()
           last_cursor = cursor_row[0] if cursor_row else 'N/A'
-          print(f'Total POIs: {total}')
-          print(f'Google enriched: {enriched}')
+          print(f'Total POIs (Riyadh): {total}')
+          print(f'Google matched: {matched}')
+          print(f'Google attempted: {attempted}')
           print(f'Fresh (last 30d): {fresh}')
           if total > 0:
-              print(f'Coverage: {enriched/total*100:.1f}%')
+              coverage = attempted / total * 100
+              match_rate = matched / total * 100
+              print(f'Coverage: {coverage:.1f}%')
+              print(f'Match rate: {match_rate:.1f}%')
+              assert coverage >= 99.0, f'Coverage {coverage:.1f}% is below 99% threshold'
           print(f'Last cursor: {last_cursor}')
           db.close()
           "
