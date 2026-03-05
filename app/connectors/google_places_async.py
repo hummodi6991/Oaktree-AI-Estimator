@@ -40,10 +40,19 @@ _RESTAURANT_TYPES = frozenset({
     "food", "bakery", "bar",
 })
 
-_GENERIC_NAMES = frozenset({
-    "restaurant", "cafe", "مطعم", "كافيه", "مقهى",
-    "coffee", "food", "bakery", "grill",
-})
+_GENERIC_NAMES = frozenset(
+    {
+        "مطعم",
+        "مقهى",
+        "كافيه",
+        "restaurant",
+        "cafe",
+        "coffee",
+        "food",
+        "bakery",
+        "grill",
+    }
+)
 
 # In-memory caches
 _candidates_cache: dict[tuple[str, float, float], list[dict]] = {}

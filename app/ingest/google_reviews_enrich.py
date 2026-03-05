@@ -90,6 +90,7 @@ def _fetch_batch(
     *,
     cursor: str | None,
     force: bool,
+    only_missing: bool,
     batch_size: int,
 ) -> list[RestaurantPOI]:
     """
@@ -97,6 +98,7 @@ def _fetch_batch(
 
     Filters:
     - Within Riyadh bbox
+    - If only_missing: only rows with NULL review_count or NULL google_place_id
     - If not force: only rows with NULL or stale google_fetched_at
     - Ordered by id for stable cursor pagination
     """
@@ -109,6 +111,12 @@ def _fetch_batch(
             RestaurantPOI.lon <= RIYADH_LON_MAX,
         )
     )
+
+    if only_missing:
+        q = q.filter(
+            (RestaurantPOI.review_count.is_(None))
+            | (RestaurantPOI.google_place_id.is_(None))
+        )
 
     if not force:
         stale_cutoff = datetime.now(timezone.utc) - timedelta(days=STALE_DAYS)
@@ -276,6 +284,7 @@ async def run_async(
     *,
     limit: int | None = None,
     force: bool = False,
+    only_missing: bool = True,
     resume: bool = True,
     reset: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -320,6 +329,7 @@ async def run_async(
                     db,
                     cursor=cursor,
                     force=force,
+                    only_missing=only_missing,
                     batch_size=batch_size,
                 )
                 if not batch:
@@ -374,6 +384,7 @@ def run(
     *,
     limit: int | None = None,
     force: bool = False,
+    only_missing: bool = True,
     resume: bool = True,
     reset: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -383,6 +394,7 @@ def run(
         run_async(
             limit=limit,
             force=force,
+            only_missing=only_missing,
             resume=resume,
             reset=reset,
             batch_size=batch_size,
@@ -415,6 +427,14 @@ def main() -> None:
         help="Reset cursor to NULL before starting.",
     )
     parser.add_argument(
+        "--only-missing", action="store_true", default=True,
+        help="Only enrich rows with NULL review_count or google_place_id (default: true).",
+    )
+    parser.add_argument(
+        "--no-only-missing", dest="only_missing", action="store_false",
+        help="Enrich all rows, not just those missing review data.",
+    )
+    parser.add_argument(
         "--batch-size", type=int, default=DEFAULT_BATCH_SIZE,
         help=f"Rows per batch (default: {DEFAULT_BATCH_SIZE}).",
     )
@@ -428,6 +448,7 @@ def main() -> None:
     stats = run(
         limit=args.limit,
         force=args.force,
+        only_missing=args.only_missing,
         resume=args.resume,
         reset=args.reset,
         batch_size=args.batch_size,
