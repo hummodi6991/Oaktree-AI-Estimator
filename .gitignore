@@ -3,6 +3,7 @@ pycache/
 .venv/
 .env
 node_modules/
+frontend/dist/
 *.log
 # Ignore generated data but keep checked-in samples
 data/*
