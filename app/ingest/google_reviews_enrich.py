@@ -284,7 +284,7 @@ async def run_async(
     *,
     limit: int | None = None,
     force: bool = False,
-    only_missing: bool = True,
+    only_missing: bool = False,
     resume: bool = True,
     reset: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -384,7 +384,7 @@ def run(
     *,
     limit: int | None = None,
     force: bool = False,
-    only_missing: bool = True,
+    only_missing: bool = False,
     resume: bool = True,
     reset: bool = False,
     batch_size: int = DEFAULT_BATCH_SIZE,
@@ -427,8 +427,8 @@ def main() -> None:
         help="Reset cursor to NULL before starting.",
     )
     parser.add_argument(
-        "--only-missing", action="store_true", default=True,
-        help="Only enrich rows with NULL review_count or google_place_id (default: true).",
+        "--only-missing", action="store_true", default=False,
+        help="Only enrich rows with NULL review_count or google_place_id.",
     )
     parser.add_argument(
         "--no-only-missing", dest="only_missing", action="store_false",
