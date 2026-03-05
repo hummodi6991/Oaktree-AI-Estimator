@@ -15,6 +15,10 @@ on:
         description: "Only enrich rows missing Google data (set false for a one-time full refresh)"
         type: boolean
         default: true
+      reset_cursor:
+        description: "Reset resume cursor before starting (recommended for full refresh)"
+        type: boolean
+        default: false
   schedule:
     - cron: "0 5 * * 3"  # Weekly Wednesday 05:00 UTC
 
@@ -67,11 +71,13 @@ jobs:
             echo "limit=0" >> "$GITHUB_OUTPUT"
             echo "force=false" >> "$GITHUB_OUTPUT"
             echo "only_missing=true" >> "$GITHUB_OUTPUT"
+            echo "reset_cursor=false" >> "$GITHUB_OUTPUT"
           else
             LIMIT="${{ github.event.inputs.limit }}"
             echo "limit=${LIMIT:-500}" >> "$GITHUB_OUTPUT"
             echo "force=${{ github.event.inputs.force }}" >> "$GITHUB_OUTPUT"
             echo "only_missing=${{ github.event.inputs.only_missing }}" >> "$GITHUB_OUTPUT"
+            echo "reset_cursor=${{ github.event.inputs.reset_cursor }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Enrich restaurant POIs with Google Reviews
@@ -79,6 +85,12 @@ jobs:
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
         run: |
           ARGS="--resume --batch-size 200"
+
+          # If user requested a cursor reset, do it.
+          if [ "${{ steps.inputs.outputs.reset_cursor }}" = "true" ]; then
+            ARGS="$ARGS --reset"
+          fi
+
           LIMIT="${{ steps.inputs.outputs.limit }}"
           if [ "$LIMIT" != "0" ] && [ -n "$LIMIT" ]; then
             ARGS="$ARGS --limit $LIMIT"
@@ -86,9 +98,17 @@ jobs:
           if [ "${{ steps.inputs.outputs.force }}" = "true" ]; then
             ARGS="$ARGS --force"
           fi
+          # Full refresh: ensure we don't accidentally "resume past" everything.
+          # If only_missing is false (full refresh) and user did not explicitly reset_cursor,
+          # reset cursor automatically to avoid processed=0 runs.
           if [ "${{ steps.inputs.outputs.only_missing }}" != "true" ]; then
             ARGS="$ARGS --no-only-missing"
+            if [ "${{ steps.inputs.outputs.reset_cursor }}" != "true" ]; then
+              ARGS="$ARGS --reset"
+            fi
           fi
+
+          echo "Running: python -m app.ingest.google_reviews_enrich $ARGS"
           python -m app.ingest.google_reviews_enrich $ARGS
 
       - name: Smoke test — enrichment coverage
