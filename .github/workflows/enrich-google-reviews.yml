@@ -19,8 +19,6 @@ on:
         description: "Reset resume cursor before starting (recommended for full refresh)"
         type: boolean
         default: false
-  schedule:
-    - cron: "0 5 * * 3"  # Weekly Wednesday 05:00 UTC
 
 concurrency:
   group: enrich-google-reviews
@@ -67,18 +65,11 @@ jobs:
       - name: Resolve inputs
         id: inputs
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "limit=0" >> "$GITHUB_OUTPUT"
-            echo "force=false" >> "$GITHUB_OUTPUT"
-            echo "only_missing=true" >> "$GITHUB_OUTPUT"
-            echo "reset_cursor=false" >> "$GITHUB_OUTPUT"
-          else
-            LIMIT="${{ github.event.inputs.limit }}"
-            echo "limit=${LIMIT:-500}" >> "$GITHUB_OUTPUT"
-            echo "force=${{ github.event.inputs.force }}" >> "$GITHUB_OUTPUT"
-            echo "only_missing=${{ github.event.inputs.only_missing }}" >> "$GITHUB_OUTPUT"
-            echo "reset_cursor=${{ github.event.inputs.reset_cursor }}" >> "$GITHUB_OUTPUT"
-          fi
+          LIMIT="${{ github.event.inputs.limit }}"
+          echo "limit=${LIMIT:-500}" >> "$GITHUB_OUTPUT"
+          echo "force=${{ github.event.inputs.force }}" >> "$GITHUB_OUTPUT"
+          echo "only_missing=${{ github.event.inputs.only_missing }}" >> "$GITHUB_OUTPUT"
+          echo "reset_cursor=${{ github.event.inputs.reset_cursor }}" >> "$GITHUB_OUTPUT"
 
       - name: Enrich restaurant POIs with Google Reviews
         env:
