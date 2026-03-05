@@ -12,9 +12,9 @@ on:
         type: boolean
         default: false
       only_missing:
-        description: "Only enrich rows missing Google data (default: false = full refresh)"
+        description: "Only enrich rows missing Google data (set false for a one-time full refresh)"
         type: boolean
-        default: false
+        default: true
   schedule:
     - cron: "0 5 * * 3"  # Weekly Wednesday 05:00 UTC
 
@@ -66,7 +66,7 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             echo "limit=0" >> "$GITHUB_OUTPUT"
             echo "force=false" >> "$GITHUB_OUTPUT"
-            echo "only_missing=false" >> "$GITHUB_OUTPUT"
+            echo "only_missing=true" >> "$GITHUB_OUTPUT"
           else
             LIMIT="${{ github.event.inputs.limit }}"
             echo "limit=${LIMIT:-500}" >> "$GITHUB_OUTPUT"
