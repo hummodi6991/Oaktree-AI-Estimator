@@ -85,6 +85,20 @@ class TestGridIndex:
 # ---------------------------------------------------------------------------
 
 
+class TestWeightsAlignment:
+    """Ensure demand_factors keys produced by _score_cell match DEMAND_WEIGHTS."""
+
+    def test_demand_factors_keys_match_weights(self):
+        nearby = []
+        result = _score_cell(24.7, 46.7, "burger", 1200, nearby, 5000.0, DEMAND_WEIGHTS)
+        factor_keys = set(result["debug_factors"].keys())
+        weight_keys = set(DEMAND_WEIGHTS.keys())
+        assert factor_keys == weight_keys, (
+            f"Mismatch: factors={factor_keys - weight_keys}, "
+            f"weights={weight_keys - factor_keys}"
+        )
+
+
 class TestScoreCell:
     def test_returns_required_fields(self):
         nearby = [

@@ -28,7 +28,6 @@ from app.services.restaurant_location import (
     competitor_rating_score,
     _haversine,
     _weighted_avg,
-    get_ai_weights,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,10 +37,10 @@ _CACHE_TTL = timedelta(days=7)
 
 # Riyadh bounding box (expanded by ~15 km for edge-radius queries)
 _RIYADH_BBOX = {
-    "min_lat": 24.40,
+    "min_lat": 24.20,
     "max_lat": 25.10,
-    "min_lon": 46.40,
-    "max_lon": 47.10,
+    "min_lon": 46.20,
+    "max_lon": 47.30,
 }
 
 
@@ -387,11 +386,13 @@ def generate_opportunity_heatmap(
     t_build_idx = time.monotonic() - t0
     logger.info("Built spatial index in %.2fs", t_build_idx)
 
-    # 5. Determine weights
+    # 5. Use static DEMAND_WEIGHTS for batch heatmap scoring.
+    # AI weights are intentionally NOT used here: the trained model's
+    # feature importances map to a mix of demand + confidence features,
+    # and applying them as demand-only weights would distort the scores.
+    # The per-location /restaurant/score endpoint handles AI weights
+    # with its own mapping logic; the heatmap uses the curated weights.
     demand_w = DEMAND_WEIGHTS
-    ai_w = get_ai_weights()
-    if ai_w:
-        demand_w = ai_w
 
     # 6. Score each cell
     t0 = time.monotonic()
