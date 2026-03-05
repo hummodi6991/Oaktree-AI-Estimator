@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { useTranslation } from "react-i18next";
+import type { Geometry } from "geojson";
 
 import Map from "./components/Map";
 import ExcelForm from "./components/ExcelForm";
 import AccessCodeModal from "./components/AccessCodeModal";
 import AdminAnalyticsModal from "./components/AdminAnalyticsModal";
+import RestaurantLocationPanel from "./components/RestaurantLocationPanel";
 import "./i18n";
 import "./App.css";
 import "./index.css";
@@ -30,6 +32,51 @@ import "./styles/ui-figma.css";
 import "./styles/atlas-ui.css";
 import i18n from "i18next";
 
+function centroidFromGeometry(geometry?: Geometry | null): [number, number] | null {
+  if (!geometry) return null;
+  if (geometry.type === "Point") return geometry.coordinates as [number, number];
+  if (geometry.type === "Polygon") {
+    const ring = geometry.coordinates?.[0];
+    if (!ring || ring.length < 3) return null;
+    let crossSum = 0, cxSum = 0, cySum = 0;
+    for (let i = 0; i < ring.length; i++) {
+      const [x0, y0] = ring[i];
+      const [x1, y1] = ring[(i + 1) % ring.length];
+      const cross = x0 * y1 - x1 * y0;
+      crossSum += cross;
+      cxSum += (x0 + x1) * cross;
+      cySum += (y0 + y1) * cross;
+    }
+    if (!crossSum) return null;
+    return [cxSum / (3 * crossSum), cySum / (3 * crossSum)];
+  }
+  if (geometry.type === "MultiPolygon") {
+    const coords = geometry.coordinates as number[][][][];
+    let totalArea = 0, cx = 0, cy = 0;
+    for (const poly of coords) {
+      const ring = poly[0];
+      if (!ring || ring.length < 3) continue;
+      let crossSum = 0, cxS = 0, cyS = 0;
+      for (let i = 0; i < ring.length; i++) {
+        const [x0, y0] = ring[i];
+        const [x1, y1] = ring[(i + 1) % ring.length];
+        const cross = x0 * y1 - x1 * y0;
+        crossSum += cross;
+        cxS += (x0 + x1) * cross;
+        cyS += (y0 + y1) * cross;
+      }
+      if (!crossSum) continue;
+      const area = Math.abs(crossSum) / 2;
+      totalArea += area;
+      cx += (cxS / (3 * crossSum)) * area;
+      cy += (cyS / (3 * crossSum)) * area;
+    }
+    if (!totalArea) return null;
+    return [cx / totalArea, cy / totalArea];
+  }
+  return null;
+}
+
 function applyLocaleAttrs() {
   const lng = i18n.language || "en";
   document.documentElement.lang = lng;
@@ -51,6 +98,11 @@ function App() {
   const { t } = useTranslation();
   const [searchTarget, setSearchTarget] = useState<SearchItem | null>(null);
   const [isMapHidden, setIsMapHidden] = useState(false);
+  const [restaurantHeatmapData, setRestaurantHeatmapData] = useState<GeoJSON.FeatureCollection | null>(null);
+
+  const parcelCentroid = useMemo(() => centroidFromGeometry(parcel?.geometry as Geometry | null), [parcel]);
+  const parcelLon = parcelCentroid?.[0] ?? null;
+  const parcelLat = parcelCentroid?.[1] ?? null;
 
   const uiV2 = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
@@ -159,6 +211,7 @@ function App() {
   useEffect(() => {
     if (!parcel) {
       setIsMapHidden(false);
+      setRestaurantHeatmapData(null);
     }
   }, [parcel]);
 
@@ -232,6 +285,11 @@ function App() {
               );
             })()}
             <ExcelForm parcel={parcel} />
+            <RestaurantLocationPanel
+              lat={parcelLat}
+              lon={parcelLon}
+              onHeatmapData={setRestaurantHeatmapData}
+            />
           </>
         ) : null}
       </div>
@@ -255,6 +313,7 @@ function App() {
                 focusTarget={searchTarget}
                 mapHeight={isMapHidden ? "0px" : "52vh"}
                 mapContainerClassName="ui-v2-map-canvas"
+                restaurantHeatmapData={restaurantHeatmapData}
               />
             </div>
           }
@@ -269,6 +328,13 @@ function App() {
                   isMapHidden={isMapHidden}
                 />}
                 controls={<ExcelForm parcel={parcel} mode="v2" />}
+                extra={
+                  <RestaurantLocationPanel
+                    lat={parcelLat}
+                    lon={parcelLon}
+                    onHeatmapData={setRestaurantHeatmapData}
+                  />
+                }
               />
             ) : (
               <EmptyState />

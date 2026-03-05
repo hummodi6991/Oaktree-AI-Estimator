@@ -18,6 +18,7 @@ import type { ParcelSummary } from "../api";
 import { collateParcels, identifyPoint, type CollateResponse } from "../lib/api/geo";
 import MapSearchBar from "./MapSearchBar";
 import type { SearchItem } from "../types/search";
+import { setRestaurantHeatmapData } from "../map/restaurantHeatLayer";
 
 // Proper Arabic shaping (joins letters) for MapLibre:
 // MapLibre expects a URL to a plugin JS file (NOT an imported module object).
@@ -43,6 +44,7 @@ type MapProps = {
   mapHeight?: string | number;
   mapContainerClassName?: string;
   uiVariant?: "legacy" | "v2";
+  restaurantHeatmapData?: GeoJSON.FeatureCollection | null;
 };
 
 type StatusMessage = { key: string; options?: Record<string, unknown> } | { raw: string };
@@ -327,6 +329,7 @@ export default function Map({
   mapHeight = "60vh",
   mapContainerClassName,
   uiVariant = "legacy",
+  restaurantHeatmapData = null,
 }: MapProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -737,6 +740,12 @@ export default function Map({
     }
     map.flyTo({ center: focusTarget.center, zoom: Math.min(16, safeMax), duration: 600 });
   }, [focusTarget]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.isStyleLoaded()) return;
+    setRestaurantHeatmapData(map, restaurantHeatmapData ?? null);
+  }, [restaurantHeatmapData]);
 
   const handleClearSelection = () => {
     setSelectedParcelIds([]);
