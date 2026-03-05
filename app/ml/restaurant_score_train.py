@@ -4,7 +4,11 @@ ML model training for restaurant location demand-potential scoring.
 Trains a GradientBoostingRegressor to calibrate location demand-potential
 scores based on features like competition density, population,
 traffic, commercial density, delivery platform coverage, anchor proximity,
-and income proxy.
+income proxy, and Google-enriched signals (rating, review count,
+price level, confidence).
+
+Training is scoped to Riyadh (lat 24.20–25.10, lon 46.20–47.30) to
+match the Google enrichment pipeline's coverage area.
 
 The trained model's feature importances are used by the scoring engine
 to dynamically weight demand factors (instead of static weights). This
@@ -27,6 +31,7 @@ from datetime import date
 
 import joblib
 import mlflow
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
@@ -45,10 +50,14 @@ MODEL_DIR = os.environ.get("MODEL_DIR", "models")
 MODEL_PATH = os.path.join(MODEL_DIR, "restaurant_score_v0.pkl")
 META_PATH = os.path.join(MODEL_DIR, "restaurant_score_v0.meta.json")
 
+# Riyadh bounding box — matches the Google enrichment pipeline scope
+RIYADH_LAT_MIN, RIYADH_LAT_MAX = 24.20, 25.10
+RIYADH_LON_MIN, RIYADH_LON_MAX = 46.20, 47.30
+
 
 def _build_training_df(db: Session) -> pd.DataFrame:
     """
-    Build training data from restaurant POI density.
+    Build training data from restaurant POI density (Riyadh only).
 
     Training target: demand-potential proxy — areas with many highly-rated
     restaurants of a given category indicate proven demand. We use
@@ -62,6 +71,12 @@ def _build_training_df(db: Session) -> pd.DataFrame:
     - neighbor_competition: same-category restaurants in surrounding cells
     - neighbor_total: total restaurants in surrounding cells
     - population: population in the H3 cell
+    - google_rating: average Google rating in the cell
+    - google_review_count: total Google review count in the cell
+    - log_review_count: log1p(google_review_count)
+    - google_price_level: average Google price level in the cell
+    - google_confidence: average Google match confidence in the cell
+    - has_google: fraction of POIs with a Google place ID
     - category (one-hot encoded)
     """
     try:
@@ -69,7 +84,7 @@ def _build_training_df(db: Session) -> pd.DataFrame:
     except ImportError:
         raise RuntimeError("h3 library required for training")
 
-    # Get all restaurant POIs with coordinates
+    # Get all restaurant POIs within Riyadh bbox
     pois = (
         db.query(
             RestaurantPOI.lat,
@@ -77,19 +92,31 @@ def _build_training_df(db: Session) -> pd.DataFrame:
             RestaurantPOI.category,
             RestaurantPOI.rating,
             RestaurantPOI.source,
+            RestaurantPOI.review_count,
+            RestaurantPOI.price_level,
+            RestaurantPOI.google_place_id,
+            RestaurantPOI.google_confidence,
         )
         .filter(RestaurantPOI.lat.isnot(None))
         .filter(RestaurantPOI.lon.isnot(None))
+        .filter(RestaurantPOI.lat >= RIYADH_LAT_MIN)
+        .filter(RestaurantPOI.lat <= RIYADH_LAT_MAX)
+        .filter(RestaurantPOI.lon >= RIYADH_LON_MIN)
+        .filter(RestaurantPOI.lon <= RIYADH_LON_MAX)
         .all()
     )
 
     if not pois:
-        raise RuntimeError("No restaurant POI data available for training")
+        raise RuntimeError("No restaurant POI data available for training (Riyadh bbox)")
 
     # Aggregate by H3 cell x category
     h3_data: dict[tuple[str, str], dict] = {}
 
-    for lat, lon, category, rating, source in pois:
+    for row in pois:
+        lat, lon, category, rating, source = row[0], row[1], row[2], row[3], row[4]
+        review_count, price_level, google_place_id, google_conf = (
+            row[5], row[6], row[7], row[8],
+        )
         lat_f, lon_f = float(lat), float(lon)
         h3_idx = h3.latlng_to_cell(lat_f, lon_f, 8)
         key = (h3_idx, category)
@@ -105,6 +132,15 @@ def _build_training_df(db: Session) -> pd.DataFrame:
                 "rated_count": 0,
                 "platform_count": 0,
                 "platform_sources": set(),
+                # Google-enriched accumulators
+                "google_rating_sum": 0.0,
+                "google_rated_count": 0,
+                "google_review_total": 0,
+                "google_price_sum": 0.0,
+                "google_price_count": 0,
+                "google_conf_sum": 0.0,
+                "google_conf_count": 0,
+                "google_count": 0,
             }
 
         h3_data[key]["count"] += 1
@@ -114,6 +150,21 @@ def _build_training_df(db: Session) -> pd.DataFrame:
         if source in PLATFORM_SOURCES:
             h3_data[key]["platform_count"] += 1
             h3_data[key]["platform_sources"].add(source)
+
+        # Google-enriched fields
+        if google_place_id:
+            h3_data[key]["google_count"] += 1
+            if rating:
+                h3_data[key]["google_rating_sum"] += float(rating)
+                h3_data[key]["google_rated_count"] += 1
+            if review_count:
+                h3_data[key]["google_review_total"] += int(review_count)
+            if price_level:
+                h3_data[key]["google_price_sum"] += float(price_level)
+                h3_data[key]["google_price_count"] += 1
+            if google_conf:
+                h3_data[key]["google_conf_sum"] += float(google_conf)
+                h3_data[key]["google_conf_count"] += 1
 
     # Build feature rows
     items = []
@@ -146,6 +197,24 @@ def _build_training_df(db: Session) -> pd.DataFrame:
             if n != h3_idx
         )
 
+        # Google-derived features
+        g = data
+        google_rating = (
+            g["google_rating_sum"] / g["google_rated_count"]
+            if g["google_rated_count"] > 0 else 0.0
+        )
+        google_review_count = g["google_review_total"]
+        log_review_count = float(np.log1p(google_review_count))
+        google_price_level = (
+            g["google_price_sum"] / g["google_price_count"]
+            if g["google_price_count"] > 0 else 0.0
+        )
+        google_confidence = (
+            g["google_conf_sum"] / g["google_conf_count"]
+            if g["google_conf_count"] > 0 else 0.0
+        )
+        has_google = g["google_count"] / g["count"] if g["count"] > 0 else 0.0
+
         # Target: normalized demand proxy
         target = min(100.0, data["count"] * avg_rating * 5)
 
@@ -159,11 +228,17 @@ def _build_training_df(db: Session) -> pd.DataFrame:
             "neighbor_competition": neighbor_same_cat,
             "neighbor_total": neighbor_total,
             "population": population,
+            "google_rating": google_rating,
+            "google_review_count": google_review_count,
+            "log_review_count": log_review_count,
+            "google_price_level": google_price_level,
+            "google_confidence": google_confidence,
+            "has_google": has_google,
             "target": target,
         })
 
     df = pd.DataFrame(items)
-    logger.info("Built training DataFrame with %d rows", len(df))
+    logger.info("Built training DataFrame with %d rows (Riyadh only)", len(df))
     return df
 
 
@@ -189,6 +264,12 @@ def train_and_save() -> dict:
         "neighbor_competition",
         "neighbor_total",
         "population",
+        "google_rating",
+        "google_review_count",
+        "log_review_count",
+        "google_price_level",
+        "google_confidence",
+        "has_google",
     ]
 
     # One-hot encode category
@@ -231,14 +312,21 @@ def train_and_save() -> dict:
         "features": all_features,
         "feature_importances": importances,
         "trained_at": str(date.today()),
-        "model_version": "v3_enhanced",
+        "model_version": "v4_google_riyadh",
         "platform_sources": sorted(PLATFORM_SOURCES),
+        "training_bbox": {
+            "lat_min": RIYADH_LAT_MIN,
+            "lat_max": RIYADH_LAT_MAX,
+            "lon_min": RIYADH_LON_MIN,
+            "lon_max": RIYADH_LON_MAX,
+            "label": "Riyadh",
+        },
     }
     with open(META_PATH, "w") as f:
         json.dump(meta, f, indent=2)
 
     try:
-        with mlflow.start_run(run_name="restaurant_demand_potential_v3"):
+        with mlflow.start_run(run_name="restaurant_demand_potential_v4_google"):
             mlflow.log_params({
                 "model": "GradientBoostingRegressor",
                 "n_estimators": 200,
@@ -256,8 +344,30 @@ def train_and_save() -> dict:
         "Restaurant score model trained: MAE=%.2f, R2=%.3f, n=%d",
         mae, r2, len(df),
     )
+
+    # Smoke-test summary
+    has_google_pct = (
+        df["has_google"].mean() * 100.0 if "has_google" in df.columns else 0.0
+    )
+    sorted_imp = sorted(importances.items(), key=lambda x: x[1], reverse=True)
+    top15 = sorted_imp[:15]
+
+    print("\n" + "=" * 60)
+    print("TRAINING SMOKE TEST")
+    print("=" * 60)
+    print(f"  Training rows:          {len(df)}")
+    print(f"  has_google = true:      {has_google_pct:.1f}%")
+    print(f"  MAE:                    {mae:.2f}")
+    print(f"  R2:                     {r2:.3f}")
+    print(f"\n  Top 15 feature importances:")
+    for rank, (feat, imp) in enumerate(top15, 1):
+        print(f"    {rank:2d}. {feat:<30s} {imp:.4f}")
+    print("=" * 60 + "\n")
+
     return {"model_path": MODEL_PATH, "metrics": meta}
 
 
 if __name__ == "__main__":
-    print(train_and_save())
+    logging.basicConfig(level=logging.INFO)
+    result = train_and_save()
+    print(json.dumps(result.get("metrics", {}), indent=2))
