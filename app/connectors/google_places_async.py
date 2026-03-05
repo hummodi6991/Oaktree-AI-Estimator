@@ -16,7 +16,9 @@ import asyncio
 import logging
 import math
 import os
+import re
 import time
+import unicodedata
 from typing import Any
 
 import httpx
@@ -54,8 +56,44 @@ _GENERIC_NAMES = frozenset(
     }
 )
 
+# ---------------------------------------------------------------------------
+# Name normalization helpers
+# ---------------------------------------------------------------------------
+
+# Arabic diacritics (tashkeel) Unicode range
+_ARABIC_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7-\u06E8\u06EA-\u06ED]")
+
+# Arabic Alef variants → bare Alef
+_ALEF_VARIANTS = re.compile(r"[\u0622\u0623\u0625\u0671]")  # آ أ إ ٱ
+
+# Ta marbuta → Ha
+_TA_MARBUTA = "\u0629"  # ة
+_HA = "\u0647"  # ه
+
+# Arabic-Indic digits → ASCII
+_ARABIC_DIGIT_MAP = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+
+# Generic tokens to strip for similarity (both Arabic and English)
+_STRIP_TOKENS_AR = frozenset({
+    "مطعم", "كافيه", "مقهى", "كوفي", "مطاعم", "كافيتريا",
+    "مخبز", "حلويات", "عصير", "محل", "فرع", "الرياض", "السعودية", "شارع",
+})
+_STRIP_TOKENS_EN = frozenset({
+    "restaurant", "restaurants", "cafe", "coffee", "juice",
+    "branch", "riyadh", "ksa", "saudi", "store", "shop",
+    "mall", "grill", "kitchen", "house", "bakery",
+})
+_STRIP_TOKENS = _STRIP_TOKENS_AR | _STRIP_TOKENS_EN
+
+# Category → ordered list of Google Place types to try
+_CATEGORY_TYPE_MAP: dict[str, list[str | None]] = {
+    "coffee_bakery": ["cafe", "bakery", None],
+    "healthy": ["restaurant", "meal_takeaway", None],
+}
+_DEFAULT_TYPE_ORDER: list[str | None] = ["restaurant", None]
+
 # In-memory caches
-_candidates_cache: dict[tuple[str, float, float], list[dict]] = {}
+_candidates_cache: dict[tuple[str, float, float, str | None, int], list[dict]] = {}
 _details_cache: dict[str, dict] = {}
 
 
@@ -66,6 +104,86 @@ def _get_api_key() -> str:
     if not _API_KEY:
         raise RuntimeError("GOOGLE_PLACES_API_KEY environment variable is not set")
     return _API_KEY
+
+
+def normalize_name(name: str) -> str:
+    """
+    Normalize a restaurant name for similarity comparison.
+
+    Steps:
+    - Lowercase
+    - Remove Arabic diacritics (tashkeel)
+    - Normalize Alef variants to bare Alef
+    - Normalize ta marbuta to ha
+    - Normalize Arabic-Indic digits to ASCII
+    - Remove punctuation
+    - Collapse whitespace
+    """
+    s = name.lower()
+    # Remove Arabic diacritics
+    s = _ARABIC_DIACRITICS.sub("", s)
+    # Normalize Alef variants
+    s = _ALEF_VARIANTS.sub("\u0627", s)  # → ا
+    # Ta marbuta → Ha
+    s = s.replace(_TA_MARBUTA, _HA)
+    # Arabic digits → ASCII
+    s = s.translate(_ARABIC_DIGIT_MAP)
+    # Remove punctuation (keep letters, digits, spaces)
+    s = re.sub(r"[^\w\s]", " ", s, flags=re.UNICODE)
+    # Collapse whitespace
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _strip_diacritics_latin(s: str) -> str:
+    """Remove Latin diacritics (e.g., é → e)."""
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _normalized_token_set(name: str) -> set[str]:
+    """
+    Produce a normalized token set for similarity comparison.
+    Strips generic tokens and applies full normalization.
+    """
+    normed = normalize_name(name)
+    normed = _strip_diacritics_latin(normed)
+    tokens = set(normed.split())
+    tokens -= _STRIP_TOKENS
+    return tokens
+
+
+def _build_name_variants(name: str, name_ar: str | None) -> list[str]:
+    """
+    Build a list of query name variants for a POI, ordered by specificity.
+    """
+    variants: list[str] = []
+    seen: set[str] = set()
+
+    def _add(v: str) -> None:
+        v = v.strip()
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            variants.append(v)
+
+    # 1. Original name as-is
+    _add(name)
+
+    # 2. Arabic name if present and different
+    if name_ar:
+        _add(name_ar)
+
+    # 3. Normalized name (strip punctuation/diacritics, collapse spaces)
+    normed = normalize_name(name)
+    _add(normed)
+
+    # 4. Name + "Riyadh" / name + "الرياض"
+    _add(f"{name} Riyadh")
+    _add(f"{name} الرياض")
+    if name_ar:
+        _add(f"{name_ar} الرياض")
+
+    return variants
 
 
 class TokenBucketRateLimiter:
@@ -139,32 +257,35 @@ class AsyncGooglePlacesClient:
 
         raise RuntimeError(f"Google Places API request failed after {_MAX_RETRIES} retries")
 
-    async def find_place_candidates(
+    async def _text_search(
         self,
-        name: str,
+        query: str,
         lat: float,
         lon: float,
         radius_m: int = 500,
+        place_type: str | None = "restaurant",
         max_results: int = 5,
     ) -> list[dict]:
-        """Text Search for restaurant candidates, limited to max_results."""
-        cache_key = (name.strip().lower(), round(lat, 5), round(lon, 5))
+        """Single Text Search call. Returns parsed candidate list."""
+        cache_key = (query.strip().lower(), round(lat, 5), round(lon, 5), place_type, radius_m)
         if cache_key in _candidates_cache:
             return _candidates_cache[cache_key]
 
         key = _get_api_key()
-        params = {
-            "query": name,
+        params: dict[str, Any] = {
+            "query": query,
             "location": f"{lat},{lon}",
             "radius": str(radius_m),
-            "type": "restaurant",
             "key": key,
         }
+        if place_type:
+            params["type"] = place_type
+
         data = await self._request(f"{_BASE_URL}/textsearch/json", params)
 
         status = data.get("status", "")
         if status not in ("OK", "ZERO_RESULTS"):
-            logger.error("Google Places Text Search status=%s for %r", status, name)
+            logger.error("Google Places Text Search status=%s for %r", status, query)
             _candidates_cache[cache_key] = []
             return []
 
@@ -186,6 +307,106 @@ class AsyncGooglePlacesClient:
 
         _candidates_cache[cache_key] = candidates
         return candidates
+
+    async def find_place_candidates(
+        self,
+        name: str,
+        lat: float,
+        lon: float,
+        radius_m: int = 500,
+        max_results: int = 5,
+    ) -> list[dict]:
+        """
+        Text Search for restaurant candidates, limited to max_results.
+
+        Legacy single-query interface (kept for backward compatibility).
+        Prefer find_candidates_multi for better coverage.
+        """
+        return await self._text_search(name, lat, lon, radius_m, "restaurant", max_results)
+
+    async def find_candidates_multi(
+        self,
+        name_variants: list[str],
+        lat: float,
+        lon: float,
+        category: str | None = None,
+        radius_m: int = 500,
+        max_results: int = 5,
+    ) -> tuple[list[dict], dict[str, Any]]:
+        """
+        Try multiple query variants and type combinations to find candidates.
+
+        Returns (candidates, fallback_info) where fallback_info tracks which
+        strategies were used.
+
+        Strategy order:
+        1. For each name variant, try category-appropriate types
+        2. If all fail at radius_m, escalate to 1500m
+        """
+        fallback_info: dict[str, Any] = {
+            "attempts": 0,
+            "variant_used": None,
+            "type_used": None,
+            "radius_used": radius_m,
+            "used_name_ar": False,
+            "used_riyadh_suffix": False,
+            "removed_type": False,
+            "radius_escalated": False,
+        }
+
+        # Determine type order based on category
+        type_order = _CATEGORY_TYPE_MAP.get(category or "", _DEFAULT_TYPE_ORDER)
+
+        # Pass 1: normal radius
+        for variant in name_variants:
+            for place_type in type_order:
+                fallback_info["attempts"] += 1
+                candidates = await self._text_search(
+                    variant, lat, lon, radius_m, place_type, max_results,
+                )
+                if candidates:
+                    fallback_info["variant_used"] = variant
+                    fallback_info["type_used"] = place_type
+                    # Track which fallback was used
+                    if variant != name_variants[0]:
+                        if "Riyadh" in variant or "الرياض" in variant:
+                            fallback_info["used_riyadh_suffix"] = True
+                        elif name_ar and variant == name_ar:
+                            fallback_info["used_name_ar"] = True
+                    if place_type is None:
+                        fallback_info["removed_type"] = True
+                    return candidates, fallback_info
+
+        # Pass 2: escalated radius (1500m) — only try first 2 variants with first type
+        escalated_radius = 1500
+        for variant in name_variants[:2]:
+            for place_type in type_order[:1]:  # Only primary type at wider radius
+                fallback_info["attempts"] += 1
+                candidates = await self._text_search(
+                    variant, lat, lon, escalated_radius, place_type, max_results,
+                )
+                if candidates:
+                    fallback_info["variant_used"] = variant
+                    fallback_info["type_used"] = place_type
+                    fallback_info["radius_used"] = escalated_radius
+                    fallback_info["radius_escalated"] = True
+                    return candidates, fallback_info
+
+        # Pass 3: escalated radius with no type constraint (last resort)
+        for variant in name_variants[:2]:
+            fallback_info["attempts"] += 1
+            candidates = await self._text_search(
+                variant, lat, lon, escalated_radius, None, max_results,
+            )
+            if candidates:
+                fallback_info["variant_used"] = variant
+                fallback_info["type_used"] = None
+                fallback_info["radius_used"] = escalated_radius
+                fallback_info["radius_escalated"] = True
+                fallback_info["removed_type"] = True
+                return candidates, fallback_info
+
+        return [], fallback_info
 
     async def get_place_details(self, place_id: str) -> dict:
         """Fetch Place Details for a specific place_id."""
@@ -226,7 +447,7 @@ class AsyncGooglePlacesClient:
 
 
 # ---------------------------------------------------------------------------
-# Matching helpers (same logic as sync, kept here for self-containment)
+# Matching helpers
 # ---------------------------------------------------------------------------
 
 
@@ -241,18 +462,39 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def _name_similarity(a: str, b: str) -> float:
-    """Simple case-insensitive token-overlap similarity in [0, 1]."""
-    ta = set(a.lower().split())
-    tb = set(b.lower().split())
+    """
+    Normalized token-overlap similarity in [0, 1].
+
+    Uses full normalization: lowercase, strip diacritics, remove generic
+    tokens, then compute Jaccard-style overlap.
+    """
+    ta = _normalized_token_set(a)
+    tb = _normalized_token_set(b)
+    if not ta or not tb:
+        # Fallback: basic lowercase split if normalization stripped everything
+        ta = set(normalize_name(a).split())
+        tb = set(normalize_name(b).split())
     if not ta or not tb:
         return 0.0
-    return len(ta & tb) / max(len(ta), len(tb))
+    intersection = len(ta & tb)
+    union = len(ta | tb)
+    return intersection / union if union > 0 else 0.0
 
 
 def _is_generic_name(name: str) -> bool:
     """Check if the restaurant name is too generic for reliable matching."""
     tokens = set(name.lower().split())
     return len(tokens) <= 1 and bool(tokens & _GENERIC_NAMES)
+
+
+def _expected_types_for_category(category: str | None) -> frozenset[str]:
+    """Return expected Google Place types for a given POI category."""
+    if category == "coffee_bakery":
+        return frozenset({"cafe", "bakery"})
+    elif category == "healthy":
+        return frozenset({"restaurant", "meal_takeaway"})
+    else:
+        return frozenset({"restaurant"})
 
 
 def pick_best_candidate(
@@ -262,17 +504,33 @@ def pick_best_candidate(
     candidates: list[dict],
     max_distance_m: float = 250.0,
     min_confidence: float = 0.4,
+    category: str | None = None,
+    radius_escalated: bool = False,
 ) -> tuple[dict | None, float]:
     """
     Choose the best Google Places candidate for a restaurant POI.
 
+    Scoring:
+    - 40% distance score
+    - 35% name similarity
+    - 15% type bonus
+    - 10% proximity/context bonuses
+
     For generic names, require closer distance (<=100m).
+    For escalated radius, require stronger name match.
     """
     generic = _is_generic_name(name)
     effective_max_dist = 100.0 if generic else max_distance_m
+    # When radius was escalated, require higher name similarity
+    effective_min_conf = min_confidence
+    if radius_escalated:
+        effective_min_conf = max(min_confidence, 0.50)
+
+    expected_types = _expected_types_for_category(category)
 
     best: dict | None = None
     best_conf = 0.0
+    candidates_within_75m = []
 
     for c in candidates:
         clat, clng = c.get("lat"), c.get("lng")
@@ -294,13 +552,39 @@ def pick_best_candidate(
         types = set(c.get("types", []))
         type_bonus = 1.0 if types & _RESTAURANT_TYPES else 0.0
 
-        conf = 0.45 * dist_score + 0.40 * name_score + 0.15 * type_bonus
+        # Extra bonuses
+        bonus = 0.0
+
+        # Strong proximity bonus (<=75m)
+        if dist <= 75:
+            bonus += 0.3
+            candidates_within_75m.append((c, name_score))
+
+        # Category type match bonus
+        if types & expected_types:
+            bonus += 0.15
+
+        # Penalty for very generic candidate name when POI name is non-generic
+        cand_name = c.get("name", "")
+        if not generic and _is_generic_name(cand_name):
+            bonus -= 0.2
+
+        conf = 0.40 * dist_score + 0.35 * name_score + 0.15 * type_bonus + 0.10 * min(bonus, 1.0)
 
         if conf > best_conf:
             best_conf = conf
             best = c
 
-    if best_conf < min_confidence:
+    # Special rule: if exactly one candidate within 75m and moderate name similarity,
+    # accept it even if overall score is slightly below threshold
+    if best is None or best_conf < effective_min_conf:
+        if len(candidates_within_75m) == 1:
+            sole_candidate, sole_name_score = candidates_within_75m[0]
+            if sole_name_score >= 0.15:  # at least some token overlap
+                # Force accept with a minimum confidence
+                return sole_candidate, round(max(best_conf, 0.40), 4)
+
+    if best_conf < effective_min_conf:
         return None, 0.0
 
     return best, round(best_conf, 4)
