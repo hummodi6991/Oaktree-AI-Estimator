@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 120
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
@@ -72,7 +72,7 @@ jobs:
         env:
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
         run: |
-          ARGS=""
+          ARGS="--resume --batch-size 200"
           LIMIT="${{ steps.inputs.outputs.limit }}"
           if [ "$LIMIT" != "0" ] && [ -n "$LIMIT" ]; then
             ARGS="$ARGS --limit $LIMIT"
@@ -91,10 +91,13 @@ jobs:
           total = db.execute(text('SELECT count(*) FROM restaurant_poi')).scalar()
           enriched = db.execute(text('SELECT count(*) FROM restaurant_poi WHERE google_place_id IS NOT NULL')).scalar()
           fresh = db.execute(text(\"\"\"SELECT count(*) FROM restaurant_poi WHERE google_fetched_at >= now() - interval '30 days'\"\"\")).scalar()
+          cursor_row = db.execute(text('SELECT last_cursor FROM google_reviews_enrich_state WHERE id = 1')).first()
+          last_cursor = cursor_row[0] if cursor_row else 'N/A'
           print(f'Total POIs: {total}')
           print(f'Google enriched: {enriched}')
           print(f'Fresh (last 30d): {fresh}')
           if total > 0:
               print(f'Coverage: {enriched/total*100:.1f}%')
+          print(f'Last cursor: {last_cursor}')
           db.close()
           "
