@@ -54,10 +54,11 @@ export function setRestaurantHeatmapData(
     source: RESTAURANT_HEAT_SOURCE_ID,
     maxzoom: 16,
     paint: {
-      // Weight each point by its score (normalized 0-100 → 0-1)
+      // Weight each point by its score (normalized 0-100 → 0-1).
+      // Exponential base 2 makes high-score areas stand out sharply.
       "heatmap-weight": [
         "interpolate",
-        ["linear"],
+        ["exponential", 2],
         SCORE_EXPR,
         0, 0,
         100, 1,
@@ -70,17 +71,17 @@ export function setRestaurantHeatmapData(
         10, 0.8,
         15, 1.5,
       ],
-      // Color ramp from transparent to high-score red
+      // Cool cyan → blue color ramp for high contrast on satellite imagery
       "heatmap-color": [
         "interpolate",
         ["linear"],
         ["heatmap-density"],
         0, "rgba(0,0,0,0)",
-        0.1, "rgba(255,255,204,0.6)",   // light yellow
-        0.3, "rgba(254,217,118,0.7)",    // yellow
-        0.5, "rgba(253,141,60,0.8)",     // orange
-        0.7, "rgba(227,26,28,0.85)",     // red
-        1.0, "rgba(177,0,38,0.9)",       // dark red
+        0.1, "rgba(200,240,255,0.55)",   // pale ice-blue
+        0.3, "rgba(100,210,255,0.65)",   // light cyan
+        0.5, "rgba(0,200,220,0.75)",     // aqua
+        0.7, "rgba(0,140,255,0.85)",     // electric blue
+        1.0, "rgba(0,60,200,0.92)",      // deep blue
       ],
       // Radius increases with zoom for smooth coverage
       "heatmap-radius": [
@@ -119,16 +120,16 @@ export function setRestaurantHeatmapData(
         50, 7,
         100, 12,
       ],
-      // Color ramp matching the heatmap palette
+      // Cool cyan → blue ramp matching the heatmap palette
       "circle-color": [
         "interpolate",
         ["linear"],
         SCORE_EXPR,
-        0, "#ffffcc",
-        25, "#fed976",
-        50, "#fd8d3c",
-        75, "#e31a1c",
-        100, "#b10026",
+        0, "#c8f0ff",
+        25, "#64d2ff",
+        50, "#00c8dc",
+        75, "#008cff",
+        100, "#003cc8",
       ],
       // Fade in as heatmap fades out
       "circle-opacity": [
