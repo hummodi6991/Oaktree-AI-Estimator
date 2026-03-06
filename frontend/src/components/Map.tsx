@@ -13,6 +13,7 @@ import {
 import {
   setRestaurantHeatmapData,
   RESTAURANT_HEAT_LAYER_ID,
+  RESTAURANT_POINTS_LAYER_ID,
 } from "../map/restaurantHeatLayer";
 
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -367,6 +368,7 @@ export default function Map({
 
   const restaurantModeRef = useRef(restaurantMode);
   const onRestaurantClickRef = useRef(onRestaurantClick);
+  const restaurantHeatmapDataRef = useRef(restaurantHeatmapData);
 
   const [showMultiHint, setShowMultiHint] = useState(true);
 
@@ -449,6 +451,9 @@ export default function Map({
   useEffect(() => {
     onRestaurantClickRef.current = onRestaurantClick;
   }, [onRestaurantClick]);
+  useEffect(() => {
+    restaurantHeatmapDataRef.current = restaurantHeatmapData;
+  }, [restaurantHeatmapData]);
 
   // Expose map instance to parent via ref
   useEffect(() => {
@@ -661,6 +666,10 @@ export default function Map({
       selectSource?.setData(selectedParcelsGeojson);
       const hoverSource = map.getSource(HOVER_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
       hoverSource?.setData(hoverDataRef.current);
+      // Reattach restaurant heatmap if active
+      if (restaurantHeatmapDataRef.current) {
+        setRestaurantHeatmapData(map, restaurantHeatmapDataRef.current);
+      }
       ensureLayerOrder(map);
       console.info("style.load reattached selection and hover layers");
       map.on("idle", logParcelPropertiesOnce);
@@ -675,7 +684,8 @@ export default function Map({
       className: "restaurant-heat-popup",
     });
 
-    map.on("mousemove", RESTAURANT_HEAT_LAYER_ID, (e) => {
+    // Tooltip on circle (points) layer — heatmap layers are not queryable
+    map.on("mousemove", RESTAURANT_POINTS_LAYER_ID, (e) => {
       if (!e.features || e.features.length === 0) return;
       map.getCanvas().style.cursor = "pointer";
       const props = e.features[0].properties || {};
@@ -689,7 +699,7 @@ export default function Map({
         .addTo(map);
     });
 
-    map.on("mouseleave", RESTAURANT_HEAT_LAYER_ID, () => {
+    map.on("mouseleave", RESTAURANT_POINTS_LAYER_ID, () => {
       map.getCanvas().style.cursor = "crosshair";
       heatmapPopup.remove();
     });
