@@ -177,22 +177,38 @@ export default function RestaurantFinderPanel({
 
       {/* Click-to-score result */}
       {(scoreResult || scoreLoading) && (
-        <div className="oak-card" style={{ marginBottom: 16 }}>
-          <div className="oak-card-title">
-            {t("restaurant.overallScore", { defaultValue: "Location Score" })}
-          </div>
+        <div
+          style={{
+            marginBottom: 16,
+            background: "#fff",
+            borderRadius: 10,
+            border: "1px solid rgba(0,0,0,0.07)",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 1px 10px rgba(0,0,0,0.03)",
+            overflow: "hidden",
+          }}
+        >
           {scoreLoading ? (
-            <div style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)" }}>
+            <div style={{ padding: 20, fontSize: "var(--oak-fs-sm)", color: "var(--oak-text-light)" }}>
               {t("restaurant.scoring", { defaultValue: "Scoring..." })}
             </div>
           ) : scoreResult ? (
             <>
-              {/* Score circle + headline */}
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+              {/* ── Summary header ── */}
+              <div
+                style={{
+                  padding: "14px 16px",
+                  background: "var(--oak-secondary)",
+                  borderBottom: "1px solid rgba(0,0,0,0.06)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                }}
+              >
+                {/* Score badge */}
                 <div
                   style={{
-                    width: 48,
-                    height: 48,
+                    width: 52,
+                    height: 52,
                     borderRadius: "50%",
                     background: scoreColor(Number.isFinite(scoreResult.final_score) ? scoreResult.final_score : 0),
                     display: "flex",
@@ -200,116 +216,188 @@ export default function RestaurantFinderPanel({
                     justifyContent: "center",
                     color: "#fff",
                     fontWeight: 700,
-                    fontSize: 18,
+                    fontSize: 20,
                     flexShrink: 0,
+                    boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
                   }}
                 >
                   {Math.round(Number.isFinite(scoreResult.final_score) ? scoreResult.final_score : 0)}
                 </div>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: "var(--oak-fs-sm)" }}>
-                    {t("restaurant.finalScore", { defaultValue: "Final Score" })}
+
+                {/* Title + sub-scores */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontWeight: 700,
+                      fontSize: "var(--oak-fs-base)",
+                      color: "var(--oak-text-dark)",
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {t("restaurant.overallScore", { defaultValue: "Opportunity Score" })}
                   </div>
                   <div
                     style={{
+                      display: "flex",
+                      gap: 16,
+                      marginTop: 4,
                       fontSize: "var(--oak-fs-xs)",
-                      color: "var(--oak-text-light)",
-                      marginTop: 2,
+                      color: "var(--oak-text-gray)",
                     }}
                   >
-                    {t("restaurant.opportunityLabel", { defaultValue: "Opportunity" })}:{" "}
-                    {Math.round(Number.isFinite(scoreResult.opportunity_score) ? scoreResult.opportunity_score : 0)} ·{" "}
-                    {t("restaurant.parcelConfidence", { defaultValue: "Parcel confidence" })}:{" "}
-                    {Math.round(Number.isFinite(scoreResult.confidence_score) ? scoreResult.confidence_score : 0)}
+                    <span>
+                      {t("restaurant.opportunityLabel", { defaultValue: "Opportunity" })}{" "}
+                      <strong style={{ color: "var(--oak-text-dark)", fontWeight: 600 }}>
+                        {Math.round(Number.isFinite(scoreResult.opportunity_score) ? scoreResult.opportunity_score : 0)}
+                      </strong>
+                    </span>
+                    <span>
+                      {t("restaurant.parcelConfidence", { defaultValue: "Confidence" })}{" "}
+                      <strong style={{ color: "var(--oak-text-dark)", fontWeight: 600 }}>
+                        {Math.round(Number.isFinite(scoreResult.confidence_score) ? scoreResult.confidence_score : 0)}
+                      </strong>
+                    </span>
                   </div>
                 </div>
               </div>
 
-              {/* Factor contributions */}
+              {/* ── Factor breakdown ── */}
               {scoreResult.contributions && scoreResult.contributions.length > 0 && (
-                <div style={{ display: "grid", gap: 6 }}>
-                  {scoreResult.contributions.map((c) => (
-                    <div
-                      key={c.factor}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        fontSize: "var(--oak-fs-xs)",
-                      }}
-                    >
-                      <span
-                        style={{
-                          minWidth: 100,
-                          color: "var(--oak-text-gray)",
-                        }}
-                      >
-                        {c.factor}
-                      </span>
+                <div style={{ padding: "12px 16px 14px" }}>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "var(--oak-text-light)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.04em",
+                      marginBottom: 10,
+                    }}
+                  >
+                    {t("restaurant.factorBreakdown", { defaultValue: "Factor Breakdown" })}
+                  </div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {scoreResult.contributions.map((c) => (
                       <div
+                        key={c.factor}
                         style={{
-                          flex: 1,
-                          height: 6,
-                          background: "var(--oak-outlines)",
-                          borderRadius: 3,
-                          overflow: "hidden",
+                          display: "grid",
+                          gridTemplateColumns: "110px 1fr 32px",
+                          alignItems: "center",
+                          gap: 10,
+                          fontSize: "var(--oak-fs-xs)",
                         }}
                       >
+                        <span
+                          style={{
+                            color: "var(--oak-text-gray)",
+                            fontWeight: 500,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {c.factor}
+                        </span>
                         <div
                           style={{
-                            width: `${Math.min(100, Math.max(0, c.score))}%`,
-                            height: "100%",
-                            background: scoreColor(c.score),
-                            borderRadius: 3,
+                            height: 7,
+                            background: "#f0f0f0",
+                            borderRadius: 4,
+                            overflow: "hidden",
                           }}
-                        />
+                        >
+                          <div
+                            style={{
+                              width: `${Math.min(100, Math.max(0, c.score))}%`,
+                              height: "100%",
+                              background: scoreColor(c.score),
+                              borderRadius: 4,
+                              transition: "width 300ms ease",
+                            }}
+                          />
+                        </div>
+                        <span
+                          style={{
+                            textAlign: "right",
+                            fontWeight: 600,
+                            color: "var(--oak-text-dark)",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {Math.round(c.score)}
+                        </span>
                       </div>
-                      <span
-                        style={{
-                          minWidth: 28,
-                          textAlign: "right",
-                          fontWeight: 500,
-                          color: "var(--oak-text-dark)",
-                        }}
-                      >
-                        {Math.round(c.score)}
-                      </span>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               )}
 
-              {/* Nearby competitors */}
+              {/* ── Nearby competitors ── */}
               {scoreResult.nearby_competitors && scoreResult.nearby_competitors.length > 0 && (
-                <div style={{ marginTop: 12 }}>
+                <div
+                  style={{
+                    padding: "10px 16px 14px",
+                    borderTop: "1px solid rgba(0,0,0,0.06)",
+                  }}
+                >
                   <div
                     style={{
-                      fontSize: "var(--oak-fs-xs)",
+                      fontSize: 11,
                       fontWeight: 600,
-                      color: "var(--oak-text-gray)",
-                      marginBottom: 6,
+                      color: "var(--oak-text-light)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.04em",
+                      marginBottom: 8,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
                     }}
                   >
-                    {t("restaurant.nearbyCompetitors", { defaultValue: "Nearby Competitors" })} (
-                    {scoreResult.nearby_competitors.length})
-                  </div>
-                  {scoreResult.nearby_competitors.slice(0, 5).map((comp) => (
-                    <div
-                      key={comp.id}
+                    <span>
+                      {t("restaurant.nearbyCompetitors", { defaultValue: "Nearby Competitors" })}
+                    </span>
+                    <span
                       style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        fontSize: "var(--oak-fs-xs)",
-                        padding: "4px 0",
-                        borderBottom: "1px solid var(--oak-outlines)",
+                        fontSize: 11,
+                        fontWeight: 500,
+                        color: "var(--oak-text-light)",
+                        textTransform: "none",
+                        letterSpacing: "normal",
                       }}
                     >
-                      <span>{comp.name}</span>
-                      <span style={{ color: "var(--oak-text-light)" }}>
-                        {Math.round(comp.distance_m)}m
-                      </span>
-                    </div>
-                  ))}
+                      {scoreResult.nearby_competitors.length}
+                    </span>
+                  </div>
+                  <div style={{ display: "grid", gap: 0 }}>
+                    {scoreResult.nearby_competitors.slice(0, 5).map((comp, i) => (
+                      <div
+                        key={comp.id}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          fontSize: "var(--oak-fs-xs)",
+                          padding: "6px 0",
+                          borderTop: i === 0 ? "none" : "1px solid rgba(0,0,0,0.05)",
+                        }}
+                      >
+                        <span style={{ color: "var(--oak-text-dark)", fontWeight: 500 }}>
+                          {comp.name}
+                        </span>
+                        <span
+                          style={{
+                            color: "var(--oak-text-light)",
+                            fontVariantNumeric: "tabular-nums",
+                            flexShrink: 0,
+                            marginLeft: 12,
+                          }}
+                        >
+                          {Math.round(comp.distance_m)}m
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </>
