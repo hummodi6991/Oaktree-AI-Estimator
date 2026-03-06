@@ -126,6 +126,51 @@ class TestScoreCell:
         assert "underserved_index" in result
         assert "debug_factors" in result
 
+    def test_confidence_score_nonzero_with_data(self):
+        """Cells with nearby POIs that have reviews must produce non-zero confidence."""
+        nearby = [
+            {
+                "category": "burger",
+                "source": "hungerstation",
+                "rating": 3.5,
+                "review_count": 50,
+                "chain_name": None,
+                "google_place_id": "abc",
+                "google_confidence": 0.9,
+                "lat": 24.7,
+                "lon": 46.7,
+                "distance_m": 200,
+            },
+        ]
+        result = _score_cell(24.7, 46.7, "burger", 1200, nearby, 5000.0, DEMAND_WEIGHTS)
+        assert result["confidence_score"] > 0, (
+            "confidence_score must be > 0 when nearby POIs have Google data and reviews"
+        )
+        assert 0.0 <= result["confidence_score"] <= 100.0
+
+    def test_confidence_score_in_0_100_range(self):
+        """confidence_score should be in 0..100 scale, not 0..1."""
+        nearby = [
+            {
+                "category": "burger",
+                "source": "test",
+                "rating": 4.0,
+                "review_count": 100,
+                "chain_name": None,
+                "google_place_id": "x",
+                "google_confidence": 0.8,
+                "lat": 24.7,
+                "lon": 46.7,
+                "distance_m": 100,
+            },
+        ]
+        result = _score_cell(24.7, 46.7, "burger", 1200, nearby, 5000.0, DEMAND_WEIGHTS)
+        # With good google data and reviews, confidence should be well above 1.0
+        # (proving it's in 0..100 scale, not 0..1)
+        assert result["confidence_score"] > 1.0, (
+            "confidence_score should be in 0..100 range, got %s" % result["confidence_score"]
+        )
+
     def test_no_nearby_high_opportunity(self):
         result = _score_cell(24.7, 46.7, "burger", 1200, [], 5000.0, DEMAND_WEIGHTS)
         # No competitors → high competition score → decent opportunity

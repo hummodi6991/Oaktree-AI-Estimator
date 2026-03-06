@@ -50,7 +50,7 @@ const debugRestaurant =
   new URLSearchParams(window.location.search).has("debug_restaurant");
 
 /** Scale a score that might be in 0..1 range up to 0..100. */
-function normalizeScore01To100(x: unknown): number {
+export function normalizeScore01To100(x: unknown): number {
   if (typeof x !== "number" || !Number.isFinite(x)) return 0;
   return x <= 1.01 && x >= 0 ? x * 100 : x;
 }
@@ -64,7 +64,7 @@ function safeNum(x: unknown): number {
  * Normalize a raw top-cell object (plain object or GeoJSON Feature) into
  * the canonical TopCell shape with scores in 0..100.
  */
-function normalizeTopCell(raw: Record<string, any>): TopCell | null {
+export function normalizeTopCell(raw: Record<string, any>): TopCell | null {
   // Unwrap GeoJSON Feature
   let props = raw;
   let lat: number | undefined;

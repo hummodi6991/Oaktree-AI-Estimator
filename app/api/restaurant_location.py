@@ -526,11 +526,37 @@ def get_opportunity_top_cells(
         cache_bust=cache_bust,
     )
 
-    top = result.get("metadata", {}).get("top_underserved", [])[:limit]
+    # Build top cells directly from features rather than relying on the
+    # cached metadata.top_underserved summary.  Older cached payloads may
+    # lack confidence_score / opportunity_score in the summary even though
+    # the feature properties always contain them.
+    features = result.get("features", [])
+    sorted_features = sorted(
+        features,
+        key=lambda f: f.get("properties", {}).get("underserved_index", 0),
+        reverse=True,
+    )[:limit]
+
+    cells = [
+        {
+            "h3": f["properties"]["h3"],
+            "lat": f["geometry"]["coordinates"][1],
+            "lon": f["geometry"]["coordinates"][0],
+            "underserved_index": f["properties"]["underserved_index"],
+            "opportunity_score": f["properties"]["opportunity_score"],
+            "confidence_score": f["properties"]["confidence_score"],
+            "final_score": f["properties"]["final_score"],
+            "demand_score": f["properties"].get("demand_score"),
+            "cost_penalty": f["properties"].get("cost_penalty"),
+            "competitor_count": f["properties"]["competitor_count"],
+            "population": f["properties"]["population"],
+        }
+        for f in sorted_features
+    ]
 
     return {
         "category": category,
         "radius_m": radius_m,
-        "count": len(top),
-        "cells": top,
+        "count": len(cells),
+        "cells": cells,
     }
