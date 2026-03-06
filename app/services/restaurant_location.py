@@ -717,10 +717,18 @@ def score_location(
 # ---------------------------------------------------------------------------
 
 # Weights for confidence sub-factors (must sum to 1.0)
+#
+# The original version relied only on Google enrichment signals. That makes the
+# confidence score collapse to zero in perfectly valid areas whenever nearby POIs
+# have not been enriched yet. Keep Google as the strongest signal, but add
+# fallback evidence signals so confidence reflects actual nearby market evidence.
 _CONF_WEIGHTS = {
-    "has_google": 0.35,
-    "google_confidence": 0.35,
-    "review_sufficiency": 0.30,
+    "has_google": 0.20,
+    "google_confidence": 0.20,
+    "review_sufficiency": 0.20,
+    "nearby_evidence": 0.20,
+    "source_diversity": 0.10,
+    "rating_coverage": 0.10,
 }
 
 
@@ -814,10 +822,32 @@ def _compute_confidence_features(
 
     review_sufficiency = min(1.0, math.log1p(total_reviews) / math.log1p(200))
 
+    # 4. nearby_evidence: soft floor for places that have actual nearby market data
+    # even when Google enrichment is still sparse.
+    nearby_evidence = min(1.0, len(all_nearby) / 8.0) if all_nearby else 0.0
+
+    # 5. source_diversity: reward multiple data sources/platforms in the local ring.
+    distinct_sources = len(
+        {
+            str(r.get("source") or "").strip().lower()
+            for r in all_nearby
+            if r.get("source")
+        }
+    )
+    source_diversity = min(1.0, distinct_sources / 4.0)
+
+    # 6. rating_coverage: if nearby places at least carry ratings, we should not
+    # force confidence to zero just because Google IDs are missing.
+    rated_count = sum(1 for r in all_nearby if r.get("rating") is not None)
+    rating_coverage = (rated_count / len(all_nearby)) if all_nearby else 0.0
+
     return {
         "has_google": round(has_google, 4),
         "google_confidence": round(google_conf_score, 4),
         "review_sufficiency": round(review_sufficiency, 4),
+        "nearby_evidence": round(nearby_evidence, 4),
+        "source_diversity": round(source_diversity, 4),
+        "rating_coverage": round(rating_coverage, 4),
     }
 
 
