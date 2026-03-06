@@ -80,6 +80,92 @@ class TestScoreEndpoint:
         assert "confidence" in data
 
 
+class TestTopCellsEndpoint:
+    """Tests for /restaurant/opportunity-top-cells to prevent confidence regression."""
+
+    @patch("app.api.restaurant_location.generate_opportunity_heatmap")
+    def test_top_cells_include_confidence_score(self, mock_heatmap, client):
+        """Top cells must always expose confidence_score from feature properties."""
+        mock_heatmap.return_value = _make_heatmap_payload(confidence_score=45.0)
+        resp = client.get("/v1/restaurant/opportunity-top-cells?category=burger")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] >= 1
+        cell = data["cells"][0]
+        assert "confidence_score" in cell
+        assert cell["confidence_score"] == 45.0
+        assert "opportunity_score" in cell
+        assert cell["opportunity_score"] == 72.5
+
+    @patch("app.api.restaurant_location.generate_opportunity_heatmap")
+    def test_top_cells_from_stale_cache_without_confidence(self, mock_heatmap, client):
+        """Even if cached metadata.top_underserved lacks confidence_score,
+        the endpoint should still return it by reading from feature properties."""
+        # Simulate old cached payload: top_underserved missing confidence_score
+        payload = _make_heatmap_payload(confidence_score=38.0)
+        for item in payload["metadata"]["top_underserved"]:
+            item.pop("confidence_score", None)
+            item.pop("opportunity_score", None)
+        mock_heatmap.return_value = payload
+
+        resp = client.get("/v1/restaurant/opportunity-top-cells?category=burger")
+        assert resp.status_code == 200
+        cell = resp.json()["cells"][0]
+        # The endpoint rebuilds from features, so confidence_score must be present
+        assert cell["confidence_score"] == 38.0
+        assert cell["opportunity_score"] == 72.5
+
+    @patch("app.api.restaurant_location.generate_opportunity_heatmap")
+    def test_top_cells_nonzero_confidence_for_scored_cells(self, mock_heatmap, client):
+        """Cells with nearby data should have non-zero confidence."""
+        mock_heatmap.return_value = _make_heatmap_payload(confidence_score=55.2)
+        resp = client.get("/v1/restaurant/opportunity-top-cells?category=burger")
+        cell = resp.json()["cells"][0]
+        assert cell["confidence_score"] > 0
+
+
+def _make_heatmap_payload(confidence_score: float = 45.0) -> dict:
+    """Create a realistic heatmap payload for testing."""
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [46.7, 24.7]},
+                "properties": {
+                    "h3": "882a10a1cbfffff",
+                    "opportunity_score": 72.5,
+                    "confidence_score": confidence_score,
+                    "final_score": 58.0,
+                    "demand_sum_reviews": 120,
+                    "competitor_count": 3,
+                    "population": 4500.0,
+                    "underserved_index": 320.5,
+                    "debug_factors": {},
+                },
+            }
+        ],
+        "metadata": {
+            "category": "burger",
+            "radius_m": 1200,
+            "cell_count": 1,
+            "top_underserved": [
+                {
+                    "h3": "882a10a1cbfffff",
+                    "lat": 24.7,
+                    "lon": 46.7,
+                    "underserved_index": 320.5,
+                    "opportunity_score": 72.5,
+                    "confidence_score": confidence_score,
+                    "final_score": 58.0,
+                    "competitor_count": 3,
+                    "population": 4500.0,
+                },
+            ],
+        },
+    }
+
+
 class TestHeatmapEndpoint:
     def test_heatmap_requires_category(self, client):
         resp = client.get("/v1/restaurant/heatmap")
