@@ -354,6 +354,8 @@
     "demandScore": "الطلب",
     "costScore": "التكلفة",
     "confidence": "مستوى الثقة",
+    "cellConfidence": "ثقة الخلية",
+    "parcelConfidence": "ثقة القطعة",
     "factorBreakdown": "تفصيل العوامل",
     "nearbyCompetitors": "المنافسون القريبون",
     "competitorName": "الاسم",

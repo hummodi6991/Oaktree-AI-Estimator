@@ -410,6 +410,40 @@ export default function Map({
 
   useEffect(() => {
     restaurantModeRef.current = restaurantMode;
+    // Adjust selection layer paint for high-contrast visibility on satellite basemap
+    const map = mapRef.current;
+    if (!map) return;
+    const fillLayer = map.getLayer(SELECT_FILL_LAYER_ID);
+    const lineLayer = map.getLayer(SELECT_LINE_LAYER_ID);
+    if (restaurantMode) {
+      if (fillLayer) {
+        map.setPaintProperty(SELECT_FILL_LAYER_ID, "fill-color", "#00e5ff");
+        map.setPaintProperty(SELECT_FILL_LAYER_ID, "fill-opacity", 0.25);
+      }
+      if (lineLayer) {
+        map.setPaintProperty(SELECT_LINE_LAYER_ID, "line-color", "#00e5ff");
+        map.setPaintProperty(SELECT_LINE_LAYER_ID, "line-width", 3);
+        map.setPaintProperty(SELECT_LINE_LAYER_ID, "line-opacity", 0.95);
+      }
+    } else {
+      // Restore v2 defaults
+      if (fillLayer) {
+        map.setPaintProperty(SELECT_FILL_LAYER_ID, "fill-color", "#335c4f");
+        map.setPaintProperty(SELECT_FILL_LAYER_ID, "fill-opacity", 0.18);
+      }
+      if (lineLayer) {
+        map.setPaintProperty(SELECT_LINE_LAYER_ID, "line-color", "#21443a");
+        map.setPaintProperty(SELECT_LINE_LAYER_ID, "line-width", 2);
+        map.setPaintProperty(SELECT_LINE_LAYER_ID, "line-opacity", 0.85);
+      }
+    }
+    // Clear restaurant selection when switching away from restaurant mode
+    if (!restaurantMode) {
+      const selectSource = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+      if (selectSource && selectedParcelIdsRef.current.length === 0) {
+        selectSource.setData({ type: "FeatureCollection", features: [] });
+      }
+    }
   }, [restaurantMode]);
 
   useEffect(() => {
@@ -650,7 +684,7 @@ export default function Map({
       heatmapPopup
         .setLngLat(e.lngLat)
         .setHTML(
-          `<div style="font-size:12px;line-height:1.4"><strong>Opportunity:</strong> ${typeof finalScore === "number" ? Math.round(finalScore) : finalScore}<br/><strong>Confidence:</strong> ${typeof confidence === "number" ? Math.round(confidence) : confidence}</div>`,
+          `<div style="font-size:12px;line-height:1.4"><strong>Opportunity:</strong> ${typeof finalScore === "number" ? Math.round(finalScore) : finalScore}<br/><strong>Cell confidence:</strong> ${typeof confidence === "number" ? Math.round(confidence) : confidence}</div>`,
         )
         .addTo(map);
     });
@@ -663,9 +697,29 @@ export default function Map({
     map.on("click", async (e) => {
       setCollateStatus(null);
 
-      // Restaurant mode: forward click for scoring instead of parcel selection
+      // Restaurant mode: forward click for scoring AND highlight clicked parcel
       if (restaurantModeRef.current && onRestaurantClickRef.current) {
         onRestaurantClickRef.current(e.lngLat.lat, e.lngLat.lng);
+
+        // Highlight the parcel under the click using the existing selection layer
+        try {
+          const identifyResult = await identifyPoint(e.lngLat.lng, e.lngLat.lat);
+          const selectSource = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+          if (identifyResult?.found && identifyResult.parcel?.geometry) {
+            const geometry = transformGeometryToWgs84(identifyResult.parcel.geometry as Geometry | null);
+            if (geometry && selectSource) {
+              selectSource.setData({
+                type: "FeatureCollection",
+                features: [{ type: "Feature", geometry, properties: { id: identifyResult.parcel.parcel_id ?? null } }],
+              });
+            }
+          } else if (selectSource) {
+            selectSource.setData({ type: "FeatureCollection", features: [] });
+          }
+        } catch (err) {
+          console.error("[map] restaurant parcel highlight failed:", err);
+        }
+
         return;
       }
 
