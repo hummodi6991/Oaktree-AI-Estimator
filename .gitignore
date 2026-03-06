@@ -11,3 +11,5 @@ data/*
 !data/samples/**
 __pycache__/
 mlruns/
+# Root-level package-lock from stray npm installs
+/package-lock.json
