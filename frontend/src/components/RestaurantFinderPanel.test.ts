@@ -1,0 +1,31 @@
+import { describe, expect, it } from "vitest";
+import en from "../i18n/en.json";
+import ar from "../i18n/ar.json";
+
+// ---------------------------------------------------------------------------
+// Confidence label i18n keys — regression tests
+// ---------------------------------------------------------------------------
+
+describe("Restaurant Finder confidence labels", () => {
+  it("en.json has distinct cellConfidence and parcelConfidence keys", () => {
+    expect(en.restaurant.cellConfidence).toBe("Cell confidence");
+    expect(en.restaurant.parcelConfidence).toBe("Parcel confidence");
+  });
+
+  it("ar.json has distinct cellConfidence and parcelConfidence keys", () => {
+    expect(ar.restaurant.cellConfidence).toBe("ثقة الخلية");
+    expect(ar.restaurant.parcelConfidence).toBe("ثقة القطعة");
+  });
+
+  it("cellConfidence and parcelConfidence are not equal to the generic confidence key", () => {
+    expect(en.restaurant.cellConfidence).not.toBe(en.restaurant.confidence);
+    expect(en.restaurant.parcelConfidence).not.toBe(en.restaurant.confidence);
+    expect(ar.restaurant.cellConfidence).not.toBe(ar.restaurant.confidence);
+    expect(ar.restaurant.parcelConfidence).not.toBe(ar.restaurant.confidence);
+  });
+
+  it("generic confidence key is preserved for backward compatibility", () => {
+    expect(en.restaurant.confidence).toBe("Confidence");
+    expect(ar.restaurant.confidence).toBe("مستوى الثقة");
+  });
+});

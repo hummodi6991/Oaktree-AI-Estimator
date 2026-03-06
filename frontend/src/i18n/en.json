@@ -354,6 +354,8 @@
     "demandScore": "Demand",
     "costScore": "Cost",
     "confidence": "Confidence",
+    "cellConfidence": "Cell confidence",
+    "parcelConfidence": "Parcel confidence",
     "factorBreakdown": "Factor breakdown",
     "nearbyCompetitors": "Nearby competitors",
     "competitorName": "Name",
