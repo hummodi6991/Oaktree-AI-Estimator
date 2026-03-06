@@ -81,9 +81,11 @@ describe("restaurantHeatLayer", () => {
 
     // Verify layer types
     const heatmapCall = map.addLayer.mock.calls.find((c: any) => c[0].id === RESTAURANT_HEAT_LAYER_ID);
-    expect(heatmapCall[0].type).toBe("heatmap");
+    expect(heatmapCall).toBeDefined();
+    expect((heatmapCall![0] as unknown as { type: string }).type).toBe("heatmap");
     const circleCall = map.addLayer.mock.calls.find((c: any) => c[0].id === RESTAURANT_POINTS_LAYER_ID);
-    expect(circleCall[0].type).toBe("circle");
+    expect(circleCall).toBeDefined();
+    expect((circleCall![0] as unknown as { type: string }).type).toBe("circle");
   });
 
   it("updates existing source data without re-adding layers", () => {
