@@ -87,7 +87,7 @@ function normalizeTopCell(raw: Record<string, any>): TopCell | null {
   return {
     lat,
     lon,
-    opportunity_score: normalizeScore01To100(props.opportunity_score ?? props.opportunity),
+    opportunity_score: normalizeScore01To100(props.opportunity_score ?? props.opportunity ?? props.final_score ?? props.score),
     confidence_score: normalizeScore01To100(props.confidence_score ?? props.confidence),
     final_score: normalizeScore01To100(props.final_score ?? props.score),
     area_label: props.area_label,
