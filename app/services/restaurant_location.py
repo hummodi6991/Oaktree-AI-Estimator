@@ -852,11 +852,16 @@ def _compute_confidence_features(
 
 
 def _aggregate_confidence(features: dict[str, float]) -> float:
-    """Weighted average of confidence features -> score in [0, 1]."""
-    total = sum(
-        _CONF_WEIGHTS.get(k, 0) * v for k, v in features.items()
-    )
-    return total
+    """Weighted average of confidence features -> score in [0, 1].
+
+    Normalize by the weights of the features actually present so legacy callers
+    or tests that only provide a subset of factors still behave correctly.
+    """
+    weighted_sum = sum(_CONF_WEIGHTS.get(k, 0.0) * float(v) for k, v in features.items())
+    weight_total = sum(_CONF_WEIGHTS.get(k, 0.0) for k in features.keys())
+    if weight_total <= 0:
+        return 0.0
+    return max(0.0, min(1.0, weighted_sum / weight_total))
 
 
 def _build_confidence_contributions(
