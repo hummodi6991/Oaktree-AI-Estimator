@@ -124,6 +124,10 @@ def _nearby_restaurants(
         ).mappings().all()
     except Exception as exc:
         logger.warning("Nearby restaurants query failed, falling back to ORM: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
         deg_offset = radius_m / 111_000
         rows_orm = (
             db.query(RestaurantPOI)
@@ -208,6 +212,10 @@ def population_score(db: Session, lat: float, lon: float, radius_m: float = 2000
         return 50.0
     except Exception as exc:
         logger.warning("Population query failed: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return 50.0
 
     if total_pop <= 0:
@@ -233,6 +241,10 @@ def commercial_density_score(db: Session, lat: float, lon: float, radius_m: floa
         count = int(result or 0)
     except Exception as exc:
         logger.debug("Commercial density query failed: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return 50.0
 
     if count == 0:
@@ -326,6 +338,10 @@ def anchor_proximity_score(db: Session, lat: float, lon: float) -> float:
             ).scalar() or 0
             total += min(weight, count * (weight / 3.0))
         except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
             total += weight * 0.5  # neutral fallback
 
     return min(95.0, max(10.0, 10.0 + total))
@@ -402,6 +418,10 @@ def income_proxy_score(db: Session, lat: float, lon: float) -> float:
                 return 40.0
     except Exception as exc:
         logger.debug("Income proxy failed: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
     return 50.0  # neutral default
 
@@ -432,7 +452,10 @@ def zoning_fit_score(db: Session, lat: float, lon: float) -> float:
                 return 40.0
             return 60.0
     except Exception:
-        pass
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
     return 50.0  # neutral when no zoning data
 
@@ -457,7 +480,10 @@ def parking_availability_score(db: Session, lat: float, lon: float) -> float:
         if count >= 1:
             return 70.0
     except Exception:
-        pass
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
     return 50.0  # neutral
 
@@ -780,7 +806,10 @@ def _compute_confidence_features(
                     google_count = result[0] or 0
                     total_with_google_check = result[1] or 0
             except Exception:
-                pass
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
 
     has_google = (
         google_count / total_with_google_check
@@ -808,7 +837,10 @@ def _compute_confidence_features(
                 ).scalar()
                 avg_google_conf = float(result) if result else 0.0
             except Exception:
-                pass
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
 
     # Clamp to [0, 1] — google_confidence is stored as 0-1
     google_conf_score = max(0.0, min(1.0, avg_google_conf))
@@ -831,7 +863,10 @@ def _compute_confidence_features(
                 ).scalar()
                 total_reviews = int(result) if result else 0
             except Exception:
-                pass
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
 
     review_sufficiency = min(1.0, math.log1p(total_reviews) / math.log1p(200))
 
@@ -1017,6 +1052,10 @@ def _resolve_rent_aqar(db: Session, lat: float, lon: float) -> _RentResolution:
 
     except Exception as exc:
         logger.debug("Aqar rent resolution failed: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
     # 5. Indicator-based fallback (legacy)
     return _resolve_rent_indicator_fallback(db, lat, lon)
@@ -1041,6 +1080,10 @@ def _resolve_rent_indicator_fallback(db: Session, lat: float, lon: float) -> _Re
                 )
     except Exception as exc:
         logger.debug("Indicator rent fallback failed: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
     return _RentResolution(
         rent_per_m2=None,
