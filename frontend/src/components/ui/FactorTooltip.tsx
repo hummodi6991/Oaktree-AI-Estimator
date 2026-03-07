@@ -20,10 +20,17 @@ export default function FactorTooltip({ text }: Props) {
   const updatePos = useCallback(() => {
     if (!ref.current) return;
     const rect = ref.current.getBoundingClientRect();
-    setPos({
-      top: rect.top + window.scrollY,
-      left: rect.left + rect.width / 2 + window.scrollX,
-    });
+    const gap = 6;
+    const tooltipMaxW = 220;
+    let left = rect.right + gap + window.scrollX;
+    const top = rect.top + window.scrollY + rect.height / 2;
+
+    // Clamp to stay within viewport on the right edge
+    if (rect.right + gap + tooltipMaxW > window.innerWidth) {
+      left = Math.max(0, window.innerWidth - tooltipMaxW - 4 + window.scrollX);
+    }
+
+    setPos({ top, left });
   }, []);
 
   const show = useCallback(() => {
@@ -91,9 +98,9 @@ export default function FactorTooltip({ text }: Props) {
             role="tooltip"
             style={{
               position: "absolute",
-              top: pos.top - 6,
+              top: pos.top,
               left: pos.left,
-              transform: "translateX(-50%) translateY(-100%)",
+              transform: "translateY(-50%)",
               width: "max-content",
               maxWidth: 220,
               padding: "6px 10px",
@@ -107,6 +114,8 @@ export default function FactorTooltip({ text }: Props) {
               zIndex: 10000,
               pointerEvents: "none",
               whiteSpace: "normal",
+              overflowWrap: "break-word",
+              wordBreak: "break-word",
             }}
           >
             {text}
