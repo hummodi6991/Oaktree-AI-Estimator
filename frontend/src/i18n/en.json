@@ -381,7 +381,24 @@
     "sourcePOICount": "POI count",
     "sourceStatus": "Status",
     "statusActive": "Active",
-    "statusPending": "Pending"
+    "statusPending": "Pending",
+    "factors": {
+      "rent": { "label": "Rent", "tip": "Estimated affordability of the area for this restaurant type" },
+      "competition": { "label": "Competition", "tip": "Intensity of nearby same-category competitors" },
+      "zoning_fit": { "label": "Zoning fit", "tip": "How suitable local zoning and land use is for this use" },
+      "parking": { "label": "Parking", "tip": "Expected parking convenience around the site" },
+      "population": { "label": "Population", "tip": "Surrounding residential population support" },
+      "foot_traffic": { "label": "Foot traffic", "tip": "Likely pedestrian activity near the site" },
+      "commercial_density": { "label": "Commercial density", "tip": "Concentration of nearby commercial uses" },
+      "chain_gap": { "label": "Chain gap", "tip": "Whitespace for this category or chain in the area" },
+      "competitor_rating": { "label": "Competitor rating", "tip": "Quality strength of nearby competitors" },
+      "delivery_demand": { "label": "Delivery demand", "tip": "Likely support from food delivery demand" },
+      "anchor_proximity": { "label": "Anchor proximity", "tip": "Closeness to major trip generators" },
+      "complementary": { "label": "Complementary uses", "tip": "Nearby uses that support restaurant performance" },
+      "traffic": { "label": "Traffic", "tip": "Likely vehicle movement around the site" },
+      "income_proxy": { "label": "Income proxy", "tip": "Proxy for local purchasing power" },
+      "road_frontage": { "label": "Road frontage", "tip": "Visibility and access from roads" }
+    }
   },
   "mapDraw": {
     "toolbar": {

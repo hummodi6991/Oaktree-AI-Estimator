@@ -9,6 +9,7 @@ import {
   type TopCell,
   type ScoreResult,
 } from "../lib/api/restaurant";
+import FactorTooltip from "./ui/FactorTooltip";
 
 type Props = {
   onHeatmapData: (data: GeoJSON.FeatureCollection | null) => void;
@@ -22,6 +23,13 @@ function scoreColor(score: number): string {
   if (score >= 50) return "var(--oak-warning, #f59e0b)";
   if (score >= 25) return "#fc8d59";
   return "var(--oak-error, #d4183d)";
+}
+
+/** Fallback: convert snake_case key to Title case label (no underscores). */
+function fallbackLabel(key: string): string {
+  return key
+    .replace(/_/g, " ")
+    .replace(/^\w/, (c) => c.toUpperCase());
 }
 
 export default function RestaurantFinderPanel({
@@ -263,72 +271,90 @@ export default function RestaurantFinderPanel({
 
               {/* ── Factor breakdown ── */}
               {scoreResult.contributions && scoreResult.contributions.length > 0 && (
-                <div style={{ padding: "12px 16px 14px" }}>
+                <div style={{ padding: "14px 16px 16px" }}>
                   <div
                     style={{
                       fontSize: 11,
                       fontWeight: 600,
                       color: "var(--oak-text-light)",
                       textTransform: "uppercase",
-                      letterSpacing: "0.04em",
-                      marginBottom: 10,
+                      letterSpacing: "0.05em",
+                      marginBottom: 12,
                     }}
                   >
                     {t("restaurant.factorBreakdown", { defaultValue: "Factor Breakdown" })}
                   </div>
-                  <div style={{ display: "grid", gap: 8 }}>
-                    {scoreResult.contributions.map((c) => (
-                      <div
-                        key={c.factor}
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "110px 1fr 32px",
-                          alignItems: "center",
-                          gap: 10,
-                          fontSize: "var(--oak-fs-xs)",
-                        }}
-                      >
-                        <span
-                          style={{
-                            color: "var(--oak-text-gray)",
-                            fontWeight: 500,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {c.factor}
-                        </span>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {scoreResult.contributions.map((c) => {
+                      const label =
+                        t(`restaurant.factors.${c.factor}.label`, { defaultValue: "" }) ||
+                        fallbackLabel(c.factor);
+                      const tip = t(`restaurant.factors.${c.factor}.tip`, { defaultValue: "" });
+
+                      return (
                         <div
+                          key={c.factor}
                           style={{
-                            height: 7,
-                            background: "#f0f0f0",
-                            borderRadius: 4,
-                            overflow: "hidden",
+                            display: "grid",
+                            gridTemplateColumns: "minmax(100px, auto) 1fr 32px",
+                            alignItems: "center",
+                            gap: 10,
+                            fontSize: "var(--oak-fs-xs)",
+                            padding: "3px 0",
                           }}
                         >
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 5,
+                              color: "var(--oak-text-gray)",
+                              fontWeight: 500,
+                              overflow: "hidden",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            <span
+                              style={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {label}
+                            </span>
+                            {tip && <FactorTooltip text={tip} />}
+                          </span>
                           <div
                             style={{
-                              width: `${Math.min(100, Math.max(0, c.score))}%`,
-                              height: "100%",
-                              background: scoreColor(c.score),
-                              borderRadius: 4,
-                              transition: "width 300ms ease",
+                              height: 6,
+                              background: "rgba(0,0,0,0.05)",
+                              borderRadius: 3,
+                              overflow: "hidden",
                             }}
-                          />
+                          >
+                            <div
+                              style={{
+                                width: `${Math.min(100, Math.max(0, c.score))}%`,
+                                height: "100%",
+                                background: scoreColor(c.score),
+                                borderRadius: 3,
+                                transition: "width 300ms ease",
+                              }}
+                            />
+                          </div>
+                          <span
+                            style={{
+                              textAlign: "right",
+                              fontWeight: 600,
+                              color: "var(--oak-text-dark)",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {Math.round(c.score)}
+                          </span>
                         </div>
-                        <span
-                          style={{
-                            textAlign: "right",
-                            fontWeight: 600,
-                            color: "var(--oak-text-dark)",
-                            fontVariantNumeric: "tabular-nums",
-                          }}
-                        >
-                          {Math.round(c.score)}
-                        </span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
