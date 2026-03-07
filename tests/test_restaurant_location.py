@@ -78,14 +78,66 @@ class TestCompetitorRatingScore:
 
 
 class TestRentScore:
-    def test_low_rent_high_score(self):
-        assert rent_score_value(200) >= 80.0
-
-    def test_high_rent_low_score(self):
-        assert rent_score_value(2000) <= 25.0
+    """rent_score_value uses monthly SAR/m² from Aqar (range ~30-800)."""
 
     def test_no_data_neutral(self):
         assert rent_score_value(None) == 50.0
+
+    def test_zero_rent_neutral(self):
+        assert rent_score_value(0) == 50.0
+
+    def test_negative_rent_neutral(self):
+        assert rent_score_value(-10) == 50.0
+
+    # --- representative low / medium / high monthly rent ---
+
+    def test_very_low_rent(self):
+        """≤50 SAR/m²/month — peripheral / industrial, best score."""
+        score = rent_score_value(30)
+        assert score == 95.0
+
+    def test_low_rent_high_score(self):
+        """~80 SAR/m²/month — cheap area, high score."""
+        score = rent_score_value(80)
+        assert 80.0 <= score <= 92.0
+
+    def test_moderate_rent(self):
+        """~167 SAR/m²/month (observed Aqar median-ish) — mid-range score."""
+        score = rent_score_value(167)
+        assert 50.0 <= score <= 70.0
+
+    def test_above_average_rent(self):
+        """~250 SAR/m²/month — above-average, score around 45."""
+        score = rent_score_value(250)
+        assert 40.0 <= score <= 50.0
+
+    def test_high_rent_low_score(self):
+        """~500 SAR/m²/month — prime retail, low score."""
+        score = rent_score_value(500)
+        assert score <= 25.0
+
+    def test_ultra_premium_rent(self):
+        """≥700 SAR/m²/month — ultra-premium, floor score."""
+        score = rent_score_value(800)
+        assert score == 10.0
+
+    def test_monotonically_decreasing(self):
+        """Score must strictly decrease as rent increases."""
+        rents = [30, 75, 120, 200, 300, 450, 600, 750]
+        scores = [rent_score_value(r) for r in rents]
+        for i in range(len(scores) - 1):
+            assert scores[i] > scores[i + 1], (
+                f"rent_score_value({rents[i]})={scores[i]} should be > "
+                f"rent_score_value({rents[i+1]})={scores[i+1]}"
+            )
+
+    def test_discriminative_spread(self):
+        """Scores across the realistic range should span at least 60 points."""
+        low = rent_score_value(50)
+        high = rent_score_value(600)
+        assert low - high >= 60.0, (
+            f"Spread {low} - {high} = {low - high} is too narrow"
+        )
 
 
 class TestRoadClassScore:
@@ -259,12 +311,12 @@ class TestRentDataQuality:
 
     def test_rent_factor_changes_from_neutral_with_aqar_signal(self):
         """When Aqar rent data is available, rent factor should NOT be the neutral 50."""
-        # District-level Aqar rent of 200 SAR/m² -> rent_score_value should be ~90
-        res = _RentResolution(rent_per_m2=200.0, scope="district", sample_count=10,
-                              median_used=200.0, method="aqar_district_median")
+        # District-level Aqar rent of 80 SAR/m²/month -> clearly below-average, high score
+        res = _RentResolution(rent_per_m2=80.0, scope="district", sample_count=10,
+                              median_used=80.0, method="aqar_district_median")
         score = rent_score_value(res.rent_per_m2)
         assert score != 50.0, "Rent factor should not be neutral when Aqar data exists"
-        assert score >= 80.0, "Low rent should give high score"
+        assert score >= 80.0, "Low monthly rent should give high score"
 
     def test_confidence_increases_with_district_aqar_rent(self):
         """Confidence should be higher when district-level Aqar rent is used."""

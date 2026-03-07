@@ -282,18 +282,52 @@ def competitor_rating_score(avg_rating: float | None, count: int) -> float:
 
 
 def rent_score_value(rent_per_m2: float | None) -> float:
-    """Lower rent -> higher score (better margins)."""
+    """Lower rent -> higher score (better margins).
+
+    Thresholds are calibrated for **monthly** Aqar commercial/retail rent in
+    Riyadh (SAR/m²/month).  The ingestion pipeline normalises annual Aqar
+    listings to monthly; values above 800 SAR/m²/month are clipped during
+    normalisation, so the realistic input range is roughly 30-800.
+
+    A piecewise-linear interpolation between breakpoints gives a smooth,
+    discriminative mapping instead of the coarse step-function that collapsed
+    almost every Riyadh parcel to 90.
+
+    Breakpoints (rent → score):
+        ≤ 50   →  95   very cheap (industrial / peripheral)
+         100   →  80   below-average rent
+         150   →  65   moderate
+         250   →  45   above-average / desirable corridor
+         400   →  25   prime retail
+        ≥ 700  →  10   ultra-premium (near normalisation ceiling)
+    """
     if rent_per_m2 is None:
         return 50.0
-    if rent_per_m2 < 300:
-        return 90.0
-    if rent_per_m2 < 600:
-        return 75.0
-    if rent_per_m2 < 1000:
-        return 55.0
-    if rent_per_m2 < 1500:
-        return 35.0
-    return 20.0
+    if rent_per_m2 <= 0:
+        return 50.0  # invalid / missing, neutral
+
+    _BREAKPOINTS: list[tuple[float, float]] = [
+        (50,  95.0),
+        (100, 80.0),
+        (150, 65.0),
+        (250, 45.0),
+        (400, 25.0),
+        (700, 10.0),
+    ]
+
+    if rent_per_m2 <= _BREAKPOINTS[0][0]:
+        return _BREAKPOINTS[0][1]
+    if rent_per_m2 >= _BREAKPOINTS[-1][0]:
+        return _BREAKPOINTS[-1][1]
+
+    for i in range(len(_BREAKPOINTS) - 1):
+        r0, s0 = _BREAKPOINTS[i]
+        r1, s1 = _BREAKPOINTS[i + 1]
+        if rent_per_m2 <= r1:
+            t = (rent_per_m2 - r0) / (r1 - r0)
+            return round(s0 + t * (s1 - s0), 1)
+
+    return _BREAKPOINTS[-1][1]
 
 
 # ---------------------------------------------------------------------------
