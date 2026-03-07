@@ -134,13 +134,15 @@ class TestIncomeProxyRollback:
     def test_returns_fallback_on_db_error(self):
         db = MagicMock()
         db.rollback.return_value = None
-        # Make the district resolver itself raise, simulating a DB error
-        with patch(
-            "app.services.restaurant_location.resolve_district",
-            side_effect=_FakeInFailedSqlTransaction("aborted"),
-            create=True,
-        ):
-            # income_proxy_score imports resolve_district inside the try block
+        # resolve_district is imported inside the function body via
+        # ``from app.services.district_resolver import resolve_district``.
+        # Inject a fake module into sys.modules so the import succeeds and
+        # the function raises, simulating a DB error inside the resolver.
+        fake_module = MagicMock()
+        fake_module.resolve_district.side_effect = _FakeInFailedSqlTransaction(
+            "aborted"
+        )
+        with patch.dict("sys.modules", {"app.services.district_resolver": fake_module}):
             result = income_proxy_score(db, 24.7, 46.7)
         assert result == 50.0
         db.rollback.assert_called()
