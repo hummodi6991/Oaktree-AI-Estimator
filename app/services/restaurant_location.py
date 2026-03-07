@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.models.tables import PopulationDensity, RestaurantPOI
 from app.services.restaurant_categories import CATEGORIES
+from app.services.rent import RentMedianResult, aqar_rent_median
 from app.services.traffic_proxy import traffic_score_at
 
 logger = logging.getLogger(__name__)
@@ -629,8 +630,9 @@ def score_location(
 
     demand = _weighted_avg(demand_factors, demand_w)
 
-    # 3. Compute cost factors — wired up to real data
-    rent_val = _resolve_rent(db, lat, lon)
+    # 3. Compute cost factors — wired up to real Aqar rent data
+    rent_resolution = _resolve_rent_aqar(db, lat, lon)
+    rent_val = rent_resolution.rent_per_m2
     cost_factors = {
         "rent": rent_score_value(rent_val),
         "parking": parking_availability_score(db, lat, lon),
@@ -653,6 +655,7 @@ def score_location(
 
     # 7. Confidence score — data reliability (0-1 then 0-100)
     confidence_features = _compute_confidence_features(db, lat, lon, same_cat, diff_cat)
+    confidence_features["rent_data_quality"] = _rent_data_quality(rent_resolution)
     confidence_score_01 = _aggregate_confidence(confidence_features)
     confidence_score_01 = max(0.0, min(1.0, confidence_score_01))
     confidence_score_100 = round(confidence_score_01 * 100, 1)
@@ -708,6 +711,15 @@ def score_location(
             "rent_per_m2": rent_val,
             "ai_weights_used": ai_used,
             "confidence_features": confidence_features,
+            "rent_meta": {
+                "aqar_used": rent_resolution.scope not in ("indicator_fallback", "none"),
+                "scope": rent_resolution.scope,
+                "method": rent_resolution.method,
+                "sample_count": rent_resolution.sample_count,
+                "median_rent_per_m2": rent_resolution.median_used,
+                "asset_type": _RESTAURANT_AQAR_ASSET,
+                "unit_type": _RESTAURANT_AQAR_UNIT,
+            },
         },
     )
 
@@ -723,12 +735,13 @@ def score_location(
 # have not been enriched yet. Keep Google as the strongest signal, but add
 # fallback evidence signals so confidence reflects actual nearby market evidence.
 _CONF_WEIGHTS = {
-    "has_google": 0.20,
-    "google_confidence": 0.20,
-    "review_sufficiency": 0.20,
-    "nearby_evidence": 0.20,
+    "has_google": 0.15,
+    "google_confidence": 0.15,
+    "review_sufficiency": 0.15,
+    "nearby_evidence": 0.15,
     "source_diversity": 0.10,
     "rating_coverage": 0.10,
+    "rent_data_quality": 0.20,
 }
 
 
@@ -881,15 +894,158 @@ def _build_confidence_contributions(
     return items
 
 
-def _resolve_rent(db: Session, lat: float, lon: float) -> float | None:
-    """Try to get rent data for the given location using the district resolver."""
+@dataclass
+class _RentResolution:
+    """Internal result from Aqar-aware rent lookup for Restaurant Finder."""
+    rent_per_m2: float | None
+    scope: str  # "district" | "district_shrinkage" | "city" | "city_asset" | "indicator_fallback" | "none"
+    sample_count: int
+    median_used: float | None
+    method: str  # human-readable label
+
+
+def _rent_data_quality(rent: _RentResolution) -> float:
+    """
+    Map rent resolution scope to a 0-1 confidence contribution.
+
+    - district with strong sample: 1.0
+    - district_shrinkage: 0.7
+    - city / city_asset: 0.5
+    - indicator_fallback: 0.2
+    - none: 0.0
+    """
+    _SCOPE_QUALITY = {
+        "district": 1.0,
+        "district_shrinkage": 0.7,
+        "city": 0.5,
+        "city_asset": 0.5,
+        "indicator_fallback": 0.2,
+        "none": 0.0,
+    }
+    return _SCOPE_QUALITY.get(rent.scope, 0.0)
+
+
+# Restaurant rent config — mirrors COMPONENT_AQAR_CONFIG in estimates.py
+_RESTAURANT_AQAR_ASSET = "commercial"
+_RESTAURANT_AQAR_UNIT = "retail"  # best proxy for restaurant space
+_RESTAURANT_AQAR_MIN_SAMPLES = 5
+_RESTAURANT_AQAR_SINCE_DAYS = 730
+
+
+def _resolve_rent_aqar(db: Session, lat: float, lon: float) -> _RentResolution:
+    """
+    Resolve rent for Restaurant Finder using Aqar rent comps.
+
+    Hierarchy (same as Development Feasibility / estimates):
+      1. District Aqar median (if >= min_samples)
+      2. District shrinkage toward city median (if district sparse but >0)
+      3. City Aqar median (unit_type match)
+      4. City Aqar median (asset_type only)
+      5. Indicator-based fallback (legacy _resolve_rent logic)
+      6. None
+    """
+    try:
+        from app.services.district_resolver import resolve_district
+
+        resolution = resolve_district(db, city="riyadh", lat=lat, lon=lon)
+        city_norm = resolution.city_norm or "riyadh"
+        district_norm = resolution.district_norm or None
+
+        result = aqar_rent_median(
+            db,
+            city=city_norm,
+            district=district_norm,
+            asset_type=_RESTAURANT_AQAR_ASSET,
+            unit_type=_RESTAURANT_AQAR_UNIT,
+            since_days=_RESTAURANT_AQAR_SINCE_DAYS,
+        )
+
+        # Determine best city-level baseline for shrinkage
+        base_city_median: float | None = None
+        if result.city_median is not None:
+            base_city_median = float(result.city_median)
+        elif result.city_asset_median is not None:
+            base_city_median = float(result.city_asset_median)
+
+        min_samples = _RESTAURANT_AQAR_MIN_SAMPLES
+
+        # 1. District median with enough samples
+        if result.district_median is not None and result.n_district >= min_samples:
+            return _RentResolution(
+                rent_per_m2=float(result.district_median),
+                scope="district",
+                sample_count=result.n_district,
+                median_used=float(result.district_median),
+                method="aqar_district_median",
+            )
+
+        # 2. District shrinkage (sparse district blended toward city)
+        if (
+            result.district_median is not None
+            and result.n_district > 0
+            and base_city_median is not None
+        ):
+            weight = min(1.0, result.n_district / float(min_samples))
+            blended = float(result.district_median) * weight + base_city_median * (1.0 - weight)
+            return _RentResolution(
+                rent_per_m2=blended,
+                scope="district_shrinkage",
+                sample_count=result.n_district,
+                median_used=blended,
+                method="aqar_district_shrinkage",
+            )
+
+        # 3. City median (unit_type match)
+        if result.city_median is not None and result.n_city >= min_samples:
+            return _RentResolution(
+                rent_per_m2=float(result.city_median),
+                scope="city",
+                sample_count=result.n_city,
+                median_used=float(result.city_median),
+                method="aqar_city_median",
+            )
+
+        # 4. City median (asset_type only)
+        if result.city_asset_median is not None and result.n_city_asset >= min_samples:
+            return _RentResolution(
+                rent_per_m2=float(result.city_asset_median),
+                scope="city_asset",
+                sample_count=result.n_city_asset,
+                median_used=float(result.city_asset_median),
+                method="aqar_city_asset_median",
+            )
+
+    except Exception as exc:
+        logger.debug("Aqar rent resolution failed: %s", exc)
+
+    # 5. Indicator-based fallback (legacy)
+    return _resolve_rent_indicator_fallback(db, lat, lon)
+
+
+def _resolve_rent_indicator_fallback(db: Session, lat: float, lon: float) -> _RentResolution:
+    """Legacy rent resolution via market indicators — used when Aqar data is unavailable."""
     try:
         from app.services.district_resolver import resolve_district
         resolution = resolve_district(db, city="riyadh", lat=lat, lon=lon)
         district = resolution.district_norm or resolution.district_raw
         if district:
             from app.services.indicators import latest_rent_per_m2
-            return latest_rent_per_m2(db, "riyadh", district)
+            rent = latest_rent_per_m2(db, "riyadh", district)
+            if rent is not None:
+                return _RentResolution(
+                    rent_per_m2=rent,
+                    scope="indicator_fallback",
+                    sample_count=0,
+                    median_used=rent,
+                    method="indicator_district_rent",
+                )
     except Exception as exc:
-        logger.debug("Rent resolution failed: %s", exc)
-    return None
+        logger.debug("Indicator rent fallback failed: %s", exc)
+
+    return _RentResolution(
+        rent_per_m2=None,
+        scope="none",
+        sample_count=0,
+        median_used=None,
+        method="none",
+    )
