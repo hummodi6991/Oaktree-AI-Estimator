@@ -356,6 +356,8 @@
     "confidence": "مستوى الثقة",
     "cellConfidence": "ثقة الخلية",
     "parcelConfidence": "ثقة القطعة",
+    "parcelOpportunity": "فرصة القطعة",
+    "cellOpportunity": "فرصة الخلية",
     "factorBreakdown": "تفصيل العوامل",
     "nearbyCompetitors": "المنافسون القريبون",
     "competitorName": "الاسم",

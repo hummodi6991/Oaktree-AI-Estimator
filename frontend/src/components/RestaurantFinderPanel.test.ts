@@ -29,3 +29,24 @@ describe("Restaurant Finder confidence labels", () => {
     expect(ar.restaurant.confidence).toBe("مستوى الثقة");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Opportunity label i18n keys — regression tests
+// ---------------------------------------------------------------------------
+
+describe("Restaurant Finder opportunity labels", () => {
+  it("en.json has distinct cellOpportunity and parcelOpportunity keys", () => {
+    expect(en.restaurant.cellOpportunity).toBe("Cell opportunity");
+    expect(en.restaurant.parcelOpportunity).toBe("Parcel opportunity");
+  });
+
+  it("ar.json has distinct cellOpportunity and parcelOpportunity keys", () => {
+    expect(ar.restaurant.cellOpportunity).toBe("فرصة الخلية");
+    expect(ar.restaurant.parcelOpportunity).toBe("فرصة القطعة");
+  });
+
+  it("cellOpportunity and parcelOpportunity are distinct from each other", () => {
+    expect(en.restaurant.cellOpportunity).not.toBe(en.restaurant.parcelOpportunity);
+    expect(ar.restaurant.cellOpportunity).not.toBe(ar.restaurant.parcelOpportunity);
+  });
+});

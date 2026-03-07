@@ -694,7 +694,7 @@ export default function Map({
       heatmapPopup
         .setLngLat(e.lngLat)
         .setHTML(
-          `<div style="font-size:12px;line-height:1.4"><strong>Opportunity:</strong> ${typeof finalScore === "number" ? Math.round(finalScore) : finalScore}<br/><strong>Cell confidence:</strong> ${typeof confidence === "number" ? Math.round(confidence) : confidence}</div>`,
+          `<div style="font-size:12px;line-height:1.4"><strong>Cell opportunity:</strong> ${typeof finalScore === "number" ? Math.round(finalScore) : finalScore}<br/><strong>Cell confidence:</strong> ${typeof confidence === "number" ? Math.round(confidence) : confidence}</div>`,
         )
         .addTo(map);
     });

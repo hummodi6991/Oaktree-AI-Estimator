@@ -246,13 +246,13 @@ export default function RestaurantFinderPanel({
                     }}
                   >
                     <span>
-                      {t("restaurant.opportunityLabel", { defaultValue: "Opportunity" })}{" "}
+                      {t("restaurant.parcelOpportunity", { defaultValue: "Parcel opportunity" })}{" "}
                       <strong style={{ color: "var(--oak-text-dark)", fontWeight: 600 }}>
                         {Math.round(Number.isFinite(scoreResult.opportunity_score) ? scoreResult.opportunity_score : 0)}
                       </strong>
                     </span>
                     <span>
-                      {t("restaurant.parcelConfidence", { defaultValue: "Confidence" })}{" "}
+                      {t("restaurant.parcelConfidence", { defaultValue: "Parcel confidence" })}{" "}
                       <strong style={{ color: "var(--oak-text-dark)", fontWeight: 600 }}>
                         {Math.round(Number.isFinite(scoreResult.confidence_score) ? scoreResult.confidence_score : 0)}
                       </strong>
@@ -485,7 +485,7 @@ export default function RestaurantFinderPanel({
                       marginTop: 2,
                     }}
                   >
-                    {t("restaurant.opportunityLabel", { defaultValue: "Opportunity" })}:{" "}
+                    {t("restaurant.cellOpportunity", { defaultValue: "Cell opportunity" })}:{" "}
                     {Math.round(Number.isFinite(cell.opportunity_score) ? cell.opportunity_score : 0)} ·{" "}
                     {t("restaurant.cellConfidence", { defaultValue: "Cell confidence" })}:{" "}
                     {Math.round(Number.isFinite(cell.confidence_score) ? cell.confidence_score : 0)}
