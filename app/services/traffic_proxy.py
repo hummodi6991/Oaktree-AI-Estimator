@@ -80,6 +80,10 @@ def traffic_score_at(
         ).mappings().all()
     except Exception as exc:
         logger.warning("traffic_score_at query failed: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return {"score": 25.0, "road_count": 0, "nearest_road": None}
 
     if not rows:
