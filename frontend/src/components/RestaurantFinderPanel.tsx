@@ -125,6 +125,15 @@ export default function RestaurantFinderPanel({
     onHighlightCell(cell.lon, cell.lat);
   };
 
+  const sectionHeadingStyle: React.CSSProperties = {
+    fontSize: 10,
+    fontWeight: 700,
+    color: "var(--oak-text-light)",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+    marginBottom: 10,
+  };
+
   return (
     <div className="ui-v2-form-wrap">
       {/* Category selector */}
@@ -204,7 +213,7 @@ export default function RestaurantFinderPanel({
               {/* ── Summary header ── */}
               <div
                 style={{
-                  padding: "14px 16px",
+                  padding: "16px 18px",
                   background: "var(--oak-secondary)",
                   borderBottom: "1px solid rgba(0,0,0,0.06)",
                   display: "flex",
@@ -215,8 +224,8 @@ export default function RestaurantFinderPanel({
                 {/* Score badge */}
                 <div
                   style={{
-                    width: 52,
-                    height: 52,
+                    width: 56,
+                    height: 56,
                     borderRadius: "50%",
                     background: scoreColor(Number.isFinite(scoreResult.final_score) ? scoreResult.final_score : 0),
                     display: "flex",
@@ -224,9 +233,9 @@ export default function RestaurantFinderPanel({
                     justifyContent: "center",
                     color: "#fff",
                     fontWeight: 700,
-                    fontSize: 20,
+                    fontSize: 22,
                     flexShrink: 0,
-                    boxShadow: "0 2px 6px rgba(0,0,0,0.15)",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.18)",
                   }}
                 >
                   {Math.round(Number.isFinite(scoreResult.final_score) ? scoreResult.final_score : 0)}
@@ -247,8 +256,8 @@ export default function RestaurantFinderPanel({
                   <div
                     style={{
                       display: "flex",
-                      gap: 16,
-                      marginTop: 4,
+                      gap: 18,
+                      marginTop: 6,
                       fontSize: "var(--oak-fs-xs)",
                       color: "var(--oak-text-gray)",
                     }}
@@ -271,32 +280,24 @@ export default function RestaurantFinderPanel({
 
               {/* ── Factor breakdown ── */}
               {scoreResult.contributions && scoreResult.contributions.length > 0 && (
-                <div style={{ padding: "14px 16px 16px" }}>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--oak-text-light)",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
-                      marginBottom: 12,
-                    }}
-                  >
+                <div style={{ padding: "14px 18px 16px" }}>
+                  <div style={sectionHeadingStyle}>
                     {t("restaurant.factorBreakdown", { defaultValue: "Factor Breakdown" })}
                   </div>
-                  <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ display: "grid", gap: 5 }}>
                     {scoreResult.contributions.map((c) => {
                       const label =
                         t(`restaurant.factors.${c.factor}.label`, { defaultValue: "" }) ||
                         fallbackLabel(c.factor);
                       const tip = t(`restaurant.factors.${c.factor}.tip`, { defaultValue: "" });
+                      const score = Math.round(c.score);
 
                       return (
                         <div
                           key={c.factor}
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "minmax(100px, auto) 1fr 32px",
+                            gridTemplateColumns: "140px 1fr 30px",
                             alignItems: "center",
                             gap: 10,
                             fontSize: "var(--oak-fs-xs)",
@@ -307,7 +308,7 @@ export default function RestaurantFinderPanel({
                             style={{
                               display: "inline-flex",
                               alignItems: "center",
-                              gap: 5,
+                              gap: 4,
                               color: "var(--oak-text-gray)",
                               fontWeight: 500,
                               overflow: "hidden",
@@ -326,9 +327,9 @@ export default function RestaurantFinderPanel({
                           </span>
                           <div
                             style={{
-                              height: 6,
-                              background: "rgba(0,0,0,0.05)",
-                              borderRadius: 3,
+                              height: 7,
+                              background: "rgba(0,0,0,0.04)",
+                              borderRadius: 4,
                               overflow: "hidden",
                             }}
                           >
@@ -337,7 +338,7 @@ export default function RestaurantFinderPanel({
                                 width: `${Math.min(100, Math.max(0, c.score))}%`,
                                 height: "100%",
                                 background: scoreColor(c.score),
-                                borderRadius: 3,
+                                borderRadius: 4,
                                 transition: "width 300ms ease",
                               }}
                             />
@@ -346,11 +347,12 @@ export default function RestaurantFinderPanel({
                             style={{
                               textAlign: "right",
                               fontWeight: 600,
+                              fontSize: 12,
                               color: "var(--oak-text-dark)",
                               fontVariantNumeric: "tabular-nums",
                             }}
                           >
-                            {Math.round(c.score)}
+                            {score}
                           </span>
                         </div>
                       );
@@ -363,18 +365,13 @@ export default function RestaurantFinderPanel({
               {scoreResult.nearby_competitors && scoreResult.nearby_competitors.length > 0 && (
                 <div
                   style={{
-                    padding: "10px 16px 14px",
+                    padding: "12px 18px 14px",
                     borderTop: "1px solid rgba(0,0,0,0.06)",
                   }}
                 >
                   <div
                     style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color: "var(--oak-text-light)",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.04em",
-                      marginBottom: 8,
+                      ...sectionHeadingStyle,
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "space-between",
@@ -449,76 +446,81 @@ export default function RestaurantFinderPanel({
             })}
           </div>
         ) : (
-          <div style={{ display: "grid", gap: 8 }}>
-            {topCells.map((cell, idx) => (
-              <button
-                key={cell.h3_index || idx}
-                type="button"
-                onClick={() => handleTopCellClick(cell, idx)}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "48px 1fr",
-                  gap: 10,
-                  padding: "10px 12px",
-                  borderRadius: "var(--oak-radius)",
-                  border:
-                    activeTopCellIdx === idx
+          <div style={{ display: "grid", gap: 6 }}>
+            {topCells.map((cell, idx) => {
+              const cellScore = Number.isFinite(cell.final_score) ? cell.final_score : 0;
+              const isActive = activeTopCellIdx === idx;
+              return (
+                <button
+                  key={cell.h3_index || idx}
+                  type="button"
+                  onClick={() => handleTopCellClick(cell, idx)}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "44px 1fr",
+                    gap: 10,
+                    padding: "10px 12px",
+                    borderRadius: "var(--oak-radius)",
+                    border: isActive
                       ? "2px solid var(--oak-primary)"
                       : "1px solid var(--oak-outlines)",
-                  background:
-                    activeTopCellIdx === idx
+                    background: isActive
                       ? "var(--oak-secondary)"
                       : "var(--oak-bg-surface)",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  width: "100%",
-                  transition: "border-color 120ms ease, background 120ms ease",
-                }}
-              >
-                <div
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: "50%",
-                    background: scoreColor(Number.isFinite(cell.final_score) ? cell.final_score : 0),
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#fff",
-                    fontWeight: 700,
-                    fontSize: "var(--oak-fs-sm)",
-                    flexShrink: 0,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    width: "100%",
+                    transition: "border-color 120ms ease, background 120ms ease",
                   }}
                 >
-                  {Math.round(Number.isFinite(cell.final_score) ? cell.final_score : 0)}
-                </div>
-                <div>
                   <div
                     style={{
-                      fontSize: "var(--oak-fs-xs)",
-                      fontWeight: 600,
-                      color: "var(--oak-text-dark)",
+                      width: 38,
+                      height: 38,
+                      borderRadius: "50%",
+                      background: scoreColor(cellScore),
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      color: "#fff",
+                      fontWeight: 700,
+                      fontSize: "var(--oak-fs-sm)",
+                      flexShrink: 0,
                     }}
                   >
-                    #{idx + 1} ·{" "}
-                    {cell.area_label ||
-                      `${cell.lat.toFixed(4)}, ${cell.lon.toFixed(4)}`}
+                    {Math.round(cellScore)}
                   </div>
-                  <div
-                    style={{
-                      fontSize: "var(--oak-fs-xs)",
-                      color: "var(--oak-text-light)",
-                      marginTop: 2,
-                    }}
-                  >
-                    {t("restaurant.cellOpportunity", { defaultValue: "Cell opportunity" })}:{" "}
-                    {Math.round(Number.isFinite(cell.opportunity_score) ? cell.opportunity_score : 0)} ·{" "}
-                    {t("restaurant.cellConfidence", { defaultValue: "Cell confidence" })}:{" "}
-                    {Math.round(Number.isFinite(cell.confidence_score) ? cell.confidence_score : 0)}
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: "var(--oak-fs-xs)",
+                        fontWeight: 600,
+                        color: "var(--oak-text-dark)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      #{idx + 1} ·{" "}
+                      {cell.area_label ||
+                        `${cell.lat.toFixed(4)}, ${cell.lon.toFixed(4)}`}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "var(--oak-text-light)",
+                        marginTop: 2,
+                      }}
+                    >
+                      {t("restaurant.cellOpportunity", { defaultValue: "Cell opportunity" })}:{" "}
+                      {Math.round(Number.isFinite(cell.opportunity_score) ? cell.opportunity_score : 0)} ·{" "}
+                      {t("restaurant.cellConfidence", { defaultValue: "Cell confidence" })}:{" "}
+                      {Math.round(Number.isFinite(cell.confidence_score) ? cell.confidence_score : 0)}
+                    </div>
                   </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>

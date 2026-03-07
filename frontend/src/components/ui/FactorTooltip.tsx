@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type Props = {
   text: string;
@@ -11,18 +11,46 @@ type Props = {
 export default function FactorTooltip({ text }: Props) {
   const [open, setOpen] = useState(false);
   const timeout = useRef<number | null>(null);
+  const isTouchRef = useRef(false);
   const ref = useRef<HTMLButtonElement>(null);
 
   const show = useCallback(() => {
+    if (isTouchRef.current) return; // ignore mouse events after touch
     if (timeout.current) clearTimeout(timeout.current);
     setOpen(true);
   }, []);
 
   const hide = useCallback(() => {
+    if (isTouchRef.current) return; // ignore mouse events after touch
     timeout.current = window.setTimeout(() => setOpen(false), 120);
   }, []);
 
-  const toggle = useCallback(() => setOpen((v) => !v), []);
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    e.preventDefault(); // prevent synthetic mouse events
+    isTouchRef.current = true;
+    setOpen((v) => !v);
+  }, []);
+
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    // On touch devices the touchend handler already toggled state
+    if (isTouchRef.current) {
+      e.preventDefault();
+      return;
+    }
+    setOpen((v) => !v);
+  }, []);
+
+  // Close on outside tap (touch devices)
+  useEffect(() => {
+    if (!open) return;
+    const onTouch = (e: TouchEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("touchstart", onTouch, { passive: true });
+    return () => document.removeEventListener("touchstart", onTouch);
+  }, [open]);
 
   return (
     <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
@@ -30,7 +58,8 @@ export default function FactorTooltip({ text }: Props) {
         ref={ref}
         type="button"
         aria-label={text}
-        onClick={toggle}
+        onClick={handleClick}
+        onTouchEnd={handleTouchEnd}
         onMouseEnter={show}
         onMouseLeave={hide}
         onFocus={show}
@@ -77,7 +106,7 @@ export default function FactorTooltip({ text }: Props) {
             fontWeight: 400,
             lineHeight: 1.45,
             boxShadow: "0 2px 8px rgba(0,0,0,0.18)",
-            zIndex: 10,
+            zIndex: 50,
             pointerEvents: "none",
             whiteSpace: "normal",
           }}
