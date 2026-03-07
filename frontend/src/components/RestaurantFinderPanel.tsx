@@ -512,9 +512,9 @@ export default function RestaurantFinderPanel({
                         marginTop: 2,
                       }}
                     >
-                      {t("restaurant.cellOpportunity", { defaultValue: "Opp." })}:{" "}
+                      {t("restaurant.cellOpportunity", { defaultValue: "Cell opportunity" })}:{" "}
                       {Math.round(Number.isFinite(cell.opportunity_score) ? cell.opportunity_score : 0)} ·{" "}
-                      {t("restaurant.cellConfidence", { defaultValue: "Conf." })}:{" "}
+                      {t("restaurant.cellConfidence", { defaultValue: "Cell confidence" })}:{" "}
                       {Math.round(Number.isFinite(cell.confidence_score) ? cell.confidence_score : 0)}
                     </div>
                   </div>
