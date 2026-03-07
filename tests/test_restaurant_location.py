@@ -14,6 +14,8 @@ from app.services.restaurant_location import (
     _aggregate_confidence,
     _build_confidence_contributions,
     _CONF_WEIGHTS,
+    _RentResolution,
+    _rent_data_quality,
 )
 from app.services.traffic_proxy import road_class_score
 
@@ -220,3 +222,96 @@ class TestConfidenceScore:
         conf_high = _aggregate_confidence(features_high)
         conf_low = _aggregate_confidence(features_low)
         assert conf_high > conf_low
+
+
+class TestRentDataQuality:
+    """Tests for Aqar rent data quality -> confidence contribution."""
+
+    def test_district_scope_highest_quality(self):
+        res = _RentResolution(rent_per_m2=500.0, scope="district", sample_count=10,
+                              median_used=500.0, method="aqar_district_median")
+        assert _rent_data_quality(res) == 1.0
+
+    def test_district_shrinkage_medium_quality(self):
+        res = _RentResolution(rent_per_m2=450.0, scope="district_shrinkage", sample_count=3,
+                              median_used=450.0, method="aqar_district_shrinkage")
+        assert _rent_data_quality(res) == 0.7
+
+    def test_city_scope_moderate_quality(self):
+        res = _RentResolution(rent_per_m2=400.0, scope="city", sample_count=20,
+                              median_used=400.0, method="aqar_city_median")
+        assert _rent_data_quality(res) == 0.5
+
+    def test_city_asset_scope_moderate_quality(self):
+        res = _RentResolution(rent_per_m2=400.0, scope="city_asset", sample_count=15,
+                              median_used=400.0, method="aqar_city_asset_median")
+        assert _rent_data_quality(res) == 0.5
+
+    def test_indicator_fallback_low_quality(self):
+        res = _RentResolution(rent_per_m2=350.0, scope="indicator_fallback", sample_count=0,
+                              median_used=350.0, method="indicator_district_rent")
+        assert _rent_data_quality(res) == 0.2
+
+    def test_no_data_zero_quality(self):
+        res = _RentResolution(rent_per_m2=None, scope="none", sample_count=0,
+                              median_used=None, method="none")
+        assert _rent_data_quality(res) == 0.0
+
+    def test_rent_factor_changes_from_neutral_with_aqar_signal(self):
+        """When Aqar rent data is available, rent factor should NOT be the neutral 50."""
+        # District-level Aqar rent of 200 SAR/m² -> rent_score_value should be ~90
+        res = _RentResolution(rent_per_m2=200.0, scope="district", sample_count=10,
+                              median_used=200.0, method="aqar_district_median")
+        score = rent_score_value(res.rent_per_m2)
+        assert score != 50.0, "Rent factor should not be neutral when Aqar data exists"
+        assert score >= 80.0, "Low rent should give high score"
+
+    def test_confidence_increases_with_district_aqar_rent(self):
+        """Confidence should be higher when district-level Aqar rent is used."""
+        base_features = {
+            "has_google": 0.5,
+            "google_confidence": 0.5,
+            "review_sufficiency": 0.5,
+            "nearby_evidence": 0.5,
+            "source_diversity": 0.5,
+            "rating_coverage": 0.5,
+        }
+
+        # Without rent data quality
+        conf_without = _aggregate_confidence(base_features)
+
+        # With district-level rent data quality
+        features_with_rent = {**base_features, "rent_data_quality": 1.0}
+        conf_with = _aggregate_confidence(features_with_rent)
+
+        assert conf_with > conf_without, (
+            "Confidence should increase when district Aqar rent data is available"
+        )
+
+    def test_confidence_increases_with_city_aqar_rent(self):
+        """Confidence should increase even with city-level Aqar rent (less than district)."""
+        base_features = {
+            "has_google": 0.5,
+            "google_confidence": 0.5,
+            "review_sufficiency": 0.5,
+            "nearby_evidence": 0.5,
+            "source_diversity": 0.5,
+            "rating_coverage": 0.5,
+        }
+
+        features_city = {**base_features, "rent_data_quality": 0.5}
+        features_district = {**base_features, "rent_data_quality": 1.0}
+
+        conf_city = _aggregate_confidence(features_city)
+        conf_district = _aggregate_confidence(features_district)
+
+        assert conf_district > conf_city, (
+            "District rent should give higher confidence than city rent"
+        )
+
+    def test_fallback_still_works_when_aqar_missing(self):
+        """When Aqar is unavailable, rent_data_quality=0 and rent factor returns neutral 50."""
+        res = _RentResolution(rent_per_m2=None, scope="none", sample_count=0,
+                              median_used=None, method="none")
+        assert rent_score_value(res.rent_per_m2) == 50.0
+        assert _rent_data_quality(res) == 0.0
