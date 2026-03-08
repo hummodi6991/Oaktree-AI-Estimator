@@ -192,6 +192,23 @@ def _extract_district_from_url(url: str) -> str | None:
     return None
 
 
+def _normalize_name_for_sql(raw: str) -> str:
+    """Normalize a restaurant name for comparison — mirrors the SQL
+    regexp_replace normalization used in queries."""
+    import re as _re
+    n = raw.lower().strip()
+    n = _re.sub(r"[^a-z0-9\s\u0600-\u06FF]", " ", n)
+    n = _re.sub(r"\s+", " ", n).strip()
+    return n
+
+
+_NORM_NAME_SQL = (
+    "TRIM(regexp_replace("
+    "  regexp_replace(LOWER(name), '[^a-z0-9\\s\\u0600-\\u06FF]', ' ', 'g'),"
+    "  '\\s+', ' ', 'g'))"
+)
+
+
 def _match_existing_poi(
     db: Session, name: str, district: str
 ) -> dict[str, float] | None:
@@ -199,33 +216,37 @@ def _match_existing_poi(
     Try to find a matching restaurant_poi by name similarity + district.
     Returns {lat, lon} if a confident match is found.
     """
-    # Use exact normalized name match within the same district
+    norm = _normalize_name_for_sql(name)
+    if not norm or len(norm) < 3:
+        return None
+
+    # Use normalized name match within the same district
     result = db.execute(
-        text("""
+        text(f"""
             SELECT lat, lon FROM restaurant_poi
-            WHERE LOWER(name) = LOWER(:name)
+            WHERE {_NORM_NAME_SQL} = :name
               AND district IS NOT NULL
               AND LOWER(district) = LOWER(:district)
             LIMIT 1
         """),
-        {"name": name.strip(), "district": district.strip()},
+        {"name": norm, "district": district.strip()},
     ).first()
 
     if result:
         return {"lat": float(result[0]), "lon": float(result[1])}
 
-    # Fallback: partial name match within district
+    # Fallback: partial normalized name match within district
     result = db.execute(
-        text("""
+        text(f"""
             SELECT lat, lon FROM restaurant_poi
-            WHERE LOWER(name) LIKE :pattern
+            WHERE {_NORM_NAME_SQL} LIKE :pattern
               AND district IS NOT NULL
               AND LOWER(district) = LOWER(:district)
             ORDER BY LENGTH(name) ASC
             LIMIT 1
         """),
         {
-            "pattern": f"%{name.strip().lower()}%",
+            "pattern": f"%{norm}%",
             "district": district.strip(),
         },
     ).first()

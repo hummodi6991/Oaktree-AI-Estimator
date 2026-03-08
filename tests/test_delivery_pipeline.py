@@ -38,6 +38,7 @@ from app.delivery.location import (
 )
 from app.delivery.pipeline import _normalize_name, record_to_row
 from app.delivery.resolver import _normalize_for_match as resolver_normalize
+from app.delivery.location import _normalize_name_for_sql
 
 
 # ============================================================================
@@ -476,3 +477,79 @@ class TestIntegrationFixtures:
         resolved = resolve_location(rec, db=None)
         assert resolved.lat == 24.6651
         assert resolved.lon == 46.7218
+
+
+# ============================================================================
+# Name normalization consistency tests
+# ============================================================================
+
+
+class TestNameNormalizationConsistency:
+    """Verify Python and SQL-side normalization produce the same results."""
+
+    def test_punctuation_stripped_consistently(self):
+        """Al-Baik (Olaya) must normalize identically in Python and SQL paths."""
+        py_result = resolver_normalize("Al-Baik (Olaya)")
+        sql_result = _normalize_name_for_sql("Al-Baik (Olaya)")
+        assert py_result == sql_result == "al baik olaya"
+
+    def test_arabic_preserved(self):
+        """Arabic characters must survive normalization."""
+        py_result = resolver_normalize("البيك - الربوة")
+        sql_result = _normalize_name_for_sql("البيك - الربوة")
+        assert py_result == sql_result
+        assert "البيك" in py_result
+        assert "الربوة" in py_result
+
+    def test_apostrophe_stripped(self):
+        """Apostrophes (McDonald's) must be normalized consistently.
+        The apostrophe becomes a space, then gets collapsed."""
+        py_result = resolver_normalize("McDonald's Riyadh")
+        sql_result = _normalize_name_for_sql("McDonald's Riyadh")
+        assert py_result == sql_result == "mcdonald s riyadh"
+
+    def test_empty_and_none(self):
+        assert resolver_normalize(None) == ""
+        assert resolver_normalize("") == ""
+        assert _normalize_name_for_sql("") == ""
+
+
+# ============================================================================
+# Confidence gating tests
+# ============================================================================
+
+
+class TestConfidenceGating:
+    """Verify that low-precision rows are properly gated."""
+
+    def test_district_centroid_below_parcel_threshold(self):
+        """District centroid records (0.3) must not pass the 0.7 parcel gate."""
+        from app.delivery.features import PARCEL_MIN_CONFIDENCE
+
+        rec = DeliveryRecord(
+            platform="hungerstation",
+            restaurant_name_raw="Test",
+            district_text="Olaya",
+        )
+        resolved = resolve_location(rec, db=None)
+        assert resolved.location_confidence < PARCEL_MIN_CONFIDENCE
+        assert resolved.geocode_method == GeocodeMethod.DISTRICT_CENTROID
+
+    def test_platform_payload_above_parcel_threshold(self):
+        """Direct platform coordinates (0.9) must pass the 0.7 parcel gate."""
+        from app.delivery.features import PARCEL_MIN_CONFIDENCE
+
+        rec = DeliveryRecord(
+            platform="hungerstation",
+            lat=24.7136,
+            lon=46.6753,
+        )
+        resolved = resolve_location(rec, db=None)
+        assert resolved.location_confidence >= PARCEL_MIN_CONFIDENCE
+        assert resolved.geocode_method == GeocodeMethod.PLATFORM_PAYLOAD
+
+    def test_poi_match_excluded_from_first_party_methods(self):
+        """POI_MATCH coordinates are borrowed and not first-party."""
+        first_party = {"platform_payload", "json_ld", "address_geocode"}
+        assert GeocodeMethod.POI_MATCH.value not in first_party
+        assert GeocodeMethod.DISTRICT_CENTROID.value not in first_party

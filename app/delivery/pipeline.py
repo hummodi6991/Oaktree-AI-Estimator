@@ -18,6 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Iterator
 
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.delivery.models import DeliveryIngestRun, DeliverySourceRecord
@@ -148,12 +149,46 @@ def run_platform_scrape(
             # 4. Location resolution
             record = resolve_location(record, db)
 
-            # 5. Persist
+            # 5. Persist (upsert: update if same platform+listing exists)
             row = record_to_row(record, run_id)
-            db.add(row)
-            stats["rows_inserted"] += 1
+            if row.source_listing_id:
+                existing = (
+                    db.query(DeliverySourceRecord)
+                    .filter_by(
+                        platform=row.platform,
+                        source_listing_id=row.source_listing_id,
+                    )
+                    .first()
+                )
+                if existing:
+                    # Update existing record with fresh data
+                    existing.ingest_run_id = run_id
+                    existing.scraped_at = row.scraped_at
+                    existing.lat = row.lat
+                    existing.lon = row.lon
+                    existing.geocode_method = row.geocode_method
+                    existing.location_confidence = row.location_confidence
+                    existing.restaurant_name_raw = row.restaurant_name_raw
+                    existing.restaurant_name_normalized = row.restaurant_name_normalized
+                    existing.brand_raw = row.brand_raw
+                    existing.branch_raw = row.branch_raw
+                    existing.cuisine_raw = row.cuisine_raw
+                    existing.category_raw = row.category_raw
+                    existing.rating = row.rating
+                    existing.rating_count = row.rating_count
+                    existing.district_text = row.district_text
+                    existing.parse_confidence = row.parse_confidence
+                    existing.entity_resolution_status = "pending"
+                    stats["rows_updated"] = stats.get("rows_updated", 0) + 1
+                else:
+                    db.add(row)
+                    stats["rows_inserted"] += 1
+            else:
+                db.add(row)
+                stats["rows_inserted"] += 1
 
-            if stats["rows_inserted"] % 100 == 0:
+            total_rows = stats["rows_inserted"] + stats.get("rows_updated", 0)
+            if total_rows % 100 == 0:
                 db.flush()
 
     except Exception as exc:
@@ -176,6 +211,7 @@ def run_platform_scrape(
     run.rows_scraped = stats["rows_scraped"]
     run.rows_parsed = stats["rows_parsed"]
     run.rows_inserted = stats["rows_inserted"]
+    run.rows_updated = stats.get("rows_updated", 0)
     run.rows_skipped = stats["rows_skipped"]
     run.rows_matched = matched
     run.error_summary = {"errors": stats["errors"]} if stats["errors"] else None

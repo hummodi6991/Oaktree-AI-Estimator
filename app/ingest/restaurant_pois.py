@@ -168,15 +168,26 @@ def ingest_delivery_platforms(db: Session, sources: list[str] | None = None) -> 
     total_inserted = sum(r.get("rows_inserted", 0) for r in results)
     logger.info("Delivery pipeline stored %d raw records", total_inserted)
 
-    # Also upsert high-confidence records with coordinates into restaurant_poi
-    # for backward compatibility with the existing scoring engine
+    # Collect run IDs from this invocation so we only upsert fresh rows
+    run_ids = [r["run_id"] for r in results if r.get("run_id")]
+    if not run_ids:
+        db.commit()
+        return 0
+
+    # Only upsert rows from *this* run with first-party coordinates.
+    # Exclude poi_match and district_centroid geocode methods — those are
+    # borrowed or approximate locations that should not enter restaurant_poi.
     n = 0
     resolved_rows = (
         db.query(DeliverySourceRecord)
         .filter(
+            DeliverySourceRecord.ingest_run_id.in_(run_ids),
             DeliverySourceRecord.lat.isnot(None),
             DeliverySourceRecord.lon.isnot(None),
-            DeliverySourceRecord.location_confidence >= 0.5,
+            DeliverySourceRecord.location_confidence >= 0.7,
+            DeliverySourceRecord.geocode_method.in_(
+                ["platform_payload", "json_ld", "address_geocode"]
+            ),
         )
         .all()
     )
@@ -193,7 +204,12 @@ def ingest_delivery_platforms(db: Session, sources: list[str] | None = None) -> 
             "district": row.district_text,
             "rating": float(row.rating) if row.rating else None,
             "review_count": row.rating_count,
-            "raw": {"source_url": row.source_url, "delivery_pipeline": True},
+            "raw": {
+                "source_url": row.source_url,
+                "delivery_pipeline": True,
+                "geocode_method": row.geocode_method,
+                "location_confidence": row.location_confidence,
+            },
         }
         _upsert_poi(db, poi)
         n += 1

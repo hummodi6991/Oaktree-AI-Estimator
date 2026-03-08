@@ -148,6 +148,17 @@ def _resolve_single(
     return None
 
 
+def _normalize_name_sql() -> str:
+    """Return a SQL expression that normalizes restaurant_poi.name the same
+    way ``_normalize_for_match`` does in Python: lowercase, strip
+    non-alphanumeric/non-Arabic characters, collapse whitespace."""
+    return (
+        "TRIM(regexp_replace("
+        "  regexp_replace(LOWER(name), '[^a-z0-9\\s\\u0600-\\u06FF]', ' ', 'g'),"
+        "  '\\s+', ' ', 'g'))"
+    )
+
+
 def _match_name_district(
     db: Session, name: str, district: str
 ) -> dict[str, Any] | None:
@@ -158,9 +169,9 @@ def _match_name_district(
 
     try:
         row = db.execute(
-            text("""
+            text(f"""
                 SELECT id FROM restaurant_poi
-                WHERE LOWER(name) = :name
+                WHERE {_normalize_name_sql()} = :name
                   AND LOWER(district) = LOWER(:district)
                 LIMIT 1
             """),
@@ -214,9 +225,9 @@ def _match_name_proximity(
 
     try:
         row = db.execute(
-            text("""
+            text(f"""
                 SELECT id FROM restaurant_poi
-                WHERE LOWER(name) = :name
+                WHERE {_normalize_name_sql()} = :name
                   AND geom IS NOT NULL
                   AND ST_DWithin(
                       geom::geography,

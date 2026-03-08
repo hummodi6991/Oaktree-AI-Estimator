@@ -105,6 +105,13 @@ class DeliverySourceRecord(Base):
         Index("ix_dsr_matched_poi", "matched_restaurant_poi_id"),
         Index("ix_dsr_ingest_run", "ingest_run_id"),
         Index("ix_dsr_brand", "brand_raw"),
+        Index(
+            "uq_dsr_platform_listing",
+            "platform",
+            "source_listing_id",
+            unique=True,
+            postgresql_where=text("source_listing_id IS NOT NULL"),
+        ),
     )
 
 

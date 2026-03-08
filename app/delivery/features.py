@@ -273,12 +273,15 @@ def nearby_delivery_competition(
 ) -> dict[str, Any]:
     """
     Count delivery-platform restaurants near a point.
-    ONLY uses records with high location confidence (>= 0.7).
+    ONLY uses records with high location confidence (>= 0.7) and
+    first-party coordinate methods (platform_payload, json_ld, address_geocode).
+    Excludes poi_match and district_centroid which are approximate.
     """
     conditions = [
         "lat IS NOT NULL",
         "lon IS NOT NULL",
         "location_confidence >= :min_conf",
+        "geocode_method IN ('platform_payload', 'json_ld', 'address_geocode')",
     ]
     params: dict[str, Any] = {
         "lat": lat,
