@@ -6,6 +6,7 @@ import {
   fetchTopCells,
   scoreLocation,
   getHeatmapMeta,
+  clearHeatmapCacheForCategory,
   type RestaurantCategory,
   type TopCell,
   type ScoreResult,
@@ -93,6 +94,11 @@ export default function RestaurantFinderPanel({
       setTopCellsLoading(true);
       setActiveTopCellIdx(null);
 
+      // Clear stale in-memory metadata so the UI doesn't flash old AI status
+      // while the new fetch is in-flight.
+      clearHeatmapCacheForCategory(category);
+      setHeatmapMeta(null);
+
       try {
         const [heatmap, cells] = await Promise.all([
           fetchOpportunityHeatmap(category),
@@ -100,10 +106,13 @@ export default function RestaurantFinderPanel({
         ]);
         onHeatmapData(heatmap);
         setTopCells(cells);
+        // Read freshly populated metadata from the just-fetched response
         setHeatmapMeta(getHeatmapMeta(category));
       } catch (e: any) {
         setError(e?.message || "Failed to load heatmap data");
         onHeatmapData(null);
+        // Ensure stale metadata doesn't linger after a failed fetch
+        setHeatmapMeta(null);
       } finally {
         setHeatmapLoading(false);
         setTopCellsLoading(false);

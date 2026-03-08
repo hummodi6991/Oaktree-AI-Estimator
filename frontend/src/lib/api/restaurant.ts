@@ -129,6 +129,17 @@ export function getHeatmapMeta(category: string): HeatmapMeta | null {
   return heatmapMetaCache.get(category) ?? null;
 }
 
+/** Clear cached heatmap data and metadata for a specific category (or all). */
+export function clearHeatmapCacheForCategory(category?: string) {
+  if (category) {
+    heatmapCache.delete(category);
+    heatmapMetaCache.delete(category);
+  } else {
+    heatmapCache.clear();
+    heatmapMetaCache.clear();
+  }
+}
+
 export async function fetchCategories(): Promise<RestaurantCategory[]> {
   const res = await fetchWithAuth(buildApiUrl("/v1/restaurant/categories"));
   const data = await res.json();

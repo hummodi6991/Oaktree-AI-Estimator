@@ -280,6 +280,109 @@ class TestCacheReadWrite:
 
 
 # ---------------------------------------------------------------------------
+# AI-consistency cache invalidation
+# ---------------------------------------------------------------------------
+
+
+class TestCacheAIConsistency:
+    """Cache must be invalidated when AI model state differs from cached payload."""
+
+    @staticmethod
+    def _make_cached_row(ai_used: bool, model_version: str):
+        """Helper: create a mock cache row with given AI metadata."""
+        row = MagicMock()
+        row.computed_at = datetime.now(timezone.utc)  # fresh within TTL
+        row.payload = {
+            "type": "FeatureCollection",
+            "features": [],
+            "metadata": {
+                "ai_used": ai_used,
+                "scoring_mode": "heatmap_ai_v1" if ai_used else "curated_static_v1",
+                "model_version": model_version,
+            },
+        }
+        return row
+
+    @staticmethod
+    def _mock_db(row):
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter_by.return_value.first.return_value = row
+        return mock_db
+
+    @patch("app.services.restaurant_opportunity_heatmap._get_heatmap_model_status")
+    def test_static_cache_invalidated_when_ai_available(self, mock_status):
+        """Cached static fallback + AI model now available => cache miss."""
+        from app.services.restaurant_opportunity_heatmap import _get_cached
+
+        mock_status.return_value = {
+            "available": True,
+            "model_version": "heatmap_ai_v1",
+        }
+        row = self._make_cached_row(ai_used=False, model_version="curated_static_v1")
+        result = _get_cached(self._mock_db(row), "burger", 1200)
+        assert result is None, "Should invalidate cache when AI became available"
+
+    @patch("app.services.restaurant_opportunity_heatmap._get_heatmap_model_status")
+    def test_outdated_model_version_invalidated(self, mock_status):
+        """Cached AI payload with old model_version + new version available => cache miss."""
+        from app.services.restaurant_opportunity_heatmap import _get_cached
+
+        mock_status.return_value = {
+            "available": True,
+            "model_version": "heatmap_ai_v2",
+        }
+        row = self._make_cached_row(ai_used=True, model_version="heatmap_ai_v1")
+        result = _get_cached(self._mock_db(row), "burger", 1200)
+        assert result is None, "Should invalidate cache when model version changed"
+
+    @patch("app.services.restaurant_opportunity_heatmap._get_heatmap_model_status")
+    def test_static_cache_kept_when_ai_unavailable(self, mock_status):
+        """Cached static fallback + AI still unavailable => cache hit."""
+        from app.services.restaurant_opportunity_heatmap import _get_cached
+
+        mock_status.return_value = {
+            "available": False,
+            "model_version": None,
+        }
+        row = self._make_cached_row(ai_used=False, model_version="curated_static_v1")
+        result = _get_cached(self._mock_db(row), "burger", 1200)
+        assert result is not None, "Should keep cache when AI is still unavailable"
+        assert result["metadata"]["scoring_mode"] == "curated_static_v1"
+
+    @patch("app.services.restaurant_opportunity_heatmap._get_heatmap_model_status")
+    def test_ai_cache_kept_when_version_matches(self, mock_status):
+        """Cached AI payload with same model_version => cache hit."""
+        from app.services.restaurant_opportunity_heatmap import _get_cached
+
+        mock_status.return_value = {
+            "available": True,
+            "model_version": "heatmap_ai_v1",
+        }
+        row = self._make_cached_row(ai_used=True, model_version="heatmap_ai_v1")
+        result = _get_cached(self._mock_db(row), "burger", 1200)
+        assert result is not None, "Should keep cache when AI version matches"
+        assert result["metadata"]["ai_used"] is True
+
+    @patch("app.services.restaurant_opportunity_heatmap._get_heatmap_model_status")
+    def test_legacy_cache_without_metadata_not_broken(self, mock_status):
+        """Old cache rows without metadata dict should still work (cache hit)."""
+        from app.services.restaurant_opportunity_heatmap import _get_cached
+
+        mock_status.return_value = {
+            "available": True,
+            "model_version": "heatmap_ai_v1",
+        }
+        row = MagicMock()
+        row.computed_at = datetime.now(timezone.utc)
+        # Legacy payload without metadata key
+        row.payload = {"type": "FeatureCollection", "features": []}
+        result = _get_cached(self._mock_db(row), "burger", 1200)
+        # No metadata means ai_used defaults to False; AI is available
+        # => should invalidate (treat missing metadata as stale static)
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
 # Endpoint returns FeatureCollection (mock service)
 # ---------------------------------------------------------------------------
 

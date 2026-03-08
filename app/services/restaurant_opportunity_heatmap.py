@@ -63,7 +63,14 @@ _RIYADH_BBOX = {
 def _get_cached(
     db: Session, category: str, radius_m: int
 ) -> dict[str, Any] | None:
-    """Return cached payload if fresh enough, else None."""
+    """Return cached payload if fresh enough and AI-consistent, else None.
+
+    Invalidates the cache automatically when:
+    - The cached payload used static fallback but the heatmap AI model is now
+      available (stale static masking new AI).
+    - The cached payload's model_version differs from the currently loaded
+      model version (outdated AI version).
+    """
     row = (
         db.query(RestaurantHeatmapCache)
         .filter_by(category=category, radius_m=radius_m)
@@ -73,7 +80,50 @@ def _get_cached(
         return None
     if datetime.now(timezone.utc) - row.computed_at > _CACHE_TTL:
         return None
-    return row.payload
+
+    payload = row.payload
+    if not isinstance(payload, dict):
+        return payload
+
+    # --- AI-consistency check ---
+    cached_meta = payload.get("metadata") or {}
+    cached_scoring_mode = cached_meta.get("scoring_mode", "")
+    cached_model_version = cached_meta.get("model_version", "")
+    cached_ai_used = cached_meta.get("ai_used", False)
+
+    current_status = _get_heatmap_model_status()
+    model_available_now = current_status.get("available", False)
+    current_model_version = current_status.get("model_version") or ""
+
+    # Case 1: cached payload is static fallback, but AI model is now available
+    if not cached_ai_used and model_available_now:
+        logger.info(
+            "Heatmap cache BYPASS: cached payload is static fallback "
+            "(scoring_mode=%s) but heatmap AI model is now available "
+            "(version=%s). Recomputing with AI. category=%s",
+            cached_scoring_mode,
+            current_model_version,
+            category,
+        )
+        return None
+
+    # Case 2: cached payload used AI but model version has changed
+    if (
+        cached_ai_used
+        and model_available_now
+        and current_model_version
+        and cached_model_version != current_model_version
+    ):
+        logger.info(
+            "Heatmap cache BYPASS: cached model_version=%s differs from "
+            "current model_version=%s. Recomputing. category=%s",
+            cached_model_version,
+            current_model_version,
+            category,
+        )
+        return None
+
+    return payload
 
 
 def _set_cache(
