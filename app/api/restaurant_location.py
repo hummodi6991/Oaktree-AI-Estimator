@@ -542,6 +542,54 @@ def get_data_sources(db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# Delivery data quality stats
+# ---------------------------------------------------------------------------
+
+
+@router.get("/restaurant/delivery-stats")
+def get_delivery_stats(db: Session = Depends(get_db)):
+    """
+    Return data quality metrics for delivery source records.
+    Includes per-platform stats, totals, top duplicates, and recent ingest runs.
+    """
+    from app.delivery.stats import delivery_data_quality_report
+
+    return delivery_data_quality_report(db)
+
+
+@router.get("/restaurant/delivery-features")
+def get_delivery_features(
+    district: Optional[str] = Query(None, description="Riyadh district name"),
+    category: Optional[str] = Query(None, description="Restaurant category"),
+    db: Session = Depends(get_db),
+):
+    """
+    Return delivery-derived features for a district/category.
+    """
+    from app.delivery.features import (
+        avg_delivery_metrics,
+        category_saturation,
+        delivery_rating_aggregates,
+        platform_presence_count,
+    )
+
+    result: dict[str, Any] = {}
+    result["platform_presence"] = platform_presence_count(
+        db, district=district, category=category,
+    )
+    result["delivery_metrics"] = avg_delivery_metrics(
+        db, district=district, category=category,
+    )
+    result["rating_aggregates"] = delivery_rating_aggregates(
+        db, district=district, category=category,
+    )
+    if district:
+        result["category_saturation"] = category_saturation(db, district)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # NEW: City-wide underserved demand heatmap
 # ---------------------------------------------------------------------------
 
