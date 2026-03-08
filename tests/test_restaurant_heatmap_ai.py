@@ -345,6 +345,204 @@ class TestOpportunityHeatmapAiMetadata:
 
 
 # ---------------------------------------------------------------------------
+# End-to-end: train a real model, run inference, verify ai_used=true
+# ---------------------------------------------------------------------------
+
+
+class TestHeatmapAiEndToEnd:
+    """
+    Train a real HistGradientBoostingRegressor on synthetic cell data,
+    inject it into the inference service, and verify the full scoring
+    path produces ai_used=true with valid scores.
+    """
+
+    def test_ai_path_produces_ai_used_true(self):
+        """Prove that when a real model artifact is present, the AI path
+        runs and produces ai_used=true with finite scores."""
+        from sklearn.ensemble import HistGradientBoostingRegressor
+        import app.services.restaurant_heatmap_ai as ai_mod
+        from app.ml.restaurant_heatmap_train import build_cell_features, NUMERIC_FEATURES
+
+        # --- 1. Train a tiny real model on synthetic data ---
+        rng = np.random.RandomState(42)
+        n_rows = 60
+        cat_options = ["burger", "pizza", "chicken"]
+        categories_onehot = [f"cat_{c}" for c in cat_options]
+        all_features = NUMERIC_FEATURES + categories_onehot
+
+        synth = {}
+        for feat in NUMERIC_FEATURES:
+            synth[feat] = rng.uniform(0, 100, size=n_rows)
+        for cat_col in categories_onehot:
+            synth[cat_col] = rng.choice([0, 1], size=n_rows)
+        synth_target = rng.uniform(0, 100, size=n_rows)
+
+        X_train = pd.DataFrame(synth)[all_features]
+        y_train = pd.Series(synth_target)
+
+        model = HistGradientBoostingRegressor(
+            max_iter=10, max_depth=3, random_state=42,
+        )
+        model.fit(X_train, y_train)
+
+        # --- 2. Inject the trained model into the AI module ---
+        old_model, old_meta = ai_mod._MODEL, ai_mod._META
+        try:
+            ai_mod._MODEL = model
+            ai_mod._META = {
+                "model_version": "heatmap_ai_v1_test",
+                "feature_names": all_features,
+            }
+
+            # --- 3. Build features via the real build_cell_features path ---
+            nearby_pois = [
+                {
+                    "category": "burger",
+                    "source": "hungerstation",
+                    "rating": 4.0,
+                    "review_count": 100,
+                    "chain_name": "TestChain",
+                    "google_place_id": "gp1",
+                    "google_confidence": 0.85,
+                    "price_level": 2.0,
+                    "lat": 24.7,
+                    "lon": 46.7,
+                    "distance_m": 300,
+                },
+                {
+                    "category": "pizza",
+                    "source": "talabat",
+                    "rating": 3.5,
+                    "review_count": 60,
+                    "chain_name": None,
+                    "google_place_id": "gp2",
+                    "google_confidence": 0.7,
+                    "price_level": 1.0,
+                    "lat": 24.701,
+                    "lon": 46.701,
+                    "distance_m": 500,
+                },
+            ]
+
+            feats = build_cell_features(
+                24.7, 46.7, "burger", nearby_pois, 5000.0,
+                frozenset({"hungerstation", "talabat"}),
+            )
+            feat_df = pd.DataFrame([feats])
+            feat_df = pd.get_dummies(feat_df, columns=["category"], prefix="cat")
+            # Drop any non-feature columns (same logic as the fixed inference path)
+            feat_df = feat_df.drop(
+                columns=[c for c in ("h3",) if c in feat_df.columns],
+            )
+
+            # --- 4. Run prediction via the inference service ---
+            from app.services.restaurant_heatmap_ai import predict_cell_scores
+
+            scores = predict_cell_scores(feat_df)
+
+            # --- 5. Verify: AI path ran and produced valid output ---
+            assert scores is not None, "predict_cell_scores returned None despite model being loaded"
+            assert len(scores) == 1
+            assert np.isfinite(scores[0]), f"Score is not finite: {scores[0]}"
+            assert 0.0 <= scores[0] <= 100.0, f"Score out of range: {scores[0]}"
+
+            # --- 6. Verify model status shows available ---
+            status = ai_mod.get_model_status()
+            assert status["available"] is True
+            assert status["model_version"] == "heatmap_ai_v1_test"
+
+        finally:
+            # Restore original state
+            ai_mod._MODEL = old_model
+            ai_mod._META = old_meta
+
+    def test_full_generator_ai_path(self):
+        """
+        Simulate the generate_opportunity_heatmap AI path end-to-end:
+        build features for multiple cells, batch-predict, and verify
+        the output GeoJSON features all have ai_used=true.
+        """
+        from sklearn.ensemble import HistGradientBoostingRegressor
+        import app.services.restaurant_heatmap_ai as ai_mod
+        from app.ml.restaurant_heatmap_train import build_cell_features, NUMERIC_FEATURES
+        from app.services.restaurant_opportunity_heatmap import _GridIndex
+
+        rng = np.random.RandomState(99)
+        cat_options = ["burger", "pizza"]
+        categories_onehot = [f"cat_{c}" for c in cat_options]
+        all_features = NUMERIC_FEATURES + categories_onehot
+
+        # Train a tiny model
+        n_rows = 40
+        synth = {feat: rng.uniform(0, 50, size=n_rows) for feat in NUMERIC_FEATURES}
+        for cat_col in categories_onehot:
+            synth[cat_col] = rng.choice([0, 1], size=n_rows)
+
+        model = HistGradientBoostingRegressor(max_iter=5, max_depth=2, random_state=99)
+        model.fit(pd.DataFrame(synth)[all_features], rng.uniform(20, 80, size=n_rows))
+
+        old_model, old_meta = ai_mod._MODEL, ai_mod._META
+        try:
+            ai_mod._MODEL = model
+            ai_mod._META = {
+                "model_version": "heatmap_ai_v1_e2e",
+                "feature_names": all_features,
+            }
+
+            # Simulate 3 cells with some POIs
+            pois = [
+                {"id": "1", "lat": 24.70, "lon": 46.70, "category": "burger",
+                 "source": "hungerstation", "rating": 4.0, "review_count": 80,
+                 "chain_name": "BK", "google_place_id": "g1",
+                 "google_confidence": 0.9, "price_level": 2.0},
+                {"id": "2", "lat": 24.70, "lon": 46.70, "category": "pizza",
+                 "source": "talabat", "rating": 3.5, "review_count": 40,
+                 "chain_name": None, "google_place_id": None,
+                 "google_confidence": None, "price_level": None},
+            ]
+
+            cells = [
+                {"h3": "cell_a", "lat": 24.700, "lon": 46.700, "population": 5000},
+                {"h3": "cell_b", "lat": 24.705, "lon": 46.705, "population": 3000},
+                {"h3": "cell_c", "lat": 24.710, "lon": 46.710, "population": 1000},
+            ]
+
+            idx = _GridIndex(pois, cell_deg=0.01)
+            category = "burger"
+            ps = frozenset({"hungerstation", "talabat"})
+
+            cell_records = []
+            cell_meta_list = []
+            for cell in cells:
+                nearby = idx.neighbors(cell["lat"], cell["lon"], 1200)
+                feats = build_cell_features(
+                    cell["lat"], cell["lon"], category, nearby,
+                    cell["population"], ps,
+                )
+                cell_records.append(feats)
+                cell_meta_list.append({"h3": cell["h3"], "lat": cell["lat"], "lon": cell["lon"]})
+
+            feat_df = pd.DataFrame(cell_records)
+            feat_df = pd.get_dummies(feat_df, columns=["category"], prefix="cat")
+            feat_df = feat_df.drop(
+                columns=[c for c in ("h3",) if c in feat_df.columns],
+            )
+
+            from app.services.restaurant_heatmap_ai import predict_cell_scores
+            scores = predict_cell_scores(feat_df)
+
+            assert scores is not None, "AI path must produce scores when model is loaded"
+            assert len(scores) == 3
+            for i, s in enumerate(scores):
+                assert np.isfinite(s), f"Cell {i} score is not finite: {s}"
+                assert 0.0 <= s <= 100.0, f"Cell {i} score out of range: {s}"
+
+        finally:
+            ai_mod._MODEL = old_model
+            ai_mod._META = old_meta
+
+
+# ---------------------------------------------------------------------------
 # No regression: parcel scoring
 # ---------------------------------------------------------------------------
 

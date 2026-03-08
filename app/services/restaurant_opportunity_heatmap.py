@@ -476,9 +476,10 @@ def generate_opportunity_heatmap(
             feat_df = pd.DataFrame(cell_records)
             # One-hot encode category to match training columns
             feat_df = pd.get_dummies(feat_df, columns=["category"], prefix="cat")
-            # Drop non-numeric helper columns
-            for col in ("h3",):
-                feat_df.pop(col, None)
+            # Drop non-numeric helper columns that may have leaked in
+            feat_df = feat_df.drop(
+                columns=[c for c in ("h3",) if c in feat_df.columns],
+            )
 
             ai_scores = _predict_cell_scores(feat_df)
             if ai_scores is not None:

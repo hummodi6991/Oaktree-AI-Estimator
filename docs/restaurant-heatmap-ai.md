@@ -21,7 +21,7 @@ The heatmap AI predicts a **demand-gap proxy** per (H3 cell, category):
 demand_signal = log1p(sum_review_count) * log1p(population)
 supply_signal = log1p(competitor_count)
 raw_target   = demand_signal / (1 + supply_signal)
-target       = quantile-normalized to 0–100
+target       = max-scaled to 0–100  (divided by training-set max)
 ```
 
 - **High score** = strong demand indicators with limited competition (underserved area)

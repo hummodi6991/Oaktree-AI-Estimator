@@ -12,7 +12,7 @@ Target: demand-gap proxy — measures underserved opportunity per H3 cell.
     demand_signal = log1p(sum_review_count) * log1p(population)
     supply_signal = log1p(competitor_count)
     raw_target   = demand_signal / (1 + supply_signal)
-    target       = quantile-normalized to 0–100
+    target       = max-scaled to 0–100  (divided by training-set max)
 
 High target ⇒ area has strong demand signals but limited competition.
 This is an explicit heuristic proxy; true merchant-outcome data is not
@@ -310,7 +310,7 @@ def _build_training_df(
 
     df = pd.DataFrame(items)
 
-    # Quantile-normalise target to 0–100
+    # Max-scale target to 0–100 (divide by training-set max)
     t_max = df["target"].max()
     if t_max > 0:
         df["target"] = (df["target"] / t_max) * 100.0
@@ -385,7 +385,7 @@ def train_and_save() -> dict:
         "r2": r2,
         "target_definition": (
             "demand_gap: log1p(sum_review_count)*log1p(population) "
-            "/ (1+log1p(competitor_count)), quantile-normalized 0-100"
+            "/ (1+log1p(competitor_count)), max-scaled 0-100"
         ),
         "category_handling": "one-hot encoded, model trains across all categories",
         "riyadh_only": True,
