@@ -29,6 +29,17 @@ _META: dict[str, Any] = {}
 _BASE = os.environ.get("MODEL_DIR", "models")
 _MODEL_PATH = os.path.join(_BASE, "restaurant_heatmap_v1.pkl")
 _META_PATH = os.path.join(_BASE, "restaurant_heatmap_v1.meta.json")
+_LOAD_ERROR: str | None = None
+
+# Startup logging — runs once at import time
+logger.info(
+    "Heatmap AI loader: MODEL_DIR=%s, pkl=%s (exists=%s), meta=%s (exists=%s)",
+    _BASE,
+    _MODEL_PATH,
+    os.path.exists(_MODEL_PATH),
+    _META_PATH,
+    os.path.exists(_META_PATH),
+)
 
 
 def try_load_model() -> Any:
@@ -36,12 +47,13 @@ def try_load_model() -> Any:
     Lazy-load the heatmap AI model.  Returns the model object on success
     or ``None`` if the artifact is not present / cannot be loaded.
     """
-    global _MODEL, _META
+    global _MODEL, _META, _LOAD_ERROR
     if _MODEL is not None:
         return _MODEL
 
     if not os.path.exists(_MODEL_PATH):
-        logger.info("Heatmap AI model not found at %s — will use static fallback", _MODEL_PATH)
+        _LOAD_ERROR = f"Model pkl not found at {_MODEL_PATH}"
+        logger.info("Heatmap AI: %s — will use static fallback", _LOAD_ERROR)
         return None
 
     try:
@@ -51,13 +63,16 @@ def try_load_model() -> Any:
         if os.path.exists(_META_PATH):
             with open(_META_PATH, "r") as f:
                 _META = json.load(f)
+        _LOAD_ERROR = None
         logger.info(
-            "Heatmap AI model loaded: version=%s",
+            "Heatmap AI model loaded: version=%s, features=%d",
             _META.get("model_version", "unknown"),
+            len(_META.get("feature_names", [])),
         )
         return _MODEL
     except Exception as exc:
-        logger.warning("Failed to load heatmap AI model: %s", exc)
+        _LOAD_ERROR = f"Failed to load: {exc}"
+        logger.warning("Heatmap AI: %s", _LOAD_ERROR)
         return None
 
 
@@ -101,6 +116,10 @@ def get_model_status() -> dict[str, Any]:
     return {
         "available": available,
         "artifact_present": os.path.exists(_MODEL_PATH),
+        "model_path": _MODEL_PATH,
+        "meta_path": _META_PATH,
+        "meta_present": os.path.exists(_META_PATH),
+        "load_error": _LOAD_ERROR,
         "model_version": _META.get("model_version") if available else None,
         "trained_at": _META.get("trained_at") if available else None,
         "feature_count": len(_META.get("feature_names", [])) if available else 0,

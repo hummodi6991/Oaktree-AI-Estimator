@@ -569,3 +569,153 @@ class TestParcelScoringNotRegressed:
         )
         assert result.model_version == "ai_weighted_v3"
         assert result.ai_weights_used is True
+
+
+# ---------------------------------------------------------------------------
+# Parcel AI status introspection
+# ---------------------------------------------------------------------------
+
+
+class TestParcelAiStatus:
+    """Tests for the parcel AI status introspection endpoint."""
+
+    def test_parcel_ai_status_unavailable(self):
+        """When no model artifact exists, status reports unavailable."""
+        import app.services.restaurant_location as mod
+
+        # Reset cached state
+        old_weights = mod._cached_ai_weights
+        old_error = mod._parcel_load_error
+        old_meta = mod._parcel_meta
+        try:
+            mod._cached_ai_weights = None
+            mod._parcel_load_error = None
+            mod._parcel_meta = {}
+            with patch.object(mod, "_MODEL_META_PATH", "/nonexistent/meta.json"), \
+                 patch.object(mod, "_MODEL_PKL_PATH", "/nonexistent/model.pkl"):
+                status = mod.get_parcel_ai_status()
+                assert status["available"] is False
+                assert status["artifact_present"] is False
+                assert status["fallback_mode"] is True
+                assert status["load_error"] is not None
+                assert "model_path" in status
+                assert "meta_path" in status
+        finally:
+            mod._cached_ai_weights = old_weights
+            mod._parcel_load_error = old_error
+            mod._parcel_meta = old_meta
+
+    def test_parcel_ai_status_available(self):
+        """When model meta is loaded, status reports available."""
+        import app.services.restaurant_location as mod
+
+        old_weights = mod._cached_ai_weights
+        old_error = mod._parcel_load_error
+        old_meta = mod._parcel_meta
+        try:
+            mod._cached_ai_weights = {"competition": 0.3, "population": 0.2}
+            mod._parcel_load_error = None
+            mod._parcel_meta = {
+                "model_version": "score_v0_test",
+                "mae": 5.0,
+                "r2": 0.8,
+                "n_rows": 500,
+            }
+            with patch.object(mod, "_MODEL_PKL_PATH", "/tmp/fake.pkl"), \
+                 patch("os.path.exists", return_value=True):
+                status = mod.get_parcel_ai_status()
+                assert status["available"] is True
+                assert status["fallback_mode"] is False
+                assert status["model_version"] == "score_v0_test"
+        finally:
+            mod._cached_ai_weights = old_weights
+            mod._parcel_load_error = old_error
+            mod._parcel_meta = old_meta
+
+    def test_parcel_ai_status_endpoint(self):
+        """The /v1/restaurant/parcel-ai-status API endpoint returns expected fields."""
+        from unittest.mock import patch as mock_patch
+
+        fake_status = {
+            "available": False,
+            "artifact_present": False,
+            "model_path": "models/restaurant_score_v0.pkl",
+            "meta_path": "models/restaurant_score_v0.meta.json",
+            "meta_present": False,
+            "load_error": "not found",
+            "model_version": None,
+            "trained_at": None,
+            "mae": None,
+            "r2": None,
+            "n_rows": None,
+            "fallback_mode": True,
+        }
+
+        with mock_patch(
+            "app.api.restaurant_location.get_parcel_ai_status",
+            return_value=fake_status,
+        ):
+            from app.main import app
+            from fastapi.testclient import TestClient
+
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.get("/v1/restaurant/parcel-ai-status")
+
+            if resp.status_code == 200:
+                data = resp.json()
+                assert "ai_model_available" in data
+                assert "model_version" in data
+                assert "artifact_present" in data
+                assert "model_path" in data
+                assert "meta_path" in data
+                assert "load_error" in data
+                assert "fallback_mode" in data
+                assert "description" in data
+                assert data["ai_model_available"] is False
+                assert data["fallback_mode"] is True
+
+
+# ---------------------------------------------------------------------------
+# Heatmap AI status endpoint — extended fields
+# ---------------------------------------------------------------------------
+
+
+class TestHeatmapAiStatusExtended:
+    """Verify the heatmap-ai-status endpoint now includes path/error fields."""
+
+    def test_extended_fields_present(self):
+        from unittest.mock import patch as mock_patch
+
+        fake_status = {
+            "available": False,
+            "artifact_present": False,
+            "model_path": "models/restaurant_heatmap_v1.pkl",
+            "meta_path": "models/restaurant_heatmap_v1.meta.json",
+            "meta_present": False,
+            "load_error": "pkl not found",
+            "model_version": None,
+            "trained_at": None,
+            "feature_count": 0,
+            "train_row_count": None,
+            "mae": None,
+            "r2": None,
+            "target_definition": None,
+            "riyadh_only": True,
+        }
+
+        with mock_patch(
+            "app.api.restaurant_location.get_heatmap_model_status",
+            return_value=fake_status,
+        ):
+            from app.main import app
+            from fastapi.testclient import TestClient
+
+            client = TestClient(app, raise_server_exceptions=False)
+            resp = client.get("/v1/restaurant/heatmap-ai-status")
+
+            if resp.status_code == 200:
+                data = resp.json()
+                assert "model_path" in data
+                assert "meta_path" in data
+                assert "meta_present" in data
+                assert "load_error" in data
