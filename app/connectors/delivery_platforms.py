@@ -35,9 +35,9 @@ from app.connectors.open_data import robots_allows
 logger = logging.getLogger(__name__)
 
 _UA = "oaktree-estimator/1.0 (+https://github.com/hummodi6991/Oaktree-AI-Estimator)"
-_DEFAULT_TIMEOUT = 30
-_MAX_RETRIES = 3
-_BACKOFF_BASE = 2.0  # seconds; retry delays: 2, 4, 8
+_DEFAULT_TIMEOUT = 45
+_MAX_RETRIES = 4
+_BACKOFF_BASE = 2.0  # seconds; retry delays: 2, 4, 8, 16
 
 # Registry of all scrapers — used by the ingestion pipeline to iterate
 # over all available platforms without hard-coding function names.
@@ -66,7 +66,13 @@ def _fetch_with_retries(
     *,
     timeout: float = _DEFAULT_TIMEOUT,
 ) -> httpx.Response | None:
-    """GET with exponential-backoff retries.  Does NOT check robots.txt."""
+    """GET with exponential-backoff retries.  Does NOT check robots.txt.
+
+    Retries on:
+    - 429 / 503 HTTP status codes
+    - Timeouts, connection errors
+    - Transport-level errors (incomplete chunked read, RemoteProtocolError)
+    """
     for attempt in range(_MAX_RETRIES):
         try:
             r = httpx.get(
@@ -85,9 +91,17 @@ def _fetch_with_retries(
                 continue
             logger.debug("HTTP %s for %s", exc.response.status_code, url)
             return None
-        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+        except (
+            httpx.TimeoutException,
+            httpx.ConnectError,
+            httpx.RemoteProtocolError,
+            httpx.ReadError,
+        ) as exc:
             delay = _BACKOFF_BASE ** (attempt + 1)
-            logger.info("Network error on %s (%s), retrying in %.0fs", url, exc, delay)
+            logger.info(
+                "Transient error on %s (attempt %d/%d: %s), retrying in %.0fs",
+                url, attempt + 1, _MAX_RETRIES, exc, delay,
+            )
             time.sleep(delay)
     logger.warning("All %d retries exhausted for %s", _MAX_RETRIES, url)
     return None
@@ -181,23 +195,39 @@ def _generic_sitemap_scrape(
     crawl_delay: float = 2.0,
     max_pages: int = 200,
 ) -> Iterator[dict[str, Any]]:
-    """Generic sitemap-based scraper used by multiple platforms."""
+    """Generic sitemap-based scraper used by multiple platforms.
+
+    Partial sitemap shard failures are logged and skipped — they do not
+    collapse the entire platform run.
+    """
     logger.info("Fetching %s sitemap: %s", source, sitemap_url)
     sitemap_urls = _parse_sitemap(sitemap_url)
 
-    # Expand nested sitemaps
+    # Expand nested sitemaps (tolerate individual shard failures)
     restaurant_urls: list[str] = []
+    shard_failures = 0
     for u in sitemap_urls:
         if url_filter and url_filter not in u.lower():
             continue
         if u.endswith(".xml") or u.endswith(".xml.gz"):
-            restaurant_urls.extend(_parse_sitemap(u))
+            try:
+                restaurant_urls.extend(_parse_sitemap(u))
+            except Exception as exc:
+                shard_failures += 1
+                logger.warning(
+                    "Sitemap shard %s failed for %s: %s", u, source, exc
+                )
         else:
             restaurant_urls.append(u)
 
     if not url_filter:
         restaurant_urls = sitemap_urls
 
+    if shard_failures:
+        logger.warning(
+            "%s: %d sitemap shard(s) failed, continuing with %d URLs",
+            source, shard_failures, len(restaurant_urls),
+        )
     logger.info("Found %d candidate URLs from %s", len(restaurant_urls), source)
 
     count = 0

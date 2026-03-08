@@ -36,6 +36,7 @@ from app.delivery.location import (
     _normalize_district_name,
     RIYADH_DISTRICT_CENTROIDS,
 )
+from app.delivery.models import DeliveryIngestRun
 from app.delivery.pipeline import _normalize_name, record_to_row
 from app.delivery.resolver import _normalize_for_match as resolver_normalize
 from app.delivery.location import _normalize_name_for_sql
@@ -553,3 +554,308 @@ class TestConfidenceGating:
         first_party = {"platform_payload", "json_ld", "address_geocode"}
         assert GeocodeMethod.POI_MATCH.value not in first_party
         assert GeocodeMethod.DISTRICT_CENTROID.value not in first_party
+
+
+# ============================================================================
+# Production robustness tests
+# ============================================================================
+
+
+class TestScraperTransportErrorRollback:
+    """Scraper transport errors must cause a rollback, not poison the session."""
+
+    def test_scraper_exception_triggers_rollback(self):
+        """When a scraper raises a transport error mid-stream, the pipeline
+        must rollback the session and mark the run as failed."""
+        from app.delivery.pipeline import run_platform_scrape
+
+        def _exploding_scraper(max_pages=200):
+            yield {
+                "id": "test:ok-record",
+                "name": "Good Record",
+                "source": "testplatform",
+                "source_url": "https://example.com/ok",
+                "lat": None,
+                "lon": None,
+                "category_raw": None,
+            }
+            raise ConnectionError(
+                "peer closed connection without sending complete message body"
+            )
+
+        mock_registry = {
+            "testplatform": {
+                "fn": _exploding_scraper,
+                "source": "testplatform",
+                "label": "Test",
+                "url": "https://example.com",
+            }
+        }
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter_by.return_value.first.return_value = None
+
+        # Make flush assign an id to any DeliveryIngestRun added
+        added_objects = []
+        def fake_add(obj):
+            added_objects.append(obj)
+            if isinstance(obj, DeliveryIngestRun) and obj.id is None:
+                obj.id = 99
+        mock_db.add.side_effect = fake_add
+        mock_db.flush.return_value = None
+
+        # For _safe_finalize_run's session.get()
+        run_obj = DeliveryIngestRun(id=99, platform="testplatform", status="running")
+        mock_db.get.return_value = run_obj
+
+        with patch("app.connectors.delivery_platforms.SCRAPER_REGISTRY", mock_registry):
+            result = run_platform_scrape(
+                mock_db, "testplatform", max_pages=5, run_resolver=False
+            )
+
+        # Session must have been rolled back
+        assert mock_db.rollback.called
+        # Result must report the error
+        assert any("scrape" in e.get("phase", "") for e in result.get("errors", []))
+
+    def test_transport_error_does_not_raise(self):
+        """The pipeline must catch transport errors and not propagate them."""
+        from app.delivery.pipeline import run_platform_scrape
+
+        def _exploding_scraper(max_pages=200):
+            raise ConnectionError("incomplete chunked read")
+
+        mock_registry = {
+            "boom": {
+                "fn": _exploding_scraper,
+                "source": "boom",
+                "label": "Boom",
+                "url": "https://example.com",
+            }
+        }
+
+        mock_db = MagicMock()
+        def fake_add(obj):
+            if isinstance(obj, DeliveryIngestRun) and obj.id is None:
+                obj.id = 1
+        mock_db.add.side_effect = fake_add
+        mock_db.flush.return_value = None
+        run = DeliveryIngestRun(id=1, platform="boom", status="running")
+        mock_db.get.return_value = run
+
+        with patch("app.connectors.delivery_platforms.SCRAPER_REGISTRY", mock_registry):
+            # Must not raise
+            result = run_platform_scrape(
+                mock_db, "boom", max_pages=1, run_resolver=False
+            )
+
+        assert "errors" in result
+        assert len(result["errors"]) > 0
+
+
+class TestResolverDBExceptionRollback:
+    """Resolver DB exceptions must be caught and rolled back cleanly."""
+
+    def test_resolver_failure_does_not_crash_pipeline(self):
+        """If the resolver raises (e.g. AdminShutdown), the pipeline must
+        rollback and continue — not propagate PendingRollbackError."""
+        from app.delivery.pipeline import run_platform_scrape
+
+        def _ok_scraper(max_pages=200):
+            # yields nothing — just want to test resolver path
+            return iter([])
+
+        mock_registry = {
+            "safe": {
+                "fn": _ok_scraper,
+                "source": "safe",
+                "label": "Safe",
+                "url": "https://example.com",
+            }
+        }
+
+        mock_db = MagicMock()
+        def fake_add(obj):
+            if isinstance(obj, DeliveryIngestRun) and obj.id is None:
+                obj.id = 42
+        mock_db.add.side_effect = fake_add
+        mock_db.flush.return_value = None
+        run = DeliveryIngestRun(id=42, platform="safe", status="running")
+        mock_db.get.return_value = run
+
+        def _resolver_boom(db, run_id):
+            raise Exception("terminating connection due to administrator command")
+
+        with patch("app.connectors.delivery_platforms.SCRAPER_REGISTRY", mock_registry):
+            with patch("app.delivery.resolver.resolve_run", _resolver_boom):
+                result = run_platform_scrape(
+                    mock_db, "safe", max_pages=1, run_resolver=True
+                )
+
+        # Rollback must have been called after resolver failure
+        assert mock_db.rollback.called
+        assert any(
+            "resolve" in e.get("phase", "") for e in result.get("errors", [])
+        )
+
+
+def _mock_session_factory():
+    """Create a mock session factory that returns mock sessions with
+    proper run objects for pipeline testing."""
+    sessions = []
+
+    def factory():
+        s = MagicMock()
+        s.flush.return_value = None
+        next_id = len(sessions) + 1
+
+        def fake_add(obj):
+            if isinstance(obj, DeliveryIngestRun) and obj.id is None:
+                obj.id = next_id
+        s.add.side_effect = fake_add
+
+        run = DeliveryIngestRun(
+            id=next_id,
+            platform="test",
+            status="running",
+        )
+        s.get.return_value = run
+        sessions.append(s)
+        return s
+
+    return factory, sessions
+
+
+def _patch_session_local(mock_factory):
+    """Patch SessionLocal by injecting a mock module into sys.modules."""
+    import sys
+    import types
+    mock_mod = types.ModuleType("app.db.session")
+    mock_mod.SessionLocal = mock_factory
+    return patch.dict(sys.modules, {"app.db.session": mock_mod})
+
+
+class TestPlatformIsolation:
+    """Failure in one platform must not poison subsequent platforms."""
+
+    def test_one_platform_failure_does_not_block_next(self):
+        """When platform A fails, platform B must still run successfully
+        (each gets its own session)."""
+        from app.delivery.pipeline import run_all_platforms
+
+        call_log = []
+
+        def _failing_scraper(max_pages=200):
+            call_log.append("fail_called")
+            raise ConnectionError("boom")
+
+        def _ok_scraper(max_pages=200):
+            call_log.append("ok_called")
+            return iter([])
+
+        mock_registry = {
+            "platform_a": {
+                "fn": _failing_scraper,
+                "source": "platform_a",
+                "label": "A",
+                "url": "https://a.com",
+            },
+            "platform_b": {
+                "fn": _ok_scraper,
+                "source": "platform_b",
+                "label": "B",
+                "url": "https://b.com",
+            },
+        }
+
+        factory, mock_sessions = _mock_session_factory()
+
+        with patch("app.connectors.delivery_platforms.SCRAPER_REGISTRY", mock_registry):
+            with _patch_session_local(factory):
+                results = run_all_platforms(
+                    platforms=["platform_a", "platform_b"],
+                    run_resolver=False,
+                )
+
+        # Both platforms must have been attempted
+        assert "fail_called" in call_log
+        assert "ok_called" in call_log
+
+        # Each platform got its own session
+        assert len(mock_sessions) >= 2
+
+        # Results must contain entries for both platforms
+        assert len(results) == 2
+
+    def test_fresh_session_per_platform(self):
+        """Verify that run_all_platforms creates a separate session for each
+        platform, not reusing a single shared session."""
+        from app.delivery.pipeline import run_all_platforms
+
+        def _noop_scraper(max_pages=200):
+            return iter([])
+
+        mock_registry = {
+            "p1": {"fn": _noop_scraper, "source": "p1", "label": "P1", "url": "https://p1.com"},
+            "p2": {"fn": _noop_scraper, "source": "p2", "label": "P2", "url": "https://p2.com"},
+        }
+
+        factory, mock_sessions = _mock_session_factory()
+
+        with patch("app.connectors.delivery_platforms.SCRAPER_REGISTRY", mock_registry):
+            with _patch_session_local(factory):
+                run_all_platforms(
+                    platforms=["p1", "p2"],
+                    run_resolver=False,
+                )
+
+        # Two distinct sessions must have been created
+        assert len(mock_sessions) >= 2
+        assert mock_sessions[0] is not mock_sessions[1]
+
+
+class TestPlatformFiltering:
+    """Platform filtering from CLI/workflow must restrict execution."""
+
+    def test_cli_platform_comma_separated(self):
+        """--platform hungerstation,jahez should produce a two-element list."""
+        platform_str = "hungerstation,jahez"
+        platform_list = [p.strip() for p in platform_str.split(",") if p.strip()]
+        assert platform_list == ["hungerstation", "jahez"]
+
+    def test_cli_single_platform(self):
+        """--platform hungerstation should produce a one-element list."""
+        platform_str = "hungerstation"
+        platform_list = [p.strip() for p in platform_str.split(",") if p.strip()]
+        assert platform_list == ["hungerstation"]
+
+    def test_run_all_platforms_respects_filter(self):
+        """run_all_platforms(platforms=[...]) must only run those platforms."""
+        from app.delivery.pipeline import run_all_platforms
+
+        called_platforms = []
+
+        def _tracking_scraper(platform_name):
+            def _scraper(max_pages=200):
+                called_platforms.append(platform_name)
+                return iter([])
+            return _scraper
+
+        mock_registry = {
+            "alpha": {"fn": _tracking_scraper("alpha"), "source": "alpha", "label": "A", "url": "https://a.com"},
+            "beta": {"fn": _tracking_scraper("beta"), "source": "beta", "label": "B", "url": "https://b.com"},
+            "gamma": {"fn": _tracking_scraper("gamma"), "source": "gamma", "label": "G", "url": "https://g.com"},
+        }
+
+        factory, _ = _mock_session_factory()
+
+        with patch("app.connectors.delivery_platforms.SCRAPER_REGISTRY", mock_registry):
+            with _patch_session_local(factory):
+                run_all_platforms(
+                    platforms=["alpha", "gamma"],
+                    run_resolver=False,
+                )
+
+        assert "alpha" in called_platforms
+        assert "gamma" in called_platforms
+        assert "beta" not in called_platforms

@@ -88,10 +88,14 @@ jobs:
           fi
 
       - name: Ingest restaurant POIs
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           python -c "
-          import logging
-          logging.basicConfig(level=logging.INFO, format='%(levelname)s %(name)s %(message)s')
+          import logging, sys
+          logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(name)s  %(message)s')
+          logger = logging.getLogger('ingest-workflow')
+
           from app.db.session import SessionLocal
           from app.ingest.restaurant_pois import (
               ingest_overture_restaurants,
@@ -101,25 +105,43 @@ jobs:
 
           sources = '${{ steps.sources.outputs.list }}'.split(',')
           sources = [s.strip() for s in sources if s.strip()]
-          print(f'Sources to ingest: {sources}')
+          logger.info('Sources to ingest: %s', sources)
 
           delivery_filter = '${{ steps.sources.outputs.delivery_platforms }}'.strip()
           delivery_sources = [s.strip() for s in delivery_filter.split(',') if s.strip()] if delivery_filter else None
           if delivery_sources:
-              print(f'Delivery platforms filter: {delivery_sources}')
+              logger.info('Delivery platforms filter: %s', delivery_sources)
 
-          db = SessionLocal()
           results = {}
-          try:
-              if 'overture' in sources:
+
+          if 'overture' in sources:
+              db = SessionLocal()
+              try:
                   results['overture'] = ingest_overture_restaurants(db)
-              if 'osm' in sources:
+              except Exception as exc:
+                  logger.error('Overture ingestion failed: %s', exc)
+                  results['overture'] = 0
+              finally:
+                  db.close()
+
+          if 'osm' in sources:
+              db = SessionLocal()
+              try:
                   results['osm'] = ingest_osm_restaurants(db)
-              if 'delivery' in sources:
-                  results['delivery_platforms'] = ingest_delivery_platforms(db, sources=delivery_sources)
-              print(f'Ingestion complete: {results}')
-          finally:
-              db.close()
+              except Exception as exc:
+                  logger.error('OSM ingestion failed: %s', exc)
+                  results['osm'] = 0
+              finally:
+                  db.close()
+
+          if 'delivery' in sources:
+              try:
+                  results['delivery_platforms'] = ingest_delivery_platforms(sources=delivery_sources)
+              except Exception as exc:
+                  logger.error('Delivery ingestion failed: %s', exc)
+                  results['delivery_platforms'] = 0
+
+          logger.info('Ingestion complete: %s', results)
           "
 
       - name: Smoke test — category breakdown
