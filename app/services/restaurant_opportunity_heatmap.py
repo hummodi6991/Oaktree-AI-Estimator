@@ -236,6 +236,8 @@ def _score_cell(
         ),
         "chain_gap": _chain_gap_simple(competitor_count),
         "income_proxy": 50.0,
+        "peak_hour_alignment": 50.0,  # neutral — no per-cell road query
+        "demographic_affinity": 50.0,  # neutral — no per-cell demo data
     }
 
     demand = _weighted_avg(demand_factors, demand_w)
@@ -443,6 +445,23 @@ def generate_opportunity_heatmap(
         key=lambda f: f["properties"]["underserved_index"],
         reverse=True,
     )[:30]
+    # Resolve district names for top cells
+    district_cache: dict[str, str | None] = {}
+
+    def _resolve_area_label(lat_val: float, lon_val: float) -> str | None:
+        cache_key = f"{lat_val:.3f},{lon_val:.3f}"
+        if cache_key in district_cache:
+            return district_cache[cache_key]
+        try:
+            from app.services.district_resolver import resolve_district
+            resolution = resolve_district(db, city="riyadh", lat=lat_val, lon=lon_val)
+            label = resolution.district_raw or resolution.district_norm
+            district_cache[cache_key] = label
+            return label
+        except Exception:
+            district_cache[cache_key] = None
+            return None
+
     top_cells_summary = [
         {
             "h3": f["properties"]["h3"],
@@ -456,6 +475,10 @@ def generate_opportunity_heatmap(
             "cost_penalty": f["properties"].get("cost_penalty"),
             "competitor_count": f["properties"]["competitor_count"],
             "population": f["properties"]["population"],
+            "area_label": _resolve_area_label(
+                f["geometry"]["coordinates"][1],
+                f["geometry"]["coordinates"][0],
+            ),
         }
         for f in top_cells
     ]

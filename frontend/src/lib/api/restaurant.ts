@@ -22,6 +22,17 @@ export type TopCell = {
   area_label?: string;
 };
 
+export type CannibalizationResult = {
+  risk_level: "low" | "moderate" | "high";
+  risk_score: number;
+  affected_locations: Array<{
+    name: string;
+    distance_m: number;
+    overlap_pct: number;
+  }>;
+  recommendation: string;
+};
+
 export type ScoreResult = {
   opportunity_score: number;
   confidence_score: number;
@@ -41,6 +52,8 @@ export type ScoreResult = {
     source: string;
     distance_m: number;
   }>;
+  explanation?: string;
+  cannibalization?: CannibalizationResult | null;
 };
 
 // --- Normalization helpers for mixed backend response shapes ---
@@ -104,6 +117,8 @@ function normalizeScoreResult(raw: Record<string, any>): ScoreResult {
     factors: raw.factors,
     contributions: raw.contributions,
     nearby_competitors: raw.nearby_competitors,
+    explanation: raw.explanation,
+    cannibalization: raw.cannibalization,
   };
 }
 

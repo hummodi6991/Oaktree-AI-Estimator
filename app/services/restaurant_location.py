@@ -52,17 +52,19 @@ PLATFORM_SOURCES = frozenset({
 
 DEMAND_WEIGHTS: dict[str, float] = {
     "competition": 0.18,
-    "complementary": 0.04,
+    "complementary": 0.02,
     "population": 0.14,
     "traffic": 0.10,
-    "road_frontage": 0.04,
+    "road_frontage": 0.01,
     "commercial_density": 0.08,
     "delivery_demand": 0.10,
     "competitor_rating": 0.08,
     "anchor_proximity": 0.08,
-    "foot_traffic": 0.06,
+    "foot_traffic": 0.03,
     "chain_gap": 0.05,
     "income_proxy": 0.05,
+    "peak_hour_alignment": 0.06,
+    "demographic_affinity": 0.02,
 }
 
 COST_WEIGHTS: dict[str, float] = {
@@ -86,6 +88,8 @@ class LocationScoreResult:
     nearby_competitors: list[dict[str, Any]] = field(default_factory=list)
     model_version: str = "weighted_v3"
     ai_weights_used: bool = False
+    explanation: str = ""
+    cannibalization: dict[str, Any] | None = None
     debug: dict[str, Any] = field(default_factory=dict)
 
 
@@ -460,6 +464,325 @@ def income_proxy_score(db: Session, lat: float, lon: float) -> float:
     return 50.0  # neutral default
 
 
+# ---------------------------------------------------------------------------
+# Peak hour alignment — match category peak hours to area traffic patterns
+# ---------------------------------------------------------------------------
+
+# Typical peak-hour profiles per category.
+# "daytime" = lunch/business (primary, secondary roads → office corridors)
+# "evening" = dinner/social (residential, tertiary → neighborhood)
+# "morning" = breakfast/coffee (primary → commuter routes)
+# "allday"  = neutral
+_CATEGORY_PEAK_PROFILE: dict[str, str] = {
+    "burger": "allday",
+    "pizza": "evening",
+    "chicken": "allday",
+    "traditional": "evening",
+    "asian": "evening",
+    "indian": "evening",
+    "turkish": "evening",
+    "japanese_sushi": "evening",
+    "seafood": "evening",
+    "coffee_bakery": "morning",
+    "desserts": "evening",
+    "healthy": "daytime",
+    "cloud_kitchen": "allday",
+    "international": "allday",
+}
+
+# Road classes that indicate daytime (office/commercial) traffic
+_DAYTIME_ROADS = {"primary", "primary_link", "secondary", "secondary_link", "trunk", "trunk_link"}
+# Road classes that indicate evening (residential/neighborhood) traffic
+_EVENING_ROADS = {"residential", "living_street", "tertiary", "tertiary_link"}
+# Road classes that indicate morning commuter traffic
+_MORNING_ROADS = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link"}
+
+
+def peak_hour_alignment_score(
+    category: str,
+    nearest_road_class: str | None,
+) -> float:
+    """
+    Score how well the area's traffic pattern aligns with the category's
+    peak demand hours. Uses the nearest road classification as a proxy
+    for when traffic peaks (commuter vs. residential vs. commercial).
+    """
+    profile = _CATEGORY_PEAK_PROFILE.get(category, "allday")
+    if profile == "allday" or not nearest_road_class:
+        return 50.0  # neutral for all-day categories
+
+    road_lower = nearest_road_class.lower()
+
+    if profile == "daytime":
+        if road_lower in _DAYTIME_ROADS:
+            return 85.0
+        if road_lower in _EVENING_ROADS:
+            return 30.0
+        return 50.0
+
+    if profile == "evening":
+        if road_lower in _EVENING_ROADS:
+            return 80.0
+        if road_lower in _DAYTIME_ROADS:
+            return 40.0
+        return 55.0
+
+    if profile == "morning":
+        if road_lower in _MORNING_ROADS:
+            return 85.0
+        if road_lower in _EVENING_ROADS:
+            return 35.0
+        return 50.0
+
+    return 50.0
+
+
+# ---------------------------------------------------------------------------
+# Demographic affinity — weight population by category relevance
+# ---------------------------------------------------------------------------
+
+
+def demographic_affinity_score(
+    category: str,
+    population: float,
+    nearby_restaurants: list[dict],
+) -> float:
+    """
+    Estimate how well the local demographic mix matches the restaurant
+    category. Uses nearby restaurant diversity and population density
+    as proxies (true demographics would require GASTAT data).
+
+    Heuristics:
+    - Indian/Asian categories score higher in dense, diverse areas
+      (proxy for expat-heavy neighborhoods)
+    - Traditional/Arabic scores higher in residential-dominant areas
+    - Coffee/desserts benefit from young-adult density (proxied by
+      high restaurant diversity + moderate population)
+    """
+    if population <= 0:
+        return 30.0
+
+    # Restaurant diversity as proxy for cosmopolitan / expat neighborhoods
+    cats_present = {r.get("category") for r in nearby_restaurants if r.get("category")}
+    diversity = len(cats_present)
+
+    # Expat-affinity categories benefit from diverse dining scenes
+    expat_categories = {"indian", "asian", "japanese_sushi", "international", "healthy"}
+    # Local-affinity categories benefit from lower diversity (residential areas)
+    local_categories = {"traditional", "chicken"}
+
+    if category in expat_categories:
+        if diversity >= 5:
+            return min(90.0, 50.0 + diversity * 5.0)
+        return max(25.0, 30.0 + diversity * 4.0)
+
+    if category in local_categories:
+        # Residential areas with moderate density, fewer diverse options
+        if diversity <= 3 and population > 3000:
+            return 80.0
+        if diversity <= 5:
+            return 60.0
+        return 40.0
+
+    # Neutral categories
+    return 50.0
+
+
+# ---------------------------------------------------------------------------
+# Cannibalization analysis for chain expansions
+# ---------------------------------------------------------------------------
+
+
+def cannibalization_risk(
+    db: Session,
+    lat: float,
+    lon: float,
+    chain_name: str,
+    category: str,
+    radius_m: float = 3000,
+) -> dict[str, Any]:
+    """
+    Analyze how a new location for *chain_name* would cannibalize
+    existing same-chain outlets.
+
+    Returns:
+        {
+            "risk_level": "low" | "moderate" | "high",
+            "risk_score": 0-100 (higher = more cannibalization risk),
+            "affected_locations": [{name, distance_m, overlap_pct}, ...],
+            "recommendation": str,
+        }
+    """
+    chain_lower = chain_name.lower()
+
+    # Find existing chain locations within radius
+    same_cat, _ = _nearby_restaurants(db, lat, lon, radius_m, category)
+    chain_locations = [
+        r for r in same_cat
+        if r.get("chain_name") and chain_lower in r["chain_name"].lower()
+    ]
+
+    if not chain_locations:
+        return {
+            "risk_level": "low",
+            "risk_score": 0,
+            "affected_locations": [],
+            "recommendation": "No existing outlets found within the search radius.",
+        }
+
+    affected = []
+    max_overlap = 0.0
+
+    for loc in chain_locations:
+        dist = float(loc.get("distance_m", 0))
+        # Overlap model: trade areas overlap more when locations are close.
+        # Assume ~1km trade area radius for typical QSR; overlap decreases
+        # linearly with distance.
+        trade_area_radius = 1000.0  # meters
+        if dist < 2 * trade_area_radius:
+            overlap_pct = max(0.0, 1.0 - dist / (2 * trade_area_radius)) * 100
+        else:
+            overlap_pct = 0.0
+
+        max_overlap = max(max_overlap, overlap_pct)
+        affected.append({
+            "name": loc.get("name", chain_name),
+            "distance_m": round(dist, 0),
+            "overlap_pct": round(overlap_pct, 1),
+        })
+
+    # Sort by overlap (highest first)
+    affected.sort(key=lambda x: x["overlap_pct"], reverse=True)
+
+    # Aggregate risk score from worst overlap + number of affected outlets
+    risk_score = min(100, round(max_overlap * 0.7 + len(affected) * 10, 0))
+
+    if risk_score >= 60:
+        risk_level = "high"
+        recommendation = (
+            f"High cannibalization risk: {len(affected)} existing outlet(s) within "
+            f"{radius_m/1000:.0f}km with up to {max_overlap:.0f}% trade area overlap. "
+            "Consider a location further from existing branches."
+        )
+    elif risk_score >= 30:
+        risk_level = "moderate"
+        recommendation = (
+            f"Moderate cannibalization risk: {len(affected)} nearby outlet(s). "
+            "Some trade area overlap expected but may still capture incremental demand."
+        )
+    else:
+        risk_level = "low"
+        recommendation = (
+            "Low cannibalization risk: existing outlets are far enough "
+            "to maintain separate trade areas."
+        )
+
+    return {
+        "risk_level": risk_level,
+        "risk_score": risk_score,
+        "affected_locations": affected[:10],
+        "recommendation": recommendation,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Natural language explanation generator
+# ---------------------------------------------------------------------------
+
+_FACTOR_TEMPLATES: dict[str, dict[str, str]] = {
+    "competition": {
+        "high": "Very low competition — only {count} same-category restaurant(s) nearby",
+        "low": "High competition with {count} same-category competitors within the search radius",
+    },
+    "population": {
+        "high": "Strong surrounding population density supports high foot traffic",
+        "low": "Low population density in the surrounding area may limit walk-in demand",
+    },
+    "traffic": {
+        "high": "Located near {road_name}, a high-traffic road",
+        "low": "Limited road traffic in the immediate area",
+    },
+    "delivery_demand": {
+        "high": "Strong delivery platform presence suggests proven demand",
+        "low": "Low delivery platform presence — opportunity to capture untapped delivery demand",
+    },
+    "rent": {
+        "high": "Rent is affordable for the area, supporting healthier margins",
+        "low": "Above-average rent at {rent_val} SAR/m\u00b2/month may squeeze margins",
+    },
+    "competitor_rating": {
+        "high": "Competitors have low ratings, suggesting room for a higher-quality entrant",
+        "low": "Competitors are well-rated, making differentiation harder",
+    },
+    "chain_gap": {
+        "high": "This category is underrepresented in the area",
+        "low": "The category is already well-served in this location",
+    },
+    "anchor_proximity": {
+        "high": "Close to major anchors (malls, universities, hospitals) that drive foot traffic",
+        "low": "Far from major trip generators",
+    },
+}
+
+
+def generate_explanation(
+    category: str,
+    factors: dict[str, float],
+    contributions: list[dict[str, Any]],
+    debug: dict[str, Any],
+) -> str:
+    """
+    Generate a plain-English summary explaining *why* the location
+    received its score. Uses the top positive and negative factors.
+    """
+    cat_label = CATEGORIES.get(category, {}).get("en", category.replace("_", " ").title())
+
+    # Sort contributions by weighted impact to find top positive/negative
+    sorted_contribs = sorted(contributions, key=lambda c: c.get("score", 50), reverse=True)
+
+    positives = [c for c in sorted_contribs if c.get("score", 50) >= 65]
+    negatives = [c for c in sorted_contribs if c.get("score", 50) <= 35]
+
+    parts: list[str] = []
+
+    # Build positive highlights
+    if positives:
+        top_pos = positives[0]
+        factor_name = top_pos["factor"]
+        templates = _FACTOR_TEMPLATES.get(factor_name, {})
+        if "high" in templates:
+            msg = templates["high"].format(
+                count=debug.get("same_category_count", "few"),
+                road_name=debug.get("nearest_road", {}).get("name") or "a nearby road",
+                rent_val=debug.get("rent_per_m2") or "N/A",
+            )
+            parts.append(msg)
+        else:
+            label = factor_name.replace("_", " ").title()
+            parts.append(f"Strong {label} score")
+
+    # Build negative highlights
+    if negatives:
+        top_neg = negatives[0]
+        factor_name = top_neg["factor"]
+        templates = _FACTOR_TEMPLATES.get(factor_name, {})
+        if "low" in templates:
+            msg = templates["low"].format(
+                count=debug.get("same_category_count", "many"),
+                road_name=debug.get("nearest_road", {}).get("name") or "nearby roads",
+                rent_val=debug.get("rent_per_m2") or "N/A",
+            )
+            parts.append("However, " + msg[0].lower() + msg[1:])
+        else:
+            label = factor_name.replace("_", " ").title()
+            parts.append(f"However, {label} score is weak")
+
+    if not parts:
+        return f"This is a moderately scored location for {cat_label} with balanced factors."
+
+    return f"For {cat_label}: " + ". ".join(parts) + "."
+
+
 def zoning_fit_score(db: Session, lat: float, lon: float) -> float:
     """
     Score how well the zoning/land-use at this location supports
@@ -664,6 +987,9 @@ def score_location(
     comm_density = commercial_density_score(db, lat, lon)
     pop_score = population_score(db, lat, lon)
 
+    # Nearest road info for peak hour alignment
+    nearest_road_class = traffic_info.get("nearest_road", {}).get("class") if isinstance(traffic_info.get("nearest_road"), dict) else None
+
     demand_factors = {
         "competition": competition_score(len(same_cat)),
         "complementary": complementary_score(len(diff_cat)),
@@ -677,6 +1003,8 @@ def score_location(
         "foot_traffic": foot_traffic_score(same_cat + diff_cat, comm_density, pop_score),
         "chain_gap": chain_gap_score(same_cat, category, chain_name),
         "income_proxy": income_proxy_score(db, lat, lon),
+        "peak_hour_alignment": peak_hour_alignment_score(category, nearest_road_class),
+        "demographic_affinity": demographic_affinity_score(category, pop_score, same_cat + diff_cat),
     }
 
     # Try AI-predicted weights
@@ -747,6 +1075,37 @@ def score_location(
         key=lambda x: x.get("distance_m", 0),
     )[:20]
 
+    # 11. Build debug info
+    debug_info = {
+        "same_category_count": len(same_cat),
+        "diff_category_count": len(diff_cat),
+        "platform_count_nearby": len(all_on_platforms),
+        "platform_sources_detected": list({r.get("source") for r in all_on_platforms}),
+        "avg_competitor_rating": round(avg_rating, 2) if avg_rating else None,
+        "radius_m": radius_m,
+        "nearest_road": traffic_info.get("nearest_road"),
+        "rent_per_m2": rent_val,
+        "ai_weights_used": ai_used,
+        "confidence_features": confidence_features,
+        "rent_meta": {
+            "aqar_used": rent_resolution.scope not in ("indicator_fallback", "none"),
+            "scope": rent_resolution.scope,
+            "method": rent_resolution.method,
+            "sample_count": rent_resolution.sample_count,
+            "median_rent_per_m2": rent_resolution.median_used,
+            "asset_type": _RESTAURANT_AQAR_ASSET,
+            "unit_type": _RESTAURANT_AQAR_UNIT,
+        },
+    }
+
+    # 12. Generate natural-language explanation
+    explanation = generate_explanation(category, all_factors, contributions, debug_info)
+
+    # 13. Cannibalization analysis (only when chain_name is provided)
+    cannibal = None
+    if chain_name:
+        cannibal = cannibalization_risk(db, lat, lon, chain_name, category, radius_m=3000)
+
     return LocationScoreResult(
         opportunity_score=round(opportunity, 1),
         demand_score=round(demand, 1),
@@ -760,27 +1119,9 @@ def score_location(
         nearby_competitors=competitors_out,
         model_version="ai_weighted_v3" if ai_used else "weighted_v3",
         ai_weights_used=ai_used,
-        debug={
-            "same_category_count": len(same_cat),
-            "diff_category_count": len(diff_cat),
-            "platform_count_nearby": len(all_on_platforms),
-            "platform_sources_detected": list({r.get("source") for r in all_on_platforms}),
-            "avg_competitor_rating": round(avg_rating, 2) if avg_rating else None,
-            "radius_m": radius_m,
-            "nearest_road": traffic_info.get("nearest_road"),
-            "rent_per_m2": rent_val,
-            "ai_weights_used": ai_used,
-            "confidence_features": confidence_features,
-            "rent_meta": {
-                "aqar_used": rent_resolution.scope not in ("indicator_fallback", "none"),
-                "scope": rent_resolution.scope,
-                "method": rent_resolution.method,
-                "sample_count": rent_resolution.sample_count,
-                "median_rent_per_m2": rent_resolution.median_used,
-                "asset_type": _RESTAURANT_AQAR_ASSET,
-                "unit_type": _RESTAURANT_AQAR_UNIT,
-            },
-        },
+        explanation=explanation,
+        cannibalization=cannibal,
+        debug=debug_info,
     )
 
 
@@ -795,13 +1136,14 @@ def score_location(
 # have not been enriched yet. Keep Google as the strongest signal, but add
 # fallback evidence signals so confidence reflects actual nearby market evidence.
 _CONF_WEIGHTS = {
-    "has_google": 0.15,
-    "google_confidence": 0.15,
+    "has_google": 0.10,
+    "google_confidence": 0.10,
     "review_sufficiency": 0.15,
     "nearby_evidence": 0.15,
     "source_diversity": 0.10,
     "rating_coverage": 0.10,
-    "rent_data_quality": 0.20,
+    "rent_data_quality": 0.15,
+    "data_freshness": 0.15,
 }
 
 
@@ -923,6 +1265,41 @@ def _compute_confidence_features(
     rated_count = sum(1 for r in all_nearby if r.get("rating") is not None)
     rating_coverage = (rated_count / len(all_nearby)) if all_nearby else 0.0
 
+    # 7. data_freshness: how recent is the nearby POI data?
+    # Uses google_fetched_at timestamps as the best available freshness signal.
+    data_freshness = 0.5  # neutral default
+    if all_nearby:
+        ids = [r.get("id") for r in all_nearby if r.get("id")]
+        if ids:
+            try:
+                from sqlalchemy import text as sa_text
+                placeholders = ", ".join([f":id_{i}" for i in range(len(ids))])
+                params = {f"id_{i}": id_val for i, id_val in enumerate(ids)}
+                result = db.execute(
+                    sa_text(
+                        f"SELECT AVG(EXTRACT(EPOCH FROM (NOW() - google_fetched_at)) / 86400.0)"
+                        f" FROM restaurant_poi"
+                        f" WHERE id IN ({placeholders})"
+                        f"   AND google_fetched_at IS NOT NULL"
+                    ),
+                    params,
+                ).scalar()
+                if result is not None:
+                    avg_age_days = float(result)
+                    if avg_age_days <= 30:
+                        data_freshness = 1.0
+                    elif avg_age_days <= 90:
+                        data_freshness = 0.7
+                    elif avg_age_days <= 180:
+                        data_freshness = 0.4
+                    else:
+                        data_freshness = 0.2
+            except Exception:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+
     return {
         "has_google": round(has_google, 4),
         "google_confidence": round(google_conf_score, 4),
@@ -930,6 +1307,7 @@ def _compute_confidence_features(
         "nearby_evidence": round(nearby_evidence, 4),
         "source_diversity": round(source_diversity, 4),
         "rating_coverage": round(rating_coverage, 4),
+        "data_freshness": round(data_freshness, 4),
     }
 
 

@@ -13,9 +13,14 @@ CATEGORIES: dict[str, dict[str, str]] = {
     "chicken": {"en": "Chicken", "ar": "دجاج"},
     "traditional": {"en": "Traditional / Arabic", "ar": "أكل شعبي / عربي"},
     "asian": {"en": "Asian", "ar": "آسيوي"},
+    "indian": {"en": "Indian", "ar": "هندي"},
+    "turkish": {"en": "Turkish", "ar": "تركي"},
+    "japanese_sushi": {"en": "Japanese / Sushi", "ar": "ياباني / سوشي"},
     "seafood": {"en": "Seafood", "ar": "مأكولات بحرية"},
     "coffee_bakery": {"en": "Coffee & Bakery", "ar": "قهوة ومخبوزات"},
+    "desserts": {"en": "Desserts & Sweets", "ar": "حلويات"},
     "healthy": {"en": "Healthy / Salads", "ar": "صحي / سلطات"},
+    "cloud_kitchen": {"en": "Cloud Kitchen", "ar": "مطبخ سحابي"},
     "international": {"en": "International", "ar": "عالمي"},
 }
 
@@ -33,22 +38,46 @@ _KEYWORD_MAP: list[tuple[list[str], str]] = [
         ],
         "traditional",
     ),
+    # Specific Asian sub-categories — checked before generic "asian"
     (
         [
-            "chinese", "japanese", "sushi", "korean", "thai", "indian",
-            "vietnamese", "asian", "ramen", "noodle", "wok",
+            "indian", "biryani", "tandoori", "curry", "masala", "dosa",
+            "naan", "tikka", "هندي",
+        ],
+        "indian",
+    ),
+    (
+        [
+            "turkish", "kebab", "lahmacun", "pide", "iskender",
+            "doner", "baklava_turkish", "تركي",
+        ],
+        "turkish",
+    ),
+    (
+        ["japanese", "sushi", "ramen", "tempura", "udon", "ياباني", "سوشي"],
+        "japanese_sushi",
+    ),
+    (
+        [
+            "chinese", "korean", "thai", "vietnamese", "asian",
+            "noodle", "wok", "dim_sum", "pho",
         ],
         "asian",
     ),
     (["fish", "seafood", "shrimp", "سمك", "بحري"], "seafood"),
     (
-        [
-            "cafe", "coffee", "bakery", "dessert", "pastry", "ice_cream",
-            "chocolate", "donut", "juice", "smoothie", "قهوة", "حلويات",
-        ],
+        ["cafe", "coffee", "bakery", "قهوة"],
         "coffee_bakery",
     ),
+    (
+        [
+            "dessert", "pastry", "ice_cream", "chocolate", "donut",
+            "kunafa", "sweets", "candy", "gelato", "حلويات", "كنافة",
+        ],
+        "desserts",
+    ),
     (["salad", "healthy", "vegan", "vegetarian", "poke", "bowl"], "healthy"),
+    (["cloud_kitchen", "ghost_kitchen", "delivery_only", "مطبخ_سحابي"], "cloud_kitchen"),
 ]
 
 

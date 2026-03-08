@@ -397,8 +397,16 @@
       "complementary": { "label": "استخدامات مكملة", "tip": "الاستخدامات القريبة التي تدعم أداء المطعم" },
       "traffic": { "label": "حركة المرور", "tip": "حركة المركبات المتوقعة حول الموقع" },
       "income_proxy": { "label": "مؤشر الدخل", "tip": "مؤشر للقدرة الشرائية المحلية" },
-      "road_frontage": { "label": "واجهة الطريق", "tip": "الرؤية والوصول من الطرق" }
-    }
+      "road_frontage": { "label": "واجهة الطريق", "tip": "الرؤية والوصول من الطرق" },
+      "peak_hour_alignment": { "label": "ملاءمة ساعات الذروة", "tip": "مدى توافق أنماط حركة المرور مع ساعات الذروة لهذه الفئة" },
+      "demographic_affinity": { "label": "ملاءمة ديموغرافية", "tip": "مدى توافق التركيبة السكانية المحلية مع نوع المطبخ" }
+    },
+    "cannibalizationWarning": "خطر التفكيك",
+    "cannibalizationHigh": "خطر تفكيك مرتفع",
+    "cannibalizationModerate": "خطر تفكيك متوسط",
+    "clickToScoreHint": "انقر في أي مكان على الخريطة لتقييم الموقع لهذه الفئة.",
+    "topOpportunityAreas": "أفضل مناطق الفرص",
+    "noTopCells": "اختر فئة لعرض أفضل مناطق الفرص"
   },
   "mapDraw": {
     "toolbar": {

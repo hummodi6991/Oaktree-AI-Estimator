@@ -278,6 +278,53 @@ export default function RestaurantFinderPanel({
                 </div>
               </div>
 
+              {/* ── Explanation ── */}
+              {scoreResult.explanation && (
+                <div
+                  style={{
+                    padding: "12px 18px",
+                    borderBottom: "1px solid rgba(0,0,0,0.06)",
+                    fontSize: "var(--oak-fs-xs)",
+                    color: "var(--oak-text-gray)",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  {scoreResult.explanation}
+                </div>
+              )}
+
+              {/* ── Cannibalization warning ── */}
+              {scoreResult.cannibalization && scoreResult.cannibalization.risk_level !== "low" && (
+                <div
+                  style={{
+                    padding: "10px 18px",
+                    borderBottom: "1px solid rgba(0,0,0,0.06)",
+                    background: scoreResult.cannibalization.risk_level === "high" ? "#fef2f2" : "#fffbeb",
+                    fontSize: "var(--oak-fs-xs)",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontWeight: 700,
+                      color: scoreResult.cannibalization.risk_level === "high"
+                        ? "var(--oak-error, #d4183d)"
+                        : "#b45309",
+                      marginBottom: 4,
+                    }}
+                  >
+                    {t("restaurant.cannibalizationWarning", {
+                      defaultValue: scoreResult.cannibalization.risk_level === "high"
+                        ? "High Cannibalization Risk"
+                        : "Moderate Cannibalization Risk",
+                    })}
+                  </div>
+                  <div style={{ color: "var(--oak-text-gray)" }}>
+                    {scoreResult.cannibalization.recommendation}
+                  </div>
+                </div>
+              )}
+
               {/* ── Factor breakdown ── */}
               {scoreResult.contributions && scoreResult.contributions.length > 0 && (
                 <div style={{ padding: "14px 18px 16px" }}>

@@ -32,8 +32,30 @@ class TestNormalizeCategory:
 
     def test_asian_keywords(self):
         assert normalize_category("chinese") == "asian"
-        assert normalize_category("sushi") == "asian"
         assert normalize_category("korean") == "asian"
+
+    def test_indian_keywords(self):
+        assert normalize_category("indian") == "indian"
+        assert normalize_category("biryani") == "indian"
+        assert normalize_category("tandoori") == "indian"
+
+    def test_turkish_keywords(self):
+        assert normalize_category("turkish") == "turkish"
+        assert normalize_category("kebab") == "turkish"
+
+    def test_japanese_sushi_keywords(self):
+        assert normalize_category("sushi") == "japanese_sushi"
+        assert normalize_category("japanese") == "japanese_sushi"
+        assert normalize_category("ramen") == "japanese_sushi"
+
+    def test_desserts_keywords(self):
+        assert normalize_category("dessert") == "desserts"
+        assert normalize_category("ice_cream") == "desserts"
+        assert normalize_category("kunafa") == "desserts"
+
+    def test_cloud_kitchen_keywords(self):
+        assert normalize_category("cloud_kitchen") == "cloud_kitchen"
+        assert normalize_category("ghost_kitchen") == "cloud_kitchen"
 
     def test_seafood_keywords(self):
         assert normalize_category("seafood") == "seafood"
@@ -62,6 +84,7 @@ class TestNormalizeOsmCuisine:
     def test_semicolon_multi_value(self):
         assert normalize_osm_cuisine("burger;pizza") == "burger"
         assert normalize_osm_cuisine("chinese;japanese") == "asian"
+        assert normalize_osm_cuisine("sushi;ramen") == "japanese_sushi"
 
     def test_none(self):
         assert normalize_osm_cuisine(None) == "international"

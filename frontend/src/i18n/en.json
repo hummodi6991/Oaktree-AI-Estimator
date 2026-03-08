@@ -397,8 +397,16 @@
       "complementary": { "label": "Complementary uses", "tip": "Nearby uses that support restaurant performance" },
       "traffic": { "label": "Traffic", "tip": "Likely vehicle movement around the site" },
       "income_proxy": { "label": "Income proxy", "tip": "Proxy for local purchasing power" },
-      "road_frontage": { "label": "Road frontage", "tip": "Visibility and access from roads" }
-    }
+      "road_frontage": { "label": "Road frontage", "tip": "Visibility and access from roads" },
+      "peak_hour_alignment": { "label": "Peak hour fit", "tip": "How well area traffic patterns match peak dining hours for this category" },
+      "demographic_affinity": { "label": "Demographic fit", "tip": "How well the local demographic mix matches this cuisine type" }
+    },
+    "cannibalizationWarning": "Cannibalization Risk",
+    "cannibalizationHigh": "High Cannibalization Risk",
+    "cannibalizationModerate": "Moderate Cannibalization Risk",
+    "clickToScoreHint": "Click anywhere on the map to score a location for this category.",
+    "topOpportunityAreas": "Top Opportunity Areas",
+    "noTopCells": "Select a category to see top opportunity areas"
   },
   "mapDraw": {
     "toolbar": {

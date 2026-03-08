@@ -90,6 +90,8 @@ class ScoreResponse(BaseModel):
     nearby_competitors: list[dict[str, Any]] = Field(default_factory=list)
     model_version: str = "weighted_v3"
     ai_weights_used: bool = False
+    explanation: str = Field("", description="Natural-language summary explaining the score")
+    cannibalization: Optional[dict[str, Any]] = Field(None, description="Cannibalization risk analysis (when chain_name is provided)")
 
 
 class ParcelScoreRequest(BaseModel):
@@ -154,6 +156,8 @@ def score_restaurant_location(req: ScoreRequest, db: Session = Depends(get_db)):
         nearby_competitors=result.nearby_competitors,
         model_version=result.model_version,
         ai_weights_used=result.ai_weights_used,
+        explanation=result.explanation,
+        cannibalization=result.cannibalization,
     )
 
 
@@ -537,6 +541,14 @@ def get_opportunity_top_cells(
         reverse=True,
     )[:limit]
 
+    # Build area_label lookup from metadata top_underserved (if available)
+    area_labels: dict[str, str | None] = {}
+    meta_top = result.get("metadata", {}).get("top_underserved", [])
+    for cell_meta in meta_top:
+        h3_key = cell_meta.get("h3", "")
+        if h3_key and cell_meta.get("area_label"):
+            area_labels[h3_key] = cell_meta["area_label"]
+
     cells = [
         {
             "h3": f["properties"]["h3"],
@@ -550,6 +562,7 @@ def get_opportunity_top_cells(
             "cost_penalty": f["properties"].get("cost_penalty"),
             "competitor_count": f["properties"]["competitor_count"],
             "population": f["properties"]["population"],
+            "area_label": area_labels.get(f["properties"]["h3"]),
         }
         for f in sorted_features
     ]
