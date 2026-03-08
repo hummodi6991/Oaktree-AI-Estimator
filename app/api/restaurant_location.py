@@ -23,6 +23,7 @@ from app.services.restaurant_location import (
     COST_WEIGHTS,
     DEMAND_WEIGHTS,
     get_ai_weights,
+    get_parcel_ai_status,
     score_location,
 )
 from app.services.restaurant_opportunity_heatmap import (
@@ -416,6 +417,10 @@ def get_heatmap_ai_status():
         "ai_model_available": status["available"],
         "model_version": status.get("model_version"),
         "artifact_present": status["artifact_present"],
+        "model_path": status.get("model_path"),
+        "meta_path": status.get("meta_path"),
+        "meta_present": status.get("meta_present"),
+        "load_error": status.get("load_error"),
         "fallback_mode": not status["available"],
         "trained_at": status.get("trained_at"),
         "train_row_count": status.get("train_row_count"),
@@ -427,6 +432,36 @@ def get_heatmap_ai_status():
             "Dedicated citywide heatmap AI model predicting cell-level "
             "restaurant opportunity (demand-gap proxy) for Riyadh H3 cells. "
             "When unavailable, the heatmap falls back to curated static weights."
+        ),
+    }
+
+
+@router.get("/restaurant/parcel-ai-status")
+def get_parcel_ai_status_endpoint():
+    """
+    Return the status of the parcel-level AI scoring model.
+
+    Includes model availability, version, artifact presence,
+    file paths, load error (if any), and fallback mode.
+    """
+    status = get_parcel_ai_status()
+    return {
+        "ai_model_available": status["available"],
+        "model_version": status.get("model_version"),
+        "artifact_present": status["artifact_present"],
+        "model_path": status.get("model_path"),
+        "meta_path": status.get("meta_path"),
+        "meta_present": status.get("meta_present"),
+        "load_error": status.get("load_error"),
+        "fallback_mode": status["fallback_mode"],
+        "trained_at": status.get("trained_at"),
+        "mae": status.get("mae"),
+        "r2": status.get("r2"),
+        "n_rows": status.get("n_rows"),
+        "description": (
+            "Parcel-level AI model that predicts demand-factor weights "
+            "from trained GradientBoosting feature importances. "
+            "When unavailable, scoring uses static default weights."
         ),
     }
 

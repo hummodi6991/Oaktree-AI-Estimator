@@ -34,6 +34,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ── Download trained restaurant model artifacts from GitHub Actions ──
+      - name: Download restaurant-score-model artifact
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: restaurant-score-model
+          path: models/
+          workflow: train-restaurant-model.yml
+          search_artifacts: true
+          if_no_artifact_found: warn
+
+      - name: Download restaurant-heatmap-model artifact
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: restaurant-heatmap-model
+          path: models/
+          workflow: train-restaurant-heatmap.yml
+          search_artifacts: true
+          if_no_artifact_found: warn
+
+      - name: Verify restaurant model artifacts
+        run: |
+          echo "=== Restaurant model artifacts ==="
+          ls -la models/ || true
+
+          MISSING=""
+          for f in models/restaurant_score_v0.pkl \
+                   models/restaurant_score_v0.meta.json \
+                   models/restaurant_heatmap_v1.pkl \
+                   models/restaurant_heatmap_v1.meta.json; do
+            if [ -f "$f" ]; then
+              echo "✓ $f ($(stat -c%s "$f") bytes)"
+            else
+              echo "✗ $f MISSING"
+              MISSING="$MISSING $f"
+            fi
+          done
+
+          if [ -n "$MISSING" ]; then
+            echo ""
+            echo "::warning::Missing restaurant model artifacts:$MISSING"
+            echo "The deploy will proceed but AI scoring will fall back to static weights."
+          else
+            echo ""
+            echo "All restaurant model artifacts present."
+          fi
+
       - name: Generate local glyphs (Arabic)
         run: |
           docker pull jmbarbier/fontnik:latest
@@ -81,6 +127,10 @@ jobs:
           IMAGE="ghcr.io/${{ github.repository_owner }}/oaktree-estimator:${{ github.sha }}"
           echo "Using image: $IMAGE"
           docker build --build-arg VITE_PARCEL_TILE_TABLE=public.riyadh_parcels_arcgis_proxy -t "$IMAGE" .
+
+          echo "=== Verify models inside Docker image ==="
+          docker run --rm "$IMAGE" ls -la /app/models/ || true
+
           docker push "$IMAGE"
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 

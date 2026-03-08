@@ -527,8 +527,21 @@ def parking_availability_score(db: Session, lat: float, lon: float) -> float:
 # ---------------------------------------------------------------------------
 
 _MODEL_DIR = os.environ.get("MODEL_DIR", "models")
+_MODEL_PKL_PATH = os.path.join(_MODEL_DIR, "restaurant_score_v0.pkl")
 _MODEL_META_PATH = os.path.join(_MODEL_DIR, "restaurant_score_v0.meta.json")
 _cached_ai_weights: dict[str, float] | None = None
+_parcel_load_error: str | None = None
+_parcel_meta: dict[str, Any] = {}
+
+# Startup logging — runs once at import time
+logger.info(
+    "Parcel AI loader: MODEL_DIR=%s, pkl=%s (exists=%s), meta=%s (exists=%s)",
+    _MODEL_DIR,
+    _MODEL_PKL_PATH,
+    os.path.exists(_MODEL_PKL_PATH),
+    _MODEL_META_PATH,
+    os.path.exists(_MODEL_META_PATH),
+)
 
 
 def get_ai_weights() -> dict[str, float] | None:
@@ -536,7 +549,7 @@ def get_ai_weights() -> dict[str, float] | None:
     Load AI-predicted factor weights from the trained model's feature
     importances. Returns None if no model is available.
     """
-    global _cached_ai_weights
+    global _cached_ai_weights, _parcel_load_error, _parcel_meta
     if _cached_ai_weights is not None:
         return _cached_ai_weights
 
@@ -544,8 +557,11 @@ def get_ai_weights() -> dict[str, float] | None:
         with open(_MODEL_META_PATH) as f:
             meta = json.load(f)
 
+        _parcel_meta = meta
         importances = meta.get("feature_importances", {})
         if not importances:
+            _parcel_load_error = "meta.json present but feature_importances is empty"
+            logger.warning("Parcel AI: %s", _parcel_load_error)
             return None
 
         # Map model feature names to scoring factor names.
@@ -582,15 +598,43 @@ def get_ai_weights() -> dict[str, float] | None:
                 weights[f] = per_factor
 
         _cached_ai_weights = weights
-        logger.info("Loaded AI weights: %s", weights)
+        _parcel_load_error = None
+        logger.info("Parcel AI: loaded AI weights successfully — version=%s",
+                     meta.get("model_version", "unknown"))
         return weights
 
     except FileNotFoundError:
-        logger.debug("No trained model found at %s", _MODEL_META_PATH)
+        _parcel_load_error = f"Model meta not found at {_MODEL_META_PATH}"
+        logger.info("Parcel AI: %s — will use static fallback weights", _parcel_load_error)
         return None
     except Exception as exc:
-        logger.warning("Failed to load AI weights: %s", exc)
+        _parcel_load_error = f"Failed to load: {exc}"
+        logger.warning("Parcel AI: %s", _parcel_load_error)
         return None
+
+
+def get_parcel_ai_status() -> dict[str, Any]:
+    """
+    Return introspection info for the parcel AI (scoring weight) model.
+    Used by the ``/v1/restaurant/parcel-ai-status`` endpoint.
+    """
+    # Ensure we've attempted loading
+    ai_w = get_ai_weights()
+    available = ai_w is not None
+    return {
+        "available": available,
+        "artifact_present": os.path.exists(_MODEL_PKL_PATH),
+        "model_path": _MODEL_PKL_PATH,
+        "meta_path": _MODEL_META_PATH,
+        "meta_present": os.path.exists(_MODEL_META_PATH),
+        "load_error": _parcel_load_error,
+        "model_version": _parcel_meta.get("model_version") if available else None,
+        "trained_at": _parcel_meta.get("trained_at") if available else None,
+        "mae": _parcel_meta.get("mae") if available else None,
+        "r2": _parcel_meta.get("r2") if available else None,
+        "n_rows": _parcel_meta.get("n_rows") if available else None,
+        "fallback_mode": not available,
+    }
 
 
 # ---------------------------------------------------------------------------
