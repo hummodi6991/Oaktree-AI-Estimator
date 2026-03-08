@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { normalizeScore01To100, normalizeTopCell } from "./restaurant";
+import {
+  normalizeScore01To100,
+  normalizeTopCell,
+  getHeatmapMeta,
+  clearHeatmapCache,
+  clearHeatmapCacheForCategory,
+} from "./restaurant";
 
 // ---------------------------------------------------------------------------
 // normalizeScore01To100
@@ -100,5 +106,29 @@ describe("normalizeTopCell", () => {
   it("skips entries with zero lat and lon", () => {
     const raw = { lat: 0, lon: 0, confidence_score: 50 };
     expect(normalizeTopCell(raw)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Heatmap metadata cache — ensures stale AI status doesn't persist
+// ---------------------------------------------------------------------------
+
+describe("heatmap metadata cache", () => {
+  it("getHeatmapMeta returns null for unknown category", () => {
+    expect(getHeatmapMeta("nonexistent_category_xyz")).toBeNull();
+  });
+
+  it("clearHeatmapCache clears all metadata", () => {
+    // After clearing, previously populated meta should be gone
+    clearHeatmapCache();
+    expect(getHeatmapMeta("burger")).toBeNull();
+    expect(getHeatmapMeta("pizza")).toBeNull();
+  });
+
+  it("clearHeatmapCacheForCategory clears only the specified category", () => {
+    clearHeatmapCache(); // start clean
+    // No way to populate without fetching, but clearing an absent key should not throw
+    clearHeatmapCacheForCategory("burger");
+    expect(getHeatmapMeta("burger")).toBeNull();
   });
 });

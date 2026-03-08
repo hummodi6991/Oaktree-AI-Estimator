@@ -46,6 +46,9 @@ def try_load_model() -> Any:
     """
     Lazy-load the heatmap AI model.  Returns the model object on success
     or ``None`` if the artifact is not present / cannot be loaded.
+
+    Re-checks the filesystem each call when the model is not yet loaded,
+    so a newly deployed artifact is picked up without a server restart.
     """
     global _MODEL, _META, _LOAD_ERROR
     if _MODEL is not None:
@@ -53,21 +56,23 @@ def try_load_model() -> Any:
 
     if not os.path.exists(_MODEL_PATH):
         _LOAD_ERROR = f"Model pkl not found at {_MODEL_PATH}"
-        logger.info("Heatmap AI: %s — will use static fallback", _LOAD_ERROR)
+        logger.debug("Heatmap AI: %s — will use static fallback", _LOAD_ERROR)
         return None
 
     try:
         import joblib
 
+        logger.info("Heatmap AI: loading model from %s ...", _MODEL_PATH)
         _MODEL = joblib.load(_MODEL_PATH)
         if os.path.exists(_META_PATH):
             with open(_META_PATH, "r") as f:
                 _META = json.load(f)
         _LOAD_ERROR = None
         logger.info(
-            "Heatmap AI model loaded: version=%s, features=%d",
+            "Heatmap AI model loaded successfully: version=%s, features=%d, trained_at=%s",
             _META.get("model_version", "unknown"),
             len(_META.get("feature_names", [])),
+            _META.get("trained_at", "unknown"),
         )
         return _MODEL
     except Exception as exc:
@@ -115,6 +120,7 @@ def get_model_status() -> dict[str, Any]:
     available = model is not None
     return {
         "available": available,
+        "ai_model_available": available,
         "artifact_present": os.path.exists(_MODEL_PATH),
         "model_path": _MODEL_PATH,
         "meta_path": _META_PATH,
