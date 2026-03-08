@@ -147,37 +147,78 @@ def ingest_delivery_platforms(db: Session, sources: list[str] | None = None) -> 
     """
     Ingest restaurant POIs from delivery platform scrapers.
 
-    Uses the SCRAPER_REGISTRY to dynamically discover all available
-    scrapers. Pass ``sources`` to restrict to specific platforms.
+    This function now runs the new delivery pipeline which:
+    1. Stores ALL records into delivery_source_record (even without coords)
+    2. Runs location resolution to recover coordinates where possible
+    3. Runs entity resolution to match against existing POIs
+    4. Only upserts into restaurant_poi when location confidence is adequate
+
+    The raw delivery records are always preserved for analytics even when
+    they cannot be placed into restaurant_poi.
     """
     from app.connectors.delivery_platforms import SCRAPER_REGISTRY
+    from app.delivery.pipeline import run_all_platforms
+    from app.delivery.models import DeliverySourceRecord
 
+    # Run the new pipeline (stores raw records + resolves)
+    target_platforms = sources or list(SCRAPER_REGISTRY.keys())
+    results = run_all_platforms(
+        db, platforms=target_platforms, run_resolver=True,
+    )
+    total_inserted = sum(r.get("rows_inserted", 0) for r in results)
+    logger.info("Delivery pipeline stored %d raw records", total_inserted)
+
+    # Collect run IDs from this invocation so we only upsert fresh rows
+    run_ids = [r["run_id"] for r in results if r.get("run_id")]
+    if not run_ids:
+        db.commit()
+        return 0
+
+    # Only upsert rows from *this* run with first-party coordinates.
+    # Exclude poi_match and district_centroid geocode methods — those are
+    # borrowed or approximate locations that should not enter restaurant_poi.
     n = 0
-    for source, entry in SCRAPER_REGISTRY.items():
-        if sources and source not in sources:
-            continue
-
-        scraper_fn = entry["fn"]
-        try:
-            for rec in scraper_fn():
-                category = normalize_category(rec.get("category_raw"))
-                poi = {
-                    "id": rec["id"],
-                    "name": rec.get("name", "Unknown"),
-                    "category": category,
-                    "source": source,
-                    "lat": rec.get("lat"),
-                    "lon": rec.get("lon"),
-                    "raw": {"source_url": rec.get("source_url")},
-                }
-                if poi["lat"] and poi["lon"]:
-                    _upsert_poi(db, poi)
-                    n += 1
-        except Exception as exc:
-            logger.warning("Scraper %s failed: %s", source, exc)
+    resolved_rows = (
+        db.query(DeliverySourceRecord)
+        .filter(
+            DeliverySourceRecord.ingest_run_id.in_(run_ids),
+            DeliverySourceRecord.lat.isnot(None),
+            DeliverySourceRecord.lon.isnot(None),
+            DeliverySourceRecord.location_confidence >= 0.7,
+            DeliverySourceRecord.geocode_method.in_(
+                ["platform_payload", "json_ld", "address_geocode"]
+            ),
+        )
+        .all()
+    )
+    for row in resolved_rows:
+        category = normalize_category(row.cuisine_raw or row.category_raw)
+        poi = {
+            "id": f"{row.platform}:{row.source_listing_id or row.id}",
+            "name": row.restaurant_name_normalized or row.restaurant_name_raw or "Unknown",
+            "category": category,
+            "source": row.platform,
+            "lat": float(row.lat),
+            "lon": float(row.lon),
+            "chain_name": row.brand_raw,
+            "district": row.district_text,
+            "rating": float(row.rating) if row.rating else None,
+            "review_count": row.rating_count,
+            "raw": {
+                "source_url": row.source_url,
+                "delivery_pipeline": True,
+                "geocode_method": row.geocode_method,
+                "location_confidence": row.location_confidence,
+            },
+        }
+        _upsert_poi(db, poi)
+        n += 1
 
     db.commit()
-    logger.info("Ingested %d delivery platform restaurant POIs", n)
+    logger.info(
+        "Ingested %d delivery platform restaurant POIs (from %d raw records)",
+        n, total_inserted,
+    )
     return n
 
 
