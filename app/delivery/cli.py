@@ -3,6 +3,7 @@ CLI commands for the delivery data pipeline.
 
 Usage:
     python -m app.delivery.cli scrape --platform hungerstation
+    python -m app.delivery.cli scrape --platform hungerstation,jahez
     python -m app.delivery.cli scrape --all
     python -m app.delivery.cli resolve
     python -m app.delivery.cli stats
@@ -24,32 +25,34 @@ logger = logging.getLogger(__name__)
 
 
 def cmd_scrape(args: argparse.Namespace) -> None:
-    """Run scraper pipeline for one or all platforms."""
-    from app.db.session import SessionLocal
-    from app.delivery.pipeline import run_all_platforms, run_platform_scrape
+    """Run scraper pipeline for one, several, or all platforms."""
+    from app.delivery.pipeline import run_all_platforms
 
-    db = SessionLocal()
-    try:
-        if args.platform:
-            result = run_platform_scrape(
-                db,
-                args.platform,
-                max_pages=args.max_pages,
-                run_resolver=not args.no_resolve,
-            )
-            print(json.dumps(result, indent=2, default=str))
-        elif args.all:
-            results = run_all_platforms(
-                db,
-                max_pages=args.max_pages,
-                run_resolver=not args.no_resolve,
-            )
-            print(json.dumps(results, indent=2, default=str))
-        else:
-            print("Specify --platform <name> or --all")
-            sys.exit(1)
-    finally:
-        db.close()
+    # --platform accepts comma-separated values
+    platform_list: list[str] | None = None
+    if args.platform:
+        platform_list = [p.strip() for p in args.platform.split(",") if p.strip()]
+    elif not args.all:
+        print("Specify --platform <name>[,<name>...] or --all")
+        sys.exit(1)
+
+    logger.info(
+        "CLI scrape: platforms=%s max_pages=%d resolve=%s",
+        platform_list or "ALL", args.max_pages, not args.no_resolve,
+    )
+
+    # run_all_platforms creates its own sessions per platform
+    results = run_all_platforms(
+        db=None,  # type: ignore[arg-type]  # unused — sessions created internally
+        max_pages=args.max_pages,
+        platforms=platform_list,
+        run_resolver=not args.no_resolve,
+    )
+    print(json.dumps(results, indent=2, default=str))
+
+    # Exit non-zero if every platform failed
+    if all("error" in r for r in results):
+        sys.exit(1)
 
 
 def cmd_resolve(args: argparse.Namespace) -> None:
@@ -134,7 +137,10 @@ def main() -> None:
 
     # scrape
     p_scrape = sub.add_parser("scrape", help="Run scraper pipeline")
-    p_scrape.add_argument("--platform", type=str, help="Platform key (e.g. hungerstation)")
+    p_scrape.add_argument(
+        "--platform", type=str,
+        help="Platform key(s), comma-separated (e.g. hungerstation,jahez)",
+    )
     p_scrape.add_argument("--all", action="store_true", help="Run all platforms")
     p_scrape.add_argument("--max-pages", type=int, default=200)
     p_scrape.add_argument("--no-resolve", action="store_true", help="Skip entity resolution")
