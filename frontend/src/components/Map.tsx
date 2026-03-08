@@ -691,10 +691,14 @@ export default function Map({
       const props = e.features[0].properties || {};
       const finalScore = props.final_score ?? props.score ?? "—";
       const confidence = props.confidence_score ?? props.confidence ?? "—";
+      const scoringMode = props.scoring_mode;
+      const scoringLabel = scoringMode === "heatmap_ai_v1"
+        ? `Scored with Heatmap AI v1`
+        : `Scored with curated heatmap model`;
       heatmapPopup
         .setLngLat(e.lngLat)
         .setHTML(
-          `<div style="font-size:12px;line-height:1.4"><strong>Cell opportunity:</strong> ${typeof finalScore === "number" ? Math.round(finalScore) : finalScore}<br/><strong>Cell confidence:</strong> ${typeof confidence === "number" ? Math.round(confidence) : confidence}</div>`,
+          `<div style="font-size:12px;line-height:1.4"><strong>Cell opportunity:</strong> ${typeof finalScore === "number" ? Math.round(finalScore) : finalScore}<br/><strong>Cell confidence:</strong> ${typeof confidence === "number" ? Math.round(confidence) : confidence}<br/><span style="color:#999;font-size:11px">${scoringLabel}</span></div>`,
         )
         .addTo(map);
     });

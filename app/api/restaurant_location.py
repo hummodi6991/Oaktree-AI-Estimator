@@ -28,6 +28,9 @@ from app.services.restaurant_location import (
 from app.services.restaurant_opportunity_heatmap import (
     generate_opportunity_heatmap,
 )
+from app.services.restaurant_heatmap_ai import (
+    get_model_status as get_heatmap_model_status,
+)
 
 router = APIRouter(tags=["restaurant-location"])
 logger = logging.getLogger(__name__)
@@ -396,6 +399,39 @@ def get_ai_weight_info():
 
 
 # ---------------------------------------------------------------------------
+# NEW: Heatmap AI introspection
+# ---------------------------------------------------------------------------
+
+
+@router.get("/restaurant/heatmap-ai-status")
+def get_heatmap_ai_status():
+    """
+    Return the status of the dedicated heatmap AI model.
+
+    Includes model availability, version, artifact presence,
+    fallback mode, and a description of what the model predicts.
+    """
+    status = get_heatmap_model_status()
+    return {
+        "ai_model_available": status["available"],
+        "model_version": status.get("model_version"),
+        "artifact_present": status["artifact_present"],
+        "fallback_mode": not status["available"],
+        "trained_at": status.get("trained_at"),
+        "train_row_count": status.get("train_row_count"),
+        "mae": status.get("mae"),
+        "r2": status.get("r2"),
+        "target_definition": status.get("target_definition"),
+        "riyadh_only": status.get("riyadh_only", True),
+        "description": (
+            "Dedicated citywide heatmap AI model predicting cell-level "
+            "restaurant opportunity (demand-gap proxy) for Riyadh H3 cells. "
+            "When unavailable, the heatmap falls back to curated static weights."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # NEW: Data sources registry
 # ---------------------------------------------------------------------------
 
@@ -550,13 +586,22 @@ def get_opportunity_top_cells(
             "cost_penalty": f["properties"].get("cost_penalty"),
             "competitor_count": f["properties"]["competitor_count"],
             "population": f["properties"]["population"],
+            "ai_used": f["properties"].get("ai_used", False),
+            "model_version": f["properties"].get("model_version", "curated_static_v1"),
+            "scoring_mode": f["properties"].get("scoring_mode", "curated_static_v1"),
         }
         for f in sorted_features
     ]
+
+    # Top-level AI metadata from the heatmap result
+    heatmap_meta = result.get("metadata", {})
 
     return {
         "category": category,
         "radius_m": radius_m,
         "count": len(cells),
+        "ai_used": heatmap_meta.get("ai_used", False),
+        "model_version": heatmap_meta.get("model_version", "curated_static_v1"),
+        "scoring_mode": heatmap_meta.get("scoring_mode", "curated_static_v1"),
         "cells": cells,
     }
