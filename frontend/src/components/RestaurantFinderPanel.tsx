@@ -5,9 +5,11 @@ import {
   fetchOpportunityHeatmap,
   fetchTopCells,
   scoreLocation,
+  getHeatmapMeta,
   type RestaurantCategory,
   type TopCell,
   type ScoreResult,
+  type HeatmapMeta,
 } from "../lib/api/restaurant";
 import FactorTooltip from "./ui/FactorTooltip";
 
@@ -51,6 +53,7 @@ export default function RestaurantFinderPanel({
   const [scoreLoading, setScoreLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTopCellIdx, setActiveTopCellIdx] = useState<number | null>(null);
+  const [heatmapMeta, setHeatmapMeta] = useState<HeatmapMeta | null>(null);
 
   // Debounce timer ref for category changes
   const debounceRef = useRef<number | null>(null);
@@ -97,6 +100,7 @@ export default function RestaurantFinderPanel({
         ]);
         onHeatmapData(heatmap);
         setTopCells(cells);
+        setHeatmapMeta(getHeatmapMeta(category));
       } catch (e: any) {
         setError(e?.message || "Failed to load heatmap data");
         onHeatmapData(null);
@@ -174,6 +178,22 @@ export default function RestaurantFinderPanel({
           </div>
         )}
       </div>
+
+      {/* Heatmap AI status note */}
+      {heatmapMeta && !heatmapLoading && (
+        <div
+          style={{
+            fontSize: 11,
+            color: heatmapMeta.ai_used ? "var(--oak-primary, #2563eb)" : "var(--oak-text-light)",
+            marginBottom: 10,
+            lineHeight: 1.4,
+          }}
+        >
+          {heatmapMeta.ai_used
+            ? `Heatmap AI active \u00b7 ${heatmapMeta.model_version}`
+            : "Heatmap AI unavailable \u2014 using curated fallback"}
+        </div>
+      )}
 
       {/* Error display */}
       {error && (
@@ -276,6 +296,21 @@ export default function RestaurantFinderPanel({
                     </span>
                   </div>
                 </div>
+              </div>
+
+              {/* ── Parcel AI status note ── */}
+              <div
+                style={{
+                  padding: "4px 18px 0",
+                  fontSize: 11,
+                  color: scoreResult.ai_weights_used
+                    ? "var(--oak-primary, #2563eb)"
+                    : "var(--oak-text-light)",
+                }}
+              >
+                {scoreResult.ai_weights_used
+                  ? `Parcel AI active \u00b7 ${scoreResult.model_version || "ai_weighted_v3"}`
+                  : "Parcel AI unavailable \u2014 using fallback scoring"}
               </div>
 
               {/* ── Factor breakdown ── */}

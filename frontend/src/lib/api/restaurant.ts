@@ -41,6 +41,15 @@ export type ScoreResult = {
     source: string;
     distance_m: number;
   }>;
+  model_version?: string;
+  ai_weights_used?: boolean;
+};
+
+export type HeatmapMeta = {
+  ai_used: boolean;
+  ai_model_available: boolean;
+  model_version: string;
+  scoring_mode: string;
 };
 
 // --- Normalization helpers for mixed backend response shapes ---
@@ -104,11 +113,21 @@ function normalizeScoreResult(raw: Record<string, any>): ScoreResult {
     factors: raw.factors,
     contributions: raw.contributions,
     nearby_competitors: raw.nearby_competitors,
+    model_version: raw.model_version,
+    ai_weights_used: raw.ai_weights_used,
   };
 }
 
 // In-memory cache for heatmap responses per category
 const heatmapCache = new Map<string, GeoJSON.FeatureCollection>();
+
+// In-memory cache for heatmap metadata (AI status) per category
+const heatmapMetaCache = new Map<string, HeatmapMeta>();
+
+/** Return cached heatmap AI metadata for a category (populated after fetch). */
+export function getHeatmapMeta(category: string): HeatmapMeta | null {
+  return heatmapMetaCache.get(category) ?? null;
+}
 
 export async function fetchCategories(): Promise<RestaurantCategory[]> {
   const res = await fetchWithAuth(buildApiUrl("/v1/restaurant/categories"));
@@ -146,6 +165,17 @@ export async function fetchOpportunityHeatmap(
     if (p.opportunity_score == null && p.opportunity != null)
       p.opportunity_score = p.opportunity;
     f.properties = p;
+  }
+
+  // Extract and cache AI metadata from the response
+  const meta = data.metadata;
+  if (meta) {
+    heatmapMetaCache.set(cacheKey, {
+      ai_used: meta.ai_used ?? false,
+      ai_model_available: meta.ai_model_available ?? false,
+      model_version: meta.model_version ?? "curated_static_v1",
+      scoring_mode: meta.scoring_mode ?? "curated_static_v1",
+    });
   }
 
   heatmapCache.set(cacheKey, fc);
@@ -188,4 +218,5 @@ export async function scoreLocation(
 
 export function clearHeatmapCache() {
   heatmapCache.clear();
+  heatmapMetaCache.clear();
 }

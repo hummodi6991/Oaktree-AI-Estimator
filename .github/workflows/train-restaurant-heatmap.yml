@@ -1,0 +1,77 @@
+name: Train Restaurant Heatmap AI Model
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 0"  # Weekly Sunday 06:00 UTC
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install h3
+
+      - name: Configure DB env
+        env:
+          PGHOST_S: ${{ secrets.POSTGRES_HOST }}
+          PGPORT_S: ${{ secrets.POSTGRES_PORT }}
+          PGDB_S:   ${{ secrets.POSTGRES_DB }}
+          PGUSER_S: ${{ secrets.POSTGRES_USER }}
+          PGPASS_S: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          {
+            echo "POSTGRES_HOST=${PGHOST_S}"
+            echo "POSTGRES_PORT=${PGPORT_S}"
+            echo "POSTGRES_DB=${PGDB_S}"
+            echo "POSTGRES_USER=${PGUSER_S}"
+            echo "POSTGRES_PASSWORD=${PGPASS_S}"
+          } >> "$GITHUB_ENV"
+
+      - name: Train restaurant heatmap AI model
+        run: python -m app.ml.restaurant_heatmap_train
+
+      - name: Upload model artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: restaurant-heatmap-model
+          path: |
+            models/restaurant_heatmap_v1.pkl
+            models/restaurant_heatmap_v1.meta.json
+          retention-days: 90
+
+      - name: Print model metrics and feature importances
+        run: |
+          if [ -f models/restaurant_heatmap_v1.meta.json ]; then
+            echo "=== Heatmap AI Model Metrics ==="
+            python -c "
+          import json
+          with open('models/restaurant_heatmap_v1.meta.json') as f:
+              meta = json.load(f)
+          print(f'MAE: {meta[\"mae\"]:.3f}')
+          print(f'R2:  {meta[\"r2\"]:.3f}')
+          print(f'Training rows: {meta[\"train_row_count\"]}')
+          print(f'Model version: {meta.get(\"model_version\", \"unknown\")}')
+          print(f'Trained at: {meta.get(\"trained_at\", \"unknown\")}')
+          print()
+          print('=== Feature Importances ===')
+          imps = meta.get('feature_importances', {})
+          for feat, imp in sorted(imps.items(), key=lambda x: -x[1]):
+              print(f'  {feat}: {imp:.4f}')
+          "
+          else
+            echo "No model metrics file found"
+          fi

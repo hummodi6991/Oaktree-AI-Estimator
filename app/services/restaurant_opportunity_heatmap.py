@@ -4,6 +4,10 @@ City-wide Underserved Demand Heatmap generator.
 Uses all Riyadh population_density H3 cells as the grid, scores each cell
 for a given restaurant category using batched DB queries and spatial
 indexing, then caches the result in ``restaurant_heatmap_cache`` for 7 days.
+
+When a dedicated heatmap AI model is available (``restaurant_heatmap_v1.pkl``),
+the generator uses AI-predicted cell-level scores.  Otherwise it falls back
+to the original curated static weights.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
+import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -29,6 +34,12 @@ from app.services.restaurant_location import (
     _haversine,
     _weighted_avg,
 )
+from app.services.restaurant_heatmap_ai import (
+    try_load_model as _try_load_heatmap_model,
+    predict_cell_scores as _predict_cell_scores,
+    get_model_status as _get_heatmap_model_status,
+)
+from app.ml.restaurant_heatmap_train import build_cell_features
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +123,8 @@ def _load_pois_in_bbox(
     rows = db.execute(
         text("""
             SELECT id, lat, lon, category, rating, review_count,
-                   source, chain_name, google_place_id, google_confidence
+                   source, chain_name, google_place_id, google_confidence,
+                   price_level
             FROM restaurant_poi
             WHERE lat BETWEEN :min_lat AND :max_lat
               AND lon BETWEEN :min_lon AND :max_lon
@@ -138,6 +150,9 @@ def _load_pois_in_bbox(
             "google_place_id": r["google_place_id"],
             "google_confidence": (
                 float(r["google_confidence"]) if r["google_confidence"] else None
+            ),
+            "price_level": (
+                float(r["price_level"]) if r.get("price_level") else None
             ),
         }
         for r in rows
@@ -386,56 +401,174 @@ def generate_opportunity_heatmap(
     t_build_idx = time.monotonic() - t0
     logger.info("Built spatial index in %.2fs", t_build_idx)
 
-    # 5. Use static DEMAND_WEIGHTS for batch heatmap scoring.
-    # AI weights are intentionally NOT used here: the trained model's
-    # feature importances map to a mix of demand + confidence features,
-    # and applying them as demand-only weights would distort the scores.
-    # The per-location /restaurant/score endpoint handles AI weights
-    # with its own mapping logic; the heatmap uses the curated weights.
-    demand_w = DEMAND_WEIGHTS
+    # 5. Try dedicated heatmap AI model; fall back to static weights.
+    heatmap_model = _try_load_heatmap_model()
+    ai_used = False
+    model_version = "curated_static_v1"
+    scoring_mode = "curated_static_v1"
 
-    # 6. Score each cell
     t0 = time.monotonic()
     features: list[dict[str, Any]] = []
-    for cell in cells[:limit_cells]:
-        nearby = idx.neighbors(cell["lat"], cell["lon"], radius_m)
-        scores = _score_cell(
-            cell["lat"],
-            cell["lon"],
-            category,
-            radius_m,
-            nearby,
-            cell["population"],
-            demand_w,
-        )
 
-        # Apply min_confidence filter
-        if scores["confidence_score"] < min_confidence * 100:
-            continue
+    if heatmap_model is not None:
+        # ── AI scoring path ──
+        # Build feature DataFrame for all cells in one pass, then batch-predict.
+        ai_status = _get_heatmap_model_status()
+        model_version = ai_status.get("model_version") or "heatmap_ai_v1"
+        scoring_mode = "heatmap_ai_v1"
+        ps_frozen = frozenset(PLATFORM_SOURCES)
 
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Point",
-                    "coordinates": [cell["lon"], cell["lat"]],
-                },
-                "properties": {
-                    "h3": cell["h3"],
-                    "opportunity_score": scores["opportunity_score"],
-                    "confidence_score": scores["confidence_score"],
-                    "final_score": scores["final_score"],
-                    "demand_sum_reviews": scores["demand_sum_reviews"],
-                    "competitor_count": scores["competitor_count"],
-                    "population": scores["population"],
-                    "underserved_index": scores["underserved_index"],
-                    "debug_factors": scores["debug_factors"],
-                },
-            }
-        )
+        cell_records: list[dict[str, Any]] = []
+        cell_meta: list[dict[str, Any]] = []  # parallel list for geometry + extras
+
+        for cell in cells[:limit_cells]:
+            nearby = idx.neighbors(cell["lat"], cell["lon"], radius_m)
+            feats = build_cell_features(
+                cell["lat"],
+                cell["lon"],
+                category,
+                nearby,
+                cell["population"],
+                ps_frozen,
+            )
+            # Keep non-feature data for the GeoJSON output
+            same_cat = [p for p in nearby if p.get("category") == category]
+            demand_sum_reviews = sum(p.get("review_count", 0) for p in same_cat)
+            competitor_count = len(same_cat)
+
+            # Confidence (same simplified formula as static path)
+            google_count = sum(1 for r in nearby if r.get("google_place_id"))
+            has_google = google_count / max(1, len(nearby)) if nearby else 0.0
+            gconf_vals = [
+                r["google_confidence"]
+                for r in nearby
+                if r.get("google_confidence") is not None
+            ]
+            avg_gconf = sum(gconf_vals) / len(gconf_vals) if gconf_vals else 0.0
+            review_suf = min(
+                1.0, math.log1p(demand_sum_reviews) / math.log1p(200)
+            )
+            confidence_01 = max(0.0, min(1.0,
+                0.35 * has_google + 0.35 * avg_gconf + 0.30 * review_suf
+            ))
+            confidence_score = round(confidence_01 * 100, 1)
+
+            underserved_index = round(
+                (demand_sum_reviews / max(1, competitor_count))
+                * math.log1p(cell["population"]),
+                2,
+            )
+
+            cell_records.append(feats)
+            cell_meta.append({
+                "h3": cell["h3"],
+                "lat": cell["lat"],
+                "lon": cell["lon"],
+                "population": round(cell["population"], 1),
+                "demand_sum_reviews": demand_sum_reviews,
+                "competitor_count": competitor_count,
+                "confidence_score": confidence_score,
+                "confidence_01": confidence_01,
+                "underserved_index": underserved_index,
+            })
+
+        if cell_records:
+            feat_df = pd.DataFrame(cell_records)
+            # One-hot encode category to match training columns
+            feat_df = pd.get_dummies(feat_df, columns=["category"], prefix="cat")
+            # Drop non-numeric helper columns that may have leaked in
+            feat_df = feat_df.drop(
+                columns=[c for c in ("h3",) if c in feat_df.columns],
+            )
+
+            ai_scores = _predict_cell_scores(feat_df)
+            if ai_scores is not None:
+                ai_used = True
+                for i, (meta, opp_score) in enumerate(zip(cell_meta, ai_scores)):
+                    opp = round(float(opp_score), 1)
+                    conf_01 = meta["confidence_01"]
+                    final = round(opp * (0.60 + 0.40 * conf_01), 1)
+
+                    if meta["confidence_score"] < min_confidence * 100:
+                        continue
+
+                    features.append({
+                        "type": "Feature",
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [meta["lon"], meta["lat"]],
+                        },
+                        "properties": {
+                            "h3": meta["h3"],
+                            "opportunity_score": opp,
+                            "confidence_score": meta["confidence_score"],
+                            "final_score": final,
+                            "demand_sum_reviews": meta["demand_sum_reviews"],
+                            "competitor_count": meta["competitor_count"],
+                            "population": meta["population"],
+                            "underserved_index": meta["underserved_index"],
+                            "ai_used": True,
+                            "model_version": model_version,
+                            "scoring_mode": scoring_mode,
+                        },
+                    })
+            else:
+                # AI prediction failed at runtime — fall through to static
+                ai_used = False
+                model_version = "curated_static_v1"
+                scoring_mode = "curated_static_v1"
+
+    if not ai_used:
+        # ── Static (curated) scoring path — original logic ──
+        # The parcel AI's feature importances are intentionally NOT used here;
+        # they map to a mix of demand + confidence features and would distort
+        # the heatmap.  This path uses the curated static DEMAND_WEIGHTS.
+        demand_w = DEMAND_WEIGHTS
+
+        for cell in cells[:limit_cells]:
+            nearby = idx.neighbors(cell["lat"], cell["lon"], radius_m)
+            scores = _score_cell(
+                cell["lat"],
+                cell["lon"],
+                category,
+                radius_m,
+                nearby,
+                cell["population"],
+                demand_w,
+            )
+
+            if scores["confidence_score"] < min_confidence * 100:
+                continue
+
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [cell["lon"], cell["lat"]],
+                    },
+                    "properties": {
+                        "h3": cell["h3"],
+                        "opportunity_score": scores["opportunity_score"],
+                        "confidence_score": scores["confidence_score"],
+                        "final_score": scores["final_score"],
+                        "demand_sum_reviews": scores["demand_sum_reviews"],
+                        "competitor_count": scores["competitor_count"],
+                        "population": scores["population"],
+                        "underserved_index": scores["underserved_index"],
+                        "debug_factors": scores["debug_factors"],
+                        "ai_used": False,
+                        "model_version": model_version,
+                        "scoring_mode": scoring_mode,
+                    },
+                }
+            )
 
     t_score = time.monotonic() - t0
-    logger.info("Scored %d cells in %.2fs", len(features), t_score)
+    logger.info(
+        "Scored %d cells in %.2fs (scoring_mode=%s)",
+        len(features), t_score, scoring_mode,
+    )
 
     # 7. Top 30 underserved cells
     top_cells = sorted(
@@ -471,6 +604,10 @@ def generate_opportunity_heatmap(
             "cell_count": len(features),
             "total_population_cells": len(cells),
             "total_pois_loaded": len(pois),
+            "ai_used": ai_used,
+            "ai_model_available": heatmap_model is not None,
+            "model_version": model_version,
+            "scoring_mode": scoring_mode,
             "top_underserved": top_cells_summary,
             "timings": {
                 "load_cells_s": round(t_load_cells, 2),

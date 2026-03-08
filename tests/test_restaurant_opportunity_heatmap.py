@@ -306,6 +306,9 @@ class TestOpportunityHeatmapEndpoint:
                         "population": 4500.0,
                         "underserved_index": 320.5,
                         "debug_factors": {},
+                        "ai_used": False,
+                        "model_version": "curated_static_v1",
+                        "scoring_mode": "curated_static_v1",
                     },
                 }
             ],
@@ -313,6 +316,10 @@ class TestOpportunityHeatmapEndpoint:
                 "category": "burger",
                 "radius_m": 1200,
                 "cell_count": 1,
+                "ai_used": False,
+                "ai_model_available": False,
+                "model_version": "curated_static_v1",
+                "scoring_mode": "curated_static_v1",
             },
         }
 
