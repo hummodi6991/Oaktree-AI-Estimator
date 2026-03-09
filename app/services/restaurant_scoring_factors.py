@@ -7,6 +7,15 @@ implementations that use ArcGIS parcel data, road context, and
 weighted anchor/building signals.
 
 Each factor returns a ScoredFactor with score, confidence, and rationale.
+
+Performance notes (Phase 5 optimization):
+- parking_availability_score consolidates 3 overture_buildings queries → 1
+- Building-coverage ratio from a single overture_buildings aggregate replaces
+  weak nearby-anchor sub-scores for parking
+- Street-parking capacity signal derived from road width classes already
+  fetched by _road_access_score (no extra query)
+- Timing instrumentation via ``time.perf_counter()`` logs per-factor latency
+  at DEBUG level so production dashboards can trace bottlenecks.
 """
 
 from __future__ import annotations
@@ -14,6 +23,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -170,6 +180,8 @@ def zoning_fit_score(db: Session, lat: float, lon: float) -> ScoredFactor:
     deterministic rule engine, district-level fallback, and road adjacency
     adjustment.
     """
+    t0 = time.perf_counter()
+
     score = None
     confidence = 0.0
     rationale = "no_data"
@@ -321,6 +333,10 @@ def zoning_fit_score(db: Session, lat: float, lon: float) -> ScoredFactor:
     meta["road_bonus"] = round(road_bonus, 1)
     score = max(10.0, min(95.0, score + road_bonus))
 
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    meta["elapsed_ms"] = round(elapsed_ms, 1)
+    logger.debug("zoning_fit_score: %.1f ms  score=%.1f", elapsed_ms, score)
+
     return ScoredFactor(
         score=round(score, 1),
         confidence=round(confidence, 3),
@@ -330,7 +346,7 @@ def zoning_fit_score(db: Session, lat: float, lon: float) -> ScoredFactor:
 
 
 # ---------------------------------------------------------------------------
-# PARKING AVAILABILITY — Phase 3
+# PARKING AVAILABILITY — Phase 3 + Phase 5 (optimized)
 # ---------------------------------------------------------------------------
 
 def _parcel_parking_feasibility(db: Session, lat: float, lon: float) -> tuple[float, dict]:
@@ -376,35 +392,58 @@ def _parcel_parking_feasibility(db: Session, lat: float, lon: float) -> tuple[fl
     if area <= 0:
         return 40.0, meta
 
-    # Area component: sigmoid centered around 600m² (typical Riyadh restaurant parcel)
-    area_score = min(90.0, 20.0 + 70.0 * (1 - math.exp(-area / 800.0)))
+    # Area component: steeper sigmoid centered around 500m² to widen score
+    # spread across typical Riyadh parcels (200-3000m²).
+    # Old curve: 20 + 70*(1-exp(-area/800)) → clustered 40-65 for 200-1200m²
+    # New curve: wider range with sharper knee — tiny parcels score low,
+    # large parcels score high, mid parcels spread meaningfully.
+    if area < 200:
+        area_score = 15.0 + 15.0 * (area / 200.0)  # 15-30 for tiny
+    elif area < 600:
+        area_score = 30.0 + 30.0 * ((area - 200.0) / 400.0)  # 30-60
+    elif area < 1500:
+        area_score = 60.0 + 20.0 * ((area - 600.0) / 900.0)  # 60-80
+    else:
+        area_score = min(92.0, 80.0 + 12.0 * (1 - math.exp(-(area - 1500) / 2000.0)))
 
     # Compactness penalty: elongated/irregular parcels are harder for parking layout
     # Isoperimetric ratio: 1.0 = perfect circle, lower = more irregular
     compact_adj = 0.0
     if compactness > 0:
         if compactness < 0.3:
-            compact_adj = -10.0  # very irregular, hard to park
+            compact_adj = -12.0  # very irregular, hard to park
         elif compactness < 0.5:
-            compact_adj = -3.0
-        # compact parcels get no bonus (already factored into area score)
+            compact_adj = -5.0
+        elif compactness > 0.7:
+            compact_adj = 3.0  # compact parcels bonus for parking layout
 
     # Frontage estimate from perimeter (rough proxy for access width)
     if perimeter > 0 and area > 0:
         est_frontage = area / (perimeter / 4.0)  # rough width estimate
         meta["est_frontage_m"] = round(est_frontage, 1)
-        if est_frontage < 10:
-            compact_adj -= 5.0  # narrow frontage = poor access
+        if est_frontage < 8:
+            compact_adj -= 8.0  # very narrow frontage = poor access
+        elif est_frontage < 12:
+            compact_adj -= 3.0  # narrow frontage
+        elif est_frontage > 25:
+            compact_adj += 4.0  # wide frontage good for parking entry
 
-    score = max(15.0, min(90.0, area_score + compact_adj))
+    score = max(10.0, min(95.0, area_score + compact_adj))
     meta["source"] = "parcel_geometry"
     return score, meta
 
 
-def _road_access_score(db: Session, lat: float, lon: float) -> tuple[float, dict]:
+def _road_access_and_street_parking(
+    db: Session, lat: float, lon: float,
+) -> tuple[float, float, dict]:
     """
-    Assess road access quality for parking/customer arrival.
-    Returns (sub_score 0-100, meta).
+    Assess road access quality AND estimate on-street parking capacity.
+
+    Returns (access_sub_score 0-100, street_parking_sub_score 0-100, meta).
+
+    The street-parking score is a new discriminative signal derived from the
+    same road query — wider/calmer roads offer more curbside parking.
+    No extra DB round-trip.
     """
     meta: dict[str, Any] = {}
     try:
@@ -431,10 +470,10 @@ def _road_access_score(db: Session, lat: float, lon: float) -> tuple[float, dict
             db.rollback()
         except Exception:
             pass
-        return 45.0, {"source": "error"}
+        return 45.0, 30.0, {"source": "error"}
 
     if not rows:
-        return 20.0, {"source": "no_roads", "road_count": 0}
+        return 20.0, 10.0, {"source": "no_roads", "road_count": 0}
 
     road_classes = set()
     nearest_dist = float(rows[0].get("distance_m", 100))
@@ -452,158 +491,236 @@ def _road_access_score(db: Session, lat: float, lon: float) -> tuple[float, dict
     has_residential = "residential" in road_classes
     has_motorway = bool(road_classes & {"motorway", "motorway_link", "trunk", "trunk_link"})
 
-    # Best for restaurants: secondary/tertiary with service road nearby
-    score = 40.0
-
+    # --- Access score (same logic as before) ---
+    access = 40.0
     if has_service:
-        score += 20.0  # service road = easy ingress/egress
+        access += 20.0
     if has_secondary:
-        score += 15.0  # good visibility + accessible
+        access += 15.0
     if has_primary:
-        score += 10.0  # high visibility but sometimes hard to turn into
+        access += 10.0
     if has_residential:
-        score += 5.0  # some local access
+        access += 5.0
     if has_motorway and not has_service and not has_secondary:
-        score -= 10.0  # motorway-only = bad for restaurant parking access
+        access -= 10.0
 
-    # Distance bonus: closer to road = better access
     if nearest_dist < 20:
-        score += 5.0
+        access += 5.0
     elif nearest_dist > 100:
-        score -= 10.0
+        access -= 10.0
 
+    access = max(10.0, min(95.0, access))
+
+    # --- Street-parking capacity estimate (NEW) ---
+    # Different road classes imply different curbside parking potential.
+    # Service roads in Riyadh typically allow parallel parking.
+    # Secondary/tertiary have occasional parallel parking.
+    # Primary roads and highways generally do NOT allow curbside parking.
+    # Residential streets have limited curbside space.
+    street_parking = 20.0  # baseline: minimal on-street parking
+
+    # Service roads are the best for on-street parking in Riyadh
+    service_count = sum(1 for r in rows if (r.get("highway") or "").lower() == "service")
+    street_parking += min(30.0, service_count * 15.0)
+
+    # Secondary/tertiary roads offer some curbside opportunity
+    secondary_count = sum(
+        1 for r in rows
+        if (r.get("highway") or "").lower() in {"secondary", "secondary_link", "tertiary", "tertiary_link"}
+    )
+    street_parking += min(20.0, secondary_count * 8.0)
+
+    # Residential streets have some curbside parking
+    residential_count = sum(1 for r in rows if (r.get("highway") or "").lower() == "residential")
+    street_parking += min(10.0, residential_count * 5.0)
+
+    # Primary/trunk roads penalize street parking (no stopping zones)
+    if has_primary and not has_service:
+        street_parking -= 10.0
+    if has_motorway:
+        street_parking -= 15.0
+
+    # Multiple nearby roads = more total curb space
+    if len(rows) >= 4:
+        street_parking += 5.0
+
+    street_parking = max(5.0, min(95.0, street_parking))
+    meta["street_parking_score"] = round(street_parking, 1)
     meta["source"] = "road_analysis"
-    return max(10.0, min(95.0, score)), meta
+    return access, street_parking, meta
 
 
-def _nearby_parking_supply(db: Session, lat: float, lon: float) -> tuple[float, dict]:
+def _nearby_parking_supply_consolidated(
+    db: Session, lat: float, lon: float,
+) -> tuple[float, float, dict]:
     """
-    Count nearby parking structures, malls, and large commercial anchors
-    that provide parking options.
-    Returns (sub_score 0-100, meta).
+    Single consolidated overture_buildings query returning both parking-supply
+    score AND building-coverage ratio score.
+
+    Replaces the old 3-query ``_nearby_parking_supply`` with one query that
+    categorizes buildings via CASE expressions.
+
+    Returns (supply_sub_score 0-100, coverage_sub_score 0-100, meta).
     """
     meta: dict[str, Any] = {}
 
-    # 1. Direct parking structures from Overture buildings
-    parking_count = 0
     try:
-        parking_count = db.execute(
+        row = db.execute(
             text("""
-                SELECT COUNT(*) FROM overture_buildings
-                WHERE (class ILIKE '%%parking%%' OR class ILIKE '%%garage%%')
-                  AND ST_DWithin(
-                      ST_Transform(geom, 4326)::geography,
-                      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
-                      500
-                  )
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE (class ILIKE '%%parking%%' OR class ILIKE '%%garage%%')
+                    ) AS parking_count,
+                    COUNT(*) FILTER (
+                        WHERE (class ILIKE '%%mall%%'
+                            OR class ILIKE '%%shopping%%'
+                            OR class ILIKE '%%retail%%')
+                    ) AS mall_count,
+                    COUNT(*) AS total_buildings,
+                    COALESCE(SUM(ST_Area(geom)), 0) AS total_footprint_m2,
+                    COUNT(*) FILTER (
+                        WHERE ST_Area(geom) > 2000
+                    ) AS large_building_count,
+                    COALESCE(SUM(ST_Area(geom)) FILTER (
+                        WHERE ST_Area(geom) > 2000
+                    ), 0) AS large_footprint_m2
+                FROM overture_buildings
+                WHERE ST_DWithin(
+                    ST_Transform(geom, 4326)::geography,
+                    ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+                    800
+                )
             """),
             {"lat": lat, "lon": lon},
-        ).scalar() or 0
+        ).mappings().first()
     except Exception:
         try:
             db.rollback()
         except Exception:
             pass
-    meta["parking_structures_500m"] = parking_count
+        return 25.0, 40.0, {"source": "error"}
 
-    # 2. Malls/shopping centers nearby (typically have large parking)
-    #    Uses overture_buildings (class column) — restaurant_poi only has food POIs.
-    mall_count = 0
-    try:
-        mall_count = db.execute(
-            text("""
-                SELECT COUNT(*) FROM overture_buildings
-                WHERE (class ILIKE '%%mall%%'
-                    OR class ILIKE '%%shopping%%'
-                    OR class ILIKE '%%retail%%')
-                  AND ST_DWithin(
-                      ST_Transform(geom, 4326)::geography,
-                      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
-                      800
-                  )
-            """),
-            {"lat": lat, "lon": lon},
-        ).scalar() or 0
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            pass
+    if not row:
+        return 15.0, 20.0, {"source": "no_data"}
+
+    parking_count = int(row.get("parking_count", 0))
+    mall_count = int(row.get("mall_count", 0))
+    total_buildings = int(row.get("total_buildings", 0))
+    total_footprint = float(row.get("total_footprint_m2", 0))
+    large_count = int(row.get("large_building_count", 0))
+    large_footprint = float(row.get("large_footprint_m2", 0))
+
+    meta["parking_structures_800m"] = parking_count
     meta["malls_800m"] = mall_count
+    meta["total_buildings_800m"] = total_buildings
+    meta["total_footprint_m2"] = round(total_footprint, 0)
+    meta["large_buildings_800m"] = large_count
+    meta["large_footprint_m2"] = round(large_footprint, 0)
+    meta["source"] = "overture_consolidated"
 
-    # 3. Large Overture buildings (>2000m² footprint) that likely have parking
-    large_buildings = 0
-    try:
-        large_buildings = db.execute(
-            text("""
-                SELECT COUNT(*) FROM overture_buildings
-                WHERE ST_Area(ST_Transform(geom, 32638)) > 2000
-                  AND ST_DWithin(
-                      ST_Transform(geom, 4326)::geography,
-                      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
-                      500
-                  )
-            """),
-            {"lat": lat, "lon": lon},
-        ).scalar() or 0
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            pass
-    meta["large_buildings_500m"] = large_buildings
+    # --- Supply score (similar to old logic but from single query) ---
+    supply = 20.0  # lower baseline than before for wider spread
+    supply += min(30.0, parking_count * 12.0)
+    supply += min(25.0, mall_count * 15.0)
+    supply += min(15.0, large_count * 3.0)
+    supply = max(10.0, min(95.0, supply))
 
-    # Composite score
-    score = 25.0  # baseline: no parking evidence
-    score += min(30.0, parking_count * 12.0)  # parking structures: up to 30pts
-    score += min(20.0, mall_count * 15.0)  # malls: up to 20pts
-    score += min(15.0, large_buildings * 3.0)  # large buildings: up to 15pts
+    # --- Building coverage ratio (NEW discriminative signal) ---
+    # The ratio of total building footprint to the ~800m-radius area
+    # (pi * 800² ≈ 2,010,619 m²) tells us how built-up the neighborhood is.
+    # Dense urban = more shared/structured parking. Sparse suburban = less.
+    # But we use the Overture footprint in the native 32638 projection which
+    # is already in m², so we compare to the circle area.
+    neighborhood_area_m2 = math.pi * 800.0 * 800.0  # ~2.01 million m²
+    coverage_ratio = total_footprint / neighborhood_area_m2 if neighborhood_area_m2 > 0 else 0
+    meta["building_coverage_ratio"] = round(coverage_ratio, 4)
 
-    meta["source"] = "nearby_supply"
-    return max(10.0, min(95.0, score)), meta
+    # High coverage = dense urban → more structured parking, fewer surface lots
+    # but overall better parking infrastructure (garages, basement parking).
+    # Very low coverage = empty area, probably no parking at all.
+    # Sweet spot for restaurant parking: moderate coverage (~0.05-0.15).
+    if coverage_ratio < 0.005:
+        coverage_score = 12.0  # basically empty
+    elif coverage_ratio < 0.02:
+        coverage_score = 25.0 + 25.0 * ((coverage_ratio - 0.005) / 0.015)  # 25-50
+    elif coverage_ratio < 0.08:
+        coverage_score = 50.0 + 35.0 * ((coverage_ratio - 0.02) / 0.06)  # 50-85
+    elif coverage_ratio < 0.20:
+        coverage_score = 85.0  # dense, well-served
+    else:
+        # Hyper-dense: parking might actually be constrained
+        coverage_score = max(55.0, 85.0 - 60.0 * ((coverage_ratio - 0.20) / 0.30))
+
+    coverage_score = max(10.0, min(95.0, coverage_score))
+    meta["coverage_score"] = round(coverage_score, 1)
+
+    return supply, coverage_score, meta
 
 
 def parking_availability_score(db: Session, lat: float, lon: float) -> ScoredFactor:
     """
     Composite parking suitability score for restaurant site selection.
 
-    Combines:
-    - Parcel geometry feasibility (area, compactness, frontage)
-    - Road access quality (road hierarchy, service roads, ingress/egress)
-    - Nearby parking supply (structures, malls, large buildings)
+    Combines (Phase 5 — reweighted for better discrimination):
+    - Parcel geometry feasibility (area, compactness, frontage): 25%
+    - Road access quality (hierarchy, service roads): 20%
+    - Street-parking capacity (from road classes): 15%
+    - Nearby parking supply (structures, malls, large buildings): 15%
+    - Building coverage ratio (neighborhood density proxy): 25%
+
+    The old 35/35/30 split over-weighted clustered sub-signals. The new
+    split introduces street-parking and coverage-ratio signals that vary
+    meaningfully across Riyadh and reduce the weighting of the formerly
+    dominant (but flat) supply sub-score.
     """
-    # Component weights for the composite
-    W_PARCEL = 0.35
-    W_ACCESS = 0.35
-    W_SUPPLY = 0.30
+    t0 = time.perf_counter()
+
+    W_PARCEL = 0.25
+    W_ACCESS = 0.20
+    W_STREET = 0.15
+    W_SUPPLY = 0.15
+    W_COVERAGE = 0.25
 
     parcel_score, parcel_meta = _parcel_parking_feasibility(db, lat, lon)
-    access_score, access_meta = _road_access_score(db, lat, lon)
-    supply_score, supply_meta = _nearby_parking_supply(db, lat, lon)
+    access_score, street_score, access_meta = _road_access_and_street_parking(db, lat, lon)
+    supply_score, coverage_score, supply_meta = _nearby_parking_supply_consolidated(db, lat, lon)
 
-    composite = W_PARCEL * parcel_score + W_ACCESS * access_score + W_SUPPLY * supply_score
+    composite = (
+        W_PARCEL * parcel_score
+        + W_ACCESS * access_score
+        + W_STREET * street_score
+        + W_SUPPLY * supply_score
+        + W_COVERAGE * coverage_score
+    )
     composite = max(10.0, min(95.0, composite))
 
     # Confidence based on data availability
     has_parcel = parcel_meta.get("source") not in ("error", "no_parcel")
     has_roads = access_meta.get("road_count", 0) > 0
     has_supply_data = (
-        supply_meta.get("parking_structures_500m", 0) > 0
+        supply_meta.get("parking_structures_800m", 0) > 0
         or supply_meta.get("malls_800m", 0) > 0
-        or supply_meta.get("large_buildings_500m", 0) > 0
+        or supply_meta.get("large_buildings_800m", 0) > 0
     )
+    has_coverage = supply_meta.get("total_buildings_800m", 0) > 0
 
-    evidence_count = sum([has_parcel, has_roads, has_supply_data])
-    confidence = {0: 0.15, 1: 0.4, 2: 0.7, 3: 0.9}.get(evidence_count, 0.15)
+    evidence_count = sum([has_parcel, has_roads, has_supply_data, has_coverage])
+    confidence = {0: 0.15, 1: 0.35, 2: 0.6, 3: 0.8, 4: 0.92}.get(evidence_count, 0.15)
 
     parts = []
     if has_parcel:
         parts.append(f"parcel={parcel_score:.0f}")
     if has_roads:
         parts.append(f"access={access_score:.0f}")
+        parts.append(f"street={street_score:.0f}")
     if has_supply_data:
         parts.append(f"supply={supply_score:.0f}")
+    if has_coverage:
+        parts.append(f"coverage={coverage_score:.0f}")
     rationale = "composite:" + "+".join(parts) if parts else "no_evidence"
+
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    logger.debug("parking_availability_score: %.1f ms  score=%.1f", elapsed_ms, composite)
 
     return ScoredFactor(
         score=round(composite, 1),
@@ -612,8 +729,17 @@ def parking_availability_score(db: Session, lat: float, lon: float) -> ScoredFac
         meta={
             "parcel": {"score": round(parcel_score, 1), **parcel_meta},
             "access": {"score": round(access_score, 1), **access_meta},
+            "street_parking": {"score": round(street_score, 1)},
             "supply": {"score": round(supply_score, 1), **supply_meta},
-            "weights": {"parcel": W_PARCEL, "access": W_ACCESS, "supply": W_SUPPLY},
+            "coverage": {"score": round(coverage_score, 1)},
+            "weights": {
+                "parcel": W_PARCEL,
+                "access": W_ACCESS,
+                "street_parking": W_STREET,
+                "supply": W_SUPPLY,
+                "coverage": W_COVERAGE,
+            },
+            "elapsed_ms": round(elapsed_ms, 1),
         },
     )
 
@@ -927,6 +1053,8 @@ def commercial_density_score(db: Session, lat: float, lon: float, radius_m: floa
     - Commercial parcels (25%): zoning/land-use context
     - POI ecosystem (20%): observed commercial activity
     """
+    t0 = time.perf_counter()
+
     W_BUILDINGS = 0.30
     W_ANCHORS = 0.25
     W_PARCELS = 0.25
@@ -965,6 +1093,9 @@ def commercial_density_score(db: Session, lat: float, lon: float, radius_m: floa
         parts.append(f"poi={poi_score:.0f}")
     rationale = "composite:" + "+".join(parts) if parts else "no_evidence"
 
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    logger.debug("commercial_density_score: %.1f ms  score=%.1f", elapsed_ms, composite)
+
     return ScoredFactor(
         score=round(composite, 1),
         confidence=round(confidence, 3),
@@ -980,5 +1111,6 @@ def commercial_density_score(db: Session, lat: float, lon: float, radius_m: floa
                 "parcels": W_PARCELS,
                 "poi_ecosystem": W_POI,
             },
+            "elapsed_ms": round(elapsed_ms, 1),
         },
     )
