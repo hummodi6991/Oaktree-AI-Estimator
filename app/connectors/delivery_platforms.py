@@ -186,6 +186,138 @@ def _is_riyadh_url(url: str) -> bool:
     return "riyadh" in lower or "\u0627\u0644\u0631\u064a\u0627\u0636" in lower
 
 
+def _extract_page_data(html: str, url: str, source: str) -> dict[str, Any]:
+    """Extract structured restaurant data from an HTML page.
+
+    Tries, in order:
+    1. JSON-LD structured data
+    2. Embedded __NEXT_DATA__ / window.__data__ JSON blobs
+    3. Open Graph meta tags
+    4. <title> tag
+
+    Returns a dict with as many fields as could be extracted.
+    """
+    data: dict[str, Any] = {}
+
+    # --- 1. JSON-LD ---
+    for block in _extract_json_ld(html):
+        block_type = block.get("@type", "")
+        if block_type in ("Restaurant", "FoodEstablishment", "LocalBusiness",
+                          "Organization", "Place"):
+            data["name"] = block.get("name") or data.get("name")
+            addr = block.get("address", {})
+            if isinstance(addr, dict):
+                data["address_raw"] = addr.get("streetAddress")
+                data["district_text"] = addr.get("addressLocality")
+            geo = block.get("geo", {})
+            if isinstance(geo, dict):
+                try:
+                    lat = float(geo.get("latitude", 0))
+                    lon = float(geo.get("longitude", 0))
+                    if lat and lon:
+                        data["lat"] = lat
+                        data["lon"] = lon
+                except (ValueError, TypeError):
+                    pass
+            cuisine = block.get("servesCuisine")
+            if cuisine:
+                data["category_raw"] = (
+                    cuisine if isinstance(cuisine, str) else ", ".join(cuisine)
+                )
+            agg = block.get("aggregateRating", {})
+            if isinstance(agg, dict):
+                try:
+                    data["rating"] = float(agg.get("ratingValue", 0)) or None
+                    data["rating_count"] = int(agg.get("reviewCount", 0)) or None
+                except (ValueError, TypeError):
+                    pass
+            data["phone_raw"] = block.get("telephone")
+            break  # use first matching block
+
+    # --- 2. Embedded JSON blobs (Next.js / SPA frameworks) ---
+    if not data.get("name"):
+        for pattern in [
+            r'<script[^>]*id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>',
+            r'window\.__data__\s*=\s*(\{.*?\});',
+            r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});',
+        ]:
+            m = re.search(pattern, html, re.DOTALL)
+            if m:
+                try:
+                    blob = json.loads(m.group(1))
+                    _extract_from_nested_json(blob, data)
+                except (json.JSONDecodeError, RecursionError):
+                    pass
+                if data.get("name"):
+                    break
+
+    # --- 3. Open Graph meta tags ---
+    if not data.get("name"):
+        og_title = re.search(
+            r'<meta\s+property=["\']og:title["\'][^>]*content=["\']([^"\']+)',
+            html, re.IGNORECASE,
+        )
+        if og_title:
+            data["name"] = og_title.group(1).strip()
+
+    # --- 4. <title> tag fallback ---
+    if not data.get("name"):
+        title_m = re.search(r"<title[^>]*>([^<]+)</title>", html, re.IGNORECASE)
+        if title_m:
+            raw_title = title_m.group(1).strip()
+            # Strip common suffixes like " | HungerStation" or " - Talabat"
+            for sep in [" | ", " - ", " – ", " — "]:
+                if sep in raw_title:
+                    raw_title = raw_title.split(sep)[0].strip()
+            if raw_title and len(raw_title) > 2:
+                data["name"] = raw_title
+
+    return data
+
+
+def _extract_from_nested_json(
+    obj: Any,
+    out: dict[str, Any],
+    depth: int = 0,
+) -> None:
+    """Walk a nested JSON structure looking for restaurant-like fields."""
+    if depth > 8 or out.get("name"):
+        return
+    if isinstance(obj, dict):
+        # Look for restaurant-like objects
+        if obj.get("name") and any(
+            k in obj for k in ("latitude", "lat", "cuisine", "rating",
+                               "address", "category", "delivery")
+        ):
+            out["name"] = out.get("name") or obj.get("name")
+            for lat_key in ("latitude", "lat"):
+                if obj.get(lat_key):
+                    try:
+                        out["lat"] = float(obj[lat_key])
+                    except (ValueError, TypeError):
+                        pass
+            for lon_key in ("longitude", "lon", "lng"):
+                if obj.get(lon_key):
+                    try:
+                        out["lon"] = float(obj[lon_key])
+                    except (ValueError, TypeError):
+                        pass
+            out["category_raw"] = out.get("category_raw") or obj.get(
+                "cuisine") or obj.get("category")
+            if isinstance(out.get("category_raw"), list):
+                out["category_raw"] = ", ".join(str(c) for c in out["category_raw"])
+            out["rating"] = out.get("rating") or obj.get("rating")
+            out["address_raw"] = out.get("address_raw") or obj.get("address")
+            if isinstance(out["address_raw"], dict):
+                out["address_raw"] = out["address_raw"].get("streetAddress")
+            return
+        for v in obj.values():
+            _extract_from_nested_json(v, out, depth + 1)
+    elif isinstance(obj, list):
+        for item in obj[:20]:  # limit to avoid huge arrays
+            _extract_from_nested_json(item, out, depth + 1)
+
+
 def _generic_sitemap_scrape(
     *,
     source: str,
@@ -220,8 +352,11 @@ def _generic_sitemap_scrape(
         else:
             restaurant_urls.append(u)
 
-    if not url_filter:
-        restaurant_urls = sitemap_urls
+    if not url_filter and not restaurant_urls:
+        # No filter was set AND no nested sitemaps found — fall back to
+        # treating the top-level sitemap entries as candidate URLs.
+        restaurant_urls = [u for u in sitemap_urls
+                           if not u.endswith(".xml") and not u.endswith(".xml.gz")]
 
     if shard_failures:
         logger.warning(
@@ -231,27 +366,44 @@ def _generic_sitemap_scrape(
     logger.info("Found %d candidate URLs from %s", len(restaurant_urls), source)
 
     count = 0
+    riyadh_filtered = 0
+    fetch_failed = 0
     for u in restaurant_urls[:max_pages]:
         if riyadh_filter and not _is_riyadh_url(u):
+            riyadh_filtered += 1
             continue
 
         resp = _safe_get(u, crawl_delay=crawl_delay)
         if not resp:
+            fetch_failed += 1
             continue
 
         slug = urlparse(u).path.rstrip("/").split("/")[-1]
+        page_data = _extract_page_data(resp.text, u, source)
+        name = page_data.get("name") or _slug_to_name(slug)
+
         yield {
             "id": f"{source}:{slug}",
-            "name": _slug_to_name(slug),
+            "name": name,
             "source": source,
             "source_url": u,
-            "lat": None,
-            "lon": None,
-            "category_raw": None,
+            "lat": page_data.get("lat"),
+            "lon": page_data.get("lon"),
+            "category_raw": page_data.get("category_raw"),
+            "rating": page_data.get("rating"),
+            "rating_count": page_data.get("rating_count"),
+            "address_raw": page_data.get("address_raw"),
+            "district_text": page_data.get("district_text"),
+            "phone_raw": page_data.get("phone_raw"),
+            "_html_extracted": bool(page_data.get("name")),
         }
         count += 1
 
-    logger.info("Scraped %d restaurants from %s", count, source)
+    logger.info(
+        "Scraped %d restaurants from %s "
+        "(riyadh_filtered=%d, fetch_failed=%d, candidate_urls=%d)",
+        count, source, riyadh_filtered, fetch_failed, len(restaurant_urls),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -262,45 +414,97 @@ def _generic_sitemap_scrape(
 def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from HungerStation for Riyadh.
-    Uses sitemap to discover restaurant pages, then extracts JSON-LD or
-    structured data from each page.
+    Uses sitemap to discover restaurant pages, then extracts JSON-LD,
+    embedded JSON, or meta tags from each page.
     """
     sitemap_url = "https://hungerstation.com/sitemaps/index.xml"
     logger.info("Fetching HungerStation sitemap: %s", sitemap_url)
 
     sitemap_urls = _parse_sitemap(sitemap_url)
+    logger.info(
+        "HungerStation index returned %d entries: %s",
+        len(sitemap_urls),
+        sitemap_urls[:10],
+    )
+
     restaurant_urls: list[str] = []
-
+    # Broaden sitemap URL discovery: expand ALL nested sitemaps, not just
+    # those matching "restaurant" or "riyadh" — the Riyadh filter is
+    # applied later at the page-visit level.
     for url in sitemap_urls:
-        if "restaurant" in url.lower() or "riyadh" in url.lower():
-            if url.endswith(".xml"):
-                restaurant_urls.extend(_parse_sitemap(url))
-            else:
-                restaurant_urls.append(url)
+        if url.endswith(".xml") or url.endswith(".xml.gz"):
+            try:
+                expanded = _parse_sitemap(url)
+                logger.info(
+                    "HungerStation shard %s yielded %d URLs", url, len(expanded),
+                )
+                restaurant_urls.extend(expanded)
+            except Exception as exc:
+                logger.warning("HungerStation shard %s failed: %s", url, exc)
+        else:
+            restaurant_urls.append(url)
 
-    logger.info("Found %d potential restaurant URLs from HungerStation", len(restaurant_urls))
+    logger.info(
+        "Found %d candidate URLs from HungerStation (pre-filter)", len(restaurant_urls),
+    )
 
     count = 0
+    riyadh_filtered = 0
+    fetch_failed = 0
+    no_parse = 0
+    sample_rejected: list[str] = []
+
     for url in restaurant_urls[:max_pages]:
         if not _is_riyadh_url(url):
+            riyadh_filtered += 1
             continue
 
-        resp = _safe_get(url, crawl_delay=10.0)  # HungerStation robots.txt 10s crawl-delay
+        resp = _safe_get(url, crawl_delay=10.0)
         if not resp:
+            fetch_failed += 1
+            continue
+
+        slug = urlparse(url).path.rstrip("/").split("/")[-1]
+        page_data = _extract_page_data(resp.text, url, "hungerstation")
+
+        name = page_data.get("name") or _slug_to_name(slug)
+
+        # Even if HTML extraction yielded nothing beyond a name from <title>,
+        # we still yield a record — the slug-based name is sufficient for raw
+        # persistence.
+        if not name or len(name.strip()) < 2:
+            no_parse += 1
+            if len(sample_rejected) < 5:
+                sample_rejected.append(url)
             continue
 
         yield {
-            "id": f"hungerstation:{url.split('/')[-1]}",
-            "name": url.split("/")[-1].replace("-", " ").title(),
+            "id": f"hungerstation:{slug}",
+            "name": name,
             "source": "hungerstation",
             "source_url": url,
-            "lat": None,
-            "lon": None,
-            "category_raw": None,
+            "lat": page_data.get("lat"),
+            "lon": page_data.get("lon"),
+            "category_raw": page_data.get("category_raw"),
+            "rating": page_data.get("rating"),
+            "rating_count": page_data.get("rating_count"),
+            "address_raw": page_data.get("address_raw"),
+            "district_text": page_data.get("district_text"),
+            "phone_raw": page_data.get("phone_raw"),
+            "_html_extracted": bool(page_data.get("name")),
         }
         count += 1
 
-    logger.info("Scraped %d restaurants from HungerStation", count)
+    if sample_rejected:
+        logger.warning(
+            "HungerStation: %d pages fetched but unparseable. Samples: %s",
+            no_parse, sample_rejected,
+        )
+    logger.info(
+        "Scraped %d restaurants from HungerStation "
+        "(riyadh_filtered=%d, fetch_failed=%d, no_parse=%d, candidate_urls=%d)",
+        count, riyadh_filtered, fetch_failed, no_parse, len(restaurant_urls),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -330,14 +534,24 @@ def scrape_talabat_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
         if not resp:
             continue
 
+        slug = urlparse(url).path.rstrip("/").split("/")[-1]
+        page_data = _extract_page_data(resp.text, url, "talabat")
+        name = page_data.get("name") or _slug_to_name(slug)
+
         yield {
-            "id": f"talabat:{url.split('/')[-1]}",
-            "name": url.split("/")[-1].replace("-", " ").title(),
+            "id": f"talabat:{slug}",
+            "name": name,
             "source": "talabat",
             "source_url": url,
-            "lat": None,
-            "lon": None,
-            "category_raw": None,
+            "lat": page_data.get("lat"),
+            "lon": page_data.get("lon"),
+            "category_raw": page_data.get("category_raw"),
+            "rating": page_data.get("rating"),
+            "rating_count": page_data.get("rating_count"),
+            "address_raw": page_data.get("address_raw"),
+            "district_text": page_data.get("district_text"),
+            "phone_raw": page_data.get("phone_raw"),
+            "_html_extracted": bool(page_data.get("name")),
         }
         count += 1
 
@@ -371,14 +585,24 @@ def scrape_mrsool_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
         if not resp:
             continue
 
+        slug = urlparse(url).path.rstrip("/").split("/")[-1]
+        page_data = _extract_page_data(resp.text, url, "mrsool")
+        name = page_data.get("name") or _slug_to_name(slug)
+
         yield {
-            "id": f"mrsool:{url.split('/')[-1]}",
-            "name": url.split("/")[-1].replace("-", " ").title(),
+            "id": f"mrsool:{slug}",
+            "name": name,
             "source": "mrsool",
             "source_url": url,
-            "lat": None,
-            "lon": None,
-            "category_raw": None,
+            "lat": page_data.get("lat"),
+            "lon": page_data.get("lon"),
+            "category_raw": page_data.get("category_raw"),
+            "rating": page_data.get("rating"),
+            "rating_count": page_data.get("rating_count"),
+            "address_raw": page_data.get("address_raw"),
+            "district_text": page_data.get("district_text"),
+            "phone_raw": page_data.get("phone_raw"),
+            "_html_extracted": bool(page_data.get("name")),
         }
         count += 1
 

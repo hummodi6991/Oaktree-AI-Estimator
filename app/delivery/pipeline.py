@@ -203,7 +203,12 @@ def run_platform_scrape(
         "rows_inserted": 0,
         "rows_updated": 0,
         "rows_skipped": 0,
+        "rows_html_extracted": 0,
+        "rows_with_coords": 0,
+        "rows_with_name": 0,
         "errors": [],
+        "rejection_reasons": {},
+        "sample_rejected_urls": [],
     }
     matched = 0
     fatal_error: str | None = None
@@ -214,21 +219,44 @@ def run_platform_scrape(
         for raw_dict in scraper_fn(max_pages=max_pages):
             stats["rows_scraped"] += 1
 
+            # Track HTML extraction success
+            if raw_dict.get("_html_extracted"):
+                stats["rows_html_extracted"] += 1
+
             # 3. Parse into DeliveryRecord
             try:
                 record = parse_legacy_record(raw_dict, platform)
                 stats["rows_parsed"] += 1
             except Exception as exc:
+                reason = f"parse_error: {str(exc)[:100]}"
                 stats["errors"].append(
                     {"phase": "parse", "error": str(exc)[:200]}
                 )
                 stats["rows_skipped"] += 1
+                stats["rejection_reasons"][reason] = (
+                    stats["rejection_reasons"].get(reason, 0) + 1
+                )
+                if len(stats["sample_rejected_urls"]) < 10:
+                    stats["sample_rejected_urls"].append({
+                        "url": raw_dict.get("source_url", "?"),
+                        "reason": reason,
+                    })
                 continue
+
+            # Track data quality
+            if record.restaurant_name_raw:
+                stats["rows_with_name"] += 1
 
             # 4. Location resolution
             record = resolve_location(record, db)
 
+            if record.lat is not None and record.lon is not None:
+                stats["rows_with_coords"] += 1
+
             # 5. Persist (upsert: update if same platform+listing exists)
+            # Relaxed persistence: always store, even if fields are sparse.
+            # Low-confidence records are stored with parse_confidence reflecting
+            # their quality, instead of being dropped.
             row = record_to_row(record, run_id)
             if row.source_listing_id:
                 existing = (
@@ -256,6 +284,8 @@ def run_platform_scrape(
                     existing.rating = row.rating
                     existing.rating_count = row.rating_count
                     existing.district_text = row.district_text
+                    existing.address_raw = row.address_raw
+                    existing.phone_raw = row.phone_raw
                     existing.parse_confidence = row.parse_confidence
                     existing.entity_resolution_status = "pending"
                     stats["rows_updated"] += 1
@@ -310,14 +340,15 @@ def _log_platform_summary(
     matched: int,
     fatal_error: str | None,
 ) -> None:
-    """Emit a structured per-platform summary line."""
+    """Emit a structured per-platform summary with diagnostics."""
     status = "FAILED" if fatal_error else (
         "ERRORS" if stats.get("errors") else "OK"
     )
     logger.info(
         "=== Platform %-16s | run_id=%-5d | status=%-7s | "
         "scraped=%-5d parsed=%-5d inserted=%-5d updated=%-5d "
-        "skipped=%-5d matched=%-5d ===",
+        "skipped=%-5d matched=%-5d | "
+        "html_extracted=%-5d with_coords=%-5d with_name=%-5d ===",
         platform,
         run_id,
         status,
@@ -327,9 +358,22 @@ def _log_platform_summary(
         stats.get("rows_updated", 0),
         stats.get("rows_skipped", 0),
         matched,
+        stats.get("rows_html_extracted", 0),
+        stats.get("rows_with_coords", 0),
+        stats.get("rows_with_name", 0),
     )
     if fatal_error:
         logger.error("  Root error for %s: %s", platform, fatal_error)
+    if stats.get("rejection_reasons"):
+        logger.info(
+            "  Rejection reasons for %s: %s", platform, stats["rejection_reasons"],
+        )
+    if stats.get("sample_rejected_urls"):
+        logger.info(
+            "  Sample rejected URLs for %s: %s",
+            platform,
+            stats["sample_rejected_urls"][:5],
+        )
 
 
 def run_all_platforms(

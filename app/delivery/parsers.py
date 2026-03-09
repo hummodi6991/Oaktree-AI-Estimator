@@ -183,15 +183,20 @@ def parse_legacy_record(raw: dict[str, Any], platform: str) -> DeliveryRecord:
     """
     Parse a legacy scraper output dict into a DeliveryRecord.
 
-    The existing scrapers yield: {id, name, source, source_url, lat, lon, category_raw}
-    This parser extracts as much additional value as possible from these fields.
+    The scrapers yield dicts with at minimum: {id, name, source, source_url}
+    plus optional HTML-extracted fields: lat, lon, category_raw, rating,
+    rating_count, address_raw, district_text, phone_raw.
+
+    This parser extracts as much additional value as possible.
     """
     name = raw.get("name", "")
     source_url = raw.get("source_url", "")
     listing_id = raw.get("id", "")
 
-    # Extract district from URL or name
-    district = _extract_district_from_url(source_url)
+    # Extract district — prefer HTML-extracted value, fall back to URL/name
+    district = raw.get("district_text")
+    if not district:
+        district = _extract_district_from_url(source_url)
     if not district:
         district = _extract_district_from_text(name)
 
@@ -220,8 +225,12 @@ def parse_legacy_record(raw: dict[str, Any], platform: str) -> DeliveryRecord:
         geocode_method=geocode_method,
         location_confidence=location_confidence,
         district_text=district,
+        address_raw=raw.get("address_raw"),
         brand_raw=chain,
         branch_raw=branch,
+        phone_raw=raw.get("phone_raw"),
+        rating=raw.get("rating"),
+        rating_count=raw.get("rating_count"),
         raw_payload=raw,
     )
 
