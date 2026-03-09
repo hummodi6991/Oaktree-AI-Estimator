@@ -33,6 +33,12 @@ from app.models.tables import PopulationDensity, RestaurantPOI
 from app.services.restaurant_categories import CATEGORIES
 from app.services.rent import RentMedianResult, aqar_rent_median
 from app.services.traffic_proxy import traffic_score_at
+from app.services.restaurant_scoring_factors import (
+    ScoredFactor,
+    zoning_fit_score as _zoning_fit_v2,
+    parking_availability_score as _parking_v2,
+    commercial_density_score as _commercial_density_v2,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -224,32 +230,31 @@ def population_score(db: Session, lat: float, lon: float, radius_m: float = 2000
 
 
 def commercial_density_score(db: Session, lat: float, lon: float, radius_m: float = 500) -> float:
-    """Score based on density of commercial/office buildings (Overture)."""
+    """Score based on density of commercial/office buildings (Overture).
+
+    Delegates to the upgraded composite scorer and returns just the numeric
+    score for backward compatibility.  The full ScoredFactor (with confidence
+    and rationale) is available via ``commercial_density_score_v2()``.
+
+    On DB error / poisoned transaction, returns the legacy neutral 50.0.
+    """
     try:
-        result = db.execute(
-            text("""
-                SELECT COUNT(*) AS cnt
-                FROM overture_buildings
-                WHERE ST_DWithin(
-                    geom::geography,
-                    ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
-                    :radius_m
-                )
-            """),
-            {"lat": lat, "lon": lon, "radius_m": radius_m},
-        ).scalar()
-        count = int(result or 0)
-    except Exception as exc:
-        logger.debug("Commercial density query failed: %s", exc)
+        db.execute(text("SELECT 1"))
+    except Exception:
         try:
             db.rollback()
         except Exception:
             pass
         return 50.0
+    result = commercial_density_score_v2(db, lat, lon)
+    return result.score
 
-    if count == 0:
-        return 10.0
-    return min(95.0, 10.0 + 85.0 * (1 - math.exp(-count / 80)))
+
+def commercial_density_score_v2(
+    db: Session, lat: float, lon: float, radius_m: float = 500,
+) -> ScoredFactor:
+    """Upgraded commercial density — returns ScoredFactor with confidence."""
+    return _commercial_density_v2(db, lat, lon, radius_m)
 
 
 def delivery_demand_score(same_category_on_platforms: int, total_on_platforms: int) -> float:
@@ -341,24 +346,25 @@ def anchor_proximity_score(db: Session, lat: float, lon: float) -> float:
     and are strong demand drivers for restaurants.
     """
     anchor_queries = [
-        # Overture places: malls & shopping centers
+        # Overture buildings: malls, shopping, retail classes
         ("""
-            SELECT COUNT(*) FROM restaurant_poi
-            WHERE source = 'overture'
-              AND (category ILIKE '%%mall%%' OR category ILIKE '%%shopping%%')
-              AND geom IS NOT NULL
+            SELECT COUNT(*) FROM overture_buildings
+            WHERE class IS NOT NULL
+              AND (class ILIKE '%%mall%%'
+                   OR class ILIKE '%%shopping%%'
+                   OR class ILIKE '%%retail%%'
+                   OR class ILIKE '%%commercial%%')
               AND ST_DWithin(
-                  geom::geography,
+                  ST_Transform(geom, 4326)::geography,
                   ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                   :radius_m)
         """, 1500, 30),
-        # OSM amenities: universities, schools, hospitals
+        # OSM amenities: universities, schools, hospitals from polygon layer
         ("""
-            SELECT COUNT(*) FROM osm_roads
-            WHERE highway IS NULL
-              AND name IS NOT NULL
+            SELECT COUNT(*) FROM planet_osm_polygon
+            WHERE (amenity IS NOT NULL OR shop IS NOT NULL)
               AND ST_DWithin(
-                  geom::geography,
+                  ST_Transform(way, 4326)::geography,
                   ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                   :radius_m)
         """, 1000, 20),
@@ -462,64 +468,56 @@ def income_proxy_score(db: Session, lat: float, lon: float) -> float:
 
 def zoning_fit_score(db: Session, lat: float, lon: float) -> float:
     """
-    Score how well the zoning/land-use at this location supports
-    restaurants. Commercial and mixed-use zones score higher.
+    Score how well the zoning/land-use at this location supports restaurants.
+
+    Delegates to the upgraded ArcGIS-based scorer and returns just the
+    numeric score for backward compatibility.  The full ScoredFactor (with
+    confidence and rationale) is available via ``zoning_fit_score_v2()``.
+
+    On DB error / poisoned transaction, returns the legacy neutral 50.0.
     """
     try:
-        result = db.execute(
-            text("""
-                SELECT zoning FROM parcel
-                WHERE geom IS NOT NULL
-                  AND ST_Contains(
-                      geom,
-                      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)
-                  )
-                LIMIT 1
-            """),
-            {"lat": lat, "lon": lon},
-        ).scalar()
-        if result:
-            zoning = result.lower()
-            if any(k in zoning for k in ("commercial", "تجاري", "mixed", "متعدد")):
-                return 90.0
-            if any(k in zoning for k in ("residential", "سكني")):
-                return 40.0
-            return 60.0
+        db.execute(text("SELECT 1"))
     except Exception:
         try:
             db.rollback()
         except Exception:
             pass
+        return 50.0
+    result = zoning_fit_score_v2(db, lat, lon)
+    return result.score
 
-    return 50.0  # neutral when no zoning data
+
+def zoning_fit_score_v2(db: Session, lat: float, lon: float) -> ScoredFactor:
+    """Upgraded zoning fit — returns ScoredFactor with confidence."""
+    return _zoning_fit_v2(db, lat, lon)
 
 
 def parking_availability_score(db: Session, lat: float, lon: float) -> float:
-    """Score based on nearby parking availability."""
+    """
+    Score based on nearby parking availability.
+
+    Delegates to the upgraded composite scorer and returns just the numeric
+    score for backward compatibility.  The full ScoredFactor (with confidence
+    and rationale) is available via ``parking_availability_score_v2()``.
+
+    On DB error / poisoned transaction, returns the legacy neutral 50.0.
+    """
     try:
-        count = db.execute(
-            text("""
-                SELECT COUNT(*) FROM overture_buildings
-                WHERE (class ILIKE '%%parking%%' OR class ILIKE '%%garage%%')
-                  AND ST_DWithin(
-                      geom::geography,
-                      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
-                      500
-                  )
-            """),
-            {"lat": lat, "lon": lon},
-        ).scalar() or 0
-        if count >= 3:
-            return 90.0
-        if count >= 1:
-            return 70.0
+        db.execute(text("SELECT 1"))
     except Exception:
         try:
             db.rollback()
         except Exception:
             pass
+        return 50.0
+    result = parking_availability_score_v2(db, lat, lon)
+    return result.score
 
-    return 50.0  # neutral
+
+def parking_availability_score_v2(db: Session, lat: float, lon: float) -> ScoredFactor:
+    """Upgraded parking — returns ScoredFactor with confidence."""
+    return _parking_v2(db, lat, lon)
 
 
 # ---------------------------------------------------------------------------
@@ -702,11 +700,23 @@ def score_location(
         sum(float(r["rating"]) for r in rated) / len(rated) if rated else None
     )
 
+    # Confidence-gating constants (Phase 6): when confidence is below this
+    # threshold, blend the factor toward a conservative neutral rather than
+    # trusting a potentially uninformative score.
+    _CONFIDENCE_GATE_FLOOR = 0.3
+    _NEUTRAL_FALLBACK = 45.0
+
     # 2. Compute demand factors
     traffic_info = traffic_score_at(db, lat, lon)
     traffic_info_close = traffic_score_at(db, lat, lon, radius_m=100)
-    comm_density = commercial_density_score(db, lat, lon)
+    comm_density_v2 = commercial_density_score_v2(db, lat, lon)
+    comm_density = comm_density_v2.score
     pop_score = population_score(db, lat, lon)
+
+    # Confidence-gate commercial density on demand side too
+    if comm_density_v2.confidence < _CONFIDENCE_GATE_FLOOR:
+        _blend = comm_density_v2.confidence / _CONFIDENCE_GATE_FLOOR
+        comm_density = _blend * comm_density + (1 - _blend) * _NEUTRAL_FALLBACK
 
     demand_factors = {
         "competition": competition_score(len(same_cat)),
@@ -737,11 +747,30 @@ def score_location(
     # 3. Compute cost factors — wired up to real Aqar rent data
     rent_resolution = _resolve_rent_aqar(db, lat, lon)
     rent_val = rent_resolution.rent_per_m2
+
+    # Upgraded v2 factors with confidence and rationale
+    parking_v2 = parking_availability_score_v2(db, lat, lon)
+    zoning_v2 = zoning_fit_score_v2(db, lat, lon)
+
     cost_factors = {
         "rent": rent_score_value(rent_val),
-        "parking": parking_availability_score(db, lat, lon),
-        "zoning_fit": zoning_fit_score(db, lat, lon),
+        "parking": parking_v2.score,
+        "zoning_fit": zoning_v2.score,
     }
+
+    # Confidence-gated cost factors (Phase 6): dampen low-confidence
+    # factors toward conservative neutral so fake 50s don't mislead.
+    cost_factor_confidence: dict[str, float] = {
+        "rent": 1.0 if rent_val and rent_val > 0 else 0.2,
+        "parking": parking_v2.confidence,
+        "zoning_fit": zoning_v2.confidence,
+    }
+    for k in ("parking", "zoning_fit"):
+        conf = cost_factor_confidence[k]
+        if conf < _CONFIDENCE_GATE_FLOOR:
+            blend = conf / _CONFIDENCE_GATE_FLOOR  # 0-1
+            cost_factors[k] = blend * cost_factors[k] + (1 - blend) * _NEUTRAL_FALLBACK
+
     cost = _weighted_avg(cost_factors, COST_WEIGHTS)
 
     # 4. Composite opportunity score (market-only)
@@ -823,6 +852,23 @@ def score_location(
                 "median_rent_per_m2": rent_resolution.median_used,
                 "asset_type": _RESTAURANT_AQAR_ASSET,
                 "unit_type": _RESTAURANT_AQAR_UNIT,
+            },
+            "factor_confidence": {
+                "zoning_fit": {
+                    "confidence": zoning_v2.confidence,
+                    "rationale": zoning_v2.rationale,
+                    "meta": zoning_v2.meta,
+                },
+                "parking": {
+                    "confidence": parking_v2.confidence,
+                    "rationale": parking_v2.rationale,
+                    "meta": parking_v2.meta,
+                },
+                "commercial_density": {
+                    "confidence": comm_density_v2.confidence,
+                    "rationale": comm_density_v2.rationale,
+                    "meta": comm_density_v2.meta,
+                },
             },
         },
     )
