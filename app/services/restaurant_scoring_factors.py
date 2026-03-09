@@ -492,7 +492,7 @@ def _nearby_parking_supply(db: Session, lat: float, lon: float) -> tuple[float, 
                 SELECT COUNT(*) FROM overture_buildings
                 WHERE (class ILIKE '%%parking%%' OR class ILIKE '%%garage%%')
                   AND ST_DWithin(
-                      geom::geography,
+                      ST_Transform(geom, 4326)::geography,
                       ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                       500
                   )
@@ -517,7 +517,7 @@ def _nearby_parking_supply(db: Session, lat: float, lon: float) -> tuple[float, 
                     OR class ILIKE '%%shopping%%'
                     OR class ILIKE '%%retail%%')
                   AND ST_DWithin(
-                      geom::geography,
+                      ST_Transform(geom, 4326)::geography,
                       ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                       800
                   )
@@ -539,7 +539,7 @@ def _nearby_parking_supply(db: Session, lat: float, lon: float) -> tuple[float, 
                 SELECT COUNT(*) FROM overture_buildings
                 WHERE ST_Area(ST_Transform(geom, 32638)) > 2000
                   AND ST_DWithin(
-                      geom::geography,
+                      ST_Transform(geom, 4326)::geography,
                       ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                       500
                   )
@@ -670,7 +670,7 @@ def _nearby_building_intensity(db: Session, lat: float, lon: float) -> tuple[flo
                     ), 0) AS non_residential_footprint_m2
                 FROM overture_buildings
                 WHERE ST_DWithin(
-                    geom::geography,
+                    ST_Transform(geom, 4326)::geography,
                     ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                     500
                 )
@@ -726,7 +726,7 @@ def _demand_anchor_score(db: Session, lat: float, lon: float) -> tuple[float, di
                 SELECT class, subtype FROM overture_buildings
                 WHERE class IS NOT NULL
                   AND ST_DWithin(
-                      geom::geography,
+                      ST_Transform(geom, 4326)::geography,
                       ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                       1000
                   )
@@ -876,7 +876,7 @@ def _nearby_poi_ecosystem(db: Session, lat: float, lon: float) -> tuple[float, d
                 FROM restaurant_poi
                 WHERE geom IS NOT NULL
                   AND ST_DWithin(
-                      geom::geography,
+                      ST_Transform(geom, 4326)::geography,
                       ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                       800
                   )

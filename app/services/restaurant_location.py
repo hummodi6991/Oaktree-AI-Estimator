@@ -355,7 +355,7 @@ def anchor_proximity_score(db: Session, lat: float, lon: float) -> float:
                    OR class ILIKE '%%retail%%'
                    OR class ILIKE '%%commercial%%')
               AND ST_DWithin(
-                  geom::geography,
+                  ST_Transform(geom, 4326)::geography,
                   ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                   :radius_m)
         """, 1500, 30),
