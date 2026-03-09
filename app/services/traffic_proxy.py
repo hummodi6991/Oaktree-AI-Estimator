@@ -16,6 +16,26 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+# Cached check: None = not yet probed, True/False = result
+_OSM_ROADS_EXISTS: Optional[bool] = None
+
+
+def _has_osm_roads(db: Session) -> bool:
+    """Return True if the osm_roads table exists. Cached after first probe."""
+    global _OSM_ROADS_EXISTS
+    if _OSM_ROADS_EXISTS is not None:
+        return _OSM_ROADS_EXISTS
+    try:
+        row = db.execute(text("SELECT to_regclass('public.osm_roads')")).scalar()
+        _OSM_ROADS_EXISTS = row is not None
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        _OSM_ROADS_EXISTS = False
+    return _OSM_ROADS_EXISTS
+
 # Road class → estimated relative traffic score (0-100)
 ROAD_CLASS_SCORES: dict[str, float] = {
     "motorway": 95,
@@ -73,6 +93,9 @@ def traffic_score_at(
 
     Returns dict with score (0-100), nearest road details, and road count.
     """
+    if not _has_osm_roads(db):
+        return {"score": 25.0, "road_count": 0, "nearest_road": None}
+
     try:
         rows = db.execute(
             _NEAREST_ROAD_SQL,
