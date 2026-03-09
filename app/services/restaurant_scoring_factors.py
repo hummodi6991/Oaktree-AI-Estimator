@@ -25,32 +25,22 @@ import math
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-# Cached check: None = not yet probed, True/False = result
-_OSM_ROADS_EXISTS: Optional[bool] = None
+# Set to True once we detect osm_roads is absent (e.g. "relation does not
+# exist" error).  Subsequent calls skip osm_roads queries entirely.
+_OSM_ROADS_MISSING = False
 
 
-def _has_osm_roads(db: Session) -> bool:
-    """Return True if the osm_roads table exists. Cached after first probe."""
-    global _OSM_ROADS_EXISTS
-    if _OSM_ROADS_EXISTS is not None:
-        return _OSM_ROADS_EXISTS
-    try:
-        row = db.execute(text("SELECT to_regclass('public.osm_roads')")).scalar()
-        _OSM_ROADS_EXISTS = row is not None
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        _OSM_ROADS_EXISTS = False
-    return _OSM_ROADS_EXISTS
+def _is_relation_missing(exc: Exception) -> bool:
+    """Return True if *exc* indicates a missing table/relation."""
+    msg = str(exc).lower()
+    return "does not exist" in msg and "relation" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +130,8 @@ def _road_adjacency_bonus(db: Session, lat: float, lon: float) -> float:
     Primary/secondary roads = better for restaurants; motorway-only = worse.
     Returns adjustment in [-5, +8] range.
     """
-    if not _has_osm_roads(db):
+    global _OSM_ROADS_MISSING
+    if _OSM_ROADS_MISSING:
         return 0.0
     try:
         rows = db.execute(
@@ -161,7 +152,9 @@ def _road_adjacency_bonus(db: Session, lat: float, lon: float) -> float:
             """),
             {"lat": lat, "lon": lon},
         ).mappings().all()
-    except Exception:
+    except Exception as exc:
+        if _is_relation_missing(exc):
+            _OSM_ROADS_MISSING = True
         try:
             db.rollback()
         except Exception:
@@ -468,7 +461,8 @@ def _road_access_and_street_parking(
     No extra DB round-trip.
     """
     meta: dict[str, Any] = {}
-    if not _has_osm_roads(db):
+    global _OSM_ROADS_MISSING
+    if _OSM_ROADS_MISSING:
         return 45.0, 30.0, {"source": "no_osm_roads_table"}
     try:
         rows = db.execute(
@@ -489,7 +483,9 @@ def _road_access_and_street_parking(
             """),
             {"lat": lat, "lon": lon},
         ).mappings().all()
-    except Exception:
+    except Exception as exc:
+        if _is_relation_missing(exc):
+            _OSM_ROADS_MISSING = True
         try:
             db.rollback()
         except Exception:
@@ -1166,7 +1162,8 @@ class BatchFactorsResult:
 
 def _batch_fetch_roads(db: Session, lat: float, lon: float) -> list[dict]:
     """Fetch all roads within 300m (widest radius used). Single query."""
-    if not _has_osm_roads(db):
+    global _OSM_ROADS_MISSING
+    if _OSM_ROADS_MISSING:
         return []
     try:
         rows = db.execute(
@@ -1188,7 +1185,9 @@ def _batch_fetch_roads(db: Session, lat: float, lon: float) -> list[dict]:
             {"lat": lat, "lon": lon},
         ).mappings().all()
         return [dict(r) for r in rows]
-    except Exception:
+    except Exception as exc:
+        if _is_relation_missing(exc):
+            _OSM_ROADS_MISSING = True
         try:
             db.rollback()
         except Exception:

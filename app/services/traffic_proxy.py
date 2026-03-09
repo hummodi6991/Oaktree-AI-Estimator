@@ -9,32 +9,22 @@ traffic API in the MVP.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-# Cached check: None = not yet probed, True/False = result
-_OSM_ROADS_EXISTS: Optional[bool] = None
+# Set to True once we detect osm_roads is absent (e.g. "relation does not
+# exist" error).  Subsequent calls skip the query entirely.
+_OSM_ROADS_MISSING = False
 
 
-def _has_osm_roads(db: Session) -> bool:
-    """Return True if the osm_roads table exists. Cached after first probe."""
-    global _OSM_ROADS_EXISTS
-    if _OSM_ROADS_EXISTS is not None:
-        return _OSM_ROADS_EXISTS
-    try:
-        row = db.execute(text("SELECT to_regclass('public.osm_roads')")).scalar()
-        _OSM_ROADS_EXISTS = row is not None
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        _OSM_ROADS_EXISTS = False
-    return _OSM_ROADS_EXISTS
+def _is_relation_missing(exc: Exception) -> bool:
+    """Return True if *exc* indicates a missing table/relation."""
+    msg = str(exc).lower()
+    return "does not exist" in msg and "relation" in msg
+
 
 # Road class → estimated relative traffic score (0-100)
 ROAD_CLASS_SCORES: dict[str, float] = {
@@ -93,7 +83,8 @@ def traffic_score_at(
 
     Returns dict with score (0-100), nearest road details, and road count.
     """
-    if not _has_osm_roads(db):
+    global _OSM_ROADS_MISSING
+    if _OSM_ROADS_MISSING:
         return {"score": 25.0, "road_count": 0, "nearest_road": None}
 
     try:
@@ -103,6 +94,8 @@ def traffic_score_at(
         ).mappings().all()
     except Exception as exc:
         logger.warning("traffic_score_at query failed: %s", exc)
+        if _is_relation_missing(exc):
+            _OSM_ROADS_MISSING = True
         try:
             db.rollback()
         except Exception:
