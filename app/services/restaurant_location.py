@@ -235,7 +235,17 @@ def commercial_density_score(db: Session, lat: float, lon: float, radius_m: floa
     Delegates to the upgraded composite scorer and returns just the numeric
     score for backward compatibility.  The full ScoredFactor (with confidence
     and rationale) is available via ``commercial_density_score_v2()``.
+
+    On DB error / poisoned transaction, returns the legacy neutral 50.0.
     """
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 50.0
     result = commercial_density_score_v2(db, lat, lon)
     return result.score
 
@@ -336,24 +346,25 @@ def anchor_proximity_score(db: Session, lat: float, lon: float) -> float:
     and are strong demand drivers for restaurants.
     """
     anchor_queries = [
-        # Overture places: malls & shopping centers
+        # Overture buildings: malls, shopping, retail classes
         ("""
-            SELECT COUNT(*) FROM restaurant_poi
-            WHERE source = 'overture'
-              AND (category ILIKE '%%mall%%' OR category ILIKE '%%shopping%%')
-              AND geom IS NOT NULL
+            SELECT COUNT(*) FROM overture_buildings
+            WHERE class IS NOT NULL
+              AND (class ILIKE '%%mall%%'
+                   OR class ILIKE '%%shopping%%'
+                   OR class ILIKE '%%retail%%'
+                   OR class ILIKE '%%commercial%%')
               AND ST_DWithin(
                   geom::geography,
                   ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                   :radius_m)
         """, 1500, 30),
-        # OSM amenities: universities, schools, hospitals
+        # OSM amenities: universities, schools, hospitals from polygon layer
         ("""
-            SELECT COUNT(*) FROM osm_roads
-            WHERE highway IS NULL
-              AND name IS NOT NULL
+            SELECT COUNT(*) FROM planet_osm_polygon
+            WHERE (amenity IS NOT NULL OR shop IS NOT NULL)
               AND ST_DWithin(
-                  geom::geography,
+                  ST_Transform(way, 4326)::geography,
                   ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                   :radius_m)
         """, 1000, 20),
@@ -462,7 +473,17 @@ def zoning_fit_score(db: Session, lat: float, lon: float) -> float:
     Delegates to the upgraded ArcGIS-based scorer and returns just the
     numeric score for backward compatibility.  The full ScoredFactor (with
     confidence and rationale) is available via ``zoning_fit_score_v2()``.
+
+    On DB error / poisoned transaction, returns the legacy neutral 50.0.
     """
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 50.0
     result = zoning_fit_score_v2(db, lat, lon)
     return result.score
 
@@ -479,7 +500,17 @@ def parking_availability_score(db: Session, lat: float, lon: float) -> float:
     Delegates to the upgraded composite scorer and returns just the numeric
     score for backward compatibility.  The full ScoredFactor (with confidence
     and rationale) is available via ``parking_availability_score_v2()``.
+
+    On DB error / poisoned transaction, returns the legacy neutral 50.0.
     """
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 50.0
     result = parking_availability_score_v2(db, lat, lon)
     return result.score
 

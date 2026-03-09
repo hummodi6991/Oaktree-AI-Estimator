@@ -507,14 +507,15 @@ def _nearby_parking_supply(db: Session, lat: float, lon: float) -> tuple[float, 
     meta["parking_structures_500m"] = parking_count
 
     # 2. Malls/shopping centers nearby (typically have large parking)
+    #    Uses overture_buildings (class column) — restaurant_poi only has food POIs.
     mall_count = 0
     try:
         mall_count = db.execute(
             text("""
-                SELECT COUNT(*) FROM restaurant_poi
-                WHERE source = 'overture'
-                  AND (category ILIKE '%%mall%%' OR category ILIKE '%%shopping%%center%%')
-                  AND geom IS NOT NULL
+                SELECT COUNT(*) FROM overture_buildings
+                WHERE (class ILIKE '%%mall%%'
+                    OR class ILIKE '%%shopping%%'
+                    OR class ILIKE '%%retail%%')
                   AND ST_DWithin(
                       geom::geography,
                       ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
@@ -711,20 +712,19 @@ def _nearby_building_intensity(db: Session, lat: float, lon: float) -> tuple[flo
 def _demand_anchor_score(db: Session, lat: float, lon: float) -> tuple[float, dict]:
     """
     Score based on proximity to demand anchors (malls, offices, universities, etc.).
-    Uses restaurant_poi (overture) and osm_roads (non-road POIs) as sources.
+    Uses overture_buildings (building class) and planet_osm_polygon (amenity/shop).
     Returns (sub_score 0-100, meta).
     """
     meta: dict[str, Any] = {}
     weighted_total = 0.0
     anchor_hits: dict[str, int] = {}
 
-    # 1. Overture places — malls, shopping, office, supermarkets etc.
+    # 1. Overture buildings — commercial building classes (mall, office, hotel, etc.)
     try:
         rows = db.execute(
             text("""
-                SELECT category, name FROM restaurant_poi
-                WHERE source = 'overture'
-                  AND geom IS NOT NULL
+                SELECT class, subtype FROM overture_buildings
+                WHERE class IS NOT NULL
                   AND ST_DWithin(
                       geom::geography,
                       ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
@@ -735,38 +735,45 @@ def _demand_anchor_score(db: Session, lat: float, lon: float) -> tuple[float, di
         ).mappings().all()
 
         for r in rows:
-            cat = (r.get("category") or "").lower()
-            name = (r.get("name") or "").lower()
-            combined = f"{cat} {name}"
+            cls = (r.get("class") or "").lower()
+            subtype = (r.get("subtype") or "").lower()
+            combined = f"{cls} {subtype}"
             for keyword, weight in _ANCHOR_WEIGHTS.items():
                 if keyword in combined:
                     weighted_total += weight
                     anchor_hits[keyword] = anchor_hits.get(keyword, 0) + 1
-                    break  # only count each POI once
+                    break  # only count each building once
     except Exception:
         try:
             db.rollback()
         except Exception:
             pass
 
-    # 2. OSM amenities (schools, hospitals, universities)
+    # 2. OSM amenities/shops from planet_osm_polygon (schools, hospitals, malls)
     try:
-        osm_count = db.execute(
+        rows = db.execute(
             text("""
-                SELECT COUNT(*) FROM osm_roads
-                WHERE highway IS NULL
-                  AND name IS NOT NULL
+                SELECT amenity, shop, name FROM planet_osm_polygon
+                WHERE (amenity IS NOT NULL OR shop IS NOT NULL)
                   AND ST_DWithin(
-                      geom::geography,
+                      ST_Transform(way, 4326)::geography,
                       ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
                       800
                   )
             """),
             {"lat": lat, "lon": lon},
-        ).scalar() or 0
-        if osm_count > 0:
-            weighted_total += min(8.0, osm_count * 1.5)
-            anchor_hits["osm_amenities"] = osm_count
+        ).mappings().all()
+
+        for r in rows:
+            amenity = (r.get("amenity") or "").lower()
+            shop = (r.get("shop") or "").lower()
+            name = (r.get("name") or "").lower()
+            combined = f"{amenity} {shop} {name}"
+            for keyword, weight in _ANCHOR_WEIGHTS.items():
+                if keyword in combined:
+                    weighted_total += weight
+                    anchor_hits[keyword] = anchor_hits.get(keyword, 0) + 1
+                    break
     except Exception:
         try:
             db.rollback()
