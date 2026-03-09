@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 _cache: dict[str, tuple[float, Any]] = {}
 _CATEGORY_TTL = 3600  # 1 hour
 _HEATMAP_TTL = 300  # 5 minutes
+_PARCEL_SCORE_TTL = 30  # 30 seconds — short-lived to handle repeated clicks
 
 
 def _cache_get(key: str) -> Any | None:
@@ -94,6 +95,8 @@ class ScoreResponse(BaseModel):
     nearby_competitors: list[dict[str, Any]] = Field(default_factory=list)
     model_version: str = "weighted_v3"
     ai_weights_used: bool = False
+    elapsed_ms: float = Field(0.0, description="Total scoring elapsed time in ms")
+    factor_timing: dict[str, Any] = Field(default_factory=dict, description="Per-factor timing breakdown")
 
 
 class ParcelScoreRequest(BaseModel):
@@ -158,6 +161,8 @@ def score_restaurant_location(req: ScoreRequest, db: Session = Depends(get_db)):
         nearby_competitors=result.nearby_competitors,
         model_version=result.model_version,
         ai_weights_used=result.ai_weights_used,
+        elapsed_ms=result.elapsed_ms,
+        factor_timing=result.factor_timing,
     )
 
 
@@ -260,8 +265,14 @@ def score_restaurant_parcel(req: ParcelScoreRequest, db: Session = Depends(get_d
     if lat is None or lon is None:
         raise HTTPException(status_code=400, detail="Cannot determine location")
 
+    # Short-lived cache for repeated clicks on the same parcel
+    cache_key = f"parcel:{round(lat, 5)},{round(lon, 5)}:{req.category}:{req.chain_name or ''}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     result = score_location(db, lat, lon, req.category, chain_name=req.chain_name)
-    return {
+    response = {
         "parcel_id": req.parcel_id,
         "lat": lat,
         "lon": lon,
@@ -278,7 +289,11 @@ def score_restaurant_parcel(req: ParcelScoreRequest, db: Session = Depends(get_d
         "nearby_competitors": result.nearby_competitors,
         "model_version": result.model_version,
         "ai_weights_used": result.ai_weights_used,
+        "elapsed_ms": result.elapsed_ms,
+        "factor_timing": result.factor_timing,
     }
+    _cache_set(cache_key, response, _PARCEL_SCORE_TTL)
+    return response
 
 
 # ---------------------------------------------------------------------------
