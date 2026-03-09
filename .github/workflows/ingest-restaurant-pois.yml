@@ -78,13 +78,25 @@ jobs:
             echo "list=overture,osm,delivery" >> "$GITHUB_OUTPUT"
             echo "delivery_platforms=" >> "$GITHUB_OUTPUT"
           else
+            DP="${{ github.event.inputs.delivery_platforms }}"
             LIST=""
-            if [ "${{ github.event.inputs.overture }}" = "true" ]; then LIST="${LIST}overture,"; fi
-            if [ "${{ github.event.inputs.osm }}" = "true" ]; then LIST="${LIST}osm,"; fi
-            if [ "${{ github.event.inputs.delivery }}" = "true" ]; then LIST="${LIST}delivery,"; fi
+            # When specific delivery platforms are requested and overture/osm
+            # are left at their defaults, only run delivery.  This prevents
+            # a HungerStation-only debug run from also re-running Overture/OSM.
+            if [ -n "$DP" ]; then
+              # Explicit platform filter — default to delivery-only unless
+              # the user toggled overture/osm checkboxes to true explicitly.
+              if [ "${{ github.event.inputs.overture }}" = "true" ] && [ -z "$DP" ]; then LIST="${LIST}overture,"; fi
+              if [ "${{ github.event.inputs.osm }}" = "true" ] && [ -z "$DP" ]; then LIST="${LIST}osm,"; fi
+              LIST="${LIST}delivery,"
+            else
+              if [ "${{ github.event.inputs.overture }}" = "true" ]; then LIST="${LIST}overture,"; fi
+              if [ "${{ github.event.inputs.osm }}" = "true" ]; then LIST="${LIST}osm,"; fi
+              if [ "${{ github.event.inputs.delivery }}" = "true" ]; then LIST="${LIST}delivery,"; fi
+            fi
             FINAL="${LIST:-${{ github.event.inputs.sources }}}"
             echo "list=${FINAL%,}" >> "$GITHUB_OUTPUT"
-            echo "delivery_platforms=${{ github.event.inputs.delivery_platforms }}" >> "$GITHUB_OUTPUT"
+            echo "delivery_platforms=${DP}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Ingest restaurant POIs

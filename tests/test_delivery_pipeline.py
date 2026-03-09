@@ -859,3 +859,441 @@ class TestPlatformFiltering:
         assert "alpha" in called_platforms
         assert "gamma" in called_platforms
         assert "beta" not in called_platforms
+
+
+# ============================================================================
+# HungerStation HTML extraction tests (fixture-based)
+# ============================================================================
+
+
+class TestHungerStationPageExtraction:
+    """Test HTML content extraction for HungerStation pages."""
+
+    def test_json_ld_restaurant_page(self):
+        """HungerStation page with JSON-LD should yield name, coords, cuisine."""
+        from app.connectors.delivery_platforms import _extract_page_data
+
+        html = """
+        <html>
+        <head>
+        <title>Al Baik - Olaya | HungerStation</title>
+        <script type="application/ld+json">
+        {
+            "@type": "Restaurant",
+            "name": "Al Baik",
+            "servesCuisine": "Fast Food",
+            "address": {
+                "streetAddress": "Olaya Street",
+                "addressLocality": "Al Olaya"
+            },
+            "geo": {"latitude": "24.6905", "longitude": "46.6853"},
+            "aggregateRating": {"ratingValue": "4.7", "reviewCount": "2500"},
+            "telephone": "+966112345678"
+        }
+        </script>
+        </head>
+        <body><h1>Al Baik</h1></body>
+        </html>
+        """
+        data = _extract_page_data(
+            html, "https://hungerstation.com/riyadh/al-baik-olaya", "hungerstation"
+        )
+        assert data["name"] == "Al Baik"
+        assert data["lat"] == 24.6905
+        assert data["lon"] == 46.6853
+        assert data["category_raw"] == "Fast Food"
+        assert data["rating"] == 4.7
+        assert data["rating_count"] == 2500
+        assert data["phone_raw"] == "+966112345678"
+        assert data["district_text"] == "Al Olaya"
+
+    def test_embedded_next_data_extraction(self):
+        """Pages with __NEXT_DATA__ JSON should extract restaurant info."""
+        from app.connectors.delivery_platforms import _extract_page_data
+
+        html = """
+        <html>
+        <head><title>Shawarmer | HungerStation</title></head>
+        <body>
+        <script id="__NEXT_DATA__" type="application/json">
+        {
+            "props": {
+                "pageProps": {
+                    "restaurant": {
+                        "name": "Shawarmer - Al Malaz",
+                        "latitude": 24.6651,
+                        "longitude": 46.7218,
+                        "cuisine": "Shawarma",
+                        "rating": 4.3
+                    }
+                }
+            }
+        }
+        </script>
+        </body>
+        </html>
+        """
+        data = _extract_page_data(
+            html, "https://hungerstation.com/riyadh/shawarmer-malaz", "hungerstation"
+        )
+        assert data["name"] == "Shawarmer - Al Malaz"
+        assert data["lat"] == 24.6651
+        assert data["lon"] == 46.7218
+        assert data["category_raw"] == "Shawarma"
+
+    def test_title_tag_fallback(self):
+        """When no JSON-LD or embedded data, extract name from <title>."""
+        from app.connectors.delivery_platforms import _extract_page_data
+
+        html = """
+        <html>
+        <head><title>Kudu Al Yasmin Branch | HungerStation</title></head>
+        <body><div class="restaurant">Menu content here</div></body>
+        </html>
+        """
+        data = _extract_page_data(
+            html, "https://hungerstation.com/riyadh/kudu-al-yasmin", "hungerstation"
+        )
+        assert data["name"] == "Kudu Al Yasmin Branch"
+
+    def test_og_title_extraction(self):
+        """Open Graph title should be extracted when JSON-LD is absent."""
+        from app.connectors.delivery_platforms import _extract_page_data
+
+        html = """
+        <html>
+        <head>
+        <meta property="og:title" content="KFC Riyadh - Delivery" />
+        <title>KFC | HungerStation</title>
+        </head>
+        <body></body>
+        </html>
+        """
+        data = _extract_page_data(
+            html, "https://hungerstation.com/riyadh/kfc", "hungerstation"
+        )
+        assert data["name"] == "KFC Riyadh - Delivery"
+
+    def test_empty_page_yields_empty_data(self):
+        """Pages with no extractable data should return empty dict."""
+        from app.connectors.delivery_platforms import _extract_page_data
+
+        html = "<html><body>Nothing here</body></html>"
+        data = _extract_page_data(html, "https://example.com/about", "hungerstation")
+        assert not data.get("name")
+        assert not data.get("lat")
+
+    def test_hungerstation_record_through_full_pipeline(self):
+        """End-to-end: HTML-extracted record -> parse -> location -> row."""
+        raw = {
+            "id": "hungerstation:al-baik-olaya",
+            "name": "Al Baik",
+            "source": "hungerstation",
+            "source_url": "https://hungerstation.com/riyadh/al-baik-olaya",
+            "lat": 24.6905,
+            "lon": 46.6853,
+            "category_raw": "Fast Food",
+            "rating": 4.7,
+            "rating_count": 2500,
+            "address_raw": "Olaya Street",
+            "district_text": "Al Olaya",
+            "phone_raw": "+966112345678",
+            "_html_extracted": True,
+        }
+        rec = parse_legacy_record(raw, "hungerstation")
+        assert rec.restaurant_name_raw == "Al Baik"
+        assert rec.lat == 24.6905
+        assert rec.lon == 46.6853
+        assert rec.brand_raw == "Al Baik"
+        assert rec.phone_raw == "+966112345678"
+        assert rec.rating == 4.7
+        assert rec.geocode_method == GeocodeMethod.PLATFORM_PAYLOAD
+        assert rec.location_confidence == 0.9
+
+        # Should survive location resolution unchanged
+        resolved = resolve_location(rec, db=None)
+        assert resolved.lat == 24.6905
+        assert resolved.geocode_method == GeocodeMethod.PLATFORM_PAYLOAD
+
+        # Should be persistable
+        row = record_to_row(resolved, run_id=1)
+        assert row.restaurant_name_raw == "Al Baik"
+        assert float(row.lat) == 24.6905
+        assert row.phone_raw == "+966112345678"
+
+
+# ============================================================================
+# Sitemap extraction path tests
+# ============================================================================
+
+
+class TestSitemapExtraction:
+    """Test sitemap parsing and URL expansion logic."""
+
+    def test_parse_sitemap_xml(self):
+        """_parse_sitemap should extract <loc> URLs from valid XML."""
+        from app.connectors.delivery_platforms import _parse_sitemap
+        from unittest.mock import patch, MagicMock
+
+        xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <url><loc>https://hungerstation.com/riyadh/al-baik</loc></url>
+            <url><loc>https://hungerstation.com/riyadh/kfc-olaya</loc></url>
+            <url><loc>https://hungerstation.com/jeddah/mcdonalds</loc></url>
+        </urlset>
+        """
+        mock_resp = MagicMock()
+        mock_resp.text = xml_content
+
+        with patch(
+            "app.connectors.delivery_platforms._fetch_with_retries",
+            return_value=mock_resp,
+        ):
+            urls = _parse_sitemap("https://hungerstation.com/sitemap.xml")
+
+        assert len(urls) == 3
+        assert "https://hungerstation.com/riyadh/al-baik" in urls
+        assert "https://hungerstation.com/riyadh/kfc-olaya" in urls
+
+    def test_parse_sitemap_index(self):
+        """Sitemap index with nested sitemaps should expand correctly."""
+        from app.connectors.delivery_platforms import _parse_sitemap
+        from unittest.mock import patch, MagicMock
+
+        index_xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <sitemap><loc>https://hungerstation.com/sitemap-restaurants.xml</loc></sitemap>
+            <sitemap><loc>https://hungerstation.com/sitemap-pages.xml</loc></sitemap>
+        </sitemapindex>
+        """
+        restaurant_xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <url><loc>https://hungerstation.com/riyadh/al-baik</loc></url>
+        </urlset>
+        """
+
+        def mock_fetch(url, **kwargs):
+            resp = MagicMock()
+            if "index" in url:
+                resp.text = index_xml
+            else:
+                resp.text = restaurant_xml
+            return resp
+
+        with patch(
+            "app.connectors.delivery_platforms._fetch_with_retries",
+            side_effect=mock_fetch,
+        ):
+            index_urls = _parse_sitemap("https://hungerstation.com/sitemaps/index.xml")
+
+        assert len(index_urls) == 2
+        assert any("restaurants" in u for u in index_urls)
+
+    def test_generic_scrape_does_not_clobber_expanded_urls(self):
+        """Regression: _generic_sitemap_scrape must not overwrite
+        restaurant_urls when url_filter is None."""
+        from app.connectors.delivery_platforms import _generic_sitemap_scrape
+        from unittest.mock import patch, MagicMock
+
+        index_xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <sitemap><loc>https://example.com/sitemap-1.xml</loc></sitemap>
+        </sitemapindex>
+        """
+        shard_xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <url><loc>https://example.com/riyadh/restaurant-a</loc></url>
+            <url><loc>https://example.com/riyadh/restaurant-b</loc></url>
+        </urlset>
+        """
+
+        def mock_fetch(url, **kwargs):
+            resp = MagicMock()
+            if "index" in url or url.endswith("sitemap.xml"):
+                resp.text = index_xml
+            else:
+                resp.text = shard_xml
+            return resp
+
+        mock_page = MagicMock()
+        mock_page.text = "<html><head><title>Restaurant A</title></head><body></body></html>"
+
+        with patch("app.connectors.delivery_platforms._fetch_with_retries", side_effect=mock_fetch):
+            with patch("app.connectors.delivery_platforms._safe_get", return_value=mock_page):
+                results = list(_generic_sitemap_scrape(
+                    source="test",
+                    sitemap_url="https://example.com/sitemap.xml",
+                    url_filter=None,
+                    riyadh_filter=True,
+                    crawl_delay=0,
+                    max_pages=10,
+                ))
+
+        # Should yield the expanded restaurant URLs, not the sitemap XML URLs
+        assert len(results) == 2
+        assert results[0]["name"] == "Restaurant A"  # from <title>
+        assert "restaurant-a" in results[0]["source_url"]
+
+
+# ============================================================================
+# Weak record persistence tests
+# ============================================================================
+
+
+class TestWeakRecordPersistence:
+    """Verify that sparse records are still persisted at low confidence."""
+
+    def test_name_only_record_persists(self):
+        """A record with only a name should be persistable."""
+        raw = {
+            "id": "hungerstation:mystery-place",
+            "name": "Mystery Place",
+            "source": "hungerstation",
+            "source_url": "https://hungerstation.com/riyadh/mystery-place",
+            "lat": None,
+            "lon": None,
+            "category_raw": None,
+            "_html_extracted": False,
+        }
+        rec = parse_legacy_record(raw, "hungerstation")
+        assert rec.restaurant_name_raw == "Mystery Place"
+        assert rec.lat is None
+        assert rec.lon is None
+        assert rec.parse_confidence == 0.25  # name-only
+
+        row = record_to_row(rec, run_id=1)
+        assert row.restaurant_name_raw == "Mystery Place"
+        assert row.parse_confidence == 0.25
+        assert row.lat is None
+
+    def test_slug_only_record_persists(self):
+        """A record with only a URL-slug name should still be stored."""
+        raw = {
+            "id": "hungerstation:unknown-restaurant-123",
+            "name": "Unknown Restaurant 123",
+            "source": "hungerstation",
+            "source_url": "https://hungerstation.com/riyadh/unknown-restaurant-123",
+            "lat": None,
+            "lon": None,
+            "category_raw": None,
+        }
+        rec = parse_legacy_record(raw, "hungerstation")
+        row = record_to_row(rec, run_id=1)
+        assert row.platform == "hungerstation"
+        assert row.restaurant_name_raw == "Unknown Restaurant 123"
+        # Low confidence but still stored
+        assert row.parse_confidence < 0.5
+
+    def test_no_coords_with_district_gets_centroid(self):
+        """Record with district but no coords should get centroid and persist."""
+        raw = {
+            "id": "hungerstation:local-spot-olaya",
+            "name": "Local Spot",
+            "source": "hungerstation",
+            "source_url": "https://hungerstation.com/riyadh/olaya/local-spot",
+            "lat": None,
+            "lon": None,
+            "category_raw": None,
+            "district_text": None,
+        }
+        rec = parse_legacy_record(raw, "hungerstation")
+        # District should be extracted from URL
+        assert rec.district_text is not None
+        assert "olaya" in rec.district_text.lower()
+
+        resolved = resolve_location(rec, db=None)
+        assert resolved.lat is not None
+        assert resolved.location_confidence == 0.3  # district centroid
+        assert resolved.geocode_method == GeocodeMethod.DISTRICT_CENTROID
+
+        row = record_to_row(resolved, run_id=1)
+        assert row.lat is not None
+        assert row.location_confidence == 0.3
+
+    def test_html_extracted_record_with_partial_data(self):
+        """A record with HTML-extracted name but no coords should persist."""
+        raw = {
+            "id": "hungerstation:fancy-cafe",
+            "name": "Fancy Café & Lounge",
+            "source": "hungerstation",
+            "source_url": "https://hungerstation.com/riyadh/fancy-cafe",
+            "lat": None,
+            "lon": None,
+            "category_raw": "Café",
+            "rating": 4.2,
+            "rating_count": None,
+            "address_raw": None,
+            "district_text": None,
+            "phone_raw": None,
+            "_html_extracted": True,
+        }
+        rec = parse_legacy_record(raw, "hungerstation")
+        assert rec.restaurant_name_raw == "Fancy Café & Lounge"
+        assert rec.cuisine_raw == "Café"
+        assert rec.rating == 4.2
+        # Confidence should reflect partial data
+        assert rec.parse_confidence > 0.25  # has name + cuisine + rating
+
+        row = record_to_row(rec, run_id=1)
+        assert row.restaurant_name_raw == "Fancy Café & Lounge"
+        assert row.rating is not None
+
+    def test_pipeline_stats_include_diagnostics(self):
+        """Pipeline stats should track HTML extraction and coord counts."""
+        from app.delivery.pipeline import run_platform_scrape
+
+        def _test_scraper(max_pages=200):
+            yield {
+                "id": "hungerstation:with-coords",
+                "name": "Coords Place",
+                "source": "hungerstation",
+                "source_url": "https://example.com/riyadh/coords",
+                "lat": 24.7,
+                "lon": 46.7,
+                "category_raw": "burger",
+                "_html_extracted": True,
+            }
+            yield {
+                "id": "hungerstation:no-coords",
+                "name": "No Coords Place",
+                "source": "hungerstation",
+                "source_url": "https://example.com/riyadh/no-coords",
+                "lat": None,
+                "lon": None,
+                "category_raw": None,
+                "_html_extracted": False,
+            }
+
+        mock_registry = {
+            "hungerstation": {
+                "fn": _test_scraper,
+                "source": "hungerstation",
+                "label": "HungerStation",
+                "url": "https://hungerstation.com",
+            }
+        }
+
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter_by.return_value.first.return_value = None
+
+        added = []
+        def fake_add(obj):
+            added.append(obj)
+            if isinstance(obj, DeliveryIngestRun) and obj.id is None:
+                obj.id = 99
+        mock_db.add.side_effect = fake_add
+        mock_db.flush.return_value = None
+        run_obj = DeliveryIngestRun(id=99, platform="hungerstation", status="running")
+        mock_db.get.return_value = run_obj
+
+        with patch("app.connectors.delivery_platforms.SCRAPER_REGISTRY", mock_registry):
+            result = run_platform_scrape(
+                mock_db, "hungerstation", max_pages=5, run_resolver=False
+            )
+
+        assert result["rows_scraped"] == 2
+        assert result["rows_parsed"] == 2
+        assert result["rows_inserted"] == 2
+        assert result["rows_html_extracted"] == 1
+        assert result["rows_with_coords"] >= 1
+        assert result["rows_with_name"] == 2
