@@ -113,7 +113,7 @@ The fetch step writes Riyadh-only `.csv.gz` JSONL files into `data/ms_buildings/
     (scales above-ground `area_ratio` by `3.5 / baseline_floors`) so BUA/FAR reflect that.
   - Land pricing defaults to **blended_v1** (Suhail anchor + Kaggle Aqar median, district-resolved once via `resolve_district`), shared with `GET /v1/pricing/land`.
 
-### Expansion Advisor API (v1)
+### Expansion Advisor API (v3)
 
 Endpoints:
 - `POST /v1/expansion-advisor/searches`
@@ -121,6 +121,11 @@ Endpoints:
 - `GET /v1/expansion-advisor/searches/{search_id}/candidates`
 - `POST /v1/expansion-advisor/candidates/compare`
 - `GET /v1/expansion-advisor/candidates/{candidate_id}/memo`
+- `POST /v1/expansion-advisor/saved-searches`
+- `GET /v1/expansion-advisor/saved-searches`
+- `GET /v1/expansion-advisor/saved-searches/{saved_id}`
+- `PATCH /v1/expansion-advisor/saved-searches/{saved_id}`
+- `DELETE /v1/expansion-advisor/saved-searches/{saved_id}`
 
 `POST /v1/expansion-advisor/searches` request fields:
 - `brand_name` (string)
@@ -156,8 +161,19 @@ Compare response:
 - deterministic recommendation verdict (`go` | `consider` | `caution`)
 - a headline, best-use-case branch format, and primary watchout
 
+
+Saved studies payload fields:
+- `search_id`, `title`, `description?`, `status` (`draft` | `final`)
+- `selected_candidate_ids` (shortlist/favorites/compare set)
+- `filters_json` (brief form restore payload)
+- `ui_state_json` (lightweight map/list UI state restore)
+
+Saved study detail response includes linked `search` and `candidates` for frontend hydration.
+
 Notes:
-- v1 uses ArcGIS parcels only (`public.riyadh_parcels_arcgis_proxy`) for Riyadh.
+- Expansion Advisor is now the primary user-facing workflow and replaces Restaurant Finder in navigation.
+- Restaurant Finder remains available only as a legacy/internal market-intelligence flow.
+- ArcGIS Riyadh parcels are the only supported parcel source.
 - Suhail and inferred parcels are intentionally excluded.
 - Cannibalization scoring is deterministic and distance-based, adjusted by service model.
 - Revenue index and payback are heuristic decision-support signals (not guaranteed revenue forecasts).

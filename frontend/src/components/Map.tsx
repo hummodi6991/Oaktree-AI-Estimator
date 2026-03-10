@@ -23,6 +23,7 @@ import type { ParcelSummary } from "../api";
 import { collateParcels, identifyPoint, type CollateResponse } from "../lib/api/geo";
 import MapSearchBar from "./MapSearchBar";
 import type { SearchItem } from "../types/search";
+import type { ExpansionCandidate } from "../lib/api/expansionAdvisor";
 
 // Proper Arabic shaping (joins letters) for MapLibre:
 // MapLibre expects a URL to a plugin JS file (NOT an imported module object).
@@ -53,6 +54,11 @@ type MapProps = {
   onRestaurantClick?: (lat: number, lng: number) => void;
   highlightCell?: { lng: number; lat: number } | null;
   mapInstanceRef?: React.MutableRefObject<maplibregl.Map | null>;
+  expansionCandidates?: ExpansionCandidate[];
+  selectedExpansionCandidateId?: string | null;
+  shortlistExpansionCandidateIds?: string[];
+  existingBranches?: Array<{ lat: number; lon: number }>;
+  onExpansionCandidateClick?: (candidateId: string) => void;
 };
 
 type StatusMessage = { key: string; options?: Record<string, unknown> } | { raw: string };
@@ -65,6 +71,10 @@ const HOVER_SOURCE_ID = "parcel-hover-src";
 const HOVER_CASING_LAYER_ID = "parcel-hover-casing";
 const HOVER_LINE_LAYER_ID = "parcel-hover-line";
 const DISTRICT_LABELS_LAYER_ID = "oaktree-district-labels";
+const EXP_CANDIDATE_SOURCE_ID = "exp-candidate-src";
+const EXP_CANDIDATE_LAYER_ID = "exp-candidate-layer";
+const EXP_BRANCH_SOURCE_ID = "exp-branch-src";
+const EXP_BRANCH_LAYER_ID = "exp-branch-layer";
 const SOURCE_CRS = "EPSG:32638";
 proj4.defs(SOURCE_CRS, "+proj=utm +zone=38 +datum=WGS84 +units=m +no_defs");
 
@@ -342,6 +352,11 @@ export default function Map({
   onRestaurantClick,
   highlightCell = null,
   mapInstanceRef,
+  expansionCandidates = [],
+  selectedExpansionCandidateId = null,
+  shortlistExpansionCandidateIds = [],
+  existingBranches = [],
+  onExpansionCandidateClick,
 }: MapProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -367,6 +382,7 @@ export default function Map({
   const parcelPropertiesLoggedRef = useRef(false);
 
   const restaurantModeRef = useRef(restaurantMode);
+  const onExpansionCandidateClickRef = useRef(onExpansionCandidateClick);
   const onRestaurantClickRef = useRef(onRestaurantClick);
   const restaurantHeatmapDataRef = useRef(restaurantHeatmapData);
 
@@ -880,6 +896,60 @@ export default function Map({
     const source = map.getSource(SELECT_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
     source?.setData(selectedParcelsGeojson);
   }, [multiSelectMode, selectedParcelsGeojson]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const candidateFeatures = expansionCandidates
+      .filter((item) => Number.isFinite(item.lon) && Number.isFinite(item.lat))
+      .map((item) => ({
+        type: "Feature" as const,
+        geometry: { type: "Point" as const, coordinates: [item.lon, item.lat] },
+        properties: {
+          candidate_id: item.id,
+          selected: item.id === selectedExpansionCandidateId,
+          shortlisted: shortlistExpansionCandidateIds.includes(item.id),
+        },
+      }));
+
+    const branchesFeatures = existingBranches
+      .filter((b) => Number.isFinite(b.lon) && Number.isFinite(b.lat))
+      .map((b) => ({
+        type: "Feature" as const,
+        geometry: { type: "Point" as const, coordinates: [b.lon, b.lat] },
+        properties: {},
+      }));
+
+    const candidateFc = { type: "FeatureCollection" as const, features: candidateFeatures };
+    const branchFc = { type: "FeatureCollection" as const, features: branchesFeatures };
+
+    if (!map.getSource(EXP_CANDIDATE_SOURCE_ID)) {
+      map.addSource(EXP_CANDIDATE_SOURCE_ID, { type: "geojson", data: candidateFc as any });
+      map.addLayer({
+        id: EXP_CANDIDATE_LAYER_ID,
+        type: "circle",
+        source: EXP_CANDIDATE_SOURCE_ID,
+        paint: {
+          "circle-color": ["case", ["get", "selected"], "#006dff", ["get", "shortlisted"], "#1a9c6c", "#3d5a80"],
+          "circle-radius": ["case", ["get", "selected"], 8, 5],
+        },
+      });
+      map.on("click", EXP_CANDIDATE_LAYER_ID, (e: maplibregl.MapLayerMouseEvent) => {
+        const id = e.features?.[0]?.properties?.candidate_id;
+        if (id && onExpansionCandidateClickRef.current) onExpansionCandidateClickRef.current(String(id));
+      });
+    } else {
+      (map.getSource(EXP_CANDIDATE_SOURCE_ID) as maplibregl.GeoJSONSource).setData(candidateFc as any);
+    }
+
+    if (!map.getSource(EXP_BRANCH_SOURCE_ID)) {
+      map.addSource(EXP_BRANCH_SOURCE_ID, { type: "geojson", data: branchFc as any });
+      map.addLayer({ id: EXP_BRANCH_LAYER_ID, type: "circle", source: EXP_BRANCH_SOURCE_ID, paint: { "circle-color": "#f59e0b", "circle-radius": 5 } });
+    } else {
+      (map.getSource(EXP_BRANCH_SOURCE_ID) as maplibregl.GeoJSONSource).setData(branchFc as any);
+    }
+  }, [expansionCandidates, selectedExpansionCandidateId, shortlistExpansionCandidateIds, existingBranches]);
 
   useEffect(() => {
     if (!focusTarget) return;
