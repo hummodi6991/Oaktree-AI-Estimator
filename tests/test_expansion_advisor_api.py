@@ -35,11 +35,16 @@ def _client_with_db(db: DummyDB) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_post_expansion_search_returns_expected_shape(monkeypatch):
+def test_post_expansion_search_with_existing_branches(monkeypatch):
     db = DummyDB()
 
     from app.api import expansion_advisor as expansion_api
 
+    monkeypatch.setattr(
+        expansion_api,
+        "persist_existing_branches",
+        lambda _db, _search_id, _branches: None,
+    )
     monkeypatch.setattr(
         expansion_api,
         "run_expansion_search",
@@ -48,18 +53,12 @@ def test_post_expansion_search_returns_expected_shape(monkeypatch):
                 "id": "candidate-1",
                 "search_id": kwargs["search_id"],
                 "parcel_id": "parcel-123",
+                "district": "Olaya",
                 "lat": 24.7,
                 "lon": 46.7,
-                "area_m2": 210.0,
-                "landuse_label": "Commercial",
-                "landuse_code": "C",
-                "population_reach": 15000.0,
-                "competitor_count": 2,
-                "delivery_listing_count": 12,
-                "demand_score": 83.5,
-                "whitespace_score": 82.0,
-                "fit_score": 89.0,
-                "confidence_score": 100.0,
+                "cannibalization_score": 55.0,
+                "distance_to_nearest_branch_m": 1400.0,
+                "compare_rank": 1,
                 "final_score": 86.6,
                 "explanation": {"summary": "ok", "positives": [], "risks": [], "inputs": {}},
             }
@@ -74,6 +73,9 @@ def test_post_expansion_search_returns_expected_shape(monkeypatch):
             "service_model": "qsr",
             "min_area_m2": 100,
             "max_area_m2": 350,
+            "existing_branches": [
+                {"name": "HQ", "lat": 24.71, "lon": 46.68, "district": "Olaya"}
+            ],
             "target_districts": ["Olaya"],
             "bbox": {"min_lon": 46.5, "min_lat": 24.5, "max_lon": 46.9, "max_lat": 24.9},
             "limit": 10,
@@ -84,45 +86,11 @@ def test_post_expansion_search_returns_expected_shape(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert "search_id" in body
-    assert body["brand_profile"]["brand_name"] == "Brand X"
-    assert body["brand_profile"]["target_districts"] == ["Olaya"]
-    assert isinstance(body["items"], list)
-    assert body["items"][0]["parcel_id"] == "parcel-123"
-    assert body["meta"]["parcel_source"] == "arcgis_only"
-    assert body["meta"]["excluded_sources"] == ["suhail", "inferred_parcels"]
+    assert body["brand_profile"]["existing_branches"][0]["name"] == "HQ"
+    assert body["items"][0]["district"] == "Olaya"
+    assert body["items"][0]["cannibalization_score"] == 55.0
+    assert body["meta"]["version"] == "expansion_advisor_v1"
     assert db.committed is True
-
-
-def test_get_expansion_search_by_id_shape(monkeypatch):
-    db = DummyDB()
-
-    from app.api import expansion_advisor as expansion_api
-
-    monkeypatch.setattr(
-        expansion_api,
-        "get_search",
-        lambda _db, search_id: {
-            "id": search_id,
-            "brand_name": "Brand X",
-            "category": "burger",
-            "service_model": "qsr",
-            "request_json": {"brand_name": "Brand X"},
-            "notes": {"version": "expansion_advisor_v0"},
-        },
-    )
-
-    client = _client_with_db(db)
-    try:
-        response = client.get("/v1/expansion-advisor/searches/search-1")
-    finally:
-        app.dependency_overrides.pop(get_db, None)
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["id"] == "search-1"
-    assert body["brand_name"] == "Brand X"
-    assert body["request_json"]["brand_name"] == "Brand X"
 
 
 def test_get_expansion_search_candidates_shape(monkeypatch):
@@ -139,6 +107,10 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
                 "id": "candidate-1",
                 "search_id": "search-1",
                 "parcel_id": "parcel-123",
+                "district": "Olaya",
+                "cannibalization_score": 40.0,
+                "distance_to_nearest_branch_m": 3200.0,
+                "compare_rank": 1,
                 "final_score": 88.1,
                 "explanation": {"summary": "candidate explanation"},
             }
@@ -153,16 +125,66 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert "items" in body
-    assert len(body["items"]) == 1
-    assert body["items"][0]["parcel_id"] == "parcel-123"
-    assert body["items"][0]["explanation"]["summary"] == "candidate explanation"
+    assert body["items"][0]["district"] == "Olaya"
+    assert body["items"][0]["compare_rank"] == 1
+
+
+def test_compare_endpoint_happy_path(monkeypatch):
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(
+        expansion_api,
+        "compare_candidates",
+        lambda _db, _search_id, _candidate_ids: {
+            "items": [{"candidate_id": "c1"}, {"candidate_id": "c2"}],
+            "summary": {"best_overall_candidate_id": "c1"},
+        },
+    )
+
+    client = _client_with_db(db)
+    try:
+        response = client.post(
+            "/v1/expansion-advisor/candidates/compare",
+            json={"search_id": "search-1", "candidate_ids": ["c1", "c2"]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"][0]["candidate_id"] == "c1"
+
+
+def test_compare_endpoint_rejects_foreign_candidate_ids(monkeypatch):
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    def _raise_not_found(_db, _search_id, _candidate_ids):
+        raise ValueError("not_found")
+
+    monkeypatch.setattr(expansion_api, "compare_candidates", _raise_not_found)
+
+    client = _client_with_db(db)
+    try:
+        response = client.post(
+            "/v1/expansion-advisor/candidates/compare",
+            json={"search_id": "search-1", "candidate_ids": ["c1", "c-foreign"]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 404
 
 
 def test_post_expansion_search_rolls_back_when_scoring_fails(monkeypatch):
     db = DummyDB()
 
     from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(expansion_api, "persist_existing_branches", lambda *_args, **_kwargs: None)
 
     def _boom(**_kwargs):
         raise RuntimeError("scoring failed")

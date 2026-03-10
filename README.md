@@ -113,34 +113,45 @@ The fetch step writes Riyadh-only `.csv.gz` JSONL files into `data/ms_buildings/
     (scales above-ground `area_ratio` by `3.5 / baseline_floors`) so BUA/FAR reflect that.
   - Land pricing defaults to **blended_v1** (Suhail anchor + Kaggle Aqar median, district-resolved once via `resolve_district`), shared with `GET /v1/pricing/land`.
 
-### Expansion Advisor API (v0)
+### Expansion Advisor API (v1)
 
 Endpoints:
 - `POST /v1/expansion-advisor/searches`
 - `GET /v1/expansion-advisor/searches/{search_id}`
 - `GET /v1/expansion-advisor/searches/{search_id}/candidates`
+- `POST /v1/expansion-advisor/candidates/compare`
 
 `POST /v1/expansion-advisor/searches` request fields:
 - `brand_name` (string)
 - `category` (string)
 - `service_model` (`qsr` | `dine_in` | `delivery_first` | `cafe`)
 - `min_area_m2`, `max_area_m2`, `target_area_m2` (numbers)
-- `target_districts` (string array; accepted but not yet enforced in filtering)
+- `target_districts` (string array; enforced if provided)
+- `existing_branches` (array of `{name?, lat, lon, district?}`)
+- `comparison_candidate_ids` (optional string array for client workflows)
 - `bbox` (`min_lon`, `min_lat`, `max_lon`, `max_lat`)
 - `limit` (1..100)
 
-Response shape:
-- `search_id`
-- `brand_profile` (input profile echoed with computed `target_area_m2`)
-- `items` (ranked candidate list with parcel/location metrics, scores, and explanation)
-- `meta`
-  - `version: expansion_advisor_v0`
-  - `parcel_source: arcgis_only`
-  - `excluded_sources: ["suhail", "inferred_parcels"]`
+Search/candidate responses now include:
+- `existing_branches` in search payloads
+- candidate `district`
+- candidate `cannibalization_score`
+- candidate `distance_to_nearest_branch_m`
+- candidate `compare_rank` (stored ranked order)
+
+`POST /v1/expansion-advisor/candidates/compare` request:
+- `search_id` (string)
+- `candidate_ids` (2..6 candidate IDs from the same search)
+
+Compare response:
+- `items` in the same order as requested `candidate_ids`
+- per-item score breakdown + pros/cons
+- `summary` with best-overall, lowest-cannibalization, highest-demand, and best-fit candidate IDs
 
 Notes:
-- v0 uses ArcGIS parcels only (`public.riyadh_parcels_arcgis_proxy`).
-- Suhail and inferred parcels are intentionally excluded in v0.
+- v1 uses ArcGIS parcels only (`public.riyadh_parcels_arcgis_proxy`) for Riyadh.
+- Suhail and inferred parcels are intentionally excluded.
+- Cannibalization scoring is deterministic and distance-based, adjusted by service model.
 
 ### Rent benchmarks (Excel mode)
 
