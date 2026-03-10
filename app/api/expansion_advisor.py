@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db.deps import get_db
 from app.services.expansion_advisor import (
     compare_candidates,
+    get_candidate_memo,
     get_candidates,
     get_search,
     persist_existing_branches,
@@ -117,7 +118,7 @@ def create_expansion_search(
                 "request_json": json.dumps(request_json, ensure_ascii=False),
                 "notes": json.dumps(
                     {
-                        "version": "expansion_advisor_v1",
+                        "version": "expansion_advisor_v2",
                         "parcel_source": "arcgis_only",
                         "excluded_sources": ["suhail", "inferred_parcels"],
                     },
@@ -161,7 +162,7 @@ def create_expansion_search(
         },
         "items": items,
         "meta": {
-            "version": "expansion_advisor_v1",
+            "version": "expansion_advisor_v2",
             "parcel_source": "arcgis_only",
             "excluded_sources": ["suhail", "inferred_parcels"],
         },
@@ -183,6 +184,15 @@ def get_expansion_search_candidates(search_id: str, db: Session = Depends(get_db
         raise HTTPException(status_code=404, detail="Expansion search not found")
     return {"items": get_candidates(db, search_id)}
 
+
+
+
+@router.get("/candidates/{candidate_id}/memo")
+def get_expansion_candidate_memo(candidate_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    memo = get_candidate_memo(db, candidate_id)
+    if not memo:
+        raise HTTPException(status_code=404, detail="Expansion candidate not found")
+    return memo
 
 @router.post("/candidates/compare")
 def compare_expansion_candidates(

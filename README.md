@@ -120,6 +120,7 @@ Endpoints:
 - `GET /v1/expansion-advisor/searches/{search_id}`
 - `GET /v1/expansion-advisor/searches/{search_id}/candidates`
 - `POST /v1/expansion-advisor/candidates/compare`
+- `GET /v1/expansion-advisor/candidates/{candidate_id}/memo`
 
 `POST /v1/expansion-advisor/searches` request fields:
 - `brand_name` (string)
@@ -137,6 +138,8 @@ Search/candidate responses now include:
 - candidate `district`
 - candidate `cannibalization_score`
 - candidate `distance_to_nearest_branch_m`
+- candidate economics fields: `estimated_rent_sar_m2_year`, `estimated_annual_rent_sar`, `estimated_fitout_cost_sar`, `estimated_revenue_index`, `economics_score`, `estimated_payback_months`, `payback_band`
+- candidate decision memo fields: `decision_summary`, `key_strengths_json`, `key_risks_json`
 - candidate `compare_rank` (stored ranked order)
 
 `POST /v1/expansion-advisor/candidates/compare` request:
@@ -145,13 +148,25 @@ Search/candidate responses now include:
 
 Compare response:
 - `items` in the same order as requested `candidate_ids`
-- per-item score breakdown + pros/cons
-- `summary` with best-overall, lowest-cannibalization, highest-demand, and best-fit candidate IDs
+- per-item score breakdown + pros/cons + economics fields
+- `summary` with best-overall, lowest-cannibalization, highest-demand, best-fit, best-economics, lowest-rent-burden, and fastest-payback candidate IDs
+
+`GET /v1/expansion-advisor/candidates/{candidate_id}/memo` returns a deterministic decision memo with:
+- candidate economics + scoring breakdown
+- deterministic recommendation verdict (`go` | `consider` | `caution`)
+- a headline, best-use-case branch format, and primary watchout
 
 Notes:
 - v1 uses ArcGIS parcels only (`public.riyadh_parcels_arcgis_proxy`) for Riyadh.
 - Suhail and inferred parcels are intentionally excluded.
 - Cannibalization scoring is deterministic and distance-based, adjusted by service model.
+- Revenue index and payback are heuristic decision-support signals (not guaranteed revenue forecasts).
+
+Payback band meanings:
+- `strong`: <= 18 months
+- `promising`: > 18 and <= 28 months
+- `borderline`: > 28 and <= 40 months
+- `weak`: > 40 months
 
 ### Rent benchmarks (Excel mode)
 

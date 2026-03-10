@@ -8,9 +8,14 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services.aqar_district_match import normalize_district_key
+from app.services.rent import aqar_rent_median
 
 
 ARCGIS_PARCELS_TABLE = "public.riyadh_parcels_arcgis_proxy"
+_EXPANSION_CITY = "riyadh"
+_EXPANSION_AQAR_ASSET = "commercial"
+_EXPANSION_AQAR_UNIT = "retail"
+_EXPANSION_DEFAULT_RENT_SAR_M2_YEAR = 900.0
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -132,6 +137,14 @@ def _build_explanation(
     landuse_code: str | None,
     cannibalization_score: float,
     distance_to_nearest_branch_m: float | None,
+    economics_score: float,
+    estimated_rent_sar_m2_year: float,
+    estimated_annual_rent_sar: float,
+    estimated_fitout_cost_sar: float,
+    estimated_revenue_index: float,
+    estimated_payback_months: float,
+    payback_band: str,
+    rent_source: str,
     final_score: float,
 ) -> dict[str, Any]:
     positives: list[str] = []
@@ -182,8 +195,169 @@ def _build_explanation(
             "landuse_code": landuse_code,
             "cannibalization_score": cannibalization_score,
             "distance_to_nearest_branch_m": distance_to_nearest_branch_m,
+            "economics_score": economics_score,
+            "estimated_rent_sar_m2_year": estimated_rent_sar_m2_year,
+            "estimated_annual_rent_sar": estimated_annual_rent_sar,
+            "estimated_fitout_cost_sar": estimated_fitout_cost_sar,
+            "estimated_revenue_index": estimated_revenue_index,
+            "estimated_payback_months": estimated_payback_months,
+            "payback_band": payback_band,
+            "rent_source": rent_source,
         },
     }
+
+
+def _estimate_rent_sar_m2_year(db: Session, district: str | None) -> tuple[float, str]:
+    try:
+        result = aqar_rent_median(
+            db,
+            city=_EXPANSION_CITY,
+            district=district,
+            asset_type=_EXPANSION_AQAR_ASSET,
+            unit_type=_EXPANSION_AQAR_UNIT,
+            since_days=730,
+        )
+        if result.district_median is not None and result.n_district >= 5:
+            return float(result.district_median) * 12.0, "aqar_district"
+        if result.district_median is not None and result.n_district > 0 and result.city_median is not None:
+            district_weight = min(1.0, result.n_district / 5.0)
+            blended = float(result.district_median) * district_weight + float(result.city_median) * (1.0 - district_weight)
+            return blended * 12.0, "aqar_district_shrinkage"
+        if result.city_median is not None:
+            return float(result.city_median) * 12.0, "aqar_city"
+        if result.city_asset_median is not None:
+            return float(result.city_asset_median) * 12.0, "aqar_city_asset"
+    except Exception:
+        pass
+    return _EXPANSION_DEFAULT_RENT_SAR_M2_YEAR, "conservative_default"
+
+
+def _estimate_fitout_cost_sar(area_m2: float, service_model: str) -> float:
+    cost_per_m2 = {
+        "delivery_first": 1900.0,
+        "qsr": 2600.0,
+        "cafe": 2800.0,
+        "dine_in": 3600.0,
+    }.get(service_model, 2600.0)
+    return max(0.0, area_m2 * cost_per_m2)
+
+
+def _estimate_revenue_index(
+    demand_score: float,
+    delivery_listing_count: int,
+    population_reach: float,
+    whitespace_score: float,
+) -> float:
+    delivery_signal = _clamp((delivery_listing_count / 35.0) * 100.0)
+    population_signal = _clamp((population_reach / 16000.0) * 100.0)
+    return _clamp(demand_score * 0.45 + whitespace_score * 0.20 + delivery_signal * 0.20 + population_signal * 0.15)
+
+
+def _economics_score(
+    *,
+    estimated_revenue_index: float,
+    estimated_annual_rent_sar: float,
+    estimated_fitout_cost_sar: float,
+    area_m2: float,
+    cannibalization_score: float,
+    fit_score: float,
+) -> float:
+    monthly_rent_per_m2 = estimated_annual_rent_sar / max(area_m2 * 12.0, 1.0)
+    rent_burden_score = _clamp(100.0 - (monthly_rent_per_m2 / 180.0) * 100.0)
+    fitout_cost_per_m2 = estimated_fitout_cost_sar / max(area_m2, 1.0)
+    fitout_burden_score = _clamp(100.0 - ((fitout_cost_per_m2 - 1800.0) / 2600.0) * 100.0)
+    cannibalization_component = 100.0 - cannibalization_score
+    return _clamp(
+        estimated_revenue_index * 0.38
+        + rent_burden_score * 0.20
+        + fitout_burden_score * 0.14
+        + cannibalization_component * 0.13
+        + fit_score * 0.15
+    )
+
+
+def _estimate_payback_months(
+    *,
+    estimated_fitout_cost_sar: float,
+    estimated_annual_rent_sar: float,
+    estimated_revenue_index: float,
+    confidence_score: float,
+) -> float:
+    annual_burden = estimated_annual_rent_sar + estimated_fitout_cost_sar * 0.45
+    normalized_burden = _clamp((annual_burden / 1_800_000.0) * 100.0)
+    quality_factor = 0.85 + (confidence_score / 100.0) * 0.3
+    months = 16.0 + normalized_burden * 0.38 - estimated_revenue_index * 0.18
+    return round(_clamp(months / max(quality_factor, 0.55), 9.0, 72.0), 2)
+
+
+def _payback_band(estimated_payback_months: float) -> str:
+    if estimated_payback_months <= 18.0:
+        return "strong"
+    if estimated_payback_months <= 28.0:
+        return "promising"
+    if estimated_payback_months <= 40.0:
+        return "borderline"
+    return "weak"
+
+
+def _build_strengths_and_risks(
+    *,
+    demand_score: float,
+    whitespace_score: float,
+    fit_score: float,
+    cannibalization_score: float,
+    payback_band: str,
+    rent_source: str,
+) -> tuple[list[str], list[str]]:
+    strengths: list[str] = []
+    risks: list[str] = []
+    if demand_score >= 70:
+        strengths.append("High demand index supports branch throughput")
+    if whitespace_score >= 65:
+        strengths.append("Competitive whitespace remains attractive")
+    if fit_score >= 70:
+        strengths.append("Parcel characteristics align with target format")
+    if payback_band in {"strong", "promising"}:
+        strengths.append(f"Heuristic payback is {payback_band} for first-pass screening")
+    if rent_source == "conservative_default":
+        risks.append("Rent benchmark fell back to conservative city default (lower confidence)")
+    if cannibalization_score >= 70:
+        risks.append("High overlap risk with existing branches")
+    if payback_band in {"borderline", "weak"}:
+        risks.append("Payback profile is slower versus preferred expansion targets")
+    if whitespace_score <= 45:
+        risks.append("Competitive density may pressure launch economics")
+    return strengths[:4], risks[:4]
+
+
+def _recommended_use_case(service_model: str, area_m2: float) -> str:
+    if service_model == "dine_in":
+        return "flagship dine-in" if area_m2 >= 260 else "neighborhood dine-in"
+    if service_model == "delivery_first":
+        return "delivery-led branch"
+    if service_model == "cafe":
+        return "compact cafe" if area_m2 < 180 else "destination cafe"
+    return "neighborhood qsr"
+
+
+def _decision_summary(
+    *,
+    district: str | None,
+    final_score: float,
+    economics_score: float,
+    payback_band: str,
+    key_risks: list[str],
+    service_model: str,
+    area_m2: float,
+) -> str:
+    area_label = "compact" if area_m2 < 180 else "standard"
+    district_label = district or "the target district"
+    risk_text = key_risks[0] if key_risks else "execution risk should be managed during leasing and design"
+    return (
+        f"This {area_label} candidate in {district_label} scores {final_score:.1f}/100 overall with an economics score of {economics_score:.1f}/100. "
+        f"The payback profile is {payback_band}, making it a practical first-pass option for {_recommended_use_case(service_model, area_m2)}. "
+        f"The biggest commercial risk is {risk_text.lower()}."
+    )
 
 
 def persist_existing_branches(db: Session, search_id: str, existing_branches: list[dict[str, Any]]) -> None:
@@ -359,6 +533,7 @@ def run_expansion_search(
     ).mappings().all()
 
     candidates: list[dict[str, Any]] = []
+    rent_cache: dict[str | None, tuple[float, str]] = {}
     for row in rows:
         area_m2 = _safe_float(row.get("area_m2"))
         population_reach = _safe_float(row.get("population_reach"))
@@ -390,14 +565,61 @@ def run_expansion_search(
         )
         cannibalization_score = _cannibalization_score(distance_to_nearest_branch_m, service_model)
         cannibalization_component = 100.0 - cannibalization_score
-        final_score = _clamp(
-            demand_score * 0.30
-            + whitespace_score * 0.25
-            + fit_score * 0.20
-            + confidence_score * 0.10
-            + cannibalization_component * 0.15
+
+        rent_cache_key = district_norm or None
+        if rent_cache_key not in rent_cache:
+            rent_cache[rent_cache_key] = _estimate_rent_sar_m2_year(db, district)
+        estimated_rent_sar_m2_year, rent_source = rent_cache[rent_cache_key]
+        estimated_annual_rent_sar = area_m2 * estimated_rent_sar_m2_year
+        estimated_fitout_cost_sar = _estimate_fitout_cost_sar(area_m2, service_model)
+        estimated_revenue_index = _estimate_revenue_index(
+            demand_score,
+            delivery_listing_count,
+            population_reach,
+            whitespace_score,
+        )
+        economics_score = _economics_score(
+            estimated_revenue_index=estimated_revenue_index,
+            estimated_annual_rent_sar=estimated_annual_rent_sar,
+            estimated_fitout_cost_sar=estimated_fitout_cost_sar,
+            area_m2=area_m2,
+            cannibalization_score=cannibalization_score,
+            fit_score=fit_score,
+        )
+        estimated_payback_months = _estimate_payback_months(
+            estimated_fitout_cost_sar=estimated_fitout_cost_sar,
+            estimated_annual_rent_sar=estimated_annual_rent_sar,
+            estimated_revenue_index=estimated_revenue_index,
+            confidence_score=confidence_score,
+        )
+        payback_band = _payback_band(estimated_payback_months)
+        key_strengths_json, key_risks_json = _build_strengths_and_risks(
+            demand_score=demand_score,
+            whitespace_score=whitespace_score,
+            fit_score=fit_score,
+            cannibalization_score=cannibalization_score,
+            payback_band=payback_band,
+            rent_source=rent_source,
         )
 
+        final_score = _clamp(
+            demand_score * 0.22
+            + whitespace_score * 0.18
+            + fit_score * 0.18
+            + confidence_score * 0.08
+            + cannibalization_component * 0.12
+            + economics_score * 0.22
+        )
+
+        decision_summary = _decision_summary(
+            district=district,
+            final_score=final_score,
+            economics_score=economics_score,
+            payback_band=payback_band,
+            key_risks=key_risks_json,
+            service_model=service_model,
+            area_m2=area_m2,
+        )
         explanation = _build_explanation(
             area_m2=area_m2,
             population_reach=population_reach,
@@ -407,6 +629,14 @@ def run_expansion_search(
             landuse_code=landuse_code,
             cannibalization_score=cannibalization_score,
             distance_to_nearest_branch_m=distance_to_nearest_branch_m,
+            economics_score=economics_score,
+            estimated_rent_sar_m2_year=estimated_rent_sar_m2_year,
+            estimated_annual_rent_sar=estimated_annual_rent_sar,
+            estimated_fitout_cost_sar=estimated_fitout_cost_sar,
+            estimated_revenue_index=estimated_revenue_index,
+            estimated_payback_months=estimated_payback_months,
+            payback_band=payback_band,
+            rent_source=rent_source,
             final_score=final_score,
         )
 
@@ -432,6 +662,16 @@ def run_expansion_search(
                 "distance_to_nearest_branch_m": round(distance_to_nearest_branch_m, 2)
                 if distance_to_nearest_branch_m is not None
                 else None,
+                "estimated_rent_sar_m2_year": round(estimated_rent_sar_m2_year, 2),
+                "estimated_annual_rent_sar": round(estimated_annual_rent_sar, 2),
+                "estimated_fitout_cost_sar": round(estimated_fitout_cost_sar, 2),
+                "estimated_revenue_index": round(estimated_revenue_index, 2),
+                "economics_score": round(economics_score, 2),
+                "estimated_payback_months": round(estimated_payback_months, 2),
+                "payback_band": payback_band,
+                "decision_summary": decision_summary,
+                "key_risks_json": key_risks_json,
+                "key_strengths_json": key_strengths_json,
                 "final_score": round(final_score, 2),
                 "explanation": explanation,
             }
@@ -464,6 +704,16 @@ def run_expansion_search(
             cannibalization_score,
             distance_to_nearest_branch_m,
             final_score,
+            estimated_rent_sar_m2_year,
+            estimated_annual_rent_sar,
+            estimated_fitout_cost_sar,
+            estimated_revenue_index,
+            economics_score,
+            estimated_payback_months,
+            payback_band,
+            decision_summary,
+            key_risks_json,
+            key_strengths_json,
             compare_rank,
             explanation
         ) VALUES (
@@ -486,6 +736,16 @@ def run_expansion_search(
             :cannibalization_score,
             :distance_to_nearest_branch_m,
             :final_score,
+            :estimated_rent_sar_m2_year,
+            :estimated_annual_rent_sar,
+            :estimated_fitout_cost_sar,
+            :estimated_revenue_index,
+            :economics_score,
+            :estimated_payback_months,
+            :payback_band,
+            :decision_summary,
+            CAST(:key_risks_json AS jsonb),
+            CAST(:key_strengths_json AS jsonb),
             :compare_rank,
             CAST(:explanation AS jsonb)
         )
@@ -498,6 +758,8 @@ def run_expansion_search(
             {
                 **candidate,
                 "explanation": json.dumps(candidate["explanation"], ensure_ascii=False),
+                "key_risks_json": json.dumps(candidate["key_risks_json"], ensure_ascii=False),
+                "key_strengths_json": json.dumps(candidate["key_strengths_json"], ensure_ascii=False),
             },
         )
 
@@ -572,6 +834,16 @@ def get_candidates(db: Session, search_id: str) -> list[dict[str, Any]]:
                 confidence_score,
                 cannibalization_score,
                 distance_to_nearest_branch_m,
+                estimated_rent_sar_m2_year,
+                estimated_annual_rent_sar,
+                estimated_fitout_cost_sar,
+                estimated_revenue_index,
+                economics_score,
+                estimated_payback_months,
+                payback_band,
+                decision_summary,
+                key_risks_json,
+                key_strengths_json,
                 final_score,
                 compare_rank,
                 explanation,
@@ -606,6 +878,13 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 confidence_score,
                 cannibalization_score,
                 distance_to_nearest_branch_m,
+                estimated_rent_sar_m2_year,
+                estimated_annual_rent_sar,
+                estimated_fitout_cost_sar,
+                estimated_revenue_index,
+                economics_score,
+                estimated_payback_months,
+                payback_band,
                 competitor_count,
                 delivery_listing_count,
                 population_reach,
@@ -653,6 +932,13 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 "confidence_score": row.get("confidence_score"),
                 "cannibalization_score": row.get("cannibalization_score"),
                 "distance_to_nearest_branch_m": row.get("distance_to_nearest_branch_m"),
+                "estimated_rent_sar_m2_year": row.get("estimated_rent_sar_m2_year"),
+                "estimated_annual_rent_sar": row.get("estimated_annual_rent_sar"),
+                "estimated_fitout_cost_sar": row.get("estimated_fitout_cost_sar"),
+                "estimated_revenue_index": row.get("estimated_revenue_index"),
+                "economics_score": row.get("economics_score"),
+                "estimated_payback_months": row.get("estimated_payback_months"),
+                "payback_band": row.get("payback_band"),
                 "competitor_count": row.get("competitor_count"),
                 "delivery_listing_count": row.get("delivery_listing_count"),
                 "population_reach": row.get("population_reach"),
@@ -666,6 +952,9 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
     lowest_cannibalization = min(items, key=lambda item: _safe_float(item.get("cannibalization_score"), 9999.0))["candidate_id"]
     highest_demand = max(items, key=lambda item: _safe_float(item.get("demand_score")))["candidate_id"]
     best_fit = max(items, key=lambda item: _safe_float(item.get("fit_score")))["candidate_id"]
+    best_economics = max(items, key=lambda item: _safe_float(item.get("economics_score")))["candidate_id"]
+    lowest_rent_burden = min(items, key=lambda item: _safe_float(item.get("estimated_annual_rent_sar"), 10**12))["candidate_id"]
+    fastest_payback = min(items, key=lambda item: _safe_float(item.get("estimated_payback_months"), 10**6))["candidate_id"]
 
     return {
         "items": items,
@@ -674,5 +963,111 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "lowest_cannibalization_candidate_id": lowest_cannibalization,
             "highest_demand_candidate_id": highest_demand,
             "best_fit_candidate_id": best_fit,
+            "best_economics_candidate_id": best_economics,
+            "lowest_rent_burden_candidate_id": lowest_rent_burden,
+            "fastest_payback_candidate_id": fastest_payback,
+        },
+    }
+
+
+def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
+    row = db.execute(
+        text(
+            """
+            SELECT
+                c.id AS candidate_id,
+                c.search_id,
+                s.brand_name,
+                s.category,
+                s.service_model,
+                c.parcel_id,
+                c.district,
+                c.area_m2,
+                c.landuse_label,
+                c.final_score,
+                c.economics_score,
+                c.demand_score,
+                c.whitespace_score,
+                c.fit_score,
+                c.confidence_score,
+                c.cannibalization_score,
+                c.distance_to_nearest_branch_m,
+                c.estimated_rent_sar_m2_year,
+                c.estimated_annual_rent_sar,
+                c.estimated_fitout_cost_sar,
+                c.estimated_revenue_index,
+                c.estimated_payback_months,
+                c.payback_band,
+                c.key_strengths_json,
+                c.key_risks_json,
+                c.decision_summary
+            FROM expansion_candidate c
+            JOIN expansion_search s ON s.id = c.search_id
+            WHERE c.id = :candidate_id
+            """
+        ),
+        {"candidate_id": candidate_id},
+    ).mappings().first()
+    if not row:
+        return None
+
+    candidate = dict(row)
+    strengths = candidate.get("key_strengths_json") or []
+    risks = candidate.get("key_risks_json") or []
+    final_score = _safe_float(candidate.get("final_score"))
+    economics_score = _safe_float(candidate.get("economics_score"))
+    cannibalization_score = _safe_float(candidate.get("cannibalization_score"))
+
+    if final_score >= 78 and economics_score >= 70 and cannibalization_score <= 55:
+        verdict = "go"
+    elif final_score >= 58 and economics_score >= 45 and cannibalization_score <= 75:
+        verdict = "consider"
+    else:
+        verdict = "caution"
+
+    best_use_case = _recommended_use_case(
+        str(candidate.get("service_model") or "qsr"),
+        _safe_float(candidate.get("area_m2")),
+    )
+    main_watchout = risks[0] if risks else "Validate lease and capex assumptions before commitment"
+    district = candidate.get("district") or "Riyadh"
+    headline = f"{verdict.upper()}: {district} parcel shows {economics_score:.1f}/100 economics for {best_use_case}"
+
+    return {
+        "candidate_id": candidate["candidate_id"],
+        "search_id": candidate["search_id"],
+        "brand_profile": {
+            "brand_name": candidate.get("brand_name"),
+            "category": candidate.get("category"),
+            "service_model": candidate.get("service_model"),
+        },
+        "candidate": {
+            "parcel_id": candidate.get("parcel_id"),
+            "district": candidate.get("district"),
+            "area_m2": candidate.get("area_m2"),
+            "landuse_label": candidate.get("landuse_label"),
+            "final_score": candidate.get("final_score"),
+            "economics_score": candidate.get("economics_score"),
+            "demand_score": candidate.get("demand_score"),
+            "whitespace_score": candidate.get("whitespace_score"),
+            "fit_score": candidate.get("fit_score"),
+            "confidence_score": candidate.get("confidence_score"),
+            "cannibalization_score": candidate.get("cannibalization_score"),
+            "distance_to_nearest_branch_m": candidate.get("distance_to_nearest_branch_m"),
+            "estimated_rent_sar_m2_year": candidate.get("estimated_rent_sar_m2_year"),
+            "estimated_annual_rent_sar": candidate.get("estimated_annual_rent_sar"),
+            "estimated_fitout_cost_sar": candidate.get("estimated_fitout_cost_sar"),
+            "estimated_revenue_index": candidate.get("estimated_revenue_index"),
+            "estimated_payback_months": candidate.get("estimated_payback_months"),
+            "payback_band": candidate.get("payback_band"),
+            "key_strengths": strengths,
+            "key_risks": risks,
+            "decision_summary": candidate.get("decision_summary"),
+        },
+        "recommendation": {
+            "headline": headline,
+            "verdict": verdict,
+            "best_use_case": best_use_case,
+            "main_watchout": main_watchout,
         },
     }

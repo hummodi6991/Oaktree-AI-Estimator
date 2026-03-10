@@ -89,7 +89,7 @@ def test_post_expansion_search_with_existing_branches(monkeypatch):
     assert body["brand_profile"]["existing_branches"][0]["name"] == "HQ"
     assert body["items"][0]["district"] == "Olaya"
     assert body["items"][0]["cannibalization_score"] == 55.0
-    assert body["meta"]["version"] == "expansion_advisor_v1"
+    assert body["meta"]["version"] == "expansion_advisor_v2"
     assert db.committed is True
 
 
@@ -111,6 +111,16 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
                 "cannibalization_score": 40.0,
                 "distance_to_nearest_branch_m": 3200.0,
                 "compare_rank": 1,
+                "estimated_rent_sar_m2_year": 980.0,
+                "estimated_annual_rent_sar": 176400.0,
+                "estimated_fitout_cost_sar": 468000.0,
+                "estimated_revenue_index": 73.0,
+                "economics_score": 69.0,
+                "estimated_payback_months": 24.0,
+                "payback_band": "promising",
+                "decision_summary": "summary",
+                "key_risks_json": ["risk"],
+                "key_strengths_json": ["strength"],
                 "final_score": 88.1,
                 "explanation": {"summary": "candidate explanation"},
             }
@@ -127,6 +137,8 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
     body = response.json()
     assert body["items"][0]["district"] == "Olaya"
     assert body["items"][0]["compare_rank"] == 1
+    assert body["items"][0]["economics_score"] == 69.0
+    assert body["items"][0]["payback_band"] == "promising"
 
 
 def test_compare_endpoint_happy_path(monkeypatch):
@@ -138,8 +150,16 @@ def test_compare_endpoint_happy_path(monkeypatch):
         expansion_api,
         "compare_candidates",
         lambda _db, _search_id, _candidate_ids: {
-            "items": [{"candidate_id": "c1"}, {"candidate_id": "c2"}],
-            "summary": {"best_overall_candidate_id": "c1"},
+            "items": [
+                {"candidate_id": "c1", "economics_score": 70.0, "estimated_payback_months": 20.0},
+                {"candidate_id": "c2", "economics_score": 62.0, "estimated_payback_months": 28.0},
+            ],
+            "summary": {
+                "best_overall_candidate_id": "c1",
+                "best_economics_candidate_id": "c1",
+                "fastest_payback_candidate_id": "c1",
+                "lowest_rent_burden_candidate_id": "c2",
+            },
         },
     )
 
@@ -155,6 +175,8 @@ def test_compare_endpoint_happy_path(monkeypatch):
     assert response.status_code == 200
     body = response.json()
     assert body["items"][0]["candidate_id"] == "c1"
+    assert body["items"][0]["economics_score"] == 70.0
+    assert body["summary"]["best_economics_candidate_id"] == "c1"
 
 
 def test_compare_endpoint_rejects_foreign_candidate_ids(monkeypatch):
@@ -207,3 +229,75 @@ def test_post_expansion_search_rolls_back_when_scoring_fails(monkeypatch):
     assert response.status_code == 500
     assert db.committed is False
     assert db.rolled_back is True
+
+
+def test_candidate_memo_endpoint_happy_path(monkeypatch):
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(
+        expansion_api,
+        "get_candidate_memo",
+        lambda _db, _candidate_id: {
+            "candidate_id": "c1",
+            "search_id": "search-1",
+            "brand_profile": {"brand_name": "Brand X", "category": "burger", "service_model": "qsr"},
+            "candidate": {
+                "parcel_id": "p1",
+                "district": "Olaya",
+                "area_m2": 180,
+                "landuse_label": "Commercial",
+                "final_score": 81,
+                "economics_score": 72,
+                "demand_score": 79,
+                "whitespace_score": 68,
+                "fit_score": 76,
+                "confidence_score": 84,
+                "cannibalization_score": 33,
+                "distance_to_nearest_branch_m": 2600,
+                "estimated_rent_sar_m2_year": 980,
+                "estimated_annual_rent_sar": 176400,
+                "estimated_fitout_cost_sar": 468000,
+                "estimated_revenue_index": 75,
+                "estimated_payback_months": 21,
+                "payback_band": "promising",
+                "key_strengths": ["Strong demand"],
+                "key_risks": ["Competition"],
+                "decision_summary": "summary",
+            },
+            "recommendation": {
+                "headline": "GO",
+                "verdict": "go",
+                "best_use_case": "neighborhood qsr",
+                "main_watchout": "Competition",
+            },
+        },
+    )
+
+    client = _client_with_db(db)
+    try:
+        response = client.get("/v1/expansion-advisor/candidates/c1/memo")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["candidate_id"] == "c1"
+    assert body["recommendation"]["verdict"] == "go"
+
+
+def test_candidate_memo_endpoint_404(monkeypatch):
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(expansion_api, "get_candidate_memo", lambda _db, _candidate_id: None)
+
+    client = _client_with_db(db)
+    try:
+        response = client.get("/v1/expansion-advisor/candidates/missing/memo")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 404
