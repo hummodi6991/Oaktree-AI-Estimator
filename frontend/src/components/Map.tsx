@@ -15,6 +15,7 @@ import {
   RESTAURANT_HEAT_LAYER_ID,
   RESTAURANT_POINTS_LAYER_ID,
 } from "../map/restaurantHeatLayer";
+import { buildExpansionOverlayData } from "../map/expansionOverlay";
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
@@ -383,6 +384,7 @@ export default function Map({
 
   const restaurantModeRef = useRef(restaurantMode);
   const onExpansionCandidateClickRef = useRef(onExpansionCandidateClick);
+  const expansionCandidateClickHandlerRef = useRef<((e: maplibregl.MapLayerMouseEvent) => void) | null>(null);
   const onRestaurantClickRef = useRef(onRestaurantClick);
   const restaurantHeatmapDataRef = useRef(restaurantHeatmapData);
 
@@ -463,6 +465,10 @@ export default function Map({
       }
     }
   }, [restaurantMode]);
+
+  useEffect(() => {
+    onExpansionCandidateClickRef.current = onExpansionCandidateClick;
+  }, [onExpansionCandidateClick]);
 
   useEffect(() => {
     onRestaurantClickRef.current = onRestaurantClick;
@@ -901,54 +907,81 @@ export default function Map({
     const map = mapRef.current;
     if (!map) return;
 
-    const candidateFeatures = expansionCandidates
-      .filter((item) => Number.isFinite(item.lon) && Number.isFinite(item.lat))
-      .map((item) => ({
-        type: "Feature" as const,
-        geometry: { type: "Point" as const, coordinates: [item.lon, item.lat] },
-        properties: {
-          candidate_id: item.id,
-          selected: item.id === selectedExpansionCandidateId,
-          shortlisted: shortlistExpansionCandidateIds.includes(item.id),
-        },
-      }));
+    const { candidateFc, branchFc } = buildExpansionOverlayData(
+      expansionCandidates,
+      selectedExpansionCandidateId,
+      shortlistExpansionCandidateIds,
+      existingBranches,
+    );
 
-    const branchesFeatures = existingBranches
-      .filter((b) => Number.isFinite(b.lon) && Number.isFinite(b.lat))
-      .map((b) => ({
-        type: "Feature" as const,
-        geometry: { type: "Point" as const, coordinates: [b.lon, b.lat] },
-        properties: {},
-      }));
+    const syncOverlay = () => {
+      if (!map || !map.isStyleLoaded()) return false;
+      try {
+        const candidateSource = map.getSource(EXP_CANDIDATE_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+        if (!candidateSource) {
+          map.addSource(EXP_CANDIDATE_SOURCE_ID, { type: "geojson", data: candidateFc as any });
+        } else {
+          candidateSource.setData(candidateFc as any);
+        }
 
-    const candidateFc = { type: "FeatureCollection" as const, features: candidateFeatures };
-    const branchFc = { type: "FeatureCollection" as const, features: branchesFeatures };
+        if (!map.getLayer(EXP_CANDIDATE_LAYER_ID)) {
+          map.addLayer({
+            id: EXP_CANDIDATE_LAYER_ID,
+            type: "circle",
+            source: EXP_CANDIDATE_SOURCE_ID,
+            paint: {
+              "circle-color": ["case", ["get", "selected"], "#006dff", ["get", "shortlisted"], "#1a9c6c", "#3d5a80"],
+              "circle-radius": ["case", ["get", "selected"], 8, 5],
+            },
+          });
+        }
 
-    if (!map.getSource(EXP_CANDIDATE_SOURCE_ID)) {
-      map.addSource(EXP_CANDIDATE_SOURCE_ID, { type: "geojson", data: candidateFc as any });
-      map.addLayer({
-        id: EXP_CANDIDATE_LAYER_ID,
-        type: "circle",
-        source: EXP_CANDIDATE_SOURCE_ID,
-        paint: {
-          "circle-color": ["case", ["get", "selected"], "#006dff", ["get", "shortlisted"], "#1a9c6c", "#3d5a80"],
-          "circle-radius": ["case", ["get", "selected"], 8, 5],
-        },
-      });
-      map.on("click", EXP_CANDIDATE_LAYER_ID, (e: maplibregl.MapLayerMouseEvent) => {
-        const id = e.features?.[0]?.properties?.candidate_id;
-        if (id && onExpansionCandidateClickRef.current) onExpansionCandidateClickRef.current(String(id));
-      });
-    } else {
-      (map.getSource(EXP_CANDIDATE_SOURCE_ID) as maplibregl.GeoJSONSource).setData(candidateFc as any);
+        const branchSource = map.getSource(EXP_BRANCH_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
+        if (!branchSource) {
+          map.addSource(EXP_BRANCH_SOURCE_ID, { type: "geojson", data: branchFc as any });
+        } else {
+          branchSource.setData(branchFc as any);
+        }
+
+        if (!map.getLayer(EXP_BRANCH_LAYER_ID)) {
+          map.addLayer({
+            id: EXP_BRANCH_LAYER_ID,
+            type: "circle",
+            source: EXP_BRANCH_SOURCE_ID,
+            paint: { "circle-color": "#f59e0b", "circle-radius": 5 },
+          });
+        }
+
+        if (!expansionCandidateClickHandlerRef.current) {
+          expansionCandidateClickHandlerRef.current = (e: maplibregl.MapLayerMouseEvent) => {
+            const id = e.features?.[0]?.properties?.candidate_id;
+            if (id && onExpansionCandidateClickRef.current) onExpansionCandidateClickRef.current(String(id));
+          };
+          map.on("click", EXP_CANDIDATE_LAYER_ID, expansionCandidateClickHandlerRef.current);
+        }
+
+        return true;
+      } catch (error) {
+        console.error("Failed to sync expansion advisor overlay", error);
+        return false;
+      }
+    };
+
+    if (syncOverlay()) {
+      return;
     }
 
-    if (!map.getSource(EXP_BRANCH_SOURCE_ID)) {
-      map.addSource(EXP_BRANCH_SOURCE_ID, { type: "geojson", data: branchFc as any });
-      map.addLayer({ id: EXP_BRANCH_LAYER_ID, type: "circle", source: EXP_BRANCH_SOURCE_ID, paint: { "circle-color": "#f59e0b", "circle-radius": 5 } });
-    } else {
-      (map.getSource(EXP_BRANCH_SOURCE_ID) as maplibregl.GeoJSONSource).setData(branchFc as any);
-    }
+    const handleStyleReady = () => {
+      syncOverlay();
+    };
+
+    map.once("load", handleStyleReady);
+    map.on("styledata", handleStyleReady);
+
+    return () => {
+      map.off("styledata", handleStyleReady);
+      map.off("load", handleStyleReady);
+    };
   }, [expansionCandidates, selectedExpansionCandidateId, shortlistExpansionCandidateIds, existingBranches]);
 
   useEffect(() => {
