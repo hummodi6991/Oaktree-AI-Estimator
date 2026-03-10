@@ -1,6 +1,6 @@
 """initial expansion advisor tables
 
-Revision ID: 20260310_01_expansion_advisor_initial
+Revision ID: 20260310_exp_adv_v0
 Revises: 0016
 Create Date: 2026-03-10
 """
@@ -10,7 +10,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
 
-revision = "20260310_01_expansion_advisor_initial"
+revision = "20260310_exp_adv_v0"
+# Keep Alembic revision ids <= 32 chars to fit alembic_version.version_num.
 down_revision = "0016"
 branch_labels = None
 depends_on = None
