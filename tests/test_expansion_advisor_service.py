@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from app.services.expansion_advisor import compare_candidates, run_expansion_search
+from app.services import expansion_advisor as expansion_service
+from app.services.expansion_advisor import (
+    _payback_band,
+    compare_candidates,
+    get_candidate_memo,
+    run_expansion_search,
+)
 
 
 class _Result:
@@ -18,10 +24,11 @@ class _Result:
 
 
 class FakeDB:
-    def __init__(self, candidate_rows=None, compare_rows=None, has_search=True):
+    def __init__(self, candidate_rows=None, compare_rows=None, has_search=True, memo_row=None):
         self.candidate_rows = candidate_rows or []
         self.compare_rows = compare_rows or []
         self.has_search = has_search
+        self.memo_row = memo_row
         self.inserted = []
 
     def execute(self, stmt, params=None):
@@ -35,10 +42,12 @@ class FakeDB:
             return _Result([{"id": "search-1"}] if self.has_search else [])
         if "FROM expansion_candidate" in sql and "id = ANY" in sql:
             return _Result(self.compare_rows)
+        if "FROM expansion_candidate c" in sql and "JOIN expansion_search s" in sql:
+            return _Result([self.memo_row] if self.memo_row else [])
         return _Result([])
 
 
-def test_district_filtering_narrows_results_and_sets_cannibalization_fields():
+def test_district_filtering_narrows_results_and_sets_economics_fields():
     db = FakeDB(
         candidate_rows=[
             {
@@ -87,6 +96,10 @@ def test_district_filtering_narrows_results_and_sets_cannibalization_fields():
     assert items[0]["district"] == "حي العليا"
     assert items[0]["cannibalization_score"] is not None
     assert items[0]["distance_to_nearest_branch_m"] is not None
+    assert items[0]["economics_score"] is not None
+    assert items[0]["estimated_payback_months"] is not None
+    assert items[0]["payback_band"] in {"strong", "promising", "borderline", "weak"}
+    assert 0.0 <= items[0]["final_score"] <= 100.0
     assert items[0]["compare_rank"] == 1
 
 
@@ -105,6 +118,13 @@ def test_compare_candidates_rejects_candidate_ids_from_other_search():
                 "confidence_score": 90,
                 "cannibalization_score": 40,
                 "distance_to_nearest_branch_m": 2300,
+                "estimated_rent_sar_m2_year": 960,
+                "estimated_annual_rent_sar": 144000,
+                "estimated_fitout_cost_sar": 390000,
+                "estimated_revenue_index": 71,
+                "economics_score": 68,
+                "estimated_payback_months": 24,
+                "payback_band": "promising",
                 "competitor_count": 3,
                 "delivery_listing_count": 12,
                 "population_reach": 14000,
@@ -120,3 +140,116 @@ def test_compare_candidates_rejects_candidate_ids_from_other_search():
         raised = True
 
     assert raised is True
+
+
+def test_payback_band_assignment_logic():
+    assert _payback_band(12) == "strong"
+    assert _payback_band(24) == "promising"
+    assert _payback_band(35) == "borderline"
+    assert _payback_band(52) == "weak"
+
+
+def test_get_candidate_memo_returns_recommendation_shape():
+    db = FakeDB(
+        memo_row={
+            "candidate_id": "c1",
+            "search_id": "search-1",
+            "brand_name": "Brand X",
+            "category": "burger",
+            "service_model": "qsr",
+            "parcel_id": "p1",
+            "district": "Olaya",
+            "area_m2": 180,
+            "landuse_label": "Commercial",
+            "final_score": 82,
+            "economics_score": 75,
+            "demand_score": 80,
+            "whitespace_score": 70,
+            "fit_score": 78,
+            "confidence_score": 85,
+            "cannibalization_score": 35,
+            "distance_to_nearest_branch_m": 2200,
+            "estimated_rent_sar_m2_year": 980,
+            "estimated_annual_rent_sar": 176400,
+            "estimated_fitout_cost_sar": 468000,
+            "estimated_revenue_index": 74,
+            "estimated_payback_months": 22,
+            "payback_band": "promising",
+            "key_strengths_json": ["Strong demand index supports branch throughput"],
+            "key_risks_json": ["Competitive density may pressure launch economics"],
+            "decision_summary": "summary",
+        }
+    )
+
+    memo = get_candidate_memo(db, "c1")
+
+    assert memo is not None
+    assert memo["candidate_id"] == "c1"
+    assert memo["recommendation"]["verdict"] in {"go", "consider", "caution"}
+    assert memo["candidate"]["key_strengths"]
+
+
+def test_run_expansion_search_caches_rent_resolution_by_district(monkeypatch):
+    db = FakeDB(
+        candidate_rows=[
+            {
+                "parcel_id": "p1",
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 160,
+                "lon": 46.70,
+                "lat": 24.70,
+                "district": "حي العليا",
+                "population_reach": 12000,
+                "competitor_count": 4,
+                "delivery_listing_count": 11,
+            },
+            {
+                "parcel_id": "p2",
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 170,
+                "lon": 46.71,
+                "lat": 24.71,
+                "district": "العليا",
+                "population_reach": 11800,
+                "competitor_count": 4,
+                "delivery_listing_count": 10,
+            },
+            {
+                "parcel_id": "p3",
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 180,
+                "lon": 46.72,
+                "lat": 24.72,
+                "district": "الملقا",
+                "population_reach": 12500,
+                "competitor_count": 3,
+                "delivery_listing_count": 12,
+            },
+        ]
+    )
+
+    calls: list[str | None] = []
+
+    def _fake_rent(_db, district):
+        calls.append(district)
+        return (900.0, "test")
+
+    monkeypatch.setattr(expansion_service, "_estimate_rent_sar_m2_year", _fake_rent)
+
+    items = run_expansion_search(
+        db,
+        search_id="search-1",
+        brand_name="Brand X",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=300,
+        target_area_m2=170,
+        limit=10,
+    )
+
+    assert len(items) == 3
+    assert len(calls) == 2
