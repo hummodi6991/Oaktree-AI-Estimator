@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
 from app.services.expansion_advisor import (
+    compare_candidates,
     get_candidates,
     get_search,
+    persist_existing_branches,
     run_expansion_search,
 )
 
@@ -27,6 +29,13 @@ class ExpansionAdvisorBBox(BaseModel):
     max_lat: float
 
 
+class ExistingBranchInput(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=256)
+    lat: float
+    lon: float
+    district: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 class ExpansionAdvisorSearchRequest(BaseModel):
     brand_name: str = Field(..., min_length=1, max_length=256)
     category: str = Field(..., min_length=1, max_length=128)
@@ -35,8 +44,15 @@ class ExpansionAdvisorSearchRequest(BaseModel):
     max_area_m2: float = Field(500, ge=20, le=10000)
     target_area_m2: float | None = Field(None, ge=20, le=10000)
     target_districts: list[str] = Field(default_factory=list)
+    existing_branches: list[ExistingBranchInput] = Field(default_factory=list)
+    comparison_candidate_ids: list[str] | None = None
     bbox: ExpansionAdvisorBBox | None = None
     limit: int = Field(25, ge=1, le=100)
+
+
+class CompareCandidatesRequest(BaseModel):
+    search_id: str = Field(..., min_length=1, max_length=36)
+    candidate_ids: list[str] = Field(..., min_length=2, max_length=6)
 
 
 @router.post("/searches")
@@ -55,6 +71,7 @@ def create_expansion_search(
 
     request_json = req.model_dump()
     bbox_json = req.bbox.model_dump() if req.bbox else None
+    existing_branches_payload = [branch.model_dump() for branch in req.existing_branches]
 
     try:
         db.execute(
@@ -100,7 +117,7 @@ def create_expansion_search(
                 "request_json": json.dumps(request_json, ensure_ascii=False),
                 "notes": json.dumps(
                     {
-                        "version": "expansion_advisor_v0",
+                        "version": "expansion_advisor_v1",
                         "parcel_source": "arcgis_only",
                         "excluded_sources": ["suhail", "inferred_parcels"],
                     },
@@ -108,6 +125,8 @@ def create_expansion_search(
                 ),
             },
         )
+
+        persist_existing_branches(db, search_id, existing_branches_payload)
 
         items = run_expansion_search(
             db=db,
@@ -121,6 +140,7 @@ def create_expansion_search(
             limit=req.limit,
             bbox=bbox_json,
             target_districts=req.target_districts,
+            existing_branches=existing_branches_payload,
         )
         db.commit()
     except Exception:
@@ -137,10 +157,11 @@ def create_expansion_search(
             "max_area_m2": req.max_area_m2,
             "target_area_m2": target_area_m2,
             "target_districts": req.target_districts,
+            "existing_branches": existing_branches_payload,
         },
         "items": items,
         "meta": {
-            "version": "expansion_advisor_v0",
+            "version": "expansion_advisor_v1",
             "parcel_source": "arcgis_only",
             "excluded_sources": ["suhail", "inferred_parcels"],
         },
@@ -161,3 +182,14 @@ def get_expansion_search_candidates(search_id: str, db: Session = Depends(get_db
     if not search:
         raise HTTPException(status_code=404, detail="Expansion search not found")
     return {"items": get_candidates(db, search_id)}
+
+
+@router.post("/candidates/compare")
+def compare_expansion_candidates(
+    req: CompareCandidatesRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        return compare_candidates(db, req.search_id, req.candidate_ids)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Expansion search/candidates not found")
