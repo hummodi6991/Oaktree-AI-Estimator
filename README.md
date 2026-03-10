@@ -113,6 +113,35 @@ The fetch step writes Riyadh-only `.csv.gz` JSONL files into `data/ms_buildings/
     (scales above-ground `area_ratio` by `3.5 / baseline_floors`) so BUA/FAR reflect that.
   - Land pricing defaults to **blended_v1** (Suhail anchor + Kaggle Aqar median, district-resolved once via `resolve_district`), shared with `GET /v1/pricing/land`.
 
+### Expansion Advisor API (v0)
+
+Endpoints:
+- `POST /v1/expansion-advisor/searches`
+- `GET /v1/expansion-advisor/searches/{search_id}`
+- `GET /v1/expansion-advisor/searches/{search_id}/candidates`
+
+`POST /v1/expansion-advisor/searches` request fields:
+- `brand_name` (string)
+- `category` (string)
+- `service_model` (`qsr` | `dine_in` | `delivery_first` | `cafe`)
+- `min_area_m2`, `max_area_m2`, `target_area_m2` (numbers)
+- `target_districts` (string array; accepted but not yet enforced in filtering)
+- `bbox` (`min_lon`, `min_lat`, `max_lon`, `max_lat`)
+- `limit` (1..100)
+
+Response shape:
+- `search_id`
+- `brand_profile` (input profile echoed with computed `target_area_m2`)
+- `items` (ranked candidate list with parcel/location metrics, scores, and explanation)
+- `meta`
+  - `version: expansion_advisor_v0`
+  - `parcel_source: arcgis_only`
+  - `excluded_sources: ["suhail", "inferred_parcels"]`
+
+Notes:
+- v0 uses ArcGIS parcels only (`public.riyadh_parcels_arcgis_proxy`).
+- Suhail and inferred parcels are intentionally excluded in v0.
+
 ### Rent benchmarks (Excel mode)
 
 The Excel pathway blends data sources for rent: if REGA city-level rents exist and Kaggle Aqar district medians are available, the API scales REGA by the district/city ratio from Aqar. When only Aqar rents exist, it falls back to the district median; otherwise the REGA city benchmark (or manual/template rents) is used. Load Kaggle-derived rent comps via `app/ingest/aqar_rent_comps.py` to enable the blend.

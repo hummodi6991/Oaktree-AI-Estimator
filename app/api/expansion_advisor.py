@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+import json
+import uuid
+from typing import Any, Literal
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.db.deps import get_db
+from app.services.expansion_advisor import (
+    get_candidates,
+    get_search,
+    run_expansion_search,
+)
+
+
+router = APIRouter(prefix="/expansion-advisor", tags=["expansion-advisor"])
+
+
+class ExpansionAdvisorBBox(BaseModel):
+    min_lon: float
+    min_lat: float
+    max_lon: float
+    max_lat: float
+
+
+class ExpansionAdvisorSearchRequest(BaseModel):
+    brand_name: str = Field(..., min_length=1, max_length=256)
+    category: str = Field(..., min_length=1, max_length=128)
+    service_model: Literal["qsr", "dine_in", "delivery_first", "cafe"] = "qsr"
+    min_area_m2: float = Field(80, ge=20, le=5000)
+    max_area_m2: float = Field(500, ge=20, le=10000)
+    target_area_m2: float | None = Field(None, ge=20, le=10000)
+    target_districts: list[str] = Field(default_factory=list)
+    bbox: ExpansionAdvisorBBox | None = None
+    limit: int = Field(25, ge=1, le=100)
+
+
+@router.post("/searches")
+def create_expansion_search(
+    req: ExpansionAdvisorSearchRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    if req.min_area_m2 > req.max_area_m2:
+        raise HTTPException(
+            status_code=400,
+            detail="min_area_m2 must be less than or equal to max_area_m2",
+        )
+
+    target_area_m2 = req.target_area_m2 or ((req.min_area_m2 + req.max_area_m2) / 2.0)
+    search_id = str(uuid.uuid4())
+
+    request_json = req.model_dump()
+    bbox_json = req.bbox.model_dump() if req.bbox else None
+
+    try:
+        db.execute(
+            text(
+                """
+                INSERT INTO expansion_search (
+                    id,
+                    brand_name,
+                    category,
+                    service_model,
+                    target_districts,
+                    min_area_m2,
+                    max_area_m2,
+                    target_area_m2,
+                    bbox,
+                    request_json,
+                    notes
+                ) VALUES (
+                    :id,
+                    :brand_name,
+                    :category,
+                    :service_model,
+                    CAST(:target_districts AS jsonb),
+                    :min_area_m2,
+                    :max_area_m2,
+                    :target_area_m2,
+                    CAST(:bbox AS jsonb),
+                    CAST(:request_json AS jsonb),
+                    CAST(:notes AS jsonb)
+                )
+                """
+            ),
+            {
+                "id": search_id,
+                "brand_name": req.brand_name,
+                "category": req.category,
+                "service_model": req.service_model,
+                "target_districts": json.dumps(req.target_districts, ensure_ascii=False),
+                "min_area_m2": req.min_area_m2,
+                "max_area_m2": req.max_area_m2,
+                "target_area_m2": target_area_m2,
+                "bbox": json.dumps(bbox_json, ensure_ascii=False) if bbox_json else None,
+                "request_json": json.dumps(request_json, ensure_ascii=False),
+                "notes": json.dumps(
+                    {
+                        "version": "expansion_advisor_v0",
+                        "parcel_source": "arcgis_only",
+                        "excluded_sources": ["suhail", "inferred_parcels"],
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        )
+
+        items = run_expansion_search(
+            db=db,
+            search_id=search_id,
+            brand_name=req.brand_name,
+            category=req.category,
+            service_model=req.service_model,
+            min_area_m2=req.min_area_m2,
+            max_area_m2=req.max_area_m2,
+            target_area_m2=target_area_m2,
+            limit=req.limit,
+            bbox=bbox_json,
+            target_districts=req.target_districts,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "search_id": search_id,
+        "brand_profile": {
+            "brand_name": req.brand_name,
+            "category": req.category,
+            "service_model": req.service_model,
+            "min_area_m2": req.min_area_m2,
+            "max_area_m2": req.max_area_m2,
+            "target_area_m2": target_area_m2,
+            "target_districts": req.target_districts,
+        },
+        "items": items,
+        "meta": {
+            "version": "expansion_advisor_v0",
+            "parcel_source": "arcgis_only",
+            "excluded_sources": ["suhail", "inferred_parcels"],
+        },
+    }
+
+
+@router.get("/searches/{search_id}")
+def get_expansion_search(search_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    search = get_search(db, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Expansion search not found")
+    return search
+
+
+@router.get("/searches/{search_id}/candidates")
+def get_expansion_search_candidates(search_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    search = get_search(db, search_id)
+    if not search:
+        raise HTTPException(status_code=404, detail="Expansion search not found")
+    return {"items": get_candidates(db, search_id)}
