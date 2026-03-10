@@ -1,0 +1,115 @@
+import { buildApiUrl, fetchWithAuth } from "../../api";
+
+export type ExpansionBrief = {
+  brand_name: string;
+  category: string;
+  service_model: "qsr" | "dine_in" | "delivery_first" | "cafe";
+  min_area_m2: number;
+  max_area_m2: number;
+  target_area_m2?: number | null;
+  target_districts: string[];
+  existing_branches: Array<{ name?: string; lat: number; lon: number; district?: string }>;
+  limit: number;
+};
+
+export type ExpansionCandidate = {
+  id: string;
+  search_id: string;
+  parcel_id: string;
+  district?: string;
+  lat: number;
+  lon: number;
+  final_score?: number;
+  economics_score?: number;
+  compare_rank?: number;
+};
+
+export type SavedExpansionSearch = {
+  id: string;
+  search_id: string;
+  title: string;
+  description?: string | null;
+  status: "draft" | "final";
+  selected_candidate_ids?: string[] | null;
+  filters_json?: Record<string, unknown> | null;
+  ui_state_json?: Record<string, unknown> | null;
+  created_at?: string;
+  updated_at?: string;
+  search?: Record<string, unknown> | null;
+  candidates?: ExpansionCandidate[];
+};
+
+async function readJson<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  return (text ? JSON.parse(text) : {}) as T;
+}
+
+export async function createExpansionSearch(payload: ExpansionBrief) {
+  const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/searches"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return readJson<{ search_id: string; items: ExpansionCandidate[] }>(res);
+}
+
+export async function getExpansionSearch(searchId: string) {
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}`));
+  return readJson<Record<string, unknown>>(res);
+}
+
+export async function getExpansionCandidates(searchId: string) {
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/candidates`));
+  return readJson<{ items: ExpansionCandidate[] }>(res);
+}
+
+export async function compareExpansionCandidates(searchId: string, candidateIds: string[]) {
+  const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/candidates/compare"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ search_id: searchId, candidate_ids: candidateIds }),
+  });
+  return readJson<Record<string, unknown>>(res);
+}
+
+export async function getExpansionCandidateMemo(candidateId: string) {
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo`));
+  return readJson<Record<string, unknown>>(res);
+}
+
+export async function createSavedExpansionSearch(payload: Omit<SavedExpansionSearch, "id">) {
+  const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/saved-searches"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return readJson<SavedExpansionSearch>(res);
+}
+
+export async function listSavedExpansionSearches(status?: "draft" | "final", limit = 20) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (status) params.set("status", status);
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches?${params.toString()}`));
+  return readJson<{ items: SavedExpansionSearch[] }>(res);
+}
+
+export async function getSavedExpansionSearch(savedId: string) {
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`));
+  return readJson<SavedExpansionSearch>(res);
+}
+
+export async function updateSavedExpansionSearch(savedId: string, payload: Partial<SavedExpansionSearch>) {
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return readJson<SavedExpansionSearch>(res);
+}
+
+export async function deleteSavedExpansionSearch(savedId: string) {
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`), {
+    method: "DELETE",
+  });
+  return readJson<{ deleted: boolean }>(res);
+}

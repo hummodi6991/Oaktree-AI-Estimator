@@ -12,11 +12,16 @@ from sqlalchemy.orm import Session
 from app.db.deps import get_db
 from app.services.expansion_advisor import (
     compare_candidates,
+    create_saved_search,
+    delete_saved_search,
     get_candidate_memo,
     get_candidates,
+    get_saved_search,
     get_search,
+    list_saved_searches,
     persist_existing_branches,
     run_expansion_search,
+    update_saved_search,
 )
 
 
@@ -54,6 +59,27 @@ class ExpansionAdvisorSearchRequest(BaseModel):
 class CompareCandidatesRequest(BaseModel):
     search_id: str = Field(..., min_length=1, max_length=36)
     candidate_ids: list[str] = Field(..., min_length=2, max_length=6)
+
+
+
+class SavedSearchCreateRequest(BaseModel):
+    search_id: str = Field(..., min_length=1, max_length=36)
+    title: str = Field(..., min_length=1, max_length=256)
+    description: str | None = None
+    status: Literal["draft", "final"] = "draft"
+    selected_candidate_ids: list[str] | None = None
+    filters_json: dict[str, Any] | None = None
+    ui_state_json: dict[str, Any] | None = None
+
+
+class SavedSearchPatchRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=256)
+    description: str | None = None
+    status: Literal["draft", "final"] | None = None
+    selected_candidate_ids: list[str] | None = None
+    filters_json: dict[str, Any] | None = None
+    ui_state_json: dict[str, Any] | None = None
+
 
 
 @router.post("/searches")
@@ -203,3 +229,80 @@ def compare_expansion_candidates(
         return compare_candidates(db, req.search_id, req.candidate_ids)
     except ValueError:
         raise HTTPException(status_code=404, detail="Expansion search/candidates not found")
+
+
+@router.post("/saved-searches")
+def create_expansion_saved_search(req: SavedSearchCreateRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    if not get_search(db, req.search_id):
+        raise HTTPException(status_code=404, detail="Expansion search not found")
+    try:
+        saved = create_saved_search(
+            db,
+            search_id=req.search_id,
+            title=req.title,
+            description=req.description,
+            status=req.status,
+            selected_candidate_ids=req.selected_candidate_ids,
+            filters_json=req.filters_json,
+            ui_state_json=req.ui_state_json,
+        )
+        db.commit()
+        return saved
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.get("/saved-searches")
+def list_expansion_saved_searches(
+    status: Literal["draft", "final"] | None = None,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    safe_limit = min(max(limit, 1), 100)
+    return {"items": list_saved_searches(db, status=status, limit=safe_limit)}
+
+
+@router.get("/saved-searches/{saved_id}")
+def get_expansion_saved_search(saved_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    saved = get_saved_search(db, saved_id)
+    if not saved:
+        raise HTTPException(status_code=404, detail="Saved search not found")
+    return saved
+
+
+@router.patch("/saved-searches/{saved_id}")
+def patch_expansion_saved_search(
+    saved_id: str,
+    req: SavedSearchPatchRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    payload = req.model_dump(exclude_unset=True)
+    try:
+        saved = update_saved_search(db, saved_id, payload)
+        if not saved:
+            db.rollback()
+            raise HTTPException(status_code=404, detail="Saved search not found")
+        db.commit()
+        return saved
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.delete("/saved-searches/{saved_id}")
+def delete_expansion_saved_search(saved_id: str, db: Session = Depends(get_db)) -> dict[str, bool]:
+    try:
+        deleted = delete_saved_search(db, saved_id)
+        if not deleted:
+            db.rollback()
+            raise HTTPException(status_code=404, detail="Saved search not found")
+        db.commit()
+        return {"deleted": True}
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise

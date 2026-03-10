@@ -26,7 +26,9 @@
     "landUse": {
       "residential": "Residential",
       "mixed": "Mixed/Commercial"
-    }
+    },
+    "modeExpansion": "Expansion Advisor",
+    "modeFeasibility": "Development Feasibility"
   },
   "map": {
     "status": {
@@ -340,16 +342,16 @@
     }
   },
   "restaurant": {
-    "title": "Restaurant Location Finder",
-    "subtitle": "Find the best parcel in Riyadh for a new restaurant branch.",
+    "title": "Legacy Market Intelligence",
+    "subtitle": "Internal legacy workflow only.",
     "categoryLabel": "Restaurant category",
     "chainNameLabel": "Chain name (optional)",
     "chainNamePlaceholder": "e.g. Burger King, Al Baik",
     "scoreLocation": "Score this location",
-    "scoring": "Scoring\u2026",
+    "scoring": "Scoring…",
     "showHeatmap": "Show heatmap",
     "hideHeatmap": "Hide heatmap",
-    "loadingHeatmap": "Loading heatmap\u2026",
+    "loadingHeatmap": "Loading heatmap…",
     "overallScore": "Opportunity score",
     "demandScore": "Demand",
     "costScore": "Cost",
@@ -369,7 +371,7 @@
     "tabTopParcels": "Top Parcels",
     "tabDataSources": "Data Sources",
     "findTopParcels": "Find best locations",
-    "findingTopParcels": "Searching\u2026",
+    "findingTopParcels": "Searching…",
     "cellsEvaluated": "Cells evaluated",
     "topScore": "Score",
     "topCompetitors": "Competitors",
@@ -383,21 +385,66 @@
     "statusActive": "Active",
     "statusPending": "Pending",
     "factors": {
-      "rent": { "label": "Rent", "tip": "Estimated affordability of the area for this restaurant type" },
-      "competition": { "label": "Competition", "tip": "Intensity of nearby same-category competitors" },
-      "zoning_fit": { "label": "Zoning fit", "tip": "How suitable local zoning and land use is for this use" },
-      "parking": { "label": "Parking", "tip": "Expected parking convenience around the site" },
-      "population": { "label": "Population", "tip": "Surrounding residential population support" },
-      "foot_traffic": { "label": "Foot traffic", "tip": "Likely pedestrian activity near the site" },
-      "commercial_density": { "label": "Commercial density", "tip": "Concentration of nearby commercial uses" },
-      "chain_gap": { "label": "Chain gap", "tip": "Whitespace for this category or chain in the area" },
-      "competitor_rating": { "label": "Competitor rating", "tip": "Quality strength of nearby competitors" },
-      "delivery_demand": { "label": "Delivery demand", "tip": "Likely support from food delivery demand" },
-      "anchor_proximity": { "label": "Anchor proximity", "tip": "Closeness to major trip generators" },
-      "complementary": { "label": "Complementary uses", "tip": "Nearby uses that support restaurant performance" },
-      "traffic": { "label": "Traffic", "tip": "Likely vehicle movement around the site" },
-      "income_proxy": { "label": "Income proxy", "tip": "Proxy for local purchasing power" },
-      "road_frontage": { "label": "Road frontage", "tip": "Visibility and access from roads" }
+      "rent": {
+        "label": "Rent",
+        "tip": "Estimated affordability of the area for this restaurant type"
+      },
+      "competition": {
+        "label": "Competition",
+        "tip": "Intensity of nearby same-category competitors"
+      },
+      "zoning_fit": {
+        "label": "Zoning fit",
+        "tip": "How suitable local zoning and land use is for this use"
+      },
+      "parking": {
+        "label": "Parking",
+        "tip": "Expected parking convenience around the site"
+      },
+      "population": {
+        "label": "Population",
+        "tip": "Surrounding residential population support"
+      },
+      "foot_traffic": {
+        "label": "Foot traffic",
+        "tip": "Likely pedestrian activity near the site"
+      },
+      "commercial_density": {
+        "label": "Commercial density",
+        "tip": "Concentration of nearby commercial uses"
+      },
+      "chain_gap": {
+        "label": "Chain gap",
+        "tip": "Whitespace for this category or chain in the area"
+      },
+      "competitor_rating": {
+        "label": "Competitor rating",
+        "tip": "Quality strength of nearby competitors"
+      },
+      "delivery_demand": {
+        "label": "Delivery demand",
+        "tip": "Likely support from food delivery demand"
+      },
+      "anchor_proximity": {
+        "label": "Anchor proximity",
+        "tip": "Closeness to major trip generators"
+      },
+      "complementary": {
+        "label": "Complementary uses",
+        "tip": "Nearby uses that support restaurant performance"
+      },
+      "traffic": {
+        "label": "Traffic",
+        "tip": "Likely vehicle movement around the site"
+      },
+      "income_proxy": {
+        "label": "Income proxy",
+        "tip": "Proxy for local purchasing power"
+      },
+      "road_frontage": {
+        "label": "Road frontage",
+        "tip": "Visibility and access from roads"
+      }
     }
   },
   "mapDraw": {
@@ -419,5 +466,33 @@
     "guidanceText": "Click to add vertices. Double-click or press Finish shape to close the polygon, then drag vertices to adjust the parcel or press Clear to remove it.",
     "toggleOutlines": "Show parcel outlines",
     "finishShape": "Finish shape"
+  },
+  "expansionAdvisor": {
+    "title": "Expansion Advisor",
+    "briefTitle": "Expansion Brief",
+    "brandName": "Brand Name",
+    "category": "Category",
+    "minArea": "Minimum Area (m²)",
+    "maxArea": "Maximum Area (m²)",
+    "targetArea": "Target Area (m²)",
+    "targetDistricts": "Target Districts (comma-separated)",
+    "existingBranches": "Existing Branches (name,lat,lon,district per line)",
+    "searchLimit": "Search limit",
+    "runSearch": "Run Search",
+    "loadingSearch": "Loading search…",
+    "noCandidates": "No candidate parcels returned.",
+    "candidateParcels": "Candidate Parcels",
+    "shortlist": "Shortlist",
+    "removeShortlist": "Remove from shortlist",
+    "compareCandidates": "Compare Candidates",
+    "compareNeedTwo": "Compare requires at least 2 candidates",
+    "decisionMemo": "Decision Memo",
+    "loadingMemo": "Loading memo…",
+    "saveSearch": "Save Search",
+    "savedStudies": "Saved Studies",
+    "noSavedSearches": "No saved searches yet.",
+    "failedSave": "Failed to save study.",
+    "failedLoad": "Failed to load saved study.",
+    "existingBranchesLabel": "Existing Branches"
   }
 }

@@ -858,6 +858,207 @@ def get_candidates(db: Session, search_id: str) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+
+
+def create_saved_search(
+    db: Session,
+    *,
+    search_id: str,
+    title: str,
+    description: str | None,
+    status: str,
+    selected_candidate_ids: list[str] | None,
+    filters_json: dict[str, Any] | None,
+    ui_state_json: dict[str, Any] | None,
+) -> dict[str, Any]:
+    saved_id = str(uuid.uuid4())
+    row = db.execute(
+        text(
+            """
+            INSERT INTO expansion_saved_search (
+                id,
+                search_id,
+                title,
+                description,
+                status,
+                selected_candidate_ids,
+                filters_json,
+                ui_state_json
+            ) VALUES (
+                :id,
+                :search_id,
+                :title,
+                :description,
+                :status,
+                CAST(:selected_candidate_ids AS jsonb),
+                CAST(:filters_json AS jsonb),
+                CAST(:ui_state_json AS jsonb)
+            )
+            RETURNING
+                id,
+                search_id,
+                title,
+                description,
+                status,
+                selected_candidate_ids,
+                filters_json,
+                ui_state_json,
+                created_at,
+                updated_at
+            """
+        ),
+        {
+            "id": saved_id,
+            "search_id": search_id,
+            "title": title,
+            "description": description,
+            "status": status,
+            "selected_candidate_ids": json.dumps(selected_candidate_ids, ensure_ascii=False)
+            if selected_candidate_ids is not None
+            else None,
+            "filters_json": json.dumps(filters_json, ensure_ascii=False) if filters_json is not None else None,
+            "ui_state_json": json.dumps(ui_state_json, ensure_ascii=False) if ui_state_json is not None else None,
+        },
+    ).mappings().first()
+    return dict(row) if row else {}
+
+
+def list_saved_searches(
+    db: Session,
+    *,
+    status: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                id,
+                search_id,
+                title,
+                description,
+                status,
+                selected_candidate_ids,
+                filters_json,
+                ui_state_json,
+                created_at,
+                updated_at
+            FROM expansion_saved_search
+            WHERE (:status IS NULL OR status = :status)
+            ORDER BY updated_at DESC
+            LIMIT :limit
+            """
+        ),
+        {"status": status, "limit": limit},
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def get_saved_search(db: Session, saved_id: str) -> dict[str, Any] | None:
+    row = db.execute(
+        text(
+            """
+            SELECT
+                id,
+                search_id,
+                title,
+                description,
+                status,
+                selected_candidate_ids,
+                filters_json,
+                ui_state_json,
+                created_at,
+                updated_at
+            FROM expansion_saved_search
+            WHERE id = :saved_id
+            """
+        ),
+        {"saved_id": saved_id},
+    ).mappings().first()
+    if not row:
+        return None
+
+    saved = dict(row)
+    search = get_search(db, str(saved["search_id"]))
+    candidates = get_candidates(db, str(saved["search_id"]))
+    saved["search"] = search
+    saved["candidates"] = candidates
+    return saved
+
+
+def update_saved_search(
+    db: Session,
+    saved_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not payload:
+        row = db.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    search_id,
+                    title,
+                    description,
+                    status,
+                    selected_candidate_ids,
+                    filters_json,
+                    ui_state_json,
+                    created_at,
+                    updated_at
+                FROM expansion_saved_search
+                WHERE id = :saved_id
+                """
+            ),
+            {"saved_id": saved_id},
+        ).mappings().first()
+        return dict(row) if row else None
+
+    updates: list[str] = []
+    params: dict[str, Any] = {"saved_id": saved_id}
+    simple_fields = ["title", "description", "status"]
+    for field in simple_fields:
+        if field in payload:
+            updates.append(f"{field} = :{field}")
+            params[field] = payload[field]
+
+    for field in ["selected_candidate_ids", "filters_json", "ui_state_json"]:
+        if field in payload:
+            updates.append(f"{field} = CAST(:{field} AS jsonb)")
+            params[field] = json.dumps(payload[field], ensure_ascii=False) if payload[field] is not None else None
+
+    updates.append("updated_at = now()")
+
+    row = db.execute(
+        text(
+            f"""
+            UPDATE expansion_saved_search
+            SET {', '.join(updates)}
+            WHERE id = :saved_id
+            RETURNING
+                id,
+                search_id,
+                title,
+                description,
+                status,
+                selected_candidate_ids,
+                filters_json,
+                ui_state_json,
+                created_at,
+                updated_at
+            """
+        ),
+        params,
+    ).mappings().first()
+    return dict(row) if row else None
+
+
+def delete_saved_search(db: Session, saved_id: str) -> bool:
+    row = db.execute(
+        text("DELETE FROM expansion_saved_search WHERE id = :saved_id RETURNING id"),
+        {"saved_id": saved_id},
+    ).first()
+    return bool(row)
 def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) -> dict[str, Any]:
     search = db.execute(text("SELECT id FROM expansion_search WHERE id = :search_id"), {"search_id": search_id}).first()
     if not search:

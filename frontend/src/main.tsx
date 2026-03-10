@@ -7,7 +7,8 @@ import Map from "./components/Map";
 import ExcelForm from "./components/ExcelForm";
 import AccessCodeModal from "./components/AccessCodeModal";
 import AdminAnalyticsModal from "./components/AdminAnalyticsModal";
-import RestaurantFinderPanel from "./components/RestaurantFinderPanel";
+import ExpansionAdvisorPage from "./features/expansion-advisor/ExpansionAdvisorPage";
+import type { ExpansionCandidate, ExpansionBrief } from "./lib/api/expansionAdvisor";
 import "./i18n";
 import "./App.css";
 import "./index.css";
@@ -32,7 +33,7 @@ import "./styles/ui-figma.css";
 import "./styles/atlas-ui.css";
 import i18n from "i18next";
 
-type AnalysisMode = "feasibility" | "restaurant";
+type AnalysisMode = "feasibility" | "expansion";
 
 function applyLocaleAttrs() {
   const lng = i18n.language || "en";
@@ -55,10 +56,14 @@ function App() {
   const { t } = useTranslation();
   const [searchTarget, setSearchTarget] = useState<SearchItem | null>(null);
   const [isMapHidden, setIsMapHidden] = useState(false);
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("feasibility");
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>("expansion");
   const [restaurantHeatmapData, setRestaurantHeatmapData] = useState<GeoJSON.FeatureCollection | null>(null);
   const [restaurantClickedLocation, setRestaurantClickedLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [restaurantHighlightCell, setRestaurantHighlightCell] = useState<{ lng: number; lat: number } | null>(null);
+  const [expansionCandidates, setExpansionCandidates] = useState<ExpansionCandidate[]>([]);
+  const [expansionSelectedCandidateId, setExpansionSelectedCandidateId] = useState<string | null>(null);
+  const [expansionShortlistIds, setExpansionShortlistIds] = useState<string[]>([]);
+  const [expansionBranches, setExpansionBranches] = useState<ExpansionBrief["existing_branches"]>([]);
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
 
   const uiV2 = useMemo(() => {
@@ -175,7 +180,7 @@ function App() {
     setRestaurantClickedLocation({ lat, lng });
   }, []);
 
-  const handleRestaurantFlyTo = useCallback((lng: number, lat: number) => {
+  const handleExpansionFlyTo = useCallback((lng: number, lat: number) => {
     const map = mapInstanceRef.current;
     if (!map) return;
     map.flyTo({ center: [lng, lat], zoom: 16, duration: 800 });
@@ -292,17 +297,17 @@ function App() {
                 </button>
                 <button
                   type="button"
-                  className={`oak-btn oak-btn--sm ${analysisMode === "restaurant" ? "oak-btn--primary" : "oak-btn--tertiary"}`}
+                  className={`oak-btn oak-btn--sm ${analysisMode === "expansion" ? "oak-btn--primary" : "oak-btn--tertiary"}`}
                   style={{ borderRadius: "0 var(--oak-radius) var(--oak-radius) 0" }}
-                  onClick={() => setAnalysisMode("restaurant")}
+                  onClick={() => setAnalysisMode("expansion")}
                 >
-                  {t("app.modeRestaurant", { defaultValue: "Restaurant Finder" })}
+                  {t("app.modeExpansion", { defaultValue: "Expansion Advisor" })}
                 </button>
               </div>
               <div className={`ui-v2-map-wrap ${isMapHidden ? "ui-v2-map-wrap--hidden" : ""}`}>
                 <Map
                   onParcel={(selectedParcel) => {
-                    if (analysisMode !== "restaurant") {
+                    if (analysisMode !== "expansion") {
                       setParcel(selectedParcel);
                     }
                   }}
@@ -312,22 +317,41 @@ function App() {
                   focusTarget={searchTarget}
                   mapHeight={isMapHidden ? "0px" : "52vh"}
                   mapContainerClassName="ui-v2-map-canvas"
-                  restaurantHeatmapData={analysisMode === "restaurant" ? restaurantHeatmapData : null}
-                  restaurantMode={analysisMode === "restaurant"}
+                  restaurantHeatmapData={analysisMode === "expansion" ? restaurantHeatmapData : null}
+                  restaurantMode={analysisMode === "expansion"}
                   onRestaurantClick={handleRestaurantClick}
                   highlightCell={restaurantHighlightCell}
                   mapInstanceRef={mapInstanceRef}
+                  expansionCandidates={analysisMode === "expansion" ? expansionCandidates : []}
+                  selectedExpansionCandidateId={expansionSelectedCandidateId}
+                  shortlistExpansionCandidateIds={expansionShortlistIds}
+                  existingBranches={expansionBranches}
+                  onExpansionCandidateClick={(candidateId) => {
+                    const candidate = expansionCandidates.find((item) => item.id === candidateId);
+                    if (!candidate) return;
+                    setExpansionSelectedCandidateId(candidateId);
+                    handleExpansionFlyTo(candidate.lon, candidate.lat);
+                  }}
                 />
               </div>
             </>
           }
           content={
-            analysisMode === "restaurant" ? (
-              <RestaurantFinderPanel
-                onHeatmapData={setRestaurantHeatmapData}
-                onFlyTo={handleRestaurantFlyTo}
-                onHighlightCell={handleRestaurantHighlight}
-                clickedLocation={restaurantClickedLocation}
+            analysisMode === "expansion" ? (
+              <ExpansionAdvisorPage
+                externalSelectedCandidateId={expansionSelectedCandidateId}
+                onCandidatesChange={(candidates, shortlistIds, selectedId, branches) => {
+                  setExpansionCandidates(candidates);
+                  setExpansionShortlistIds(shortlistIds);
+                  setExpansionSelectedCandidateId(selectedId);
+                  setExpansionBranches(branches);
+                }}
+                onSelectedCandidateChange={(candidate) => {
+                  if (!candidate) return;
+                  setExpansionSelectedCandidateId(candidate.id);
+                  handleExpansionFlyTo(candidate.lon, candidate.lat);
+                  handleRestaurantHighlight(candidate.lon, candidate.lat);
+                }}
               />
             ) : parcel ? (
               <AnalysisLayout
