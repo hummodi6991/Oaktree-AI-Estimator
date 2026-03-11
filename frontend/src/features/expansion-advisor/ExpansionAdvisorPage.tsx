@@ -10,6 +10,7 @@ import {
   listSavedExpansionSearches,
   normalizeCandidates,
   type CandidateMemoResponse,
+  type CompareCandidateItem,
   type CompareCandidatesResponse,
   type ExpansionBrief,
   type ExpansionCandidate,
@@ -41,7 +42,7 @@ export function shouldLoadMemoFromMapSelection(externalCandidateId: string | nul
   return Boolean(externalCandidateId && externalCandidateId !== selectedCandidateId);
 }
 
-export function getCompareRows(compareResult: CompareCandidatesResponse | null): ExpansionCandidate[] {
+export function getCompareRows(compareResult: CompareCandidatesResponse | null): CompareCandidateItem[] {
   return compareResult?.items || [];
 }
 

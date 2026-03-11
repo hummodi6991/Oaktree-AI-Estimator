@@ -1,6 +1,12 @@
 import { useTranslation } from "react-i18next";
 import type { RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
 
+function assumptionsText(assumptions: Record<string, unknown> | undefined) {
+  const rows = Object.entries(assumptions || {});
+  if (!rows.length) return "-";
+  return rows.map(([key, value]) => `${key}: ${String(value)}`).join("; ");
+}
+
 export default function ExpansionReportPanel({ report, loading }: { report: RecommendationReportResponse | null; loading: boolean }) {
   const { t } = useTranslation();
   if (loading) return <div>{t("expansionAdvisor.loadingReport")}</div>;
@@ -24,7 +30,7 @@ export default function ExpansionReportPanel({ report, loading }: { report: Reco
           <div key={item.id} style={{ border: "1px solid #d8e1dd", borderRadius: 6, padding: 8 }}>
             <strong>{item.id}</strong> #{item.rank_position ?? "-"} — {item.final_score ?? "-"}
             <div>{t("expansionAdvisor.confidenceGrade")}: {item.confidence_grade || "-"}</div>
-            <div>{t("expansionAdvisor.gateVerdict")}: {item.gate_verdict || (item.gate_status_json?.overall_pass ? t("expansionAdvisor.pass") : t("expansionAdvisor.fail"))}</div>
+            <div>{t("expansionAdvisor.gateVerdict")}: {item.gate_verdict || t("expansionAdvisor.fail")}</div>
             <div>{t("expansionAdvisor.topPositives")}: {(item.top_positives_json || []).slice(0, 2).join(" • ") || "-"}</div>
             <div>{t("expansionAdvisor.topRisks")}: {(item.top_risks_json || []).slice(0, 2).join(" • ") || "-"}</div>
             <div>snapshot: {String(item.feature_snapshot_json?.data_completeness_score ?? "-")}</div>
@@ -32,7 +38,7 @@ export default function ExpansionReportPanel({ report, loading }: { report: Reco
           </div>
         ))}
       </div>
-      <div>{t("expansionAdvisor.assumptions")}: {(report.assumptions || []).join("; ") || "-"}</div>
+      <div>{t("expansionAdvisor.assumptions")}: {assumptionsText(report.assumptions)}</div>
     </div>
   );
 }

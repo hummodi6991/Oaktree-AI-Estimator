@@ -16,7 +16,7 @@ export default function ExpansionMemoPanel({ memo, loading }: { memo: CandidateM
   const gates = (candidate.gate_status || {}) as Record<string, boolean>;
   const gateReasons = (candidate.gate_reasons || {}) as Record<string, unknown>;
   const featureSnapshot = (candidate.feature_snapshot || {}) as Record<string, unknown>;
-  const scoreBreakdown = (candidate.score_breakdown || {}) as Record<string, unknown>;
+  const scoreBreakdown = (candidate.score_breakdown_json || {}) as Record<string, unknown>;
   const comps = (candidate.comparable_competitors || []) as Array<Record<string, unknown>>;
 
   return (
@@ -44,8 +44,8 @@ export default function ExpansionMemoPanel({ memo, loading }: { memo: CandidateM
       <div>{t("expansionAdvisor.failed")}: {toList(gateReasons.failed).join(", ") || "-"}</div>
       <div>{t("expansionAdvisor.unknown")}: {toList(gateReasons.unknown).join(", ") || "-"}</div>
 
-      <div><strong>{t("expansionAdvisor.topPositives")}</strong><ul>{toList(candidate.top_positives).map((s) => <li key={s}>{s}</li>)}</ul></div>
-      <div><strong>{t("expansionAdvisor.topRisks")}</strong><ul>{toList(candidate.top_risks).map((s) => <li key={s}>{s}</li>)}</ul></div>
+      <div><strong>{t("expansionAdvisor.topPositives")}</strong><ul>{toList(candidate.top_positives_json).map((s) => <li key={s}>{s}</li>)}</ul></div>
+      <div><strong>{t("expansionAdvisor.topRisks")}</strong><ul>{toList(candidate.top_risks_json).map((s) => <li key={s}>{s}</li>)}</ul></div>
       <div>{t("expansionAdvisor.demandThesis")}: {String(candidate.demand_thesis ?? "-")}</div>
       <div>{t("expansionAdvisor.costThesis")}: {String(candidate.cost_thesis ?? "-")}</div>
 

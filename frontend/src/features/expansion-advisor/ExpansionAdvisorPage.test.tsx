@@ -67,11 +67,12 @@ describe("Expansion advisor UI behavior", () => {
     expect(restored.selectedCandidate?.id).toBe("c3");
   });
 
-  it("compare response rows are available for rendering", () => {
+  it("compare response rows use candidate_id", () => {
     const rows = getCompareRows({
-      items: [{ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0, final_score: 81, economics_score: 72, estimated_payback_months: 22, payback_band: "promising", brand_fit_score: 77, provider_density_score: 69 }],
+      items: [{ candidate_id: "c1", final_score: 81, economics_score: 72, estimated_payback_months: 22, payback_band: "promising", brand_fit_score: 77, provider_density_score: 69 }],
+      summary: {},
     });
-    expect(rows[0].id).toBe("c1");
+    expect(rows[0].candidate_id).toBe("c1");
     expect(rows[0].economics_score).toBe(72);
   });
 
@@ -81,14 +82,43 @@ describe("Expansion advisor UI behavior", () => {
   });
 
   it("report panel renders recommendation summary", () => {
-    const html = renderToStaticMarkup(<ExpansionReportPanel loading={false} report={{ meta: { version: "6.1" }, recommendation: { best_candidate_id: "c1", runner_up_candidate_id: "c2", best_pass_candidate_id: "c1", best_confidence_candidate_id: "c2", summary: "summary" }, top_candidates: [{ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0, final_score: 90, confidence_grade: "A", gate_status_json: { overall_pass: true } }] }} />);
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        report={{
+          meta: { version: "6.1" },
+          recommendation: { best_candidate_id: "c1", runner_up_candidate_id: "c2", best_pass_candidate_id: "c1", best_confidence_candidate_id: "c2", summary: "summary" },
+          top_candidates: [{ id: "c1", final_score: 90, confidence_grade: "A", gate_verdict: "pass" }],
+          assumptions: { rent_growth: "3%" },
+          brand_profile: {},
+        }}
+      />,
+    );
     expect(html).toContain("c1");
     expect(html).toContain("summary");
     expect(html).toContain("6.1");
+    expect(html).toContain("rent_growth");
   });
 
   it("memo panel renders gate reasons positives and risks", () => {
-    const html = renderToStaticMarkup(<ExpansionMemoPanel loading={false} memo={{ recommendation: { verdict: "go", headline: "GO" }, candidate: { comparable_competitors: [{ id: "r1", name: "Comp", distance_m: 100 }], top_positives: ["demand"], top_risks: ["cost"], gate_status: { overall_pass: true }, gate_reasons: { passed: ["zoning"], failed: ["parking"], unknown: ["access"] } }, market_research: {} }} />);
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={{
+          recommendation: { verdict: "go", headline: "GO" },
+          candidate: {
+            comparable_competitors: [{ id: "r1", name: "Comp", distance_m: 100 }],
+            top_positives_json: ["demand"],
+            top_risks_json: ["cost"],
+            score_breakdown_json: { final_score: 80, weights: {}, inputs: {}, weighted_components: {} },
+            gate_status: { overall_pass: true },
+            gate_reasons: { passed: ["zoning"], failed: ["parking"], unknown: ["access"], thresholds: {}, explanations: {} },
+          },
+          market_research: {},
+          brand_profile: {},
+        }}
+      />,
+    );
     expect(html).toContain("Comp");
     expect(html).toContain("zoning");
     expect(html).toContain("demand");

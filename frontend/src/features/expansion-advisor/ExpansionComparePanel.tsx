@@ -22,8 +22,8 @@ export default function ExpansionComparePanel({ compareIds, result, loading, err
             </thead>
             <tbody>
               {result.items.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.id}</td><td>{value(item.rank_position)}</td><td>{value(item.final_score)}</td><td>{value(item.confidence_grade)}</td><td>{item.gate_status_json?.overall_pass ? t("expansionAdvisor.pass") : t("expansionAdvisor.fail")}</td><td>{value(item.zoning_fit_score)}</td><td>{value(item.frontage_score)}</td><td>{value(item.access_score)}</td><td>{value(item.parking_score)}</td><td>{value(item.access_visibility_score)}</td><td>{value(item.economics_score)}</td><td>{value(item.brand_fit_score)}</td><td>{value(item.provider_density_score)}</td><td>{value(item.provider_whitespace_score)}</td><td>{value(item.estimated_payback_months)}</td><td>{value(item.payback_band)}</td>
+                <tr key={item.candidate_id}>
+                  <td>{item.candidate_id}</td><td>{value(item.rank_position)}</td><td>{value(item.final_score)}</td><td>{value(item.confidence_grade)}</td><td>{item.gate_status_json?.overall_pass ? t("expansionAdvisor.pass") : t("expansionAdvisor.fail")}</td><td>{value(item.zoning_fit_score)}</td><td>{value(item.frontage_score)}</td><td>{value(item.access_score)}</td><td>{value(item.parking_score)}</td><td>{value(item.access_visibility_score)}</td><td>{value(item.economics_score)}</td><td>{value(item.brand_fit_score)}</td><td>{value(item.provider_density_score)}</td><td>{value(item.provider_whitespace_score)}</td><td>{value(item.estimated_payback_months)}</td><td>{value(item.payback_band)}</td>
                 </tr>
               ))}
             </tbody>

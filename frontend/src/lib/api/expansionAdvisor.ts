@@ -34,8 +34,14 @@ export type ExpansionBrief = {
 };
 
 export type ExpansionAdvisorBrandProfileResponse = {
-  meta?: ExpansionAdvisorMeta;
-  profile?: ExpansionBrandProfile;
+  price_tier?: string;
+  average_check_sar?: number;
+  primary_channel?: string;
+  target_customer?: string;
+  expansion_goal?: string;
+  preferred_districts?: string[];
+  excluded_districts?: string[];
+  [key: string]: unknown;
 };
 
 export type CandidateGateReasons = {
@@ -54,16 +60,16 @@ export type CandidateFeatureSnapshot = {
 };
 
 export type CandidateScoreBreakdown = {
-  weights: Record<string, number>;
-  inputs: Record<string, number | string | boolean | null>;
-  weighted_components: Record<string, number>;
+  weights: Record<string, unknown>;
+  inputs: Record<string, unknown>;
+  weighted_components: Record<string, unknown>;
   final_score: number;
-  [key: string]: unknown;
 };
 
 export type ComparableCompetitor = {
   id?: string;
   name?: string;
+  score?: number;
   category?: string;
   district?: string;
   rating?: number;
@@ -74,6 +80,7 @@ export type ComparableCompetitor = {
 
 export type ExpansionCandidate = {
   id: string;
+  candidate_id?: string;
   search_id: string;
   parcel_id: string;
   district?: string;
@@ -109,42 +116,125 @@ export type ExpansionCandidate = {
 };
 
 export type ExpansionSearchResponse = {
-  meta?: ExpansionAdvisorMeta;
   search_id: string;
+  brand_profile: ExpansionAdvisorBrandProfileResponse;
   items: ExpansionCandidate[];
+  meta: ExpansionAdvisorMeta;
 };
 
 export type ExpansionSearchDetailResponse = {
-  meta?: ExpansionAdvisorMeta;
-  search_id: string;
-  brief?: ExpansionBrief;
-  [key: string]: unknown;
+  id: string;
+  created_at?: string;
+  brand_name?: string;
+  category?: string;
+  service_model?: string;
+  target_districts: string[];
+  min_area_m2?: number;
+  max_area_m2?: number;
+  target_area_m2?: number;
+  bbox?: Record<string, unknown> | null;
+  request_json: Record<string, unknown>;
+  notes: Record<string, unknown>;
+  existing_branches: Array<Record<string, unknown>>;
+  brand_profile?: Record<string, unknown> | null;
+  meta: ExpansionAdvisorMeta;
 };
 
 export type ExpansionCandidatesListResponse = {
-  meta?: ExpansionAdvisorMeta;
-  search_id?: string;
   items: ExpansionCandidate[];
+  meta: ExpansionAdvisorMeta;
+};
+
+export type CompareCandidateItem = {
+  candidate_id: string;
+  rank_position?: number;
+  final_score?: number;
+  confidence_grade?: string;
+  gate_status_json?: Record<string, boolean>;
+  zoning_fit_score?: number;
+  frontage_score?: number;
+  access_score?: number;
+  parking_score?: number;
+  access_visibility_score?: number;
+  economics_score?: number;
+  brand_fit_score?: number;
+  provider_density_score?: number;
+  provider_whitespace_score?: number;
+  estimated_payback_months?: number;
+  payback_band?: string;
 };
 
 export type CompareCandidatesResponse = {
-  meta?: ExpansionAdvisorMeta;
-  items: ExpansionCandidate[];
-  summary?: Record<string, string>;
+  items: CompareCandidateItem[];
+  summary: Record<string, string | null>;
 };
 
 export type CandidateMemoResponse = {
-  meta?: ExpansionAdvisorMeta;
-  recommendation?: Record<string, unknown>;
-  candidate?: Record<string, unknown>;
-  market_research?: Record<string, unknown>;
+  candidate_id?: string;
+  search_id?: string;
+  brand_profile: Record<string, unknown>;
+  recommendation: {
+    headline?: string;
+    verdict?: string;
+    best_use_case?: string;
+    main_watchout?: string;
+    gate_verdict?: string;
+  };
+  candidate: {
+    final_score?: number;
+    rank_position?: number;
+    confidence_grade?: string;
+    economics_score?: number;
+    brand_fit_score?: number;
+    payback_band?: string;
+    estimated_payback_months?: number;
+    score_breakdown_json?: CandidateScoreBreakdown;
+    top_positives_json?: string[];
+    top_risks_json?: string[];
+    gate_status?: Record<string, boolean>;
+    gate_reasons?: CandidateGateReasons;
+    feature_snapshot?: CandidateFeatureSnapshot;
+    comparable_competitors?: ComparableCompetitor[];
+    demand_thesis?: string;
+    cost_thesis?: string;
+    [key: string]: unknown;
+  };
+  market_research: {
+    delivery_market_summary?: string;
+    competitive_context?: string;
+    district_fit_summary?: string;
+  };
+};
+
+export type RecommendationTopCandidate = {
+  id?: string;
+  final_score?: number;
+  rank_position?: number;
+  confidence_grade?: string;
+  gate_verdict?: string;
+  top_positives_json?: string[];
+  top_risks_json?: string[];
+  feature_snapshot_json?: Record<string, unknown>;
+  score_breakdown_json?: CandidateScoreBreakdown;
 };
 
 export type RecommendationReportResponse = {
-  meta?: ExpansionAdvisorMeta;
-  recommendation?: Record<string, unknown>;
-  top_candidates?: ExpansionCandidate[];
-  assumptions?: string[];
+  search_id?: string;
+  brand_profile: Record<string, unknown>;
+  meta: ExpansionAdvisorMeta;
+  recommendation: {
+    best_candidate_id?: string;
+    runner_up_candidate_id?: string;
+    best_pass_candidate_id?: string;
+    best_confidence_candidate_id?: string;
+    why_best?: string;
+    main_risk?: string;
+    best_format?: string;
+    summary?: string;
+    report_summary?: string;
+  };
+  top_candidates: RecommendationTopCandidate[];
+  assumptions: Record<string, unknown>;
 };
 
 export type SavedExpansionSearch = {
@@ -158,7 +248,7 @@ export type SavedExpansionSearch = {
   ui_state_json?: Record<string, unknown> | null;
   created_at?: string;
   updated_at?: string;
-  search?: ExpansionSearchDetailResponse | Record<string, unknown> | null;
+  search?: ExpansionSearchDetailResponse | null;
   candidates?: ExpansionCandidate[];
 };
 
@@ -209,9 +299,9 @@ export async function createExpansionSearch(payload: ExpansionBrief): Promise<Ex
 }
 export async function getExpansionSearch(searchId: string): Promise<ExpansionSearchDetailResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}`)); return readJson<ExpansionSearchDetailResponse>(res); }
 export async function getExpansionCandidates(searchId: string): Promise<ExpansionCandidatesListResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/candidates`)); const data = await readJson<ExpansionCandidatesListResponse>(res); return { ...data, items: normalizeCandidates(data.items || []) }; }
-export async function compareExpansionCandidates(searchId: string, candidateIds: string[]): Promise<CompareCandidatesResponse> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/candidates/compare"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search_id: searchId, candidate_ids: candidateIds }) }); const data = await readJson<CompareCandidatesResponse>(res); return { ...data, items: normalizeCandidates(data.items || []) }; }
-export async function getExpansionCandidateMemo(candidateId: string): Promise<CandidateMemoResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo`)); return readJson<CandidateMemoResponse>(res); }
-export async function getExpansionRecommendationReport(searchId: string): Promise<RecommendationReportResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`)); const data = await readJson<RecommendationReportResponse>(res); return { ...data, top_candidates: normalizeCandidates(data.top_candidates || []) }; }
+export async function compareExpansionCandidates(searchId: string, candidateIds: string[]): Promise<CompareCandidatesResponse> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/candidates/compare"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search_id: searchId, candidate_ids: candidateIds }) }); const data = await readJson<CompareCandidatesResponse>(res); return { ...data, items: data.items || [], summary: data.summary || {} }; }
+export async function getExpansionCandidateMemo(candidateId: string): Promise<CandidateMemoResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo`)); const data = await readJson<CandidateMemoResponse>(res); return { ...data, brand_profile: data.brand_profile || {}, recommendation: data.recommendation || {}, candidate: data.candidate || {}, market_research: data.market_research || {} }; }
+export async function getExpansionRecommendationReport(searchId: string): Promise<RecommendationReportResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`)); const data = await readJson<RecommendationReportResponse>(res); return { ...data, top_candidates: data.top_candidates || [], assumptions: data.assumptions || {}, recommendation: data.recommendation || {}, brand_profile: data.brand_profile || {}, meta: data.meta || {} }; }
 export async function createSavedExpansionSearch(payload: Omit<SavedExpansionSearch, "id">): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/saved-searches"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }
 export async function listSavedExpansionSearches(status?: "draft" | "final", limit = 20): Promise<SavedExpansionSearchListResponse> { const params = new URLSearchParams({ limit: String(limit) }); if (status) params.set("status", status); const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches?${params.toString()}`)); const data = await readJson<SavedExpansionSearchListResponse>(res); return { items: (data.items || []).map(normalizeSavedSearch) }; }
 export async function getSavedExpansionSearch(savedId: string): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`)); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }
