@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 
 type Props = {
   defaultTitle: string;
+  defaultDescription?: string;
+  defaultStatus?: "draft" | "final";
   saving: boolean;
   error: string | null;
   isUpdate?: boolean;
@@ -10,11 +12,11 @@ type Props = {
   onClose: () => void;
 };
 
-export default function SaveStudyDialog({ defaultTitle, saving, error, isUpdate, onSave, onClose }: Props) {
+export default function SaveStudyDialog({ defaultTitle, defaultDescription, defaultStatus, saving, error, isUpdate, onSave, onClose }: Props) {
   const { t } = useTranslation();
   const [title, setTitle] = useState(defaultTitle);
-  const [description, setDescription] = useState("");
-  const [status, setStatus] = useState<"draft" | "final">("draft");
+  const [description, setDescription] = useState(defaultDescription || "");
+  const [status, setStatus] = useState<"draft" | "final">(defaultStatus || "draft");
 
   return (
     <div className="ea-dialog-backdrop" onClick={onClose}>

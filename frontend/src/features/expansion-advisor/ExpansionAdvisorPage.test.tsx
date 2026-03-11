@@ -5,6 +5,7 @@ import ExpansionComparePanel, { getOrderedCompareSummaryEntries } from "./Expans
 import ExpansionResultsPanel from "./ExpansionResultsPanel";
 import ExpansionReportPanel, { triggerReportCandidateSelect } from "./ExpansionReportPanel";
 import ExpansionMemoPanel from "./ExpansionMemoPanel";
+import SaveStudyDialog from "./SaveStudyDialog";
 import en from "../../i18n/en.json";
 import {
   restoreSavedUiState,
@@ -597,6 +598,41 @@ describe("Candidate card renders WhyThisRank section", () => {
     );
     expect(html).toContain("ea-why-rank");
     expect(html).toContain("Olaya");
+  });
+});
+
+describe("Update study dialog preserves existing values", () => {
+  it("renders with existing description and status when in update mode", () => {
+    const html = renderToStaticMarkup(
+      <SaveStudyDialog
+        defaultTitle="My Study"
+        defaultDescription="Existing description from server"
+        defaultStatus="final"
+        saving={false}
+        error={null}
+        isUpdate={true}
+        onSave={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain("Existing description from server");
+    expect(html).toContain("My Study");
+    // The <option value="final"> should be selected
+    expect(html).toMatch(/option[^>]*value="final"[^>]*selected/);
+  });
+
+  it("defaults to empty description and draft status for new saves", () => {
+    const html = renderToStaticMarkup(
+      <SaveStudyDialog
+        defaultTitle="New Study"
+        saving={false}
+        error={null}
+        onSave={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    expect(html).toContain("New Study");
+    expect(html).toMatch(/option[^>]*value="draft"[^>]*selected/);
   });
 });
 

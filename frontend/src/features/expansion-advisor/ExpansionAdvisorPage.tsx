@@ -633,9 +633,12 @@ export default function ExpansionAdvisorPage({
         />
       )}
 
-      {activeDrawer === "save" && (
-        <SaveStudyDialog
-          defaultTitle={title}
+      {activeDrawer === "save" && (() => {
+        const activeSaved = activeSavedId ? savedItems.find((s) => s.id === activeSavedId) : null;
+        return <SaveStudyDialog
+          defaultTitle={activeSaved?.title || title}
+          defaultDescription={activeSaved?.description || undefined}
+          defaultStatus={activeSaved?.status || undefined}
           saving={saving}
           error={saveError}
           isUpdate={Boolean(activeSavedId)}
@@ -662,8 +665,8 @@ export default function ExpansionAdvisorPage({
               setActiveDrawer("none");
             } catch { setSaveError(t("expansionAdvisor.errorSavedLoad")); } finally { setSaving(false); }
           }}
-        />
-      )}
+        />;
+      })()}
 
       {reportError && activeDrawer !== "report" && <div className="ea-state ea-state--error">{reportError}</div>}
     </div>
