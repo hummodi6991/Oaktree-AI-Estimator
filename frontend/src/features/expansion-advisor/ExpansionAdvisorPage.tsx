@@ -148,10 +148,15 @@ export default function ExpansionAdvisorPage({
               setShortlistIds(restored.shortlistIds);
               setCompareIds(restored.compareIds);
               setCandidates(normalizeCandidates(saved.candidates || []));
-              setSelectedCandidate(restored.selectedCandidate);
               if (saved.filters_json) setBrief(saved.filters_json as ExpansionBrief);
               setMemo(null);
               setReport(null);
+              if (restored.selectedCandidate) {
+                void handleSelectCandidate(restored.selectedCandidate);
+              } else {
+                setSelectedCandidate(null);
+                onSelectedCandidateChange(null);
+              }
             } catch {
               setSavedLoadError(t("expansionAdvisor.errorSavedLoad"));
             } finally {
