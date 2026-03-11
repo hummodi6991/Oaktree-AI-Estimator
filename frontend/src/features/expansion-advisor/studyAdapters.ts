@@ -340,6 +340,7 @@ export type FinalistTile = {
   district: string;
   gateVerdict: string;
   paybackBand: string;
+  paybackMonths: number | null;
   estimatedAnnualRent: number | null;
   fitoutCost: number | null;
   revenueIndex: number | null;
@@ -369,6 +370,7 @@ export function buildFinalistTiles(
         district: candidate.district || candidate.parcel_id || "—",
         gateVerdict: gatePass === true ? "pass" : gatePass === false ? "fail" : "unknown",
         paybackBand: candidate.payback_band || "—",
+        paybackMonths: candidate.estimated_payback_months ?? null,
         estimatedAnnualRent: candidate.estimated_annual_rent_sar ?? null,
         fitoutCost: candidate.estimated_fitout_cost_sar ?? null,
         revenueIndex: candidate.estimated_revenue_index ?? null,

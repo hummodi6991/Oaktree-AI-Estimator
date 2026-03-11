@@ -748,7 +748,7 @@ describe("buildUiStateJson", () => {
 describe("Finalist tile builder", () => {
   it("builds tiles from shortlist with lead designation", () => {
     const candidates = [
-      makeCandidate({ id: "c1", rank_position: 1, district: "Olaya", final_score: 85, gate_status_json: { overall_pass: true }, payback_band: "fast", estimated_annual_rent_sar: 120000, estimated_fitout_cost_sar: 80000, estimated_revenue_index: 72, top_positives_json: ["Great location"], top_risks_json: ["High rent"], confidence_grade: "A" }),
+      makeCandidate({ id: "c1", rank_position: 1, district: "Olaya", final_score: 85, gate_status_json: { overall_pass: true }, payback_band: "fast", estimated_payback_months: 18, estimated_annual_rent_sar: 120000, estimated_fitout_cost_sar: 80000, estimated_revenue_index: 72, top_positives_json: ["Great location"], top_risks_json: ["High rent"], confidence_grade: "A" }),
       makeCandidate({ id: "c2", rank_position: 2, district: "Malqa", final_score: 78, gate_status_json: { overall_pass: false }, payback_band: "moderate", top_positives_json: [], top_risks_json: [], confidence_grade: "B" }),
     ];
     const tiles = buildFinalistTiles(candidates, ["c1", "c2"], "c1");
@@ -756,6 +756,7 @@ describe("Finalist tile builder", () => {
     expect(tiles[0].isLead).toBe(true);
     expect(tiles[0].district).toBe("Olaya");
     expect(tiles[0].gateVerdict).toBe("pass");
+    expect(tiles[0].paybackMonths).toBe(18);
     expect(tiles[0].bestStrength).toBe("Great location");
     expect(tiles[0].mainRisk).toBe("High rent");
     expect(tiles[1].isLead).toBe(false);

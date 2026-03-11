@@ -67,7 +67,10 @@ function TileCard({
       <div className="ea-finalist-tile__metrics">
         <div className="ea-finalist-tile__metric">
           <span className="ea-finalist-tile__metric-label">{t("expansionAdvisor.payback")}</span>
-          <PaybackBadge band={tile.paybackBand !== "—" ? tile.paybackBand : undefined} />
+          <PaybackBadge
+            band={tile.paybackBand !== "—" ? tile.paybackBand : undefined}
+            months={tile.paybackMonths}
+          />
         </div>
         <div className="ea-finalist-tile__metric">
           <span className="ea-finalist-tile__metric-label">{t("expansionAdvisor.annualRent")}</span>
