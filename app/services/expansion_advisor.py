@@ -143,7 +143,30 @@ def _zoning_fit_score(landuse_label: str | None, landuse_code: str | None) -> fl
     return _clamp(_landuse_fit(landuse_label, landuse_code))
 
 
-def _frontage_score(*, parcel_perimeter_m: float, touches_road: bool, nearby_road_count: int, nearest_major_road_m: float | None) -> float:
+def _table_available(db: Session, table_name: str) -> bool:
+    schema, _, table = table_name.partition(".")
+    if not table:
+        schema, table = "public", schema
+    row = db.execute(
+        text(
+            """
+            SELECT EXISTS(
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = :schema
+                  AND table_name = :table
+            ) AS available
+            """
+        ),
+        {"schema": schema, "table": table},
+    ).mappings().first()
+    return bool(row and row.get("available"))
+
+
+def _frontage_score(*, parcel_perimeter_m: float, touches_road: bool, nearby_road_count: int, nearest_major_road_m: float | None,
+    road_context_available: bool = True) -> float:
+    if not road_context_available:
+        return 55.0
     perimeter_signal = _clamp((parcel_perimeter_m / 260.0) * 100.0)
     touch_signal = 100.0 if touches_road else 40.0
     density_signal = _clamp((nearby_road_count / 6.0) * 100.0)
@@ -151,15 +174,19 @@ def _frontage_score(*, parcel_perimeter_m: float, touches_road: bool, nearby_roa
     return _clamp(perimeter_signal * 0.30 + touch_signal * 0.30 + density_signal * 0.20 + major_road_signal * 0.20)
 
 
-def _access_score(*, touches_road: bool, nearest_major_road_m: float | None, nearby_road_count: int) -> float:
+def _access_score(*, touches_road: bool, nearest_major_road_m: float | None, nearby_road_count: int, road_context_available: bool = True) -> float:
+    if not road_context_available:
+        return 55.0
     touch_signal = 100.0 if touches_road else 30.0
     major_signal = _clamp(100.0 - (_safe_float(nearest_major_road_m, 500.0) / 500.0) * 100.0)
     road_density = _clamp((nearby_road_count / 8.0) * 100.0)
     return _clamp(touch_signal * 0.40 + major_signal * 0.35 + road_density * 0.25)
 
 
-def _parking_score(*, area_m2: float, service_model: str, nearby_parking_count: int, access_score: float) -> float:
+def _parking_score(*, area_m2: float, service_model: str, nearby_parking_count: int, access_score: float, parking_context_available: bool = True) -> float:
     area_signal = _clamp((area_m2 / 300.0) * 100.0)
+    if not parking_context_available:
+        return _clamp(area_signal * 0.50 + access_score * 0.20 + 30.0)
     parking_amenity_signal = _clamp((nearby_parking_count / 6.0) * 100.0)
     model_adjustment = {
         "delivery_first": 80.0,
@@ -182,7 +209,7 @@ def _access_visibility_score(*, frontage_score: float, access_score: float, bran
 def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon: float, area_m2: float, district: str | None,
     landuse_label: str | None, landuse_code: str | None, provider_listing_count: int, provider_platform_count: int,
     competitor_count: int, nearest_branch_distance_m: float | None, rent_source: str, estimated_rent_sar_m2_year: float,
-    economics_score: float) -> dict[str, Any]:
+    economics_score: float, roads_table_available: bool, parking_table_available: bool) -> dict[str, Any]:
     base = {
         "parcel_area_m2": round(_safe_float(area_m2), 2),
         "parcel_perimeter_m": None,
@@ -200,70 +227,149 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
         "rent_source": rent_source,
         "estimated_rent_sar_m2_year": round(_safe_float(estimated_rent_sar_m2_year), 2),
         "economics_score": round(_safe_float(economics_score), 2),
+        "context_sources": {
+            "roads_table_available": False,
+            "parking_table_available": False,
+            "road_context_available": False,
+            "parking_context_available": False,
+        },
+        "missing_context": [],
+        "data_completeness_score": 0,
     }
+
+    base["context_sources"]["roads_table_available"] = roads_table_available
+    base["context_sources"]["parking_table_available"] = parking_table_available
+
     if not parcel_id:
+        base["missing_context"] = ["missing_parcel_id"]
+        base["data_completeness_score"] = 50
         return base
     try:
-        row = db.execute(text(
-            f"""
-            WITH p AS (
-                SELECT id, geom, area_m2
-                FROM {ARCGIS_PARCELS_TABLE}
-                WHERE id::text = :parcel_id
+        perimeter_row = db.execute(
+            text(
+                f"""
+                SELECT COALESCE(ST_Perimeter(p.geom::geography), 0) AS parcel_perimeter_m
+                FROM {ARCGIS_PARCELS_TABLE} p
+                WHERE p.id::text = :parcel_id
                 LIMIT 1
-            )
-            SELECT
-                COALESCE(ST_Perimeter(p.geom::geography), 0) AS parcel_perimeter_m,
-                COALESCE((
-                    SELECT MIN(ST_Distance(l.way::geography, p.geom::geography))
-                    FROM planet_osm_line l
-                    WHERE l.way IS NOT NULL
-                      AND (l.highway IS NOT NULL OR NULLIF(l.name, '') IS NOT NULL)
-                      AND ST_DWithin(l.way::geography, p.geom::geography, 700)
-                      AND (
-                        l.highway IN ('motorway','trunk','primary','secondary')
-                        OR NULLIF(l.name, '') IS NOT NULL
-                      )
-                ), 5000) AS nearest_major_road_distance_m,
-                COALESCE((
-                    SELECT COUNT(*)
-                    FROM planet_osm_line l
-                    WHERE l.way IS NOT NULL
-                      AND l.highway IS NOT NULL
-                      AND ST_DWithin(l.way::geography, ST_Centroid(p.geom)::geography, 250)
-                ), 0) AS nearby_road_segment_count,
-                EXISTS(
-                    SELECT 1
-                    FROM planet_osm_line l
-                    WHERE l.way IS NOT NULL
-                      AND l.highway IS NOT NULL
-                      AND ST_DWithin(l.way::geography, p.geom::geography, 18)
-                ) AS touches_road,
-                COALESCE((
-                    SELECT COUNT(*)
-                    FROM planet_osm_polygon op
-                    WHERE op.way IS NOT NULL
-                      AND (
-                        lower(COALESCE(op.amenity, '')) = 'parking'
-                        OR lower(COALESCE(op.parking, '')) IN ('surface','multi-storey','underground')
-                      )
-                      AND ST_DWithin(op.way::geography, ST_Centroid(p.geom)::geography, 350)
-                ), 0) AS nearby_parking_amenity_count
-            FROM p
-            """
-        ), {"parcel_id": str(parcel_id)}).mappings().first()
-        if row:
-            base.update(
-                {
-                    "parcel_perimeter_m": round(_safe_float(row.get("parcel_perimeter_m")), 2),
-                    "nearest_major_road_distance_m": round(_safe_float(row.get("nearest_major_road_distance_m")), 2),
-                    "nearby_road_segment_count": _safe_int(row.get("nearby_road_segment_count")),
-                    "touches_road": bool(row.get("touches_road")),
-                    "nearby_parking_amenity_count": _safe_int(row.get("nearby_parking_amenity_count")),
-                }
-            )
+                """
+            ),
+            {"parcel_id": str(parcel_id)},
+        ).mappings().first()
+        if perimeter_row:
+            base["parcel_perimeter_m"] = round(_safe_float(perimeter_row.get("parcel_perimeter_m")), 2)
     except Exception:
         pass
+
+    if roads_table_available:
+        try:
+            road_row = db.execute(
+                text(
+                    f"""
+                    WITH p AS (
+                        SELECT geom
+                        FROM {ARCGIS_PARCELS_TABLE}
+                        WHERE id::text = :parcel_id
+                        LIMIT 1
+                    )
+                    SELECT
+                        COALESCE((
+                            SELECT MIN(ST_Distance(l.way::geography, p.geom::geography))
+                            FROM planet_osm_line l
+                            WHERE l.way IS NOT NULL
+                              AND (l.highway IS NOT NULL OR NULLIF(l.name, '') IS NOT NULL)
+                              AND ST_DWithin(l.way::geography, p.geom::geography, 700)
+                              AND (
+                                l.highway IN ('motorway','trunk','primary','secondary')
+                                OR NULLIF(l.name, '') IS NOT NULL
+                              )
+                        ), 5000) AS nearest_major_road_distance_m,
+                        COALESCE((
+                            SELECT COUNT(*)
+                            FROM planet_osm_line l
+                            WHERE l.way IS NOT NULL
+                              AND l.highway IS NOT NULL
+                              AND ST_DWithin(l.way::geography, ST_Centroid(p.geom)::geography, 250)
+                        ), 0) AS nearby_road_segment_count,
+                        EXISTS(
+                            SELECT 1
+                            FROM planet_osm_line l
+                            WHERE l.way IS NOT NULL
+                              AND l.highway IS NOT NULL
+                              AND ST_DWithin(l.way::geography, p.geom::geography, 18)
+                        ) AS touches_road
+                    FROM p
+                    """
+                ),
+                {"parcel_id": str(parcel_id)},
+            ).mappings().first()
+            if road_row:
+                nearby_road_segment_count = _safe_int(road_row.get("nearby_road_segment_count"))
+                touches_road = bool(road_row.get("touches_road"))
+                nearest_major_road_distance_m = _safe_float(road_row.get("nearest_major_road_distance_m"))
+                base.update(
+                    {
+                        "nearest_major_road_distance_m": round(nearest_major_road_distance_m, 2),
+                        "nearby_road_segment_count": nearby_road_segment_count,
+                        "touches_road": touches_road,
+                    }
+                )
+                base["context_sources"]["road_context_available"] = (
+                    nearby_road_segment_count > 0 or touches_road or nearest_major_road_distance_m < 5000
+                )
+        except Exception:
+            pass
+
+    if parking_table_available:
+        try:
+            parking_row = db.execute(
+                text(
+                    f"""
+                    WITH p AS (
+                        SELECT geom
+                        FROM {ARCGIS_PARCELS_TABLE}
+                        WHERE id::text = :parcel_id
+                        LIMIT 1
+                    )
+                    SELECT COALESCE((
+                        SELECT COUNT(*)
+                        FROM planet_osm_polygon op
+                        WHERE op.way IS NOT NULL
+                          AND (
+                            lower(COALESCE(op.amenity, '')) = 'parking'
+                            OR lower(COALESCE(op.parking, '')) IN ('surface','multi-storey','underground')
+                          )
+                          AND ST_DWithin(op.way::geography, ST_Centroid(p.geom)::geography, 350)
+                    ), 0) AS nearby_parking_amenity_count
+                    FROM p
+                    """
+                ),
+                {"parcel_id": str(parcel_id)},
+            ).mappings().first()
+            if parking_row:
+                nearby_parking_amenity_count = _safe_int(parking_row.get("nearby_parking_amenity_count"))
+                base["nearby_parking_amenity_count"] = nearby_parking_amenity_count
+                base["context_sources"]["parking_context_available"] = nearby_parking_amenity_count >= 0
+        except Exception:
+            pass
+
+    missing_context: list[str] = []
+    if not roads_table_available:
+        missing_context.append("roads_table_unavailable")
+    if not parking_table_available:
+        missing_context.append("parking_table_unavailable")
+    if roads_table_available and not base["context_sources"].get("road_context_available"):
+        missing_context.append("road_context_unavailable")
+    if parking_table_available and not base["context_sources"].get("parking_context_available"):
+        missing_context.append("parking_context_unavailable")
+    base["missing_context"] = missing_context
+
+    completeness_components = [100.0]
+    completeness_components.append(100.0 if roads_table_available else 0.0)
+    completeness_components.append(100.0 if parking_table_available else 0.0)
+    completeness_components.append(100.0 if base["context_sources"].get("road_context_available") else 0.0)
+    completeness_components.append(100.0 if base["context_sources"].get("parking_context_available") else 0.0)
+    base["data_completeness_score"] = int(round(sum(completeness_components) / len(completeness_components)))
     return base
 
 
@@ -316,6 +422,8 @@ def _candidate_gate_status(
     economics_score: float,
     payback_band: str,
     brand_profile: dict[str, Any],
+    road_context_available: bool,
+    parking_context_available: bool,
 ) -> tuple[dict[str, bool], dict[str, Any]]:
     thresholds = {
         "area_fit_min": 55.0,
@@ -350,25 +458,123 @@ def _candidate_gate_status(
 
     economics_pass = economics_score >= thresholds["economics_min"] and str(payback_band or "").lower() != "weak"
 
-    checks = [zoning_fit_pass, area_fit_pass, frontage_access_pass, parking_pass, cannibalization_pass, delivery_market_pass, economics_pass]
-    if district:
-        checks.append(district_pass)
-    overall_pass = all(checks)
-    gate_status = {
+    gate_states: dict[str, bool | None] = {
         "zoning_fit_pass": zoning_fit_pass,
         "area_fit_pass": area_fit_pass,
-        "frontage_access_pass": frontage_access_pass,
-        "parking_pass": parking_pass,
+        "frontage_access_pass": frontage_access_pass if road_context_available else None,
+        "parking_pass": parking_pass if parking_context_available else None,
         "district_pass": district_pass,
         "cannibalization_pass": cannibalization_pass,
         "delivery_market_pass": delivery_market_pass,
         "economics_pass": economics_pass,
+    }
+    failed = [k for k, v in gate_states.items() if v is False]
+    passed = [k for k, v in gate_states.items() if v is True]
+    unknown = [k for k, v in gate_states.items() if v is None]
+
+    core_gates = ["zoning_fit_pass", "area_fit_pass", "district_pass", "cannibalization_pass", "delivery_market_pass", "economics_pass"]
+    core_pass = all(gate_states[g] is True for g in core_gates)
+    overall_pass = len(failed) == 0 and core_pass
+
+    gate_status = {
+        "zoning_fit_pass": bool(zoning_fit_pass),
+        "area_fit_pass": bool(area_fit_pass),
+        "frontage_access_pass": bool(frontage_access_pass) if road_context_available else True,
+        "parking_pass": bool(parking_pass) if parking_context_available else True,
+        "district_pass": bool(district_pass),
+        "cannibalization_pass": bool(cannibalization_pass),
+        "delivery_market_pass": bool(delivery_market_pass),
+        "economics_pass": bool(economics_pass),
         "overall_pass": overall_pass,
     }
-    passed = [k for k, v in gate_status.items() if v and k != "overall_pass"]
-    failed = [k for k, v in gate_status.items() if (not v) and k != "overall_pass"]
-    reasons = {"passed": passed, "failed": failed, "thresholds": thresholds}
+    explanations = {
+        "zoning_fit_pass": "Zoning fit compares parcel land-use compatibility against threshold.",
+        "area_fit_pass": "Area fit checks candidate area against requested branch range.",
+        "frontage_access_pass": "Frontage/access gate depends on road context and road-adjacent signals.",
+        "parking_pass": "Parking gate depends on nearby parking amenity context and parcel suitability.",
+        "district_pass": "District gate fails only for explicitly excluded districts.",
+        "cannibalization_pass": "Cannibalization gate checks minimum spacing from existing branches.",
+        "delivery_market_pass": "Delivery-market gate applies when primary channel is delivery.",
+        "economics_pass": "Economics gate requires minimum economics score and non-weak payback.",
+    }
+    reasons = {"passed": passed, "failed": failed, "unknown": unknown, "thresholds": thresholds, "explanations": explanations}
     return gate_status, reasons
+
+
+def _score_breakdown(
+    *,
+    demand_score: float,
+    whitespace_score: float,
+    brand_fit_score: float,
+    economics_score: float,
+    provider_intelligence_composite: float,
+    access_visibility_score: float,
+    confidence_score: float,
+) -> dict[str, Any]:
+    component_weights = {
+        "demand_potential": 25,
+        "competition_whitespace": 20,
+        "brand_fit": 20,
+        "occupancy_economics": 15,
+        "delivery_demand": 10,
+        "access_visibility": 5,
+        "confidence": 5,
+    }
+    weighted_components = {
+        "demand_potential": round(_safe_float(demand_score) * 0.25, 2),
+        "competition_whitespace": round(_safe_float(whitespace_score) * 0.20, 2),
+        "brand_fit": round(_safe_float(brand_fit_score) * 0.20, 2),
+        "occupancy_economics": round(_safe_float(economics_score) * 0.15, 2),
+        "delivery_demand": round(_safe_float(provider_intelligence_composite) * 0.10, 2),
+        "access_visibility": round(_safe_float(access_visibility_score) * 0.05, 2),
+        "confidence": round(_safe_float(confidence_score) * 0.05, 2),
+    }
+    final_score = round(sum(weighted_components.values()), 2)
+    return {
+        "weights": component_weights,
+        "inputs": {
+            "demand_potential": round(_safe_float(demand_score), 2),
+            "competition_whitespace": round(_safe_float(whitespace_score), 2),
+            "brand_fit": round(_safe_float(brand_fit_score), 2),
+            "occupancy_economics": round(_safe_float(economics_score), 2),
+            "delivery_demand": round(_safe_float(provider_intelligence_composite), 2),
+            "access_visibility": round(_safe_float(access_visibility_score), 2),
+            "confidence": round(_safe_float(confidence_score), 2),
+        },
+        "weighted_components": weighted_components,
+        "final_score": round(_clamp(final_score), 2),
+    }
+
+
+def _top_positives_and_risks(
+    *,
+    candidate: dict[str, Any],
+    gate_reasons: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    positives: list[str] = []
+    risks: list[str] = []
+    if _safe_float(candidate.get("demand_score")) >= 70:
+        positives.append("Demand potential is strong for this district.")
+    if _safe_float(candidate.get("whitespace_score")) >= 65:
+        positives.append("Competitive whitespace remains favorable.")
+    if _safe_float(candidate.get("brand_fit_score")) >= 70:
+        positives.append("Brand-fit profile aligns with site characteristics.")
+    if _safe_float(candidate.get("economics_score")) >= 65:
+        positives.append("Economics profile meets target screening band.")
+    if bool((candidate.get("gate_status_json") or {}).get("overall_pass")):
+        positives.append("All required gates pass under available context.")
+
+    if _safe_float(candidate.get("cannibalization_score")) >= 70:
+        risks.append("Cannibalization risk is elevated versus branch network.")
+    if _safe_float(candidate.get("economics_score")) < 50:
+        risks.append("Economics score is below preferred threshold.")
+    if _safe_float(candidate.get("delivery_competition_score")) >= 65:
+        risks.append("Delivery competition intensity is high.")
+    for gate in gate_reasons.get("failed") or []:
+        risks.append(f"Gate failed: {gate}.")
+    for gate in gate_reasons.get("unknown") or []:
+        risks.append(f"Gate unknown due to missing context: {gate}.")
+    return positives[:5], risks[:5]
 
 
 def _confidence_grade(
@@ -1051,7 +1257,10 @@ def run_expansion_search(
     ).mappings().all()
 
     candidates: list[dict[str, Any]] = []
+    prepared: list[dict[str, Any]] = []
     rent_cache: dict[str | None, tuple[float, str]] = {}
+    roads_table_available = _table_available(db, "public.planet_osm_line")
+    parking_table_available = _table_available(db, "public.planet_osm_polygon")
     for row in rows:
         area_m2 = _safe_float(row.get("area_m2"))
         population_reach = _safe_float(row.get("population_reach"))
@@ -1090,7 +1299,6 @@ def run_expansion_search(
             existing_branches,
         )
         cannibalization_score = _cannibalization_score(distance_to_nearest_branch_m, service_model)
-        cannibalization_component = 100.0 - cannibalization_score
 
         rent_cache_key = district_norm or None
         if rent_cache_key not in rent_cache:
@@ -1119,6 +1327,122 @@ def run_expansion_search(
             confidence_score=confidence_score,
         )
         payback_band = _payback_band(estimated_payback_months)
+        frontage_score = 55.0
+        access_score = 55.0
+        parking_score = _parking_score(
+            area_m2=area_m2,
+            service_model=service_model,
+            nearby_parking_count=0,
+            access_score=access_score,
+            parking_context_available=False,
+        )
+        access_visibility_score = _access_visibility_score(
+            frontage_score=frontage_score,
+            access_score=access_score,
+            brand_profile=effective_brand_profile,
+        )
+        brand_fit_score = _brand_fit_score(
+            district=district,
+            area_m2=area_m2,
+            demand_score=demand_score,
+            fit_score=fit_score,
+            cannibalization_score=cannibalization_score,
+            provider_density_score=provider_density_score,
+            provider_whitespace_score=provider_whitespace_score,
+            multi_platform_presence_score=multi_platform_presence_score,
+            delivery_competition_score=delivery_competition_score,
+            visibility_signal=access_visibility_score,
+            parking_signal=parking_score,
+            brand_profile=effective_brand_profile,
+            service_model=service_model,
+        )
+        provider_intelligence_composite = _clamp(
+            provider_density_score * 0.28
+            + provider_whitespace_score * 0.30
+            + multi_platform_presence_score * 0.22
+            + (100.0 - delivery_competition_score) * 0.20
+        )
+
+        preliminary_breakdown = _score_breakdown(
+            demand_score=demand_score,
+            whitespace_score=whitespace_score,
+            brand_fit_score=brand_fit_score,
+            economics_score=economics_score,
+            provider_intelligence_composite=provider_intelligence_composite,
+            access_visibility_score=access_visibility_score,
+            confidence_score=confidence_score,
+        )
+        prepared.append(
+            {
+                "row": dict(row),
+                "area_m2": area_m2,
+                "population_reach": population_reach,
+                "competitor_count": competitor_count,
+                "delivery_listing_count": delivery_listing_count,
+                "provider_listing_count": provider_listing_count,
+                "provider_platform_count": provider_platform_count,
+                "delivery_competition_count": delivery_competition_count,
+                "landuse_label": landuse_label,
+                "landuse_code": landuse_code,
+                "district": district,
+                "demand_score": demand_score,
+                "whitespace_score": whitespace_score,
+                "fit_score": fit_score,
+                "zoning_fit_score": zoning_fit_score,
+                "provider_density_score": provider_density_score,
+                "provider_whitespace_score": provider_whitespace_score,
+                "multi_platform_presence_score": multi_platform_presence_score,
+                "delivery_competition_score": delivery_competition_score,
+                "confidence_score": confidence_score,
+                "distance_to_nearest_branch_m": distance_to_nearest_branch_m,
+                "cannibalization_score": cannibalization_score,
+                "estimated_rent_sar_m2_year": estimated_rent_sar_m2_year,
+                "rent_source": rent_source,
+                "estimated_annual_rent_sar": estimated_annual_rent_sar,
+                "estimated_fitout_cost_sar": estimated_fitout_cost_sar,
+                "estimated_revenue_index": estimated_revenue_index,
+                "economics_score": economics_score,
+                "estimated_payback_months": estimated_payback_months,
+                "payback_band": payback_band,
+                "provider_intelligence_composite": provider_intelligence_composite,
+                "preliminary_final_score": _safe_float(preliminary_breakdown.get("final_score")),
+            }
+        )
+
+    prepared.sort(key=lambda item: item["preliminary_final_score"], reverse=True)
+    shortlist_size = min(len(prepared), max(limit, 50))
+    for prepared_item in prepared[:shortlist_size]:
+        row = prepared_item["row"]
+        area_m2 = prepared_item["area_m2"]
+        population_reach = prepared_item["population_reach"]
+        competitor_count = prepared_item["competitor_count"]
+        delivery_listing_count = prepared_item["delivery_listing_count"]
+        provider_listing_count = prepared_item["provider_listing_count"]
+        provider_platform_count = prepared_item["provider_platform_count"]
+        landuse_label = prepared_item["landuse_label"]
+        landuse_code = prepared_item["landuse_code"]
+        district = prepared_item["district"]
+        demand_score = prepared_item["demand_score"]
+        whitespace_score = prepared_item["whitespace_score"]
+        fit_score = prepared_item["fit_score"]
+        zoning_fit_score = prepared_item["zoning_fit_score"]
+        provider_density_score = prepared_item["provider_density_score"]
+        provider_whitespace_score = prepared_item["provider_whitespace_score"]
+        multi_platform_presence_score = prepared_item["multi_platform_presence_score"]
+        delivery_competition_score = prepared_item["delivery_competition_score"]
+        confidence_score = prepared_item["confidence_score"]
+        distance_to_nearest_branch_m = prepared_item["distance_to_nearest_branch_m"]
+        cannibalization_score = prepared_item["cannibalization_score"]
+        estimated_rent_sar_m2_year = prepared_item["estimated_rent_sar_m2_year"]
+        rent_source = prepared_item["rent_source"]
+        estimated_annual_rent_sar = prepared_item["estimated_annual_rent_sar"]
+        estimated_fitout_cost_sar = prepared_item["estimated_fitout_cost_sar"]
+        estimated_revenue_index = prepared_item["estimated_revenue_index"]
+        economics_score = prepared_item["economics_score"]
+        estimated_payback_months = prepared_item["estimated_payback_months"]
+        payback_band = prepared_item["payback_band"]
+        provider_intelligence_composite = prepared_item["provider_intelligence_composite"]
+
         feature_snapshot_json = _candidate_feature_snapshot(
             db,
             parcel_id=str(row.get("parcel_id") or ""),
@@ -1135,31 +1459,36 @@ def run_expansion_search(
             rent_source=rent_source,
             estimated_rent_sar_m2_year=estimated_rent_sar_m2_year,
             economics_score=economics_score,
+            roads_table_available=roads_table_available,
+            parking_table_available=parking_table_available,
         )
+        road_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("road_context_available"))
+        parking_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("parking_context_available"))
         frontage_score = _frontage_score(
             parcel_perimeter_m=_safe_float(feature_snapshot_json.get("parcel_perimeter_m")),
             touches_road=bool(feature_snapshot_json.get("touches_road")),
             nearby_road_count=_safe_int(feature_snapshot_json.get("nearby_road_segment_count")),
             nearest_major_road_m=_safe_float(feature_snapshot_json.get("nearest_major_road_distance_m")),
+            road_context_available=road_context_available,
         )
         access_score = _access_score(
             touches_road=bool(feature_snapshot_json.get("touches_road")),
             nearest_major_road_m=_safe_float(feature_snapshot_json.get("nearest_major_road_distance_m")),
             nearby_road_count=_safe_int(feature_snapshot_json.get("nearby_road_segment_count")),
+            road_context_available=road_context_available,
         )
         parking_score = _parking_score(
             area_m2=area_m2,
             service_model=service_model,
             nearby_parking_count=_safe_int(feature_snapshot_json.get("nearby_parking_amenity_count")),
             access_score=access_score,
+            parking_context_available=parking_context_available,
         )
         access_visibility_score = _access_visibility_score(
             frontage_score=frontage_score,
             access_score=access_score,
             brand_profile=effective_brand_profile,
         )
-        visibility_signal = access_visibility_score
-        parking_signal = parking_score
         brand_fit_score = _brand_fit_score(
             district=district,
             area_m2=area_m2,
@@ -1170,12 +1499,21 @@ def run_expansion_search(
             provider_whitespace_score=provider_whitespace_score,
             multi_platform_presence_score=multi_platform_presence_score,
             delivery_competition_score=delivery_competition_score,
-            visibility_signal=visibility_signal,
-            parking_signal=parking_signal,
+            visibility_signal=access_visibility_score,
+            parking_signal=parking_score,
             brand_profile=effective_brand_profile,
             service_model=service_model,
         )
-
+        score_breakdown_json = _score_breakdown(
+            demand_score=demand_score,
+            whitespace_score=whitespace_score,
+            brand_fit_score=brand_fit_score,
+            economics_score=economics_score,
+            provider_intelligence_composite=provider_intelligence_composite,
+            access_visibility_score=access_visibility_score,
+            confidence_score=confidence_score,
+        )
+        final_score = _safe_float(score_breakdown_json.get("final_score"))
         key_strengths_json, key_risks_json = _build_strengths_and_risks(
             demand_score=demand_score,
             whitespace_score=whitespace_score,
@@ -1183,33 +1521,6 @@ def run_expansion_search(
             cannibalization_score=cannibalization_score,
             payback_band=payback_band,
             rent_source=rent_source,
-        )
-
-        provider_intelligence_composite = _clamp(
-            provider_density_score * 0.28
-            + provider_whitespace_score * 0.30
-            + multi_platform_presence_score * 0.22
-            + (100.0 - delivery_competition_score) * 0.20
-        )
-
-        final_score = _clamp(
-            demand_score * 0.25
-            + whitespace_score * 0.20
-            + brand_fit_score * 0.20
-            + economics_score * 0.15
-            + provider_intelligence_composite * 0.10
-            + access_visibility_score * 0.05
-            + confidence_score * 0.05
-        )
-
-        decision_summary = _decision_summary(
-            district=district,
-            final_score=final_score,
-            economics_score=economics_score,
-            payback_band=payback_band,
-            key_risks=key_risks_json,
-            service_model=service_model,
-            area_m2=area_m2,
         )
         gate_status_json, gate_reasons_json = _candidate_gate_status(
             fit_score=fit_score,
@@ -1224,6 +1535,8 @@ def run_expansion_search(
             economics_score=economics_score,
             payback_band=payback_band,
             brand_profile=effective_brand_profile,
+            road_context_available=road_context_available,
+            parking_context_available=parking_context_available,
         )
         confidence_grade = _confidence_grade(
             confidence_score=confidence_score,
@@ -1271,6 +1584,25 @@ def run_expansion_search(
             rent_source=rent_source,
             final_score=final_score,
         )
+        seed_candidate = {
+            "demand_score": demand_score,
+            "whitespace_score": whitespace_score,
+            "brand_fit_score": brand_fit_score,
+            "economics_score": economics_score,
+            "delivery_competition_score": delivery_competition_score,
+            "cannibalization_score": cannibalization_score,
+            "gate_status_json": gate_status_json,
+        }
+        top_positives_json, top_risks_json = _top_positives_and_risks(candidate=seed_candidate, gate_reasons=gate_reasons_json)
+        decision_summary = _decision_summary(
+            district=district,
+            final_score=final_score,
+            economics_score=economics_score,
+            payback_band=payback_band,
+            key_risks=key_risks_json,
+            service_model=service_model,
+            area_m2=area_m2,
+        )
 
         candidates.append(
             {
@@ -1314,9 +1646,12 @@ def run_expansion_search(
                 "gate_status_json": gate_status_json,
                 "gate_reasons_json": gate_reasons_json,
                 "feature_snapshot_json": feature_snapshot_json,
+                "score_breakdown_json": score_breakdown_json,
                 "confidence_grade": confidence_grade,
                 "demand_thesis": demand_thesis,
                 "cost_thesis": cost_thesis,
+                "top_positives_json": top_positives_json,
+                "top_risks_json": top_risks_json,
                 "comparable_competitors_json": comparable_competitors_json,
                 "decision_summary": decision_summary,
                 "key_risks_json": key_risks_json,
@@ -1330,6 +1665,7 @@ def run_expansion_search(
     candidates = candidates[:limit]
     for index, candidate in enumerate(candidates, start=1):
         candidate["compare_rank"] = index
+        candidate["rank_position"] = index
 
     insert_sql = text(
         """
@@ -1373,14 +1709,18 @@ def run_expansion_search(
             gate_status_json,
             gate_reasons_json,
             feature_snapshot_json,
+            score_breakdown_json,
             confidence_grade,
             demand_thesis,
             cost_thesis,
+            top_positives_json,
+            top_risks_json,
             comparable_competitors_json,
             decision_summary,
             key_risks_json,
             key_strengths_json,
             compare_rank,
+            rank_position,
             explanation
         ) VALUES (
             :id,
@@ -1422,14 +1762,18 @@ def run_expansion_search(
             CAST(:gate_status_json AS jsonb),
             CAST(:gate_reasons_json AS jsonb),
             CAST(:feature_snapshot_json AS jsonb),
+            CAST(:score_breakdown_json AS jsonb),
             :confidence_grade,
             :demand_thesis,
             :cost_thesis,
+            CAST(:top_positives_json AS jsonb),
+            CAST(:top_risks_json AS jsonb),
             CAST(:comparable_competitors_json AS jsonb),
             :decision_summary,
             CAST(:key_risks_json AS jsonb),
             CAST(:key_strengths_json AS jsonb),
             :compare_rank,
+            :rank_position,
             CAST(:explanation AS jsonb)
         )
         """
@@ -1446,6 +1790,9 @@ def run_expansion_search(
                 "gate_status_json": json.dumps(candidate["gate_status_json"], ensure_ascii=False),
                 "gate_reasons_json": json.dumps(candidate["gate_reasons_json"], ensure_ascii=False),
                 "feature_snapshot_json": json.dumps(candidate["feature_snapshot_json"], ensure_ascii=False),
+                "score_breakdown_json": json.dumps(candidate["score_breakdown_json"], ensure_ascii=False),
+                "top_positives_json": json.dumps(candidate["top_positives_json"], ensure_ascii=False),
+                "top_risks_json": json.dumps(candidate["top_risks_json"], ensure_ascii=False),
                 "comparable_competitors_json": json.dumps(candidate["comparable_competitors_json"], ensure_ascii=False),
             },
         )
@@ -1532,8 +1879,11 @@ def get_candidates(db: Session, search_id: str) -> list[dict[str, Any]]:
                 gate_status_json,
                 gate_reasons_json,
                 feature_snapshot_json,
+                score_breakdown_json,
                 demand_thesis,
                 cost_thesis,
+                top_positives_json,
+                top_risks_json,
                 comparable_competitors_json,
                 cannibalization_score,
                 distance_to_nearest_branch_m,
@@ -1554,11 +1904,12 @@ def get_candidates(db: Session, search_id: str) -> list[dict[str, Any]]:
                 key_strengths_json,
                 final_score,
                 compare_rank,
+                rank_position,
                 explanation,
                 computed_at
             FROM expansion_candidate
             WHERE search_id = :search_id
-            ORDER BY compare_rank ASC NULLS LAST, final_score DESC, computed_at DESC
+            ORDER BY rank_position ASC NULLS LAST, compare_rank ASC NULLS LAST, final_score DESC, computed_at DESC
             """
         ),
         {"search_id": search_id},
@@ -1799,8 +2150,11 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 gate_status_json,
                 gate_reasons_json,
                 feature_snapshot_json,
+                score_breakdown_json,
                 demand_thesis,
                 cost_thesis,
+                top_positives_json,
+                top_risks_json,
                 comparable_competitors_json,
                 cannibalization_score,
                 distance_to_nearest_branch_m,
@@ -1819,7 +2173,8 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 competitor_count,
                 delivery_listing_count,
                 population_reach,
-                landuse_label
+                landuse_label,
+                rank_position
             FROM expansion_candidate
             WHERE search_id = :search_id
               AND id = ANY(:candidate_ids)
@@ -1870,8 +2225,11 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 "gate_status_json": row.get("gate_status_json") or {},
                 "gate_reasons_json": row.get("gate_reasons_json") or {},
                 "feature_snapshot_json": row.get("feature_snapshot_json") or {},
+                "score_breakdown_json": row.get("score_breakdown_json") or {},
                 "demand_thesis": row.get("demand_thesis"),
                 "cost_thesis": row.get("cost_thesis"),
+                "top_positives_json": row.get("top_positives_json") or [],
+                "top_risks_json": row.get("top_risks_json") or [],
                 "comparable_competitors_json": row.get("comparable_competitors_json") or [],
                 "cannibalization_score": row.get("cannibalization_score"),
                 "distance_to_nearest_branch_m": row.get("distance_to_nearest_branch_m"),
@@ -1891,6 +2249,7 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 "delivery_listing_count": row.get("delivery_listing_count"),
                 "population_reach": row.get("population_reach"),
                 "landuse_label": row.get("landuse_label"),
+                "rank_position": row.get("rank_position"),
                 "pros": pros,
                 "cons": cons,
             }
@@ -1970,8 +2329,11 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
                 c.gate_status_json,
                 c.gate_reasons_json,
                 c.feature_snapshot_json,
+                c.score_breakdown_json,
                 c.demand_thesis,
                 c.cost_thesis,
+                c.top_positives_json,
+                c.top_risks_json,
                 c.comparable_competitors_json,
                 c.cannibalization_score,
                 c.distance_to_nearest_branch_m,
@@ -1983,7 +2345,8 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
                 c.payback_band,
                 c.key_strengths_json,
                 c.key_risks_json,
-                c.decision_summary
+                c.decision_summary,
+                c.rank_position
             FROM expansion_candidate c
             JOIN expansion_search s ON s.id = c.search_id
             WHERE c.id = :candidate_id
@@ -2063,8 +2426,11 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "gate_status": candidate.get("gate_status_json") or {},
             "gate_reasons": candidate.get("gate_reasons_json") or {},
             "feature_snapshot": candidate.get("feature_snapshot_json") or {},
+            "score_breakdown_json": candidate.get("score_breakdown_json") or {},
             "demand_thesis": candidate.get("demand_thesis"),
             "cost_thesis": candidate.get("cost_thesis"),
+            "top_positives_json": candidate.get("top_positives_json") or [],
+            "top_risks_json": candidate.get("top_risks_json") or [],
             "comparable_competitors": candidate.get("comparable_competitors_json") or [],
             "cannibalization_score": candidate.get("cannibalization_score"),
             "distance_to_nearest_branch_m": candidate.get("distance_to_nearest_branch_m"),
@@ -2077,6 +2443,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "key_strengths": strengths,
             "key_risks": risks,
             "decision_summary": candidate.get("decision_summary"),
+            "rank_position": candidate.get("rank_position"),
         },
         "recommendation": {
             "headline": headline,
@@ -2137,12 +2504,17 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
         payload["feature_snapshot_json"] = {
             "district": snapshot.get("district"),
             "parcel_area_m2": snapshot.get("parcel_area_m2"),
+            "data_completeness_score": snapshot.get("data_completeness_score"),
+            "missing_context": snapshot.get("missing_context") or [],
             "touches_road": snapshot.get("touches_road"),
             "nearby_road_segment_count": snapshot.get("nearby_road_segment_count"),
             "nearest_major_road_distance_m": snapshot.get("nearest_major_road_distance_m"),
             "nearby_parking_amenity_count": snapshot.get("nearby_parking_amenity_count"),
         }
         payload["gate_verdict"] = "pass" if bool((payload.get("gate_status_json") or {}).get("overall_pass")) else "fail"
+        payload["top_positives_json"] = (payload.get("top_positives_json") or [])[:3]
+        payload["top_risks_json"] = (payload.get("top_risks_json") or [])[:3]
+        payload["rank_position"] = payload.get("rank_position") or payload.get("compare_rank")
         top_payload.append(payload)
     return {
         "search_id": search_id,
@@ -2156,6 +2528,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
             "why_best": f"Highest blended final score with brand fit {_safe_float(best.get('brand_fit_score')):.1f}/100 and economics {_safe_float(best.get('economics_score')):.1f}/100.",
             "main_risk": (best.get("key_risks_json") or ["Validate lease and execution assumptions"])[0],
             "best_format": _recommended_use_case(str(search.get("service_model") or "qsr"), _safe_float(best.get("area_m2"))),
+            "summary": f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner.get('district') if runner else 'backup options'} as runner-up.",
             "report_summary": f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner.get('district') if runner else 'backup options'} as runner-up.",
         },
         "assumptions": {

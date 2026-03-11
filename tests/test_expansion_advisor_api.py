@@ -93,7 +93,7 @@ def test_post_expansion_search_with_existing_branches(monkeypatch):
     assert body["brand_profile"]["existing_branches"][0]["name"] == "HQ"
     assert body["items"][0]["district"] == "Olaya"
     assert body["items"][0]["cannibalization_score"] == 55.0
-    assert body["meta"]["version"] == "expansion_advisor_v6"
+    assert body["meta"]["version"] == "expansion_advisor_v6.1"
     assert db.committed is True
 
 
@@ -115,6 +115,7 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
                 "cannibalization_score": 40.0,
                 "distance_to_nearest_branch_m": 3200.0,
                 "compare_rank": 1,
+                "rank_position": 1,
                 "estimated_rent_sar_m2_year": 980.0,
                 "estimated_annual_rent_sar": 176400.0,
                 "estimated_fitout_cost_sar": 468000.0,
@@ -127,8 +128,13 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
                 "key_strengths_json": ["strength"],
                 "confidence_grade": "A",
                 "gate_status_json": {"overall_pass": True},
+                "gate_reasons_json": {"passed": ["zoning_fit_pass"], "failed": [], "unknown": []},
+                "feature_snapshot_json": {"parcel_area_m2": 180, "context_sources": {"road_context_available": True}},
+                "score_breakdown_json": {"final_score": 88.1},
                 "demand_thesis": "Demand is strong",
                 "cost_thesis": "Cost is manageable",
+                "top_positives_json": ["Demand potential is strong for this district."],
+                "top_risks_json": ["Delivery competition intensity is high."],
                 "comparable_competitors_json": [{"id": "r1", "name": "Comp"}],
                 "final_score": 88.1,
                 "explanation": {"summary": "candidate explanation"},
@@ -150,6 +156,9 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
     assert body["items"][0]["payback_band"] == "promising"
     assert body["items"][0]["confidence_grade"] == "A"
     assert body["items"][0]["gate_status_json"]["overall_pass"] is True
+    assert body["items"][0]["rank_position"] == 1
+    assert "score_breakdown_json" in body["items"][0]
+    assert "top_positives_json" in body["items"][0]
 
 
 def test_compare_endpoint_happy_path(monkeypatch):
@@ -270,8 +279,11 @@ def test_candidate_memo_endpoint_happy_path(monkeypatch):
                 "gate_status": {"overall_pass": True},
                 "gate_reasons": {"passed": ["zoning_fit_pass"], "failed": []},
                 "feature_snapshot": {"parcel_area_m2": 180, "touches_road": True},
+                "score_breakdown_json": {"final_score": 81},
                 "demand_thesis": "Demand is strong",
                 "cost_thesis": "Costs are manageable",
+                "top_positives_json": ["Demand potential is strong for this district."],
+                "top_risks_json": ["Delivery competition intensity is high."],
                 "comparable_competitors": [{"id": "r1", "name": "Comp"}],
                 "cannibalization_score": 33,
                 "distance_to_nearest_branch_m": 2600,
@@ -308,6 +320,7 @@ def test_candidate_memo_endpoint_happy_path(monkeypatch):
     assert body["recommendation"]["gate_verdict"] == "pass"
     assert body["candidate"]["comparable_competitors"][0]["id"] == "r1"
     assert body["candidate"]["feature_snapshot"]["touches_road"] is True
+    assert "score_breakdown_json" in body["candidate"]
 
 
 def test_candidate_memo_endpoint_404(monkeypatch):

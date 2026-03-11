@@ -432,6 +432,8 @@ def test_gate_status_logic():
         economics_score=65,
         payback_band="promising",
         brand_profile={"primary_channel": "delivery", "excluded_districts": ["Malqa"], "cannibalization_tolerance_m": 1800},
+        road_context_available=True,
+        parking_context_available=True,
     )
     assert gates["overall_pass"] is True
     assert gates["district_pass"] is True
@@ -461,8 +463,8 @@ def test_report_includes_new_decision_outputs():
     import app.services.expansion_advisor as svc
     svc.get_search = lambda _db, _sid: {"id": "search-1", "service_model": "qsr", "brand_profile": {"expansion_goal": "balanced"}}
     svc.get_candidates = lambda _db, _sid: [
-        {"id": "c1", "final_score": 90, "brand_fit_score": 82, "economics_score": 70, "area_m2": 170, "district": "Olaya", "key_risks_json": ["risk"], "confidence_grade": "A", "confidence_score": 85, "gate_status_json": {"overall_pass": True}, "demand_thesis": "d", "cost_thesis": "c", "comparable_competitors_json": [{"id": "x"}], "zoning_fit_score": 88, "frontage_score": 65, "access_score": 67, "parking_score": 62, "access_visibility_score": 66, "feature_snapshot_json": {"parcel_area_m2": 170}},
-        {"id": "c2", "final_score": 86, "brand_fit_score": 79, "economics_score": 68, "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"], "confidence_grade": "B", "confidence_score": 72, "gate_status_json": {"overall_pass": False}, "demand_thesis": "d2", "cost_thesis": "c2", "comparable_competitors_json": [], "zoning_fit_score": 78, "frontage_score": 61, "access_score": 60, "parking_score": 58, "access_visibility_score": 61, "feature_snapshot_json": {"parcel_area_m2": 180}},
+        {"id": "c1", "final_score": 90, "brand_fit_score": 82, "economics_score": 70, "area_m2": 170, "district": "Olaya", "key_risks_json": ["risk"], "confidence_grade": "A", "confidence_score": 85, "gate_status_json": {"overall_pass": True}, "demand_thesis": "d", "cost_thesis": "c", "comparable_competitors_json": [{"id": "x"}], "zoning_fit_score": 88, "frontage_score": 65, "access_score": 67, "parking_score": 62, "access_visibility_score": 66, "feature_snapshot_json": {"parcel_area_m2": 170, "data_completeness_score": 90}, "rank_position": 1, "score_breakdown_json": {"final_score": 90}, "top_positives_json": ["pos"], "top_risks_json": ["risk"]},
+        {"id": "c2", "final_score": 86, "brand_fit_score": 79, "economics_score": 68, "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"], "confidence_grade": "B", "confidence_score": 72, "gate_status_json": {"overall_pass": False}, "demand_thesis": "d2", "cost_thesis": "c2", "comparable_competitors_json": [], "zoning_fit_score": 78, "frontage_score": 61, "access_score": 60, "parking_score": 58, "access_visibility_score": 61, "feature_snapshot_json": {"parcel_area_m2": 180, "data_completeness_score": 80}, "rank_position": 2, "score_breakdown_json": {"final_score": 86}, "top_positives_json": ["pos2"], "top_risks_json": ["risk2"]},
     ]
     report = get_recommendation_report(db, "search-1")
     assert report["recommendation"]["best_pass_candidate_id"] == "c1"
@@ -470,6 +472,8 @@ def test_report_includes_new_decision_outputs():
     assert "demand_thesis" in report["top_candidates"][0]
     assert "zoning_fit_score" in report["top_candidates"][0]
     assert "feature_snapshot_json" in report["top_candidates"][0]
+    assert report["top_candidates"][0]["rank_position"] == 1
+    assert "score_breakdown_json" in report["top_candidates"][0]
 
 
 def test_v6_feature_scores_are_bounded():
@@ -493,8 +497,210 @@ def test_gate_status_uses_v6_scores_for_failure():
         economics_score=75,
         payback_band="promising",
         brand_profile={"excluded_districts": [], "cannibalization_tolerance_m": 1800},
+        road_context_available=True,
+        parking_context_available=True,
     )
     assert gates["overall_pass"] is False
     assert "zoning_fit_pass" in reasons["failed"]
     assert "frontage_access_pass" in reasons["failed"]
     assert "parking_pass" in reasons["failed"]
+
+
+def test_missing_road_context_uses_neutral_scores_and_unknown_gate(monkeypatch):
+    db = FakeDB(candidate_rows=[{
+        "parcel_id": "p1", "landuse_label": "Commercial", "landuse_code": "C", "area_m2": 180, "lon": 46.7, "lat": 24.7, "district": "Olaya",
+        "population_reach": 15000, "competitor_count": 5, "delivery_listing_count": 12
+    }])
+
+    monkeypatch.setattr(expansion_service, "_table_available", lambda _db, _table: False)
+
+    items = run_expansion_search(db, search_id="s", brand_name="b", category="burger", service_model="qsr", min_area_m2=100, max_area_m2=300, target_area_m2=180, limit=3)
+    item = items[0]
+    assert item["frontage_score"] == 55.0
+    assert item["access_score"] == 55.0
+    assert "frontage_access_pass" in item["gate_reasons_json"]["unknown"]
+    assert item["gate_status_json"]["overall_pass"] is True
+
+
+def test_missing_parking_context_uses_neutral_score_and_unknown_gate(monkeypatch):
+    db = FakeDB(candidate_rows=[{
+        "parcel_id": "p1", "landuse_label": "Commercial", "landuse_code": "C", "area_m2": 180, "lon": 46.7, "lat": 24.7, "district": "Olaya",
+        "population_reach": 15000, "competitor_count": 5, "delivery_listing_count": 12
+    }])
+
+    monkeypatch.setattr(expansion_service, "_table_available", lambda _db, table: table == "public.planet_osm_line")
+
+    items = run_expansion_search(db, search_id="s", brand_name="b", category="burger", service_model="qsr", min_area_m2=100, max_area_m2=300, target_area_m2=180, limit=3)
+    item = items[0]
+    assert 0.0 <= item["parking_score"] <= 100.0
+    assert "parking_pass" in item["gate_reasons_json"]["unknown"]
+
+
+def test_score_breakdown_matches_final_score():
+    breakdown = expansion_service._score_breakdown(
+        demand_score=80,
+        whitespace_score=70,
+        brand_fit_score=75,
+        economics_score=60,
+        provider_intelligence_composite=65,
+        access_visibility_score=55,
+        confidence_score=50,
+    )
+    weighted_sum = sum((breakdown.get("weighted_components") or {}).values())
+    assert abs(weighted_sum - breakdown["final_score"]) < 0.01
+    assert 0.0 <= breakdown["final_score"] <= 100.0
+
+
+def test_compare_includes_v61_fields():
+    db = FakeDB(
+        compare_rows=[
+            {
+                "id": "c1", "parcel_id": "p1", "district": "Olaya", "area_m2": 150, "final_score": 80, "demand_score": 75,
+                "whitespace_score": 70, "fit_score": 85, "zoning_fit_score": 88, "frontage_score": 66, "access_score": 64,
+                "parking_score": 62, "access_visibility_score": 65, "confidence_score": 79, "confidence_grade": "B",
+                "gate_status_json": {"overall_pass": True}, "gate_reasons_json": {"passed": ["zoning_fit_pass"], "unknown": []},
+                "feature_snapshot_json": {"context_sources": {"road_context_available": True, "parking_context_available": True}},
+                "score_breakdown_json": {"final_score": 80}, "top_positives_json": ["good"], "top_risks_json": ["risk"],
+                "demand_thesis": "Demand is moderate", "cost_thesis": "Cost is manageable", "comparable_competitors_json": [],
+                "cannibalization_score": 40, "distance_to_nearest_branch_m": 2300, "estimated_rent_sar_m2_year": 960,
+                "estimated_annual_rent_sar": 144000, "estimated_fitout_cost_sar": 390000, "estimated_revenue_index": 71,
+                "economics_score": 68, "brand_fit_score": 70, "provider_density_score": 50, "provider_whitespace_score": 60,
+                "multi_platform_presence_score": 60, "delivery_competition_score": 50, "estimated_payback_months": 24,
+                "payback_band": "promising", "competitor_count": 3, "delivery_listing_count": 12, "population_reach": 14000,
+                "landuse_label": "Commercial", "rank_position": 1,
+            },
+            {
+                "id": "c2", "parcel_id": "p2", "district": "Malqa", "area_m2": 170, "final_score": 74, "demand_score": 69,
+                "whitespace_score": 62, "fit_score": 73, "zoning_fit_score": 80, "frontage_score": 70, "access_score": 72,
+                "parking_score": 68, "access_visibility_score": 71, "confidence_score": 86, "confidence_grade": "A",
+                "gate_status_json": {"overall_pass": True}, "gate_reasons_json": {"passed": ["zoning_fit_pass"], "unknown": []},
+                "feature_snapshot_json": {}, "score_breakdown_json": {"final_score": 74}, "top_positives_json": [], "top_risks_json": [],
+                "demand_thesis": "Demand is strong", "cost_thesis": "Cost is higher", "comparable_competitors_json": [],
+                "cannibalization_score": 35, "distance_to_nearest_branch_m": 2500, "estimated_rent_sar_m2_year": 990,
+                "estimated_annual_rent_sar": 168300, "estimated_fitout_cost_sar": 430000, "estimated_revenue_index": 70,
+                "economics_score": 64, "brand_fit_score": 69, "provider_density_score": 48, "provider_whitespace_score": 58,
+                "multi_platform_presence_score": 58, "delivery_competition_score": 52, "estimated_payback_months": 27,
+                "payback_band": "promising", "competitor_count": 4, "delivery_listing_count": 11, "population_reach": 13200,
+                "landuse_label": "Commercial", "rank_position": 2,
+            },
+        ]
+    )
+    result = compare_candidates(db, "search-1", ["c1", "c2"])
+    assert "score_breakdown_json" in result["items"][0]
+    assert "top_positives_json" in result["items"][0]
+    assert "top_risks_json" in result["items"][0]
+    assert result["items"][0]["rank_position"] == 1
+
+
+def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch):
+    candidate_rows = []
+    for idx in range(120):
+        candidate_rows.append(
+            {
+                "parcel_id": f"p{idx}",
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 140 + (idx % 30),
+                "lon": 46.7 + idx * 0.0001,
+                "lat": 24.7 + idx * 0.0001,
+                "district": "Olaya",
+                "population_reach": 12000,
+                "competitor_count": 4,
+                "delivery_listing_count": 10,
+            }
+        )
+    db = FakeDB(candidate_rows=candidate_rows)
+
+    table_calls: list[str] = []
+    snapshot_calls = 0
+
+    def _fake_table_available(_db, table_name):
+        table_calls.append(table_name)
+        return True
+
+    def _fake_snapshot(*_args, **_kwargs):
+        nonlocal snapshot_calls
+        snapshot_calls += 1
+        return {
+            "parcel_area_m2": 150,
+            "parcel_perimeter_m": 250,
+            "district": "Olaya",
+            "landuse_label": "Commercial",
+            "landuse_code": "C",
+            "nearest_major_road_distance_m": 120,
+            "nearby_road_segment_count": 4,
+            "touches_road": True,
+            "nearby_parking_amenity_count": 2,
+            "provider_listing_count": 10,
+            "provider_platform_count": 3,
+            "competitor_count": 4,
+            "nearest_branch_distance_m": 2000,
+            "rent_source": "test",
+            "estimated_rent_sar_m2_year": 900,
+            "economics_score": 60,
+            "context_sources": {
+                "roads_table_available": True,
+                "parking_table_available": True,
+                "road_context_available": True,
+                "parking_context_available": True,
+            },
+            "missing_context": [],
+            "data_completeness_score": 100,
+        }
+
+    monkeypatch.setattr(expansion_service, "_table_available", _fake_table_available)
+    monkeypatch.setattr(expansion_service, "_candidate_feature_snapshot", _fake_snapshot)
+
+    items = run_expansion_search(
+        db,
+        search_id="s",
+        brand_name="b",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=300,
+        target_area_m2=180,
+        limit=10,
+    )
+
+    assert len(items) == 10
+    assert table_calls == ["public.planet_osm_line", "public.planet_osm_polygon"]
+    assert snapshot_calls == 50
+
+
+def test_feature_snapshot_queries_road_and_parking_independently():
+    class _DB:
+        def execute(self, stmt, _params=None):
+            sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+            if "ST_Perimeter" in sql:
+                return _Result([{"parcel_perimeter_m": 260.0}])
+            if "FROM planet_osm_line" in sql:
+                return _Result([{"nearest_major_road_distance_m": 120.0, "nearby_road_segment_count": 3, "touches_road": True}])
+            if "FROM planet_osm_polygon" in sql:
+                raise AssertionError("parking query should not run when parking table unavailable")
+            return _Result([])
+
+    snapshot = expansion_service._candidate_feature_snapshot(
+        _DB(),
+        parcel_id="p1",
+        lat=24.7,
+        lon=46.7,
+        area_m2=180,
+        district="Olaya",
+        landuse_label="Commercial",
+        landuse_code="C",
+        provider_listing_count=5,
+        provider_platform_count=2,
+        competitor_count=3,
+        nearest_branch_distance_m=2000,
+        rent_source="test",
+        estimated_rent_sar_m2_year=900,
+        economics_score=60,
+        roads_table_available=True,
+        parking_table_available=False,
+    )
+
+    assert snapshot["nearby_road_segment_count"] == 3
+    assert snapshot["touches_road"] is True
+    assert snapshot["context_sources"]["road_context_available"] is True
+    assert snapshot["context_sources"]["parking_context_available"] is False
