@@ -245,76 +245,113 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
         base["data_completeness_score"] = 50
         return base
     try:
-        row = db.execute(text(
-            f"""
-            WITH p AS (
-                SELECT id, geom, area_m2
-                FROM {ARCGIS_PARCELS_TABLE}
-                WHERE id::text = :parcel_id
+        perimeter_row = db.execute(
+            text(
+                f"""
+                SELECT COALESCE(ST_Perimeter(p.geom::geography), 0) AS parcel_perimeter_m
+                FROM {ARCGIS_PARCELS_TABLE} p
+                WHERE p.id::text = :parcel_id
                 LIMIT 1
-            )
-            SELECT
-                COALESCE(ST_Perimeter(p.geom::geography), 0) AS parcel_perimeter_m,
-                COALESCE((
-                    SELECT MIN(ST_Distance(l.way::geography, p.geom::geography))
-                    FROM planet_osm_line l
-                    WHERE l.way IS NOT NULL
-                      AND (l.highway IS NOT NULL OR NULLIF(l.name, '') IS NOT NULL)
-                      AND ST_DWithin(l.way::geography, p.geom::geography, 700)
-                      AND (
-                        l.highway IN ('motorway','trunk','primary','secondary')
-                        OR NULLIF(l.name, '') IS NOT NULL
-                      )
-                ), 5000) AS nearest_major_road_distance_m,
-                COALESCE((
-                    SELECT COUNT(*)
-                    FROM planet_osm_line l
-                    WHERE l.way IS NOT NULL
-                      AND l.highway IS NOT NULL
-                      AND ST_DWithin(l.way::geography, ST_Centroid(p.geom)::geography, 250)
-                ), 0) AS nearby_road_segment_count,
-                EXISTS(
-                    SELECT 1
-                    FROM planet_osm_line l
-                    WHERE l.way IS NOT NULL
-                      AND l.highway IS NOT NULL
-                      AND ST_DWithin(l.way::geography, p.geom::geography, 18)
-                ) AS touches_road,
-                COALESCE((
-                    SELECT COUNT(*)
-                    FROM planet_osm_polygon op
-                    WHERE op.way IS NOT NULL
-                      AND (
-                        lower(COALESCE(op.amenity, '')) = 'parking'
-                        OR lower(COALESCE(op.parking, '')) IN ('surface','multi-storey','underground')
-                      )
-                      AND ST_DWithin(op.way::geography, ST_Centroid(p.geom)::geography, 350)
-                ), 0) AS nearby_parking_amenity_count
-            FROM p
-            """
-        ), {"parcel_id": str(parcel_id)}).mappings().first()
-        if row:
-            nearby_road_segment_count = _safe_int(row.get("nearby_road_segment_count"))
-            touches_road = bool(row.get("touches_road"))
-            nearest_major_road_distance_m = _safe_float(row.get("nearest_major_road_distance_m"))
-            nearby_parking_amenity_count = _safe_int(row.get("nearby_parking_amenity_count"))
-            base.update(
-                {
-                    "parcel_perimeter_m": round(_safe_float(row.get("parcel_perimeter_m")), 2),
-                    "nearest_major_road_distance_m": round(nearest_major_road_distance_m, 2),
-                    "nearby_road_segment_count": nearby_road_segment_count,
-                    "touches_road": touches_road,
-                    "nearby_parking_amenity_count": nearby_parking_amenity_count,
-                }
-            )
-            road_context_available = roads_table_available and (
-                nearby_road_segment_count > 0 or touches_road or nearest_major_road_distance_m < 5000
-            )
-            parking_context_available = parking_table_available and nearby_parking_amenity_count >= 0
-            base["context_sources"]["road_context_available"] = road_context_available
-            base["context_sources"]["parking_context_available"] = parking_context_available
+                """
+            ),
+            {"parcel_id": str(parcel_id)},
+        ).mappings().first()
+        if perimeter_row:
+            base["parcel_perimeter_m"] = round(_safe_float(perimeter_row.get("parcel_perimeter_m")), 2)
     except Exception:
         pass
+
+    if roads_table_available:
+        try:
+            road_row = db.execute(
+                text(
+                    f"""
+                    WITH p AS (
+                        SELECT geom
+                        FROM {ARCGIS_PARCELS_TABLE}
+                        WHERE id::text = :parcel_id
+                        LIMIT 1
+                    )
+                    SELECT
+                        COALESCE((
+                            SELECT MIN(ST_Distance(l.way::geography, p.geom::geography))
+                            FROM planet_osm_line l
+                            WHERE l.way IS NOT NULL
+                              AND (l.highway IS NOT NULL OR NULLIF(l.name, '') IS NOT NULL)
+                              AND ST_DWithin(l.way::geography, p.geom::geography, 700)
+                              AND (
+                                l.highway IN ('motorway','trunk','primary','secondary')
+                                OR NULLIF(l.name, '') IS NOT NULL
+                              )
+                        ), 5000) AS nearest_major_road_distance_m,
+                        COALESCE((
+                            SELECT COUNT(*)
+                            FROM planet_osm_line l
+                            WHERE l.way IS NOT NULL
+                              AND l.highway IS NOT NULL
+                              AND ST_DWithin(l.way::geography, ST_Centroid(p.geom)::geography, 250)
+                        ), 0) AS nearby_road_segment_count,
+                        EXISTS(
+                            SELECT 1
+                            FROM planet_osm_line l
+                            WHERE l.way IS NOT NULL
+                              AND l.highway IS NOT NULL
+                              AND ST_DWithin(l.way::geography, p.geom::geography, 18)
+                        ) AS touches_road
+                    FROM p
+                    """
+                ),
+                {"parcel_id": str(parcel_id)},
+            ).mappings().first()
+            if road_row:
+                nearby_road_segment_count = _safe_int(road_row.get("nearby_road_segment_count"))
+                touches_road = bool(road_row.get("touches_road"))
+                nearest_major_road_distance_m = _safe_float(road_row.get("nearest_major_road_distance_m"))
+                base.update(
+                    {
+                        "nearest_major_road_distance_m": round(nearest_major_road_distance_m, 2),
+                        "nearby_road_segment_count": nearby_road_segment_count,
+                        "touches_road": touches_road,
+                    }
+                )
+                base["context_sources"]["road_context_available"] = (
+                    nearby_road_segment_count > 0 or touches_road or nearest_major_road_distance_m < 5000
+                )
+        except Exception:
+            pass
+
+    if parking_table_available:
+        try:
+            parking_row = db.execute(
+                text(
+                    f"""
+                    WITH p AS (
+                        SELECT geom
+                        FROM {ARCGIS_PARCELS_TABLE}
+                        WHERE id::text = :parcel_id
+                        LIMIT 1
+                    )
+                    SELECT COALESCE((
+                        SELECT COUNT(*)
+                        FROM planet_osm_polygon op
+                        WHERE op.way IS NOT NULL
+                          AND (
+                            lower(COALESCE(op.amenity, '')) = 'parking'
+                            OR lower(COALESCE(op.parking, '')) IN ('surface','multi-storey','underground')
+                          )
+                          AND ST_DWithin(op.way::geography, ST_Centroid(p.geom)::geography, 350)
+                    ), 0) AS nearby_parking_amenity_count
+                    FROM p
+                    """
+                ),
+                {"parcel_id": str(parcel_id)},
+            ).mappings().first()
+            if parking_row:
+                nearby_parking_amenity_count = _safe_int(parking_row.get("nearby_parking_amenity_count"))
+                base["nearby_parking_amenity_count"] = nearby_parking_amenity_count
+                base["context_sources"]["parking_context_available"] = nearby_parking_amenity_count >= 0
+        except Exception:
+            pass
 
     missing_context: list[str] = []
     if not roads_table_available:

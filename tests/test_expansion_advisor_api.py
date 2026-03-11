@@ -93,7 +93,7 @@ def test_post_expansion_search_with_existing_branches(monkeypatch):
     assert body["brand_profile"]["existing_branches"][0]["name"] == "HQ"
     assert body["items"][0]["district"] == "Olaya"
     assert body["items"][0]["cannibalization_score"] == 55.0
-    assert body["meta"]["version"] == "expansion_advisor_v61"
+    assert body["meta"]["version"] == "expansion_advisor_v6.1"
     assert db.committed is True
 
 

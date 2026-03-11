@@ -666,3 +666,41 @@ def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch
     assert len(items) == 10
     assert table_calls == ["public.planet_osm_line", "public.planet_osm_polygon"]
     assert snapshot_calls == 50
+
+
+def test_feature_snapshot_queries_road_and_parking_independently():
+    class _DB:
+        def execute(self, stmt, _params=None):
+            sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+            if "ST_Perimeter" in sql:
+                return _Result([{"parcel_perimeter_m": 260.0}])
+            if "FROM planet_osm_line" in sql:
+                return _Result([{"nearest_major_road_distance_m": 120.0, "nearby_road_segment_count": 3, "touches_road": True}])
+            if "FROM planet_osm_polygon" in sql:
+                raise AssertionError("parking query should not run when parking table unavailable")
+            return _Result([])
+
+    snapshot = expansion_service._candidate_feature_snapshot(
+        _DB(),
+        parcel_id="p1",
+        lat=24.7,
+        lon=46.7,
+        area_m2=180,
+        district="Olaya",
+        landuse_label="Commercial",
+        landuse_code="C",
+        provider_listing_count=5,
+        provider_platform_count=2,
+        competitor_count=3,
+        nearest_branch_distance_m=2000,
+        rent_source="test",
+        estimated_rent_sar_m2_year=900,
+        economics_score=60,
+        roads_table_available=True,
+        parking_table_available=False,
+    )
+
+    assert snapshot["nearby_road_segment_count"] == 3
+    assert snapshot["touches_road"] is True
+    assert snapshot["context_sources"]["road_context_available"] is True
+    assert snapshot["context_sources"]["parking_context_available"] is False
