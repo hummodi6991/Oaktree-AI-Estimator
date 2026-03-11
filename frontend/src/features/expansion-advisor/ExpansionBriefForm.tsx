@@ -12,6 +12,13 @@ export const defaultBrief: ExpansionBrief = {
   target_districts: [],
   existing_branches: [],
   limit: 25,
+  brand_profile: {
+    primary_channel: "balanced",
+    parking_sensitivity: "medium",
+    frontage_sensitivity: "medium",
+    visibility_sensitivity: "medium",
+    expansion_goal: "balanced",
+  },
 };
 
 export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: { initialValue: ExpansionBrief; onSubmit: (brief: ExpansionBrief) => void; loading: boolean }) {
@@ -24,28 +31,31 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
   return (
     <form onSubmit={(e) => { e.preventDefault(); onSubmit(brief); }} style={{ display: "grid", gap: 8 }}>
       <h3>{t("expansionAdvisor.briefTitle")}</h3>
+      <strong>Brand basics</strong>
       <input placeholder={t("expansionAdvisor.brandName")} value={brief.brand_name} onChange={(e) => setBrief({ ...brief, brand_name: e.target.value })} />
       <input placeholder={t("expansionAdvisor.category")} value={brief.category} onChange={(e) => setBrief({ ...brief, category: e.target.value })} />
-      <select value={brief.service_model} onChange={(e) => setBrief({ ...brief, service_model: e.target.value as ExpansionBrief["service_model"] })}>
-        <option value="qsr">QSR</option><option value="dine_in">Dine In</option><option value="delivery_first">Delivery First</option><option value="cafe">Cafe</option>
-      </select>
+      <select value={brief.brand_profile?.price_tier || ""} onChange={(e) => setBrief({ ...brief, brand_profile: { ...(brief.brand_profile || {}), price_tier: (e.target.value || null) as any } })}><option value="">price tier</option><option value="value">value</option><option value="mid">mid</option><option value="premium">premium</option></select>
+      <input type="number" placeholder="average check (SAR)" value={brief.brand_profile?.average_check_sar ?? ""} onChange={(e) => setBrief({ ...brief, brand_profile: { ...(brief.brand_profile || {}), average_check_sar: Number(e.target.value) || null } })} />
+      <input placeholder="target customer" value={brief.brand_profile?.target_customer ?? ""} onChange={(e) => setBrief({ ...brief, brand_profile: { ...(brief.brand_profile || {}), target_customer: e.target.value || null } })} />
+
+      <strong>Operating strategy</strong>
+      <select value={brief.service_model} onChange={(e) => setBrief({ ...brief, service_model: e.target.value as ExpansionBrief["service_model"] })}><option value="qsr">QSR</option><option value="dine_in">Dine In</option><option value="delivery_first">Delivery First</option><option value="cafe">Cafe</option></select>
+      <select value={brief.brand_profile?.primary_channel || "balanced"} onChange={(e) => setBrief({ ...brief, brand_profile: { ...(brief.brand_profile || {}), primary_channel: e.target.value as any } })}><option value="balanced">balanced</option><option value="dine_in">dine in</option><option value="delivery">delivery</option></select>
+      <select value={brief.brand_profile?.expansion_goal || "balanced"} onChange={(e) => setBrief({ ...brief, brand_profile: { ...(brief.brand_profile || {}), expansion_goal: e.target.value as any } })}><option value="balanced">balanced</option><option value="flagship">flagship</option><option value="neighborhood">neighborhood</option><option value="delivery_led">delivery led</option></select>
+      <input type="number" placeholder="cannibalization tolerance (m)" value={brief.brand_profile?.cannibalization_tolerance_m ?? ""} onChange={(e) => setBrief({ ...brief, brand_profile: { ...(brief.brand_profile || {}), cannibalization_tolerance_m: Number(e.target.value) || null } })} />
+
+      <strong>Market preferences</strong>
+      <select value={brief.brand_profile?.parking_sensitivity || "medium"} onChange={(e) => setBrief({ ...brief, brand_profile: { ...(brief.brand_profile || {}), parking_sensitivity: e.target.value as any } })}><option value="low">parking low</option><option value="medium">parking medium</option><option value="high">parking high</option></select>
+      <select value={brief.brand_profile?.frontage_sensitivity || "medium"} onChange={(e) => setBrief({ ...brief, brand_profile: { ...(brief.brand_profile || {}), frontage_sensitivity: e.target.value as any } })}><option value="low">frontage low</option><option value="medium">frontage medium</option><option value="high">frontage high</option></select>
+      <select value={brief.brand_profile?.visibility_sensitivity || "medium"} onChange={(e) => setBrief({ ...brief, brand_profile: { ...(brief.brand_profile || {}), visibility_sensitivity: e.target.value as any } })}><option value="low">visibility low</option><option value="medium">visibility medium</option><option value="high">visibility high</option></select>
+      <input placeholder={t("expansionAdvisor.targetDistricts")} value={brief.target_districts.join(",")} onChange={(e) => setBrief({ ...brief, target_districts: e.target.value.split(",").map((d) => d.trim()).filter(Boolean) })} />
+      <input placeholder="preferred districts" value={(brief.brand_profile?.preferred_districts || []).join(",")} onChange={(e) => setBrief({ ...brief, brand_profile: { ...(brief.brand_profile || {}), preferred_districts: e.target.value.split(",").map((d) => d.trim()).filter(Boolean) } })} />
+      <input placeholder="excluded districts" value={(brief.brand_profile?.excluded_districts || []).join(",")} onChange={(e) => setBrief({ ...brief, brand_profile: { ...(brief.brand_profile || {}), excluded_districts: e.target.value.split(",").map((d) => d.trim()).filter(Boolean) } })} />
+
       <input type="number" placeholder={t("expansionAdvisor.minArea")} value={brief.min_area_m2} onChange={(e) => setBrief({ ...brief, min_area_m2: Number(e.target.value) })} />
       <input type="number" placeholder={t("expansionAdvisor.maxArea")} value={brief.max_area_m2} onChange={(e) => setBrief({ ...brief, max_area_m2: Number(e.target.value) })} />
       <input type="number" placeholder={t("expansionAdvisor.targetArea")} value={brief.target_area_m2 ?? ""} onChange={(e) => setBrief({ ...brief, target_area_m2: Number(e.target.value) })} />
-      <input placeholder={t("expansionAdvisor.targetDistricts")} value={brief.target_districts.join(",")} onChange={(e) => setBrief({ ...brief, target_districts: e.target.value.split(",").map((d) => d.trim()).filter(Boolean) })} />
-      <textarea
-        placeholder={t("expansionAdvisor.existingBranches")}
-        value={branchesText}
-        onChange={(e) => {
-          const value = e.target.value;
-          setBranchesText(value);
-          const branches = value.split("\n").map((row) => row.trim()).filter(Boolean).map((row) => {
-            const [name, lat, lon, district] = row.split(",").map((x) => x.trim());
-            return { name, lat: Number(lat), lon: Number(lon), district };
-          }).filter((b) => Number.isFinite(b.lat) && Number.isFinite(b.lon));
-          setBrief({ ...brief, existing_branches: branches });
-        }}
-      />
+      <textarea placeholder={t("expansionAdvisor.existingBranches")} value={branchesText} onChange={(e) => { const value = e.target.value; setBranchesText(value); const branches = value.split("\n").map((row) => row.trim()).filter(Boolean).map((row) => { const [name, lat, lon, district] = row.split(",").map((x) => x.trim()); return { name, lat: Number(lat), lon: Number(lon), district }; }).filter((b) => Number.isFinite(b.lat) && Number.isFinite(b.lon)); setBrief({ ...brief, existing_branches: branches }); }} />
       <input type="number" placeholder={t("expansionAdvisor.searchLimit")} value={brief.limit} onChange={(e) => setBrief({ ...brief, limit: Number(e.target.value) })} />
       <button type="submit" className="oak-btn oak-btn--primary" disabled={loading || !brief.brand_name}>{loading ? t("expansionAdvisor.loadingSearch") : t("expansionAdvisor.runSearch")}</button>
     </form>

@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import ExpansionComparePanel from "./ExpansionComparePanel";
 import ExpansionResultsPanel from "./ExpansionResultsPanel";
+import ExpansionReportPanel from "./ExpansionReportPanel";
 import en from "../../i18n/en.json";
 import {
   getCompareRows,
@@ -14,7 +15,7 @@ describe("Expansion advisor UI behavior", () => {
   it("renders candidate cards", () => {
     const html = renderToStaticMarkup(
       <ExpansionResultsPanel
-        items={[{ id: "c1", search_id: "s1", parcel_id: "p1", lat: 24.7, lon: 46.7 }]}
+        items={[{ id: "c1", search_id: "s1", parcel_id: "p1", lat: 24.7, lon: 46.7, brand_fit_score: 75, provider_density_score: 60, provider_whitespace_score: 55 }]}
         selectedCandidateId={null}
         shortlistIds={[]}
         compareIds={[]}
@@ -59,6 +60,8 @@ describe("Expansion advisor UI behavior", () => {
           economics_score: 72,
           estimated_payback_months: 22,
           payback_band: "promising",
+          brand_fit_score: 77,
+          provider_density_score: 69,
         },
       ],
     });
@@ -69,5 +72,11 @@ describe("Expansion advisor UI behavior", () => {
   it("map/list shared selection path requests memo when ids differ", () => {
     expect(shouldLoadMemoFromMapSelection("c7", "c3")).toBe(true);
     expect(shouldLoadMemoFromMapSelection("c7", "c7")).toBe(false);
+  });
+
+  it("report panel renders recommendation summary", () => {
+    const html = renderToStaticMarkup(<ExpansionReportPanel report={{ recommendation: { best_candidate_id: "c1", report_summary: "summary" }, top_candidates: [{ id: "c1", final_score: 90 }] }} />);
+    expect(html).toContain("c1");
+    expect(html).toContain("summary");
   });
 });

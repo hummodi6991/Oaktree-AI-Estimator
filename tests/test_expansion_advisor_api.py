@@ -40,11 +40,8 @@ def test_post_expansion_search_with_existing_branches(monkeypatch):
 
     from app.api import expansion_advisor as expansion_api
 
-    monkeypatch.setattr(
-        expansion_api,
-        "persist_existing_branches",
-        lambda _db, _search_id, _branches: None,
-    )
+    monkeypatch.setattr(expansion_api, "persist_existing_branches", lambda _db, _search_id, _branches: None)
+    monkeypatch.setattr(expansion_api, "persist_brand_profile", lambda _db, _search_id, _profile: None)
     monkeypatch.setattr(
         expansion_api,
         "run_expansion_search",
@@ -79,6 +76,13 @@ def test_post_expansion_search_with_existing_branches(monkeypatch):
             "target_districts": ["Olaya"],
             "bbox": {"min_lon": 46.5, "min_lat": 24.5, "max_lon": 46.9, "max_lat": 24.9},
             "limit": 10,
+            "brand_profile": {
+                "price_tier": "premium",
+                "primary_channel": "delivery",
+                "expansion_goal": "delivery_led",
+                "preferred_districts": ["Olaya"],
+                "excluded_districts": ["Malqa"],
+            },
         }
         response = client.post("/v1/expansion-advisor/searches", json=payload)
     finally:
@@ -89,7 +93,7 @@ def test_post_expansion_search_with_existing_branches(monkeypatch):
     assert body["brand_profile"]["existing_branches"][0]["name"] == "HQ"
     assert body["items"][0]["district"] == "Olaya"
     assert body["items"][0]["cannibalization_score"] == 55.0
-    assert body["meta"]["version"] == "expansion_advisor_v2"
+    assert body["meta"]["version"] == "expansion_advisor_v4"
     assert db.committed is True
 
 
@@ -300,4 +304,29 @@ def test_candidate_memo_endpoint_404(monkeypatch):
     finally:
         app.dependency_overrides.pop(get_db, None)
 
+    assert response.status_code == 404
+
+
+def test_report_endpoint_happy_path(monkeypatch):
+    db = DummyDB()
+    from app.api import expansion_advisor as expansion_api
+    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id: {"search_id": "search-1", "recommendation": {"best_candidate_id": "c1"}})
+    client = _client_with_db(db)
+    try:
+        response = client.get("/v1/expansion-advisor/searches/search-1/report")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+    assert response.status_code == 200
+    assert response.json()["recommendation"]["best_candidate_id"] == "c1"
+
+
+def test_report_endpoint_404(monkeypatch):
+    db = DummyDB()
+    from app.api import expansion_advisor as expansion_api
+    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id: None)
+    client = _client_with_db(db)
+    try:
+        response = client.get("/v1/expansion-advisor/searches/missing/report")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
     assert response.status_code == 404

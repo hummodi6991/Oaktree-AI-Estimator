@@ -8,6 +8,11 @@ export default function ExpansionCandidateCard({ candidate, selected, shortliste
       <strong>{candidate.district || t("common.notAvailable")}</strong>
       <div>{t("expansionAdvisor.candidateParcels")}: {candidate.parcel_id}</div>
       <div>Score: {candidate.final_score ?? "-"}</div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <span>Brand fit {candidate.brand_fit_score ?? "-"}</span>
+        <span>Delivery strength {candidate.provider_density_score ?? "-"}</span>
+        <span>Whitespace {candidate.provider_whitespace_score ?? "-"}</span>
+      </div>
       <button onClick={onSelect}>{t("expansionAdvisor.decisionMemo")}</button>
       <button onClick={onToggleShortlist}>{shortlisted ? t("expansionAdvisor.removeShortlist") : t("expansionAdvisor.shortlist")}</button>
       <button onClick={onCompareToggle}>{t("expansionAdvisor.compareCandidates")}</button>

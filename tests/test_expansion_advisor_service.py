@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from app.services import expansion_advisor as expansion_service
 from app.services.expansion_advisor import (
+    _brand_fit_score,
     _payback_band,
     compare_candidates,
     get_candidate_memo,
+    get_recommendation_report,
     run_expansion_search,
 )
 
@@ -24,12 +26,13 @@ class _Result:
 
 
 class FakeDB:
-    def __init__(self, candidate_rows=None, compare_rows=None, has_search=True, memo_row=None):
+    def __init__(self, candidate_rows=None, compare_rows=None, has_search=True, memo_row=None, brand_profile_row=None):
         self.candidate_rows = candidate_rows or []
         self.compare_rows = compare_rows or []
         self.has_search = has_search
         self.memo_row = memo_row
         self.inserted = []
+        self.brand_profile_row = brand_profile_row
 
     def execute(self, stmt, params=None):
         sql = stmt.text if hasattr(stmt, "text") else str(stmt)
@@ -44,6 +47,8 @@ class FakeDB:
             return _Result(self.compare_rows)
         if "FROM expansion_candidate c" in sql and "JOIN expansion_search s" in sql:
             return _Result([self.memo_row] if self.memo_row else [])
+        if "FROM expansion_brand_profile" in sql:
+            return _Result([self.brand_profile_row] if self.brand_profile_row else [])
         return _Result([])
 
 
@@ -253,3 +258,52 @@ def test_run_expansion_search_caches_rent_resolution_by_district(monkeypatch):
 
     assert len(items) == 3
     assert len(calls) == 2
+
+
+def test_report_happy_path_returns_best_and_runner_up():
+    db = FakeDB(candidate_rows=[], brand_profile_row={"price_tier": "mid", "preferred_districts_json": [], "excluded_districts_json": []})
+    import app.services.expansion_advisor as svc
+    svc.get_search = lambda _db, _sid: {"id": "search-1", "service_model": "qsr", "brand_profile": {"expansion_goal": "balanced"}}
+    svc.get_candidates = lambda _db, _sid: [
+        {"id": "c1", "final_score": 90, "brand_fit_score": 82, "economics_score": 70, "area_m2": 170, "district": "Olaya", "key_risks_json": ["risk"]},
+        {"id": "c2", "final_score": 86, "brand_fit_score": 79, "economics_score": 68, "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"]},
+    ]
+    report = get_recommendation_report(db, "search-1")
+    assert report is not None
+    assert report["recommendation"]["best_candidate_id"] == "c1"
+
+
+def test_brand_provider_scores_bounded():
+    db = FakeDB(candidate_rows=[{
+        "parcel_id": "p1", "landuse_label": "Commercial", "landuse_code": "C", "area_m2": 180, "lon": 46.7, "lat": 24.7, "district": "Olaya",
+        "population_reach": 15000, "competitor_count": 20, "delivery_listing_count": 200, "provider_listing_count": 200, "provider_platform_count": 10, "delivery_competition_count": 400
+    }])
+    items = run_expansion_search(db, search_id="s", brand_name="b", category="burger", service_model="qsr", min_area_m2=100, max_area_m2=300, target_area_m2=180, limit=3)
+    assert 0 <= items[0]["brand_fit_score"] <= 100
+    assert 0 <= items[0]["provider_density_score"] <= 100
+    assert 0 <= items[0]["provider_whitespace_score"] <= 100
+    assert 0 <= items[0]["multi_platform_presence_score"] <= 100
+    assert 0 <= items[0]["delivery_competition_score"] <= 100
+
+
+def test_brand_fit_responds_to_multi_platform_presence():
+    base_kwargs = dict(
+        district="Olaya",
+        area_m2=220,
+        demand_score=72,
+        fit_score=70,
+        cannibalization_score=42,
+        provider_density_score=65,
+        provider_whitespace_score=58,
+        delivery_competition_score=48,
+        visibility_signal=74,
+        parking_signal=62,
+        brand_profile={"primary_channel": "delivery", "expansion_goal": "balanced"},
+        service_model="qsr",
+    )
+
+    low_platform = _brand_fit_score(multi_platform_presence_score=20, **base_kwargs)
+    high_platform = _brand_fit_score(multi_platform_presence_score=90, **base_kwargs)
+
+    assert high_platform != low_platform
+    assert high_platform > low_platform
