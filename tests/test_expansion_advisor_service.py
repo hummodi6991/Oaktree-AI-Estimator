@@ -150,6 +150,80 @@ def test_compare_candidates_rejects_candidate_ids_from_other_search():
     assert raised is True
 
 
+def test_compare_candidates_includes_v5_fields_and_gate_summary_uses_actual_gate_data():
+    db = FakeDB(
+        compare_rows=[
+            {
+                "id": "c1",
+                "parcel_id": "p1",
+                "district": "Olaya",
+                "area_m2": 150,
+                "final_score": 80,
+                "demand_score": 75,
+                "whitespace_score": 70,
+                "fit_score": 85,
+                "confidence_score": 79,
+                "confidence_grade": "B",
+                "gate_status_json": {"overall_pass": False},
+                "demand_thesis": "Demand is moderate",
+                "cost_thesis": "Cost is manageable",
+                "comparable_competitors_json": [{"id": "r1"}],
+                "cannibalization_score": 40,
+                "distance_to_nearest_branch_m": 2300,
+                "estimated_rent_sar_m2_year": 960,
+                "estimated_annual_rent_sar": 144000,
+                "estimated_fitout_cost_sar": 390000,
+                "estimated_revenue_index": 71,
+                "economics_score": 68,
+                "estimated_payback_months": 24,
+                "payback_band": "promising",
+                "competitor_count": 3,
+                "delivery_listing_count": 12,
+                "population_reach": 14000,
+                "landuse_label": "Commercial",
+            },
+            {
+                "id": "c2",
+                "parcel_id": "p2",
+                "district": "Malqa",
+                "area_m2": 170,
+                "final_score": 74,
+                "demand_score": 69,
+                "whitespace_score": 62,
+                "fit_score": 73,
+                "confidence_score": 86,
+                "confidence_grade": "A",
+                "gate_status_json": {"overall_pass": True},
+                "demand_thesis": "Demand is strong",
+                "cost_thesis": "Cost is higher",
+                "comparable_competitors_json": [{"id": "r2"}],
+                "cannibalization_score": 35,
+                "distance_to_nearest_branch_m": 2500,
+                "estimated_rent_sar_m2_year": 990,
+                "estimated_annual_rent_sar": 168300,
+                "estimated_fitout_cost_sar": 430000,
+                "estimated_revenue_index": 70,
+                "economics_score": 64,
+                "estimated_payback_months": 27,
+                "payback_band": "promising",
+                "competitor_count": 4,
+                "delivery_listing_count": 11,
+                "population_reach": 13200,
+                "landuse_label": "Commercial",
+            },
+        ]
+    )
+
+    result = compare_candidates(db, "search-1", ["c1", "c2"])
+
+    assert result["items"][0]["confidence_grade"] == "B"
+    assert result["items"][0]["gate_status_json"] == {"overall_pass": False}
+    assert result["items"][0]["demand_thesis"] == "Demand is moderate"
+    assert result["items"][0]["cost_thesis"] == "Cost is manageable"
+    assert result["items"][0]["comparable_competitors_json"] == [{"id": "r1"}]
+    assert result["summary"]["best_gate_pass_candidate_id"] == "c2"
+
+
 def test_payback_band_assignment_logic():
     assert _payback_band(12) == "strong"
     assert _payback_band(24) == "promising"
