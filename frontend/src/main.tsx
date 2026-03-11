@@ -65,6 +65,7 @@ function App() {
   const [expansionShortlistIds, setExpansionShortlistIds] = useState<string[]>([]);
   const [expansionBranches, setExpansionBranches] = useState<ExpansionBrief["existing_branches"]>([]);
   const [expansionCompareIds, setExpansionCompareIds] = useState<string[]>([]);
+  const [expansionLeadCandidateId, setExpansionLeadCandidateId] = useState<string | null>(null);
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
 
   const uiV2 = useMemo(() => {
@@ -327,6 +328,7 @@ function App() {
                   selectedExpansionCandidateId={expansionSelectedCandidateId}
                   shortlistExpansionCandidateIds={expansionShortlistIds}
                   compareExpansionCandidateIds={expansionCompareIds}
+                  leadExpansionCandidateId={expansionLeadCandidateId}
                   existingBranches={expansionBranches}
                   onExpansionCandidateClick={(candidateId) => {
                     const candidate = expansionCandidates.find((item) => item.id === candidateId);
@@ -342,11 +344,12 @@ function App() {
             analysisMode === "expansion" ? (
               <ExpansionAdvisorPage
                 externalSelectedCandidateId={expansionSelectedCandidateId}
-                onCandidatesChange={(candidates, shortlistIds, selectedId, branches, compareIds) => {
+                onCandidatesChange={(candidates, shortlistIds, selectedId, branches, compareIds, leadId) => {
                   setExpansionCandidates(candidates);
                   setExpansionShortlistIds(shortlistIds);
                   setExpansionSelectedCandidateId(selectedId);
                   setExpansionCompareIds(compareIds || []);
+                  setExpansionLeadCandidateId(leadId || null);
                   setExpansionBranches(branches);
                 }}
                 onSelectedCandidateChange={(candidate) => {

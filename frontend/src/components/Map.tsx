@@ -59,6 +59,7 @@ type MapProps = {
   selectedExpansionCandidateId?: string | null;
   shortlistExpansionCandidateIds?: string[];
   compareExpansionCandidateIds?: string[];
+  leadExpansionCandidateId?: string | null;
   existingBranches?: Array<{ lat: number; lon: number }>;
   onExpansionCandidateClick?: (candidateId: string) => void;
 };
@@ -358,6 +359,7 @@ export default function Map({
   selectedExpansionCandidateId = null,
   shortlistExpansionCandidateIds = [],
   compareExpansionCandidateIds = [],
+  leadExpansionCandidateId = null,
   existingBranches = [],
   onExpansionCandidateClick,
 }: MapProps) {
@@ -915,6 +917,7 @@ export default function Map({
       shortlistExpansionCandidateIds,
       existingBranches,
       compareExpansionCandidateIds,
+      leadExpansionCandidateId,
     );
 
     const syncOverlay = () => {
@@ -985,7 +988,7 @@ export default function Map({
       map.off("styledata", handleStyleReady);
       map.off("load", handleStyleReady);
     };
-  }, [expansionCandidates, selectedExpansionCandidateId, shortlistExpansionCandidateIds, compareExpansionCandidateIds, existingBranches]);
+  }, [expansionCandidates, selectedExpansionCandidateId, shortlistExpansionCandidateIds, compareExpansionCandidateIds, leadExpansionCandidateId, existingBranches]);
 
   useEffect(() => {
     if (!focusTarget) return;
