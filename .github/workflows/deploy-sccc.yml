@@ -36,7 +36,9 @@ jobs:
 
       # ── Download trained restaurant model artifacts from GitHub Actions ──
       - name: Download restaurant-score-model artifact
+        id: download_score_model
         uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
         with:
           name: restaurant-score-model
           path: models/
@@ -45,13 +47,24 @@ jobs:
           if_no_artifact_found: warn
 
       - name: Download restaurant-heatmap-model artifact
+        id: download_heatmap_model
         uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
         with:
           name: restaurant-heatmap-model
           path: models/
           workflow: train-restaurant-heatmap.yml
           search_artifacts: true
           if_no_artifact_found: warn
+
+      - name: Warn if artifact download action itself failed
+        run: |
+          if [ "${{ steps.download_score_model.outcome }}" != "success" ]; then
+            echo "::warning::restaurant-score-model artifact download step failed; deploy will continue and rely on fallback verification."
+          fi
+          if [ "${{ steps.download_heatmap_model.outcome }}" != "success" ]; then
+            echo "::warning::restaurant-heatmap-model artifact download step failed; deploy will continue and rely on fallback verification."
+          fi
 
       - name: Verify restaurant model artifacts
         run: |
