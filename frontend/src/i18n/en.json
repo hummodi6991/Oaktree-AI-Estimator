@@ -555,6 +555,23 @@
     "gateReasons": "Gate reasons",
     "featureSnapshot": "Feature snapshot",
     "passed": "Passed",
-    "failed": "Failed"
+    "failed": "Failed",
+    "economicsScore": "Economics score",
+    "topPositives": "Top positives",
+    "topRisks": "Top risks",
+    "removeCompare": "Remove from compare",
+    "bestUseCase": "Best use case",
+    "mainWatchout": "Main watchout",
+    "candidateSummary": "Candidate summary",
+    "unknown": "Unknown",
+    "scoreBreakdown": "Score breakdown",
+    "assumptions": "Assumptions",
+    "loadingReport": "Loading report…",
+    "loadingSaved": "Loading saved studies…",
+    "errorSearch": "Unable to run search.",
+    "errorMemo": "Unable to load memo.",
+    "errorCompare": "Unable to compare candidates.",
+    "errorReport": "Unable to load report.",
+    "errorSavedLoad": "Unable to load saved study."
   }
 }

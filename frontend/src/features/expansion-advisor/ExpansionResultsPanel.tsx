@@ -18,6 +18,7 @@ export default function ExpansionResultsPanel(props: {
           candidate={item}
           selected={props.selectedCandidateId === item.id}
           shortlisted={props.shortlistIds.includes(item.id)}
+          compared={props.compareIds.includes(item.id)}
           onSelect={() => props.onSelectCandidate(item)}
           onToggleShortlist={() => props.onToggleShortlist(item.id)}
           onCompareToggle={() => props.onToggleCompare(item.id)}

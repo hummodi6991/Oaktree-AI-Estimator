@@ -7,16 +7,17 @@ import ExpansionReportPanel from "./ExpansionReportPanel";
 import ExpansionMemoPanel from "./ExpansionMemoPanel";
 import en from "../../i18n/en.json";
 import {
-  getCompareRows,
   restoreSavedUiState,
   shouldLoadMemoFromMapSelection,
+  getCompareRows,
 } from "./ExpansionAdvisorPage";
+import { normalizeCandidate } from "../../lib/api/expansionAdvisor";
 
 describe("Expansion advisor UI behavior", () => {
   it("renders candidate cards", () => {
     const html = renderToStaticMarkup(
       <ExpansionResultsPanel
-        items={[{ id: "c1", search_id: "s1", parcel_id: "p1", lat: 24.7, lon: 46.7, brand_fit_score: 75, provider_density_score: 60, provider_whitespace_score: 55, confidence_grade: "A", demand_thesis: "Demand is strong", cost_thesis: "Cost is manageable", gate_status_json: { overall_pass: true }, comparable_competitors_json: [{ id: "r1", name: "Comp", distance_m: 120 }] }]}
+        items={[{ id: "c1", search_id: "s1", parcel_id: "p1", lat: 24.7, lon: 46.7, brand_fit_score: 75, economics_score: 80, provider_density_score: 60, provider_whitespace_score: 55, confidence_grade: "A", demand_thesis: "Demand is strong", cost_thesis: "Cost is manageable", gate_status_json: { overall_pass: true }, top_positives_json: ["great"], top_risks_json: ["rent"], comparable_competitors_json: [{ id: "r1", name: "Comp", distance_m: 120 }] }]}
         selectedCandidateId={null}
         shortlistIds={[]}
         compareIds={[]}
@@ -27,11 +28,11 @@ describe("Expansion advisor UI behavior", () => {
     );
     expect(html).toContain("p1");
     expect(html).toContain("Demand is strong");
-    expect(html).toContain("Cost is manageable");
+    expect(html).toContain("Comp");
   });
 
   it("compare button disables for <2 selections", () => {
-    const html = renderToStaticMarkup(<ExpansionComparePanel compareIds={["c1"]} onCompare={() => {}} />);
+    const html = renderToStaticMarkup(<ExpansionComparePanel compareIds={["c1"]} result={null} loading={false} error={null} onCompare={() => {}} />);
     expect(html).toContain("disabled");
   });
 
@@ -39,9 +40,21 @@ describe("Expansion advisor UI behavior", () => {
     expect(en.app.modeExpansion).toBe("Expansion Advisor");
   });
 
-  it("saved study restore returns search id and ui state compare ids", () => {
+  it("candidate normalization fills safe defaults", () => {
+    const candidate = normalizeCandidate({ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0 });
+    expect(candidate.gate_status_json).toEqual({});
+    expect(candidate.gate_reasons_json?.passed).toEqual([]);
+    expect(candidate.feature_snapshot_json?.data_completeness_score).toBe(0);
+    expect(candidate.score_breakdown_json?.final_score).toBe(0);
+    expect(candidate.top_positives_json).toEqual([]);
+  });
+
+  it("saved study restore returns normalized ui state", () => {
     const restored = restoreSavedUiState({
+      id: "sv1",
       search_id: "search-9",
+      title: "study",
+      status: "draft",
       selected_candidate_ids: ["c1"],
       ui_state_json: { compare_ids: ["c2", "c3"], selected_candidate_id: "c3" },
       candidates: [
@@ -56,19 +69,9 @@ describe("Expansion advisor UI behavior", () => {
 
   it("compare response rows are available for rendering", () => {
     const rows = getCompareRows({
-      items: [
-        {
-          candidate_id: "c1",
-          final_score: 81,
-          economics_score: 72,
-          estimated_payback_months: 22,
-          payback_band: "promising",
-          brand_fit_score: 77,
-          provider_density_score: 69,
-        },
-      ],
+      items: [{ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0, final_score: 81, economics_score: 72, estimated_payback_months: 22, payback_band: "promising", brand_fit_score: 77, provider_density_score: 69 }],
     });
-    expect(rows[0].candidate_id).toBe("c1");
+    expect(rows[0].id).toBe("c1");
     expect(rows[0].economics_score).toBe(72);
   });
 
@@ -78,14 +81,17 @@ describe("Expansion advisor UI behavior", () => {
   });
 
   it("report panel renders recommendation summary", () => {
-    const html = renderToStaticMarkup(<ExpansionReportPanel report={{ recommendation: { best_candidate_id: "c1", runner_up_candidate_id: "c2", best_pass_candidate_id: "c1", best_confidence_candidate_id: "c2", report_summary: "summary" }, top_candidates: [{ id: "c1", final_score: 90, confidence_grade: "A", gate_status_json: { overall_pass: true } }] }} />);
+    const html = renderToStaticMarkup(<ExpansionReportPanel loading={false} report={{ meta: { version: "6.1" }, recommendation: { best_candidate_id: "c1", runner_up_candidate_id: "c2", best_pass_candidate_id: "c1", best_confidence_candidate_id: "c2", summary: "summary" }, top_candidates: [{ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0, final_score: 90, confidence_grade: "A", gate_status_json: { overall_pass: true } }] }} />);
     expect(html).toContain("c1");
     expect(html).toContain("summary");
-    expect(html).toContain("c2");
-  });
-  it("memo panel renders comparable competitors text", () => {
-    const html = renderToStaticMarkup(<ExpansionMemoPanel loading={false} memo={{ recommendation: { verdict: "go", headline: "GO" }, candidate: { comparable_competitors: [{ id: "r1", name: "Comp", distance_m: 100 }], key_strengths: [], key_risks: [], gate_status: { overall_pass: true } }, market_research: {} }} />);
-    expect(html).toContain("Comp");
+    expect(html).toContain("6.1");
   });
 
+  it("memo panel renders gate reasons positives and risks", () => {
+    const html = renderToStaticMarkup(<ExpansionMemoPanel loading={false} memo={{ recommendation: { verdict: "go", headline: "GO" }, candidate: { comparable_competitors: [{ id: "r1", name: "Comp", distance_m: 100 }], top_positives: ["demand"], top_risks: ["cost"], gate_status: { overall_pass: true }, gate_reasons: { passed: ["zoning"], failed: ["parking"], unknown: ["access"] } }, market_research: {} }} />);
+    expect(html).toContain("Comp");
+    expect(html).toContain("zoning");
+    expect(html).toContain("demand");
+    expect(html).toContain("cost");
+  });
 });
