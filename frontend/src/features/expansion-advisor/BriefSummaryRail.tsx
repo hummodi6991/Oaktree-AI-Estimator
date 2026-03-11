@@ -6,9 +6,10 @@ type Props = {
   onEditBrief: () => void;
   onRunAgain: () => void;
   loading: boolean;
+  isFinalStudy?: boolean;
 };
 
-export default function BriefSummaryRail({ brief, onEditBrief, onRunAgain, loading }: Props) {
+export default function BriefSummaryRail({ brief, onEditBrief, onRunAgain, loading, isFinalStudy }: Props) {
   const { t } = useTranslation();
   const profile = brief.brand_profile || {};
   const branchCount = (brief.existing_branches || []).filter(
@@ -19,7 +20,7 @@ export default function BriefSummaryRail({ brief, onEditBrief, onRunAgain, loadi
     <div className="ea-brief-rail">
       <div className="ea-brief-rail__header">
         <h4 className="ea-brief-rail__title">{t("expansionAdvisor.brandBriefSummary")}</h4>
-        <div className="ea-brief-rail__actions">
+        <div className={`ea-brief-rail__actions${isFinalStudy ? " ea-brief-rail__actions--muted" : ""}`}>
           <button
             type="button"
             className="oak-btn oak-btn--sm oak-btn--tertiary"
@@ -27,14 +28,16 @@ export default function BriefSummaryRail({ brief, onEditBrief, onRunAgain, loadi
           >
             {t("expansionAdvisor.editBrief")}
           </button>
-          <button
-            type="button"
-            className="oak-btn oak-btn--sm oak-btn--primary"
-            onClick={onRunAgain}
-            disabled={loading}
-          >
-            {loading ? t("expansionAdvisor.searchingCta") : t("expansionAdvisor.runAgain")}
-          </button>
+          {!isFinalStudy && (
+            <button
+              type="button"
+              className="oak-btn oak-btn--sm oak-btn--primary"
+              onClick={onRunAgain}
+              disabled={loading}
+            >
+              {loading ? t("expansionAdvisor.searchingCta") : t("expansionAdvisor.runAgain")}
+            </button>
+          )}
         </div>
       </div>
       <div className="ea-brief-rail__items">

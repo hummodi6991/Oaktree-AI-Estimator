@@ -1393,3 +1393,503 @@ describe("Assumptions card rendering", () => {
     expect(html).toContain("ea-assumptions-strip");
   });
 });
+
+/* ─── Validation plan derivation tests ─── */
+
+describe("Validation plan derivation from deterministic fields", () => {
+  it("always includes site visit as must_verify", () => {
+    const candidate = makeCandidate({});
+    const items = deriveValidationPlan(candidate);
+    const siteVisit = items.find((i) => i.label === "Site visit");
+    expect(siteVisit).toBeTruthy();
+    expect(siteVisit?.priority).toBe("must_verify");
+  });
+
+  it("includes landlord rent verification when rent data is present", () => {
+    const candidate = makeCandidate({ estimated_rent_sar_m2_year: 1500, estimated_annual_rent_sar: 180000 });
+    const items = deriveValidationPlan(candidate);
+    const rent = items.find((i) => i.label === "Landlord rent verification");
+    expect(rent).toBeTruthy();
+    expect(rent?.priority).toBe("must_verify");
+    expect(rent?.detail).toContain("1500");
+  });
+
+  it("marks parking as must_verify when gate fails", () => {
+    const candidate = makeCandidate({ gate_status_json: { overall_pass: false, parking_pass: false } });
+    const items = deriveValidationPlan(candidate);
+    const parking = items.find((i) => i.label === "Parking check");
+    expect(parking?.priority).toBe("must_verify");
+  });
+
+  it("marks parking as already_strong when gate passes", () => {
+    const candidate = makeCandidate({ gate_status_json: { overall_pass: true, parking_pass: true } });
+    const items = deriveValidationPlan(candidate);
+    const parking = items.find((i) => i.label === "Parking check");
+    expect(parking?.priority).toBe("already_strong");
+  });
+
+  it("marks cannibalization as already_strong when nearest branch >2km", () => {
+    const candidate = makeCandidate({ distance_to_nearest_branch_m: 3500 });
+    const items = deriveValidationPlan(candidate);
+    const cannibal = items.find((i) => i.label === "Branch cannibalization sanity check");
+    expect(cannibal?.priority).toBe("already_strong");
+  });
+
+  it("marks cannibalization as must_verify when nearest branch <2km", () => {
+    const candidate = makeCandidate({ distance_to_nearest_branch_m: 800 });
+    const items = deriveValidationPlan(candidate);
+    const cannibal = items.find((i) => i.label === "Branch cannibalization sanity check");
+    expect(cannibal?.priority).toBe("must_verify");
+  });
+
+  it("adds unknown gate items as must_verify", () => {
+    const candidate = makeCandidate({
+      gate_reasons_json: { passed: [], failed: [], unknown: ["zoning_compliance"], thresholds: {}, explanations: {} },
+    });
+    const items = deriveValidationPlan(candidate);
+    const unknown = items.find((i) => i.label.toLowerCase().includes("zoning compliance"));
+    expect(unknown?.priority).toBe("must_verify");
+  });
+
+  it("adds missing context sources as nice_to_confirm", () => {
+    const candidate = makeCandidate({
+      feature_snapshot_json: { context_sources: {}, missing_context: ["traffic_counts"], data_completeness_score: 50 },
+    });
+    const items = deriveValidationPlan(candidate);
+    const missing = items.find((i) => i.label.toLowerCase().includes("traffic counts"));
+    expect(missing?.priority).toBe("nice_to_confirm");
+  });
+
+  it("groups delivery as already_strong when whitespace score >= 70", () => {
+    const candidate = makeCandidate({ provider_whitespace_score: 85 });
+    const items = deriveValidationPlan(candidate);
+    const delivery = items.find((i) => i.label === "Delivery catchment validation");
+    expect(delivery?.priority).toBe("already_strong");
+  });
+});
+
+/* ─── Assumptions confidence derivation tests ─── */
+
+describe("Assumptions confidence derivation", () => {
+  it("marks overall score as strong", () => {
+    const candidate = makeCandidate({ final_score: 82 });
+    const items = deriveAssumptions(candidate);
+    const score = items.find((i) => i.label === "Overall score");
+    expect(score?.confidence).toBe("strong");
+  });
+
+  it("marks economics as estimated", () => {
+    const candidate = makeCandidate({ economics_score: 70, estimated_annual_rent_sar: 150000 });
+    const items = deriveAssumptions(candidate);
+    const econ = items.find((i) => i.label === "Economics model");
+    expect(econ?.confidence).toBe("estimated");
+  });
+
+  it("marks brand fit as strong when google_places context available", () => {
+    const candidate = makeCandidate({
+      brand_fit_score: 80,
+      feature_snapshot_json: { context_sources: { google_places: {} }, missing_context: [], data_completeness_score: 90 },
+    });
+    const items = deriveAssumptions(candidate);
+    const brandFit = items.find((i) => i.label === "Brand fit");
+    expect(brandFit?.confidence).toBe("strong");
+  });
+
+  it("marks missing context as missing confidence", () => {
+    const candidate = makeCandidate({
+      feature_snapshot_json: { context_sources: {}, missing_context: ["footfall_data"], data_completeness_score: 40 },
+    });
+    const items = deriveAssumptions(candidate);
+    const missing = items.find((i) => i.label === "footfall data");
+    expect(missing?.confidence).toBe("missing");
+  });
+
+  it("includes report-level assumptions as estimated", () => {
+    const candidate = makeCandidate({});
+    const report = { recommendation: {}, top_candidates: [], assumptions: { rental_benchmark: "REGA district median" }, meta: {} } as any;
+    const items = deriveAssumptions(candidate, report);
+    const rental = items.find((i) => i.label === "rental benchmark");
+    expect(rental?.confidence).toBe("estimated");
+  });
+});
+
+/* ─── Decision snapshot rendering tests ─── */
+
+describe("Decision snapshot rendering for lead candidate", () => {
+  it("renders decision snapshot card with correct data", () => {
+    const candidate = makeCandidate({
+      rank_position: 1,
+      district: "Al Malqa",
+      final_score: 88,
+      confidence_grade: "A",
+      gate_status_json: { overall_pass: true },
+      top_positives_json: ["Strong foot traffic"],
+      top_risks_json: ["High rent"],
+    });
+    const html = renderToStaticMarkup(
+      <DecisionSnapshotCard candidate={candidate} />,
+    );
+    expect(html).toContain("ea-decision-snapshot");
+    expect(html).toContain("Al Malqa");
+    expect(html).toContain("Strong foot traffic");
+  });
+
+  it("renders prominent class when prominent=true", () => {
+    const candidate = makeCandidate({ district: "Al Nakheel" });
+    const html = renderToStaticMarkup(
+      <DecisionSnapshotCard candidate={candidate} prominent />,
+    );
+    expect(html).toContain("ea-decision-snapshot--prominent");
+  });
+
+  it("uses report recommendation fields when available", () => {
+    const candidate = makeCandidate({ rank_position: 1, district: "Al Malqa" });
+    const report = {
+      recommendation: { why_best: "Best economics", main_risk: "Parking limited", best_format: "QSR drive-through" },
+      top_candidates: [],
+      assumptions: {},
+      meta: {},
+    } as any;
+    const snapshot = buildDecisionSnapshot(candidate, report);
+    expect(snapshot.whyItWins).toBe("Best economics");
+    expect(snapshot.mainRisk).toBe("Parking limited");
+    expect(snapshot.bestFormat).toBe("QSR drive-through");
+  });
+
+  it("falls back to candidate positives/risks when no report", () => {
+    const candidate = makeCandidate({
+      top_positives_json: ["High demand zone"],
+      top_risks_json: ["Cannibalization risk"],
+    });
+    const snapshot = buildDecisionSnapshot(candidate);
+    expect(snapshot.whyItWins).toBe("High demand zone");
+    expect(snapshot.mainRisk).toBe("Cannibalization risk");
+  });
+});
+
+/* ─── Compare outcome banner tests ─── */
+
+describe("Compare outcome banner behavior", () => {
+  it("derives compare outcome with winner and runner-up strengths", () => {
+    const result = {
+      items: [{ candidate_id: "c1" }, { candidate_id: "c2" }],
+      summary: {
+        best_overall_candidate_id: "c1",
+        best_economics_candidate_id: "c2",
+        fastest_payback_candidate_id: "c1",
+        best_brand_fit_candidate_id: "c1",
+      } as Record<string, string | null>,
+    };
+    const candidates = [
+      makeCandidate({ id: "c1", rank_position: 1, district: "Al Malqa" }),
+      makeCandidate({ id: "c2", rank_position: 2, district: "Al Nakheel" }),
+    ];
+    const outcome = deriveCompareOutcome(result, candidates, "c1");
+    expect(outcome.winnerId).toBe("c1");
+    expect(outcome.winnerLabel).toContain("Al Malqa");
+    expect(outcome.runnerUpStrengths).toContain("best economics");
+    expect(outcome.leadsAligned).toBe(true);
+  });
+
+  it("detects lead mismatch when compare winner differs", () => {
+    const result = {
+      items: [{ candidate_id: "c1" }, { candidate_id: "c2" }],
+      summary: { best_overall_candidate_id: "c2" } as Record<string, string | null>,
+    };
+    const candidates = [
+      makeCandidate({ id: "c1", rank_position: 1 }),
+      makeCandidate({ id: "c2", rank_position: 2 }),
+    ];
+    const outcome = deriveCompareOutcome(result, candidates, "c1");
+    expect(outcome.leadsAligned).toBe(false);
+  });
+
+  it("renders banner with misalignment warning", () => {
+    const result = {
+      items: [{ candidate_id: "c1" }, { candidate_id: "c2" }],
+      summary: { best_overall_candidate_id: "c2" },
+    } as any;
+    const candidates = [makeCandidate({ id: "c1" }), makeCandidate({ id: "c2" })];
+    const html = renderToStaticMarkup(
+      <CompareOutcomeBanner result={result} candidates={candidates} leadCandidateId="c1" />,
+    );
+    expect(html).toContain("ea-compare-outcome--misaligned");
+  });
+
+  it("returns empty outcome when result is null", () => {
+    const outcome = deriveCompareOutcome(null, [], null);
+    expect(outcome.winnerId).toBeNull();
+    expect(outcome.leadsAligned).toBe(true);
+  });
+});
+
+/* ─── Saved study metadata restore from partial ui_state_json ─── */
+
+describe("Saved study metadata extraction from partial ui_state_json", () => {
+  it("extracts full metadata from complete ui_state_json", () => {
+    const saved = {
+      id: "ss1",
+      search_id: "s1",
+      title: "Test Study",
+      status: "final" as const,
+      selected_candidate_ids: ["c1", "c2", "c3"],
+      ui_state_json: {
+        lead_candidate_id: "c1",
+        compare_ids: ["c1", "c2"],
+        active_sort: "payback",
+        active_filter: "pass_only",
+      },
+      candidates: [makeCandidate({ id: "c1", district: "Al Malqa", parcel_id: "p-abc" })],
+    } as any;
+    const meta = extractSavedStudyMeta(saved);
+    expect(meta.isFinal).toBe(true);
+    expect(meta.leadDistrict).toBe("Al Malqa");
+    expect(meta.leadParcelId).toBe("p-abc");
+    expect(meta.shortlistCount).toBe(3);
+    expect(meta.compareCount).toBe(2);
+    expect(meta.lastSort).toBe("payback");
+    expect(meta.lastFilter).toBe("pass_only");
+  });
+
+  it("handles empty ui_state_json gracefully", () => {
+    const saved = {
+      id: "ss2",
+      search_id: "s2",
+      title: "Minimal Study",
+      status: "draft" as const,
+      selected_candidate_ids: [],
+      ui_state_json: null,
+    } as any;
+    const meta = extractSavedStudyMeta(saved);
+    expect(meta.isFinal).toBe(false);
+    expect(meta.leadDistrict).toBeNull();
+    expect(meta.leadParcelId).toBeNull();
+    expect(meta.shortlistCount).toBe(0);
+    expect(meta.compareCount).toBe(0);
+    expect(meta.lastSort).toBeNull();
+    expect(meta.lastFilter).toBeNull();
+  });
+
+  it("handles partial ui_state_json with missing fields", () => {
+    const saved = {
+      id: "ss3",
+      search_id: "s3",
+      title: "Partial Study",
+      status: "draft" as const,
+      selected_candidate_ids: ["c1"],
+      ui_state_json: { lead_candidate_id: "c99" },
+      candidates: [],
+    } as any;
+    const meta = extractSavedStudyMeta(saved);
+    expect(meta.shortlistCount).toBe(1);
+    expect(meta.leadDistrict).toBeNull();
+    expect(meta.leadParcelId).toContain("c99");
+    expect(meta.compareCount).toBe(0);
+  });
+
+  it("restores sort/filter from partial state safely", () => {
+    const result = restoreSortFilter({ active_sort: "economics" });
+    expect(result.activeSort).toBe("economics");
+    expect(result.activeFilter).toBe("all");
+    expect(result.districtFilter).toBe("");
+  });
+
+  it("falls back to defaults for invalid sort/filter values", () => {
+    const result = restoreSortFilter({ active_sort: "invalid_value", active_filter: 123 });
+    expect(result.activeSort).toBe("rank");
+    expect(result.activeFilter).toBe("all");
+  });
+});
+
+/* ─── Final vs draft study presentation behavior ─── */
+
+describe("Final vs draft study presentation", () => {
+  it("buildUiStateJson preserves all state fields", () => {
+    const state = buildUiStateJson("c1", ["c1", "c2"], "c1", "pass_only", "payback", "Al Malqa");
+    expect(state.selected_candidate_id).toBe("c1");
+    expect(state.compare_ids).toEqual(["c1", "c2"]);
+    expect(state.lead_candidate_id).toBe("c1");
+    expect(state.active_filter).toBe("pass_only");
+    expect(state.active_sort).toBe("payback");
+    expect(state.district_filter).toBe("Al Malqa");
+  });
+
+  it("restoreSavedUiState restores lead and sort/filter from saved study", () => {
+    const saved = {
+      id: "ss1",
+      search_id: "s1",
+      title: "Test",
+      status: "final" as const,
+      selected_candidate_ids: ["c1", "c2"],
+      ui_state_json: {
+        lead_candidate_id: "c1",
+        compare_ids: ["c1", "c2"],
+        selected_candidate_id: "c1",
+        active_sort: "economics",
+        active_filter: "pass_only",
+        district_filter: "Al Malqa",
+      },
+    } as any;
+    const candidates = [makeCandidate({ id: "c1" }), makeCandidate({ id: "c2" })];
+    const restored = restoreSavedUiState(saved, candidates);
+    expect(restored.leadCandidateId).toBe("c1");
+    expect(restored.activeSort).toBe("economics");
+    expect(restored.activeFilter).toBe("pass_only");
+    expect(restored.districtFilter).toBe("Al Malqa");
+    expect(restored.compareIds).toEqual(["c1", "c2"]);
+  });
+});
+
+/* ─── Copy/share text block generation ─── */
+
+describe("Copy/share text block generation", () => {
+  it("generates executive summary text from candidate and report", () => {
+    const candidate = makeCandidate({
+      rank_position: 1,
+      district: "Al Malqa",
+      top_positives_json: ["Strong demand"],
+      top_risks_json: ["High rent pressure"],
+    });
+    const report = {
+      recommendation: { why_best: "Highest demand zone", main_risk: "Rent escalation", best_format: "QSR" },
+      top_candidates: [],
+      assumptions: {},
+      meta: {},
+    } as any;
+    const summary = buildCopySummary(candidate, report, null);
+    expect(summary.bestCandidate).toContain("Al Malqa");
+    expect(summary.topReason).toBe("Highest demand zone");
+    expect(summary.mainRisk).toBe("Rent escalation");
+    expect(summary.bestFormat).toBe("QSR");
+  });
+
+  it("formats copy summary text correctly", () => {
+    const summary = {
+      bestCandidate: "#1 Al Malqa",
+      topReason: "Best foot traffic",
+      mainRisk: "High rent",
+      bestFormat: "Cafe",
+      nextValidation: "Site visit recommended",
+    };
+    const text = formatCopySummaryText(summary);
+    expect(text).toContain("Lead site: #1 Al Malqa");
+    expect(text).toContain("Top reason: Best foot traffic");
+    expect(text).toContain("Main risk: High rent");
+    expect(text).toContain("Best format: Cafe");
+    expect(text).toContain("Next step: Site visit recommended");
+  });
+
+  it("generates landlord briefing text with rent info", () => {
+    const candidate = makeCandidate({
+      rank_position: 2,
+      district: "Al Nakheel",
+      parcel_id: "p-xyz",
+      estimated_rent_sar_m2_year: 1200,
+      estimated_annual_rent_sar: 144000,
+      gate_status_json: { overall_pass: true },
+    });
+    const text = formatLandlordBriefingText(candidate);
+    expect(text).toContain("Al Nakheel");
+    expect(text).toContain("p-xyz");
+    expect(text).toContain("1200 SAR/m");
+    expect(text).toContain("144,000 SAR/yr");
+    expect(text).toContain("All gates passed");
+    expect(text).toContain("Confirm street frontage");
+  });
+
+  it("falls back to candidate positives when no report", () => {
+    const candidate = makeCandidate({
+      top_positives_json: ["Low competition area"],
+      top_risks_json: ["Unknown zoning"],
+      gate_reasons_json: { passed: [], failed: [], unknown: ["zoning"], thresholds: {}, explanations: {} },
+    });
+    const summary = buildCopySummary(candidate, null, null);
+    expect(summary.topReason).toBe("Low competition area");
+    expect(summary.mainRisk).toBe("Unknown zoning");
+    expect(summary.nextValidation).toBe("zoning");
+  });
+});
+
+/* ─── Memo panel rendering with context ─── */
+
+describe("Memo panel rendering with study context", () => {
+  it("renders memo panel with study context chips", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        memo={{
+          recommendation: { verdict: "go", headline: "Strong site" },
+          candidate: { final_score: 85, rank_position: 1, confidence_grade: "A" },
+          market_research: {},
+        } as any}
+        loading={false}
+        shortlistCount={4}
+        compareCount={3}
+      />,
+    );
+    expect(html).toContain("ea-drawer__context-chips");
+    expect(html).toContain("4 shortlisted");
+    expect(html).toContain("3 compared");
+  });
+
+  it("renders memo panel without chips when counts are zero", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        memo={{
+          recommendation: { verdict: "go" },
+          candidate: {},
+          market_research: {},
+        } as any}
+        loading={false}
+        shortlistCount={0}
+        compareCount={0}
+      />,
+    );
+    expect(html).not.toContain("ea-drawer__context-chips");
+  });
+});
+
+/* ─── Report panel rendering with lead context ─── */
+
+describe("Report panel rendering with lead context", () => {
+  it("renders decision snapshot inside report when lead exists", () => {
+    const candidate = makeCandidate({ rank_position: 1, district: "Al Malqa", final_score: 90, confidence_grade: "A", gate_status_json: { overall_pass: true } });
+    const report = {
+      recommendation: { why_best: "Test reason", summary: "Test summary" },
+      top_candidates: [],
+      assumptions: {},
+      meta: {},
+    } as any;
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        report={report}
+        loading={false}
+        leadCandidateId="c1"
+        leadCandidate={candidate}
+      />,
+    );
+    expect(html).toContain("ea-decision-snapshot");
+    expect(html).toContain("ea-validation-plan");
+    expect(html).toContain("ea-assumptions-card");
+  });
+
+  it("renders study context chips in report", () => {
+    const report = {
+      recommendation: {},
+      top_candidates: [],
+      assumptions: {},
+      meta: {},
+    } as any;
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        report={report}
+        loading={false}
+        shortlistCount={3}
+        compareCount={2}
+        isFinalStudy={true}
+      />,
+    );
+    expect(html).toContain("ea-drawer__context-chips");
+    expect(html).toContain("3 shortlisted");
+    expect(html).toContain("Final");
+  });
+});
