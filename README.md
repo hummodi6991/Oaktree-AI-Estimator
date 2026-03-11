@@ -173,7 +173,9 @@ Compare response:
 - a headline, best-use-case branch format, and primary watchout
 - deterministic `market_research` summaries for delivery-market context, competitive context, and district fit
 
-`GET /v1/expansion-advisor/searches/{search_id}/report` returns a deterministic executive-style JSON recommendation with `meta.version = "expansion_advisor_v6.1"`, `top_candidates` (top 3 ordered by `rank_position`, then final score fallback), and `recommendation` keys always present (`best_candidate_id`, `runner_up_candidate_id`, `best_pass_candidate_id`, `best_confidence_candidate_id`, `why_best`, `main_risk`, `best_format`, `summary`, `report_summary`). Top candidates always include `id`, `final_score`, `rank_position`, `confidence_grade`, `gate_verdict`, top positives/risks (max 3), compact feature snapshot, and compact score breakdown.
+`GET /v1/expansion-advisor/searches/{search_id}` returns a deterministic detail contract for legacy and new rows. It always includes: `target_districts` (array), `bbox` (object or null), `request_json` (object), `notes` (object), `existing_branches` (array), `brand_profile` (object), and `meta` with `version`, `parcel_source`, `excluded_sources`.
+
+`GET /v1/expansion-advisor/searches/{search_id}/report` returns a deterministic executive-style JSON recommendation with `meta.version = "expansion_advisor_v6.1"`, `top_candidates` (top 3 ordered by `rank_position`, then final score fallback), and `recommendation` keys always present (`best_candidate_id`, `runner_up_candidate_id`, `best_pass_candidate_id`, `best_confidence_candidate_id`, `why_best`, `main_risk`, `best_format`, `summary`, `report_summary`). `assumptions` is always present. Top candidates always include `id`, `final_score`, `rank_position`, `confidence_grade`, `gate_verdict`, top positives/risks (max 3), compact feature snapshot, and compact score breakdown.
 
 
 Saved studies payload fields:
@@ -182,7 +184,7 @@ Saved studies payload fields:
 - `filters_json` (brief form restore payload)
 - `ui_state_json` (lightweight map/list UI state restore)
 
-Saved study detail response includes linked `search` and `candidates` for frontend hydration.
+Saved study detail response includes linked `search` and `candidates` for frontend hydration. Saved-search responses are normalized for deterministic defaults: `selected_candidate_ids` (array), `filters_json` (object), `ui_state_json` (object), `description` (nullable), nested `search` normalized as above, and nested `candidates` normalized to include decision-layer defaults (`gate_reasons_json`, `feature_snapshot_json`, `score_breakdown_json`).
 
 Notes:
 - Expansion Advisor is now the primary user-facing workflow and replaces Restaurant Finder in navigation.

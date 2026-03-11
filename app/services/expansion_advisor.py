@@ -16,6 +16,9 @@ _EXPANSION_CITY = "riyadh"
 _EXPANSION_AQAR_ASSET = "commercial"
 _EXPANSION_AQAR_UNIT = "retail"
 _EXPANSION_DEFAULT_RENT_SAR_M2_YEAR = 900.0
+_EXPANSION_VERSION = "expansion_advisor_v6.1"
+_EXPANSION_PARCEL_SOURCE = "arcgis_only"
+_EXPANSION_EXCLUDED_SOURCES = ["suhail", "inferred_parcels"]
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
@@ -92,6 +95,50 @@ def _normalize_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     payload["decision_summary"] = payload.get("decision_summary") or ""
     payload["demand_thesis"] = payload.get("demand_thesis") or ""
     payload["cost_thesis"] = payload.get("cost_thesis") or ""
+    return payload
+
+
+def _normalize_search_payload(search: dict[str, Any] | None) -> dict[str, Any] | None:
+    if search is None:
+        return None
+    payload = dict(search)
+    payload["target_districts"] = payload.get("target_districts") or []
+    payload["bbox"] = payload.get("bbox") if payload.get("bbox") is not None else None
+    payload["request_json"] = payload.get("request_json") or {}
+    payload["notes"] = payload.get("notes") or {}
+    payload["existing_branches"] = payload.get("existing_branches") or []
+    payload["brand_profile"] = payload.get("brand_profile") or {}
+    meta = dict(payload.get("meta") or {})
+    meta["version"] = _EXPANSION_VERSION
+    meta["parcel_source"] = _EXPANSION_PARCEL_SOURCE
+    meta["excluded_sources"] = list(_EXPANSION_EXCLUDED_SOURCES)
+    payload["meta"] = meta
+    return payload
+
+
+def _normalize_saved_search_payload(
+    saved: dict[str, Any] | None,
+    *,
+    search: dict[str, Any] | None = None,
+    candidates: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    if saved is None:
+        return None
+    payload = dict(saved)
+    payload["selected_candidate_ids"] = payload.get("selected_candidate_ids") or []
+    payload["filters_json"] = payload.get("filters_json") or {}
+    payload["ui_state_json"] = payload.get("ui_state_json") or {}
+    payload["description"] = payload.get("description")
+    payload["search"] = _normalize_search_payload(search if search is not None else payload.get("search"))
+    normalized_candidates = candidates if candidates is not None else payload.get("candidates")
+    payload["candidates"] = [_normalize_candidate_payload(dict(item)) for item in (normalized_candidates or [])]
+
+    search_payload = payload.get("search") or {}
+    if search_payload.get("brand_profile"):
+        payload["brand_profile"] = search_payload.get("brand_profile")
+        filters_json = dict(payload.get("filters_json") or {})
+        filters_json["brand_profile"] = search_payload.get("brand_profile")
+        payload["filters_json"] = filters_json
     return payload
 
 
@@ -1901,12 +1948,7 @@ def get_search(db: Session, search_id: str) -> dict[str, Any] | None:
         return None
     payload = dict(row)
     payload["brand_profile"] = get_brand_profile(db, search_id)
-    payload["meta"] = {
-        "version": "expansion_advisor_v6.1",
-        "parcel_source": "arcgis_only",
-        "excluded_sources": ["suhail", "inferred_parcels"],
-    }
-    return payload
+    return _normalize_search_payload(payload)
 
 
 def get_candidates(db: Session, search_id: str) -> list[dict[str, Any]]:
@@ -2039,7 +2081,7 @@ def create_saved_search(
             "ui_state_json": json.dumps(ui_state_json, ensure_ascii=False) if ui_state_json is not None else None,
         },
     ).mappings().first()
-    return dict(row) if row else {}
+    return _normalize_saved_search_payload(dict(row) if row else {})
 
 
 def list_saved_searches(
@@ -2070,7 +2112,7 @@ def list_saved_searches(
         ),
         {"status": status, "limit": limit},
     ).mappings().all()
-    return [dict(row) for row in rows]
+    return [_normalize_saved_search_payload(dict(row)) for row in rows]
 
 
 def get_saved_search(db: Session, saved_id: str) -> dict[str, Any] | None:
@@ -2100,14 +2142,7 @@ def get_saved_search(db: Session, saved_id: str) -> dict[str, Any] | None:
     saved = dict(row)
     search = get_search(db, str(saved["search_id"]))
     candidates = get_candidates(db, str(saved["search_id"]))
-    saved["search"] = search
-    saved["candidates"] = candidates
-    if search and search.get("brand_profile"):
-        saved["brand_profile"] = search.get("brand_profile")
-        filters_json = dict(saved.get("filters_json") or {})
-        filters_json["brand_profile"] = search.get("brand_profile")
-        saved["filters_json"] = filters_json
-    return saved
+    return _normalize_saved_search_payload(saved, search=search, candidates=candidates)
 
 
 def update_saved_search(
@@ -2136,7 +2171,7 @@ def update_saved_search(
             ),
             {"saved_id": saved_id},
         ).mappings().first()
-        return dict(row) if row else None
+        return _normalize_saved_search_payload(dict(row)) if row else None
 
     updates: list[str] = []
     params: dict[str, Any] = {"saved_id": saved_id}
@@ -2174,8 +2209,27 @@ def update_saved_search(
         ),
         params,
     ).mappings().first()
-    return dict(row) if row else None
+    return _normalize_saved_search_payload(dict(row)) if row else None
 
+
+_COMPARE_SUMMARY_KEYS = [
+    "best_overall_candidate_id",
+    "lowest_cannibalization_candidate_id",
+    "highest_demand_candidate_id",
+    "best_fit_candidate_id",
+    "best_economics_candidate_id",
+    "best_brand_fit_candidate_id",
+    "strongest_delivery_market_candidate_id",
+    "strongest_whitespace_candidate_id",
+    "lowest_rent_burden_candidate_id",
+    "fastest_payback_candidate_id",
+    "most_confident_candidate_id",
+    "best_gate_pass_candidate_id",
+]
+
+
+def _empty_compare_summary() -> dict[str, Any]:
+    return {key: None for key in _COMPARE_SUMMARY_KEYS}
 
 def delete_saved_search(db: Session, saved_id: str) -> bool:
     row = db.execute(
@@ -2314,30 +2368,30 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
         item["cons"] = cons
         items.append(item)
 
-    best_overall = max(items, key=lambda item: _safe_float(item.get("final_score")))["candidate_id"]
-    lowest_cannibalization = min(items, key=lambda item: _safe_float(item.get("cannibalization_score"), 9999.0))["candidate_id"]
-    highest_demand = max(items, key=lambda item: _safe_float(item.get("demand_score")))["candidate_id"]
-    best_fit = max(items, key=lambda item: _safe_float(item.get("fit_score")))["candidate_id"]
-    best_economics = max(items, key=lambda item: _safe_float(item.get("economics_score")))["candidate_id"]
-    best_brand_fit = max(items, key=lambda item: _safe_float(item.get("brand_fit_score")))["candidate_id"]
-    strongest_delivery_market = max(items, key=lambda item: _safe_float(item.get("provider_density_score")) + _safe_float(item.get("multi_platform_presence_score")))["candidate_id"]
-    strongest_whitespace = max(items, key=lambda item: _safe_float(item.get("provider_whitespace_score")))["candidate_id"]
-    lowest_rent_burden = min(items, key=lambda item: _safe_float(item.get("estimated_annual_rent_sar"), 10**12))["candidate_id"]
-    fastest_payback = min(items, key=lambda item: _safe_float(item.get("estimated_payback_months"), 10**6))["candidate_id"]
-    grade_order = {"A": 4, "B": 3, "C": 2, "D": 1}
-    most_confident = max(
-        items,
-        key=lambda item: (
-            grade_order.get(str(item.get("confidence_grade") or "D"), 0),
-            _safe_float(item.get("confidence_score")),
-        ),
-    )["candidate_id"]
-    pass_items = [item for item in items if bool((item.get("gate_status_json") or {}).get("overall_pass"))]
-    best_gate_pass = max(pass_items or items, key=lambda item: _safe_float(item.get("final_score")))["candidate_id"]
+    summary = _empty_compare_summary()
+    if items:
+        best_overall = max(items, key=lambda item: _safe_float(item.get("final_score")))["candidate_id"]
+        lowest_cannibalization = min(items, key=lambda item: _safe_float(item.get("cannibalization_score"), 9999.0))["candidate_id"]
+        highest_demand = max(items, key=lambda item: _safe_float(item.get("demand_score")))["candidate_id"]
+        best_fit = max(items, key=lambda item: _safe_float(item.get("fit_score")))["candidate_id"]
+        best_economics = max(items, key=lambda item: _safe_float(item.get("economics_score")))["candidate_id"]
+        best_brand_fit = max(items, key=lambda item: _safe_float(item.get("brand_fit_score")))["candidate_id"]
+        strongest_delivery_market = max(items, key=lambda item: _safe_float(item.get("provider_density_score")) + _safe_float(item.get("multi_platform_presence_score")))["candidate_id"]
+        strongest_whitespace = max(items, key=lambda item: _safe_float(item.get("provider_whitespace_score")))["candidate_id"]
+        lowest_rent_burden = min(items, key=lambda item: _safe_float(item.get("estimated_annual_rent_sar"), 10**12))["candidate_id"]
+        fastest_payback = min(items, key=lambda item: _safe_float(item.get("estimated_payback_months"), 10**6))["candidate_id"]
+        grade_order = {"A": 4, "B": 3, "C": 2, "D": 1}
+        most_confident = max(
+            items,
+            key=lambda item: (
+                grade_order.get(str(item.get("confidence_grade") or "D"), 0),
+                _safe_float(item.get("confidence_score")),
+            ),
+        )["candidate_id"]
+        pass_items = [item for item in items if bool((item.get("gate_status_json") or {}).get("overall_pass"))]
+        best_gate_pass = max(pass_items or items, key=lambda item: _safe_float(item.get("final_score")))["candidate_id"]
 
-    return {
-        "items": items,
-        "summary": {
+        summary.update({
             "best_overall_candidate_id": best_overall,
             "lowest_cannibalization_candidate_id": lowest_cannibalization,
             "highest_demand_candidate_id": highest_demand,
@@ -2350,8 +2404,9 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "fastest_payback_candidate_id": fastest_payback,
             "most_confident_candidate_id": most_confident,
             "best_gate_pass_candidate_id": best_gate_pass,
-        },
-    }
+        })
+
+    return {"items": items, "summary": summary}
 
 
 def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
@@ -2537,7 +2592,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
         return {
             "search_id": search_id,
             "brand_profile": search.get("brand_profile") or {},
-            "meta": {"version": "expansion_advisor_v6.1"},
+            "meta": {"version": _EXPANSION_VERSION},
             "top_candidates": [],
             "recommendation": {
                 "best_candidate_id": None,
@@ -2551,7 +2606,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
                 "report_summary": "",
             },
             "assumptions": {
-                "parcel_source": "arcgis_only",
+                "parcel_source": _EXPANSION_PARCEL_SOURCE,
                 "city": "riyadh",
                 "heuristic_metrics": [
                     "provider_density_score",
@@ -2613,7 +2668,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     return {
         "search_id": search_id,
         "brand_profile": search.get("brand_profile") or {},
-        "meta": {"version": "expansion_advisor_v6.1"},
+        "meta": {"version": _EXPANSION_VERSION},
         "top_candidates": top_payload,
         "recommendation": {
             "best_candidate_id": best.get("id"),
@@ -2627,7 +2682,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
             "report_summary": f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner_item.get('district') if runner_item else 'backup options'} as runner-up.",
         },
         "assumptions": {
-            "parcel_source": "arcgis_only",
+            "parcel_source": _EXPANSION_PARCEL_SOURCE,
             "city": "riyadh",
             "heuristic_metrics": [
                 "provider_density_score",

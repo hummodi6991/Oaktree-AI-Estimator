@@ -218,9 +218,17 @@ def test_compare_endpoint_happy_path(monkeypatch):
             ],
             "summary": {
                 "best_overall_candidate_id": "c1",
+                "lowest_cannibalization_candidate_id": "c2",
+                "highest_demand_candidate_id": "c1",
+                "best_fit_candidate_id": "c1",
                 "best_economics_candidate_id": "c1",
-                "fastest_payback_candidate_id": "c1",
+                "best_brand_fit_candidate_id": "c1",
+                "strongest_delivery_market_candidate_id": "c2",
+                "strongest_whitespace_candidate_id": "c2",
                 "lowest_rent_burden_candidate_id": "c2",
+                "fastest_payback_candidate_id": "c1",
+                "most_confident_candidate_id": "c2",
+                "best_gate_pass_candidate_id": "c1",
             },
         },
     )
@@ -240,6 +248,20 @@ def test_compare_endpoint_happy_path(monkeypatch):
     assert body["items"][0]["economics_score"] == 70.0
     assert body["items"][0]["zoning_fit_score"] == 82
     assert body["summary"]["best_economics_candidate_id"] == "c1"
+    assert set(body["summary"].keys()) == {
+        "best_overall_candidate_id",
+        "lowest_cannibalization_candidate_id",
+        "highest_demand_candidate_id",
+        "best_fit_candidate_id",
+        "best_economics_candidate_id",
+        "best_brand_fit_candidate_id",
+        "strongest_delivery_market_candidate_id",
+        "strongest_whitespace_candidate_id",
+        "lowest_rent_burden_candidate_id",
+        "fastest_payback_candidate_id",
+        "most_confident_candidate_id",
+        "best_gate_pass_candidate_id",
+    }
 
 
 def test_compare_endpoint_rejects_foreign_candidate_ids(monkeypatch):
