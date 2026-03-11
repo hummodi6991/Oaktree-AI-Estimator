@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   compareExpansionCandidates,
@@ -30,7 +30,23 @@ import SavedSearchesPanel from "./SavedSearchesPanel";
 import ExpansionReportPanel from "./ExpansionReportPanel";
 import CandidateDetailPanel from "./CandidateDetailPanel";
 import SaveStudyDialog from "./SaveStudyDialog";
-import ScorePill from "./ScorePill";
+import BriefSummaryRail from "./BriefSummaryRail";
+import StudyHeader from "./StudyHeader";
+import ShortlistTray from "./ShortlistTray";
+import SortFilterBar from "./SortFilterBar";
+import {
+  normalizeBriefPayload,
+  filterCandidates,
+  sortCandidates,
+  extractDistricts,
+  generateStudyTitle,
+  type FilterKey,
+  type SortKey,
+  type MemoCache,
+  type ReportCache,
+  memoCacheKey,
+  reportCacheKey,
+} from "./studyAdapters";
 import "./expansion-advisor.css";
 
 /* ─── Pure helpers (exported for tests) ─── */
@@ -146,6 +162,18 @@ export default function ExpansionAdvisorPage({
   const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
   const detailRef = useRef<HTMLDivElement | null>(null);
 
+  // Brief edit/run state
+  const [briefMode, setBriefMode] = useState<"edit" | "summary">("edit");
+
+  // Sort & filter
+  const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
+  const [activeSort, setActiveSort] = useState<SortKey>("rank");
+  const [districtFilter, setDistrictFilter] = useState<string>("");
+
+  // Caches
+  const memoCacheRef = useRef<MemoCache>(new Map());
+  const reportCacheRef = useRef<ReportCache>(new Map());
+
   // Load saved studies on mount
   useEffect(() => {
     setLoadingSaved(true);
@@ -167,12 +195,24 @@ export default function ExpansionAdvisorPage({
     if (compareResult !== null) setCompareResult(null);
   }, [compareIds, compareResult]);
 
-  const loadReport = async (targetSearchId: string) => {
+  // Collapse brief to summary once search runs
+  useEffect(() => {
+    if (searchId && candidates.length > 0) setBriefMode("summary");
+  }, [searchId, candidates.length]);
+
+  const loadReport = useCallback(async (targetSearchId: string) => {
     if (!targetSearchId) return;
+    const cacheKey = reportCacheKey(targetSearchId);
+    const cached = reportCacheRef.current.get(cacheKey);
+    if (cached) { setReport(cached); return; }
     setLoadingReport(true);
     setReportError(null);
-    try { setReport(await getExpansionRecommendationReport(targetSearchId)); } catch { setReportError(t("expansionAdvisor.errorReport")); } finally { setLoadingReport(false); }
-  };
+    try {
+      const result = await getExpansionRecommendationReport(targetSearchId);
+      reportCacheRef.current.set(cacheKey, result);
+      setReport(result);
+    } catch { setReportError(t("expansionAdvisor.errorReport")); } finally { setLoadingReport(false); }
+  }, [t]);
 
   const loadCompare = async (targetSearchId: string, targetCompareIds: string[]) => {
     if (!targetSearchId || targetCompareIds.length < 2 || targetCompareIds.length > 6) { setCompareResult(null); return; }
@@ -186,13 +226,28 @@ export default function ExpansionAdvisorPage({
     setSavedItems(latest.items || []);
   };
 
+  const loadMemoForCandidate = useCallback(async (candidateId: string): Promise<CandidateMemoResponse | null> => {
+    const cacheKey = memoCacheKey(candidateId);
+    const cached = memoCacheRef.current.get(cacheKey);
+    if (cached) return cached;
+    const result = await getExpansionCandidateMemo(candidateId);
+    memoCacheRef.current.set(cacheKey, result);
+    return result;
+  }, []);
+
   const handleSelectCandidate = async (candidate: ExpansionCandidate, forceReloadMemo = false) => {
     if (sameCandidateId(candidate, selectedCandidate) && !forceReloadMemo) return;
     setSelectedCandidate(candidate);
     onSelectedCandidateChange(candidate);
     setLoadingMemo(true);
     setMemoError(null);
-    try { setMemo(await getExpansionCandidateMemo(candidate.id)); } catch { setMemoError(t("expansionAdvisor.errorMemo")); } finally { setLoadingMemo(false); requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })); }
+    try {
+      const memoResult = await loadMemoForCandidate(candidate.id);
+      setMemo(memoResult);
+    } catch { setMemoError(t("expansionAdvisor.errorMemo")); } finally {
+      setLoadingMemo(false);
+      requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
   };
 
   const handleSelectCandidateById = async (candidateId?: string | null, forceReloadMemo = false) => {
@@ -201,8 +256,14 @@ export default function ExpansionAdvisorPage({
     await handleSelectCandidate(target, forceReloadMemo);
   };
 
+  const handleOpenMemoById = async (candidateId: string) => {
+    await handleSelectCandidateById(candidateId);
+    setActiveDrawer("memo");
+  };
+
   const onSubmitBrief = async (nextBrief: ExpansionBrief) => {
-    setBrief(nextBrief);
+    const normalized = normalizeBriefPayload(nextBrief);
+    setBrief(normalized);
     setLoadingSearch(true);
     setSaveError(null);
     setSearchError(null);
@@ -223,8 +284,13 @@ export default function ExpansionAdvisorPage({
     setSearchMeta({});
     setActiveDrawer("none");
     setActiveSavedId(null);
+    setActiveFilter("all");
+    setActiveSort("rank");
+    setDistrictFilter("");
+    memoCacheRef.current.clear();
+    reportCacheRef.current.clear();
     try {
-      const result = await createExpansionSearch(nextBrief);
+      const result = await createExpansionSearch(normalized);
       setSearchId(result.search_id);
       setCandidates(normalizeCandidates(result.items || []));
       setSearchMeta(result.meta || {});
@@ -237,6 +303,11 @@ export default function ExpansionAdvisorPage({
     setMemoError(null); setReportError(null); setCompareError(null); setSaveError(null);
     setActiveDrawer("none");
     setActiveSavedId(saved.id);
+    setActiveFilter("all");
+    setActiveSort("rank");
+    setDistrictFilter("");
+    memoCacheRef.current.clear();
+    reportCacheRef.current.clear();
     let hydratedCandidates = normalizeCandidates(saved.candidates || []);
     let hydratedSaved = saved;
     try {
@@ -260,6 +331,7 @@ export default function ExpansionAdvisorPage({
     } else { setSelectedCandidate(null); onSelectedCandidateChange(null); }
     if (restored.searchId && restoredCompareIds.length >= 2 && restoredCompareIds.length <= 6) await loadCompare(restored.searchId, restoredCompareIds);
     if (restored.searchId) await loadReport(restored.searchId);
+    if (hydratedCandidates.length > 0) setBriefMode("summary");
   };
 
   const handleDeleteSaved = async (savedId: string) => {
@@ -297,12 +369,30 @@ export default function ExpansionAdvisorPage({
       return;
     }
     void handleSelectCandidate(target);
+    // Scroll candidate card into view
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-candidate-id="${target.id}"]`);
+      el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
   }, [externalSelectedCandidateId, candidates, selectedCandidate?.id]);
 
-  const title = useMemo(() => `${brief.brand_name || t("expansionAdvisor.title")} Study`, [brief.brand_name, t]);
-  const bestCandidate = candidates[0];
+  const title = useMemo(() => generateStudyTitle(brief), [brief]);
+  const bestCandidate = candidates[0] || null;
   const passCount = candidates.filter((c) => c.gate_status_json?.overall_pass).length;
   const hasResults = candidates.length > 0;
+  const districts = useMemo(() => extractDistricts(candidates), [candidates]);
+
+  // Compute filtered/sorted candidates
+  const displayCandidates = useMemo(() => {
+    let result = filterCandidates(candidates, activeFilter, districtFilter);
+    if (activeSort !== "rank") {
+      result = sortCandidates(result, activeSort);
+    }
+    return result;
+  }, [candidates, activeFilter, activeSort, districtFilter]);
+
+  const localSortActive = activeSort !== "rank" || activeFilter !== "all" || districtFilter !== "";
+  const compareShortlistEnabled = shortlistIds.length >= 2 && shortlistIds.length <= 6;
 
   return (
     <div className="ea-page">
@@ -315,30 +405,85 @@ export default function ExpansionAdvisorPage({
         <span className={`ea-story-step ${activeSavedId ? "ea-story-step--active" : ""}`}>{t("expansionAdvisor.storyStep5")}</span>
       </div>
 
+      {/* Study header — shown after search completes */}
+      {searchId && hasResults && (
+        <StudyHeader
+          title={title}
+          candidateCount={candidates.length}
+          shortlistCount={shortlistIds.length}
+          bestCandidate={bestCandidate}
+          report={report}
+          activeSavedId={activeSavedId}
+          searchId={searchId}
+          onSaveStudy={() => setActiveDrawer("save")}
+          onOpenReport={() => { void loadReport(searchId); setActiveDrawer("report"); }}
+          onCompareShortlist={async () => {
+            if (shortlistIds.length >= 2) {
+              setCompareIds(shortlistIds.slice(0, 6));
+              await loadCompare(searchId, shortlistIds.slice(0, 6));
+              setActiveDrawer("compare");
+            }
+          }}
+          compareEnabled={compareShortlistEnabled}
+        />
+      )}
+
       {/* Two-column layout: form + results */}
       <div className="ea-layout">
-        {/* Left column: search form + saved studies */}
+        {/* Left column: brief form/summary + shortlist tray + saved studies */}
         <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
-          <div className="ea-card">
-            <div className="ea-card__header">
-              <h3 className="ea-card__title">{t("expansionAdvisor.briefTitle")}</h3>
-              <span className="ea-card__subtitle">{t("expansionAdvisor.heroSubtitle")}</span>
+          {/* Brief: edit or summary mode */}
+          {briefMode === "edit" || !hasResults ? (
+            <div className="ea-card">
+              <div className="ea-card__header">
+                <h3 className="ea-card__title">{t("expansionAdvisor.brandBrief")}</h3>
+                <span className="ea-card__subtitle">{t("expansionAdvisor.heroSubtitle")}</span>
+              </div>
+              <div className="ea-card__body">
+                <ExpansionBriefForm initialValue={brief} loading={loadingSearch} onSubmit={onSubmitBrief} />
+                {searchError && <div className="ea-state ea-state--error" style={{ marginTop: 8 }}>{searchError}</div>}
+              </div>
             </div>
-            <div className="ea-card__body">
-              <ExpansionBriefForm initialValue={brief} loading={loadingSearch} onSubmit={onSubmitBrief} />
-              {searchError && <div className="ea-state ea-state--error" style={{ marginTop: 8 }}>{searchError}</div>}
-            </div>
-          </div>
+          ) : (
+            <BriefSummaryRail
+              brief={brief}
+              onEditBrief={() => setBriefMode("edit")}
+              onRunAgain={() => void onSubmitBrief(brief)}
+              loading={loadingSearch}
+            />
+          )}
+
+          {/* Shortlist tray */}
+          {hasResults && (
+            <ShortlistTray
+              candidates={candidates}
+              shortlistIds={shortlistIds}
+              compareIds={compareIds}
+              selectedCandidateId={selectedCandidate?.id || null}
+              onSelectCandidate={(id) => void handleSelectCandidateById(id)}
+              onRemoveShortlist={(id) => setShortlistIds((cur) => cur.filter((sid) => sid !== id))}
+              onOpenMemo={(id) => void handleOpenMemoById(id)}
+              onCompare={async () => {
+                if (shortlistIds.length >= 2) {
+                  setCompareIds(shortlistIds.slice(0, 6));
+                  await loadCompare(searchId, shortlistIds.slice(0, 6));
+                  setActiveDrawer("compare");
+                }
+              }}
+              compareEnabled={compareShortlistEnabled}
+            />
+          )}
 
           <div className="ea-card">
             <div className="ea-card__header">
-              <h3 className="ea-card__title">{t("expansionAdvisor.savedStudies")}</h3>
+              <h3 className="ea-card__title">{t("expansionAdvisor.expansionStudies")}</h3>
             </div>
             <div className="ea-card__body">
               {savedLoadError && <div className="ea-state ea-state--error">{savedLoadError}</div>}
               <SavedSearchesPanel
                 items={savedItems}
                 loading={loadingSaved}
+                activeSavedId={activeSavedId}
                 onOpen={async (savedId) => {
                   setLoadingSaved(true);
                   setSavedLoadError(null);
@@ -356,7 +501,7 @@ export default function ExpansionAdvisorPage({
           {hasResults && (
             <div className="ea-summary-strip">
               <div className="ea-summary-strip__item">
-                <span className="ea-summary-strip__label">{t("expansionAdvisor.totalCandidates")}:</span>
+                <span className="ea-summary-strip__label">{t("expansionAdvisor.branchCandidates")}:</span>
                 <span className="ea-summary-strip__value">{candidates.length}</span>
               </div>
               <div className="ea-summary-strip__item">
@@ -366,7 +511,7 @@ export default function ExpansionAdvisorPage({
               {bestCandidate && (
                 <div className="ea-summary-strip__item">
                   <span className="ea-summary-strip__label">{t("expansionAdvisor.bestScore")}:</span>
-                  <ScorePill value={bestCandidate.final_score} />
+                  <span className="ea-summary-strip__value">{bestCandidate.final_score ?? "—"}</span>
                 </div>
               )}
               <div className="ea-summary-strip__item">
@@ -380,6 +525,21 @@ export default function ExpansionAdvisorPage({
                 </div>
               ) : null}
             </div>
+          )}
+
+          {/* Sort & filter bar */}
+          {hasResults && (
+            <SortFilterBar
+              activeFilter={activeFilter}
+              activeSort={activeSort}
+              districtFilter={districtFilter}
+              districts={districts}
+              totalCount={candidates.length}
+              filteredCount={displayCandidates.length}
+              onFilterChange={setActiveFilter}
+              onSortChange={setActiveSort}
+              onDistrictFilterChange={setDistrictFilter}
+            />
           )}
 
           {/* Actions bar */}
@@ -397,7 +557,7 @@ export default function ExpansionAdvisorPage({
                 onSelectCandidateId={(candidateId) => void handleSelectCandidateById(candidateId)}
               />
               <button className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => { void loadReport(searchId); setActiveDrawer("report"); }}>
-                {t("expansionAdvisor.viewReport")}
+                {t("expansionAdvisor.openExecutiveReport")}
               </button>
               <button className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => setActiveDrawer("save")} disabled={!searchId}>
                 {activeSavedId ? t("expansionAdvisor.updateStudy") : t("expansionAdvisor.saveStudy")}
@@ -408,13 +568,15 @@ export default function ExpansionAdvisorPage({
           {/* Candidate list */}
           {hasResults ? (
             <ExpansionResultsPanel
-              items={candidates}
+              items={displayCandidates}
               selectedCandidateId={selectedCandidate?.id || null}
               shortlistIds={shortlistIds}
               compareIds={compareIds}
+              localSortActive={localSortActive}
               onSelectCandidate={(candidate) => void handleSelectCandidate(candidate)}
               onToggleShortlist={(candidateId) => setShortlistIds((cur) => cur.includes(candidateId) ? cur.filter((id) => id !== candidateId) : [...cur, candidateId])}
               onToggleCompare={(candidateId) => setCompareIds((cur) => getNextCompareIds(cur, candidateId))}
+              onOpenMemo={(candidateId) => void handleOpenMemoById(candidateId)}
             />
           ) : (
             <div className="ea-state">
@@ -433,7 +595,7 @@ export default function ExpansionAdvisorPage({
                   #{selectedCandidate.rank_position} {selectedCandidate.district || selectedCandidate.parcel_id}
                 </h3>
                 <button className="oak-btn oak-btn--sm oak-btn--primary" onClick={() => setActiveDrawer("memo")}>
-                  {t("expansionAdvisor.viewMemo")}
+                  {t("expansionAdvisor.viewDecisionMemo")}
                 </button>
               </div>
               <div className="ea-card__body">
@@ -471,9 +633,12 @@ export default function ExpansionAdvisorPage({
         />
       )}
 
-      {activeDrawer === "save" && (
-        <SaveStudyDialog
-          defaultTitle={title}
+      {activeDrawer === "save" && (() => {
+        const activeSaved = activeSavedId ? savedItems.find((s) => s.id === activeSavedId) : null;
+        return <SaveStudyDialog
+          defaultTitle={activeSaved?.title || title}
+          defaultDescription={activeSaved?.description || undefined}
+          defaultStatus={activeSaved?.status || undefined}
           saving={saving}
           error={saveError}
           isUpdate={Boolean(activeSavedId)}
@@ -500,8 +665,8 @@ export default function ExpansionAdvisorPage({
               setActiveDrawer("none");
             } catch { setSaveError(t("expansionAdvisor.errorSavedLoad")); } finally { setSaving(false); }
           }}
-        />
-      )}
+        />;
+      })()}
 
       {reportError && activeDrawer !== "report" && <div className="ea-state ea-state--error">{reportError}</div>}
     </div>
