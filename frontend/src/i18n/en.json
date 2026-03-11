@@ -792,6 +792,25 @@
     "whyNotRunnerUp": "Key Risk to Watch",
     "beforeSigning": "What Must Be Validated Before Signing",
     "storyStep3": "3. Shortlist Finalists",
-    "storyStep4": "4. Choose Lead Site"
+    "storyStep4": "4. Choose Lead Site",
+    "validationPlan": "Validation Plan",
+    "vpMustVerify": "Must verify before commitment",
+    "vpNiceToConfirm": "Nice to confirm",
+    "vpAlreadyStrong": "Already strong",
+    "assumptionsConfidence": "Assumptions & Confidence",
+    "acStrong": "Strong / Observed",
+    "acEstimated": "Estimated / Modeled",
+    "acMissing": "Missing / Unknown",
+    "acStrongShort": "observed",
+    "acEstimatedShort": "estimated",
+    "acMissingShort": "missing",
+    "decisionSnapshot": "Decision Snapshot",
+    "dsWhyItWins": "Why it wins",
+    "coWinsOverall": "Wins overall:",
+    "coRunnerUpStronger": "Runner-up stronger on:",
+    "coWhatWouldChange": "What would change:",
+    "coLeadMismatch": "Compare winner differs from lead",
+    "smCompared": "{{count}} compared",
+    "copySiteVisitBriefing": "Copy Site Visit Briefing"
   }
 }

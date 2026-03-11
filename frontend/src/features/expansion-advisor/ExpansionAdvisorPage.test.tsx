@@ -41,7 +41,17 @@ import {
   buildCopySummary,
   formatCopySummaryText,
   findRunnerUp,
+  deriveValidationPlan,
+  deriveAssumptions,
+  buildDecisionSnapshot,
+  deriveCompareOutcome,
+  extractSavedStudyMeta,
+  formatLandlordBriefingText,
 } from "./studyAdapters";
+import ValidationPlanPanel from "./ValidationPlanPanel";
+import AssumptionsCard from "./AssumptionsCard";
+import DecisionSnapshotCard from "./DecisionSnapshotCard";
+import CompareOutcomeBanner from "./CompareOutcomeBanner";
 import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 
 /* ─── Helpers for test data ─── */
@@ -643,6 +653,38 @@ describe("Update study dialog preserves existing values", () => {
     expect(html).toContain("New Study");
     expect(html).toMatch(/option[^>]*value="draft"[^>]*selected/);
   });
+
+  it("update preserves all existing metadata when user saves without changes", () => {
+    // Simulate exact scenario: saved study has title, description, and final status.
+    // Dialog opens for update. User clicks save immediately without editing anything.
+    // The rendered inputs must reflect the original values so onSave receives them unchanged.
+    const existingTitle = "Q4 Riyadh Expansion";
+    const existingDescription = "Flagship locations in Al Olaya and Al Malqa districts";
+    const existingStatus = "final" as const;
+
+    const html = renderToStaticMarkup(
+      <SaveStudyDialog
+        defaultTitle={existingTitle}
+        defaultDescription={existingDescription}
+        defaultStatus={existingStatus}
+        saving={false}
+        error={null}
+        isUpdate={true}
+        onSave={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    // Title input has existing value
+    expect(html).toContain(`value="${existingTitle}"`);
+    // Description input has existing value (not empty string)
+    expect(html).toContain(`value="${existingDescription}"`);
+    // Status select has "final" selected, NOT "draft"
+    expect(html).toMatch(/option[^>]*value="final"[^>]*selected/);
+    expect(html).not.toMatch(/option[^>]*value="draft"[^>]*selected/);
+    // Update button label is shown (not "Save")
+    expect(html).toContain("Update Study");
+  });
 });
 
 describe("Memo/report entry from multiple points", () => {
@@ -1002,5 +1044,352 @@ describe("Report panel lead candidate focus", () => {
     expect(html).toContain("Great demand");
     expect(html).toContain("Expensive rent");
     expect(html).toContain("QSR");
+  });
+});
+
+/* ─── Validation plan derivation ─── */
+
+describe("Validation plan derivation", () => {
+  it("generates validation items from deterministic gate/memo/report fields", () => {
+    const candidate = makeCandidate({
+      estimated_annual_rent_sar: 120000,
+      estimated_rent_sar_m2_year: 1200,
+      gate_status_json: { overall_pass: true, frontage_pass: true, access_pass: true, parking_pass: false },
+      gate_reasons_json: { passed: ["frontage", "access"], failed: ["parking"], unknown: ["visibility"], thresholds: {}, explanations: {} },
+      feature_snapshot_json: { context_sources: {}, missing_context: ["delivery_platforms"], data_completeness_score: 70 },
+      provider_whitespace_score: 75,
+      comparable_competitors_json: [{ id: "r1", name: "Comp1", distance_m: 200 }],
+      distance_to_nearest_branch_m: 3000,
+      cannibalization_score: 20,
+    });
+    const items = deriveValidationPlan(candidate);
+    expect(items.length).toBeGreaterThan(0);
+
+    // Must-verify items
+    const mustVerify = items.filter((i) => i.priority === "must_verify");
+    expect(mustVerify.some((i) => i.label === "Site visit")).toBe(true);
+    expect(mustVerify.some((i) => i.label === "Landlord rent verification")).toBe(true);
+
+    // Already strong items
+    const alreadyStrong = items.filter((i) => i.priority === "already_strong");
+    expect(alreadyStrong.some((i) => i.label === "Frontage/access confirmation")).toBe(true);
+    expect(alreadyStrong.some((i) => i.label === "Delivery catchment validation")).toBe(true);
+    expect(alreadyStrong.some((i) => i.label === "Branch cannibalization sanity check")).toBe(true);
+
+    // Parking gate failed = must verify
+    expect(mustVerify.some((i) => i.label === "Parking check")).toBe(true);
+
+    // Unknown gates
+    expect(mustVerify.some((i) => i.label.includes("visibility"))).toBe(true);
+  });
+
+  it("returns items even for sparse candidate", () => {
+    const candidate = makeCandidate({});
+    const items = deriveValidationPlan(candidate);
+    // Should at least have site visit
+    expect(items.some((i) => i.label === "Site visit")).toBe(true);
+  });
+});
+
+/* ─── Assumptions & confidence derivation ─── */
+
+describe("Assumptions & confidence derivation", () => {
+  it("categorizes data sources into strong/estimated/missing", () => {
+    const candidate = makeCandidate({
+      final_score: 85,
+      gate_status_json: { overall_pass: true, zoning_pass: true },
+      economics_score: 75,
+      estimated_annual_rent_sar: 120000,
+      brand_fit_score: 70,
+      provider_whitespace_score: 65,
+      feature_snapshot_json: {
+        context_sources: { google_places: {}, osm: {} },
+        missing_context: ["delivery_platforms"],
+        data_completeness_score: 75,
+      },
+    });
+    const items = deriveAssumptions(candidate);
+    expect(items.length).toBeGreaterThan(0);
+
+    const strong = items.filter((i) => i.confidence === "strong");
+    const estimated = items.filter((i) => i.confidence === "estimated");
+    const missing = items.filter((i) => i.confidence === "missing");
+
+    expect(strong.some((i) => i.label === "Overall score")).toBe(true);
+    expect(strong.some((i) => i.label === "Gate checks")).toBe(true);
+    expect(estimated.some((i) => i.label === "Economics model")).toBe(true);
+    expect(missing.some((i) => i.label === "delivery platforms")).toBe(true);
+  });
+
+  it("includes report assumptions", () => {
+    const candidate = makeCandidate({ final_score: 80 });
+    const report = {
+      recommendation: {},
+      top_candidates: [],
+      assumptions: { rent_growth: "3% annual" },
+      brand_profile: {},
+      meta: {},
+    };
+    const items = deriveAssumptions(candidate, report);
+    expect(items.some((i) => i.label === "rent growth")).toBe(true);
+  });
+});
+
+/* ─── Decision snapshot rendering ─── */
+
+describe("Decision snapshot", () => {
+  it("builds snapshot from candidate + report + memo fields", () => {
+    const candidate = makeCandidate({
+      rank_position: 1,
+      district: "Olaya",
+      final_score: 88,
+      confidence_grade: "A",
+      gate_status_json: { overall_pass: true },
+      top_positives_json: ["Strong demand"],
+      top_risks_json: ["High rent"],
+      gate_reasons_json: { passed: [], failed: [], unknown: ["parking"], thresholds: {}, explanations: {} },
+    });
+    const report = {
+      recommendation: { why_best: "Best demand profile", main_risk: "Rental costs", best_format: "QSR" },
+      top_candidates: [],
+      assumptions: {},
+      brand_profile: {},
+      meta: {},
+    };
+    const snap = buildDecisionSnapshot(candidate, report, null);
+    expect(snap.leadSite).toContain("Olaya");
+    expect(snap.whyItWins).toBe("Best demand profile");
+    expect(snap.mainRisk).toBe("Rental costs");
+    expect(snap.bestFormat).toBe("QSR");
+    expect(snap.confidenceGrade).toBe("A");
+    expect(snap.gateVerdict).toBe("pass");
+    expect(snap.nextValidation).toBe("parking");
+  });
+
+  it("renders DecisionSnapshotCard component", () => {
+    const candidate = makeCandidate({
+      rank_position: 1,
+      district: "Olaya",
+      final_score: 85,
+      confidence_grade: "B",
+      gate_status_json: { overall_pass: true },
+    });
+    const html = renderToStaticMarkup(
+      <DecisionSnapshotCard candidate={candidate} />,
+    );
+    expect(html).toContain("ea-decision-snapshot");
+    expect(html).toContain("Olaya");
+  });
+});
+
+/* ─── Compare outcome banner ─── */
+
+describe("Compare outcome derivation", () => {
+  it("derives winner and runner-up strengths from compare result", () => {
+    const candidates = [
+      makeCandidate({ id: "c1", rank_position: 1, district: "Olaya" }),
+      makeCandidate({ id: "c2", rank_position: 2, district: "Malqa" }),
+    ];
+    const result = {
+      items: [
+        { candidate_id: "c1", final_score: 85 },
+        { candidate_id: "c2", final_score: 78 },
+      ],
+      summary: {
+        best_overall_candidate_id: "c1",
+        best_economics_candidate_id: "c2",
+        fastest_payback_candidate_id: "c1",
+        best_brand_fit_candidate_id: "c2",
+      },
+    };
+    const outcome = deriveCompareOutcome(result, candidates, "c1");
+    expect(outcome.winnerId).toBe("c1");
+    expect(outcome.winnerLabel).toContain("Olaya");
+    expect(outcome.runnerUpStrengths).toContain("best economics");
+    expect(outcome.runnerUpStrengths).toContain("best brand fit");
+    expect(outcome.leadsAligned).toBe(true);
+  });
+
+  it("detects lead mismatch when compare winner differs from lead", () => {
+    const candidates = [
+      makeCandidate({ id: "c1" }),
+      makeCandidate({ id: "c2" }),
+    ];
+    const result = {
+      items: [{ candidate_id: "c1" }, { candidate_id: "c2" }],
+      summary: { best_overall_candidate_id: "c2" },
+    };
+    const outcome = deriveCompareOutcome(result, candidates, "c1");
+    expect(outcome.leadsAligned).toBe(false);
+  });
+
+  it("returns fallback for null result", () => {
+    const outcome = deriveCompareOutcome(null, [], null);
+    expect(outcome.winnerId).toBeNull();
+    expect(outcome.leadsAligned).toBe(true);
+  });
+
+  it("renders CompareOutcomeBanner component", () => {
+    const candidates = [makeCandidate({ id: "c1", district: "Olaya" })];
+    const result = {
+      items: [{ candidate_id: "c1", final_score: 85 }],
+      summary: { best_overall_candidate_id: "c1" },
+    };
+    const html = renderToStaticMarkup(
+      <CompareOutcomeBanner result={result} candidates={candidates} leadCandidateId="c1" />,
+    );
+    expect(html).toContain("ea-compare-outcome");
+    expect(html).toContain("Olaya");
+  });
+});
+
+/* ─── Saved-study metadata extraction ─── */
+
+describe("Saved-study metadata extraction", () => {
+  it("extracts lead district, shortlist/compare counts, sort/filter from ui_state_json", () => {
+    const saved = {
+      id: "sv1",
+      search_id: "s1",
+      title: "Test Study",
+      status: "final" as const,
+      selected_candidate_ids: ["c1", "c2", "c3"],
+      ui_state_json: {
+        lead_candidate_id: "c1",
+        compare_ids: ["c1", "c2"],
+        active_sort: "economics",
+        active_filter: "pass_only",
+      },
+      candidates: [makeCandidate({ id: "c1", district: "Olaya" }), makeCandidate({ id: "c2" })],
+    };
+    const meta = extractSavedStudyMeta(saved);
+    expect(meta.leadDistrict).toBe("Olaya");
+    expect(meta.shortlistCount).toBe(3);
+    expect(meta.compareCount).toBe(2);
+    expect(meta.lastSort).toBe("economics");
+    expect(meta.lastFilter).toBe("pass_only");
+    expect(meta.isFinal).toBe(true);
+  });
+
+  it("handles empty/partial saved study gracefully", () => {
+    const saved = {
+      id: "sv2",
+      search_id: "s1",
+      title: "Empty",
+      status: "draft" as const,
+      ui_state_json: null,
+    };
+    const meta = extractSavedStudyMeta(saved);
+    expect(meta.leadDistrict).toBeNull();
+    expect(meta.shortlistCount).toBe(0);
+    expect(meta.compareCount).toBe(0);
+    expect(meta.lastSort).toBeNull();
+    expect(meta.isFinal).toBe(false);
+  });
+});
+
+/* ─── Final vs draft study presentation ─── */
+
+describe("Final vs draft study behavior", () => {
+  it("final study should be detected from saved status", () => {
+    const saved = { id: "sv1", search_id: "s1", title: "t", status: "final" as const };
+    const meta = extractSavedStudyMeta(saved);
+    expect(meta.isFinal).toBe(true);
+  });
+
+  it("draft study should be detected from saved status", () => {
+    const saved = { id: "sv1", search_id: "s1", title: "t", status: "draft" as const };
+    const meta = extractSavedStudyMeta(saved);
+    expect(meta.isFinal).toBe(false);
+  });
+});
+
+/* ─── Copy/share text block generation ─── */
+
+describe("Copy/share text blocks", () => {
+  it("generates landlord briefing text with site details", () => {
+    const candidate = makeCandidate({
+      district: "Olaya",
+      parcel_id: "P-123",
+      rank_position: 1,
+      estimated_rent_sar_m2_year: 1200,
+      estimated_annual_rent_sar: 120000,
+      gate_status_json: { overall_pass: true },
+    });
+    const text = formatLandlordBriefingText(candidate);
+    expect(text).toContain("Site Visit Briefing");
+    expect(text).toContain("Olaya");
+    expect(text).toContain("P-123");
+    expect(text).toContain("1200 SAR/m²/yr");
+    expect(text).toContain("120,000 SAR/yr");
+    expect(text).toContain("All gates passed");
+    expect(text).toContain("Confirm street frontage");
+  });
+
+  it("handles missing rent data gracefully", () => {
+    const candidate = makeCandidate({ district: "Malqa" });
+    const text = formatLandlordBriefingText(candidate);
+    expect(text).toContain("Malqa");
+    expect(text).toContain("TBD");
+  });
+
+  it("uses report best_format for intended use", () => {
+    const candidate = makeCandidate({});
+    const report = {
+      recommendation: { best_format: "Cloud kitchen" },
+      top_candidates: [],
+      assumptions: {},
+      brand_profile: {},
+      meta: {},
+    };
+    const text = formatLandlordBriefingText(candidate, report);
+    expect(text).toContain("Cloud kitchen");
+  });
+});
+
+/* ─── Validation plan panel rendering ─── */
+
+describe("Validation plan panel rendering", () => {
+  it("renders grouped validation items", () => {
+    const candidate = makeCandidate({
+      gate_status_json: { overall_pass: true, parking_pass: false },
+      gate_reasons_json: { passed: [], failed: ["parking"], unknown: ["access"], thresholds: {}, explanations: {} },
+      distance_to_nearest_branch_m: 3000,
+    });
+    const html = renderToStaticMarkup(
+      <ValidationPlanPanel candidate={candidate} />,
+    );
+    expect(html).toContain("ea-validation-plan");
+    expect(html).toContain("Site visit");
+    expect(html).toContain("Parking check");
+  });
+});
+
+/* ─── Assumptions card rendering ─── */
+
+describe("Assumptions card rendering", () => {
+  it("renders full assumptions card", () => {
+    const candidate = makeCandidate({
+      final_score: 85,
+      gate_status_json: { overall_pass: true },
+      economics_score: 75,
+      feature_snapshot_json: {
+        context_sources: { google_places: {} },
+        missing_context: ["delivery_platforms"],
+        data_completeness_score: 70,
+      },
+    });
+    const html = renderToStaticMarkup(
+      <AssumptionsCard candidate={candidate} />,
+    );
+    expect(html).toContain("ea-assumptions-card");
+    expect(html).toContain("Overall score");
+  });
+
+  it("renders compact assumptions strip", () => {
+    const candidate = makeCandidate({ final_score: 85, gate_status_json: { overall_pass: true } });
+    const html = renderToStaticMarkup(
+      <AssumptionsCard candidate={candidate} compact />,
+    );
+    expect(html).toContain("ea-assumptions-strip");
   });
 });

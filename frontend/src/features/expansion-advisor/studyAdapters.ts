@@ -566,3 +566,378 @@ export function findRunnerUp(
   if (shortlisted.length > 0) return shortlisted[0];
   return candidates.find((c) => c.id !== leadCandidateId) || null;
 }
+
+/* ─── Validation plan derivation ─── */
+
+export type ValidationPriority = "must_verify" | "nice_to_confirm" | "already_strong";
+
+export type ValidationPlanItem = {
+  priority: ValidationPriority;
+  label: string;
+  detail: string;
+};
+
+export function deriveValidationPlan(
+  candidate: ExpansionCandidate,
+  memo?: CandidateMemoResponse | null,
+  report?: RecommendationReportResponse | null,
+): ValidationPlanItem[] {
+  const items: ValidationPlanItem[] = [];
+  const gates = candidate.gate_status_json || {};
+  const reasons = candidate.gate_reasons_json;
+  const snapshot = candidate.feature_snapshot_json;
+  const risks = candidate.top_risks_json || [];
+  const memoRec = memo?.recommendation || {};
+  const reportRec = report?.recommendation || {};
+
+  // Site visit — always must-verify if lead candidate exists
+  items.push({
+    priority: "must_verify",
+    label: "Site visit",
+    detail: "Physically verify location, traffic flow, and surroundings",
+  });
+
+  // Landlord rent verification — check economics
+  if (candidate.estimated_annual_rent_sar != null || candidate.estimated_rent_sar_m2_year != null) {
+    items.push({
+      priority: "must_verify",
+      label: "Landlord rent verification",
+      detail: `Confirm actual rent vs estimated ${candidate.estimated_rent_sar_m2_year ? Math.round(candidate.estimated_rent_sar_m2_year) + " SAR/m²/yr" : ""}`.trim(),
+    });
+  }
+
+  // Frontage/access — based on gate status
+  const frontageGate = gates.frontage_pass;
+  const accessGate = gates.access_pass;
+  if (frontageGate === false) {
+    items.push({ priority: "must_verify", label: "Frontage/access confirmation", detail: "Frontage gate failed — verify physical street frontage" });
+  } else if (frontageGate === true && accessGate === true) {
+    items.push({ priority: "already_strong", label: "Frontage/access confirmation", detail: "Both frontage and access gates passed" });
+  } else {
+    items.push({ priority: "nice_to_confirm", label: "Frontage/access confirmation", detail: "Confirm street-level frontage and pedestrian access" });
+  }
+
+  // Parking check — sensitive for dine-in
+  const parkingGate = gates.parking_pass;
+  if (parkingGate === false) {
+    items.push({ priority: "must_verify", label: "Parking check", detail: "Parking gate failed — confirm available parking spaces" });
+  } else if (parkingGate === true) {
+    items.push({ priority: "already_strong", label: "Parking check", detail: "Parking gate passed" });
+  } else if (candidate.parking_score != null) {
+    items.push({
+      priority: candidate.parking_score >= 70 ? "already_strong" : "nice_to_confirm",
+      label: "Parking check",
+      detail: `Parking score: ${Math.round(candidate.parking_score)}`,
+    });
+  }
+
+  // Delivery catchment
+  if (candidate.provider_whitespace_score != null) {
+    const strong = candidate.provider_whitespace_score >= 70;
+    items.push({
+      priority: strong ? "already_strong" : "nice_to_confirm",
+      label: "Delivery catchment validation",
+      detail: strong
+        ? `Whitespace score ${Math.round(candidate.provider_whitespace_score)} — strong delivery opportunity`
+        : `Whitespace score ${Math.round(candidate.provider_whitespace_score)} — verify delivery demand in catchment`,
+    });
+  }
+
+  // Competitor field check
+  const comps = candidate.comparable_competitors_json || [];
+  if (comps.length > 0) {
+    items.push({
+      priority: "nice_to_confirm",
+      label: "Competitor field check",
+      detail: `${comps.length} comparable competitor(s) identified — verify current operating status`,
+    });
+  } else {
+    items.push({
+      priority: "nice_to_confirm",
+      label: "Competitor field check",
+      detail: "Verify nearby competitors on the ground",
+    });
+  }
+
+  // Branch cannibalization
+  if (candidate.distance_to_nearest_branch_m != null) {
+    const km = (candidate.distance_to_nearest_branch_m / 1000).toFixed(1);
+    const safe = candidate.distance_to_nearest_branch_m >= 2000;
+    items.push({
+      priority: safe ? "already_strong" : "must_verify",
+      label: "Branch cannibalization sanity check",
+      detail: safe
+        ? `Nearest own branch ${km} km away — low cannibalization risk`
+        : `Nearest own branch only ${km} km away — assess overlap impact`,
+    });
+  } else if (candidate.cannibalization_score != null) {
+    items.push({
+      priority: candidate.cannibalization_score <= 30 ? "already_strong" : "must_verify",
+      label: "Branch cannibalization sanity check",
+      detail: `Cannibalization score: ${Math.round(candidate.cannibalization_score)}`,
+    });
+  }
+
+  // Add unknown gate items as must-verify
+  if (reasons?.unknown) {
+    for (const u of reasons.unknown) {
+      const label = u.replace(/_/g, " ");
+      if (!items.some((i) => i.label.toLowerCase().includes(label.toLowerCase()))) {
+        items.push({ priority: "must_verify", label: `Verify: ${label}`, detail: "Data unavailable — field verification required" });
+      }
+    }
+  }
+
+  // Add missing context sources as nice-to-confirm
+  if (snapshot?.missing_context) {
+    for (const m of snapshot.missing_context) {
+      const label = m.replace(/_/g, " ");
+      if (!items.some((i) => i.label.toLowerCase().includes(label.toLowerCase()))) {
+        items.push({ priority: "nice_to_confirm", label: `Verify: ${label}`, detail: "Not available from current data sources" });
+      }
+    }
+  }
+
+  return items;
+}
+
+/* ─── Assumptions & confidence derivation ─── */
+
+export type AssumptionConfidence = "strong" | "estimated" | "missing";
+
+export type AssumptionItem = {
+  label: string;
+  confidence: AssumptionConfidence;
+  detail: string;
+};
+
+export function deriveAssumptions(
+  candidate: ExpansionCandidate,
+  report?: RecommendationReportResponse | null,
+): AssumptionItem[] {
+  const items: AssumptionItem[] = [];
+  const snapshot = candidate.feature_snapshot_json;
+  const available = Object.keys(snapshot?.context_sources || {});
+  const missing = snapshot?.missing_context || [];
+  const reportAssumptions = report?.assumptions || {};
+
+  // Score/rank data
+  if (candidate.final_score != null) {
+    items.push({ label: "Overall score", confidence: "strong", detail: `Score ${Math.round(candidate.final_score)} from deterministic model` });
+  }
+
+  // Gate data
+  const gateKeys = Object.keys(candidate.gate_status_json || {});
+  if (gateKeys.length > 0) {
+    items.push({ label: "Gate checks", confidence: "strong", detail: `${gateKeys.length} gates evaluated deterministically` });
+  }
+
+  // Economics
+  if (candidate.economics_score != null && candidate.estimated_annual_rent_sar != null) {
+    items.push({ label: "Economics model", confidence: "estimated", detail: "Rent and revenue estimates from comparable data" });
+  } else if (candidate.economics_score != null) {
+    items.push({ label: "Economics model", confidence: "estimated", detail: "Economics score from modeled inputs" });
+  }
+
+  // Brand fit
+  if (candidate.brand_fit_score != null) {
+    items.push({
+      label: "Brand fit",
+      confidence: available.includes("google_places") || available.includes("osm") ? "strong" : "estimated",
+      detail: available.includes("google_places") ? "Based on observed market data" : "Based on modeled market characteristics",
+    });
+  }
+
+  // Delivery market
+  if (candidate.provider_whitespace_score != null) {
+    items.push({
+      label: "Delivery market",
+      confidence: available.includes("delivery_platforms") ? "strong" : "estimated",
+      detail: available.includes("delivery_platforms") ? "Based on observed platform data" : "Estimated from area characteristics",
+    });
+  }
+
+  // Missing data
+  for (const m of missing) {
+    items.push({ label: m.replace(/_/g, " "), confidence: "missing", detail: "Not available from current data sources" });
+  }
+
+  // Report-level assumptions
+  for (const [key, value] of Object.entries(reportAssumptions)) {
+    if (!items.some((i) => i.label.toLowerCase() === key.replace(/_/g, " ").toLowerCase())) {
+      items.push({ label: key.replace(/_/g, " "), confidence: "estimated", detail: String(value) });
+    }
+  }
+
+  return items;
+}
+
+/* ─── Decision snapshot shaping ─── */
+
+export type DecisionSnapshot = {
+  leadSite: string;
+  leadDistrict: string;
+  leadParcelId: string;
+  whyItWins: string;
+  mainRisk: string;
+  bestFormat: string;
+  nextValidation: string;
+  confidenceGrade: string;
+  gateVerdict: string;
+  finalScore: number | null;
+  rankPosition: number | null;
+};
+
+export function buildDecisionSnapshot(
+  candidate: ExpansionCandidate,
+  report?: RecommendationReportResponse | null,
+  memo?: CandidateMemoResponse | null,
+): DecisionSnapshot {
+  const rec = report?.recommendation || {};
+  const memoRec = memo?.recommendation || {};
+  const positives = candidate.top_positives_json || [];
+  const risks = candidate.top_risks_json || [];
+  const unknowns = candidate.gate_reasons_json?.unknown || [];
+  const missing = candidate.feature_snapshot_json?.missing_context || [];
+  const gatePass = candidate.gate_status_json?.overall_pass;
+
+  return {
+    leadSite: `#${candidate.rank_position || "?"} ${candidate.district || candidate.parcel_id || "—"}`,
+    leadDistrict: candidate.district || "—",
+    leadParcelId: candidate.parcel_id || "—",
+    whyItWins: rec.why_best || memoRec.best_use_case || positives[0] || "—",
+    mainRisk: rec.main_risk || memoRec.main_watchout || risks[0] || "—",
+    bestFormat: rec.best_format || memoRec.best_use_case || "—",
+    nextValidation: unknowns[0]?.replace(/_/g, " ") || missing[0]?.replace(/_/g, " ") || "Site visit recommended",
+    confidenceGrade: candidate.confidence_grade || "—",
+    gateVerdict: gatePass === true ? "pass" : gatePass === false ? "fail" : "unknown",
+    finalScore: candidate.final_score ?? null,
+    rankPosition: candidate.rank_position ?? null,
+  };
+}
+
+/* ─── Compare outcome derivation ─── */
+
+export type CompareOutcome = {
+  winnerId: string | null;
+  winnerLabel: string;
+  runnerUpStrengths: string[];
+  whatWouldChange: string;
+  leadsAligned: boolean;
+};
+
+export function deriveCompareOutcome(
+  result: { items: Array<Record<string, unknown>>; summary: Record<string, string | null> } | null,
+  candidates: ExpansionCandidate[],
+  leadCandidateId: string | null,
+): CompareOutcome {
+  const fallback: CompareOutcome = { winnerId: null, winnerLabel: "—", runnerUpStrengths: [], whatWouldChange: "—", leadsAligned: true };
+  if (!result || !result.items.length) return fallback;
+
+  const bestOverall = result.summary?.best_overall_candidate_id || null;
+  const bestCandidate = bestOverall ? candidates.find((c) => c.id === bestOverall) : null;
+  const winnerLabel = bestCandidate
+    ? `#${bestCandidate.rank_position || "?"} ${bestCandidate.district || bestCandidate.parcel_id || "—"}`
+    : bestOverall?.slice(0, 8) || "—";
+
+  // Find dimensions where runner-up wins
+  const runnerUpStrengths: string[] = [];
+  const dimensionKeys = [
+    "best_economics_candidate_id",
+    "fastest_payback_candidate_id",
+    "best_brand_fit_candidate_id",
+    "highest_demand_candidate_id",
+    "strongest_delivery_market_candidate_id",
+    "lowest_cannibalization_candidate_id",
+    "most_confident_candidate_id",
+  ];
+  for (const key of dimensionKeys) {
+    const winner = result.summary[key];
+    if (winner && winner !== bestOverall) {
+      const name = key.replace(/_candidate_id$/, "").replace(/_/g, " ");
+      runnerUpStrengths.push(name);
+    }
+  }
+
+  // What would change the decision
+  let whatWouldChange = "—";
+  if (runnerUpStrengths.length > 0) {
+    whatWouldChange = `If ${runnerUpStrengths[0]} were weighted more heavily`;
+  }
+
+  const leadsAligned = !leadCandidateId || leadCandidateId === bestOverall;
+
+  return {
+    winnerId: bestOverall,
+    winnerLabel,
+    runnerUpStrengths,
+    whatWouldChange,
+    leadsAligned,
+  };
+}
+
+/* ─── Saved-study metadata extraction ─── */
+
+export type SavedStudyMeta = {
+  leadDistrict: string | null;
+  leadParcelId: string | null;
+  shortlistCount: number;
+  compareCount: number;
+  lastSort: string | null;
+  lastFilter: string | null;
+  isFinal: boolean;
+};
+
+export function extractSavedStudyMeta(saved: SavedExpansionSearch): SavedStudyMeta {
+  const ui = (saved.ui_state_json || {}) as Record<string, unknown>;
+  const compareIds = Array.isArray(ui.compare_ids) ? ui.compare_ids as string[] : [];
+  const leadId = typeof ui.lead_candidate_id === "string" ? ui.lead_candidate_id : null;
+  const candidates = saved.candidates || [];
+  const lead = leadId ? candidates.find((c) => c.id === leadId) : null;
+  const sortFilter = restoreSortFilter(saved.ui_state_json);
+
+  return {
+    leadDistrict: lead?.district || null,
+    leadParcelId: lead?.parcel_id || leadId?.slice(0, 8) || null,
+    shortlistCount: (saved.selected_candidate_ids || []).length,
+    compareCount: compareIds.length,
+    lastSort: sortFilter.activeSort !== "rank" ? sortFilter.activeSort : null,
+    lastFilter: sortFilter.activeFilter !== "all" ? sortFilter.activeFilter : null,
+    isFinal: saved.status === "final",
+  };
+}
+
+/* ─── Landlord briefing text generation ─── */
+
+export function formatLandlordBriefingText(
+  candidate: ExpansionCandidate,
+  report?: RecommendationReportResponse | null,
+  memo?: CandidateMemoResponse | null,
+): string {
+  const district = candidate.district || "—";
+  const parcelId = candidate.parcel_id || "—";
+  const rank = candidate.rank_position || "?";
+  const rentM2 = candidate.estimated_rent_sar_m2_year ? `${Math.round(candidate.estimated_rent_sar_m2_year)} SAR/m²/yr` : "TBD";
+  const annualRent = candidate.estimated_annual_rent_sar ? `${Math.round(candidate.estimated_annual_rent_sar).toLocaleString()} SAR/yr` : "TBD";
+  const format = report?.recommendation?.best_format || memo?.recommendation?.best_use_case || "F&B outlet";
+  const gatePass = candidate.gate_status_json?.overall_pass;
+  const gateLabel = gatePass === true ? "All gates passed" : gatePass === false ? "Some gates require review" : "Pending verification";
+
+  return [
+    `Site Visit Briefing`,
+    `──────────────────`,
+    `District: ${district}`,
+    `Parcel: ${parcelId}`,
+    `Rank: #${rank}`,
+    `Intended use: ${format}`,
+    `Estimated rent: ${rentM2} (${annualRent})`,
+    `Gate status: ${gateLabel}`,
+    ``,
+    `Items to verify on site:`,
+    `- Confirm street frontage and signage visibility`,
+    `- Verify parking availability`,
+    `- Check pedestrian and vehicle access points`,
+    `- Assess surrounding tenant mix`,
+    `- Confirm available area matches requirement`,
+  ].join("\n");
+}
