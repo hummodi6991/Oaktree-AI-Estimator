@@ -27,6 +27,11 @@ type CompareResponseItem = {
   brand_fit_score?: number;
   provider_density_score?: number;
   provider_whitespace_score?: number;
+  zoning_fit_score?: number;
+  frontage_score?: number;
+  access_score?: number;
+  parking_score?: number;
+  access_visibility_score?: number;
   confidence_grade?: string;
   gate_status_json?: Record<string, boolean>;
 };
@@ -205,6 +210,11 @@ export default function ExpansionAdvisorPage({
                   <th>final_score</th>
                   <th>confidence_grade</th>
                   <th>gate_pass</th>
+                  <th>zoning_fit_score</th>
+                  <th>frontage_score</th>
+                  <th>access_score</th>
+                  <th>parking_score</th>
+                  <th>access_visibility_score</th>
                   <th>economics_score</th>
                   <th>brand_fit_score</th>
                   <th>provider_density_score</th>
@@ -220,6 +230,11 @@ export default function ExpansionAdvisorPage({
                     <td>{item.final_score ?? "-"}</td>
                     <td>{item.confidence_grade ?? "-"}</td>
                     <td>{item.gate_status_json?.overall_pass ? "pass" : "fail"}</td>
+                    <td>{item.zoning_fit_score ?? "-"}</td>
+                    <td>{item.frontage_score ?? "-"}</td>
+                    <td>{item.access_score ?? "-"}</td>
+                    <td>{item.parking_score ?? "-"}</td>
+                    <td>{item.access_visibility_score ?? "-"}</td>
                     <td>{item.economics_score ?? "-"}</td>
                     <td>{item.brand_fit_score ?? "-"}</td>
                     <td>{item.provider_density_score ?? "-"}</td>

@@ -52,8 +52,15 @@ export type ExpansionCandidate = {
   provider_whitespace_score?: number;
   multi_platform_presence_score?: number;
   delivery_competition_score?: number;
+  zoning_fit_score?: number;
+  frontage_score?: number;
+  access_score?: number;
+  parking_score?: number;
+  access_visibility_score?: number;
   confidence_grade?: string;
   gate_status_json?: Record<string, boolean>;
+  gate_reasons_json?: Record<string, unknown>;
+  feature_snapshot_json?: Record<string, unknown>;
   demand_thesis?: string;
   cost_thesis?: string;
   comparable_competitors_json?: ComparableCompetitor[];

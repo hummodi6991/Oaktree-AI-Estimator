@@ -16,7 +16,7 @@ export default function ExpansionReportPanel({ report }: { report: Record<string
       <div>{t("expansionAdvisor.mainRisk")}: {rec.main_risk || "-"}</div>
       <div>{t("expansionAdvisor.bestFormat")}: {rec.best_format || "-"}</div>
       <div>{t("expansionAdvisor.summary")}: {rec.report_summary || "-"}</div>
-      <ul>{top.slice(0, 3).map((item: any) => <li key={item.id}>{item.id} — {item.final_score} — {t("expansionAdvisor.confidenceGrade")} {item.confidence_grade || "-"} — {t("expansionAdvisor.gateVerdict")} {item.gate_status_json?.overall_pass ? t("expansionAdvisor.pass") : t("expansionAdvisor.fail")}</li>)}</ul>
+      <ul>{top.slice(0, 3).map((item: any) => <li key={item.id}>{item.id} — {item.final_score} — {t("expansionAdvisor.confidenceGrade")} {item.confidence_grade || "-"} — {t("expansionAdvisor.gateVerdict")} {item.gate_verdict || (item.gate_status_json?.overall_pass ? t("expansionAdvisor.pass") : t("expansionAdvisor.fail"))} — {item.feature_snapshot_json?.parcel_area_m2 || "-"}m²</li>)}</ul>
     </div>
   );
 }

@@ -162,9 +162,16 @@ def test_compare_candidates_includes_v5_fields_and_gate_summary_uses_actual_gate
                 "demand_score": 75,
                 "whitespace_score": 70,
                 "fit_score": 85,
+                "zoning_fit_score": 88,
+                "frontage_score": 66,
+                "access_score": 64,
+                "parking_score": 62,
+                "access_visibility_score": 65,
                 "confidence_score": 79,
                 "confidence_grade": "B",
                 "gate_status_json": {"overall_pass": False},
+                "gate_reasons_json": {"failed": ["frontage_access_pass"]},
+                "feature_snapshot_json": {"touches_road": False},
                 "demand_thesis": "Demand is moderate",
                 "cost_thesis": "Cost is manageable",
                 "comparable_competitors_json": [{"id": "r1"}],
@@ -191,9 +198,16 @@ def test_compare_candidates_includes_v5_fields_and_gate_summary_uses_actual_gate
                 "demand_score": 69,
                 "whitespace_score": 62,
                 "fit_score": 73,
+                "zoning_fit_score": 80,
+                "frontage_score": 70,
+                "access_score": 72,
+                "parking_score": 68,
+                "access_visibility_score": 71,
                 "confidence_score": 86,
                 "confidence_grade": "A",
                 "gate_status_json": {"overall_pass": True},
+                "gate_reasons_json": {"passed": ["overall_pass"]},
+                "feature_snapshot_json": {"touches_road": True},
                 "demand_thesis": "Demand is strong",
                 "cost_thesis": "Cost is higher",
                 "comparable_competitors_json": [{"id": "r2"}],
@@ -219,6 +233,9 @@ def test_compare_candidates_includes_v5_fields_and_gate_summary_uses_actual_gate
     assert result["items"][0]["confidence_grade"] == "B"
     assert result["items"][0]["gate_status_json"] == {"overall_pass": False}
     assert result["items"][0]["demand_thesis"] == "Demand is moderate"
+    assert result["items"][0]["zoning_fit_score"] == 88
+    assert result["items"][0]["frontage_score"] == 66
+    assert result["items"][0]["gate_reasons_json"]["failed"] == ["frontage_access_pass"]
     assert result["items"][0]["cost_thesis"] == "Cost is manageable"
     assert result["items"][0]["comparable_competitors_json"] == [{"id": "r1"}]
     assert result["summary"]["best_gate_pass_candidate_id"] == "c2"
@@ -248,6 +265,11 @@ def test_get_candidate_memo_returns_recommendation_shape():
             "demand_score": 80,
             "whitespace_score": 70,
             "fit_score": 78,
+            "zoning_fit_score": 82,
+            "frontage_score": 67,
+            "access_score": 69,
+            "parking_score": 60,
+            "access_visibility_score": 68,
             "confidence_score": 85,
             "cannibalization_score": 35,
             "distance_to_nearest_branch_m": 2200,
@@ -260,6 +282,13 @@ def test_get_candidate_memo_returns_recommendation_shape():
             "key_strengths_json": ["Strong demand index supports branch throughput"],
             "key_risks_json": ["Competitive density may pressure launch economics"],
             "decision_summary": "summary",
+            "gate_status_json": {"overall_pass": True, "zoning_fit_pass": True},
+            "gate_reasons_json": {"passed": ["zoning_fit_pass"], "failed": []},
+            "feature_snapshot_json": {"parcel_area_m2": 180, "touches_road": True},
+            "comparable_competitors_json": [{"id": "r1", "name": "Comp"}],
+            "demand_thesis": "Demand looks strong",
+            "cost_thesis": "Costs are manageable",
+            "confidence_grade": "A",
         }
     )
 
@@ -269,6 +298,9 @@ def test_get_candidate_memo_returns_recommendation_shape():
     assert memo["candidate_id"] == "c1"
     assert memo["recommendation"]["verdict"] in {"go", "consider", "caution"}
     assert memo["candidate"]["key_strengths"]
+    assert memo["candidate"]["gate_reasons"]["passed"] == ["zoning_fit_pass"]
+    assert memo["candidate"]["feature_snapshot"]["touches_road"] is True
+    assert memo["candidate"]["comparable_competitors"][0]["id"] == "r1"
 
 
 def test_run_expansion_search_caches_rent_resolution_by_district(monkeypatch):
@@ -387,8 +419,12 @@ def test_brand_fit_responds_to_multi_platform_presence():
 
 
 def test_gate_status_logic():
-    gates = _candidate_gate_status(
+    gates, reasons = _candidate_gate_status(
         fit_score=60,
+        zoning_fit_score=80,
+        frontage_score=70,
+        access_score=66,
+        parking_score=55,
         district="Olaya",
         distance_to_nearest_branch_m=2200,
         provider_density_score=50,
@@ -399,6 +435,7 @@ def test_gate_status_logic():
     )
     assert gates["overall_pass"] is True
     assert gates["district_pass"] is True
+    assert reasons["failed"] == []
 
 
 def test_confidence_grade_bounds():
@@ -424,10 +461,40 @@ def test_report_includes_new_decision_outputs():
     import app.services.expansion_advisor as svc
     svc.get_search = lambda _db, _sid: {"id": "search-1", "service_model": "qsr", "brand_profile": {"expansion_goal": "balanced"}}
     svc.get_candidates = lambda _db, _sid: [
-        {"id": "c1", "final_score": 90, "brand_fit_score": 82, "economics_score": 70, "area_m2": 170, "district": "Olaya", "key_risks_json": ["risk"], "confidence_grade": "A", "confidence_score": 85, "gate_status_json": {"overall_pass": True}, "demand_thesis": "d", "cost_thesis": "c", "comparable_competitors_json": [{"id": "x"}]},
-        {"id": "c2", "final_score": 86, "brand_fit_score": 79, "economics_score": 68, "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"], "confidence_grade": "B", "confidence_score": 72, "gate_status_json": {"overall_pass": False}, "demand_thesis": "d2", "cost_thesis": "c2", "comparable_competitors_json": []},
+        {"id": "c1", "final_score": 90, "brand_fit_score": 82, "economics_score": 70, "area_m2": 170, "district": "Olaya", "key_risks_json": ["risk"], "confidence_grade": "A", "confidence_score": 85, "gate_status_json": {"overall_pass": True}, "demand_thesis": "d", "cost_thesis": "c", "comparable_competitors_json": [{"id": "x"}], "zoning_fit_score": 88, "frontage_score": 65, "access_score": 67, "parking_score": 62, "access_visibility_score": 66, "feature_snapshot_json": {"parcel_area_m2": 170}},
+        {"id": "c2", "final_score": 86, "brand_fit_score": 79, "economics_score": 68, "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"], "confidence_grade": "B", "confidence_score": 72, "gate_status_json": {"overall_pass": False}, "demand_thesis": "d2", "cost_thesis": "c2", "comparable_competitors_json": [], "zoning_fit_score": 78, "frontage_score": 61, "access_score": 60, "parking_score": 58, "access_visibility_score": 61, "feature_snapshot_json": {"parcel_area_m2": 180}},
     ]
     report = get_recommendation_report(db, "search-1")
     assert report["recommendation"]["best_pass_candidate_id"] == "c1"
     assert report["recommendation"]["best_confidence_candidate_id"] == "c1"
     assert "demand_thesis" in report["top_candidates"][0]
+    assert "zoning_fit_score" in report["top_candidates"][0]
+    assert "feature_snapshot_json" in report["top_candidates"][0]
+
+
+def test_v6_feature_scores_are_bounded():
+    assert 0 <= expansion_service._zoning_fit_score("commercial", "C") <= 100
+    assert 0 <= expansion_service._frontage_score(parcel_perimeter_m=240, touches_road=True, nearby_road_count=5, nearest_major_road_m=120) <= 100
+    assert 0 <= expansion_service._access_score(touches_road=False, nearest_major_road_m=350, nearby_road_count=2) <= 100
+    assert 0 <= expansion_service._parking_score(area_m2=180, service_model="qsr", nearby_parking_count=3, access_score=65) <= 100
+
+
+def test_gate_status_uses_v6_scores_for_failure():
+    gates, reasons = _candidate_gate_status(
+        fit_score=75,
+        zoning_fit_score=40,
+        frontage_score=30,
+        access_score=30,
+        parking_score=20,
+        district="Olaya",
+        distance_to_nearest_branch_m=2600,
+        provider_density_score=60,
+        multi_platform_presence_score=70,
+        economics_score=75,
+        payback_band="promising",
+        brand_profile={"excluded_districts": [], "cannibalization_tolerance_m": 1800},
+    )
+    assert gates["overall_pass"] is False
+    assert "zoning_fit_pass" in reasons["failed"]
+    assert "frontage_access_pass" in reasons["failed"]
+    assert "parking_pass" in reasons["failed"]

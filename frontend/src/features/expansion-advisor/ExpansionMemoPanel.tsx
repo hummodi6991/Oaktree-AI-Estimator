@@ -8,6 +8,8 @@ export default function ExpansionMemoPanel({ memo, loading }: { memo: Record<str
   const marketResearch = (memo.market_research || {}) as Record<string, unknown>;
   const candidate = (memo.candidate || {}) as Record<string, unknown>;
   const gates = (candidate.gate_status || {}) as Record<string, boolean>;
+  const gateReasons = (candidate.gate_reasons || {}) as Record<string, unknown>;
+  const featureSnapshot = (candidate.feature_snapshot || {}) as Record<string, unknown>;
   const comps = (candidate.comparable_competitors || []) as Array<Record<string, unknown>>;
   const strengths = (candidate.key_strengths || []) as string[];
   const risks = (candidate.key_risks || []) as string[];
@@ -18,6 +20,15 @@ export default function ExpansionMemoPanel({ memo, loading }: { memo: Record<str
       <div>{t("expansionAdvisor.brandFit")}: {String(candidate.brand_fit_score ?? "-")}</div>
       <div>{t("expansionAdvisor.confidenceGrade")}: {String(candidate.confidence_grade ?? "-")}</div>
       <div><strong>{t("expansionAdvisor.gateChecklist")}</strong><ul>{Object.entries(gates).map(([k, v]) => <li key={k}>{k}: {v ? t("expansionAdvisor.pass") : t("expansionAdvisor.fail")}</li>)}</ul></div>
+      <div>
+        <strong>{t("expansionAdvisor.gateReasons")}</strong>
+        <div>{t("expansionAdvisor.passed")}: {JSON.stringify(gateReasons.passed || [])}</div>
+        <div>{t("expansionAdvisor.failed")}: {JSON.stringify(gateReasons.failed || [])}</div>
+      </div>
+      <div>
+        <strong>{t("expansionAdvisor.featureSnapshot")}</strong>
+        <ul>{Object.entries(featureSnapshot).slice(0, 8).map(([k, v]) => <li key={k}>{k}: {String(v)}</li>)}</ul>
+      </div>
       <div><strong>{t("expansionAdvisor.strengths")}</strong><ul>{strengths.map((s) => <li key={s}>{s}</li>)}</ul></div>
       <div><strong>{t("expansionAdvisor.risks")}</strong><ul>{risks.map((s) => <li key={s}>{s}</li>)}</ul></div>
       <div>{t("expansionAdvisor.demandThesis")}: {String(candidate.demand_thesis ?? "-")}</div>

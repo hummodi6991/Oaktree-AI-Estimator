@@ -113,7 +113,7 @@ The fetch step writes Riyadh-only `.csv.gz` JSONL files into `data/ms_buildings/
     (scales above-ground `area_ratio` by `3.5 / baseline_floors`) so BUA/FAR reflect that.
   - Land pricing defaults to **blended_v1** (Suhail anchor + Kaggle Aqar median, district-resolved once via `resolve_district`), shared with `GET /v1/pricing/land`.
 
-### Expansion Advisor API (v4)
+### Expansion Advisor API (v6)
 
 Endpoints:
 - `POST /v1/expansion-advisor/searches`
@@ -140,16 +140,15 @@ Endpoints:
 - `limit` (1..100)
 - `brand_profile` (optional object) with fields: `price_tier`, `average_check_sar`, `primary_channel`, `parking_sensitivity`, `frontage_sensitivity`, `visibility_sensitivity`, `target_customer`, `expansion_goal`, `cannibalization_tolerance_m`, `preferred_districts`, `excluded_districts`
 
-Search/candidate responses now include:
+Search/candidate responses now include (v6 adds on top of v5):
 - `existing_branches` in search payloads
-- candidate `district`
-- candidate `cannibalization_score`
-- candidate `distance_to_nearest_branch_m`
+- candidate `district`, `cannibalization_score`, `distance_to_nearest_branch_m`
 - candidate economics fields: `estimated_rent_sar_m2_year`, `estimated_annual_rent_sar`, `estimated_fitout_cost_sar`, `estimated_revenue_index`, `economics_score`, `estimated_payback_months`, `payback_band`
 - candidate decision memo fields: `decision_summary`, `key_strengths_json`, `key_risks_json`
 - candidate `compare_rank` (stored ranked order)
-- candidate `brand_fit_score`
-- candidate provider intelligence fields: `provider_density_score`, `provider_whitespace_score`, `multi_platform_presence_score`, `delivery_competition_score`
+- candidate `brand_fit_score` and provider intelligence fields: `provider_density_score`, `provider_whitespace_score`, `multi_platform_presence_score`, `delivery_competition_score`
+- **new v6 decision layer fields**: `zoning_fit_score`, `frontage_score`, `access_score`, `parking_score`, `access_visibility_score`, `gate_reasons_json`, `feature_snapshot_json`
+- `feature_snapshot_json` includes deterministic parcel/market context (parcel area/perimeter, district and land use, nearest major road distance, nearby road count, road touch signal, nearby parking amenities when available, provider counts/platform breadth, competitor count, nearest branch distance, and rent/economics context)
 
 `POST /v1/expansion-advisor/candidates/compare` request:
 - `search_id` (string)
@@ -158,15 +157,18 @@ Search/candidate responses now include:
 Compare response:
 - `items` in the same order as requested `candidate_ids`
 - per-item score breakdown + pros/cons + economics fields
+- v6 compare fields include zoning/frontage/access/parking/access-visibility, gate pass/fail, gate reasons, confidence grade, and feature snapshot
 - `summary` with best-overall, lowest-cannibalization, highest-demand, best-fit, best-economics, lowest-rent-burden, fastest-payback, best-brand-fit, strongest-delivery-market, and strongest-whitespace candidate IDs
 
 `GET /v1/expansion-advisor/candidates/{candidate_id}/memo` returns a deterministic decision memo with:
 - candidate economics + scoring breakdown
+- gate checklist, gate reasons, and feature snapshot
+- comparable competitors plus demand/cost thesis
 - deterministic recommendation verdict (`go` | `consider` | `caution`)
 - a headline, best-use-case branch format, and primary watchout
 - deterministic `market_research` summaries for delivery-market context, competitive context, and district fit
 
-`GET /v1/expansion-advisor/searches/{search_id}/report` returns a deterministic executive-style JSON recommendation with `top_candidates` (top 3), `recommendation` (best, runner-up, why, risk, best format, summary), and explicit assumptions.
+`GET /v1/expansion-advisor/searches/{search_id}/report` returns a deterministic executive-style JSON recommendation with `top_candidates` (top 3), `recommendation` (best, runner-up, best pass, best confidence, why, risk, best format, summary), and explicit assumptions. Top candidates include confidence + gate verdict + mini feature snapshot.
 
 
 Saved studies payload fields:
@@ -183,6 +185,8 @@ Notes:
 - ArcGIS Riyadh parcels are the only supported parcel source.
 - Suhail and inferred parcels are intentionally excluded.
 - Cannibalization scoring is deterministic and distance-based, adjusted by service model.
+- Hard gates include zoning fit, area fit, frontage/access, parking, district policy, cannibalization, delivery-market, economics, plus overall pass.
+- Access/frontage/parking scoring is deterministic and explainable from ArcGIS parcels + OSM road/parking context.
 - Revenue index, provider intelligence, and payback are heuristic decision-support signals (not guaranteed revenue forecasts).
 
 Payback band meanings:

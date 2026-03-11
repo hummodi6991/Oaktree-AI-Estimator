@@ -547,6 +547,14 @@
     "visibilityLow": "Visibility low",
     "visibilityMedium": "Visibility medium",
     "visibilityHigh": "Visibility high",
-    "brandFit": "Brand fit"
+    "brandFit": "Brand fit",
+    "zoningFitScore": "Zoning Fit Score",
+    "frontageScore": "Frontage Score",
+    "accessScore": "Access Score",
+    "parkingScore": "Parking Score",
+    "gateReasons": "Gate reasons",
+    "featureSnapshot": "Feature snapshot",
+    "passed": "Passed",
+    "failed": "Failed"
   }
 }

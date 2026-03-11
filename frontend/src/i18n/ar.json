@@ -547,6 +547,14 @@
     "visibilityLow": "حساسية ظهور منخفضة",
     "visibilityMedium": "حساسية ظهور متوسطة",
     "visibilityHigh": "حساسية ظهور عالية",
-    "brandFit": "ملاءمة العلامة"
+    "brandFit": "ملاءمة العلامة",
+    "zoningFitScore": "درجة ملاءمة التصنيف",
+    "frontageScore": "درجة الواجهة",
+    "accessScore": "درجة الوصول",
+    "parkingScore": "درجة المواقف",
+    "gateReasons": "أسباب البوابات",
+    "featureSnapshot": "ملخص الخصائص",
+    "passed": "ناجح",
+    "failed": "فاشل"
   }
 }

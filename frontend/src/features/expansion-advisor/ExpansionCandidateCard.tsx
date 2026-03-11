@@ -1,6 +1,11 @@
 import { useTranslation } from "react-i18next";
 import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 
+function short(text?: string) {
+  if (!text) return "-";
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
 export default function ExpansionCandidateCard({ candidate, selected, shortlisted, onSelect, onToggleShortlist, onCompareToggle }: { candidate: ExpansionCandidate; selected: boolean; shortlisted: boolean; onSelect: () => void; onToggleShortlist: () => void; onCompareToggle: () => void }) {
   const { t } = useTranslation();
   const pass = Boolean(candidate.gate_status_json?.overall_pass);
@@ -16,8 +21,12 @@ export default function ExpansionCandidateCard({ candidate, selected, shortliste
       </div>
       <div>{t("expansionAdvisor.candidateParcels")}: {candidate.parcel_id}</div>
       <div>{t("expansionAdvisor.finalScore")}: {candidate.final_score ?? "-"}</div>
-      <div>{t("expansionAdvisor.demandThesis")}: {candidate.demand_thesis || "-"}</div>
-      <div>{t("expansionAdvisor.costThesis")}: {candidate.cost_thesis || "-"}</div>
+      <div>{t("expansionAdvisor.zoningFitScore")}: {candidate.zoning_fit_score ?? "-"}</div>
+      <div>{t("expansionAdvisor.frontageScore")}: {candidate.frontage_score ?? "-"}</div>
+      <div>{t("expansionAdvisor.accessScore")}: {candidate.access_score ?? "-"}</div>
+      <div>{t("expansionAdvisor.parkingScore")}: {candidate.parking_score ?? "-"}</div>
+      <div>{t("expansionAdvisor.demandThesis")}: {short(candidate.demand_thesis)}</div>
+      <div>{t("expansionAdvisor.costThesis")}: {short(candidate.cost_thesis)}</div>
       <div>
         <strong>{t("expansionAdvisor.comparableCompetitors")}</strong>
         <ul>{comps.map((c, i) => <li key={`${c.id || c.name || i}`}>{c.name || t("common.notAvailable")} ({Math.round(c.distance_m || 0)}m)</li>)}</ul>
