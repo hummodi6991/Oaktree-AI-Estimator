@@ -11,7 +11,7 @@ export default function ExpansionResultsPanel(props: {
   onToggleCompare: (candidateId: string) => void;
 }) {
   return (
-    <div style={{ display: "grid", gap: 8 }}>
+    <div className="ea-candidate-list">
       {props.items.map((item) => (
         <ExpansionCandidateCard
           key={item.id}

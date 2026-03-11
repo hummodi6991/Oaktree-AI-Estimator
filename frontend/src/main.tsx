@@ -285,8 +285,16 @@ function App() {
               >
                 <button
                   type="button"
-                  className={`oak-btn oak-btn--sm ${analysisMode === "feasibility" ? "oak-btn--primary" : "oak-btn--tertiary"}`}
+                  className={`oak-btn oak-btn--sm ${analysisMode === "expansion" ? "oak-btn--primary" : "oak-btn--tertiary"}`}
                   style={{ borderRadius: "var(--oak-radius) 0 0 var(--oak-radius)" }}
+                  onClick={() => setAnalysisMode("expansion")}
+                >
+                  {t("app.modeExpansion", { defaultValue: "Expansion Advisor" })}
+                </button>
+                <button
+                  type="button"
+                  className={`oak-btn oak-btn--sm ${analysisMode === "feasibility" ? "oak-btn--primary" : "oak-btn--tertiary"}`}
+                  style={{ borderRadius: "0 var(--oak-radius) var(--oak-radius) 0" }}
                   onClick={() => {
                     setAnalysisMode("feasibility");
                     setRestaurantHeatmapData(null);
@@ -294,14 +302,6 @@ function App() {
                   }}
                 >
                   {t("app.modeFeasibility", { defaultValue: "Development Feasibility" })}
-                </button>
-                <button
-                  type="button"
-                  className={`oak-btn oak-btn--sm ${analysisMode === "expansion" ? "oak-btn--primary" : "oak-btn--tertiary"}`}
-                  style={{ borderRadius: "0 var(--oak-radius) var(--oak-radius) 0" }}
-                  onClick={() => setAnalysisMode("expansion")}
-                >
-                  {t("app.modeExpansion", { defaultValue: "Expansion Advisor" })}
                 </button>
               </div>
               <div className={`ui-v2-map-wrap ${isMapHidden ? "ui-v2-map-wrap--hidden" : ""}`}>

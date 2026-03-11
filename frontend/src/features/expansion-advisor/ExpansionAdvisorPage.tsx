@@ -26,6 +26,12 @@ import ExpansionComparePanel from "./ExpansionComparePanel";
 import ExpansionMemoPanel from "./ExpansionMemoPanel";
 import SavedSearchesPanel from "./SavedSearchesPanel";
 import ExpansionReportPanel from "./ExpansionReportPanel";
+import CandidateDetailPanel from "./CandidateDetailPanel";
+import SaveStudyDialog from "./SaveStudyDialog";
+import ScorePill from "./ScorePill";
+import "./expansion-advisor.css";
+
+/* ─── Pure helpers (exported for tests) ─── */
 
 export function resolveCandidateById(candidates: ExpansionCandidate[], candidateId?: string | null): ExpansionCandidate | null {
   if (!candidateId) return null;
@@ -36,7 +42,6 @@ export function restoreSavedUiState(saved: SavedExpansionSearch, candidates: Exp
   const uiState = (saved.ui_state_json || {}) as Record<string, unknown>;
   const compareIds = Array.isArray(uiState.compare_ids) ? (uiState.compare_ids as string[]) : [];
   const selectedCandidateId = typeof uiState.selected_candidate_id === "string" ? uiState.selected_candidate_id : null;
-
   return {
     searchId: saved.search_id || "",
     shortlistIds: saved.selected_candidate_ids || [],
@@ -68,34 +73,16 @@ export function getNextCompareIds(current: string[], candidateId: string): strin
 }
 
 export function getNewSearchResetState() {
-  return {
-    selectedCandidate: null,
-    shortlistIds: [],
-    compareIds: [],
-    compareResult: null,
-    memo: null,
-    report: null,
-    memoError: null,
-    reportError: null,
-    compareError: null,
-  };
+  return { selectedCandidate: null, shortlistIds: [] as string[], compareIds: [] as string[], compareResult: null as CompareCandidatesResponse | null, memo: null as CandidateMemoResponse | null, report: null as RecommendationReportResponse | null, memoError: null as string | null, reportError: null as string | null, compareError: null as string | null };
 }
 
 export function briefFromSavedSearch(saved: SavedExpansionSearch): ExpansionBrief {
   const filters = (saved.filters_json || {}) as Partial<ExpansionBrief>;
   if (filters.brand_name || filters.category || filters.service_model) {
-    return {
-      ...defaultBrief,
-      ...filters,
-      target_districts: filters.target_districts || [],
-      existing_branches: filters.existing_branches || [],
-      limit: filters.limit || defaultBrief.limit,
-    };
+    return { ...defaultBrief, ...filters, target_districts: filters.target_districts || [], existing_branches: filters.existing_branches || [], limit: filters.limit || defaultBrief.limit };
   }
-
   const search = (saved.search || {}) as Partial<ExpansionSearchDetailResponse>;
   const requestJson = ((search.request_json || {}) as Partial<ExpansionBrief>) || {};
-
   return {
     ...defaultBrief,
     ...requestJson,
@@ -115,6 +102,10 @@ export function briefFromSavedSearch(saved: SavedExpansionSearch): ExpansionBrie
 export function sameCandidateId(a: ExpansionCandidate | null, b: ExpansionCandidate | null): boolean {
   return (a?.id || null) === (b?.id || null);
 }
+
+/* ─── Component ─── */
+
+type DrawerState = "none" | "memo" | "compare" | "report" | "save";
 
 export default function ExpansionAdvisorPage({
   onCandidatesChange,
@@ -148,8 +139,11 @@ export default function ExpansionAdvisorPage({
   const [savedLoadError, setSavedLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const memoAnchorRef = useRef<HTMLDivElement | null>(null);
+  const [activeDrawer, setActiveDrawer] = useState<DrawerState>("none");
+  const [searchMeta, setSearchMeta] = useState<Record<string, unknown>>({});
+  const detailRef = useRef<HTMLDivElement | null>(null);
 
+  // Load saved studies on mount
   useEffect(() => {
     setLoadingSaved(true);
     setSavedLoadError(null);
@@ -159,44 +153,29 @@ export default function ExpansionAdvisorPage({
       .finally(() => setLoadingSaved(false));
   }, [t]);
 
+  // Sync candidates to parent
   useEffect(() => {
     onCandidatesChange(candidates, shortlistIds, selectedCandidate?.id || null, brief.existing_branches);
   }, [candidates, shortlistIds, selectedCandidate, brief.existing_branches, onCandidatesChange]);
 
+  // Clear stale compare result
   useEffect(() => {
     if (shouldKeepCompareResult(compareIds, compareResult)) return;
-    if (compareResult !== null) {
-      setCompareResult(null);
-    }
+    if (compareResult !== null) setCompareResult(null);
   }, [compareIds, compareResult]);
 
   const loadReport = async (targetSearchId: string) => {
     if (!targetSearchId) return;
     setLoadingReport(true);
     setReportError(null);
-    try {
-      setReport(await getExpansionRecommendationReport(targetSearchId));
-    } catch {
-      setReportError(t("expansionAdvisor.errorReport"));
-    } finally {
-      setLoadingReport(false);
-    }
+    try { setReport(await getExpansionRecommendationReport(targetSearchId)); } catch { setReportError(t("expansionAdvisor.errorReport")); } finally { setLoadingReport(false); }
   };
 
   const loadCompare = async (targetSearchId: string, targetCompareIds: string[]) => {
-    if (!targetSearchId || targetCompareIds.length < 2 || targetCompareIds.length > 6) {
-      setCompareResult(null);
-      return;
-    }
+    if (!targetSearchId || targetCompareIds.length < 2 || targetCompareIds.length > 6) { setCompareResult(null); return; }
     setLoadingCompare(true);
     setCompareError(null);
-    try {
-      setCompareResult(await compareExpansionCandidates(targetSearchId, targetCompareIds));
-    } catch {
-      setCompareError(t("expansionAdvisor.errorCompare"));
-    } finally {
-      setLoadingCompare(false);
-    }
+    try { setCompareResult(await compareExpansionCandidates(targetSearchId, targetCompareIds)); } catch { setCompareError(t("expansionAdvisor.errorCompare")); } finally { setLoadingCompare(false); }
   };
 
   const refreshSavedStudies = async () => {
@@ -205,28 +184,17 @@ export default function ExpansionAdvisorPage({
   };
 
   const handleSelectCandidate = async (candidate: ExpansionCandidate, forceReloadMemo = false) => {
-    if (sameCandidateId(candidate, selectedCandidate) && !forceReloadMemo) {
-      return;
-    }
+    if (sameCandidateId(candidate, selectedCandidate) && !forceReloadMemo) return;
     setSelectedCandidate(candidate);
     onSelectedCandidateChange(candidate);
     setLoadingMemo(true);
     setMemoError(null);
-    try {
-      setMemo(await getExpansionCandidateMemo(candidate.id));
-    } catch {
-      setMemoError(t("expansionAdvisor.errorMemo"));
-    } finally {
-      setLoadingMemo(false);
-      requestAnimationFrame(() => memoAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
-    }
+    try { setMemo(await getExpansionCandidateMemo(candidate.id)); } catch { setMemoError(t("expansionAdvisor.errorMemo")); } finally { setLoadingMemo(false); requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })); }
   };
 
   const handleSelectCandidateById = async (candidateId?: string | null, forceReloadMemo = false) => {
     const target = resolveCandidateById(candidates, candidateId);
-    if (!target) {
-      return;
-    }
+    if (!target) return;
     await handleSelectCandidate(target, forceReloadMemo);
   };
 
@@ -235,58 +203,44 @@ export default function ExpansionAdvisorPage({
     setLoadingSearch(true);
     setSaveError(null);
     setSearchError(null);
-    const resetState = getNewSearchResetState();
-    setSelectedCandidate(resetState.selectedCandidate);
-    onSelectedCandidateChange(resetState.selectedCandidate);
-    setShortlistIds(resetState.shortlistIds);
-    setCompareIds(resetState.compareIds);
-    setCompareResult(resetState.compareResult);
-    setMemo(resetState.memo);
-    setReport(resetState.report);
+    const reset = getNewSearchResetState();
+    setSelectedCandidate(reset.selectedCandidate);
+    onSelectedCandidateChange(reset.selectedCandidate);
+    setShortlistIds(reset.shortlistIds);
+    setCompareIds(reset.compareIds);
+    setCompareResult(reset.compareResult);
+    setMemo(reset.memo);
+    setReport(reset.report);
     setCandidates([]);
-    setMemoError(resetState.memoError);
-    setReportError(resetState.reportError);
-    setCompareError(resetState.compareError);
+    setMemoError(reset.memoError);
+    setReportError(reset.reportError);
+    setCompareError(reset.compareError);
     setSavedLoadError(null);
     setSearchId("");
+    setSearchMeta({});
+    setActiveDrawer("none");
     try {
       const result = await createExpansionSearch(nextBrief);
       setSearchId(result.search_id);
       setCandidates(normalizeCandidates(result.items || []));
+      setSearchMeta(result.meta || {});
       void loadReport(result.search_id);
-    } catch {
-      setSearchError(t("expansionAdvisor.errorSearch"));
-    } finally {
-      setLoadingSearch(false);
-    }
+    } catch { setSearchError(t("expansionAdvisor.errorSearch")); } finally { setLoadingSearch(false); }
   };
 
   const hydrateSavedStudy = async (saved: SavedExpansionSearch) => {
-    setMemo(null);
-    setReport(null);
-    setCompareResult(null);
-    setMemoError(null);
-    setReportError(null);
-    setCompareError(null);
-    setSaveError(null);
-
+    setMemo(null); setReport(null); setCompareResult(null);
+    setMemoError(null); setReportError(null); setCompareError(null); setSaveError(null);
+    setActiveDrawer("none");
     let hydratedCandidates = normalizeCandidates(saved.candidates || []);
     let hydratedSaved = saved;
-
     try {
       if (saved.search_id) {
         const [searchDetail, candidateList] = await Promise.all([getExpansionSearch(saved.search_id), getExpansionCandidates(saved.search_id)]);
         hydratedCandidates = normalizeCandidates(candidateList.items || []);
-        hydratedSaved = {
-          ...saved,
-          search: searchDetail,
-          candidates: hydratedCandidates,
-        };
+        hydratedSaved = { ...saved, search: searchDetail, candidates: hydratedCandidates };
       }
-    } catch {
-      // fall back to embedded saved payload
-    }
-
+    } catch { /* fall back to embedded saved payload */ }
     const restored = restoreSavedUiState(hydratedSaved, hydratedCandidates);
     setSearchId(restored.searchId);
     setBrief(briefFromSavedSearch(hydratedSaved));
@@ -294,170 +248,219 @@ export default function ExpansionAdvisorPage({
     setShortlistIds(restored.shortlistIds.filter((id) => Boolean(resolveCandidateById(hydratedCandidates, id))));
     const restoredCompareIds = restored.compareIds.filter((id) => Boolean(resolveCandidateById(hydratedCandidates, id)));
     setCompareIds(restoredCompareIds);
-
     if (restored.selectedCandidateId) {
       const selected = resolveCandidateById(hydratedCandidates, restored.selectedCandidateId);
-      if (selected) {
-        await handleSelectCandidate(selected, true);
-      } else {
-        setSelectedCandidate(null);
-        onSelectedCandidateChange(null);
-      }
-    } else {
-      setSelectedCandidate(null);
-      onSelectedCandidateChange(null);
-    }
-
-    if (restored.searchId && restoredCompareIds.length >= 2 && restoredCompareIds.length <= 6) {
-      await loadCompare(restored.searchId, restoredCompareIds);
-    }
-
-    if (restored.searchId) {
-      await loadReport(restored.searchId);
-    }
+      if (selected) await handleSelectCandidate(selected, true);
+      else { setSelectedCandidate(null); onSelectedCandidateChange(null); }
+    } else { setSelectedCandidate(null); onSelectedCandidateChange(null); }
+    if (restored.searchId && restoredCompareIds.length >= 2 && restoredCompareIds.length <= 6) await loadCompare(restored.searchId, restoredCompareIds);
+    if (restored.searchId) await loadReport(restored.searchId);
   };
 
+  // External map selection sync
   useEffect(() => {
     if (!shouldLoadMemoFromMapSelection(externalSelectedCandidateId, selectedCandidate?.id || null)) return;
     const target = resolveCandidateById(candidates, externalSelectedCandidateId);
     if (!target) {
-      if (selectedCandidate !== null) {
-        setSelectedCandidate(null);
-        setMemo(null);
-        setMemoError(null);
-        onSelectedCandidateChange(null);
-      }
+      if (selectedCandidate !== null) { setSelectedCandidate(null); setMemo(null); setMemoError(null); onSelectedCandidateChange(null); }
       return;
     }
     void handleSelectCandidate(target);
   }, [externalSelectedCandidateId, candidates, selectedCandidate?.id]);
 
   const title = useMemo(() => `${brief.brand_name || t("expansionAdvisor.title")} Study`, [brief.brand_name, t]);
+  const bestCandidate = candidates[0];
+  const passCount = candidates.filter((c) => c.gate_status_json?.overall_pass).length;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 16 }}>
-      <div style={{ display: "grid", gap: 16 }}>
-        <ExpansionBriefForm initialValue={brief} loading={loadingSearch} onSubmit={onSubmitBrief} />
-        {searchError ? <small>{searchError}</small> : null}
-        <h4>{t("expansionAdvisor.savedStudies")}</h4>
-        {savedLoadError ? <small>{savedLoadError}</small> : null}
-        <SavedSearchesPanel
-          items={savedItems}
-          loading={loadingSaved}
-          onOpen={async (savedId) => {
-            setLoadingSaved(true);
-            setSavedLoadError(null);
-            try {
-              const saved = await getSavedExpansionSearch(savedId);
-              await hydrateSavedStudy(saved);
-            } catch {
-              setSavedLoadError(t("expansionAdvisor.errorSavedLoad"));
-            } finally {
-              setLoadingSaved(false);
-            }
-          }}
-        />
-      </div>
-      <div style={{ display: "grid", gap: 12 }}>
-        <div style={{ display: "flex", gap: 8 }}>
-          <ExpansionComparePanel
-            compareIds={compareIds}
-            result={compareResult}
-            loading={loadingCompare}
-            error={compareError}
-            onCompare={async () => {
-              if (!searchId) return;
-              await loadCompare(searchId, compareIds);
-            }}
-            onSelectCandidateId={(candidateId) => {
-              void handleSelectCandidateById(candidateId);
-            }}
-          />
-          <button
-            onClick={async () => {
-              if (!searchId) return;
-              setSaving(true);
-              setSaveError(null);
-              try {
-                await createSavedExpansionSearch({
-                  search_id: searchId,
-                  title,
-                  description: "",
-                  status: "draft",
-                  selected_candidate_ids: shortlistIds,
-                  filters_json: brief as unknown as Record<string, unknown>,
-                  ui_state_json: { selected_candidate_id: selectedCandidate?.id || null, compare_ids: compareIds },
-                });
-                await refreshSavedStudies();
-              } catch {
-                setSaveError(t("expansionAdvisor.errorSavedLoad"));
-              } finally {
-                setSaving(false);
-              }
-            }}
-            disabled={!searchId || saving}
-          >
-            {saving ? t("common.loading") : t("expansionAdvisor.saveSearch")}
-          </button>
-          <button
-            onClick={async () => {
-              if (!searchId) return;
-              await loadReport(searchId);
-            }}
-          >
-            {t("expansionAdvisor.loadReport")}
-          </button>
-        </div>
-        {saveError ? <small>{saveError}</small> : null}
-
-        {candidates.length ? (
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <span>
-              {t("expansionAdvisor.totalCandidates")}: {candidates.length}
-            </span>
-            <span>
-              {t("expansionAdvisor.passGates")}: {candidates.filter((c) => c.gate_status_json?.overall_pass).length}
-            </span>
-            <span>
-              {t("expansionAdvisor.topDistrict")}: {candidates.find((c) => c.district)?.district || "-"}
-            </span>
-            <span>
-              {t("expansionAdvisor.selectedStrategy")}: {(brief.brand_profile?.primary_channel || "-")}/{brief.brand_profile?.expansion_goal || "-"}
-            </span>
+    <div className="ea-page">
+      {/* Two-column layout: form + results */}
+      <div className="ea-layout">
+        {/* Left column: search form + saved studies */}
+        <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
+          <div className="ea-card">
+            <div className="ea-card__header">
+              <h3 className="ea-card__title">{t("expansionAdvisor.briefTitle")}</h3>
+            </div>
+            <div className="ea-card__body">
+              <ExpansionBriefForm initialValue={brief} loading={loadingSearch} onSubmit={onSubmitBrief} />
+              {searchError && <div className="ea-state ea-state--error" style={{ marginTop: 8 }}>{searchError}</div>}
+            </div>
           </div>
-        ) : null}
 
-        {candidates.length ? (
-          <ExpansionResultsPanel
-            items={candidates}
-            selectedCandidateId={selectedCandidate?.id || null}
-            shortlistIds={shortlistIds}
-            compareIds={compareIds}
-            onSelectCandidate={(candidate) => {
-              void handleSelectCandidate(candidate);
-            }}
-            onToggleShortlist={(candidateId) =>
-              setShortlistIds((current) => (current.includes(candidateId) ? current.filter((id) => id !== candidateId) : [...current, candidateId]))
-            }
-            onToggleCompare={(candidateId) => {
-              setCompareIds((current) => getNextCompareIds(current, candidateId));
-            }}
-          />
-        ) : (
-          <div>{loadingSearch ? t("expansionAdvisor.loadingSearch") : t("expansionAdvisor.noCandidates")}</div>
-        )}
-        <div ref={memoAnchorRef} />
-        {memoError ? <small>{memoError}</small> : null}
-        <ExpansionMemoPanel memo={memo} loading={loadingMemo} />
-        {reportError ? <small>{reportError}</small> : null}
+          <div className="ea-card">
+            <div className="ea-card__header">
+              <h3 className="ea-card__title">{t("expansionAdvisor.savedStudies")}</h3>
+            </div>
+            <div className="ea-card__body">
+              {savedLoadError && <div className="ea-state ea-state--error">{savedLoadError}</div>}
+              <SavedSearchesPanel
+                items={savedItems}
+                loading={loadingSaved}
+                onOpen={async (savedId) => {
+                  setLoadingSaved(true);
+                  setSavedLoadError(null);
+                  try { const saved = await getSavedExpansionSearch(savedId); await hydrateSavedStudy(saved); } catch { setSavedLoadError(t("expansionAdvisor.errorSavedLoad")); } finally { setLoadingSaved(false); }
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Right column: results + detail */}
+        <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
+          {/* Summary strip */}
+          {candidates.length > 0 && (
+            <div className="ea-summary-strip">
+              <div className="ea-summary-strip__item">
+                <span className="ea-summary-strip__label">{t("expansionAdvisor.totalCandidates")}:</span>
+                <span className="ea-summary-strip__value">{candidates.length}</span>
+              </div>
+              <div className="ea-summary-strip__item">
+                <span className="ea-summary-strip__label">{t("expansionAdvisor.passGates")}:</span>
+                <span className="ea-summary-strip__value">{passCount}</span>
+              </div>
+              {bestCandidate && (
+                <div className="ea-summary-strip__item">
+                  <span className="ea-summary-strip__label">{t("expansionAdvisor.bestScore")}:</span>
+                  <ScorePill value={bestCandidate.final_score} />
+                </div>
+              )}
+              <div className="ea-summary-strip__item">
+                <span className="ea-summary-strip__label">{t("expansionAdvisor.topDistrict")}:</span>
+                <span className="ea-summary-strip__value">{candidates.find((c) => c.district)?.district || "—"}</span>
+              </div>
+              {searchMeta.parcel_source ? (
+                <div className="ea-summary-strip__item">
+                  <span className="ea-summary-strip__label">{t("expansionAdvisor.parcelSource")}:</span>
+                  <span className="ea-summary-strip__value">{String(searchMeta.parcel_source)}</span>
+                </div>
+              ) : null}
+              {searchMeta.version ? (
+                <div className="ea-summary-strip__item">
+                  <span className="ea-summary-strip__label">v</span>
+                  <span className="ea-summary-strip__value">{String(searchMeta.version)}</span>
+                </div>
+              ) : null}
+            </div>
+          )}
+
+          {/* Actions bar */}
+          {searchId && (
+            <div className="ea-actions-bar">
+              <ExpansionComparePanel
+                compareIds={compareIds}
+                result={null}
+                loading={false}
+                error={null}
+                onCompare={async () => {
+                  await loadCompare(searchId, compareIds);
+                  setActiveDrawer("compare");
+                }}
+                onSelectCandidateId={(candidateId) => void handleSelectCandidateById(candidateId)}
+              />
+              <button className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => { void loadReport(searchId); setActiveDrawer("report"); }}>
+                {t("expansionAdvisor.viewReport")}
+              </button>
+              <button className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => setActiveDrawer("save")} disabled={!searchId}>
+                {t("expansionAdvisor.saveStudy")}
+              </button>
+            </div>
+          )}
+
+          {/* Candidate list */}
+          {candidates.length > 0 ? (
+            <ExpansionResultsPanel
+              items={candidates}
+              selectedCandidateId={selectedCandidate?.id || null}
+              shortlistIds={shortlistIds}
+              compareIds={compareIds}
+              onSelectCandidate={(candidate) => void handleSelectCandidate(candidate)}
+              onToggleShortlist={(candidateId) => setShortlistIds((cur) => cur.includes(candidateId) ? cur.filter((id) => id !== candidateId) : [...cur, candidateId])}
+              onToggleCompare={(candidateId) => setCompareIds((cur) => getNextCompareIds(cur, candidateId))}
+            />
+          ) : (
+            <div className="ea-state">
+              {loadingSearch ? t("expansionAdvisor.loadingSearch") : t("expansionAdvisor.noResults")}
+            </div>
+          )}
+
+          {/* Selected candidate detail */}
+          <div ref={detailRef} />
+          {memoError && <div className="ea-state ea-state--error">{memoError}</div>}
+          {loadingMemo && <div className="ea-state ea-state--loading">{t("expansionAdvisor.loadingMemo")}</div>}
+          {selectedCandidate && !loadingMemo && (
+            <div className="ea-card">
+              <div className="ea-card__header">
+                <h3 className="ea-card__title">
+                  #{selectedCandidate.rank_position} {selectedCandidate.district || selectedCandidate.parcel_id}
+                </h3>
+                <button className="oak-btn oak-btn--sm oak-btn--primary" onClick={() => setActiveDrawer("memo")}>
+                  {t("expansionAdvisor.viewMemo")}
+                </button>
+              </div>
+              <div className="ea-card__body">
+                <CandidateDetailPanel candidate={selectedCandidate} />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ─── Drawers / dialogs ─── */}
+
+      {activeDrawer === "memo" && (
+        <ExpansionMemoPanel memo={memo} loading={loadingMemo} onClose={() => setActiveDrawer("none")} />
+      )}
+
+      {activeDrawer === "compare" && (
+        <ExpansionComparePanel
+          compareIds={compareIds}
+          result={compareResult}
+          loading={loadingCompare}
+          error={compareError}
+          onCompare={async () => { if (searchId) await loadCompare(searchId, compareIds); }}
+          onSelectCandidateId={(candidateId) => { setActiveDrawer("none"); void handleSelectCandidateById(candidateId); }}
+          onClose={() => setActiveDrawer("none")}
+        />
+      )}
+
+      {activeDrawer === "report" && (
         <ExpansionReportPanel
           report={report}
           loading={loadingReport}
-          onSelectCandidateId={(candidateId) => {
-            void handleSelectCandidateById(candidateId);
+          onSelectCandidateId={(candidateId) => { setActiveDrawer("none"); void handleSelectCandidateById(candidateId); }}
+          onClose={() => setActiveDrawer("none")}
+        />
+      )}
+
+      {activeDrawer === "save" && (
+        <SaveStudyDialog
+          defaultTitle={title}
+          saving={saving}
+          error={saveError}
+          onClose={() => setActiveDrawer("none")}
+          onSave={async (studyTitle, description, status) => {
+            setSaving(true);
+            setSaveError(null);
+            try {
+              await createSavedExpansionSearch({
+                search_id: searchId,
+                title: studyTitle,
+                description,
+                status,
+                selected_candidate_ids: shortlistIds,
+                filters_json: brief as unknown as Record<string, unknown>,
+                ui_state_json: { selected_candidate_id: selectedCandidate?.id || null, compare_ids: compareIds },
+              });
+              await refreshSavedStudies();
+              setActiveDrawer("none");
+            } catch { setSaveError(t("expansionAdvisor.errorSavedLoad")); } finally { setSaving(false); }
           }}
         />
-      </div>
+      )}
+
+      {reportError && activeDrawer !== "report" && <div className="ea-state ea-state--error">{reportError}</div>}
     </div>
   );
 }
