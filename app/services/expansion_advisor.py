@@ -74,7 +74,7 @@ def _channel_fit_score(service_model: str, primary_channel: str | None, provider
 
 
 def _brand_fit_score(*, district: str | None, area_m2: float, demand_score: float, fit_score: float, cannibalization_score: float,
-    provider_density_score: float, provider_whitespace_score: float, delivery_competition_score: float,
+    provider_density_score: float, provider_whitespace_score: float, multi_platform_presence_score: float, delivery_competition_score: float,
     visibility_signal: float, parking_signal: float, brand_profile: dict[str, Any], service_model: str) -> float:
     preferred = {normalize_district_key(d) for d in (brand_profile.get("preferred_districts") or []) if normalize_district_key(d)}
     excluded = {normalize_district_key(d) for d in (brand_profile.get("excluded_districts") or []) if normalize_district_key(d)}
@@ -100,7 +100,12 @@ def _brand_fit_score(*, district: str | None, area_m2: float, demand_score: floa
     else:
         goal_component = _clamp((demand_score + fit_score + provider_whitespace_score) / 3.0)
 
-    channel_component = _channel_fit_score(service_model, brand_profile.get("primary_channel"), provider_density_score, 50.0)
+    channel_component = _channel_fit_score(
+        service_model,
+        brand_profile.get("primary_channel"),
+        provider_density_score,
+        multi_platform_presence_score,
+    )
     parking_weight = _sensitivity_weight(brand_profile.get("parking_sensitivity"))
     frontage_weight = _sensitivity_weight(brand_profile.get("frontage_sensitivity"))
     visibility_weight = _sensitivity_weight(brand_profile.get("visibility_sensitivity"))
@@ -800,6 +805,7 @@ def run_expansion_search(
             cannibalization_score=cannibalization_score,
             provider_density_score=provider_density_score,
             provider_whitespace_score=provider_whitespace_score,
+            multi_platform_presence_score=multi_platform_presence_score,
             delivery_competition_score=delivery_competition_score,
             visibility_signal=visibility_signal,
             parking_signal=parking_signal,

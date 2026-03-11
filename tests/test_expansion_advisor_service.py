@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.services import expansion_advisor as expansion_service
 from app.services.expansion_advisor import (
+    _brand_fit_score,
     _payback_band,
     compare_candidates,
     get_candidate_memo,
@@ -283,3 +284,26 @@ def test_brand_provider_scores_bounded():
     assert 0 <= items[0]["provider_whitespace_score"] <= 100
     assert 0 <= items[0]["multi_platform_presence_score"] <= 100
     assert 0 <= items[0]["delivery_competition_score"] <= 100
+
+
+def test_brand_fit_responds_to_multi_platform_presence():
+    base_kwargs = dict(
+        district="Olaya",
+        area_m2=220,
+        demand_score=72,
+        fit_score=70,
+        cannibalization_score=42,
+        provider_density_score=65,
+        provider_whitespace_score=58,
+        delivery_competition_score=48,
+        visibility_signal=74,
+        parking_signal=62,
+        brand_profile={"primary_channel": "delivery", "expansion_goal": "balanced"},
+        service_model="qsr",
+    )
+
+    low_platform = _brand_fit_score(multi_platform_presence_score=20, **base_kwargs)
+    high_platform = _brand_fit_score(multi_platform_presence_score=90, **base_kwargs)
+
+    assert high_platform != low_platform
+    assert high_platform > low_platform
