@@ -165,7 +165,7 @@ def create_expansion_search(
                 "request_json": json.dumps(request_json, ensure_ascii=False),
                 "notes": json.dumps(
                     {
-                        "version": "expansion_advisor_v5",
+                        "version": "expansion_advisor_v6",
                         "parcel_source": "arcgis_only",
                         "excluded_sources": ["suhail", "inferred_parcels"],
                     },
@@ -213,7 +213,7 @@ def create_expansion_search(
         },
         "items": items,
         "meta": {
-            "version": "expansion_advisor_v5",
+            "version": "expansion_advisor_v6",
             "parcel_source": "arcgis_only",
             "excluded_sources": ["suhail", "inferred_parcels"],
         },

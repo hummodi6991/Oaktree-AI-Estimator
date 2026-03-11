@@ -93,7 +93,7 @@ def test_post_expansion_search_with_existing_branches(monkeypatch):
     assert body["brand_profile"]["existing_branches"][0]["name"] == "HQ"
     assert body["items"][0]["district"] == "Olaya"
     assert body["items"][0]["cannibalization_score"] == 55.0
-    assert body["meta"]["version"] == "expansion_advisor_v5"
+    assert body["meta"]["version"] == "expansion_advisor_v6"
     assert db.committed is True
 
 
@@ -162,7 +162,7 @@ def test_compare_endpoint_happy_path(monkeypatch):
         "compare_candidates",
         lambda _db, _search_id, _candidate_ids: {
             "items": [
-                {"candidate_id": "c1", "economics_score": 70.0, "estimated_payback_months": 20.0},
+                {"candidate_id": "c1", "economics_score": 70.0, "estimated_payback_months": 20.0, "zoning_fit_score": 82, "frontage_score": 65, "access_score": 66, "parking_score": 61, "access_visibility_score": 64},
                 {"candidate_id": "c2", "economics_score": 62.0, "estimated_payback_months": 28.0},
             ],
             "summary": {
@@ -187,6 +187,7 @@ def test_compare_endpoint_happy_path(monkeypatch):
     body = response.json()
     assert body["items"][0]["candidate_id"] == "c1"
     assert body["items"][0]["economics_score"] == 70.0
+    assert body["items"][0]["zoning_fit_score"] == 82
     assert body["summary"]["best_economics_candidate_id"] == "c1"
 
 
@@ -267,6 +268,8 @@ def test_candidate_memo_endpoint_happy_path(monkeypatch):
                 "confidence_score": 84,
                 "confidence_grade": "A",
                 "gate_status": {"overall_pass": True},
+                "gate_reasons": {"passed": ["zoning_fit_pass"], "failed": []},
+                "feature_snapshot": {"parcel_area_m2": 180, "touches_road": True},
                 "demand_thesis": "Demand is strong",
                 "cost_thesis": "Costs are manageable",
                 "comparable_competitors": [{"id": "r1", "name": "Comp"}],
@@ -304,6 +307,7 @@ def test_candidate_memo_endpoint_happy_path(monkeypatch):
     assert body["recommendation"]["verdict"] == "go"
     assert body["recommendation"]["gate_verdict"] == "pass"
     assert body["candidate"]["comparable_competitors"][0]["id"] == "r1"
+    assert body["candidate"]["feature_snapshot"]["touches_road"] is True
 
 
 def test_candidate_memo_endpoint_404(monkeypatch):
@@ -325,7 +329,7 @@ def test_candidate_memo_endpoint_404(monkeypatch):
 def test_report_endpoint_happy_path(monkeypatch):
     db = DummyDB()
     from app.api import expansion_advisor as expansion_api
-    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id: {"search_id": "search-1", "recommendation": {"best_candidate_id": "c1", "best_pass_candidate_id": "c1", "best_confidence_candidate_id": "c2"}})
+    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id: {"search_id": "search-1", "recommendation": {"best_candidate_id": "c1", "best_pass_candidate_id": "c1", "best_confidence_candidate_id": "c2"}, "top_candidates": [{"id": "c1", "zoning_fit_score": 80, "frontage_score": 63, "access_score": 65, "parking_score": 59, "access_visibility_score": 64}]})
     client = _client_with_db(db)
     try:
         response = client.get("/v1/expansion-advisor/searches/search-1/report")
