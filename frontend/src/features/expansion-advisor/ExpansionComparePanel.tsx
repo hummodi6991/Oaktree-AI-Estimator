@@ -1,5 +1,9 @@
 import { useTranslation } from "react-i18next";
 import type { CompareCandidatesResponse } from "../../lib/api/expansionAdvisor";
+import ScorePill from "./ScorePill";
+import ConfidenceBadge from "./ConfidenceBadge";
+import PaybackBadge from "./PaybackBadge";
+import { fmtScore, gateColor } from "./formatHelpers";
 
 const SUMMARY_KEY_ORDER = [
   "best_overall_candidate_id",
@@ -15,15 +19,8 @@ const SUMMARY_KEY_ORDER = [
   "most_confident_candidate_id",
 ] as const;
 
-function value(input?: string | number) {
-  return input ?? "-";
-}
-
 function summaryLabel(key: string) {
-  return key
-    .replace(/_candidate_id$/, "")
-    .replace(/_/g, " ")
-    .trim();
+  return key.replace(/_candidate_id$/, "").replace(/_/g, " ").trim();
 }
 
 export function getOrderedCompareSummaryEntries(summary: Record<string, string | null> = {}) {
@@ -33,6 +30,24 @@ export function getOrderedCompareSummaryEntries(summary: Record<string, string |
   return [...sortedKnown, ...extras];
 }
 
+const METRIC_ROWS = [
+  { label: "Rank", key: "rank_position" },
+  { label: "Final score", key: "final_score" },
+  { label: "Confidence", key: "confidence_grade" },
+  { label: "Gate", key: "gate" },
+  { label: "Economics", key: "economics_score" },
+  { label: "Brand fit", key: "brand_fit_score" },
+  { label: "Zoning", key: "zoning_fit_score" },
+  { label: "Frontage", key: "frontage_score" },
+  { label: "Access", key: "access_score" },
+  { label: "Parking", key: "parking_score" },
+  { label: "Visibility", key: "access_visibility_score" },
+  { label: "Provider density", key: "provider_density_score" },
+  { label: "Whitespace", key: "provider_whitespace_score" },
+  { label: "Payback", key: "payback_band" },
+  { label: "Payback months", key: "estimated_payback_months" },
+];
+
 export default function ExpansionComparePanel({
   compareIds,
   result,
@@ -40,6 +55,7 @@ export default function ExpansionComparePanel({
   error,
   onCompare,
   onSelectCandidateId,
+  onClose,
 }: {
   compareIds: string[];
   result: CompareCandidatesResponse | null;
@@ -47,33 +63,91 @@ export default function ExpansionComparePanel({
   error: string | null;
   onCompare: () => void;
   onSelectCandidateId?: (candidateId: string) => void;
+  onClose?: () => void;
 }) {
   const { t } = useTranslation();
   const enabled = compareIds.length >= 2 && compareIds.length <= 6;
   const summaryEntries = getOrderedCompareSummaryEntries(result?.summary || {});
+  const items = result?.items || [];
+
+  // Inline compact view when no result yet
+  if (!result && !loading && !error) {
+    return (
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button className="oak-btn oak-btn--sm oak-btn--primary" disabled={!enabled || loading} onClick={onCompare}>
+          {enabled ? t("expansionAdvisor.compareSelected", { count: compareIds.length }) : t("expansionAdvisor.compareNeedTwo")}
+        </button>
+      </div>
+    );
+  }
+
+  // Drawer when we have a result
   return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <button disabled={!enabled || loading} onClick={onCompare}>{enabled ? t("expansionAdvisor.compareCandidates") : t("expansionAdvisor.compareNeedTwo")}</button>
-      {error ? <small>{error}</small> : null}
-      {result?.items?.length ? (
-        <div>
-          <table>
-            <thead>
-              <tr>
-                <th>candidate_id</th><th>rank_position</th><th>final_score</th><th>confidence_grade</th><th>gate</th><th>zoning_fit_score</th><th>frontage_score</th><th>access_score</th><th>parking_score</th><th>access_visibility_score</th><th>economics_score</th><th>brand_fit_score</th><th>provider_density_score</th><th>provider_whitespace_score</th><th>estimated_payback_months</th><th>payback_band</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.items.map((item) => (
-                <tr key={item.candidate_id} onClick={() => item.candidate_id && onSelectCandidateId?.(item.candidate_id)} style={{ cursor: item.candidate_id ? "pointer" : "default" }}>
-                  <td>{item.candidate_id}</td><td>{value(item.rank_position)}</td><td>{value(item.final_score)}</td><td>{value(item.confidence_grade)}</td><td>{item.gate_status_json?.overall_pass ? t("expansionAdvisor.pass") : t("expansionAdvisor.fail")}</td><td>{value(item.zoning_fit_score)}</td><td>{value(item.frontage_score)}</td><td>{value(item.access_score)}</td><td>{value(item.parking_score)}</td><td>{value(item.access_visibility_score)}</td><td>{value(item.economics_score)}</td><td>{value(item.brand_fit_score)}</td><td>{value(item.provider_density_score)}</td><td>{value(item.provider_whitespace_score)}</td><td>{value(item.estimated_payback_months)}</td><td>{value(item.payback_band)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {summaryEntries.length ? <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>{summaryEntries.map(([k, v]) => <span key={k} style={{ border: "1px solid #d8e1dd", borderRadius: 12, padding: "2px 8px" }}>{summaryLabel(k)}: {v}</span>)}</div> : null}
+    <div className="ea-drawer-backdrop" onClick={() => onClose?.()}>
+      <div className="ea-drawer" onClick={(e) => e.stopPropagation()}>
+        <div className="ea-drawer__header">
+          <h3 className="ea-drawer__title">{t("expansionAdvisor.compareCandidates")}</h3>
+          <button className="ea-drawer__close" onClick={() => onClose?.()}>{t("expansionAdvisor.close")}</button>
         </div>
-      ) : null}
+        <div className="ea-drawer__body">
+          {loading && <div className="ea-state ea-state--loading">{t("expansionAdvisor.loading")}</div>}
+          {error && <div className="ea-state ea-state--error">{error}</div>}
+
+          {items.length > 0 && (
+            <>
+              <div style={{ overflowX: "auto" }}>
+                <table className="ea-compare-table">
+                  <thead>
+                    <tr>
+                      <th>{t("expansionAdvisor.score")}</th>
+                      {items.map((item) => (
+                        <th key={item.candidate_id} style={{ cursor: "pointer" }} onClick={() => item.candidate_id && onSelectCandidateId?.(item.candidate_id)}>
+                          {item.district || item.candidate_id?.slice(0, 8) || "—"}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {METRIC_ROWS.map((row) => (
+                      <tr key={row.key}>
+                        <td style={{ fontWeight: 500, color: "var(--oak-text-light)" }}>{row.label}</td>
+                        {items.map((item) => {
+                          const raw = (item as Record<string, unknown>)[row.key];
+                          if (row.key === "final_score") return <td key={item.candidate_id}><ScorePill value={item.final_score} /></td>;
+                          if (row.key === "confidence_grade") return <td key={item.candidate_id}><ConfidenceBadge grade={item.confidence_grade} /></td>;
+                          if (row.key === "gate") return <td key={item.candidate_id}><span className={`ea-badge ea-badge--${gateColor(item.gate_status_json?.overall_pass ?? null)}`}>{item.gate_status_json?.overall_pass ? t("expansionAdvisor.gatePass") : t("expansionAdvisor.gateFail")}</span></td>;
+                          if (row.key === "payback_band") return <td key={item.candidate_id}><PaybackBadge band={item.payback_band} months={item.estimated_payback_months} /></td>;
+                          if (typeof raw === "number") return <td key={item.candidate_id}>{fmtScore(raw)}</td>;
+                          return <td key={item.candidate_id}>{raw != null ? String(raw) : "—"}</td>;
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {summaryEntries.length > 0 && (
+                <div className="ea-detail__section">
+                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.compareSummary")}</h5>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {summaryEntries.map(([k, v]) => (
+                      <span key={k} className="ea-badge ea-badge--green" style={{ cursor: v ? "pointer" : "default" }} onClick={() => v && onSelectCandidateId?.(v)}>
+                        {summaryLabel(k)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {enabled && !loading && (
+            <button className="oak-btn oak-btn--primary" onClick={onCompare}>
+              {t("expansionAdvisor.compareSelected", { count: compareIds.length })}
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

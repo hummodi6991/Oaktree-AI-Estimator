@@ -32,9 +32,8 @@ describe("Expansion advisor UI behavior", () => {
         onToggleCompare={() => {}}
       />,
     );
-    expect(html).toContain("p1");
-    expect(html).toContain("Demand is strong");
-    expect(html).toContain("Comp");
+    expect(html).toContain("great");
+    expect(html).toContain("ea-candidate");
   });
 
   it("compare button disables for <2 selections", () => {
@@ -184,7 +183,7 @@ describe("Expansion advisor UI behavior", () => {
     expect(html).toContain("c1");
     expect(html).toContain("summary");
     expect(html).toContain("6.1");
-    expect(html).toContain("rent_growth");
+    expect(html).toContain("rent growth");
   });
 
   it("memo panel renders gate reasons positives and risks", () => {

@@ -101,8 +101,15 @@ export type ExpansionCandidate = {
   access_visibility_score?: number;
   confidence_grade?: string;
   gate_verdict?: string;
+  cannibalization_score?: number;
+  distance_to_nearest_branch_m?: number;
+  estimated_rent_sar_m2_year?: number;
+  estimated_annual_rent_sar?: number;
+  estimated_fitout_cost_sar?: number;
+  estimated_revenue_index?: number;
   estimated_payback_months?: number;
   payback_band?: string;
+  decision_summary?: string;
   gate_status_json?: Record<string, boolean>;
   gate_reasons_json?: CandidateGateReasons;
   feature_snapshot_json?: CandidateFeatureSnapshot;
