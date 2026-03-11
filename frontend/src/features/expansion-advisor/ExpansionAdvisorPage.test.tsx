@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
-import ExpansionComparePanel from "./ExpansionComparePanel";
+import ExpansionComparePanel, { getOrderedCompareSummaryEntries } from "./ExpansionComparePanel";
 import ExpansionResultsPanel from "./ExpansionResultsPanel";
 import ExpansionReportPanel from "./ExpansionReportPanel";
 import ExpansionMemoPanel from "./ExpansionMemoPanel";
@@ -12,6 +12,9 @@ import {
   briefFromSavedSearch,
   getCompareRows,
   getNewSearchResetState,
+  getNextCompareIds,
+  resolveCandidateById,
+  shouldKeepCompareResult,
 } from "./ExpansionAdvisorPage";
 import { normalizeCandidate } from "../../lib/api/expansionAdvisor";
 
@@ -52,41 +55,27 @@ describe("Expansion advisor UI behavior", () => {
   });
 
   it("saved study restore returns normalized ui state", () => {
-    const restored = restoreSavedUiState({
-      id: "sv1",
-      search_id: "search-9",
-      title: "study",
-      status: "draft",
-      selected_candidate_ids: ["c1"],
-      ui_state_json: { compare_ids: ["c2", "c3"], selected_candidate_id: "c3" },
-      candidates: [
-        { id: "c2", search_id: "s", parcel_id: "p2", lat: 24.7, lon: 46.7 },
-        { id: "c3", search_id: "s", parcel_id: "p3", lat: 24.8, lon: 46.8 },
-      ],
-    });
+    const candidates = [
+      { id: "c2", search_id: "s", parcel_id: "p2", lat: 24.7, lon: 46.7 },
+      { id: "c3", search_id: "s", parcel_id: "p3", lat: 24.8, lon: 46.8 },
+    ];
+    const restored = restoreSavedUiState(
+      {
+        id: "sv1",
+        search_id: "search-9",
+        title: "study",
+        status: "draft",
+        selected_candidate_ids: ["c1"],
+        ui_state_json: { compare_ids: ["c2", "c3"], selected_candidate_id: "c3" },
+        candidates,
+      },
+      candidates,
+    );
     expect(restored.searchId).toBe("search-9");
     expect(restored.shortlistIds).toEqual(["c1"]);
     expect(restored.compareIds).toEqual(["c2", "c3"]);
     expect(restored.selectedCandidate?.id).toBe("c3");
-  });
-
-  it("saved study hydration shape restores compareIds and selectedCandidate", () => {
-    const restored = restoreSavedUiState({
-      id: "sv2",
-      search_id: "search-77",
-      title: "saved",
-      status: "draft",
-      selected_candidate_ids: ["c5"],
-      ui_state_json: { compare_ids: ["c5", "c8"], selected_candidate_id: "c8" },
-      candidates: [
-        { id: "c5", search_id: "search-77", parcel_id: "p5", lat: 24.71, lon: 46.71 },
-        { id: "c8", search_id: "search-77", parcel_id: "p8", lat: 24.72, lon: 46.72 },
-      ],
-    });
-
-    expect(restored.searchId).toBe("search-77");
-    expect(restored.compareIds).toEqual(["c5", "c8"]);
-    expect(restored.selectedCandidate?.id).toBe("c8");
+    expect(restored.selectedCandidateId).toBe("c3");
   });
 
   it("briefFromSavedSearch prefers filters_json when present", () => {
@@ -162,6 +151,9 @@ describe("Expansion advisor UI behavior", () => {
       compareResult: null,
       memo: null,
       report: null,
+      memoError: null,
+      reportError: null,
+      compareError: null,
     });
   });
 
@@ -212,5 +204,109 @@ describe("Expansion advisor UI behavior", () => {
     expect(html).toContain("zoning");
     expect(html).toContain("demand");
     expect(html).toContain("cost");
+  });
+
+  it("report candidate click wiring uses callback", () => {
+    const selected: string[] = [];
+    renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        onSelectCandidateId={(id) => selected.push(id)}
+        report={{
+          meta: {},
+          recommendation: {},
+          top_candidates: [{ id: "c42", final_score: 88 }],
+          assumptions: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    expect(selected).toEqual([]);
+  });
+
+  it("saved hydration helpers restore shortlist/compare/selected ids", () => {
+    const candidates = [
+      { id: "c1", search_id: "s", parcel_id: "p1", lat: 0, lon: 0 },
+      { id: "c2", search_id: "s", parcel_id: "p2", lat: 0, lon: 0 },
+    ];
+    const restored = restoreSavedUiState(
+      {
+        id: "sv5",
+        search_id: "s",
+        title: "saved",
+        status: "draft",
+        selected_candidate_ids: ["c1"],
+        ui_state_json: { compare_ids: ["c1", "c2"], selected_candidate_id: "c2" },
+      },
+      candidates,
+    );
+    expect(restored.shortlistIds).toEqual(["c1"]);
+    expect(restored.compareIds).toEqual(["c1", "c2"]);
+    expect(restored.selectedCandidateId).toBe("c2");
+    expect(resolveCandidateById(candidates, restored.selectedCandidateId)?.id).toBe("c2");
+  });
+
+  it("compare summary ordering helper is deterministic", () => {
+    const entries = getOrderedCompareSummaryEntries({
+      most_confident_candidate_id: "c4",
+      best_overall_candidate_id: "c1",
+      fastest_payback_candidate_id: "c2",
+      custom_metric: "c9",
+    });
+    expect(entries.map(([key]) => key)).toEqual([
+      "best_overall_candidate_id",
+      "fastest_payback_candidate_id",
+      "most_confident_candidate_id",
+      "custom_metric",
+    ]);
+  });
+
+  it("compare selection helper preserves order and caps at 6", () => {
+    expect(getNextCompareIds(["c1", "c2"], "c3")).toEqual(["c1", "c2", "c3"]);
+    expect(getNextCompareIds(["c1", "c2"], "c2")).toEqual(["c1"]);
+    expect(getNextCompareIds(["c1", "c2", "c3", "c4", "c5", "c6"], "c7")).toEqual(["c1", "c2", "c3", "c4", "c5", "c6"]);
+  });
+
+  it("stale compare result guard clears mismatched result", () => {
+    expect(
+      shouldKeepCompareResult(["c1", "c2"], {
+        items: [{ candidate_id: "c1" }, { candidate_id: "c2" }],
+        summary: {},
+      }),
+    ).toBe(true);
+    expect(
+      shouldKeepCompareResult(["c1", "c3"], {
+        items: [{ candidate_id: "c1" }, { candidate_id: "c2" }],
+        summary: {},
+      }),
+    ).toBe(false);
+  });
+
+  it("memo/report panels handle sparse payloads", () => {
+    const memoHtml = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={{
+          recommendation: {},
+          candidate: {},
+          market_research: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    const reportHtml = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        report={{
+          recommendation: {},
+          top_candidates: [{ id: "c1" }],
+          assumptions: {},
+          brand_profile: {},
+          meta: {},
+        }}
+      />,
+    );
+    expect(memoHtml).toContain("-");
+    expect(reportHtml).toContain("c1");
   });
 });

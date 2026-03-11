@@ -147,6 +147,8 @@ export type ExpansionCandidatesListResponse = {
 
 export type CompareCandidateItem = {
   candidate_id: string;
+  district?: string;
+  parcel_id?: string;
   rank_position?: number;
   final_score?: number;
   confidence_grade?: string;
@@ -284,6 +286,16 @@ export function normalizeSavedSearch(saved: SavedExpansionSearch): SavedExpansio
     filters_json: saved.filters_json || {},
     ui_state_json: saved.ui_state_json || {},
     candidates: normalizeCandidates(saved.candidates || []),
+    search: saved.search
+      ? {
+          ...saved.search,
+          target_districts: saved.search.target_districts || [],
+          request_json: saved.search.request_json || {},
+          notes: saved.search.notes || {},
+          existing_branches: saved.search.existing_branches || [],
+          meta: saved.search.meta || {},
+        }
+      : saved.search,
   };
 }
 

@@ -1,18 +1,17 @@
 import { useTranslation } from "react-i18next";
 import type { RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
 
-function assumptionsText(assumptions: Record<string, unknown> | undefined) {
-  const rows = Object.entries(assumptions || {});
-  if (!rows.length) return "-";
-  return rows.map(([key, value]) => `${key}: ${String(value)}`).join("; ");
+function assumptionRows(assumptions: Record<string, unknown> | undefined) {
+  return Object.entries(assumptions || {});
 }
 
-export default function ExpansionReportPanel({ report, loading }: { report: RecommendationReportResponse | null; loading: boolean }) {
+export default function ExpansionReportPanel({ report, loading, onSelectCandidateId }: { report: RecommendationReportResponse | null; loading: boolean; onSelectCandidateId?: (candidateId: string) => void }) {
   const { t } = useTranslation();
   if (loading) return <div>{t("expansionAdvisor.loadingReport")}</div>;
   if (!report) return null;
   const rec = report.recommendation || {};
   const top = report.top_candidates || [];
+  const assumptions = assumptionRows(report.assumptions);
   return (
     <div>
       <h4>{t("expansionAdvisor.recommendationReport")}</h4>
@@ -27,7 +26,15 @@ export default function ExpansionReportPanel({ report, loading }: { report: Reco
       <div>{t("expansionAdvisor.summary")}: {String(rec.summary || rec.report_summary || "-")}</div>
       <div style={{ display: "grid", gap: 6 }}>
         {top.map((item) => (
-          <div key={item.id} style={{ border: "1px solid #d8e1dd", borderRadius: 6, padding: 8 }}>
+          <button
+            key={item.id}
+            type="button"
+            disabled={!item.id}
+            onClick={() => {
+              if (item.id) onSelectCandidateId?.(item.id);
+            }}
+            style={{ border: "1px solid #d8e1dd", borderRadius: 6, padding: 8, textAlign: "left", background: "#fff" }}
+          >
             <strong>{item.id}</strong> #{item.rank_position ?? "-"} — {item.final_score ?? "-"}
             <div>{t("expansionAdvisor.confidenceGrade")}: {item.confidence_grade || "-"}</div>
             <div>{t("expansionAdvisor.gateVerdict")}: {item.gate_verdict || t("expansionAdvisor.fail")}</div>
@@ -35,10 +42,21 @@ export default function ExpansionReportPanel({ report, loading }: { report: Reco
             <div>{t("expansionAdvisor.topRisks")}: {(item.top_risks_json || []).slice(0, 2).join(" • ") || "-"}</div>
             <div>snapshot: {String(item.feature_snapshot_json?.data_completeness_score ?? "-")}</div>
             <div>breakdown: {String(item.score_breakdown_json?.final_score ?? "-")}</div>
-          </div>
+          </button>
         ))}
       </div>
-      <div>{t("expansionAdvisor.assumptions")}: {assumptionsText(report.assumptions)}</div>
+      <div>
+        {t("expansionAdvisor.assumptions")}: {assumptions.length ? null : "-"}
+        {assumptions.length ? (
+          <ul>
+            {assumptions.map(([key, value]) => (
+              <li key={key}>
+                {key}: {String(value)}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </div>
     </div>
   );
 }

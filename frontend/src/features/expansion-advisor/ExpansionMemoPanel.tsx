@@ -18,6 +18,8 @@ export default function ExpansionMemoPanel({ memo, loading }: { memo: CandidateM
   const featureSnapshot = (candidate.feature_snapshot || {}) as Record<string, unknown>;
   const scoreBreakdown = (candidate.score_breakdown_json || {}) as Record<string, unknown>;
   const comps = (candidate.comparable_competitors || []) as Array<Record<string, unknown>>;
+  const positives = toList(candidate.top_positives_json);
+  const risks = toList(candidate.top_risks_json);
 
   return (
     <div>
@@ -44,13 +46,13 @@ export default function ExpansionMemoPanel({ memo, loading }: { memo: CandidateM
       <div>{t("expansionAdvisor.failed")}: {toList(gateReasons.failed).join(", ") || "-"}</div>
       <div>{t("expansionAdvisor.unknown")}: {toList(gateReasons.unknown).join(", ") || "-"}</div>
 
-      <div><strong>{t("expansionAdvisor.topPositives")}</strong><ul>{toList(candidate.top_positives_json).map((s) => <li key={s}>{s}</li>)}</ul></div>
-      <div><strong>{t("expansionAdvisor.topRisks")}</strong><ul>{toList(candidate.top_risks_json).map((s) => <li key={s}>{s}</li>)}</ul></div>
+      <div><strong>{t("expansionAdvisor.topPositives")}</strong><ul>{positives.length ? positives.map((s) => <li key={s}>{s}</li>) : <li>-</li>}</ul></div>
+      <div><strong>{t("expansionAdvisor.topRisks")}</strong><ul>{risks.length ? risks.map((s) => <li key={s}>{s}</li>) : <li>-</li>}</ul></div>
       <div>{t("expansionAdvisor.demandThesis")}: {String(candidate.demand_thesis ?? "-")}</div>
       <div>{t("expansionAdvisor.costThesis")}: {String(candidate.cost_thesis ?? "-")}</div>
 
       <h5>{t("expansionAdvisor.comparableCompetitors")}</h5>
-      <ul>{comps.map((c, i) => <li key={`${String(c.id || i)}`}>{String(c.name || "-")} - {String(c.distance_m || "-")}m</li>)}</ul>
+      <ul>{comps.length ? comps.map((c, i) => <li key={`${String(c.id || i)}`}>{String(c.name || "-")} - {String(c.distance_m || "-")}m</li>) : <li>-</li>}</ul>
 
       <h5>{t("expansionAdvisor.featureSnapshot")}</h5>
       <div>data_completeness_score: {String(featureSnapshot.data_completeness_score ?? "-")}</div>
