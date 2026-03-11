@@ -46,6 +46,17 @@ export function getCompareRows(compareResult: CompareCandidatesResponse | null):
   return compareResult?.items || [];
 }
 
+export function getNewSearchResetState() {
+  return {
+    selectedCandidate: null,
+    shortlistIds: [],
+    compareIds: [],
+    compareResult: null,
+    memo: null,
+    report: null,
+  };
+}
+
 export default function ExpansionAdvisorPage({
   onCandidatesChange,
   onSelectedCandidateChange,
@@ -78,8 +89,13 @@ export default function ExpansionAdvisorPage({
   const [savedLoadError, setSavedLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    listSavedExpansionSearches().then((res) => setSavedItems(res.items || [])).catch(() => {});
-  }, []);
+    setLoadingSaved(true);
+    setSavedLoadError(null);
+    listSavedExpansionSearches()
+      .then((res) => setSavedItems(res.items || []))
+      .catch(() => setSavedLoadError(t("expansionAdvisor.errorSavedLoad")))
+      .finally(() => setLoadingSaved(false));
+  }, [t]);
 
   useEffect(() => {
     onCandidatesChange(candidates, shortlistIds, selectedCandidate?.id || null, brief.existing_branches);
@@ -89,19 +105,67 @@ export default function ExpansionAdvisorPage({
     setBrief(nextBrief);
     setLoadingSearch(true);
     setSearchError(null);
+    const resetState = getNewSearchResetState();
+    setSelectedCandidate(resetState.selectedCandidate);
+    onSelectedCandidateChange(resetState.selectedCandidate);
+    setShortlistIds(resetState.shortlistIds);
+    setCompareIds(resetState.compareIds);
+    setCompareResult(resetState.compareResult);
+    setMemo(resetState.memo);
+    setReport(resetState.report);
     try {
       const result = await createExpansionSearch(nextBrief);
       setSearchId(result.search_id);
       setCandidates(normalizeCandidates(result.items || []));
-      setCompareResult(null);
-      setMemo(null);
-      setReport(null);
-      setSelectedCandidate(null);
-      setCompareIds([]);
     } catch {
       setSearchError(t("expansionAdvisor.errorSearch"));
     } finally {
       setLoadingSearch(false);
+    }
+  };
+
+  const hydrateSavedStudy = async (saved: SavedExpansionSearch) => {
+    const restored = restoreSavedUiState(saved);
+    setMemo(null);
+    setReport(null);
+    setCompareResult(null);
+    setMemoError(null);
+    setReportError(null);
+    setCompareError(null);
+
+    setSearchId(restored.searchId);
+    setShortlistIds(restored.shortlistIds);
+    setCompareIds(restored.compareIds);
+    setSelectedCandidate(restored.selectedCandidate);
+    setCandidates(normalizeCandidates(saved.candidates || []));
+    if (saved.filters_json) setBrief(saved.filters_json as ExpansionBrief);
+
+    if (restored.selectedCandidate) {
+      await handleSelectCandidate(restored.selectedCandidate);
+    } else {
+      onSelectedCandidateChange(null);
+    }
+
+    if (restored.searchId && restored.compareIds.length >= 2 && restored.compareIds.length <= 6) {
+      setLoadingCompare(true);
+      try {
+        setCompareResult(await compareExpansionCandidates(restored.searchId, restored.compareIds));
+      } catch {
+        setCompareError(t("expansionAdvisor.errorCompare"));
+      } finally {
+        setLoadingCompare(false);
+      }
+    }
+
+    if (restored.searchId) {
+      setLoadingReport(true);
+      try {
+        setReport(await getExpansionRecommendationReport(restored.searchId));
+      } catch {
+        setReportError(t("expansionAdvisor.errorReport"));
+      } finally {
+        setLoadingReport(false);
+      }
     }
   };
 
@@ -143,20 +207,7 @@ export default function ExpansionAdvisorPage({
             setSavedLoadError(null);
             try {
               const saved = await getSavedExpansionSearch(savedId);
-              const restored = restoreSavedUiState(saved);
-              setSearchId(restored.searchId);
-              setShortlistIds(restored.shortlistIds);
-              setCompareIds(restored.compareIds);
-              setCandidates(normalizeCandidates(saved.candidates || []));
-              if (saved.filters_json) setBrief(saved.filters_json as ExpansionBrief);
-              setMemo(null);
-              setReport(null);
-              if (restored.selectedCandidate) {
-                void handleSelectCandidate(restored.selectedCandidate);
-              } else {
-                setSelectedCandidate(null);
-                onSelectedCandidateChange(null);
-              }
+              await hydrateSavedStudy(saved);
             } catch {
               setSavedLoadError(t("expansionAdvisor.errorSavedLoad"));
             } finally {

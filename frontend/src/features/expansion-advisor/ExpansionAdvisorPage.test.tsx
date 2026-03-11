@@ -10,6 +10,7 @@ import {
   restoreSavedUiState,
   shouldLoadMemoFromMapSelection,
   getCompareRows,
+  getNewSearchResetState,
 } from "./ExpansionAdvisorPage";
 import { normalizeCandidate } from "../../lib/api/expansionAdvisor";
 
@@ -63,8 +64,28 @@ describe("Expansion advisor UI behavior", () => {
       ],
     });
     expect(restored.searchId).toBe("search-9");
+    expect(restored.shortlistIds).toEqual(["c1"]);
     expect(restored.compareIds).toEqual(["c2", "c3"]);
     expect(restored.selectedCandidate?.id).toBe("c3");
+  });
+
+  it("saved study hydration shape restores compareIds and selectedCandidate", () => {
+    const restored = restoreSavedUiState({
+      id: "sv2",
+      search_id: "search-77",
+      title: "saved",
+      status: "draft",
+      selected_candidate_ids: ["c5"],
+      ui_state_json: { compare_ids: ["c5", "c8"], selected_candidate_id: "c8" },
+      candidates: [
+        { id: "c5", search_id: "search-77", parcel_id: "p5", lat: 24.71, lon: 46.71 },
+        { id: "c8", search_id: "search-77", parcel_id: "p8", lat: 24.72, lon: 46.72 },
+      ],
+    });
+
+    expect(restored.searchId).toBe("search-77");
+    expect(restored.compareIds).toEqual(["c5", "c8"]);
+    expect(restored.selectedCandidate?.id).toBe("c8");
   });
 
   it("compare response rows use candidate_id", () => {
@@ -74,6 +95,17 @@ describe("Expansion advisor UI behavior", () => {
     });
     expect(rows[0].candidate_id).toBe("c1");
     expect(rows[0].economics_score).toBe(72);
+  });
+
+  it("new search reset helper clears stale memo/report/compare-facing state", () => {
+    expect(getNewSearchResetState()).toEqual({
+      selectedCandidate: null,
+      shortlistIds: [],
+      compareIds: [],
+      compareResult: null,
+      memo: null,
+      report: null,
+    });
   });
 
   it("map/list shared selection path requests memo when ids differ", () => {
