@@ -162,8 +162,8 @@ class ExpansionSearchDetailResponse(StrictResponseModel):
     max_area_m2: float | None = None
     target_area_m2: float | None = None
     bbox: dict[str, Any] | None = None
-    request_json: dict[str, Any] | None = None
-    notes: dict[str, Any] | None = None
+    request_json: dict[str, Any] = Field(default_factory=dict)
+    notes: dict[str, Any] = Field(default_factory=dict)
     existing_branches: list[dict[str, Any]] = Field(default_factory=list)
     brand_profile: dict[str, Any] | None = None
     meta: ExpansionAdvisorMeta
@@ -278,13 +278,13 @@ class SavedSearchResponse(StrictResponseModel):
     title: str | None = None
     description: str | None = None
     status: str | None = None
-    selected_candidate_ids: list[str] | None = None
-    filters_json: dict[str, Any] | None = None
-    ui_state_json: dict[str, Any] | None = None
+    selected_candidate_ids: list[str] = Field(default_factory=list)
+    filters_json: dict[str, Any] = Field(default_factory=dict)
+    ui_state_json: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None
     search: ExpansionSearchDetailResponse | None = None
-    candidates: list[ExpansionCandidateResponse] | None = None
+    candidates: list[ExpansionCandidateResponse] = Field(default_factory=list)
     brand_profile: dict[str, Any] | None = None
 
 
@@ -302,18 +302,18 @@ class SavedSearchCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=256)
     description: str | None = None
     status: Literal["draft", "final"] = "draft"
-    selected_candidate_ids: list[str] | None = None
-    filters_json: dict[str, Any] | None = None
-    ui_state_json: dict[str, Any] | None = None
+    selected_candidate_ids: list[str] = Field(default_factory=list)
+    filters_json: dict[str, Any] = Field(default_factory=dict)
+    ui_state_json: dict[str, Any] = Field(default_factory=dict)
 
 
 class SavedSearchPatchRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=256)
     description: str | None = None
     status: Literal["draft", "final"] | None = None
-    selected_candidate_ids: list[str] | None = None
-    filters_json: dict[str, Any] | None = None
-    ui_state_json: dict[str, Any] | None = None
+    selected_candidate_ids: list[str] = Field(default_factory=list)
+    filters_json: dict[str, Any] = Field(default_factory=dict)
+    ui_state_json: dict[str, Any] = Field(default_factory=dict)
 
 
 

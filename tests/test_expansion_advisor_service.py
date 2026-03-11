@@ -10,6 +10,7 @@ from app.services.expansion_advisor import (
     compare_candidates,
     get_candidate_memo,
     get_recommendation_report,
+    get_search,
     run_expansion_search,
 )
 
@@ -710,3 +711,119 @@ def test_feature_snapshot_queries_road_and_parking_independently():
     assert snapshot["touches_road"] is True
     assert snapshot["context_sources"]["road_context_available"] is True
     assert snapshot["context_sources"]["parking_context_available"] is False
+
+
+def test_get_search_normalizes_sparse_legacy_row(monkeypatch):
+    class _SearchDB:
+        def execute(self, stmt, _params=None):
+            sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+            if "FROM expansion_search" in sql:
+                return _Result([
+                    {
+                        "id": "search-legacy",
+                        "created_at": None,
+                        "brand_name": "Brand",
+                        "category": "burger",
+                        "service_model": "qsr",
+                        "target_districts": None,
+                        "min_area_m2": 100,
+                        "max_area_m2": 250,
+                        "target_area_m2": None,
+                        "bbox": None,
+                        "request_json": None,
+                        "notes": None,
+                        "existing_branches": None,
+                    }
+                ])
+            return _Result([])
+
+    monkeypatch.setattr(expansion_service, "get_brand_profile", lambda *_args, **_kwargs: None)
+
+    payload = get_search(_SearchDB(), "search-legacy")
+
+    assert payload is not None
+    assert payload["target_districts"] == []
+    assert payload["request_json"] == {}
+    assert payload["notes"] == {}
+    assert payload["existing_branches"] == []
+    assert payload["brand_profile"] == {}
+    assert payload["meta"]["version"] == "expansion_advisor_v6.1"
+
+
+def test_get_saved_search_normalizes_sparse_nested_payload(monkeypatch):
+    class _SavedDB:
+        def execute(self, stmt, _params=None):
+            sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+            if "FROM expansion_saved_search" in sql:
+                return _Result([
+                    {
+                        "id": "saved-1",
+                        "search_id": "search-1",
+                        "title": "Study",
+                        "description": None,
+                        "status": "draft",
+                        "selected_candidate_ids": None,
+                        "filters_json": None,
+                        "ui_state_json": None,
+                        "created_at": None,
+                        "updated_at": None,
+                    }
+                ])
+            return _Result([])
+
+    monkeypatch.setattr(expansion_service, "get_search", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(expansion_service, "get_candidates", lambda *_args, **_kwargs: None)
+
+    payload = expansion_service.get_saved_search(_SavedDB(), "saved-1")
+
+    assert payload is not None
+    assert payload["selected_candidate_ids"] == []
+    assert payload["filters_json"] == {}
+    assert payload["ui_state_json"] == {}
+    assert payload["search"] is None
+    assert payload["candidates"] == []
+
+
+def test_compare_candidates_returns_full_summary_contract_for_empty_list():
+    db = FakeDB(compare_rows=[])
+    result = compare_candidates(db, "search-1", [])
+
+    assert result["items"] == []
+    assert set(result["summary"].keys()) == {
+        "best_overall_candidate_id",
+        "lowest_cannibalization_candidate_id",
+        "highest_demand_candidate_id",
+        "best_fit_candidate_id",
+        "best_economics_candidate_id",
+        "best_brand_fit_candidate_id",
+        "strongest_delivery_market_candidate_id",
+        "strongest_whitespace_candidate_id",
+        "lowest_rent_burden_candidate_id",
+        "fastest_payback_candidate_id",
+        "most_confident_candidate_id",
+        "best_gate_pass_candidate_id",
+    }
+    assert all(value is None for value in result["summary"].values())
+
+
+def test_get_recommendation_report_empty_state_is_deterministic(monkeypatch):
+    monkeypatch.setattr(expansion_service, "get_search", lambda *_args, **_kwargs: {"id": "search-1", "brand_profile": {}})
+    monkeypatch.setattr(expansion_service, "get_candidates", lambda *_args, **_kwargs: [])
+
+    report = get_recommendation_report(FakeDB(), "search-1")
+
+    assert report is not None
+    assert report["meta"]["version"] == "expansion_advisor_v6.1"
+    assert report["top_candidates"] == []
+    assert set(report["recommendation"].keys()) == {
+        "best_candidate_id",
+        "runner_up_candidate_id",
+        "best_pass_candidate_id",
+        "best_confidence_candidate_id",
+        "why_best",
+        "main_risk",
+        "best_format",
+        "summary",
+        "report_summary",
+    }
+    assert "parcel_source" in report["assumptions"]

@@ -38,19 +38,59 @@ def test_saved_search_crud_endpoints(monkeypatch):
     monkeypatch.setattr(
         api,
         "create_saved_search",
-        lambda *_args, **_kwargs: {"id": "saved-1", "search_id": "search-1", "title": "Study A", "status": "draft"},
+        lambda *_args, **_kwargs: {
+            "id": "saved-1",
+            "search_id": "search-1",
+            "title": "Study A",
+            "status": "draft",
+            "selected_candidate_ids": [],
+            "filters_json": {},
+            "ui_state_json": {},
+            "description": None,
+            "search": None,
+            "candidates": [],
+        },
     )
     monkeypatch.setattr(
         api,
         "list_saved_searches",
-        lambda *_args, **_kwargs: [{"id": "saved-1", "title": "Study A", "status": "draft"}],
+        lambda *_args, **_kwargs: [{
+            "id": "saved-1",
+            "search_id": "search-1",
+            "title": "Study A",
+            "status": "draft",
+            "selected_candidate_ids": [],
+            "filters_json": {},
+            "ui_state_json": {},
+            "description": None,
+            "search": {
+                "id": "search-1",
+                "target_districts": [],
+                "existing_branches": [],
+                "request_json": {},
+                "notes": {},
+                "meta": {"version": "expansion_advisor_v6.1", "parcel_source": "arcgis_only", "excluded_sources": ["suhail", "inferred_parcels"]},
+            },
+            "candidates": [{"id": "c1", "gate_reasons_json": {"passed": [], "failed": [], "unknown": [], "thresholds": {}, "explanations": {}}, "feature_snapshot_json": {"context_sources": {}, "missing_context": [], "data_completeness_score": 0}, "score_breakdown_json": {"weights": {}, "inputs": {}, "weighted_components": {}, "final_score": 0}}],
+        }],
     )
     monkeypatch.setattr(
         api,
         "get_saved_search",
-        lambda *_args, **_kwargs: {"id": "saved-1", "search_id": "search-1", "search": {"id": "search-1", "target_districts": [], "existing_branches": [], "meta": {"version": "expansion_advisor_v6.1", "excluded_sources": []}}, "candidates": [{"id": "c1"}]},
+        lambda *_args, **_kwargs: {
+            "id": "saved-1",
+            "search_id": "search-1",
+            "title": "Study A",
+            "status": "draft",
+            "selected_candidate_ids": [],
+            "filters_json": {},
+            "ui_state_json": {},
+            "description": None,
+            "search": {"id": "search-1", "target_districts": [], "existing_branches": [], "request_json": {}, "notes": {}, "meta": {"version": "expansion_advisor_v6.1", "parcel_source": "arcgis_only", "excluded_sources": ["suhail", "inferred_parcels"]}},
+            "candidates": [{"id": "c1", "gate_reasons_json": {"passed": [], "failed": [], "unknown": [], "thresholds": {}, "explanations": {}}, "feature_snapshot_json": {"context_sources": {}, "missing_context": [], "data_completeness_score": 0}, "score_breakdown_json": {"weights": {}, "inputs": {}, "weighted_components": {}, "final_score": 0}}],
+        },
     )
-    monkeypatch.setattr(api, "update_saved_search", lambda *_args, **_kwargs: {"id": "saved-1", "title": "Renamed"})
+    monkeypatch.setattr(api, "update_saved_search", lambda *_args, **_kwargs: {"id": "saved-1", "search_id": "search-1", "title": "Renamed", "status": "draft", "selected_candidate_ids": [], "filters_json": {}, "ui_state_json": {}, "description": None, "search": None, "candidates": []})
     monkeypatch.setattr(api, "delete_saved_search", lambda *_args, **_kwargs: True)
 
     client = _client(db)
@@ -65,7 +105,9 @@ def test_saved_search_crud_endpoints(monkeypatch):
 
     assert created.status_code == 200
     assert listed.json()["items"][0]["id"] == "saved-1"
+    assert listed.json()["items"][0]["search"]["meta"]["version"] == "expansion_advisor_v6.1"
     assert fetched.json()["candidates"][0]["id"] == "c1"
+    assert fetched.json()["selected_candidate_ids"] == []
     assert patched.json()["title"] == "Renamed"
     assert deleted.json()["deleted"] is True
 
