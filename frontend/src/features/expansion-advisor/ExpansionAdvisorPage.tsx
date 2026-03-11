@@ -4,7 +4,9 @@ import {
   compareExpansionCandidates,
   createExpansionSearch,
   createSavedExpansionSearch,
+  getExpansionCandidates,
   getExpansionCandidateMemo,
+  getExpansionSearch,
   getExpansionRecommendationReport,
   getSavedExpansionSearch,
   listSavedExpansionSearches,
@@ -17,6 +19,7 @@ import {
   type RecommendationReportResponse,
   type SavedExpansionSearch,
 } from "../../lib/api/expansionAdvisor";
+import type { ExpansionSearchDetailResponse } from "../../lib/api/expansionAdvisor";
 import ExpansionBriefForm, { defaultBrief } from "./ExpansionBriefForm";
 import ExpansionResultsPanel from "./ExpansionResultsPanel";
 import ExpansionComparePanel from "./ExpansionComparePanel";
@@ -57,6 +60,41 @@ export function getNewSearchResetState() {
   };
 }
 
+export function briefFromSavedSearch(saved: SavedExpansionSearch): ExpansionBrief {
+  const filters = (saved.filters_json || {}) as Partial<ExpansionBrief>;
+  if (filters.brand_name || filters.category || filters.service_model) {
+    return {
+      ...defaultBrief,
+      ...filters,
+      target_districts: filters.target_districts || [],
+      existing_branches: filters.existing_branches || [],
+      limit: filters.limit || defaultBrief.limit,
+    };
+  }
+
+  const search = (saved.search || {}) as Partial<ExpansionSearchDetailResponse>;
+  const requestJson = ((search.request_json || {}) as Partial<ExpansionBrief>) || {};
+
+  return {
+    ...defaultBrief,
+    ...requestJson,
+    brand_name: (requestJson.brand_name || search.brand_name || defaultBrief.brand_name) as string,
+    category: (requestJson.category || search.category || defaultBrief.category) as string,
+    service_model: (requestJson.service_model || search.service_model || defaultBrief.service_model) as ExpansionBrief["service_model"],
+    min_area_m2: Number(requestJson.min_area_m2 || search.min_area_m2 || defaultBrief.min_area_m2),
+    max_area_m2: Number(requestJson.max_area_m2 || search.max_area_m2 || defaultBrief.max_area_m2),
+    target_area_m2: Number(requestJson.target_area_m2 || search.target_area_m2 || defaultBrief.target_area_m2 || 0) || null,
+    target_districts: (requestJson.target_districts || search.target_districts || defaultBrief.target_districts) as string[],
+    existing_branches: (requestJson.existing_branches || search.existing_branches || defaultBrief.existing_branches) as ExpansionBrief["existing_branches"],
+    limit: Number(requestJson.limit || defaultBrief.limit),
+    brand_profile: (requestJson.brand_profile || search.brand_profile || defaultBrief.brand_profile) as ExpansionBrief["brand_profile"],
+  };
+}
+
+function sameCandidateId(a: ExpansionCandidate | null, b: ExpansionCandidate | null) {
+  return (a?.id || null) === (b?.id || null);
+}
+
 export default function ExpansionAdvisorPage({
   onCandidatesChange,
   onSelectedCandidateChange,
@@ -87,6 +125,7 @@ export default function ExpansionAdvisorPage({
   const [compareError, setCompareError] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
   const [savedLoadError, setSavedLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoadingSaved(true);
@@ -104,6 +143,7 @@ export default function ExpansionAdvisorPage({
   const onSubmitBrief = async (nextBrief: ExpansionBrief) => {
     setBrief(nextBrief);
     setLoadingSearch(true);
+    setSaveError(null);
     setSearchError(null);
     const resetState = getNewSearchResetState();
     setSelectedCandidate(resetState.selectedCandidate);
@@ -126,28 +166,57 @@ export default function ExpansionAdvisorPage({
 
   const hydrateSavedStudy = async (saved: SavedExpansionSearch) => {
     const restored = restoreSavedUiState(saved);
+    const nextBrief = briefFromSavedSearch(saved);
     setMemo(null);
     setReport(null);
     setCompareResult(null);
     setMemoError(null);
     setReportError(null);
     setCompareError(null);
+    setSaveError(null);
 
     setSearchId(restored.searchId);
     setShortlistIds(restored.shortlistIds);
     setCompareIds(restored.compareIds);
-    setSelectedCandidate(restored.selectedCandidate);
-    setCandidates(normalizeCandidates(saved.candidates || []));
-    if (saved.filters_json) setBrief(saved.filters_json as ExpansionBrief);
+    setBrief(nextBrief);
 
-    if (restored.selectedCandidate) {
-      await handleSelectCandidate(restored.selectedCandidate);
+    let hydratedCandidates = normalizeCandidates(saved.candidates || []);
+    try {
+      if (restored.searchId) {
+        const [searchDetail, candidateList] = await Promise.all([
+          getExpansionSearch(restored.searchId),
+          getExpansionCandidates(restored.searchId),
+        ]);
+        hydratedCandidates = normalizeCandidates(candidateList.items || []);
+        setBrief(
+          briefFromSavedSearch({
+            ...saved,
+            search: searchDetail,
+            candidates: hydratedCandidates,
+          }),
+        );
+      }
+    } catch {
+      // fall back to embedded saved payload; handled by caller only if saved fetch itself failed
+    }
+
+    setCandidates(hydratedCandidates);
+
+    const selectedFromHydrated =
+      restored.selectedCandidate?.id
+        ? hydratedCandidates.find((item) => item.id === restored.selectedCandidate?.id) || null
+        : null;
+    setSelectedCandidate(selectedFromHydrated);
+
+    if (selectedFromHydrated) {
+      await handleSelectCandidate(selectedFromHydrated);
     } else {
       onSelectedCandidateChange(null);
     }
 
     if (restored.searchId && restored.compareIds.length >= 2 && restored.compareIds.length <= 6) {
       setLoadingCompare(true);
+      setCompareError(null);
       try {
         setCompareResult(await compareExpansionCandidates(restored.searchId, restored.compareIds));
       } catch {
@@ -159,6 +228,7 @@ export default function ExpansionAdvisorPage({
 
     if (restored.searchId) {
       setLoadingReport(true);
+      setReportError(null);
       try {
         setReport(await getExpansionRecommendationReport(restored.searchId));
       } catch {
@@ -186,7 +256,13 @@ export default function ExpansionAdvisorPage({
   useEffect(() => {
     if (!shouldLoadMemoFromMapSelection(externalSelectedCandidateId, selectedCandidate?.id || null)) return;
     const target = candidates.find((item) => item.id === externalSelectedCandidateId);
-    if (!target) return;
+    if (!target) {
+      if (selectedCandidate !== null) {
+        setSelectedCandidate(null);
+        onSelectedCandidateChange(null);
+      }
+      return;
+    }
     void handleSelectCandidate(target);
   }, [externalSelectedCandidateId, candidates, selectedCandidate?.id]);
 
@@ -239,23 +315,29 @@ export default function ExpansionAdvisorPage({
           <button
             onClick={async () => {
               if (!searchId) return;
-              await createSavedExpansionSearch({
-                search_id: searchId,
-                title,
-                description: "",
-                status: "draft",
-                selected_candidate_ids: shortlistIds,
-                filters_json: brief as unknown as Record<string, unknown>,
-                ui_state_json: { selected_candidate_id: selectedCandidate?.id || null, compare_ids: compareIds },
-              });
-              const latest = await listSavedExpansionSearches();
-              setSavedItems(latest.items || []);
+              setSaveError(null);
+              try {
+                await createSavedExpansionSearch({
+                  search_id: searchId,
+                  title,
+                  description: "",
+                  status: "draft",
+                  selected_candidate_ids: shortlistIds,
+                  filters_json: brief as unknown as Record<string, unknown>,
+                  ui_state_json: { selected_candidate_id: selectedCandidate?.id || null, compare_ids: compareIds },
+                });
+                const latest = await listSavedExpansionSearches();
+                setSavedItems(latest.items || []);
+              } catch {
+                setSaveError(t("expansionAdvisor.errorSavedLoad"));
+              }
             }}
           >
             {t("expansionAdvisor.saveSearch")}
           </button>
           <button onClick={async () => { if (!searchId) return; setLoadingReport(true); setReportError(null); try { setReport(await getExpansionRecommendationReport(searchId)); } catch { setReportError(t("expansionAdvisor.errorReport")); } finally { setLoadingReport(false); } }}>{t("expansionAdvisor.loadReport")}</button>
         </div>
+        {saveError ? <small>{saveError}</small> : null}
 
         {candidates.length ? (
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -272,7 +354,12 @@ export default function ExpansionAdvisorPage({
             selectedCandidateId={selectedCandidate?.id || null}
             shortlistIds={shortlistIds}
             compareIds={compareIds}
-            onSelectCandidate={handleSelectCandidate}
+            onSelectCandidate={(candidate) => {
+              if (sameCandidateId(candidate, selectedCandidate)) {
+                return;
+              }
+              void handleSelectCandidate(candidate);
+            }}
             onToggleShortlist={(candidateId) =>
               setShortlistIds((current) => (current.includes(candidateId) ? current.filter((id) => id !== candidateId) : [...current, candidateId]))
             }

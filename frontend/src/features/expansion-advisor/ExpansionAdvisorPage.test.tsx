@@ -9,6 +9,7 @@ import en from "../../i18n/en.json";
 import {
   restoreSavedUiState,
   shouldLoadMemoFromMapSelection,
+  briefFromSavedSearch,
   getCompareRows,
   getNewSearchResetState,
 } from "./ExpansionAdvisorPage";
@@ -86,6 +87,62 @@ describe("Expansion advisor UI behavior", () => {
     expect(restored.searchId).toBe("search-77");
     expect(restored.compareIds).toEqual(["c5", "c8"]);
     expect(restored.selectedCandidate?.id).toBe("c8");
+  });
+
+  it("briefFromSavedSearch prefers filters_json when present", () => {
+    const brief = briefFromSavedSearch({
+      id: "sv3",
+      search_id: "search-3",
+      title: "saved",
+      status: "draft",
+      filters_json: {
+        brand_name: "Brand X",
+        category: "burger",
+        service_model: "qsr",
+        min_area_m2: 100,
+        max_area_m2: 250,
+        target_districts: ["Olaya"],
+        existing_branches: [],
+        limit: 20,
+      },
+      ui_state_json: {},
+      candidates: [],
+    });
+    expect(brief.brand_name).toBe("Brand X");
+    expect(brief.category).toBe("burger");
+    expect(brief.target_districts).toEqual(["Olaya"]);
+  });
+
+  it("briefFromSavedSearch falls back to nested search/request payload", () => {
+    const brief = briefFromSavedSearch({
+      id: "sv4",
+      search_id: "search-4",
+      title: "saved",
+      status: "draft",
+      selected_candidate_ids: [],
+      filters_json: {},
+      ui_state_json: {},
+      search: {
+        id: "search-4",
+        brand_name: "Brand Y",
+        category: "pizza",
+        service_model: "delivery_first",
+        target_districts: ["Malqa"],
+        min_area_m2: 80,
+        max_area_m2: 180,
+        target_area_m2: 120,
+        request_json: { limit: 15 },
+        existing_branches: [{ name: "HQ", lat: 24.7, lon: 46.7, district: "Olaya" }],
+        notes: {},
+        meta: { version: "expansion_advisor_v6.1" },
+      },
+      candidates: [],
+    });
+    expect(brief.brand_name).toBe("Brand Y");
+    expect(brief.category).toBe("pizza");
+    expect(brief.service_model).toBe("delivery_first");
+    expect(brief.limit).toBe(15);
+    expect(brief.existing_branches[0].name).toBe("HQ");
   });
 
   it("compare response rows use candidate_id", () => {
