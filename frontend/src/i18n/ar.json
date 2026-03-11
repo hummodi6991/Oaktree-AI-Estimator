@@ -673,6 +673,19 @@
     "paybackBand": "نطاق الاسترداد",
     "estimatedPayback": "الاسترداد المتوقع",
     "economicsLabel": "الجدوى",
-    "brandFitLabel": "ملاءمة العلامة"
+    "brandFitLabel": "ملاءمة العلامة",
+    "stepsHint": "حدّد علامتك التجارية ← حلّل الرياض ← راجع المواقع المرشّحة ← قارن بين المتأهلين ← احفظ دراستك",
+    "brandNameHint": "مثال: الطازج، شاورمر، كودو",
+    "categoryHint": "مثال: برجر، بيتزا، قهوة",
+    "targetDistrictsHint": "مثال: العليا، الملقا، النرجس",
+    "existingBranchesHint": "أضف فروعك الحالية لحساب التداخل",
+    "updateStudy": "تحديث الدراسة",
+    "updating": "جاري التحديث…",
+    "deleteConfirm": "تأكيد الحذف",
+    "studyDeleted": "تم حذف الدراسة",
+    "studyUpdated": "تم تحديث الدراسة",
+    "rentBurden": "عبء الإيجار",
+    "demandSignal": "إشارة الطلب",
+    "competitionScore": "درجة المنافسة"
   }
 }
