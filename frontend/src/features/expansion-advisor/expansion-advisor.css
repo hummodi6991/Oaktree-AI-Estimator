@@ -695,3 +695,88 @@
   font-size: var(--oak-fs-xs, 12px);
   color: var(--oak-text-light, #828282);
 }
+
+/* ─ Steps hint ─ */
+.ea-steps-hint {
+  margin: 0;
+  padding: 8px 16px;
+  font-size: var(--oak-fs-xs, 12px);
+  color: var(--oak-text-light, #828282);
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+/* ─ Candidate summary text ─ */
+.ea-candidate__summary {
+  margin: 0;
+  font-size: var(--oak-fs-sm, 14px);
+  color: var(--oak-text-gray, #4c4c4c);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ─ Form improvements ─ */
+.ea-form__row--three {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .ea-form__row--three {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ea-form__hint {
+  margin: 0;
+  font-size: var(--oak-fs-xs, 12px);
+  color: var(--oak-text-light, #828282);
+}
+
+.ea-form__submit {
+  width: 100%;
+  padding: 10px 16px;
+  font-size: var(--oak-fs-base, 16px);
+  font-weight: var(--oak-fw-semibold, 600);
+}
+
+/* ─ Saved item active state ─ */
+.ea-saved-item--active {
+  border-color: var(--oak-primary, #14312c);
+  background: var(--oak-secondary, #fffbea);
+}
+
+.ea-saved-item__actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ─ Compare winners ─ */
+.ea-compare-winners {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ea-compare-winner-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--oak-outlines, #d7d7d7);
+  border-radius: 6px;
+  background: var(--oak-bg-surface, #fff);
+  min-width: 100px;
+}
+
+.ea-compare-winner-item__label {
+  font-size: var(--oak-fs-xs, 12px);
+  color: var(--oak-text-light, #828282);
+  font-weight: var(--oak-fw-medium, 500);
+  text-transform: capitalize;
+}

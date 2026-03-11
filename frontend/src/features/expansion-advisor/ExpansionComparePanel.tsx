@@ -20,7 +20,7 @@ const SUMMARY_KEY_ORDER = [
 ] as const;
 
 function summaryLabel(key: string) {
-  return key.replace(/_candidate_id$/, "").replace(/_/g, " ").trim();
+  return key.replace(/_candidate_id$/, "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim();
 }
 
 export function getOrderedCompareSummaryEntries(summary: Record<string, string | null> = {}) {
@@ -32,21 +32,31 @@ export function getOrderedCompareSummaryEntries(summary: Record<string, string |
 
 const METRIC_ROWS = [
   { label: "Rank", key: "rank_position" },
-  { label: "Final score", key: "final_score" },
+  { label: "Overall Score", key: "final_score" },
   { label: "Confidence", key: "confidence_grade" },
-  { label: "Gate", key: "gate" },
+  { label: "Screening Gate", key: "gate" },
   { label: "Economics", key: "economics_score" },
-  { label: "Brand fit", key: "brand_fit_score" },
+  { label: "Brand Fit", key: "brand_fit_score" },
   { label: "Zoning", key: "zoning_fit_score" },
   { label: "Frontage", key: "frontage_score" },
   { label: "Access", key: "access_score" },
   { label: "Parking", key: "parking_score" },
   { label: "Visibility", key: "access_visibility_score" },
-  { label: "Provider density", key: "provider_density_score" },
+  { label: "Provider Density", key: "provider_density_score" },
   { label: "Whitespace", key: "provider_whitespace_score" },
-  { label: "Payback", key: "payback_band" },
-  { label: "Payback months", key: "estimated_payback_months" },
+  { label: "Payback Band", key: "payback_band" },
+  { label: "Payback (months)", key: "estimated_payback_months" },
 ];
+
+function findBestIdx(items: Record<string, unknown>[], key: string): number {
+  let bestIdx = -1;
+  let bestVal = -Infinity;
+  for (let i = 0; i < items.length; i++) {
+    const v = items[i][key];
+    if (typeof v === "number" && v > bestVal) { bestVal = v; bestIdx = i; }
+  }
+  return bestIdx;
+}
 
 export default function ExpansionComparePanel({
   compareIds,
@@ -93,52 +103,57 @@ export default function ExpansionComparePanel({
           {loading && <div className="ea-state ea-state--loading">{t("expansionAdvisor.loading")}</div>}
           {error && <div className="ea-state ea-state--error">{error}</div>}
 
+          {/* Winner highlights */}
+          {summaryEntries.length > 0 && (
+            <div className="ea-detail__section">
+              <h5 className="ea-detail__section-title">{t("expansionAdvisor.compareSummary")}</h5>
+              <div className="ea-compare-winners">
+                {summaryEntries.map(([k, v]) => (
+                  <div key={k} className="ea-compare-winner-item" style={{ cursor: v ? "pointer" : "default" }} onClick={() => v && onSelectCandidateId?.(v)}>
+                    <span className="ea-compare-winner-item__label">{summaryLabel(k)}</span>
+                    <span className="ea-badge ea-badge--green">{v ? (items.find((i) => i.candidate_id === v)?.district || v.slice(0, 8)) : "—"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {items.length > 0 && (
-            <>
-              <div style={{ overflowX: "auto" }}>
-                <table className="ea-compare-table">
-                  <thead>
-                    <tr>
-                      <th>{t("expansionAdvisor.score")}</th>
-                      {items.map((item) => (
-                        <th key={item.candidate_id} style={{ cursor: "pointer" }} onClick={() => item.candidate_id && onSelectCandidateId?.(item.candidate_id)}>
-                          {item.district || item.candidate_id?.slice(0, 8) || "—"}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {METRIC_ROWS.map((row) => (
+            <div style={{ overflowX: "auto" }}>
+              <table className="ea-compare-table">
+                <thead>
+                  <tr>
+                    <th>{t("expansionAdvisor.score")}</th>
+                    {items.map((item) => (
+                      <th key={item.candidate_id} style={{ cursor: "pointer" }} onClick={() => item.candidate_id && onSelectCandidateId?.(item.candidate_id)}>
+                        {item.district || item.candidate_id?.slice(0, 8) || "—"}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {METRIC_ROWS.map((row) => {
+                    const bestIdx = row.key !== "gate" && row.key !== "confidence_grade" && row.key !== "payback_band" ? findBestIdx(items as unknown as Record<string, unknown>[], row.key) : -1;
+                    return (
                       <tr key={row.key}>
                         <td style={{ fontWeight: 500, color: "var(--oak-text-light)" }}>{row.label}</td>
-                        {items.map((item) => {
+                        {items.map((item, idx) => {
                           const raw = (item as Record<string, unknown>)[row.key];
-                          if (row.key === "final_score") return <td key={item.candidate_id}><ScorePill value={item.final_score} /></td>;
+                          const isBest = idx === bestIdx;
+                          const cellClass = isBest ? "ea-compare-winner" : "";
+                          if (row.key === "final_score") return <td key={item.candidate_id} className={cellClass}><ScorePill value={item.final_score} /></td>;
                           if (row.key === "confidence_grade") return <td key={item.candidate_id}><ConfidenceBadge grade={item.confidence_grade} /></td>;
                           if (row.key === "gate") return <td key={item.candidate_id}><span className={`ea-badge ea-badge--${gateColor(item.gate_status_json?.overall_pass ?? null)}`}>{item.gate_status_json?.overall_pass ? t("expansionAdvisor.gatePass") : t("expansionAdvisor.gateFail")}</span></td>;
                           if (row.key === "payback_band") return <td key={item.candidate_id}><PaybackBadge band={item.payback_band} months={item.estimated_payback_months} /></td>;
-                          if (typeof raw === "number") return <td key={item.candidate_id}>{fmtScore(raw)}</td>;
+                          if (typeof raw === "number") return <td key={item.candidate_id} className={cellClass}>{fmtScore(raw)}</td>;
                           return <td key={item.candidate_id}>{raw != null ? String(raw) : "—"}</td>;
                         })}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {summaryEntries.length > 0 && (
-                <div className="ea-detail__section">
-                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.compareSummary")}</h5>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {summaryEntries.map(([k, v]) => (
-                      <span key={k} className="ea-badge ea-badge--green" style={{ cursor: v ? "pointer" : "default" }} onClick={() => v && onSelectCandidateId?.(v)}>
-                        {summaryLabel(k)}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
 
           {enabled && !loading && (

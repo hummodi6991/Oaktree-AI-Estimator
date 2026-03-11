@@ -5,6 +5,7 @@ export function buildExpansionOverlayData(
   selectedExpansionCandidateId: string | null = null,
   shortlistExpansionCandidateIds: string[] = [],
   existingBranches: Array<{ lat: number; lon: number }> = [],
+  compareExpansionCandidateIds: string[] = [],
 ) {
   const candidateFeatures = expansionCandidates
     .filter((item) => Number.isFinite(item.lon) && Number.isFinite(item.lat))
@@ -15,6 +16,9 @@ export function buildExpansionOverlayData(
         candidate_id: item.id,
         selected: item.id === selectedExpansionCandidateId,
         shortlisted: shortlistExpansionCandidateIds.includes(item.id),
+        compared: compareExpansionCandidateIds.includes(item.id),
+        rank_position: item.rank_position ?? 0,
+        district: item.district ?? "",
       },
     }));
 

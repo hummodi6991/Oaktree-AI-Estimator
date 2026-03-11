@@ -5,6 +5,7 @@ import ExpansionComparePanel, { getOrderedCompareSummaryEntries } from "./Expans
 import ExpansionResultsPanel from "./ExpansionResultsPanel";
 import ExpansionReportPanel, { triggerReportCandidateSelect } from "./ExpansionReportPanel";
 import ExpansionMemoPanel from "./ExpansionMemoPanel";
+import SavedSearchesPanel from "./SavedSearchesPanel";
 import en from "../../i18n/en.json";
 import {
   restoreSavedUiState,
@@ -17,7 +18,7 @@ import {
   sameCandidateId,
   shouldKeepCompareResult,
 } from "./ExpansionAdvisorPage";
-import { normalizeCandidate } from "../../lib/api/expansionAdvisor";
+import { normalizeCandidate, normalizeSavedSearch } from "../../lib/api/expansionAdvisor";
 
 describe("Expansion advisor UI behavior", () => {
   it("renders candidate cards", () => {
@@ -302,5 +303,179 @@ describe("Expansion advisor UI behavior", () => {
     );
     expect(memoHtml).toContain("-");
     expect(reportHtml).toContain("c1");
+  });
+});
+
+describe("SavedSearchesPanel rendering", () => {
+  it("renders saved items with titles and status badges", () => {
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel
+        items={[
+          { id: "sv1", search_id: "s1", title: "My Study", status: "draft", description: "test desc" },
+          { id: "sv2", search_id: "s2", title: "Final Study", status: "final" },
+        ]}
+        loading={false}
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toContain("My Study");
+    expect(html).toContain("Final Study");
+    expect(html).toContain("test desc");
+    expect(html).toContain("ea-saved-list");
+  });
+
+  it("highlights active saved study", () => {
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel
+        items={[
+          { id: "sv1", search_id: "s1", title: "Active One", status: "draft" },
+          { id: "sv2", search_id: "s2", title: "Inactive", status: "draft" },
+        ]}
+        loading={false}
+        activeId="sv1"
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toContain("ea-saved-item--active");
+  });
+
+  it("renders delete button when onDelete is provided", () => {
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel
+        items={[{ id: "sv1", search_id: "s1", title: "Study", status: "draft" }]}
+        loading={false}
+        onOpen={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+    expect(html).toContain("ea-saved-item__actions");
+  });
+
+  it("does not render delete button when onDelete is absent", () => {
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel
+        items={[{ id: "sv1", search_id: "s1", title: "Study", status: "draft" }]}
+        loading={false}
+        onOpen={() => {}}
+      />,
+    );
+    // Should not contain the confirm/delete text since onDelete is not provided
+    expect(html).not.toContain("Are you sure");
+  });
+
+  it("shows loading state", () => {
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel items={[]} loading={true} onOpen={() => {}} />,
+    );
+    expect(html).toContain("ea-state--loading");
+  });
+
+  it("shows empty state when no items", () => {
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel items={[]} loading={false} onOpen={() => {}} />,
+    );
+    expect(html).toContain("ea-state");
+  });
+});
+
+describe("Saved search normalization", () => {
+  it("normalizeSavedSearch fills safe defaults for nested fields", () => {
+    const normalized = normalizeSavedSearch({
+      id: "sv1",
+      search_id: "s1",
+      title: "test",
+      status: "draft",
+    });
+    expect(normalized.selected_candidate_ids).toEqual([]);
+    expect(normalized.filters_json).toEqual({});
+    expect(normalized.ui_state_json).toEqual({});
+    expect(normalized.candidates).toEqual([]);
+  });
+
+  it("normalizeSavedSearch preserves existing nested search data", () => {
+    const normalized = normalizeSavedSearch({
+      id: "sv2",
+      search_id: "s2",
+      title: "test",
+      status: "final",
+      search: {
+        id: "s2",
+        target_districts: ["Olaya"],
+        request_json: { brand_name: "Test" },
+        notes: { note: "hello" },
+        existing_branches: [{ lat: 24.7, lon: 46.7 }],
+        meta: { version: "6.1" },
+      },
+    });
+    expect(normalized.search?.target_districts).toEqual(["Olaya"]);
+    expect(normalized.search?.request_json).toEqual({ brand_name: "Test" });
+    expect(normalized.search?.meta).toEqual({ version: "6.1" });
+  });
+});
+
+describe("Product copy keys", () => {
+  it("has steps hint copy", () => {
+    expect(en.expansionAdvisor.stepsHint).toContain("Define your brand");
+  });
+
+  it("has CRUD labels for saved studies", () => {
+    expect(en.expansionAdvisor.deleteStudy).toBe("Delete");
+    expect(en.expansionAdvisor.confirmDelete).toBe("Are you sure?");
+    expect(en.expansionAdvisor.updateStudy).toBe("Update Study");
+  });
+
+  it("has draft/final status labels", () => {
+    expect(en.expansionAdvisor.draft).toBe("Draft");
+    expect(en.expansionAdvisor.final).toBe("Final");
+  });
+});
+
+describe("resolveCandidateById edge cases", () => {
+  const candidates = [
+    { id: "c1", search_id: "s", parcel_id: "p1", lat: 0, lon: 0 },
+    { id: "c2", search_id: "s", parcel_id: "p2", lat: 0, lon: 0 },
+  ];
+
+  it("returns null for null candidateId", () => {
+    expect(resolveCandidateById(candidates, null)).toBeNull();
+  });
+
+  it("returns null for undefined candidateId", () => {
+    expect(resolveCandidateById(candidates, undefined)).toBeNull();
+  });
+
+  it("returns null for non-existing candidateId", () => {
+    expect(resolveCandidateById(candidates, "c99")).toBeNull();
+  });
+
+  it("returns correct candidate for valid id", () => {
+    expect(resolveCandidateById(candidates, "c2")?.id).toBe("c2");
+  });
+});
+
+describe("restoreSavedUiState edge cases", () => {
+  it("handles missing ui_state_json gracefully", () => {
+    const restored = restoreSavedUiState({
+      id: "sv1",
+      search_id: "s",
+      title: "test",
+      status: "draft",
+    }, []);
+    expect(restored.compareIds).toEqual([]);
+    expect(restored.selectedCandidateId).toBeNull();
+    expect(restored.selectedCandidate).toBeNull();
+    expect(restored.shortlistIds).toEqual([]);
+  });
+
+  it("handles empty candidate list with selected_candidate_id", () => {
+    const restored = restoreSavedUiState({
+      id: "sv1",
+      search_id: "s",
+      title: "test",
+      status: "draft",
+      ui_state_json: { selected_candidate_id: "c1" },
+    }, []);
+    expect(restored.selectedCandidateId).toBe("c1");
+    expect(restored.selectedCandidate).toBeNull();
   });
 });
