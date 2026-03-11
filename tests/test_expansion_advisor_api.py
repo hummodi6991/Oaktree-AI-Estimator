@@ -94,8 +94,49 @@ def test_post_expansion_search_with_existing_branches(monkeypatch):
     assert body["items"][0]["district"] == "Olaya"
     assert body["items"][0]["cannibalization_score"] == 55.0
     assert body["meta"]["version"] == "expansion_advisor_v6.1"
+    assert body["items"][0]["score_breakdown_json"]["weights"] == {}
     assert db.committed is True
 
+
+
+
+def test_get_expansion_search_detail_includes_versioned_meta(monkeypatch):
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(
+        expansion_api,
+        "get_search",
+        lambda _db, _search_id: {
+            "id": "search-1",
+            "created_at": "2026-01-01T00:00:00Z",
+            "brand_name": "Brand X",
+            "category": "burger",
+            "service_model": "qsr",
+            "target_districts": ["Olaya"],
+            "min_area_m2": 100,
+            "max_area_m2": 300,
+            "target_area_m2": 180,
+            "bbox": None,
+            "request_json": {"brand_name": "Brand X"},
+            "notes": {"version": "expansion_advisor_v6.1"},
+            "existing_branches": [],
+            "brand_profile": None,
+            "meta": {"version": "expansion_advisor_v6.1", "parcel_source": "arcgis_only", "excluded_sources": ["suhail", "inferred_parcels"]},
+        },
+    )
+
+    client = _client_with_db(db)
+    try:
+        response = client.get("/v1/expansion-advisor/searches/search-1")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == "search-1"
+    assert body["meta"]["version"] == "expansion_advisor_v6.1"
 
 def test_get_expansion_search_candidates_shape(monkeypatch):
     db = DummyDB()
@@ -128,9 +169,9 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
                 "key_strengths_json": ["strength"],
                 "confidence_grade": "A",
                 "gate_status_json": {"overall_pass": True},
-                "gate_reasons_json": {"passed": ["zoning_fit_pass"], "failed": [], "unknown": []},
-                "feature_snapshot_json": {"parcel_area_m2": 180, "context_sources": {"road_context_available": True}},
-                "score_breakdown_json": {"final_score": 88.1},
+                "gate_reasons_json": {"passed": ["zoning_fit_pass"], "failed": [], "unknown": [], "thresholds": {}, "explanations": {}},
+                "feature_snapshot_json": {"parcel_area_m2": 180, "context_sources": {"road_context_available": True}, "missing_context": [], "data_completeness_score": 90},
+                "score_breakdown_json": {"weights": {}, "inputs": {}, "weighted_components": {}, "final_score": 88.1},
                 "demand_thesis": "Demand is strong",
                 "cost_thesis": "Cost is manageable",
                 "top_positives_json": ["Demand potential is strong for this district."],
@@ -159,6 +200,7 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
     assert body["items"][0]["rank_position"] == 1
     assert "score_breakdown_json" in body["items"][0]
     assert "top_positives_json" in body["items"][0]
+    assert body["meta"]["version"] == "expansion_advisor_v6.1"
 
 
 def test_compare_endpoint_happy_path(monkeypatch):
@@ -277,9 +319,9 @@ def test_candidate_memo_endpoint_happy_path(monkeypatch):
                 "confidence_score": 84,
                 "confidence_grade": "A",
                 "gate_status": {"overall_pass": True},
-                "gate_reasons": {"passed": ["zoning_fit_pass"], "failed": []},
-                "feature_snapshot": {"parcel_area_m2": 180, "touches_road": True},
-                "score_breakdown_json": {"final_score": 81},
+                "gate_reasons": {"passed": ["zoning_fit_pass"], "failed": [], "unknown": [], "thresholds": {}, "explanations": {}},
+                "feature_snapshot": {"parcel_area_m2": 180, "touches_road": True, "context_sources": {}, "missing_context": [], "data_completeness_score": 90},
+                "score_breakdown_json": {"weights": {}, "inputs": {}, "weighted_components": {}, "final_score": 81},
                 "demand_thesis": "Demand is strong",
                 "cost_thesis": "Costs are manageable",
                 "top_positives_json": ["Demand potential is strong for this district."],
@@ -303,6 +345,11 @@ def test_candidate_memo_endpoint_happy_path(monkeypatch):
                 "best_use_case": "neighborhood qsr",
                 "main_watchout": "Competition",
                 "gate_verdict": "pass",
+            },
+            "market_research": {
+                "delivery_market_summary": "x",
+                "competitive_context": "y",
+                "district_fit_summary": "z",
             },
         },
     )
@@ -342,7 +389,7 @@ def test_candidate_memo_endpoint_404(monkeypatch):
 def test_report_endpoint_happy_path(monkeypatch):
     db = DummyDB()
     from app.api import expansion_advisor as expansion_api
-    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id: {"search_id": "search-1", "recommendation": {"best_candidate_id": "c1", "best_pass_candidate_id": "c1", "best_confidence_candidate_id": "c2"}, "top_candidates": [{"id": "c1", "zoning_fit_score": 80, "frontage_score": 63, "access_score": 65, "parking_score": 59, "access_visibility_score": 64}]})
+    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id: {"search_id": "search-1", "meta": {"version": "expansion_advisor_v6.1"}, "recommendation": {"best_candidate_id": "c1", "runner_up_candidate_id": "c2", "best_pass_candidate_id": "c1", "best_confidence_candidate_id": "c2", "why_best": "", "main_risk": "", "best_format": "", "summary": "", "report_summary": ""}, "assumptions": {}, "top_candidates": [{"id": "c1", "final_score": 91, "rank_position": 1, "confidence_grade": "A", "gate_verdict": "pass", "top_positives_json": [], "top_risks_json": [], "feature_snapshot_json": {}, "score_breakdown_json": {"weights": {}, "inputs": {}, "weighted_components": {}, "final_score": 91}}]})
     client = _client_with_db(db)
     try:
         response = client.get("/v1/expansion-advisor/searches/search-1/report")
@@ -352,6 +399,7 @@ def test_report_endpoint_happy_path(monkeypatch):
     assert response.json()["recommendation"]["best_candidate_id"] == "c1"
     assert response.json()["recommendation"]["best_pass_candidate_id"] == "c1"
     assert response.json()["recommendation"]["best_confidence_candidate_id"] == "c2"
+    assert response.json()["meta"]["version"] == "expansion_advisor_v6.1"
 
 
 def test_report_endpoint_404(monkeypatch):

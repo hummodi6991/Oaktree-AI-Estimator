@@ -159,9 +159,11 @@ Search/candidate responses now include (v6.1 adds on top of v5):
 
 Compare response:
 - `items` in the same order as requested `candidate_ids`
-- per-item score breakdown + pros/cons + economics fields
-- v6.1 compare fields include zoning/frontage/access/parking/access-visibility, gate pass/fail, gate reasons with `passed`/`failed`/`unknown`, confidence grade, feature snapshot, score breakdown, rank position, and top positives/risks
-- `summary` with best-overall, lowest-cannibalization, highest-demand, best-fit, best-economics, lowest-rent-burden, fastest-payback, best-brand-fit, strongest-delivery-market, and strongest-whitespace candidate IDs
+- deterministic per-item shape always includes `rank_position`, `confidence_grade`, `gate_status_json`, `gate_reasons_json`, `feature_snapshot_json`, `score_breakdown_json`, `top_positives_json`, `top_risks_json`, and `comparable_competitors_json`
+- `gate_reasons_json` always includes `passed`, `failed`, `unknown`, `thresholds`, `explanations`
+- `feature_snapshot_json` always includes `context_sources`, `missing_context`, `data_completeness_score`
+- `score_breakdown_json` always includes `weights`, `inputs`, `weighted_components`, `final_score`
+- `summary` always includes: best-overall, lowest-cannibalization, highest-demand, best-fit, best-economics, best-brand-fit, strongest-delivery-market, strongest-whitespace, lowest-rent-burden, fastest-payback, most-confident, and best-gate-pass candidate IDs
 
 `GET /v1/expansion-advisor/candidates/{candidate_id}/memo` returns a deterministic decision memo with:
 - candidate economics + scoring breakdown
@@ -171,7 +173,7 @@ Compare response:
 - a headline, best-use-case branch format, and primary watchout
 - deterministic `market_research` summaries for delivery-market context, competitive context, and district fit
 
-`GET /v1/expansion-advisor/searches/{search_id}/report` returns a deterministic executive-style JSON recommendation with `top_candidates` (top 3), `recommendation` (best, runner-up, best pass, best confidence, why, risk, best format, summary), and explicit assumptions. Top candidates include final score, rank position, confidence, gate verdict, top positives/risks, compact feature snapshot, and score breakdown.
+`GET /v1/expansion-advisor/searches/{search_id}/report` returns a deterministic executive-style JSON recommendation with `meta.version = "expansion_advisor_v6.1"`, `top_candidates` (top 3 ordered by `rank_position`, then final score fallback), and `recommendation` keys always present (`best_candidate_id`, `runner_up_candidate_id`, `best_pass_candidate_id`, `best_confidence_candidate_id`, `why_best`, `main_risk`, `best_format`, `summary`, `report_summary`). Top candidates always include `id`, `final_score`, `rank_position`, `confidence_grade`, `gate_verdict`, top positives/risks (max 3), compact feature snapshot, and compact score breakdown.
 
 
 Saved studies payload fields:
@@ -190,6 +192,7 @@ Notes:
 - Cannibalization scoring is deterministic and distance-based, adjusted by service model.
 - Hard gates include zoning fit, area fit, frontage/access, parking, district policy, cannibalization, delivery-market, economics, plus overall pass.
 - Gate reasons are split into deterministic `passed`, `failed`, and `unknown` buckets.
+- API contracts are strict: `gate_status_json` is always an object; `gate_reasons_json`, `feature_snapshot_json`, and `score_breakdown_json` always include deterministic default keys; candidate text fields (`decision_summary`, `demand_thesis`, `cost_thesis`) default to empty strings when absent.
 - If a gate depends on unavailable context, it is marked `unknown` (not auto-failed).
 - `overall_pass` only fails when at least one gate truly fails; unknown-only context gates do not force failure when core gates pass.
 - Access/frontage/parking scoring is deterministic and explainable from ArcGIS parcels + OSM road/parking context, and falls back to neutral defaults when that context is unavailable.

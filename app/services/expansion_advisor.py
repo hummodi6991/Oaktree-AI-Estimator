@@ -40,6 +40,61 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _normalize_gate_status(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _normalize_gate_reasons(value: Any) -> dict[str, Any]:
+    base = {
+        "passed": [],
+        "failed": [],
+        "unknown": [],
+        "thresholds": {},
+        "explanations": {},
+    }
+    if isinstance(value, dict):
+        base["passed"] = value.get("passed") or []
+        base["failed"] = value.get("failed") or []
+        base["unknown"] = value.get("unknown") or []
+        base["thresholds"] = value.get("thresholds") or {}
+        base["explanations"] = value.get("explanations") or {}
+    return base
+
+
+def _normalize_feature_snapshot(value: Any) -> dict[str, Any]:
+    raw = dict(value) if isinstance(value, dict) else {}
+    raw["context_sources"] = raw.get("context_sources") or {}
+    raw["missing_context"] = raw.get("missing_context") or []
+    raw["data_completeness_score"] = _safe_int(raw.get("data_completeness_score"), 0)
+    return raw
+
+
+def _normalize_score_breakdown(value: Any, final_score: Any) -> dict[str, Any]:
+    raw = dict(value) if isinstance(value, dict) else {}
+    raw["weights"] = raw.get("weights") or {}
+    raw["inputs"] = raw.get("inputs") or {}
+    raw["weighted_components"] = raw.get("weighted_components") or {}
+    raw["final_score"] = _safe_float(raw.get("final_score"), _safe_float(final_score))
+    return raw
+
+
+def _normalize_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(candidate)
+    payload["gate_status_json"] = _normalize_gate_status(payload.get("gate_status_json"))
+    payload["gate_reasons_json"] = _normalize_gate_reasons(payload.get("gate_reasons_json"))
+    payload["feature_snapshot_json"] = _normalize_feature_snapshot(payload.get("feature_snapshot_json"))
+    payload["score_breakdown_json"] = _normalize_score_breakdown(payload.get("score_breakdown_json"), payload.get("final_score"))
+    payload["top_positives_json"] = payload.get("top_positives_json") or []
+    payload["top_risks_json"] = payload.get("top_risks_json") or []
+    payload["comparable_competitors_json"] = payload.get("comparable_competitors_json") or []
+    payload["rank_position"] = payload.get("rank_position") or payload.get("compare_rank")
+    payload["confidence_grade"] = payload.get("confidence_grade") or "D"
+    payload["decision_summary"] = payload.get("decision_summary") or ""
+    payload["demand_thesis"] = payload.get("demand_thesis") or ""
+    payload["cost_thesis"] = payload.get("cost_thesis") or ""
+    return payload
+
+
 def _default_brand_profile(brand_profile: dict[str, Any] | None = None) -> dict[str, Any]:
     base = {
         "price_tier": None,
@@ -1797,7 +1852,7 @@ def run_expansion_search(
             },
         )
 
-    return candidates
+    return [_normalize_candidate_payload(candidate) for candidate in candidates]
 
 
 def get_search(db: Session, search_id: str) -> dict[str, Any] | None:
@@ -1846,6 +1901,11 @@ def get_search(db: Session, search_id: str) -> dict[str, Any] | None:
         return None
     payload = dict(row)
     payload["brand_profile"] = get_brand_profile(db, search_id)
+    payload["meta"] = {
+        "version": "expansion_advisor_v6.1",
+        "parcel_source": "arcgis_only",
+        "excluded_sources": ["suhail", "inferred_parcels"],
+    }
     return payload
 
 
@@ -1914,7 +1974,7 @@ def get_candidates(db: Session, search_id: str) -> list[dict[str, Any]]:
         ),
         {"search_id": search_id},
     ).mappings().all()
-    return [dict(row) for row in rows]
+    return [_normalize_candidate_payload(dict(row)) for row in rows]
 
 
 
@@ -2205,55 +2265,54 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
         if _safe_int(row.get("competitor_count")) >= 8:
             cons.append("Dense same-category competition")
 
-        items.append(
-            {
-                "candidate_id": row["id"],
-                "parcel_id": row.get("parcel_id"),
-                "district": row.get("district"),
-                "area_m2": row.get("area_m2"),
-                "final_score": row.get("final_score"),
-                "demand_score": row.get("demand_score"),
-                "whitespace_score": row.get("whitespace_score"),
-                "fit_score": row.get("fit_score"),
-                "zoning_fit_score": row.get("zoning_fit_score"),
-                "frontage_score": row.get("frontage_score"),
-                "access_score": row.get("access_score"),
-                "parking_score": row.get("parking_score"),
-                "access_visibility_score": row.get("access_visibility_score"),
-                "confidence_score": row.get("confidence_score"),
-                "confidence_grade": row.get("confidence_grade"),
-                "gate_status_json": row.get("gate_status_json") or {},
-                "gate_reasons_json": row.get("gate_reasons_json") or {},
-                "feature_snapshot_json": row.get("feature_snapshot_json") or {},
-                "score_breakdown_json": row.get("score_breakdown_json") or {},
-                "demand_thesis": row.get("demand_thesis"),
-                "cost_thesis": row.get("cost_thesis"),
-                "top_positives_json": row.get("top_positives_json") or [],
-                "top_risks_json": row.get("top_risks_json") or [],
-                "comparable_competitors_json": row.get("comparable_competitors_json") or [],
-                "cannibalization_score": row.get("cannibalization_score"),
-                "distance_to_nearest_branch_m": row.get("distance_to_nearest_branch_m"),
-                "estimated_rent_sar_m2_year": row.get("estimated_rent_sar_m2_year"),
-                "estimated_annual_rent_sar": row.get("estimated_annual_rent_sar"),
-                "estimated_fitout_cost_sar": row.get("estimated_fitout_cost_sar"),
-                "estimated_revenue_index": row.get("estimated_revenue_index"),
-                "economics_score": row.get("economics_score"),
-                "brand_fit_score": row.get("brand_fit_score"),
-                "provider_density_score": row.get("provider_density_score"),
-                "provider_whitespace_score": row.get("provider_whitespace_score"),
-                "multi_platform_presence_score": row.get("multi_platform_presence_score"),
-                "delivery_competition_score": row.get("delivery_competition_score"),
-                "estimated_payback_months": row.get("estimated_payback_months"),
-                "payback_band": row.get("payback_band"),
-                "competitor_count": row.get("competitor_count"),
-                "delivery_listing_count": row.get("delivery_listing_count"),
-                "population_reach": row.get("population_reach"),
-                "landuse_label": row.get("landuse_label"),
-                "rank_position": row.get("rank_position"),
-                "pros": pros,
-                "cons": cons,
-            }
-        )
+        item = _normalize_candidate_payload({
+            "candidate_id": row["id"],
+            "parcel_id": row.get("parcel_id"),
+            "district": row.get("district"),
+            "area_m2": row.get("area_m2"),
+            "final_score": row.get("final_score"),
+            "demand_score": row.get("demand_score"),
+            "whitespace_score": row.get("whitespace_score"),
+            "fit_score": row.get("fit_score"),
+            "zoning_fit_score": row.get("zoning_fit_score"),
+            "frontage_score": row.get("frontage_score"),
+            "access_score": row.get("access_score"),
+            "parking_score": row.get("parking_score"),
+            "access_visibility_score": row.get("access_visibility_score"),
+            "confidence_score": row.get("confidence_score"),
+            "confidence_grade": row.get("confidence_grade"),
+            "gate_status_json": row.get("gate_status_json"),
+            "gate_reasons_json": row.get("gate_reasons_json"),
+            "feature_snapshot_json": row.get("feature_snapshot_json"),
+            "score_breakdown_json": row.get("score_breakdown_json"),
+            "demand_thesis": row.get("demand_thesis"),
+            "cost_thesis": row.get("cost_thesis"),
+            "top_positives_json": row.get("top_positives_json"),
+            "top_risks_json": row.get("top_risks_json"),
+            "comparable_competitors_json": row.get("comparable_competitors_json"),
+            "cannibalization_score": row.get("cannibalization_score"),
+            "distance_to_nearest_branch_m": row.get("distance_to_nearest_branch_m"),
+            "estimated_rent_sar_m2_year": row.get("estimated_rent_sar_m2_year"),
+            "estimated_annual_rent_sar": row.get("estimated_annual_rent_sar"),
+            "estimated_fitout_cost_sar": row.get("estimated_fitout_cost_sar"),
+            "estimated_revenue_index": row.get("estimated_revenue_index"),
+            "economics_score": row.get("economics_score"),
+            "brand_fit_score": row.get("brand_fit_score"),
+            "provider_density_score": row.get("provider_density_score"),
+            "provider_whitespace_score": row.get("provider_whitespace_score"),
+            "multi_platform_presence_score": row.get("multi_platform_presence_score"),
+            "delivery_competition_score": row.get("delivery_competition_score"),
+            "estimated_payback_months": row.get("estimated_payback_months"),
+            "payback_band": row.get("payback_band"),
+            "competitor_count": row.get("competitor_count"),
+            "delivery_listing_count": row.get("delivery_listing_count"),
+            "population_reach": row.get("population_reach"),
+            "landuse_label": row.get("landuse_label"),
+            "rank_position": row.get("rank_position"),
+        })
+        item["pros"] = pros
+        item["cons"] = cons
+        items.append(item)
 
     best_overall = max(items, key=lambda item: _safe_float(item.get("final_score")))["candidate_id"]
     lowest_cannibalization = min(items, key=lambda item: _safe_float(item.get("cannibalization_score"), 9999.0))["candidate_id"]
@@ -2357,7 +2416,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
     if not row:
         return None
 
-    candidate = dict(row)
+    candidate = _normalize_candidate_payload(dict(row))
     brand_profile = get_brand_profile(db, str(candidate.get("search_id"))) or {}
     strengths = candidate.get("key_strengths_json") or []
     risks = candidate.get("key_risks_json") or []
@@ -2422,16 +2481,16 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "parking_score": candidate.get("parking_score"),
             "access_visibility_score": candidate.get("access_visibility_score"),
             "confidence_score": candidate.get("confidence_score"),
-            "confidence_grade": candidate.get("confidence_grade"),
-            "gate_status": candidate.get("gate_status_json") or {},
-            "gate_reasons": candidate.get("gate_reasons_json") or {},
-            "feature_snapshot": candidate.get("feature_snapshot_json") or {},
-            "score_breakdown_json": candidate.get("score_breakdown_json") or {},
-            "demand_thesis": candidate.get("demand_thesis"),
-            "cost_thesis": candidate.get("cost_thesis"),
-            "top_positives_json": candidate.get("top_positives_json") or [],
-            "top_risks_json": candidate.get("top_risks_json") or [],
-            "comparable_competitors": candidate.get("comparable_competitors_json") or [],
+            "confidence_grade": candidate.get("confidence_grade") or "D",
+            "gate_status": candidate.get("gate_status_json"),
+            "gate_reasons": candidate.get("gate_reasons_json"),
+            "feature_snapshot": candidate.get("feature_snapshot_json"),
+            "score_breakdown_json": candidate.get("score_breakdown_json"),
+            "demand_thesis": candidate.get("demand_thesis") or "",
+            "cost_thesis": candidate.get("cost_thesis") or "",
+            "top_positives_json": candidate.get("top_positives_json"),
+            "top_risks_json": candidate.get("top_risks_json"),
+            "comparable_competitors": candidate.get("comparable_competitors_json"),
             "cannibalization_score": candidate.get("cannibalization_score"),
             "distance_to_nearest_branch_m": candidate.get("distance_to_nearest_branch_m"),
             "estimated_rent_sar_m2_year": candidate.get("estimated_rent_sar_m2_year"),
@@ -2442,7 +2501,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "payback_band": candidate.get("payback_band"),
             "key_strengths": strengths,
             "key_risks": risks,
-            "decision_summary": candidate.get("decision_summary"),
+            "decision_summary": candidate.get("decision_summary") or "",
             "rank_position": candidate.get("rank_position"),
         },
         "recommendation": {
@@ -2464,13 +2523,33 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     search = get_search(db, search_id)
     if not search:
         return None
-    candidates = get_candidates(db, search_id)
-    if not candidates:
+    normalized_candidates = [_normalize_candidate_payload(c) for c in get_candidates(db, search_id)]
+
+    def _sort_key(item: dict[str, Any]) -> tuple[int, float]:
+        rank = item.get("rank_position")
+        if rank is None:
+            return (10**9, -_safe_float(item.get("final_score")))
+        return (_safe_int(rank, 10**9), -_safe_float(item.get("final_score")))
+
+    top = sorted(normalized_candidates, key=_sort_key)[:3]
+
+    if not normalized_candidates:
         return {
             "search_id": search_id,
             "brand_profile": search.get("brand_profile") or {},
+            "meta": {"version": "expansion_advisor_v6.1"},
             "top_candidates": [],
-            "recommendation": {},
+            "recommendation": {
+                "best_candidate_id": None,
+                "runner_up_candidate_id": None,
+                "best_pass_candidate_id": None,
+                "best_confidence_candidate_id": None,
+                "why_best": "",
+                "main_risk": "",
+                "best_format": "",
+                "summary": "",
+                "report_summary": "",
+            },
             "assumptions": {
                 "parcel_source": "arcgis_only",
                 "city": "riyadh",
@@ -2483,53 +2562,69 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
                 ],
             },
         }
-    top = sorted(candidates, key=lambda item: _safe_float(item.get("final_score")), reverse=True)[:3]
-    best = top[0]
-    runner = top[1] if len(top) > 1 else None
+
+    best = max(normalized_candidates, key=lambda item: _safe_float(item.get("final_score")))
+    ranked_by_score = sorted(normalized_candidates, key=lambda item: _safe_float(item.get("final_score"), 0.0), reverse=True)
+    runner_item = ranked_by_score[1] if len(ranked_by_score) > 1 else None
     grade_order = {"A": 4, "B": 3, "C": 2, "D": 1}
     best_confidence = max(
-        candidates,
+        normalized_candidates,
         key=lambda item: (
             grade_order.get(str(item.get("confidence_grade") or "D"), 0),
             _safe_float(item.get("confidence_score")),
         ),
     )
-    pass_candidates = [c for c in candidates if bool((c.get("gate_status_json") or {}).get("overall_pass"))]
-    best_pass = max(pass_candidates or candidates, key=lambda item: _safe_float(item.get("final_score")))
-    top_payload = []
+    pass_candidates = [c for c in normalized_candidates if bool((c.get("gate_status_json") or {}).get("overall_pass"))]
+    best_pass = max(pass_candidates or normalized_candidates, key=lambda item: _safe_float(item.get("final_score")))
+
+    top_payload: list[dict[str, Any]] = []
     for item in top:
-        payload = dict(item)
-        payload["comparable_competitors_json"] = (payload.get("comparable_competitors_json") or [])[:3]
-        snapshot = payload.get("feature_snapshot_json") or {}
-        payload["feature_snapshot_json"] = {
-            "district": snapshot.get("district"),
-            "parcel_area_m2": snapshot.get("parcel_area_m2"),
-            "data_completeness_score": snapshot.get("data_completeness_score"),
-            "missing_context": snapshot.get("missing_context") or [],
-            "touches_road": snapshot.get("touches_road"),
-            "nearby_road_segment_count": snapshot.get("nearby_road_segment_count"),
-            "nearest_major_road_distance_m": snapshot.get("nearest_major_road_distance_m"),
-            "nearby_parking_amenity_count": snapshot.get("nearby_parking_amenity_count"),
-        }
-        payload["gate_verdict"] = "pass" if bool((payload.get("gate_status_json") or {}).get("overall_pass")) else "fail"
-        payload["top_positives_json"] = (payload.get("top_positives_json") or [])[:3]
-        payload["top_risks_json"] = (payload.get("top_risks_json") or [])[:3]
-        payload["rank_position"] = payload.get("rank_position") or payload.get("compare_rank")
-        top_payload.append(payload)
+        snapshot = item.get("feature_snapshot_json") or {}
+        score_breakdown = item.get("score_breakdown_json") or {}
+        top_payload.append(
+            {
+                "id": item.get("id"),
+                "final_score": item.get("final_score"),
+                "rank_position": item.get("rank_position"),
+                "confidence_grade": item.get("confidence_grade") or "D",
+                "gate_verdict": "pass" if bool((item.get("gate_status_json") or {}).get("overall_pass")) else "fail",
+                "top_positives_json": (item.get("top_positives_json") or [])[:3],
+                "top_risks_json": (item.get("top_risks_json") or [])[:3],
+                "feature_snapshot_json": {
+                    "district": snapshot.get("district"),
+                    "parcel_area_m2": snapshot.get("parcel_area_m2"),
+                    "data_completeness_score": snapshot.get("data_completeness_score"),
+                    "missing_context": snapshot.get("missing_context") or [],
+                    "touches_road": snapshot.get("touches_road"),
+                    "nearby_road_segment_count": snapshot.get("nearby_road_segment_count"),
+                    "nearest_major_road_distance_m": snapshot.get("nearest_major_road_distance_m"),
+                    "nearby_parking_amenity_count": snapshot.get("nearby_parking_amenity_count"),
+                    "context_sources": snapshot.get("context_sources") or {},
+                },
+                "score_breakdown_json": {
+                    "weights": score_breakdown.get("weights") or {},
+                    "inputs": score_breakdown.get("inputs") or {},
+                    "weighted_components": score_breakdown.get("weighted_components") or {},
+                    "final_score": _safe_float(score_breakdown.get("final_score"), _safe_float(item.get("final_score"))),
+                },
+            }
+        )
+
     return {
         "search_id": search_id,
         "brand_profile": search.get("brand_profile") or {},
+        "meta": {"version": "expansion_advisor_v6.1"},
         "top_candidates": top_payload,
         "recommendation": {
             "best_candidate_id": best.get("id"),
-            "runner_up_candidate_id": runner.get("id") if runner else None,
+            "runner_up_candidate_id": runner_item.get("id") if runner_item else None,
             "best_pass_candidate_id": best_pass.get("id"),
             "best_confidence_candidate_id": best_confidence.get("id"),
             "why_best": f"Highest blended final score with brand fit {_safe_float(best.get('brand_fit_score')):.1f}/100 and economics {_safe_float(best.get('economics_score')):.1f}/100.",
             "main_risk": (best.get("key_risks_json") or ["Validate lease and execution assumptions"])[0],
             "best_format": _recommended_use_case(str(search.get("service_model") or "qsr"), _safe_float(best.get("area_m2"))),
-            "summary": f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner.get('district') if runner else 'backup options'} as runner-up.",
-            "report_summary": f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner.get('district') if runner else 'backup options'} as runner-up.",
+            "summary": f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner_item.get('district') if runner_item else 'backup options'} as runner-up.",
+            "report_summary": f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner_item.get('district') if runner_item else 'backup options'} as runner-up.",
         },
         "assumptions": {
             "parcel_source": "arcgis_only",
