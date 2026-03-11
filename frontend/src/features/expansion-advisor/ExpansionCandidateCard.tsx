@@ -3,7 +3,7 @@ import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
-import { fmtSAR, fmtMeters, fmtScore, gateColor } from "./formatHelpers";
+import { fmtSAR, fmtMeters, fmtScore, fmtM2 } from "./formatHelpers";
 
 type Props = {
   candidate: ExpansionCandidate;
@@ -26,7 +26,6 @@ export default function ExpansionCandidateCard({
 }: Props) {
   const { t } = useTranslation();
   const pass = Boolean(candidate.gate_status_json?.overall_pass);
-  const gc = gateColor(candidate.gate_status_json?.overall_pass ?? null);
   const positives = (candidate.top_positives_json || []).slice(0, 2);
   const risks = (candidate.top_risks_json || []).slice(0, 2);
 
@@ -52,25 +51,41 @@ export default function ExpansionCandidateCard({
         <div className="ea-candidate__badges">
           <ScorePill value={candidate.final_score} />
           <ConfidenceBadge grade={candidate.confidence_grade} />
-          <span className={`ea-badge ea-badge--${gc}`}>
+          <span className={`ea-badge ea-badge--${pass ? "green" : "red"}`}>
             {pass ? t("expansionAdvisor.gatePass") : t("expansionAdvisor.gateFail")}
           </span>
+          {candidate.payback_band && (
+            <PaybackBadge band={candidate.payback_band} months={candidate.estimated_payback_months} />
+          )}
         </div>
       </div>
 
-      {/* Metrics row */}
+      {/* Decision summary */}
+      {candidate.decision_summary && (
+        <p className="ea-candidate__summary">{candidate.decision_summary}</p>
+      )}
+
+      {/* Metrics grid */}
       <div className="ea-candidate__metrics">
         <div className="ea-candidate__metric">
-          <span className="ea-candidate__metric-label">{t("expansionAdvisor.payback")}:</span>
-          <PaybackBadge band={candidate.payback_band} months={candidate.estimated_payback_months} />
+          <span className="ea-candidate__metric-label">{t("expansionAdvisor.annualRent")}:</span>
+          <span>{fmtSAR(candidate.estimated_annual_rent_sar)}</span>
         </div>
         <div className="ea-candidate__metric">
-          <span className="ea-candidate__metric-label">{t("expansionAdvisor.rent")}:</span>
-          <span>{fmtSAR(candidate.estimated_annual_rent_sar)}</span>
+          <span className="ea-candidate__metric-label">{t("expansionAdvisor.fitoutCost")}:</span>
+          <span>{fmtSAR(candidate.estimated_fitout_cost_sar)}</span>
+        </div>
+        <div className="ea-candidate__metric">
+          <span className="ea-candidate__metric-label">{t("expansionAdvisor.revenueIndex")}:</span>
+          <span>{fmtScore(candidate.estimated_revenue_index, 1)}</span>
         </div>
         <div className="ea-candidate__metric">
           <span className="ea-candidate__metric-label">{t("expansionAdvisor.economicsLabel")}:</span>
           <span>{fmtScore(candidate.economics_score)}</span>
+        </div>
+        <div className="ea-candidate__metric">
+          <span className="ea-candidate__metric-label">{t("expansionAdvisor.brandFitLabel")}:</span>
+          <span>{fmtScore(candidate.brand_fit_score)}</span>
         </div>
         <div className="ea-candidate__metric">
           <span className="ea-candidate__metric-label">{t("expansionAdvisor.nearestBranch")}:</span>
@@ -82,23 +97,31 @@ export default function ExpansionCandidateCard({
             <ScorePill value={candidate.cannibalization_score} />
           </div>
         )}
+        {candidate.provider_whitespace_score != null && (
+          <div className="ea-candidate__metric">
+            <span className="ea-candidate__metric-label">{t("expansionAdvisor.providerWhitespace")}:</span>
+            <span>{fmtScore(candidate.provider_whitespace_score)}</span>
+          </div>
+        )}
       </div>
 
       {/* Insights */}
-      <div className="ea-candidate__insights">
-        {positives.map((text, i) => (
-          <div key={`p-${i}`} className="ea-candidate__insight">
-            <span className="ea-candidate__insight-icon ea-candidate__insight-icon--positive">+</span>
-            <span>{text}</span>
-          </div>
-        ))}
-        {risks.map((text, i) => (
-          <div key={`r-${i}`} className="ea-candidate__insight">
-            <span className="ea-candidate__insight-icon ea-candidate__insight-icon--risk">!</span>
-            <span>{text}</span>
-          </div>
-        ))}
-      </div>
+      {(positives.length > 0 || risks.length > 0) && (
+        <div className="ea-candidate__insights">
+          {positives.map((text, i) => (
+            <div key={`p-${i}`} className="ea-candidate__insight">
+              <span className="ea-candidate__insight-icon ea-candidate__insight-icon--positive">+</span>
+              <span>{text}</span>
+            </div>
+          ))}
+          {risks.map((text, i) => (
+            <div key={`r-${i}`} className="ea-candidate__insight">
+              <span className="ea-candidate__insight-icon ea-candidate__insight-icon--risk">!</span>
+              <span>{text}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Actions */}
       <div className="ea-candidate__actions" onClick={(e) => e.stopPropagation()}>

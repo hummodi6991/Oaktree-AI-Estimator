@@ -4,6 +4,7 @@ import {
   compareExpansionCandidates,
   createExpansionSearch,
   createSavedExpansionSearch,
+  deleteSavedExpansionSearch,
   getExpansionCandidates,
   getExpansionCandidateMemo,
   getExpansionSearch,
@@ -11,6 +12,7 @@ import {
   getSavedExpansionSearch,
   listSavedExpansionSearches,
   normalizeCandidates,
+  updateSavedExpansionSearch,
   type CandidateMemoResponse,
   type CompareCandidateItem,
   type CompareCandidatesResponse,
@@ -112,7 +114,7 @@ export default function ExpansionAdvisorPage({
   onSelectedCandidateChange,
   externalSelectedCandidateId,
 }: {
-  onCandidatesChange: (candidates: ExpansionCandidate[], shortlistIds: string[], selectedId: string | null, branches: ExpansionBrief["existing_branches"]) => void;
+  onCandidatesChange: (candidates: ExpansionCandidate[], shortlistIds: string[], selectedId: string | null, branches: ExpansionBrief["existing_branches"], compareIds?: string[]) => void;
   onSelectedCandidateChange: (candidate: ExpansionCandidate | null) => void;
   externalSelectedCandidateId?: string | null;
 }) {
@@ -141,6 +143,7 @@ export default function ExpansionAdvisorPage({
   const [saving, setSaving] = useState(false);
   const [activeDrawer, setActiveDrawer] = useState<DrawerState>("none");
   const [searchMeta, setSearchMeta] = useState<Record<string, unknown>>({});
+  const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
   const detailRef = useRef<HTMLDivElement | null>(null);
 
   // Load saved studies on mount
@@ -155,8 +158,8 @@ export default function ExpansionAdvisorPage({
 
   // Sync candidates to parent
   useEffect(() => {
-    onCandidatesChange(candidates, shortlistIds, selectedCandidate?.id || null, brief.existing_branches);
-  }, [candidates, shortlistIds, selectedCandidate, brief.existing_branches, onCandidatesChange]);
+    onCandidatesChange(candidates, shortlistIds, selectedCandidate?.id || null, brief.existing_branches, compareIds);
+  }, [candidates, shortlistIds, selectedCandidate, brief.existing_branches, compareIds, onCandidatesChange]);
 
   // Clear stale compare result
   useEffect(() => {
@@ -219,6 +222,7 @@ export default function ExpansionAdvisorPage({
     setSearchId("");
     setSearchMeta({});
     setActiveDrawer("none");
+    setActiveSavedId(null);
     try {
       const result = await createExpansionSearch(nextBrief);
       setSearchId(result.search_id);
@@ -232,6 +236,7 @@ export default function ExpansionAdvisorPage({
     setMemo(null); setReport(null); setCompareResult(null);
     setMemoError(null); setReportError(null); setCompareError(null); setSaveError(null);
     setActiveDrawer("none");
+    setActiveSavedId(saved.id);
     let hydratedCandidates = normalizeCandidates(saved.candidates || []);
     let hydratedSaved = saved;
     try {
@@ -257,6 +262,32 @@ export default function ExpansionAdvisorPage({
     if (restored.searchId) await loadReport(restored.searchId);
   };
 
+  const handleDeleteSaved = async (savedId: string) => {
+    try {
+      await deleteSavedExpansionSearch(savedId);
+      await refreshSavedStudies();
+      if (activeSavedId === savedId) setActiveSavedId(null);
+    } catch { setSavedLoadError(t("expansionAdvisor.errorDelete")); }
+  };
+
+  const handleUpdateSaved = async (studyTitle: string, description: string, status: "draft" | "final") => {
+    if (!activeSavedId) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await updateSavedExpansionSearch(activeSavedId, {
+        title: studyTitle,
+        description,
+        status,
+        selected_candidate_ids: shortlistIds,
+        filters_json: brief as unknown as Record<string, unknown>,
+        ui_state_json: { selected_candidate_id: selectedCandidate?.id || null, compare_ids: compareIds },
+      });
+      await refreshSavedStudies();
+      setActiveDrawer("none");
+    } catch { setSaveError(t("expansionAdvisor.errorUpdate")); } finally { setSaving(false); }
+  };
+
   // External map selection sync
   useEffect(() => {
     if (!shouldLoadMemoFromMapSelection(externalSelectedCandidateId, selectedCandidate?.id || null)) return;
@@ -271,9 +302,19 @@ export default function ExpansionAdvisorPage({
   const title = useMemo(() => `${brief.brand_name || t("expansionAdvisor.title")} Study`, [brief.brand_name, t]);
   const bestCandidate = candidates[0];
   const passCount = candidates.filter((c) => c.gate_status_json?.overall_pass).length;
+  const hasResults = candidates.length > 0;
 
   return (
     <div className="ea-page">
+      {/* Story steps header */}
+      <div className="ea-story-steps">
+        <span className={`ea-story-step ${!hasResults ? "ea-story-step--active" : "ea-story-step--done"}`}>{t("expansionAdvisor.storyStep1")}</span>
+        <span className={`ea-story-step ${hasResults && !selectedCandidate ? "ea-story-step--active" : hasResults ? "ea-story-step--done" : ""}`}>{t("expansionAdvisor.storyStep2")}</span>
+        <span className={`ea-story-step ${selectedCandidate ? "ea-story-step--active" : ""}`}>{t("expansionAdvisor.storyStep3")}</span>
+        <span className={`ea-story-step ${compareResult ? "ea-story-step--active" : ""}`}>{t("expansionAdvisor.storyStep4")}</span>
+        <span className={`ea-story-step ${activeSavedId ? "ea-story-step--active" : ""}`}>{t("expansionAdvisor.storyStep5")}</span>
+      </div>
+
       {/* Two-column layout: form + results */}
       <div className="ea-layout">
         {/* Left column: search form + saved studies */}
@@ -281,6 +322,7 @@ export default function ExpansionAdvisorPage({
           <div className="ea-card">
             <div className="ea-card__header">
               <h3 className="ea-card__title">{t("expansionAdvisor.briefTitle")}</h3>
+              <span className="ea-card__subtitle">{t("expansionAdvisor.heroSubtitle")}</span>
             </div>
             <div className="ea-card__body">
               <ExpansionBriefForm initialValue={brief} loading={loadingSearch} onSubmit={onSubmitBrief} />
@@ -302,6 +344,7 @@ export default function ExpansionAdvisorPage({
                   setSavedLoadError(null);
                   try { const saved = await getSavedExpansionSearch(savedId); await hydrateSavedStudy(saved); } catch { setSavedLoadError(t("expansionAdvisor.errorSavedLoad")); } finally { setLoadingSaved(false); }
                 }}
+                onDelete={handleDeleteSaved}
               />
             </div>
           </div>
@@ -310,7 +353,7 @@ export default function ExpansionAdvisorPage({
         {/* Right column: results + detail */}
         <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
           {/* Summary strip */}
-          {candidates.length > 0 && (
+          {hasResults && (
             <div className="ea-summary-strip">
               <div className="ea-summary-strip__item">
                 <span className="ea-summary-strip__label">{t("expansionAdvisor.totalCandidates")}:</span>
@@ -336,12 +379,6 @@ export default function ExpansionAdvisorPage({
                   <span className="ea-summary-strip__value">{String(searchMeta.parcel_source)}</span>
                 </div>
               ) : null}
-              {searchMeta.version ? (
-                <div className="ea-summary-strip__item">
-                  <span className="ea-summary-strip__label">v</span>
-                  <span className="ea-summary-strip__value">{String(searchMeta.version)}</span>
-                </div>
-              ) : null}
             </div>
           )}
 
@@ -363,13 +400,13 @@ export default function ExpansionAdvisorPage({
                 {t("expansionAdvisor.viewReport")}
               </button>
               <button className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => setActiveDrawer("save")} disabled={!searchId}>
-                {t("expansionAdvisor.saveStudy")}
+                {activeSavedId ? t("expansionAdvisor.updateStudy") : t("expansionAdvisor.saveStudy")}
               </button>
             </div>
           )}
 
           {/* Candidate list */}
-          {candidates.length > 0 ? (
+          {hasResults ? (
             <ExpansionResultsPanel
               items={candidates}
               selectedCandidateId={selectedCandidate?.id || null}
@@ -381,7 +418,7 @@ export default function ExpansionAdvisorPage({
             />
           ) : (
             <div className="ea-state">
-              {loadingSearch ? t("expansionAdvisor.loadingSearch") : t("expansionAdvisor.noResults")}
+              {loadingSearch ? t("expansionAdvisor.searchingCta") : t("expansionAdvisor.noResults")}
             </div>
           )}
 
@@ -439,12 +476,17 @@ export default function ExpansionAdvisorPage({
           defaultTitle={title}
           saving={saving}
           error={saveError}
+          isUpdate={Boolean(activeSavedId)}
           onClose={() => setActiveDrawer("none")}
           onSave={async (studyTitle, description, status) => {
+            if (activeSavedId) {
+              await handleUpdateSaved(studyTitle, description, status);
+              return;
+            }
             setSaving(true);
             setSaveError(null);
             try {
-              await createSavedExpansionSearch({
+              const created = await createSavedExpansionSearch({
                 search_id: searchId,
                 title: studyTitle,
                 description,
@@ -453,6 +495,7 @@ export default function ExpansionAdvisorPage({
                 filters_json: brief as unknown as Record<string, unknown>,
                 ui_state_json: { selected_candidate_id: selectedCandidate?.id || null, compare_ids: compareIds },
               });
+              setActiveSavedId(created.id);
               await refreshSavedStudies();
               setActiveDrawer("none");
             } catch { setSaveError(t("expansionAdvisor.errorSavedLoad")); } finally { setSaving(false); }

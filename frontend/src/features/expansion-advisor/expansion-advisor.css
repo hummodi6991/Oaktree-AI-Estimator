@@ -647,6 +647,53 @@
   max-height: 200px;
 }
 
+/* ─ Candidate summary text ─ */
+.ea-candidate__summary {
+  margin: 0;
+  font-size: var(--oak-fs-sm, 14px);
+  color: var(--oak-text-gray, #4c4c4c);
+  line-height: 1.5;
+  font-style: italic;
+}
+
+/* ─ Story steps header ─ */
+.ea-story-steps {
+  display: flex;
+  gap: 4px;
+  padding: 8px 0;
+  overflow-x: auto;
+}
+
+.ea-story-step {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: var(--oak-fs-xs, 12px);
+  font-weight: var(--oak-fw-medium, 500);
+  background: #f3f4f6;
+  color: var(--oak-text-light, #828282);
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.ea-story-step--active {
+  background: var(--oak-primary, #14312c);
+  color: #fff;
+}
+
+.ea-story-step--done {
+  background: #dcfce7;
+  color: #166534;
+}
+
+/* ─ Card subtitle ─ */
+.ea-card__subtitle {
+  font-size: var(--oak-fs-xs, 12px);
+  color: var(--oak-text-light, #828282);
+  font-weight: normal;
+}
+
 /* ─ Report sections ─ */
 .ea-report-section {
   display: grid;
@@ -657,6 +704,181 @@
 
 .ea-report-section:last-child {
   border-bottom: none;
+}
+
+/* ─ Report hero ─ */
+.ea-report-hero {
+  padding: 16px;
+  background: var(--oak-secondary, #fffbea);
+  border-radius: var(--oak-radius, 8px);
+  border: 1px solid var(--oak-outlines, #d7d7d7);
+}
+
+.ea-report-hero__text {
+  margin: 0;
+  font-size: var(--oak-fs-base, 16px);
+  font-weight: 500;
+  color: var(--oak-text-dark, #171717);
+  line-height: 1.6;
+}
+
+/* ─ Report picks (best / runner-up) ─ */
+.ea-report-picks {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ea-report-pick {
+  flex: 1;
+  min-width: 140px;
+  padding: 12px 16px;
+  border-radius: var(--oak-radius, 8px);
+  border: 1px solid var(--oak-outlines, #d7d7d7);
+  background: var(--oak-bg-surface, #fff);
+  text-align: center;
+  display: grid;
+  gap: 4px;
+}
+
+.ea-report-pick--best {
+  border-color: var(--oak-success, #16a34a);
+  background: #f6fffb;
+}
+
+.ea-report-pick__label {
+  font-size: var(--oak-fs-xs, 12px);
+  color: var(--oak-text-light, #828282);
+  font-weight: var(--oak-fw-medium, 500);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ea-report-pick__id {
+  font-size: var(--oak-fs-base, 16px);
+  font-weight: var(--oak-fw-bold, 700);
+  color: var(--oak-text-dark, #171717);
+  font-family: monospace;
+}
+
+/* ─ Memo verdict hero ─ */
+.ea-memo-verdict {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: var(--oak-secondary, #fffbea);
+  border-radius: var(--oak-radius, 8px);
+  border: 1px solid var(--oak-outlines, #d7d7d7);
+}
+
+.ea-memo-verdict__badge {
+  font-size: var(--oak-fs-lg, 18px);
+  padding: 6px 16px;
+}
+
+.ea-memo-verdict__headline {
+  margin: 0;
+  font-size: var(--oak-fs-lg, 18px);
+  font-weight: var(--oak-fw-semibold, 600);
+  color: var(--oak-text-dark, #171717);
+}
+
+/* ─ Memo callout boxes ─ */
+.ea-memo-callout {
+  padding: 10px 14px;
+  border-radius: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.ea-memo-callout--positive {
+  background: #f0fdf4;
+  border-inline-start: 3px solid var(--oak-success, #16a34a);
+}
+
+.ea-memo-callout--risk {
+  background: #fef2f2;
+  border-inline-start: 3px solid var(--oak-error, #d4183d);
+}
+
+.ea-memo-callout--neutral {
+  background: #f8fafc;
+  border-inline-start: 3px solid var(--oak-outlines, #d7d7d7);
+}
+
+.ea-memo-callout__label {
+  font-size: var(--oak-fs-xs, 12px);
+  font-weight: var(--oak-fw-semibold, 600);
+  color: var(--oak-text-light, #828282);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* ─ Memo two-column layout ─ */
+.ea-memo-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 600px) {
+  .ea-memo-two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.ea-memo-list {
+  margin: 4px 0 0;
+  padding-inline-start: 16px;
+  font-size: var(--oak-fs-sm, 14px);
+  color: var(--oak-text-gray, #4c4c4c);
+  line-height: 1.5;
+}
+
+/* ─ Compare highlights ─ */
+.ea-compare-highlights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ea-compare-highlight {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--oak-radius, 8px);
+  border: 1px solid var(--oak-outlines, #d7d7d7);
+  background: var(--oak-bg-surface, #fff);
+  font-size: var(--oak-fs-sm, 14px);
+}
+
+.ea-compare-highlight__dim {
+  text-transform: capitalize;
+  font-weight: var(--oak-fw-medium, 500);
+  color: var(--oak-text-gray, #4c4c4c);
+}
+
+/* ─ Compare table group headers ─ */
+.ea-compare-table__group-header td {
+  font-size: var(--oak-fs-xs, 12px);
+  font-weight: var(--oak-fw-bold, 700);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--oak-primary, #14312c);
+  background: var(--oak-secondary, #fffbea);
+  padding: 6px 12px;
+}
+
+.ea-compare-table__rank {
+  font-size: var(--oak-fs-xs, 12px);
+  opacity: 0.7;
+}
+
+/* ─ Wide drawer variant ─ */
+.ea-drawer--wide {
+  width: min(780px, 95vw);
 }
 
 /* ─ Saved studies list ─ */
@@ -694,4 +916,10 @@
 .ea-saved-item__meta {
   font-size: var(--oak-fs-xs, 12px);
   color: var(--oak-text-light, #828282);
+}
+
+.ea-saved-item__actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
 }

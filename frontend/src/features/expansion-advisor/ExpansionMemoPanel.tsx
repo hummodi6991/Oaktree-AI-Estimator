@@ -4,7 +4,7 @@ import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
-import { fmtScore, fmtMeters } from "./formatHelpers";
+import { fmtScore, fmtMeters, fmtSAR } from "./formatHelpers";
 
 function toList(input: unknown): string[] {
   return Array.isArray(input) ? input.map(String) : [];
@@ -25,9 +25,9 @@ export default function ExpansionMemoPanel({
 
   return (
     <div className="ea-drawer-backdrop" onClick={() => onClose?.()}>
-      <div className="ea-drawer" onClick={(e) => e.stopPropagation()}>
+      <div className="ea-drawer ea-drawer--wide" onClick={(e) => e.stopPropagation()}>
         <div className="ea-drawer__header">
-          <h3 className="ea-drawer__title">{t("expansionAdvisor.decisionMemo")}</h3>
+          <h3 className="ea-drawer__title">{t("expansionAdvisor.memoVerdict")}</h3>
           <button className="ea-drawer__close" onClick={() => onClose?.()}>{t("expansionAdvisor.close")}</button>
         </div>
         <div className="ea-drawer__body">
@@ -47,26 +47,37 @@ export default function ExpansionMemoPanel({
 
             return (
               <>
-                {/* Recommendation */}
-                <div className="ea-report-section">
-                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.recommendation")}</h5>
-                  {rec.headline && <p className="ea-detail__text" style={{ fontWeight: 600, fontSize: "var(--oak-fs-base)" }}>{rec.headline}</p>}
+                {/* Verdict hero */}
+                <div className="ea-memo-verdict">
                   {rec.verdict && (
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <span className="ea-detail__kv-label">{t("expansionAdvisor.verdict")}:</span>
-                      <span className={`ea-badge ea-badge--${rec.verdict?.toLowerCase() === "go" ? "green" : rec.verdict?.toLowerCase() === "caution" ? "amber" : "red"}`}>
-                        {rec.verdict}
-                      </span>
-                    </div>
+                    <span className={`ea-memo-verdict__badge ea-badge ea-badge--${rec.verdict?.toLowerCase() === "go" ? "green" : rec.verdict?.toLowerCase() === "caution" ? "amber" : "red"}`}>
+                      {rec.verdict}
+                    </span>
                   )}
-                  {rec.best_use_case && <p className="ea-detail__text"><strong>{t("expansionAdvisor.bestUseCase")}:</strong> {rec.best_use_case}</p>}
-                  {rec.main_watchout && <p className="ea-detail__text"><strong>{t("expansionAdvisor.mainWatchout")}:</strong> {rec.main_watchout}</p>}
-                  {rec.gate_verdict && <p className="ea-detail__text"><strong>{t("expansionAdvisor.gateVerdict")}:</strong> {rec.gate_verdict}</p>}
+                  {rec.headline && <h4 className="ea-memo-verdict__headline">{rec.headline}</h4>}
                 </div>
 
-                {/* Candidate summary */}
+                {/* Best use case + watchout */}
+                {(rec.best_use_case || rec.main_watchout) && (
+                  <div className="ea-report-section">
+                    {rec.best_use_case && (
+                      <div className="ea-memo-callout ea-memo-callout--positive">
+                        <span className="ea-memo-callout__label">{t("expansionAdvisor.bestUseCase")}</span>
+                        <p className="ea-detail__text">{rec.best_use_case}</p>
+                      </div>
+                    )}
+                    {rec.main_watchout && (
+                      <div className="ea-memo-callout ea-memo-callout--risk">
+                        <span className="ea-memo-callout__label">{t("expansionAdvisor.mainWatchout")}</span>
+                        <p className="ea-detail__text">{rec.main_watchout}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Scorecard */}
                 <div className="ea-report-section">
-                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.candidateSummary")}</h5>
+                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoScorecard")}</h5>
                   <div className="ea-detail__grid">
                     <div className="ea-detail__kv">
                       <span className="ea-detail__kv-label">{t("expansionAdvisor.finalScore")}</span>
@@ -95,9 +106,29 @@ export default function ExpansionMemoPanel({
                   </div>
                 </div>
 
-                {/* Gate checklist */}
+                {/* Theses - Cost & Revenue View */}
+                {(cand.demand_thesis || cand.cost_thesis) && (
+                  <div className="ea-report-section">
+                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoCostView")}</h5>
+                    {cand.demand_thesis && (
+                      <div className="ea-memo-callout ea-memo-callout--neutral">
+                        <span className="ea-memo-callout__label">{t("expansionAdvisor.demandThesis")}</span>
+                        <p className="ea-detail__text">{String(cand.demand_thesis)}</p>
+                      </div>
+                    )}
+                    {cand.cost_thesis && (
+                      <div className="ea-memo-callout ea-memo-callout--neutral">
+                        <span className="ea-memo-callout__label">{t("expansionAdvisor.costThesis")}</span>
+                        <p className="ea-detail__text">{String(cand.cost_thesis)}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Gate audit */}
                 <div className="ea-report-section">
-                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.gateChecklist")}</h5>
+                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoGateAudit")}</h5>
+                  {rec.gate_verdict && <p className="ea-detail__text" style={{ fontStyle: "italic" }}>{rec.gate_verdict}</p>}
                   <GateSummary gates={gates} />
                   {gateReasons && (
                     <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 6, display: "grid", gap: 4 }}>
@@ -108,31 +139,28 @@ export default function ExpansionMemoPanel({
                   )}
                 </div>
 
-                {/* Positives / risks */}
+                {/* Strengths / risks */}
                 <div className="ea-report-section">
-                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.topPositives")}</h5>
-                  {positives.length > 0 ? <ul style={{ margin: 0, paddingInlineStart: 16 }}>{positives.map((s, i) => <li key={i} className="ea-detail__text">{s}</li>)}</ul> : <p className="ea-detail__text">—</p>}
-                </div>
-                <div className="ea-report-section">
-                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.topRisks")}</h5>
-                  {risks.length > 0 ? <ul style={{ margin: 0, paddingInlineStart: 16 }}>{risks.map((s, i) => <li key={i} className="ea-detail__text">{s}</li>)}</ul> : <p className="ea-detail__text">—</p>}
-                </div>
-
-                {/* Theses */}
-                {(cand.demand_thesis || cand.cost_thesis) && (
-                  <div className="ea-report-section">
-                    {cand.demand_thesis && <><h5 className="ea-detail__section-title">{t("expansionAdvisor.demandThesis")}</h5><p className="ea-detail__text">{String(cand.demand_thesis)}</p></>}
-                    {cand.cost_thesis && <><h5 className="ea-detail__section-title">{t("expansionAdvisor.costThesis")}</h5><p className="ea-detail__text">{String(cand.cost_thesis)}</p></>}
+                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.risksStrengths")}</h5>
+                  <div className="ea-memo-two-col">
+                    <div>
+                      <span className="ea-memo-callout__label" style={{ color: "var(--oak-success, #16a34a)" }}>{t("expansionAdvisor.topPositives")}</span>
+                      {positives.length > 0 ? <ul className="ea-memo-list">{positives.map((s, i) => <li key={i}>{s}</li>)}</ul> : <p className="ea-detail__text">—</p>}
+                    </div>
+                    <div>
+                      <span className="ea-memo-callout__label" style={{ color: "var(--oak-error, #d4183d)" }}>{t("expansionAdvisor.topRisks")}</span>
+                      {risks.length > 0 ? <ul className="ea-memo-list">{risks.map((s, i) => <li key={i}>{s}</li>)}</ul> : <p className="ea-detail__text">—</p>}
+                    </div>
                   </div>
-                )}
+                </div>
 
-                {/* Market research */}
+                {/* Market intelligence */}
                 {(mr.delivery_market_summary || mr.competitive_context || mr.district_fit_summary) && (
                   <div className="ea-report-section">
-                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.marketResearch")}</h5>
-                    {mr.delivery_market_summary && <><span className="ea-detail__kv-label">{t("expansionAdvisor.deliveryMarket")}</span><p className="ea-detail__text">{mr.delivery_market_summary}</p></>}
-                    {mr.competitive_context && <><span className="ea-detail__kv-label">{t("expansionAdvisor.competitiveContext")}</span><p className="ea-detail__text">{mr.competitive_context}</p></>}
-                    {mr.district_fit_summary && <><span className="ea-detail__kv-label">{t("expansionAdvisor.districtFit")}</span><p className="ea-detail__text">{mr.district_fit_summary}</p></>}
+                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoMarketIntel")}</h5>
+                    {mr.delivery_market_summary && <div className="ea-memo-callout ea-memo-callout--neutral"><span className="ea-memo-callout__label">{t("expansionAdvisor.deliveryMarket")}</span><p className="ea-detail__text">{mr.delivery_market_summary}</p></div>}
+                    {mr.competitive_context && <div className="ea-memo-callout ea-memo-callout--neutral"><span className="ea-memo-callout__label">{t("expansionAdvisor.competitiveContext")}</span><p className="ea-detail__text">{mr.competitive_context}</p></div>}
+                    {mr.district_fit_summary && <div className="ea-memo-callout ea-memo-callout--neutral"><span className="ea-memo-callout__label">{t("expansionAdvisor.districtFit")}</span><p className="ea-detail__text">{mr.district_fit_summary}</p></div>}
                   </div>
                 )}
 
