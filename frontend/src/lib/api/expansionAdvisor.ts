@@ -297,8 +297,23 @@ export async function createExpansionSearch(payload: ExpansionBrief): Promise<Ex
   const data = await readJson<ExpansionSearchResponse>(res);
   return { ...data, items: normalizeCandidates(data.items || []) };
 }
-export async function getExpansionSearch(searchId: string): Promise<ExpansionSearchDetailResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}`)); return readJson<ExpansionSearchDetailResponse>(res); }
-export async function getExpansionCandidates(searchId: string): Promise<ExpansionCandidatesListResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/candidates`)); const data = await readJson<ExpansionCandidatesListResponse>(res); return { ...data, items: normalizeCandidates(data.items || []) }; }
+export async function getExpansionSearch(searchId: string): Promise<ExpansionSearchDetailResponse> {
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}`));
+  const data = await readJson<ExpansionSearchDetailResponse>(res);
+  return {
+    ...data,
+    target_districts: data.target_districts || [],
+    request_json: data.request_json || {},
+    notes: data.notes || {},
+    existing_branches: data.existing_branches || [],
+    meta: data.meta || {},
+  };
+}
+export async function getExpansionCandidates(searchId: string): Promise<ExpansionCandidatesListResponse> {
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/candidates`));
+  const data = await readJson<ExpansionCandidatesListResponse>(res);
+  return { ...data, items: normalizeCandidates(data.items || []), meta: data.meta || {} };
+}
 export async function compareExpansionCandidates(searchId: string, candidateIds: string[]): Promise<CompareCandidatesResponse> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/candidates/compare"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search_id: searchId, candidate_ids: candidateIds }) }); const data = await readJson<CompareCandidatesResponse>(res); return { ...data, items: data.items || [], summary: data.summary || {} }; }
 export async function getExpansionCandidateMemo(candidateId: string): Promise<CandidateMemoResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo`)); const data = await readJson<CandidateMemoResponse>(res); return { ...data, brand_profile: data.brand_profile || {}, recommendation: data.recommendation || {}, candidate: data.candidate || {}, market_research: data.market_research || {} }; }
 export async function getExpansionRecommendationReport(searchId: string): Promise<RecommendationReportResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`)); const data = await readJson<RecommendationReportResponse>(res); return { ...data, top_candidates: data.top_candidates || [], assumptions: data.assumptions || {}, recommendation: data.recommendation || {}, brand_profile: data.brand_profile || {}, meta: data.meta || {} }; }
