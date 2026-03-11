@@ -590,3 +590,79 @@ def test_compare_includes_v61_fields():
     assert "top_positives_json" in result["items"][0]
     assert "top_risks_json" in result["items"][0]
     assert result["items"][0]["rank_position"] == 1
+
+
+def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch):
+    candidate_rows = []
+    for idx in range(120):
+        candidate_rows.append(
+            {
+                "parcel_id": f"p{idx}",
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 140 + (idx % 30),
+                "lon": 46.7 + idx * 0.0001,
+                "lat": 24.7 + idx * 0.0001,
+                "district": "Olaya",
+                "population_reach": 12000,
+                "competitor_count": 4,
+                "delivery_listing_count": 10,
+            }
+        )
+    db = FakeDB(candidate_rows=candidate_rows)
+
+    table_calls: list[str] = []
+    snapshot_calls = 0
+
+    def _fake_table_available(_db, table_name):
+        table_calls.append(table_name)
+        return True
+
+    def _fake_snapshot(*_args, **_kwargs):
+        nonlocal snapshot_calls
+        snapshot_calls += 1
+        return {
+            "parcel_area_m2": 150,
+            "parcel_perimeter_m": 250,
+            "district": "Olaya",
+            "landuse_label": "Commercial",
+            "landuse_code": "C",
+            "nearest_major_road_distance_m": 120,
+            "nearby_road_segment_count": 4,
+            "touches_road": True,
+            "nearby_parking_amenity_count": 2,
+            "provider_listing_count": 10,
+            "provider_platform_count": 3,
+            "competitor_count": 4,
+            "nearest_branch_distance_m": 2000,
+            "rent_source": "test",
+            "estimated_rent_sar_m2_year": 900,
+            "economics_score": 60,
+            "context_sources": {
+                "roads_table_available": True,
+                "parking_table_available": True,
+                "road_context_available": True,
+                "parking_context_available": True,
+            },
+            "missing_context": [],
+            "data_completeness_score": 100,
+        }
+
+    monkeypatch.setattr(expansion_service, "_table_available", _fake_table_available)
+    monkeypatch.setattr(expansion_service, "_candidate_feature_snapshot", _fake_snapshot)
+
+    items = run_expansion_search(
+        db,
+        search_id="s",
+        brand_name="b",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=300,
+        target_area_m2=180,
+        limit=10,
+    )
+
+    assert len(items) == 10
+    assert table_calls == ["public.planet_osm_line", "public.planet_osm_polygon"]
+    assert snapshot_calls == 50
