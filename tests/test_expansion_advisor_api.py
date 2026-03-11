@@ -94,6 +94,7 @@ def test_post_expansion_search_with_existing_branches(monkeypatch):
     assert body["items"][0]["district"] == "Olaya"
     assert body["items"][0]["cannibalization_score"] == 55.0
     assert body["meta"]["version"] == "expansion_advisor_v6.1"
+    assert body["items"][0]["score_breakdown_json"]["weights"] == {}
     assert db.committed is True
 
 
@@ -159,6 +160,7 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
     assert body["items"][0]["rank_position"] == 1
     assert "score_breakdown_json" in body["items"][0]
     assert "top_positives_json" in body["items"][0]
+    assert body["meta"]["version"] == "expansion_advisor_v6.1"
 
 
 def test_compare_endpoint_happy_path(monkeypatch):
@@ -304,6 +306,11 @@ def test_candidate_memo_endpoint_happy_path(monkeypatch):
                 "main_watchout": "Competition",
                 "gate_verdict": "pass",
             },
+            "market_research": {
+                "delivery_market_summary": "x",
+                "competitive_context": "y",
+                "district_fit_summary": "z",
+            },
         },
     )
 
@@ -342,7 +349,7 @@ def test_candidate_memo_endpoint_404(monkeypatch):
 def test_report_endpoint_happy_path(monkeypatch):
     db = DummyDB()
     from app.api import expansion_advisor as expansion_api
-    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id: {"search_id": "search-1", "recommendation": {"best_candidate_id": "c1", "best_pass_candidate_id": "c1", "best_confidence_candidate_id": "c2"}, "top_candidates": [{"id": "c1", "zoning_fit_score": 80, "frontage_score": 63, "access_score": 65, "parking_score": 59, "access_visibility_score": 64}]})
+    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id: {"search_id": "search-1", "meta": {"version": "expansion_advisor_v6.1"}, "recommendation": {"best_candidate_id": "c1", "runner_up_candidate_id": "c2", "best_pass_candidate_id": "c1", "best_confidence_candidate_id": "c2", "why_best": "", "main_risk": "", "best_format": "", "summary": "", "report_summary": ""}, "assumptions": {}, "top_candidates": [{"id": "c1", "final_score": 91, "rank_position": 1, "confidence_grade": "A", "gate_verdict": "pass", "top_positives_json": [], "top_risks_json": [], "feature_snapshot_json": {}, "score_breakdown_json": {"weights": {}, "inputs": {}, "weighted_components": {}, "final_score": 91}}]})
     client = _client_with_db(db)
     try:
         response = client.get("/v1/expansion-advisor/searches/search-1/report")
@@ -352,6 +359,7 @@ def test_report_endpoint_happy_path(monkeypatch):
     assert response.json()["recommendation"]["best_candidate_id"] == "c1"
     assert response.json()["recommendation"]["best_pass_candidate_id"] == "c1"
     assert response.json()["recommendation"]["best_confidence_candidate_id"] == "c2"
+    assert response.json()["meta"]["version"] == "expansion_advisor_v6.1"
 
 
 def test_report_endpoint_404(monkeypatch):

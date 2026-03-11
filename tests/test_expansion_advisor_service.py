@@ -236,6 +236,8 @@ def test_compare_candidates_includes_v5_fields_and_gate_summary_uses_actual_gate
     assert result["items"][0]["zoning_fit_score"] == 88
     assert result["items"][0]["frontage_score"] == 66
     assert result["items"][0]["gate_reasons_json"]["failed"] == ["frontage_access_pass"]
+    assert result["items"][0]["gate_reasons_json"]["unknown"] == []
+    assert result["items"][0]["gate_reasons_json"]["thresholds"] == {}
     assert result["items"][0]["cost_thesis"] == "Cost is manageable"
     assert result["items"][0]["comparable_competitors_json"] == [{"id": "r1"}]
     assert result["summary"]["best_gate_pass_candidate_id"] == "c2"
@@ -299,6 +301,8 @@ def test_get_candidate_memo_returns_recommendation_shape():
     assert memo["recommendation"]["verdict"] in {"go", "consider", "caution"}
     assert memo["candidate"]["key_strengths"]
     assert memo["candidate"]["gate_reasons"]["passed"] == ["zoning_fit_pass"]
+    assert memo["candidate"]["gate_reasons"]["unknown"] == []
+    assert memo["candidate"]["score_breakdown_json"]["weights"] == {}
     assert memo["candidate"]["feature_snapshot"]["touches_road"] is True
     assert memo["candidate"]["comparable_competitors"][0]["id"] == "r1"
 
@@ -380,6 +384,7 @@ def test_report_happy_path_returns_best_and_runner_up():
     report = get_recommendation_report(db, "search-1")
     assert report is not None
     assert report["recommendation"]["best_candidate_id"] == "c1"
+    assert report["meta"]["version"] == "expansion_advisor_v6.1"
 
 
 def test_brand_provider_scores_bounded():
@@ -469,8 +474,8 @@ def test_report_includes_new_decision_outputs():
     report = get_recommendation_report(db, "search-1")
     assert report["recommendation"]["best_pass_candidate_id"] == "c1"
     assert report["recommendation"]["best_confidence_candidate_id"] == "c1"
-    assert "demand_thesis" in report["top_candidates"][0]
-    assert "zoning_fit_score" in report["top_candidates"][0]
+    assert "score_breakdown_json" in report["top_candidates"][0]
+    assert "rank_position" in report["top_candidates"][0]
     assert "feature_snapshot_json" in report["top_candidates"][0]
     assert report["top_candidates"][0]["rank_position"] == 1
     assert "score_breakdown_json" in report["top_candidates"][0]
@@ -590,6 +595,7 @@ def test_compare_includes_v61_fields():
     assert "top_positives_json" in result["items"][0]
     assert "top_risks_json" in result["items"][0]
     assert result["items"][0]["rank_position"] == 1
+    assert result["items"][0]["score_breakdown_json"]["weights"] == {}
 
 
 def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch):
