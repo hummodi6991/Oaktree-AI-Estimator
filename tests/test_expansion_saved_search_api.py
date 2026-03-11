@@ -48,7 +48,7 @@ def test_saved_search_crud_endpoints(monkeypatch):
     monkeypatch.setattr(
         api,
         "get_saved_search",
-        lambda *_args, **_kwargs: {"id": "saved-1", "search": {"id": "search-1"}, "candidates": [{"id": "c1"}]},
+        lambda *_args, **_kwargs: {"id": "saved-1", "search_id": "search-1", "search": {"id": "search-1", "target_districts": [], "existing_branches": [], "meta": {"version": "expansion_advisor_v6.1", "excluded_sources": []}}, "candidates": [{"id": "c1"}]},
     )
     monkeypatch.setattr(api, "update_saved_search", lambda *_args, **_kwargs: {"id": "saved-1", "title": "Renamed"})
     monkeypatch.setattr(api, "delete_saved_search", lambda *_args, **_kwargs: True)

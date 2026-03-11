@@ -5,6 +5,8 @@ import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -31,7 +33,11 @@ router = APIRouter(prefix="/expansion-advisor", tags=["expansion-advisor"])
 
 
 
-class FlexibleModel(BaseModel):
+class StrictResponseModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class FlexibleResponseModel(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 class ExpansionAdvisorBBox(BaseModel):
@@ -81,13 +87,13 @@ class ExpansionAdvisorSearchRequest(BaseModel):
 
 
 
-class ExpansionAdvisorMeta(FlexibleModel):
+class ExpansionAdvisorMeta(StrictResponseModel):
     version: str = "expansion_advisor_v6.1"
     parcel_source: str | None = None
     excluded_sources: list[str] = Field(default_factory=list)
 
 
-class ExpansionAdvisorBrandProfileResponse(FlexibleModel):
+class ExpansionAdvisorBrandProfileResponse(StrictResponseModel):
     brand_name: str | None = None
     category: str | None = None
     service_model: str | None = None
@@ -99,19 +105,19 @@ class ExpansionAdvisorBrandProfileResponse(FlexibleModel):
     brand_profile: dict[str, Any] | None = None
 
 
-class ComparableCompetitorResponse(FlexibleModel):
+class ComparableCompetitorResponse(StrictResponseModel):
     id: str | None = None
     name: str | None = None
     score: float | None = None
 
 
-class CandidateFeatureSnapshotResponse(FlexibleModel):
+class CandidateFeatureSnapshotResponse(FlexibleResponseModel):
     context_sources: dict[str, Any] = Field(default_factory=dict)
     missing_context: list[Any] = Field(default_factory=list)
     data_completeness_score: int | float = 0
 
 
-class CandidateGateReasonsResponse(FlexibleModel):
+class CandidateGateReasonsResponse(StrictResponseModel):
     passed: list[str] = Field(default_factory=list)
     failed: list[str] = Field(default_factory=list)
     unknown: list[str] = Field(default_factory=list)
@@ -119,14 +125,14 @@ class CandidateGateReasonsResponse(FlexibleModel):
     explanations: dict[str, Any] = Field(default_factory=dict)
 
 
-class CandidateScoreBreakdownResponse(FlexibleModel):
+class CandidateScoreBreakdownResponse(StrictResponseModel):
     weights: dict[str, Any] = Field(default_factory=dict)
     inputs: dict[str, Any] = Field(default_factory=dict)
     weighted_components: dict[str, Any] = Field(default_factory=dict)
     final_score: float = 0.0
 
 
-class ExpansionCandidateResponse(FlexibleModel):
+class ExpansionCandidateResponse(FlexibleResponseModel):
     id: str | None = None
     candidate_id: str | None = None
     search_id: str | None = None
@@ -144,14 +150,33 @@ class ExpansionCandidateResponse(FlexibleModel):
     decision_summary: str = ""
 
 
-class ExpansionSearchResponse(FlexibleModel):
+
+class ExpansionSearchDetailResponse(StrictResponseModel):
+    id: str
+    created_at: datetime | None = None
+    brand_name: str | None = None
+    category: str | None = None
+    service_model: str | None = None
+    target_districts: list[str] = Field(default_factory=list)
+    min_area_m2: float | None = None
+    max_area_m2: float | None = None
+    target_area_m2: float | None = None
+    bbox: dict[str, Any] | None = None
+    request_json: dict[str, Any] | None = None
+    notes: dict[str, Any] | None = None
+    existing_branches: list[dict[str, Any]] = Field(default_factory=list)
+    brand_profile: dict[str, Any] | None = None
+    meta: ExpansionAdvisorMeta
+
+
+class ExpansionSearchResponse(StrictResponseModel):
     search_id: str | None = None
     brand_profile: ExpansionAdvisorBrandProfileResponse
     items: list[ExpansionCandidateResponse]
     meta: ExpansionAdvisorMeta
 
 
-class ExpansionCandidatesListResponse(FlexibleModel):
+class ExpansionCandidatesListResponse(StrictResponseModel):
     items: list[ExpansionCandidateResponse]
     meta: ExpansionAdvisorMeta
 
@@ -160,7 +185,7 @@ class CompareCandidateItemResponse(ExpansionCandidateResponse):
     pass
 
 
-class CompareSummaryResponse(FlexibleModel):
+class CompareSummaryResponse(StrictResponseModel):
     best_overall_candidate_id: str | None = None
     lowest_cannibalization_candidate_id: str | None = None
     highest_demand_candidate_id: str | None = None
@@ -175,12 +200,12 @@ class CompareSummaryResponse(FlexibleModel):
     best_gate_pass_candidate_id: str | None = None
 
 
-class CompareCandidatesResponse(FlexibleModel):
+class CompareCandidatesResponse(StrictResponseModel):
     items: list[CompareCandidateItemResponse]
     summary: CompareSummaryResponse
 
 
-class CandidateMemoCandidateResponse(FlexibleModel):
+class CandidateMemoCandidateResponse(FlexibleResponseModel):
     rank_position: int | None = None
     score_breakdown_json: CandidateScoreBreakdownResponse = Field(default_factory=CandidateScoreBreakdownResponse)
     top_positives_json: list[Any] = Field(default_factory=list)
@@ -191,7 +216,7 @@ class CandidateMemoCandidateResponse(FlexibleModel):
     comparable_competitors: list[Any] = Field(default_factory=list)
 
 
-class CandidateMemoRecommendationResponse(FlexibleModel):
+class CandidateMemoRecommendationResponse(StrictResponseModel):
     headline: str = ""
     verdict: str = ""
     best_use_case: str = ""
@@ -199,13 +224,13 @@ class CandidateMemoRecommendationResponse(FlexibleModel):
     gate_verdict: str = ""
 
 
-class CandidateMemoMarketResearchResponse(FlexibleModel):
+class CandidateMemoMarketResearchResponse(StrictResponseModel):
     delivery_market_summary: str = ""
     competitive_context: str = ""
     district_fit_summary: str = ""
 
 
-class CandidateMemoResponse(FlexibleModel):
+class CandidateMemoResponse(StrictResponseModel):
     candidate_id: str | None = None
     search_id: str | None = None
     brand_profile: dict[str, Any] = Field(default_factory=dict)
@@ -214,7 +239,7 @@ class CandidateMemoResponse(FlexibleModel):
     market_research: CandidateMemoMarketResearchResponse
 
 
-class RecommendationTopCandidateResponse(FlexibleModel):
+class RecommendationTopCandidateResponse(StrictResponseModel):
     id: str | None = None
     final_score: float | None = None
     rank_position: int | None = None
@@ -226,7 +251,7 @@ class RecommendationTopCandidateResponse(FlexibleModel):
     score_breakdown_json: CandidateScoreBreakdownResponse = Field(default_factory=CandidateScoreBreakdownResponse)
 
 
-class RecommendationSummaryResponse(FlexibleModel):
+class RecommendationSummaryResponse(StrictResponseModel):
     best_candidate_id: str | None = None
     runner_up_candidate_id: str | None = None
     best_pass_candidate_id: str | None = None
@@ -238,7 +263,7 @@ class RecommendationSummaryResponse(FlexibleModel):
     report_summary: str = ""
 
 
-class RecommendationReportResponse(FlexibleModel):
+class RecommendationReportResponse(StrictResponseModel):
     search_id: str | None = None
     brand_profile: dict[str, Any] = Field(default_factory=dict)
     meta: ExpansionAdvisorMeta
@@ -247,7 +272,7 @@ class RecommendationReportResponse(FlexibleModel):
     assumptions: dict[str, Any] = Field(default_factory=dict)
 
 
-class SavedSearchResponse(FlexibleModel):
+class SavedSearchResponse(StrictResponseModel):
     id: str | None = None
     search_id: str | None = None
     title: str | None = None
@@ -256,12 +281,14 @@ class SavedSearchResponse(FlexibleModel):
     selected_candidate_ids: list[str] | None = None
     filters_json: dict[str, Any] | None = None
     ui_state_json: dict[str, Any] | None = None
-    search: dict[str, Any] | None = None
-    candidates: list[dict[str, Any]] | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    search: ExpansionSearchDetailResponse | None = None
+    candidates: list[ExpansionCandidateResponse] | None = None
     brand_profile: dict[str, Any] | None = None
 
 
-class SavedSearchListResponse(FlexibleModel):
+class SavedSearchListResponse(StrictResponseModel):
     items: list[SavedSearchResponse]
 
 class CompareCandidatesRequest(BaseModel):
@@ -408,7 +435,7 @@ def create_expansion_search(
     }
 
 
-@router.get("/searches/{search_id}", response_model=dict[str, Any])
+@router.get("/searches/{search_id}", response_model=ExpansionSearchDetailResponse)
 def get_expansion_search(search_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     search = get_search(db, search_id)
     if not search:
