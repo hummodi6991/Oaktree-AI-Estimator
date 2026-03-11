@@ -3,15 +3,24 @@ import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 
 export default function ExpansionCandidateCard({ candidate, selected, shortlisted, onSelect, onToggleShortlist, onCompareToggle }: { candidate: ExpansionCandidate; selected: boolean; shortlisted: boolean; onSelect: () => void; onToggleShortlist: () => void; onCompareToggle: () => void }) {
   const { t } = useTranslation();
+  const pass = Boolean(candidate.gate_status_json?.overall_pass);
+  const comps = (candidate.comparable_competitors_json || []).slice(0, 3);
   return (
-    <div style={{ border: selected ? "2px solid #1a9c6c" : "1px solid #d8e1dd", borderRadius: 8, padding: 10 }}>
-      <strong>{candidate.district || t("common.notAvailable")}</strong>
+    <div style={{ border: selected ? "2px solid #1a9c6c" : "1px solid #d8e1dd", borderRadius: 8, padding: 10, display: "grid", gap: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <strong>{candidate.district || t("common.notAvailable")}</strong>
+        <div style={{ display: "flex", gap: 6 }}>
+          <span>{t("expansionAdvisor.confidenceGrade")} {candidate.confidence_grade || "-"}</span>
+          <span>{t("expansionAdvisor.gateVerdict")}: {pass ? t("expansionAdvisor.pass") : t("expansionAdvisor.fail")}</span>
+        </div>
+      </div>
       <div>{t("expansionAdvisor.candidateParcels")}: {candidate.parcel_id}</div>
-      <div>Score: {candidate.final_score ?? "-"}</div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        <span>Brand fit {candidate.brand_fit_score ?? "-"}</span>
-        <span>Delivery strength {candidate.provider_density_score ?? "-"}</span>
-        <span>Whitespace {candidate.provider_whitespace_score ?? "-"}</span>
+      <div>{t("expansionAdvisor.finalScore")}: {candidate.final_score ?? "-"}</div>
+      <div>{t("expansionAdvisor.demandThesis")}: {candidate.demand_thesis || "-"}</div>
+      <div>{t("expansionAdvisor.costThesis")}: {candidate.cost_thesis || "-"}</div>
+      <div>
+        <strong>{t("expansionAdvisor.comparableCompetitors")}</strong>
+        <ul>{comps.map((c, i) => <li key={`${c.id || c.name || i}`}>{c.name || t("common.notAvailable")} ({Math.round(c.distance_m || 0)}m)</li>)}</ul>
       </div>
       <button onClick={onSelect}>{t("expansionAdvisor.decisionMemo")}</button>
       <button onClick={onToggleShortlist}>{shortlisted ? t("expansionAdvisor.removeShortlist") : t("expansionAdvisor.shortlist")}</button>

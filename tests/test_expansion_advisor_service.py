@@ -3,6 +3,9 @@ from __future__ import annotations
 from app.services import expansion_advisor as expansion_service
 from app.services.expansion_advisor import (
     _brand_fit_score,
+    _candidate_gate_status,
+    _comparable_competitors,
+    _confidence_grade,
     _payback_band,
     compare_candidates,
     get_candidate_memo,
@@ -145,6 +148,80 @@ def test_compare_candidates_rejects_candidate_ids_from_other_search():
         raised = True
 
     assert raised is True
+
+
+def test_compare_candidates_includes_v5_fields_and_gate_summary_uses_actual_gate_data():
+    db = FakeDB(
+        compare_rows=[
+            {
+                "id": "c1",
+                "parcel_id": "p1",
+                "district": "Olaya",
+                "area_m2": 150,
+                "final_score": 80,
+                "demand_score": 75,
+                "whitespace_score": 70,
+                "fit_score": 85,
+                "confidence_score": 79,
+                "confidence_grade": "B",
+                "gate_status_json": {"overall_pass": False},
+                "demand_thesis": "Demand is moderate",
+                "cost_thesis": "Cost is manageable",
+                "comparable_competitors_json": [{"id": "r1"}],
+                "cannibalization_score": 40,
+                "distance_to_nearest_branch_m": 2300,
+                "estimated_rent_sar_m2_year": 960,
+                "estimated_annual_rent_sar": 144000,
+                "estimated_fitout_cost_sar": 390000,
+                "estimated_revenue_index": 71,
+                "economics_score": 68,
+                "estimated_payback_months": 24,
+                "payback_band": "promising",
+                "competitor_count": 3,
+                "delivery_listing_count": 12,
+                "population_reach": 14000,
+                "landuse_label": "Commercial",
+            },
+            {
+                "id": "c2",
+                "parcel_id": "p2",
+                "district": "Malqa",
+                "area_m2": 170,
+                "final_score": 74,
+                "demand_score": 69,
+                "whitespace_score": 62,
+                "fit_score": 73,
+                "confidence_score": 86,
+                "confidence_grade": "A",
+                "gate_status_json": {"overall_pass": True},
+                "demand_thesis": "Demand is strong",
+                "cost_thesis": "Cost is higher",
+                "comparable_competitors_json": [{"id": "r2"}],
+                "cannibalization_score": 35,
+                "distance_to_nearest_branch_m": 2500,
+                "estimated_rent_sar_m2_year": 990,
+                "estimated_annual_rent_sar": 168300,
+                "estimated_fitout_cost_sar": 430000,
+                "estimated_revenue_index": 70,
+                "economics_score": 64,
+                "estimated_payback_months": 27,
+                "payback_band": "promising",
+                "competitor_count": 4,
+                "delivery_listing_count": 11,
+                "population_reach": 13200,
+                "landuse_label": "Commercial",
+            },
+        ]
+    )
+
+    result = compare_candidates(db, "search-1", ["c1", "c2"])
+
+    assert result["items"][0]["confidence_grade"] == "B"
+    assert result["items"][0]["gate_status_json"] == {"overall_pass": False}
+    assert result["items"][0]["demand_thesis"] == "Demand is moderate"
+    assert result["items"][0]["cost_thesis"] == "Cost is manageable"
+    assert result["items"][0]["comparable_competitors_json"] == [{"id": "r1"}]
+    assert result["summary"]["best_gate_pass_candidate_id"] == "c2"
 
 
 def test_payback_band_assignment_logic():
@@ -307,3 +384,50 @@ def test_brand_fit_responds_to_multi_platform_presence():
 
     assert high_platform != low_platform
     assert high_platform > low_platform
+
+
+def test_gate_status_logic():
+    gates = _candidate_gate_status(
+        fit_score=60,
+        district="Olaya",
+        distance_to_nearest_branch_m=2200,
+        provider_density_score=50,
+        multi_platform_presence_score=40,
+        economics_score=65,
+        payback_band="promising",
+        brand_profile={"primary_channel": "delivery", "excluded_districts": ["Malqa"], "cannibalization_tolerance_m": 1800},
+    )
+    assert gates["overall_pass"] is True
+    assert gates["district_pass"] is True
+
+
+def test_confidence_grade_bounds():
+    assert _confidence_grade(confidence_score=88, district="Olaya", provider_platform_count=2, multi_platform_presence_score=50, rent_source="aqar_city") == "A"
+    assert _confidence_grade(confidence_score=70, district=None, provider_platform_count=None, multi_platform_presence_score=None, rent_source="conservative_default") in {"B", "C"}
+    assert _confidence_grade(confidence_score=30, district=None, provider_platform_count=None, multi_platform_presence_score=None, rent_source="conservative_default") == "D"
+
+
+def test_comparable_competitors_payload_shape():
+    class _DB:
+        def execute(self, *_args, **_kwargs):
+            return _Result([
+                {"id": "r1", "name": "A", "category": "burger", "district": "Olaya", "rating": 4.2, "review_count": 100, "distance_m": 320.5, "source": "google"}
+            ])
+
+    items = _comparable_competitors(_DB(), category="burger", lat=24.7, lon=46.7)
+    assert items
+    assert {"id", "name", "category", "district", "rating", "review_count", "distance_m", "source"}.issubset(items[0].keys())
+
+
+def test_report_includes_new_decision_outputs():
+    db = FakeDB(candidate_rows=[])
+    import app.services.expansion_advisor as svc
+    svc.get_search = lambda _db, _sid: {"id": "search-1", "service_model": "qsr", "brand_profile": {"expansion_goal": "balanced"}}
+    svc.get_candidates = lambda _db, _sid: [
+        {"id": "c1", "final_score": 90, "brand_fit_score": 82, "economics_score": 70, "area_m2": 170, "district": "Olaya", "key_risks_json": ["risk"], "confidence_grade": "A", "confidence_score": 85, "gate_status_json": {"overall_pass": True}, "demand_thesis": "d", "cost_thesis": "c", "comparable_competitors_json": [{"id": "x"}]},
+        {"id": "c2", "final_score": 86, "brand_fit_score": 79, "economics_score": 68, "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"], "confidence_grade": "B", "confidence_score": 72, "gate_status_json": {"overall_pass": False}, "demand_thesis": "d2", "cost_thesis": "c2", "comparable_competitors_json": []},
+    ]
+    report = get_recommendation_report(db, "search-1")
+    assert report["recommendation"]["best_pass_candidate_id"] == "c1"
+    assert report["recommendation"]["best_confidence_candidate_id"] == "c1"
+    assert "demand_thesis" in report["top_candidates"][0]

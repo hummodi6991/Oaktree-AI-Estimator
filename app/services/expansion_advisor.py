@@ -174,6 +174,178 @@ def _confidence_score(landuse_label: str | None, population_reach: float, delive
     return _clamp(score)
 
 
+def _candidate_gate_status(
+    *,
+    fit_score: float,
+    district: str | None,
+    distance_to_nearest_branch_m: float | None,
+    provider_density_score: float,
+    multi_platform_presence_score: float,
+    economics_score: float,
+    payback_band: str,
+    brand_profile: dict[str, Any],
+) -> dict[str, bool]:
+    area_fit_pass = fit_score >= 55.0
+    district_norm = normalize_district_key(district) if district else None
+    excluded = {
+        normalize_district_key(item)
+        for item in (brand_profile.get("excluded_districts") or [])
+        if normalize_district_key(item)
+    }
+    district_pass = not (district_norm and district_norm in excluded)
+
+    tolerance = _safe_float(brand_profile.get("cannibalization_tolerance_m"), 1800.0)
+    cannibalization_pass = distance_to_nearest_branch_m is None or distance_to_nearest_branch_m >= tolerance
+
+    primary_channel = (brand_profile.get("primary_channel") or "balanced").lower()
+    if primary_channel == "delivery":
+        delivery_market_pass = provider_density_score >= 45.0 and multi_platform_presence_score >= 35.0
+    else:
+        delivery_market_pass = True
+
+    economics_pass = economics_score >= 50.0 and str(payback_band or "").lower() != "weak"
+
+    checks = [area_fit_pass, cannibalization_pass, delivery_market_pass, economics_pass]
+    if district:
+        checks.append(district_pass)
+
+    return {
+        "area_fit_pass": area_fit_pass,
+        "district_pass": district_pass,
+        "cannibalization_pass": cannibalization_pass,
+        "delivery_market_pass": delivery_market_pass,
+        "economics_pass": economics_pass,
+        "overall_pass": all(checks),
+    }
+
+
+def _confidence_grade(
+    *,
+    confidence_score: float,
+    district: str | None,
+    provider_platform_count: int | None,
+    multi_platform_presence_score: float | None,
+    rent_source: str,
+) -> str:
+    adjusted = _safe_float(confidence_score)
+    if district:
+        adjusted += 2.5
+    if (provider_platform_count is not None and provider_platform_count > 0) or (multi_platform_presence_score is not None):
+        adjusted += 2.5
+    if rent_source != "conservative_default":
+        adjusted += 3.0
+
+    if adjusted >= 85.0:
+        return "A"
+    if adjusted >= 70.0:
+        return "B"
+    if adjusted >= 55.0:
+        return "C"
+    return "D"
+
+
+def _build_demand_thesis(
+    *,
+    demand_score: float,
+    population_reach: float,
+    provider_density_score: float,
+    provider_whitespace_score: float,
+    delivery_competition_score: float,
+) -> str:
+    demand_label = "strong" if demand_score >= 70 else "moderate" if demand_score >= 50 else "limited"
+    provider_label = "dense" if provider_density_score >= 65 else "steady" if provider_density_score >= 45 else "thin"
+    whitespace_label = "attractive" if provider_whitespace_score >= 60 else "balanced" if provider_whitespace_score >= 40 else "tight"
+    competition_label = "intense" if delivery_competition_score >= 65 else "manageable"
+    return (
+        f"Demand is {demand_label} (score {demand_score:.1f}) with population reach around {population_reach:.0f}; "
+        f"provider activity is {provider_label}, whitespace is {whitespace_label}, and delivery competition is {competition_label}."
+    )
+
+
+def _build_cost_thesis(
+    *,
+    estimated_rent_sar_m2_year: float,
+    estimated_annual_rent_sar: float,
+    estimated_fitout_cost_sar: float,
+    estimated_payback_months: float,
+    payback_band: str,
+) -> str:
+    return (
+        f"Estimated rent is {estimated_rent_sar_m2_year:.0f} SAR/m²/year (~{estimated_annual_rent_sar:,.0f} SAR annually), "
+        f"fit-out is ~{estimated_fitout_cost_sar:,.0f} SAR, and payback is {estimated_payback_months:.1f} months ({payback_band})."
+    )
+
+
+def _comparable_competitors(
+    db: Session,
+    *,
+    category: str,
+    lat: float | None,
+    lon: float | None,
+) -> list[dict[str, Any]]:
+    if lat is None or lon is None:
+        return []
+
+    rows = db.execute(
+        text(
+            """
+            WITH candidate_point AS (
+                SELECT ST_SetSRID(ST_MakePoint(:lon, :lat), 4326) AS geom
+            ),
+            poi_base AS (
+                SELECT
+                    rp.id,
+                    rp.name,
+                    rp.category,
+                    rp.district,
+                    rp.rating,
+                    rp.review_count,
+                    rp.source,
+                    COALESCE(
+                        rp.geom,
+                        CASE
+                            WHEN rp.lon IS NOT NULL AND rp.lat IS NOT NULL THEN ST_SetSRID(ST_MakePoint(rp.lon, rp.lat), 4326)
+                            ELSE NULL
+                        END
+                    ) AS poi_geom
+                FROM restaurant_poi rp
+                WHERE lower(COALESCE(rp.category, '')) = lower(:category)
+            )
+            SELECT
+                p.id,
+                p.name,
+                p.category,
+                p.district,
+                p.rating,
+                p.review_count,
+                p.source,
+                ST_Distance(p.poi_geom::geography, cp.geom::geography) AS distance_m
+            FROM poi_base p
+            CROSS JOIN candidate_point cp
+            WHERE p.poi_geom IS NOT NULL
+              AND ST_DWithin(p.poi_geom::geography, cp.geom::geography, 1500)
+            ORDER BY distance_m ASC
+            LIMIT 5
+            """
+        ),
+        {"lat": lat, "lon": lon, "category": category},
+    ).mappings().all()
+
+    return [
+        {
+            "id": row.get("id"),
+            "name": row.get("name"),
+            "category": row.get("category"),
+            "district": row.get("district"),
+            "rating": _safe_float(row.get("rating"), default=0.0) if row.get("rating") is not None else None,
+            "review_count": _safe_int(row.get("review_count"), default=0) if row.get("review_count") is not None else None,
+            "distance_m": round(_safe_float(row.get("distance_m"), default=0.0), 2),
+            "source": row.get("source"),
+        }
+        for row in rows
+    ]
+
+
 def _nearest_branch_distance_m(lat: float, lon: float, existing_branches: list[dict[str, Any]]) -> float | None:
     if not existing_branches:
         return None
@@ -849,6 +1021,43 @@ def run_expansion_search(
             service_model=service_model,
             area_m2=area_m2,
         )
+        gate_status_json = _candidate_gate_status(
+            fit_score=fit_score,
+            district=district,
+            distance_to_nearest_branch_m=distance_to_nearest_branch_m,
+            provider_density_score=provider_density_score,
+            multi_platform_presence_score=multi_platform_presence_score,
+            economics_score=economics_score,
+            payback_band=payback_band,
+            brand_profile=effective_brand_profile,
+        )
+        confidence_grade = _confidence_grade(
+            confidence_score=confidence_score,
+            district=district,
+            provider_platform_count=provider_platform_count,
+            multi_platform_presence_score=multi_platform_presence_score,
+            rent_source=rent_source,
+        )
+        demand_thesis = _build_demand_thesis(
+            demand_score=demand_score,
+            population_reach=population_reach,
+            provider_density_score=provider_density_score,
+            provider_whitespace_score=provider_whitespace_score,
+            delivery_competition_score=delivery_competition_score,
+        )
+        cost_thesis = _build_cost_thesis(
+            estimated_rent_sar_m2_year=estimated_rent_sar_m2_year,
+            estimated_annual_rent_sar=estimated_annual_rent_sar,
+            estimated_fitout_cost_sar=estimated_fitout_cost_sar,
+            estimated_payback_months=estimated_payback_months,
+            payback_band=payback_band,
+        )
+        comparable_competitors_json = _comparable_competitors(
+            db,
+            category=category,
+            lat=_safe_float(row.get("lat")),
+            lon=_safe_float(row.get("lon")),
+        )
         explanation = _build_explanation(
             area_m2=area_m2,
             population_reach=population_reach,
@@ -903,6 +1112,11 @@ def run_expansion_search(
                 "delivery_competition_score": round(delivery_competition_score, 2),
                 "estimated_payback_months": round(estimated_payback_months, 2),
                 "payback_band": payback_band,
+                "gate_status_json": gate_status_json,
+                "confidence_grade": confidence_grade,
+                "demand_thesis": demand_thesis,
+                "cost_thesis": cost_thesis,
+                "comparable_competitors_json": comparable_competitors_json,
                 "decision_summary": decision_summary,
                 "key_risks_json": key_risks_json,
                 "key_strengths_json": key_strengths_json,
@@ -950,6 +1164,11 @@ def run_expansion_search(
             delivery_competition_score,
             estimated_payback_months,
             payback_band,
+            gate_status_json,
+            confidence_grade,
+            demand_thesis,
+            cost_thesis,
+            comparable_competitors_json,
             decision_summary,
             key_risks_json,
             key_strengths_json,
@@ -987,6 +1206,11 @@ def run_expansion_search(
             :delivery_competition_score,
             :estimated_payback_months,
             :payback_band,
+            CAST(:gate_status_json AS jsonb),
+            :confidence_grade,
+            :demand_thesis,
+            :cost_thesis,
+            CAST(:comparable_competitors_json AS jsonb),
             :decision_summary,
             CAST(:key_risks_json AS jsonb),
             CAST(:key_strengths_json AS jsonb),
@@ -1004,6 +1228,8 @@ def run_expansion_search(
                 "explanation": json.dumps(candidate["explanation"], ensure_ascii=False),
                 "key_risks_json": json.dumps(candidate["key_risks_json"], ensure_ascii=False),
                 "key_strengths_json": json.dumps(candidate["key_strengths_json"], ensure_ascii=False),
+                "gate_status_json": json.dumps(candidate["gate_status_json"], ensure_ascii=False),
+                "comparable_competitors_json": json.dumps(candidate["comparable_competitors_json"], ensure_ascii=False),
             },
         )
 
@@ -1080,6 +1306,11 @@ def get_candidates(db: Session, search_id: str) -> list[dict[str, Any]]:
                 whitespace_score,
                 fit_score,
                 confidence_score,
+                confidence_grade,
+                gate_status_json,
+                demand_thesis,
+                cost_thesis,
+                comparable_competitors_json,
                 cannibalization_score,
                 distance_to_nearest_branch_m,
                 estimated_rent_sar_m2_year,
@@ -1335,6 +1566,11 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 whitespace_score,
                 fit_score,
                 confidence_score,
+                confidence_grade,
+                gate_status_json,
+                demand_thesis,
+                cost_thesis,
+                comparable_competitors_json,
                 cannibalization_score,
                 distance_to_nearest_branch_m,
                 estimated_rent_sar_m2_year,
@@ -1394,6 +1630,11 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 "whitespace_score": row.get("whitespace_score"),
                 "fit_score": row.get("fit_score"),
                 "confidence_score": row.get("confidence_score"),
+                "confidence_grade": row.get("confidence_grade"),
+                "gate_status_json": row.get("gate_status_json") or {},
+                "demand_thesis": row.get("demand_thesis"),
+                "cost_thesis": row.get("cost_thesis"),
+                "comparable_competitors_json": row.get("comparable_competitors_json") or [],
                 "cannibalization_score": row.get("cannibalization_score"),
                 "distance_to_nearest_branch_m": row.get("distance_to_nearest_branch_m"),
                 "estimated_rent_sar_m2_year": row.get("estimated_rent_sar_m2_year"),
@@ -1427,6 +1668,16 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
     strongest_whitespace = max(items, key=lambda item: _safe_float(item.get("provider_whitespace_score")))["candidate_id"]
     lowest_rent_burden = min(items, key=lambda item: _safe_float(item.get("estimated_annual_rent_sar"), 10**12))["candidate_id"]
     fastest_payback = min(items, key=lambda item: _safe_float(item.get("estimated_payback_months"), 10**6))["candidate_id"]
+    grade_order = {"A": 4, "B": 3, "C": 2, "D": 1}
+    most_confident = max(
+        items,
+        key=lambda item: (
+            grade_order.get(str(item.get("confidence_grade") or "D"), 0),
+            _safe_float(item.get("confidence_score")),
+        ),
+    )["candidate_id"]
+    pass_items = [item for item in items if bool((item.get("gate_status_json") or {}).get("overall_pass"))]
+    best_gate_pass = max(pass_items or items, key=lambda item: _safe_float(item.get("final_score")))["candidate_id"]
 
     return {
         "items": items,
@@ -1441,6 +1692,8 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "strongest_whitespace_candidate_id": strongest_whitespace,
             "lowest_rent_burden_candidate_id": lowest_rent_burden,
             "fastest_payback_candidate_id": fastest_payback,
+            "most_confident_candidate_id": most_confident,
+            "best_gate_pass_candidate_id": best_gate_pass,
         },
     }
 
@@ -1470,6 +1723,11 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
                 c.whitespace_score,
                 c.fit_score,
                 c.confidence_score,
+                c.confidence_grade,
+                c.gate_status_json,
+                c.demand_thesis,
+                c.cost_thesis,
+                c.comparable_competitors_json,
                 c.cannibalization_score,
                 c.distance_to_nearest_branch_m,
                 c.estimated_rent_sar_m2_year,
@@ -1551,6 +1809,11 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "whitespace_score": candidate.get("whitespace_score"),
             "fit_score": candidate.get("fit_score"),
             "confidence_score": candidate.get("confidence_score"),
+            "confidence_grade": candidate.get("confidence_grade"),
+            "gate_status": candidate.get("gate_status_json") or {},
+            "demand_thesis": candidate.get("demand_thesis"),
+            "cost_thesis": candidate.get("cost_thesis"),
+            "comparable_competitors": candidate.get("comparable_competitors_json") or [],
             "cannibalization_score": candidate.get("cannibalization_score"),
             "distance_to_nearest_branch_m": candidate.get("distance_to_nearest_branch_m"),
             "estimated_rent_sar_m2_year": candidate.get("estimated_rent_sar_m2_year"),
@@ -1568,6 +1831,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "verdict": verdict,
             "best_use_case": best_use_case,
             "main_watchout": main_watchout,
+            "gate_verdict": "pass" if bool((candidate.get("gate_status_json") or {}).get("overall_pass")) else "fail",
         },
         "market_research": {
             "delivery_market_summary": delivery_market_summary,
@@ -1603,13 +1867,30 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     top = sorted(candidates, key=lambda item: _safe_float(item.get("final_score")), reverse=True)[:3]
     best = top[0]
     runner = top[1] if len(top) > 1 else None
+    grade_order = {"A": 4, "B": 3, "C": 2, "D": 1}
+    best_confidence = max(
+        candidates,
+        key=lambda item: (
+            grade_order.get(str(item.get("confidence_grade") or "D"), 0),
+            _safe_float(item.get("confidence_score")),
+        ),
+    )
+    pass_candidates = [c for c in candidates if bool((c.get("gate_status_json") or {}).get("overall_pass"))]
+    best_pass = max(pass_candidates or candidates, key=lambda item: _safe_float(item.get("final_score")))
+    top_payload = []
+    for item in top:
+        payload = dict(item)
+        payload["comparable_competitors_json"] = (payload.get("comparable_competitors_json") or [])[:3]
+        top_payload.append(payload)
     return {
         "search_id": search_id,
         "brand_profile": search.get("brand_profile") or {},
-        "top_candidates": top,
+        "top_candidates": top_payload,
         "recommendation": {
             "best_candidate_id": best.get("id"),
             "runner_up_candidate_id": runner.get("id") if runner else None,
+            "best_pass_candidate_id": best_pass.get("id"),
+            "best_confidence_candidate_id": best_confidence.get("id"),
             "why_best": f"Highest blended final score with brand fit {_safe_float(best.get('brand_fit_score')):.1f}/100 and economics {_safe_float(best.get('economics_score')):.1f}/100.",
             "main_risk": (best.get("key_risks_json") or ["Validate lease and execution assumptions"])[0],
             "best_format": _recommended_use_case(str(search.get("service_model") or "qsr"), _safe_float(best.get("area_m2"))),

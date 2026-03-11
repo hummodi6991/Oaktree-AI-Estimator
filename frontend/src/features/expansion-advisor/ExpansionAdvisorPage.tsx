@@ -26,6 +26,9 @@ type CompareResponseItem = {
   payback_band?: string;
   brand_fit_score?: number;
   provider_density_score?: number;
+  provider_whitespace_score?: number;
+  confidence_grade?: string;
+  gate_status_json?: Record<string, boolean>;
 };
 
 type CompareResponse = {
@@ -180,8 +183,17 @@ export default function ExpansionAdvisorPage({
           >
             {t("expansionAdvisor.saveSearch")}
           </button>
-          <button onClick={async () => { if (!searchId) return; setReport(await getExpansionRecommendationReport(searchId)); }}>Load report</button>
+          <button onClick={async () => { if (!searchId) return; setReport(await getExpansionRecommendationReport(searchId)); }}>{t("expansionAdvisor.loadReport")}</button>
         </div>
+
+        {candidates.length ? (
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <span>{t("expansionAdvisor.totalCandidates")}: {candidates.length}</span>
+            <span>{t("expansionAdvisor.passGates")}: {candidates.filter((c) => c.gate_status_json?.overall_pass).length}</span>
+            <span>{t("expansionAdvisor.topDistrict")}: {(candidates.find((c) => c.district)?.district) || "-"}</span>
+            <span>{t("expansionAdvisor.selectedStrategy")}: {(brief.brand_profile?.primary_channel || "-")}/{(brief.brand_profile?.expansion_goal || "-")}</span>
+          </div>
+        ) : null}
 
         {getCompareRows(compareResult).length ? (
           <div>
@@ -191,9 +203,12 @@ export default function ExpansionAdvisorPage({
                 <tr>
                   <th>candidate_id</th>
                   <th>final_score</th>
+                  <th>confidence_grade</th>
+                  <th>gate_pass</th>
                   <th>economics_score</th>
                   <th>brand_fit_score</th>
-                  <th>delivery_market_strength</th>
+                  <th>provider_density_score</th>
+                  <th>provider_whitespace_score</th>
                   <th>estimated_payback_months</th>
                   <th>payback_band</th>
                 </tr>
@@ -203,9 +218,12 @@ export default function ExpansionAdvisorPage({
                   <tr key={item.candidate_id}>
                     <td>{item.candidate_id}</td>
                     <td>{item.final_score ?? "-"}</td>
+                    <td>{item.confidence_grade ?? "-"}</td>
+                    <td>{item.gate_status_json?.overall_pass ? "pass" : "fail"}</td>
                     <td>{item.economics_score ?? "-"}</td>
                     <td>{item.brand_fit_score ?? "-"}</td>
                     <td>{item.provider_density_score ?? "-"}</td>
+                    <td>{item.provider_whitespace_score ?? "-"}</td>
                     <td>{item.estimated_payback_months ?? "-"}</td>
                     <td>{item.payback_band ?? "-"}</td>
                   </tr>
