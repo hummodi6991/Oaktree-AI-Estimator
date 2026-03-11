@@ -555,6 +555,23 @@
     "gateReasons": "أسباب البوابات",
     "featureSnapshot": "ملخص الخصائص",
     "passed": "ناجح",
-    "failed": "فاشل"
+    "failed": "فاشل",
+    "economicsScore": "درجة الجدوى الاقتصادية",
+    "topPositives": "أهم الإيجابيات",
+    "topRisks": "أهم المخاطر",
+    "removeCompare": "إزالة من المقارنة",
+    "bestUseCase": "أفضل حالة استخدام",
+    "mainWatchout": "أهم ملاحظة",
+    "candidateSummary": "ملخص الموقع",
+    "unknown": "غير معروف",
+    "scoreBreakdown": "تفصيل الدرجات",
+    "assumptions": "الافتراضات",
+    "loadingReport": "جاري تحميل التقرير…",
+    "loadingSaved": "جاري تحميل الدراسات المحفوظة…",
+    "errorSearch": "تعذر تنفيذ البحث.",
+    "errorMemo": "تعذر تحميل المذكرة.",
+    "errorCompare": "تعذر مقارنة المواقع.",
+    "errorReport": "تعذر تحميل التقرير.",
+    "errorSavedLoad": "تعذر تحميل الدراسة المحفوظة."
   }
 }

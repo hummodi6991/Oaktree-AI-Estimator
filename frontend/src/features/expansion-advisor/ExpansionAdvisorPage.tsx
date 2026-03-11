@@ -8,8 +8,14 @@ import {
   getExpansionRecommendationReport,
   getSavedExpansionSearch,
   listSavedExpansionSearches,
+  normalizeCandidates,
+  type CandidateMemoResponse,
+  type CompareCandidateItem,
+  type CompareCandidatesResponse,
   type ExpansionBrief,
   type ExpansionCandidate,
+  type RecommendationReportResponse,
+  type SavedExpansionSearch,
 } from "../../lib/api/expansionAdvisor";
 import ExpansionBriefForm, { defaultBrief } from "./ExpansionBriefForm";
 import ExpansionResultsPanel from "./ExpansionResultsPanel";
@@ -18,44 +24,15 @@ import ExpansionMemoPanel from "./ExpansionMemoPanel";
 import SavedSearchesPanel from "./SavedSearchesPanel";
 import ExpansionReportPanel from "./ExpansionReportPanel";
 
-type CompareResponseItem = {
-  candidate_id: string;
-  final_score?: number;
-  economics_score?: number;
-  estimated_payback_months?: number;
-  payback_band?: string;
-  brand_fit_score?: number;
-  provider_density_score?: number;
-  provider_whitespace_score?: number;
-  zoning_fit_score?: number;
-  frontage_score?: number;
-  access_score?: number;
-  parking_score?: number;
-  access_visibility_score?: number;
-  confidence_grade?: string;
-  gate_status_json?: Record<string, boolean>;
-};
-
-type CompareResponse = {
-  items?: CompareResponseItem[];
-};
-
-export function restoreSavedUiState(saved: {
-  search_id?: string;
-  selected_candidate_ids?: string[] | null;
-  ui_state_json?: Record<string, unknown> | null;
-  candidates?: ExpansionCandidate[];
-}) {
+export function restoreSavedUiState(saved: SavedExpansionSearch) {
   const uiState = (saved.ui_state_json || {}) as Record<string, unknown>;
   const compareIds = Array.isArray(uiState.compare_ids) ? (uiState.compare_ids as string[]) : [];
   const selectedId = typeof uiState.selected_candidate_id === "string" ? uiState.selected_candidate_id : null;
-  const selectedCandidate = selectedId
-    ? (saved.candidates || []).find((item) => item.id === selectedId) || null
-    : null;
+  const selectedCandidate = selectedId ? (saved.candidates || []).find((item) => item.id === selectedId) || null : null;
 
   return {
     searchId: saved.search_id || "",
-    shortlistIds: (saved.selected_candidate_ids as string[]) || [],
+    shortlistIds: saved.selected_candidate_ids || [],
     compareIds,
     selectedCandidate,
   };
@@ -65,8 +42,7 @@ export function shouldLoadMemoFromMapSelection(externalCandidateId: string | nul
   return Boolean(externalCandidateId && externalCandidateId !== selectedCandidateId);
 }
 
-
-export function getCompareRows(compareResult: CompareResponse | null): CompareResponseItem[] {
+export function getCompareRows(compareResult: CompareCandidatesResponse | null): CompareCandidateItem[] {
   return compareResult?.items || [];
 }
 
@@ -81,17 +57,25 @@ export default function ExpansionAdvisorPage({
 }) {
   const { t } = useTranslation();
   const [brief, setBrief] = useState<ExpansionBrief>(defaultBrief);
-  const [loadingSearch, setLoadingSearch] = useState(false);
   const [candidates, setCandidates] = useState<ExpansionCandidate[]>([]);
   const [searchId, setSearchId] = useState<string>("");
   const [selectedCandidate, setSelectedCandidate] = useState<ExpansionCandidate | null>(null);
   const [shortlistIds, setShortlistIds] = useState<string[]>([]);
   const [compareIds, setCompareIds] = useState<string[]>([]);
-  const [memo, setMemo] = useState<Record<string, unknown> | null>(null);
+  const [memo, setMemo] = useState<CandidateMemoResponse | null>(null);
+  const [savedItems, setSavedItems] = useState<SavedExpansionSearch[]>([]);
+  const [compareResult, setCompareResult] = useState<CompareCandidatesResponse | null>(null);
+  const [report, setReport] = useState<RecommendationReportResponse | null>(null);
+  const [loadingSearch, setLoadingSearch] = useState(false);
   const [loadingMemo, setLoadingMemo] = useState(false);
-  const [savedItems, setSavedItems] = useState<any[]>([]);
-  const [compareResult, setCompareResult] = useState<CompareResponse | null>(null);
-  const [report, setReport] = useState<Record<string, unknown> | null>(null);
+  const [loadingCompare, setLoadingCompare] = useState(false);
+  const [loadingReport, setLoadingReport] = useState(false);
+  const [loadingSaved, setLoadingSaved] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [memoError, setMemoError] = useState<string | null>(null);
+  const [compareError, setCompareError] = useState<string | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [savedLoadError, setSavedLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     listSavedExpansionSearches().then((res) => setSavedItems(res.items || [])).catch(() => {});
@@ -104,11 +88,18 @@ export default function ExpansionAdvisorPage({
   const onSubmitBrief = async (nextBrief: ExpansionBrief) => {
     setBrief(nextBrief);
     setLoadingSearch(true);
+    setSearchError(null);
     try {
       const result = await createExpansionSearch(nextBrief);
       setSearchId(result.search_id);
-      setCandidates(result.items || []);
+      setCandidates(normalizeCandidates(result.items || []));
       setCompareResult(null);
+      setMemo(null);
+      setReport(null);
+      setSelectedCandidate(null);
+      setCompareIds([]);
+    } catch {
+      setSearchError(t("expansionAdvisor.errorSearch"));
     } finally {
       setLoadingSearch(false);
     }
@@ -118,8 +109,11 @@ export default function ExpansionAdvisorPage({
     setSelectedCandidate(candidate);
     onSelectedCandidateChange(candidate);
     setLoadingMemo(true);
+    setMemoError(null);
     try {
       setMemo(await getExpansionCandidateMemo(candidate.id));
+    } catch {
+      setMemoError(t("expansionAdvisor.errorMemo"));
     } finally {
       setLoadingMemo(false);
     }
@@ -132,30 +126,41 @@ export default function ExpansionAdvisorPage({
     void handleSelectCandidate(target);
   }, [externalSelectedCandidateId, candidates, selectedCandidate?.id]);
 
-  const compareEnabled = compareIds.length >= 2 && compareIds.length <= 6;
   const title = useMemo(() => `${brief.brand_name || t("expansionAdvisor.title")} Study`, [brief.brand_name, t]);
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 16 }}>
       <div style={{ display: "grid", gap: 16 }}>
         <ExpansionBriefForm initialValue={brief} loading={loadingSearch} onSubmit={onSubmitBrief} />
+        {searchError ? <small>{searchError}</small> : null}
         <h4>{t("expansionAdvisor.savedStudies")}</h4>
+        {savedLoadError ? <small>{savedLoadError}</small> : null}
         <SavedSearchesPanel
           items={savedItems}
+          loading={loadingSaved}
           onOpen={async (savedId) => {
+            setLoadingSaved(true);
+            setSavedLoadError(null);
             try {
               const saved = await getSavedExpansionSearch(savedId);
-              if (saved.filters_json) setBrief(saved.filters_json as ExpansionBrief);
-              if (saved.candidates) setCandidates(saved.candidates);
               const restored = restoreSavedUiState(saved);
               setSearchId(restored.searchId);
               setShortlistIds(restored.shortlistIds);
               setCompareIds(restored.compareIds);
+              setCandidates(normalizeCandidates(saved.candidates || []));
+              if (saved.filters_json) setBrief(saved.filters_json as ExpansionBrief);
+              setMemo(null);
+              setReport(null);
               if (restored.selectedCandidate) {
                 void handleSelectCandidate(restored.selectedCandidate);
+              } else {
+                setSelectedCandidate(null);
+                onSelectedCandidateChange(null);
               }
             } catch {
-              // noop
+              setSavedLoadError(t("expansionAdvisor.errorSavedLoad"));
+            } finally {
+              setLoadingSaved(false);
             }
           }}
         />
@@ -164,10 +169,20 @@ export default function ExpansionAdvisorPage({
         <div style={{ display: "flex", gap: 8 }}>
           <ExpansionComparePanel
             compareIds={compareIds}
+            result={compareResult}
+            loading={loadingCompare}
+            error={compareError}
             onCompare={async () => {
-              if (!compareEnabled || !searchId) return;
-              const result = await compareExpansionCandidates(searchId, compareIds);
-              setCompareResult(result as CompareResponse);
+              if (!searchId) return;
+              setLoadingCompare(true);
+              setCompareError(null);
+              try {
+                setCompareResult(await compareExpansionCandidates(searchId, compareIds));
+              } catch {
+                setCompareError(t("expansionAdvisor.errorCompare"));
+              } finally {
+                setLoadingCompare(false);
+              }
             }}
           />
           <button
@@ -188,7 +203,7 @@ export default function ExpansionAdvisorPage({
           >
             {t("expansionAdvisor.saveSearch")}
           </button>
-          <button onClick={async () => { if (!searchId) return; setReport(await getExpansionRecommendationReport(searchId)); }}>{t("expansionAdvisor.loadReport")}</button>
+          <button onClick={async () => { if (!searchId) return; setLoadingReport(true); setReportError(null); try { setReport(await getExpansionRecommendationReport(searchId)); } catch { setReportError(t("expansionAdvisor.errorReport")); } finally { setLoadingReport(false); } }}>{t("expansionAdvisor.loadReport")}</button>
         </div>
 
         {candidates.length ? (
@@ -197,54 +212,6 @@ export default function ExpansionAdvisorPage({
             <span>{t("expansionAdvisor.passGates")}: {candidates.filter((c) => c.gate_status_json?.overall_pass).length}</span>
             <span>{t("expansionAdvisor.topDistrict")}: {(candidates.find((c) => c.district)?.district) || "-"}</span>
             <span>{t("expansionAdvisor.selectedStrategy")}: {(brief.brand_profile?.primary_channel || "-")}/{(brief.brand_profile?.expansion_goal || "-")}</span>
-          </div>
-        ) : null}
-
-        {getCompareRows(compareResult).length ? (
-          <div>
-            <h4>{t("expansionAdvisor.compareCandidates")}</h4>
-            <table>
-              <thead>
-                <tr>
-                  <th>candidate_id</th>
-                  <th>final_score</th>
-                  <th>confidence_grade</th>
-                  <th>gate_pass</th>
-                  <th>zoning_fit_score</th>
-                  <th>frontage_score</th>
-                  <th>access_score</th>
-                  <th>parking_score</th>
-                  <th>access_visibility_score</th>
-                  <th>economics_score</th>
-                  <th>brand_fit_score</th>
-                  <th>provider_density_score</th>
-                  <th>provider_whitespace_score</th>
-                  <th>estimated_payback_months</th>
-                  <th>payback_band</th>
-                </tr>
-              </thead>
-              <tbody>
-                {getCompareRows(compareResult).map((item) => (
-                  <tr key={item.candidate_id}>
-                    <td>{item.candidate_id}</td>
-                    <td>{item.final_score ?? "-"}</td>
-                    <td>{item.confidence_grade ?? "-"}</td>
-                    <td>{item.gate_status_json?.overall_pass ? "pass" : "fail"}</td>
-                    <td>{item.zoning_fit_score ?? "-"}</td>
-                    <td>{item.frontage_score ?? "-"}</td>
-                    <td>{item.access_score ?? "-"}</td>
-                    <td>{item.parking_score ?? "-"}</td>
-                    <td>{item.access_visibility_score ?? "-"}</td>
-                    <td>{item.economics_score ?? "-"}</td>
-                    <td>{item.brand_fit_score ?? "-"}</td>
-                    <td>{item.provider_density_score ?? "-"}</td>
-                    <td>{item.provider_whitespace_score ?? "-"}</td>
-                    <td>{item.estimated_payback_months ?? "-"}</td>
-                    <td>{item.payback_band ?? "-"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         ) : null}
 
@@ -267,8 +234,10 @@ export default function ExpansionAdvisorPage({
         ) : (
           <div>{loadingSearch ? t("expansionAdvisor.loadingSearch") : t("expansionAdvisor.noCandidates")}</div>
         )}
+        {memoError ? <small>{memoError}</small> : null}
         <ExpansionMemoPanel memo={memo} loading={loadingMemo} />
-        <ExpansionReportPanel report={report as any} />
+        {reportError ? <small>{reportError}</small> : null}
+        <ExpansionReportPanel report={report} loading={loadingReport} />
       </div>
     </div>
   );
