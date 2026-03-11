@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import ExpansionComparePanel, { getOrderedCompareSummaryEntries } from "./ExpansionComparePanel";
 import ExpansionResultsPanel from "./ExpansionResultsPanel";
-import ExpansionReportPanel from "./ExpansionReportPanel";
+import ExpansionReportPanel, { triggerReportCandidateSelect } from "./ExpansionReportPanel";
 import ExpansionMemoPanel from "./ExpansionMemoPanel";
 import en from "../../i18n/en.json";
 import {
@@ -206,22 +206,11 @@ describe("Expansion advisor UI behavior", () => {
     expect(html).toContain("cost");
   });
 
-  it("report candidate click wiring uses callback", () => {
+  it("report candidate click wiring helper calls callback", () => {
     const selected: string[] = [];
-    renderToStaticMarkup(
-      <ExpansionReportPanel
-        loading={false}
-        onSelectCandidateId={(id) => selected.push(id)}
-        report={{
-          meta: {},
-          recommendation: {},
-          top_candidates: [{ id: "c42", final_score: 88 }],
-          assumptions: {},
-          brand_profile: {},
-        }}
-      />,
-    );
-    expect(selected).toEqual([]);
+    triggerReportCandidateSelect("c42", (id) => selected.push(id));
+    triggerReportCandidateSelect(undefined, (id) => selected.push(id));
+    expect(selected).toEqual(["c42"]);
   });
 
   it("saved hydration helpers restore shortlist/compare/selected ids", () => {

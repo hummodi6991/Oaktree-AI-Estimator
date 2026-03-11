@@ -199,6 +199,8 @@ export default function ExpansionAdvisorPage({
     setCompareResult(resetState.compareResult);
     setMemo(resetState.memo);
     setReport(resetState.report);
+    setCandidates([]);
+    setSearchId("");
     setMemoError(resetState.memoError);
     setReportError(resetState.reportError);
     setCompareError(resetState.compareError);
@@ -291,6 +293,8 @@ export default function ExpansionAdvisorPage({
     if (!target) {
       if (selectedCandidate !== null) {
         setSelectedCandidate(null);
+        setMemo(null);
+        setMemoError(null);
         onSelectedCandidateChange(null);
       }
       return;

@@ -5,6 +5,11 @@ function assumptionRows(assumptions: Record<string, unknown> | undefined) {
   return Object.entries(assumptions || {});
 }
 
+export function triggerReportCandidateSelect(candidateId: string | undefined, onSelectCandidateId?: (candidateId: string) => void) {
+  if (!candidateId) return;
+  onSelectCandidateId?.(candidateId);
+}
+
 export default function ExpansionReportPanel({ report, loading, onSelectCandidateId }: { report: RecommendationReportResponse | null; loading: boolean; onSelectCandidateId?: (candidateId: string) => void }) {
   const { t } = useTranslation();
   if (loading) return <div>{t("expansionAdvisor.loadingReport")}</div>;
@@ -31,7 +36,7 @@ export default function ExpansionReportPanel({ report, loading, onSelectCandidat
             type="button"
             disabled={!item.id}
             onClick={() => {
-              if (item.id) onSelectCandidateId?.(item.id);
+              triggerReportCandidateSelect(item.id, onSelectCandidateId);
             }}
             style={{ border: "1px solid #d8e1dd", borderRadius: 6, padding: 8, textAlign: "left", background: "#fff" }}
           >
