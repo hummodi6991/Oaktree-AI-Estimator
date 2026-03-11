@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
+import type { RecommendationReportResponse, ExpansionCandidate, CandidateMemoResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
+import CopySummaryBlock from "./CopySummaryBlock";
 
 export function triggerReportCandidateSelect(candidateId: string | undefined, onSelectCandidateId?: (candidateId: string) => void) {
   if (!candidateId) return;
@@ -11,29 +13,41 @@ export function triggerReportCandidateSelect(candidateId: string | undefined, on
 export default function ExpansionReportPanel({
   report,
   loading,
+  leadCandidateId,
+  leadCandidate,
+  memo,
   onSelectCandidateId,
   onClose,
 }: {
   report: RecommendationReportResponse | null;
   loading: boolean;
+  leadCandidateId?: string | null;
+  leadCandidate?: ExpansionCandidate | null;
+  memo?: CandidateMemoResponse | null;
   onSelectCandidateId?: (candidateId: string) => void;
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
+  const [presentationMode, setPresentationMode] = useState(false);
 
   if (!report && !loading) return null;
 
   return (
     <div className="ea-drawer-backdrop" onClick={() => onClose?.()}>
-      <div className="ea-drawer ea-drawer--wide" onClick={(e) => e.stopPropagation()}>
+      <div className={`ea-drawer ea-drawer--wide${presentationMode ? " ea-drawer--presentation" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="ea-drawer__header">
-          <h3 className="ea-drawer__title">{t("expansionAdvisor.reportExecutiveSummary")}</h3>
+          <h3 className="ea-drawer__title">{t("expansionAdvisor.executiveReport")}</h3>
           {report?.meta?.version && (
             <span style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", marginInlineEnd: "auto", marginInlineStart: 12 }}>
               v{report.meta.version}
             </span>
           )}
-          <button className="ea-drawer__close" onClick={() => onClose?.()}>{t("expansionAdvisor.close")}</button>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={() => setPresentationMode((m) => !m)}>
+              {presentationMode ? t("expansionAdvisor.exitPresentation") : t("expansionAdvisor.presentationMode")}
+            </button>
+            <button className="ea-drawer__close" onClick={() => onClose?.()}>{t("expansionAdvisor.close")}</button>
+          </div>
         </div>
         <div className="ea-drawer__body">
           {loading && <div className="ea-state ea-state--loading">{t("expansionAdvisor.loadingReport")}</div>}
@@ -137,8 +151,40 @@ export default function ExpansionReportPanel({
                   </div>
                 )}
 
+                {/* Lead candidate focus callouts */}
+                {leadCandidateId && (
+                  <div className="ea-report-section">
+                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.leadSiteAnalysis")}</h5>
+                    {rec.why_best && (
+                      <div className="ea-memo-callout ea-memo-callout--positive">
+                        <span className="ea-memo-callout__label">{t("expansionAdvisor.whyLeadSite")}</span>
+                        <p className="ea-detail__text">{rec.why_best}</p>
+                      </div>
+                    )}
+                    {rec.main_risk && (
+                      <div className="ea-memo-callout ea-memo-callout--risk">
+                        <span className="ea-memo-callout__label">{t("expansionAdvisor.whyNotRunnerUp")}</span>
+                        <p className="ea-detail__text">{rec.main_risk}</p>
+                      </div>
+                    )}
+                    {rec.best_format && (
+                      <div className="ea-memo-callout ea-memo-callout--neutral">
+                        <span className="ea-memo-callout__label">{t("expansionAdvisor.beforeSigning")}</span>
+                        <p className="ea-detail__text">{rec.best_format}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Copy-ready executive summary block */}
+                <CopySummaryBlock
+                  candidate={leadCandidate || null}
+                  report={report}
+                  memo={memo || null}
+                />
+
                 {/* Assumptions */}
-                {assumptions.length > 0 && (
+                {!presentationMode && assumptions.length > 0 && (
                   <div className="ea-report-section">
                     <h5 className="ea-detail__section-title">{t("expansionAdvisor.assumptions")}</h5>
                     <div className="ea-detail__grid">

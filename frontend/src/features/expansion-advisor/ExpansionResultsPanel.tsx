@@ -6,6 +6,7 @@ export default function ExpansionResultsPanel(props: {
   selectedCandidateId: string | null;
   shortlistIds: string[];
   compareIds: string[];
+  leadCandidateId?: string | null;
   localSortActive?: boolean;
   onSelectCandidate: (candidate: ExpansionCandidate) => void;
   onToggleShortlist: (candidateId: string) => void;
@@ -21,6 +22,7 @@ export default function ExpansionResultsPanel(props: {
           selected={props.selectedCandidateId === item.id}
           shortlisted={props.shortlistIds.includes(item.id)}
           compared={props.compareIds.includes(item.id)}
+          isLead={item.id === props.leadCandidateId}
           localSortActive={props.localSortActive}
           onSelect={() => props.onSelectCandidate(item)}
           onToggleShortlist={() => props.onToggleShortlist(item.id)}

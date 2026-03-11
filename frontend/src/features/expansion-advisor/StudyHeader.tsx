@@ -7,6 +7,7 @@ type Props = {
   candidateCount: number;
   shortlistCount: number;
   bestCandidate: ExpansionCandidate | null;
+  leadCandidate?: ExpansionCandidate | null;
   report: RecommendationReportResponse | null;
   activeSavedId: string | null;
   searchId: string;
@@ -21,6 +22,7 @@ export default function StudyHeader({
   candidateCount,
   shortlistCount,
   bestCandidate,
+  leadCandidate,
   report,
   activeSavedId,
   onSaveStudy,
@@ -29,6 +31,9 @@ export default function StudyHeader({
   compareEnabled,
 }: Props) {
   const { t } = useTranslation();
+
+  const heroCandidate = leadCandidate || bestCandidate;
+  const heroLabel = leadCandidate ? t("expansionAdvisor.leadSite") : t("expansionAdvisor.topRanked");
 
   return (
     <div className="ea-study-header">
@@ -79,13 +84,13 @@ export default function StudyHeader({
           )}
         </div>
       </div>
-      {bestCandidate && (
-        <div className="ea-study-header__best">
-          <span className="ea-study-header__best-label">{t("expansionAdvisor.topRanked")}:</span>
+      {heroCandidate && (
+        <div className={`ea-study-header__best${leadCandidate ? " ea-study-header__best--lead" : ""}`}>
+          <span className="ea-study-header__best-label">{heroLabel}:</span>
           <span className="ea-study-header__best-name">
-            #{bestCandidate.rank_position} {bestCandidate.district || bestCandidate.parcel_id}
+            #{heroCandidate.rank_position} {heroCandidate.district || heroCandidate.parcel_id}
           </span>
-          <ScorePill value={bestCandidate.final_score} />
+          <ScorePill value={heroCandidate.final_score} />
           {report?.recommendation?.why_best && (
             <span className="ea-study-header__best-reason">
               — {report.recommendation.why_best.slice(0, 80)}

@@ -40,6 +40,9 @@ import {
   sortCandidates,
   extractDistricts,
   generateStudyTitle,
+  restoreLeadCandidateId,
+  restoreSortFilter,
+  buildUiStateJson,
   type FilterKey,
   type SortKey,
   type MemoCache,
@@ -47,6 +50,10 @@ import {
   memoCacheKey,
   reportCacheKey,
 } from "./studyAdapters";
+import FinalistsWorkspace from "./FinalistsWorkspace";
+import DecisionChecklist from "./DecisionChecklist";
+import NextStepsStrip from "./NextStepsStrip";
+import CopySummaryBlock from "./CopySummaryBlock";
 import "./expansion-advisor.css";
 
 /* ─── Pure helpers (exported for tests) ─── */
@@ -60,12 +67,16 @@ export function restoreSavedUiState(saved: SavedExpansionSearch, candidates: Exp
   const uiState = (saved.ui_state_json || {}) as Record<string, unknown>;
   const compareIds = Array.isArray(uiState.compare_ids) ? (uiState.compare_ids as string[]) : [];
   const selectedCandidateId = typeof uiState.selected_candidate_id === "string" ? uiState.selected_candidate_id : null;
+  const leadCandidateId = restoreLeadCandidateId(saved.ui_state_json, candidates);
+  const sortFilter = restoreSortFilter(saved.ui_state_json);
   return {
     searchId: saved.search_id || "",
     shortlistIds: saved.selected_candidate_ids || [],
     compareIds,
     selectedCandidateId,
     selectedCandidate: resolveCandidateById(candidates, selectedCandidateId),
+    leadCandidateId,
+    ...sortFilter,
   };
 }
 
@@ -130,7 +141,7 @@ export default function ExpansionAdvisorPage({
   onSelectedCandidateChange,
   externalSelectedCandidateId,
 }: {
-  onCandidatesChange: (candidates: ExpansionCandidate[], shortlistIds: string[], selectedId: string | null, branches: ExpansionBrief["existing_branches"], compareIds?: string[]) => void;
+  onCandidatesChange: (candidates: ExpansionCandidate[], shortlistIds: string[], selectedId: string | null, branches: ExpansionBrief["existing_branches"], compareIds?: string[], leadCandidateId?: string | null) => void;
   onSelectedCandidateChange: (candidate: ExpansionCandidate | null) => void;
   externalSelectedCandidateId?: string | null;
 }) {
@@ -141,6 +152,7 @@ export default function ExpansionAdvisorPage({
   const [selectedCandidate, setSelectedCandidate] = useState<ExpansionCandidate | null>(null);
   const [shortlistIds, setShortlistIds] = useState<string[]>([]);
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [leadCandidateId, setLeadCandidateId] = useState<string | null>(null);
   const [memo, setMemo] = useState<CandidateMemoResponse | null>(null);
   const [savedItems, setSavedItems] = useState<SavedExpansionSearch[]>([]);
   const [compareResult, setCompareResult] = useState<CompareCandidatesResponse | null>(null);
@@ -186,8 +198,8 @@ export default function ExpansionAdvisorPage({
 
   // Sync candidates to parent
   useEffect(() => {
-    onCandidatesChange(candidates, shortlistIds, selectedCandidate?.id || null, brief.existing_branches, compareIds);
-  }, [candidates, shortlistIds, selectedCandidate, brief.existing_branches, compareIds, onCandidatesChange]);
+    onCandidatesChange(candidates, shortlistIds, selectedCandidate?.id || null, brief.existing_branches, compareIds, leadCandidateId);
+  }, [candidates, shortlistIds, selectedCandidate, brief.existing_branches, compareIds, leadCandidateId, onCandidatesChange]);
 
   // Clear stale compare result
   useEffect(() => {
@@ -284,6 +296,7 @@ export default function ExpansionAdvisorPage({
     setSearchMeta({});
     setActiveDrawer("none");
     setActiveSavedId(null);
+    setLeadCandidateId(null);
     setActiveFilter("all");
     setActiveSort("rank");
     setDistrictFilter("");
@@ -303,9 +316,6 @@ export default function ExpansionAdvisorPage({
     setMemoError(null); setReportError(null); setCompareError(null); setSaveError(null);
     setActiveDrawer("none");
     setActiveSavedId(saved.id);
-    setActiveFilter("all");
-    setActiveSort("rank");
-    setDistrictFilter("");
     memoCacheRef.current.clear();
     reportCacheRef.current.clear();
     let hydratedCandidates = normalizeCandidates(saved.candidates || []);
@@ -324,6 +334,10 @@ export default function ExpansionAdvisorPage({
     setShortlistIds(restored.shortlistIds.filter((id) => Boolean(resolveCandidateById(hydratedCandidates, id))));
     const restoredCompareIds = restored.compareIds.filter((id) => Boolean(resolveCandidateById(hydratedCandidates, id)));
     setCompareIds(restoredCompareIds);
+    setLeadCandidateId(restored.leadCandidateId);
+    setActiveFilter(restored.activeFilter);
+    setActiveSort(restored.activeSort);
+    setDistrictFilter(restored.districtFilter);
     if (restored.selectedCandidateId) {
       const selected = resolveCandidateById(hydratedCandidates, restored.selectedCandidateId);
       if (selected) await handleSelectCandidate(selected, true);
@@ -353,7 +367,7 @@ export default function ExpansionAdvisorPage({
         status,
         selected_candidate_ids: shortlistIds,
         filters_json: brief as unknown as Record<string, unknown>,
-        ui_state_json: { selected_candidate_id: selectedCandidate?.id || null, compare_ids: compareIds },
+        ui_state_json: buildUiStateJson(selectedCandidate?.id || null, compareIds, leadCandidateId, activeFilter, activeSort, districtFilter),
       });
       await refreshSavedStudies();
       setActiveDrawer("none");
@@ -400,8 +414,8 @@ export default function ExpansionAdvisorPage({
       <div className="ea-story-steps">
         <span className={`ea-story-step ${!hasResults ? "ea-story-step--active" : "ea-story-step--done"}`}>{t("expansionAdvisor.storyStep1")}</span>
         <span className={`ea-story-step ${hasResults && !selectedCandidate ? "ea-story-step--active" : hasResults ? "ea-story-step--done" : ""}`}>{t("expansionAdvisor.storyStep2")}</span>
-        <span className={`ea-story-step ${selectedCandidate ? "ea-story-step--active" : ""}`}>{t("expansionAdvisor.storyStep3")}</span>
-        <span className={`ea-story-step ${compareResult ? "ea-story-step--active" : ""}`}>{t("expansionAdvisor.storyStep4")}</span>
+        <span className={`ea-story-step ${shortlistIds.length > 0 ? "ea-story-step--active" : selectedCandidate ? "ea-story-step--done" : ""}`}>{t("expansionAdvisor.storyStep3")}</span>
+        <span className={`ea-story-step ${leadCandidateId ? "ea-story-step--active" : compareResult ? "ea-story-step--done" : ""}`}>{t("expansionAdvisor.storyStep4")}</span>
         <span className={`ea-story-step ${activeSavedId ? "ea-story-step--active" : ""}`}>{t("expansionAdvisor.storyStep5")}</span>
       </div>
 
@@ -412,6 +426,7 @@ export default function ExpansionAdvisorPage({
           candidateCount={candidates.length}
           shortlistCount={shortlistIds.length}
           bestCandidate={bestCandidate}
+          leadCandidate={resolveCandidateById(candidates, leadCandidateId)}
           report={report}
           activeSavedId={activeSavedId}
           searchId={searchId}
@@ -453,8 +468,31 @@ export default function ExpansionAdvisorPage({
             />
           )}
 
-          {/* Shortlist tray */}
-          {hasResults && (
+          {/* Finalists workspace (replaces shortlist tray when shortlisted) */}
+          {hasResults && shortlistIds.length > 0 ? (
+            <FinalistsWorkspace
+              candidates={candidates}
+              shortlistIds={shortlistIds}
+              leadCandidateId={leadCandidateId}
+              selectedCandidateId={selectedCandidate?.id || null}
+              onSetLead={(id) => setLeadCandidateId(id)}
+              onClearLead={() => setLeadCandidateId(null)}
+              onOpenMemo={(id) => void handleOpenMemoById(id)}
+              onCompare={async () => {
+                if (shortlistIds.length >= 2) {
+                  setCompareIds(shortlistIds.slice(0, 6));
+                  await loadCompare(searchId, shortlistIds.slice(0, 6));
+                  setActiveDrawer("compare");
+                }
+              }}
+              onRemoveShortlist={(id) => {
+                setShortlistIds((cur) => cur.filter((sid) => sid !== id));
+                if (leadCandidateId === id) setLeadCandidateId(null);
+              }}
+              onSelectCandidate={(id) => void handleSelectCandidateById(id)}
+              compareEnabled={compareShortlistEnabled}
+            />
+          ) : hasResults ? (
             <ShortlistTray
               candidates={candidates}
               shortlistIds={shortlistIds}
@@ -472,7 +510,7 @@ export default function ExpansionAdvisorPage({
               }}
               compareEnabled={compareShortlistEnabled}
             />
-          )}
+          ) : null}
 
           <div className="ea-card">
             <div className="ea-card__header">
@@ -527,6 +565,25 @@ export default function ExpansionAdvisorPage({
             </div>
           )}
 
+          {/* Next steps strip - shown when lead candidate is set */}
+          {hasResults && leadCandidateId && (
+            <NextStepsStrip
+              candidates={candidates}
+              shortlistIds={shortlistIds}
+              leadCandidateId={leadCandidateId}
+              report={report}
+              onOpenMemo={(id) => void handleOpenMemoById(id)}
+              onOpenReport={() => { void loadReport(searchId); setActiveDrawer("report"); }}
+              onCompare={async () => {
+                if (shortlistIds.length >= 2) {
+                  setCompareIds(shortlistIds.slice(0, 6));
+                  await loadCompare(searchId, shortlistIds.slice(0, 6));
+                  setActiveDrawer("compare");
+                }
+              }}
+            />
+          )}
+
           {/* Sort & filter bar */}
           {hasResults && (
             <SortFilterBar
@@ -572,6 +629,7 @@ export default function ExpansionAdvisorPage({
               selectedCandidateId={selectedCandidate?.id || null}
               shortlistIds={shortlistIds}
               compareIds={compareIds}
+              leadCandidateId={leadCandidateId}
               localSortActive={localSortActive}
               onSelectCandidate={(candidate) => void handleSelectCandidate(candidate)}
               onToggleShortlist={(candidateId) => setShortlistIds((cur) => cur.includes(candidateId) ? cur.filter((id) => id !== candidateId) : [...cur, candidateId])}
@@ -592,16 +650,34 @@ export default function ExpansionAdvisorPage({
             <div className="ea-card">
               <div className="ea-card__header">
                 <h3 className="ea-card__title">
+                  {selectedCandidate.id === leadCandidateId && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
                   #{selectedCandidate.rank_position} {selectedCandidate.district || selectedCandidate.parcel_id}
                 </h3>
-                <button className="oak-btn oak-btn--sm oak-btn--primary" onClick={() => setActiveDrawer("memo")}>
-                  {t("expansionAdvisor.viewDecisionMemo")}
-                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {selectedCandidate.id !== leadCandidateId && shortlistIds.includes(selectedCandidate.id) && (
+                    <button className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => setLeadCandidateId(selectedCandidate.id)}>
+                      {t("expansionAdvisor.setAsLead")}
+                    </button>
+                  )}
+                  <button className="oak-btn oak-btn--sm oak-btn--primary" onClick={() => setActiveDrawer("memo")}>
+                    {t("expansionAdvisor.viewDecisionMemo")}
+                  </button>
+                </div>
               </div>
               <div className="ea-card__body">
                 <CandidateDetailPanel candidate={selectedCandidate} />
+                <DecisionChecklist candidate={selectedCandidate} memo={memo} />
               </div>
             </div>
+          )}
+
+          {/* Copy summary block when lead candidate has a memo */}
+          {leadCandidateId && selectedCandidate?.id === leadCandidateId && (memo || report) && (
+            <CopySummaryBlock
+              candidate={selectedCandidate}
+              report={report}
+              memo={memo}
+            />
           )}
         </div>
       </div>
@@ -609,7 +685,7 @@ export default function ExpansionAdvisorPage({
       {/* ─── Drawers / dialogs ─── */}
 
       {activeDrawer === "memo" && (
-        <ExpansionMemoPanel memo={memo} loading={loadingMemo} onClose={() => setActiveDrawer("none")} />
+        <ExpansionMemoPanel memo={memo} loading={loadingMemo} isLeadCandidate={selectedCandidate?.id === leadCandidateId} report={report} onClose={() => setActiveDrawer("none")} />
       )}
 
       {activeDrawer === "compare" && (
@@ -618,6 +694,7 @@ export default function ExpansionAdvisorPage({
           result={compareResult}
           loading={loadingCompare}
           error={compareError}
+          leadCandidateId={leadCandidateId}
           onCompare={async () => { if (searchId) await loadCompare(searchId, compareIds); }}
           onSelectCandidateId={(candidateId) => { setActiveDrawer("none"); void handleSelectCandidateById(candidateId); }}
           onClose={() => setActiveDrawer("none")}
@@ -628,6 +705,9 @@ export default function ExpansionAdvisorPage({
         <ExpansionReportPanel
           report={report}
           loading={loadingReport}
+          leadCandidateId={leadCandidateId}
+          leadCandidate={resolveCandidateById(candidates, leadCandidateId)}
+          memo={leadCandidateId && selectedCandidate?.id === leadCandidateId ? memo : null}
           onSelectCandidateId={(candidateId) => { setActiveDrawer("none"); void handleSelectCandidateById(candidateId); }}
           onClose={() => setActiveDrawer("none")}
         />
@@ -658,7 +738,7 @@ export default function ExpansionAdvisorPage({
                 status,
                 selected_candidate_ids: shortlistIds,
                 filters_json: brief as unknown as Record<string, unknown>,
-                ui_state_json: { selected_candidate_id: selectedCandidate?.id || null, compare_ids: compareIds },
+                ui_state_json: buildUiStateJson(selectedCandidate?.id || null, compareIds, leadCandidateId, activeFilter, activeSort, districtFilter),
               });
               setActiveSavedId(created.id);
               await refreshSavedStudies();

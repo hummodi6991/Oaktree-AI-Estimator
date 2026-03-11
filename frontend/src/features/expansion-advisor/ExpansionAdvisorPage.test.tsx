@@ -6,6 +6,7 @@ import ExpansionResultsPanel from "./ExpansionResultsPanel";
 import ExpansionReportPanel, { triggerReportCandidateSelect } from "./ExpansionReportPanel";
 import ExpansionMemoPanel from "./ExpansionMemoPanel";
 import SaveStudyDialog from "./SaveStudyDialog";
+import NextStepsStrip from "./NextStepsStrip";
 import en from "../../i18n/en.json";
 import {
   restoreSavedUiState,
@@ -32,6 +33,14 @@ import {
   restoreCompareFromSaved,
   memoCacheKey,
   reportCacheKey,
+  restoreLeadCandidateId,
+  restoreSortFilter,
+  buildUiStateJson,
+  buildFinalistTiles,
+  deriveDecisionChecklist,
+  buildCopySummary,
+  formatCopySummaryText,
+  findRunnerUp,
 } from "./studyAdapters";
 import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 
@@ -651,5 +660,346 @@ describe("Memo/report entry from multiple points", () => {
       />,
     );
     expect(html).toContain("Decision Memo");
+  });
+});
+
+/* ─── Lead candidate set/clear/restore ─── */
+
+describe("Lead candidate helpers", () => {
+  it("restoreLeadCandidateId returns id when present and valid", () => {
+    const candidates = [makeCandidate({ id: "c1" }), makeCandidate({ id: "c2" })];
+    expect(restoreLeadCandidateId({ lead_candidate_id: "c1" }, candidates)).toBe("c1");
+  });
+
+  it("restoreLeadCandidateId returns null when id not in candidates", () => {
+    const candidates = [makeCandidate({ id: "c1" })];
+    expect(restoreLeadCandidateId({ lead_candidate_id: "c99" }, candidates)).toBeNull();
+  });
+
+  it("restoreLeadCandidateId returns null when ui_state_json is null", () => {
+    expect(restoreLeadCandidateId(null, [])).toBeNull();
+  });
+
+  it("restoreLeadCandidateId returns null when lead_candidate_id is missing", () => {
+    expect(restoreLeadCandidateId({ compare_ids: ["c1"] }, [makeCandidate({ id: "c1" })])).toBeNull();
+  });
+
+  it("restoreSavedUiState includes leadCandidateId", () => {
+    const candidates = [makeCandidate({ id: "c1" }), makeCandidate({ id: "c2" })];
+    const restored = restoreSavedUiState(
+      {
+        id: "sv1",
+        search_id: "s1",
+        title: "test",
+        status: "draft",
+        selected_candidate_ids: ["c1"],
+        ui_state_json: { lead_candidate_id: "c1", compare_ids: ["c1", "c2"], selected_candidate_id: "c2" },
+      },
+      candidates,
+    );
+    expect(restored.leadCandidateId).toBe("c1");
+  });
+});
+
+/* ─── Sort/filter state restore ─── */
+
+describe("Sort/filter state restore from ui_state_json", () => {
+  it("restoreSortFilter extracts valid filter/sort/district", () => {
+    const result = restoreSortFilter({
+      active_filter: "pass_only",
+      active_sort: "economics",
+      district_filter: "Olaya",
+    });
+    expect(result.activeFilter).toBe("pass_only");
+    expect(result.activeSort).toBe("economics");
+    expect(result.districtFilter).toBe("Olaya");
+  });
+
+  it("restoreSortFilter defaults to safe values on invalid input", () => {
+    const result = restoreSortFilter({ active_filter: "invalid", active_sort: 123 });
+    expect(result.activeFilter).toBe("all");
+    expect(result.activeSort).toBe("rank");
+    expect(result.districtFilter).toBe("");
+  });
+
+  it("restoreSortFilter handles null ui_state_json", () => {
+    const result = restoreSortFilter(null);
+    expect(result.activeFilter).toBe("all");
+    expect(result.activeSort).toBe("rank");
+  });
+});
+
+/* ─── buildUiStateJson roundtrip ─── */
+
+describe("buildUiStateJson", () => {
+  it("produces correct shape for persistence", () => {
+    const result = buildUiStateJson("c1", ["c1", "c2"], "c1", "pass_only", "economics", "Olaya");
+    expect(result.selected_candidate_id).toBe("c1");
+    expect(result.compare_ids).toEqual(["c1", "c2"]);
+    expect(result.lead_candidate_id).toBe("c1");
+    expect(result.active_filter).toBe("pass_only");
+    expect(result.active_sort).toBe("economics");
+    expect(result.district_filter).toBe("Olaya");
+  });
+});
+
+/* ─── Finalists workspace view models ─── */
+
+describe("Finalist tile builder", () => {
+  it("builds tiles from shortlist with lead designation", () => {
+    const candidates = [
+      makeCandidate({ id: "c1", rank_position: 1, district: "Olaya", final_score: 85, gate_status_json: { overall_pass: true }, payback_band: "fast", estimated_annual_rent_sar: 120000, estimated_fitout_cost_sar: 80000, estimated_revenue_index: 72, top_positives_json: ["Great location"], top_risks_json: ["High rent"], confidence_grade: "A" }),
+      makeCandidate({ id: "c2", rank_position: 2, district: "Malqa", final_score: 78, gate_status_json: { overall_pass: false }, payback_band: "moderate", top_positives_json: [], top_risks_json: [], confidence_grade: "B" }),
+    ];
+    const tiles = buildFinalistTiles(candidates, ["c1", "c2"], "c1");
+    expect(tiles).toHaveLength(2);
+    expect(tiles[0].isLead).toBe(true);
+    expect(tiles[0].district).toBe("Olaya");
+    expect(tiles[0].gateVerdict).toBe("pass");
+    expect(tiles[0].bestStrength).toBe("Great location");
+    expect(tiles[0].mainRisk).toBe("High rent");
+    expect(tiles[1].isLead).toBe(false);
+    expect(tiles[1].gateVerdict).toBe("fail");
+  });
+
+  it("handles missing shortlist ids gracefully", () => {
+    const candidates = [makeCandidate({ id: "c1" })];
+    const tiles = buildFinalistTiles(candidates, ["c1", "c99"], null);
+    expect(tiles).toHaveLength(1);
+    expect(tiles[0].isLead).toBe(false);
+  });
+});
+
+/* ─── Decision checklist derivation ─── */
+
+describe("Decision checklist derivation", () => {
+  it("produces checklist items from candidate gate and score fields", () => {
+    const candidate = makeCandidate({
+      brand_fit_score: 75,
+      estimated_revenue_index: 65,
+      economics_score: 80,
+      payback_band: "fast",
+      estimated_payback_months: 18,
+      cannibalization_score: 25,
+      distance_to_nearest_branch_m: 3000,
+      provider_whitespace_score: 72,
+      multi_platform_presence_score: 55,
+      gate_status_json: { overall_pass: true, zoning_pass: true, parking_pass: false },
+      gate_reasons_json: { passed: ["zoning"], failed: ["parking"], unknown: ["access"], thresholds: {}, explanations: {} },
+      feature_snapshot_json: { context_sources: {}, missing_context: ["delivery_platforms"], data_completeness_score: 75 },
+    });
+    const items = deriveDecisionChecklist(candidate);
+    expect(items.length).toBeGreaterThan(0);
+
+    const marketItems = items.filter((i) => i.category === "market_demand");
+    expect(marketItems.length).toBeGreaterThan(0);
+    expect(marketItems[0].status).toBe("strong"); // brand_fit_score 75
+
+    const siteItems = items.filter((i) => i.category === "site_fit");
+    expect(siteItems.some((i) => i.label.includes("Zoning") && i.status === "strong")).toBe(true);
+    expect(siteItems.some((i) => i.label.includes("Parking") && i.status === "risk")).toBe(true);
+
+    const cannItems = items.filter((i) => i.category === "cannibalization");
+    expect(cannItems.some((i) => i.status === "strong")).toBe(true);
+
+    const unknowns = items.filter((i) => i.category === "unknowns");
+    expect(unknowns.some((i) => i.label === "access")).toBe(true);
+    expect(unknowns.some((i) => i.label === "delivery platforms")).toBe(true);
+  });
+
+  it("returns empty array for bare candidate", () => {
+    const candidate = makeCandidate({});
+    const items = deriveDecisionChecklist(candidate);
+    expect(items).toEqual([]);
+  });
+});
+
+/* ─── Copy summary block generation ─── */
+
+describe("Copy summary builder", () => {
+  it("builds summary from report + candidate fields", () => {
+    const candidate = makeCandidate({
+      rank_position: 1,
+      district: "Olaya",
+      top_positives_json: ["Great demand"],
+      top_risks_json: ["High rent"],
+      gate_reasons_json: { passed: [], failed: [], unknown: ["access"], thresholds: {}, explanations: {} },
+    });
+    const report = {
+      recommendation: { why_best: "Strong demand area", main_risk: "Rental costs", best_format: "QSR with drive-through" },
+      top_candidates: [],
+      assumptions: {},
+      brand_profile: {},
+      meta: {},
+    };
+    const summary = buildCopySummary(candidate, report, null);
+    expect(summary.bestCandidate).toContain("Olaya");
+    expect(summary.topReason).toBe("Strong demand area");
+    expect(summary.mainRisk).toBe("Rental costs");
+    expect(summary.bestFormat).toBe("QSR with drive-through");
+    expect(summary.nextValidation).toBe("access");
+  });
+
+  it("falls back gracefully with no report", () => {
+    const candidate = makeCandidate({ rank_position: 3, district: "Malqa", top_positives_json: ["Good fit"] });
+    const summary = buildCopySummary(candidate, null, null);
+    expect(summary.bestCandidate).toContain("Malqa");
+    expect(summary.topReason).toBe("Good fit");
+    expect(summary.nextValidation).toBe("Site visit recommended");
+  });
+
+  it("formatCopySummaryText produces readable text", () => {
+    const text = formatCopySummaryText({
+      bestCandidate: "#1 Olaya",
+      topReason: "Strong demand",
+      mainRisk: "High rent",
+      bestFormat: "QSR",
+      nextValidation: "Site visit",
+    });
+    expect(text).toContain("Lead site: #1 Olaya");
+    expect(text).toContain("Top reason: Strong demand");
+    expect(text.split("\n")).toHaveLength(5);
+  });
+});
+
+/* ─── Runner-up helper ─── */
+
+describe("findRunnerUp", () => {
+  it("returns first non-lead shortlisted candidate", () => {
+    const candidates = [
+      makeCandidate({ id: "c1", rank_position: 1 }),
+      makeCandidate({ id: "c2", rank_position: 2 }),
+      makeCandidate({ id: "c3", rank_position: 3 }),
+    ];
+    const result = findRunnerUp(candidates, ["c1", "c2", "c3"], "c1");
+    expect(result?.id).toBe("c2");
+  });
+
+  it("returns null when no lead is set", () => {
+    expect(findRunnerUp([], [], null)).toBeNull();
+  });
+});
+
+/* ─── Saved study restoration with partial ui_state_json ─── */
+
+describe("Saved study restore with partial/old ui_state_json", () => {
+  it("restores lead candidate from full ui_state_json", () => {
+    const candidates = [makeCandidate({ id: "c1" }), makeCandidate({ id: "c2" })];
+    const restored = restoreSavedUiState(
+      {
+        id: "sv1",
+        search_id: "s1",
+        title: "test",
+        status: "draft",
+        selected_candidate_ids: ["c1", "c2"],
+        ui_state_json: {
+          selected_candidate_id: "c1",
+          compare_ids: ["c1", "c2"],
+          lead_candidate_id: "c2",
+          active_filter: "pass_only",
+          active_sort: "economics",
+          district_filter: "Olaya",
+        },
+      },
+      candidates,
+    );
+    expect(restored.leadCandidateId).toBe("c2");
+    expect(restored.activeFilter).toBe("pass_only");
+    expect(restored.activeSort).toBe("economics");
+    expect(restored.districtFilter).toBe("Olaya");
+  });
+
+  it("gracefully handles old ui_state_json without lead/filter fields", () => {
+    const candidates = [makeCandidate({ id: "c1" })];
+    const restored = restoreSavedUiState(
+      {
+        id: "sv2",
+        search_id: "s1",
+        title: "old study",
+        status: "draft",
+        selected_candidate_ids: ["c1"],
+        ui_state_json: { selected_candidate_id: "c1", compare_ids: [] },
+      },
+      candidates,
+    );
+    expect(restored.leadCandidateId).toBeNull();
+    expect(restored.activeFilter).toBe("all");
+    expect(restored.activeSort).toBe("rank");
+    expect(restored.districtFilter).toBe("");
+  });
+
+  it("handles completely empty ui_state_json", () => {
+    const candidates = [makeCandidate({ id: "c1" })];
+    const restored = restoreSavedUiState(
+      { id: "sv3", search_id: "s1", title: "empty", status: "draft", ui_state_json: null },
+      candidates,
+    );
+    expect(restored.leadCandidateId).toBeNull();
+    expect(restored.activeFilter).toBe("all");
+    expect(restored.compareIds).toEqual([]);
+    expect(restored.selectedCandidateId).toBeNull();
+  });
+});
+
+/* ─── Next steps strip rendering ─── */
+
+describe("Next steps strip rendering", () => {
+  it("renders lead candidate info and actions", () => {
+    // NextStepsStrip imported at top of file
+    const html = renderToStaticMarkup(
+      <NextStepsStrip
+        candidates={[
+          makeCandidate({ id: "c1", rank_position: 1, district: "Olaya" }),
+          makeCandidate({ id: "c2", rank_position: 2, district: "Malqa" }),
+        ]}
+        shortlistIds={["c1", "c2"]}
+        leadCandidateId="c1"
+        report={null}
+        onOpenMemo={() => {}}
+        onOpenReport={() => {}}
+        onCompare={() => {}}
+      />,
+    );
+    expect(html).toContain("Olaya");
+    expect(html).toContain("ea-next-steps");
+  });
+
+  it("returns null when no lead candidate", () => {
+    // NextStepsStrip imported at top of file
+    const html = renderToStaticMarkup(
+      <NextStepsStrip
+        candidates={[makeCandidate({ id: "c1" })]}
+        shortlistIds={["c1"]}
+        leadCandidateId={null}
+        report={null}
+        onOpenMemo={() => {}}
+        onOpenReport={() => {}}
+        onCompare={() => {}}
+      />,
+    );
+    expect(html).toBe("");
+  });
+});
+
+/* ─── Report/memo default focus when lead exists ─── */
+
+describe("Report panel lead candidate focus", () => {
+  it("renders lead site analysis section when leadCandidateId is set", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        leadCandidateId="c1"
+        report={{
+          meta: {},
+          recommendation: { best_candidate_id: "c1", why_best: "Great demand", main_risk: "Expensive rent", best_format: "QSR" },
+          top_candidates: [],
+          assumptions: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    expect(html).toContain("Great demand");
+    expect(html).toContain("Expensive rent");
+    expect(html).toContain("QSR");
   });
 });

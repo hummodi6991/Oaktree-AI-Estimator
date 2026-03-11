@@ -91,6 +91,7 @@ export default function ExpansionComparePanel({
   result,
   loading,
   error,
+  leadCandidateId,
   onCompare,
   onSelectCandidateId,
   onClose,
@@ -99,6 +100,7 @@ export default function ExpansionComparePanel({
   result: CompareCandidatesResponse | null;
   loading: boolean;
   error: string | null;
+  leadCandidateId?: string | null;
   onCompare: () => void;
   onSelectCandidateId?: (candidateId: string) => void;
   onClose?: () => void;
@@ -155,7 +157,8 @@ export default function ExpansionComparePanel({
                   <tr>
                     <th>{t("expansionAdvisor.compareDimensions")}</th>
                     {items.map((item) => (
-                      <th key={item.candidate_id} style={{ cursor: "pointer" }} onClick={() => item.candidate_id && onSelectCandidateId?.(item.candidate_id)}>
+                      <th key={item.candidate_id} style={{ cursor: "pointer" }} onClick={() => item.candidate_id && onSelectCandidateId?.(item.candidate_id)} className={item.candidate_id === leadCandidateId ? "ea-compare-table__lead" : ""}>
+                        {item.candidate_id === leadCandidateId && <span className="ea-lead-tag ea-lead-tag--sm">{t("expansionAdvisor.leadSite")}</span>}{" "}
                         {item.district || item.candidate_id?.slice(0, 8) || "—"}
                         {item.rank_position ? <span className="ea-compare-table__rank"> #{item.rank_position}</span> : null}
                       </th>

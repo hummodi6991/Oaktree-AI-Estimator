@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { CandidateMemoResponse } from "../../lib/api/expansionAdvisor";
+import type { CandidateMemoResponse, RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
+import CopySummaryBlock from "./CopySummaryBlock";
 import { fmtScore, fmtMeters, fmtSAR } from "./formatHelpers";
 
 function toList(input: unknown): string[] {
@@ -13,22 +15,33 @@ function toList(input: unknown): string[] {
 export default function ExpansionMemoPanel({
   memo,
   loading,
+  isLeadCandidate,
+  report,
   onClose,
 }: {
   memo: CandidateMemoResponse | null;
   loading: boolean;
+  isLeadCandidate?: boolean;
+  report?: RecommendationReportResponse | null;
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
+  const [presentationMode, setPresentationMode] = useState(false);
 
   if (!memo && !loading) return null;
 
   return (
     <div className="ea-drawer-backdrop" onClick={() => onClose?.()}>
-      <div className="ea-drawer ea-drawer--wide" onClick={(e) => e.stopPropagation()}>
+      <div className={`ea-drawer ea-drawer--wide${presentationMode ? " ea-drawer--presentation" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="ea-drawer__header">
-          <h3 className="ea-drawer__title">{t("expansionAdvisor.memoVerdict")}</h3>
-          <button className="ea-drawer__close" onClick={() => onClose?.()}>{t("expansionAdvisor.close")}</button>
+          {isLeadCandidate && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
+          <h3 className="ea-drawer__title">{t("expansionAdvisor.decisionMemo")}</h3>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginInlineStart: "auto" }}>
+            <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={() => setPresentationMode((m) => !m)}>
+              {presentationMode ? t("expansionAdvisor.exitPresentation") : t("expansionAdvisor.presentationMode")}
+            </button>
+            <button className="ea-drawer__close" onClick={() => onClose?.()}>{t("expansionAdvisor.close")}</button>
+          </div>
         </div>
         <div className="ea-drawer__body">
           {loading && <div className="ea-state ea-state--loading">{t("expansionAdvisor.loadingMemo")}</div>}
@@ -183,7 +196,16 @@ export default function ExpansionMemoPanel({
                   </div>
                 )}
 
-                {(snapshot || breakdown) && (
+                {/* Copy-ready summary block */}
+                {isLeadCandidate && (
+                  <CopySummaryBlock
+                    candidate={null}
+                    report={report || null}
+                    memo={memo}
+                  />
+                )}
+
+                {!presentationMode && (snapshot || breakdown) && (
                   <details className="ea-debug">
                     <summary>{t("expansionAdvisor.debugDetails")}</summary>
                     <pre>{JSON.stringify({ feature_snapshot: snapshot, score_breakdown: breakdown }, null, 2)}</pre>

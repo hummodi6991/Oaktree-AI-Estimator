@@ -289,3 +289,278 @@ export function extractDistricts(candidates: ExpansionCandidate[]): string[] {
   }
   return Array.from(set).sort();
 }
+
+/* ─── Lead candidate helpers ─── */
+
+export function restoreLeadCandidateId(
+  uiState: Record<string, unknown> | null | undefined,
+  candidates: ExpansionCandidate[],
+): string | null {
+  const raw = (uiState || {}) as Record<string, unknown>;
+  const id = typeof raw.lead_candidate_id === "string" ? raw.lead_candidate_id : null;
+  if (!id) return null;
+  return candidates.some((c) => c.id === id) ? id : null;
+}
+
+export function restoreSortFilter(
+  uiState: Record<string, unknown> | null | undefined,
+): { activeFilter: FilterKey; activeSort: SortKey; districtFilter: string } {
+  const raw = (uiState || {}) as Record<string, unknown>;
+  const validFilters: FilterKey[] = ["all", "pass_only", "fastest_payback", "strongest_economics", "strongest_brand_fit", "lowest_cannibalization", "strongest_delivery"];
+  const validSorts: SortKey[] = ["rank", "payback", "economics", "brand_fit", "cannibalization", "delivery", "district"];
+  const f = typeof raw.active_filter === "string" && validFilters.includes(raw.active_filter as FilterKey) ? (raw.active_filter as FilterKey) : "all";
+  const s = typeof raw.active_sort === "string" && validSorts.includes(raw.active_sort as SortKey) ? (raw.active_sort as SortKey) : "rank";
+  const d = typeof raw.district_filter === "string" ? raw.district_filter : "";
+  return { activeFilter: f, activeSort: s, districtFilter: d };
+}
+
+export function buildUiStateJson(
+  selectedCandidateId: string | null,
+  compareIds: string[],
+  leadCandidateId: string | null,
+  activeFilter: FilterKey,
+  activeSort: SortKey,
+  districtFilter: string,
+): Record<string, unknown> {
+  return {
+    selected_candidate_id: selectedCandidateId,
+    compare_ids: compareIds,
+    lead_candidate_id: leadCandidateId,
+    active_filter: activeFilter,
+    active_sort: activeSort,
+    district_filter: districtFilter,
+  };
+}
+
+/* ─── Finalist workspace view models ─── */
+
+export type FinalistTile = {
+  id: string;
+  rankPosition: number | null;
+  district: string;
+  gateVerdict: string;
+  paybackBand: string;
+  estimatedAnnualRent: number | null;
+  fitoutCost: number | null;
+  revenueIndex: number | null;
+  bestStrength: string;
+  mainRisk: string;
+  finalScore: number | null;
+  confidenceGrade: string;
+  isLead: boolean;
+};
+
+export function buildFinalistTiles(
+  candidates: ExpansionCandidate[],
+  shortlistIds: string[],
+  leadCandidateId: string | null,
+): FinalistTile[] {
+  return shortlistIds
+    .map((id) => candidates.find((c) => c.id === id))
+    .filter(Boolean)
+    .map((c) => {
+      const candidate = c!;
+      const positives = candidate.top_positives_json || [];
+      const risks = candidate.top_risks_json || [];
+      const gatePass = candidate.gate_status_json?.overall_pass;
+      return {
+        id: candidate.id,
+        rankPosition: candidate.rank_position ?? null,
+        district: candidate.district || candidate.parcel_id || "—",
+        gateVerdict: gatePass === true ? "pass" : gatePass === false ? "fail" : "unknown",
+        paybackBand: candidate.payback_band || "—",
+        estimatedAnnualRent: candidate.estimated_annual_rent_sar ?? null,
+        fitoutCost: candidate.estimated_fitout_cost_sar ?? null,
+        revenueIndex: candidate.estimated_revenue_index ?? null,
+        bestStrength: positives[0] || "—",
+        mainRisk: risks[0] || "—",
+        finalScore: candidate.final_score ?? null,
+        confidenceGrade: candidate.confidence_grade || "—",
+        isLead: candidate.id === leadCandidateId,
+      };
+    });
+}
+
+/* ─── Decision checklist derivation ─── */
+
+export type ChecklistCategory = "market_demand" | "site_fit" | "cannibalization" | "delivery_market" | "economics" | "unknowns";
+
+export type ChecklistItem = {
+  category: ChecklistCategory;
+  label: string;
+  status: "strong" | "caution" | "risk" | "verify";
+};
+
+export function deriveDecisionChecklist(
+  candidate: ExpansionCandidate,
+  memo?: CandidateMemoResponse | null,
+): ChecklistItem[] {
+  const items: ChecklistItem[] = [];
+  const gates = candidate.gate_status_json || {};
+  const reasons = candidate.gate_reasons_json;
+  const snapshot = candidate.feature_snapshot_json;
+
+  // Market demand
+  if (candidate.brand_fit_score != null) {
+    items.push({
+      category: "market_demand",
+      label: `Brand fit score: ${Math.round(candidate.brand_fit_score)}`,
+      status: candidate.brand_fit_score >= 70 ? "strong" : candidate.brand_fit_score >= 40 ? "caution" : "risk",
+    });
+  }
+  if (candidate.estimated_revenue_index != null) {
+    items.push({
+      category: "market_demand",
+      label: `Revenue index: ${candidate.estimated_revenue_index.toFixed(1)}`,
+      status: candidate.estimated_revenue_index >= 70 ? "strong" : candidate.estimated_revenue_index >= 40 ? "caution" : "risk",
+    });
+  }
+  if (memo?.market_research?.district_fit_summary) {
+    items.push({ category: "market_demand", label: "District fit assessed", status: "strong" });
+  }
+
+  // Site fit
+  for (const key of ["zoning", "frontage", "parking", "access", "visibility"]) {
+    const gateKey = `${key}_pass`;
+    const scoreKey = `${key === "visibility" ? "access_visibility" : key}_score`;
+    if (gateKey in gates) {
+      items.push({
+        category: "site_fit",
+        label: `${key.charAt(0).toUpperCase() + key.slice(1)} gate`,
+        status: gates[gateKey] ? "strong" : "risk",
+      });
+    } else if ((candidate as Record<string, unknown>)[scoreKey] != null) {
+      const val = Number((candidate as Record<string, unknown>)[scoreKey]);
+      items.push({
+        category: "site_fit",
+        label: `${key.charAt(0).toUpperCase() + key.slice(1)} score: ${Math.round(val)}`,
+        status: val >= 70 ? "strong" : val >= 40 ? "caution" : "risk",
+      });
+    }
+  }
+
+  // Cannibalization
+  if (candidate.cannibalization_score != null) {
+    items.push({
+      category: "cannibalization",
+      label: `Cannibalization score: ${Math.round(candidate.cannibalization_score)}`,
+      status: candidate.cannibalization_score <= 30 ? "strong" : candidate.cannibalization_score <= 60 ? "caution" : "risk",
+    });
+  }
+  if (candidate.distance_to_nearest_branch_m != null) {
+    const km = (candidate.distance_to_nearest_branch_m / 1000).toFixed(1);
+    items.push({
+      category: "cannibalization",
+      label: `Nearest branch: ${km} km`,
+      status: candidate.distance_to_nearest_branch_m >= 2000 ? "strong" : candidate.distance_to_nearest_branch_m >= 800 ? "caution" : "risk",
+    });
+  }
+
+  // Delivery market
+  if (candidate.provider_whitespace_score != null) {
+    items.push({
+      category: "delivery_market",
+      label: `Whitespace score: ${Math.round(candidate.provider_whitespace_score)}`,
+      status: candidate.provider_whitespace_score >= 70 ? "strong" : candidate.provider_whitespace_score >= 40 ? "caution" : "risk",
+    });
+  }
+  if (candidate.multi_platform_presence_score != null) {
+    items.push({
+      category: "delivery_market",
+      label: `Multi-platform: ${Math.round(candidate.multi_platform_presence_score)}`,
+      status: candidate.multi_platform_presence_score >= 70 ? "strong" : candidate.multi_platform_presence_score >= 40 ? "caution" : "risk",
+    });
+  }
+
+  // Economics
+  if (candidate.economics_score != null) {
+    items.push({
+      category: "economics",
+      label: `Economics score: ${Math.round(candidate.economics_score)}`,
+      status: candidate.economics_score >= 70 ? "strong" : candidate.economics_score >= 40 ? "caution" : "risk",
+    });
+  }
+  if (candidate.payback_band) {
+    const band = candidate.payback_band.toLowerCase();
+    items.push({
+      category: "economics",
+      label: `Payback: ${candidate.payback_band}${candidate.estimated_payback_months ? ` (${Math.round(candidate.estimated_payback_months)} mo)` : ""}`,
+      status: band === "fast" || band === "promising" ? "strong" : band === "moderate" || band === "standard" ? "caution" : "risk",
+    });
+  }
+
+  // Unknowns to verify
+  if (reasons?.unknown) {
+    for (const u of reasons.unknown) {
+      items.push({ category: "unknowns", label: u.replace(/_/g, " "), status: "verify" });
+    }
+  }
+  if (snapshot?.missing_context) {
+    for (const m of snapshot.missing_context) {
+      if (!items.some((i) => i.category === "unknowns" && i.label === m.replace(/_/g, " "))) {
+        items.push({ category: "unknowns", label: m.replace(/_/g, " "), status: "verify" });
+      }
+    }
+  }
+
+  return items;
+}
+
+/* ─── Copy-summary block generation ─── */
+
+export type CopySummary = {
+  bestCandidate: string;
+  topReason: string;
+  mainRisk: string;
+  bestFormat: string;
+  nextValidation: string;
+};
+
+export function buildCopySummary(
+  candidate: ExpansionCandidate | null,
+  report: RecommendationReportResponse | null,
+  memo: CandidateMemoResponse | null,
+): CopySummary {
+  const rec = report?.recommendation || {};
+  const memoRec = memo?.recommendation || {};
+  const positives = candidate?.top_positives_json || [];
+  const risks = candidate?.top_risks_json || [];
+  const unknowns = candidate?.gate_reasons_json?.unknown || [];
+  const missing = candidate?.feature_snapshot_json?.missing_context || [];
+
+  return {
+    bestCandidate: candidate
+      ? `#${candidate.rank_position || "?"} ${candidate.district || candidate.parcel_id || "—"}`
+      : "—",
+    topReason: rec.why_best || memoRec.best_use_case || positives[0] || "—",
+    mainRisk: rec.main_risk || memoRec.main_watchout || risks[0] || "—",
+    bestFormat: rec.best_format || memoRec.best_use_case || "—",
+    nextValidation: unknowns[0]?.replace(/_/g, " ") || missing[0]?.replace(/_/g, " ") || "Site visit recommended",
+  };
+}
+
+export function formatCopySummaryText(summary: CopySummary): string {
+  return [
+    `Lead site: ${summary.bestCandidate}`,
+    `Top reason: ${summary.topReason}`,
+    `Main risk: ${summary.mainRisk}`,
+    `Best format: ${summary.bestFormat}`,
+    `Next step: ${summary.nextValidation}`,
+  ].join("\n");
+}
+
+/* ─── Runner-up helper ─── */
+
+export function findRunnerUp(
+  candidates: ExpansionCandidate[],
+  shortlistIds: string[],
+  leadCandidateId: string | null,
+): ExpansionCandidate | null {
+  if (!leadCandidateId) return null;
+  const shortlisted = shortlistIds
+    .filter((id) => id !== leadCandidateId)
+    .map((id) => candidates.find((c) => c.id === id))
+    .filter(Boolean) as ExpansionCandidate[];
+  if (shortlisted.length > 0) return shortlisted[0];
+  return candidates.find((c) => c.id !== leadCandidateId) || null;
+}

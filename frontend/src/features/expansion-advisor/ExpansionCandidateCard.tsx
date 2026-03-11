@@ -11,6 +11,7 @@ type Props = {
   selected: boolean;
   shortlisted: boolean;
   compared: boolean;
+  isLead?: boolean;
   localSortActive?: boolean;
   onSelect: () => void;
   onToggleShortlist: () => void;
@@ -23,6 +24,7 @@ export default function ExpansionCandidateCard({
   selected,
   shortlisted,
   compared,
+  isLead,
   localSortActive,
   onSelect,
   onToggleShortlist,
@@ -39,6 +41,7 @@ export default function ExpansionCandidateCard({
     selected && "ea-candidate--selected",
     shortlisted && "ea-candidate--shortlisted",
     compared && "ea-candidate--compared",
+    isLead && "ea-candidate--lead",
   ]
     .filter(Boolean)
     .join(" ");
@@ -48,6 +51,7 @@ export default function ExpansionCandidateCard({
       {/* Top row: rank + district + badges */}
       <div className="ea-candidate__top">
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {isLead && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
           {candidate.rank_position ? (
             <span className="ea-candidate__rank" title={localSortActive ? t("expansionAdvisor.backendRank") : undefined}>
               #{candidate.rank_position}
