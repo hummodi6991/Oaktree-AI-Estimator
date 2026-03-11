@@ -3,6 +3,9 @@ from __future__ import annotations
 from app.services import expansion_advisor as expansion_service
 from app.services.expansion_advisor import (
     _brand_fit_score,
+    _candidate_gate_status,
+    _comparable_competitors,
+    _confidence_grade,
     _payback_band,
     compare_candidates,
     get_candidate_memo,
@@ -307,3 +310,50 @@ def test_brand_fit_responds_to_multi_platform_presence():
 
     assert high_platform != low_platform
     assert high_platform > low_platform
+
+
+def test_gate_status_logic():
+    gates = _candidate_gate_status(
+        fit_score=60,
+        district="Olaya",
+        distance_to_nearest_branch_m=2200,
+        provider_density_score=50,
+        multi_platform_presence_score=40,
+        economics_score=65,
+        payback_band="promising",
+        brand_profile={"primary_channel": "delivery", "excluded_districts": ["Malqa"], "cannibalization_tolerance_m": 1800},
+    )
+    assert gates["overall_pass"] is True
+    assert gates["district_pass"] is True
+
+
+def test_confidence_grade_bounds():
+    assert _confidence_grade(confidence_score=88, district="Olaya", provider_platform_count=2, multi_platform_presence_score=50, rent_source="aqar_city") == "A"
+    assert _confidence_grade(confidence_score=70, district=None, provider_platform_count=None, multi_platform_presence_score=None, rent_source="conservative_default") in {"B", "C"}
+    assert _confidence_grade(confidence_score=30, district=None, provider_platform_count=None, multi_platform_presence_score=None, rent_source="conservative_default") == "D"
+
+
+def test_comparable_competitors_payload_shape():
+    class _DB:
+        def execute(self, *_args, **_kwargs):
+            return _Result([
+                {"id": "r1", "name": "A", "category": "burger", "district": "Olaya", "rating": 4.2, "review_count": 100, "distance_m": 320.5, "source": "google"}
+            ])
+
+    items = _comparable_competitors(_DB(), category="burger", lat=24.7, lon=46.7)
+    assert items
+    assert {"id", "name", "category", "district", "rating", "review_count", "distance_m", "source"}.issubset(items[0].keys())
+
+
+def test_report_includes_new_decision_outputs():
+    db = FakeDB(candidate_rows=[])
+    import app.services.expansion_advisor as svc
+    svc.get_search = lambda _db, _sid: {"id": "search-1", "service_model": "qsr", "brand_profile": {"expansion_goal": "balanced"}}
+    svc.get_candidates = lambda _db, _sid: [
+        {"id": "c1", "final_score": 90, "brand_fit_score": 82, "economics_score": 70, "area_m2": 170, "district": "Olaya", "key_risks_json": ["risk"], "confidence_grade": "A", "confidence_score": 85, "gate_status_json": {"overall_pass": True}, "demand_thesis": "d", "cost_thesis": "c", "comparable_competitors_json": [{"id": "x"}]},
+        {"id": "c2", "final_score": 86, "brand_fit_score": 79, "economics_score": 68, "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"], "confidence_grade": "B", "confidence_score": 72, "gate_status_json": {"overall_pass": False}, "demand_thesis": "d2", "cost_thesis": "c2", "comparable_competitors_json": []},
+    ]
+    report = get_recommendation_report(db, "search-1")
+    assert report["recommendation"]["best_pass_candidate_id"] == "c1"
+    assert report["recommendation"]["best_confidence_candidate_id"] == "c1"
+    assert "demand_thesis" in report["top_candidates"][0]

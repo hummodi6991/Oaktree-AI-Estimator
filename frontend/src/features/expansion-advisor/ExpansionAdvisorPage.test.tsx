@@ -4,6 +4,7 @@ import React from "react";
 import ExpansionComparePanel from "./ExpansionComparePanel";
 import ExpansionResultsPanel from "./ExpansionResultsPanel";
 import ExpansionReportPanel from "./ExpansionReportPanel";
+import ExpansionMemoPanel from "./ExpansionMemoPanel";
 import en from "../../i18n/en.json";
 import {
   getCompareRows,
@@ -15,7 +16,7 @@ describe("Expansion advisor UI behavior", () => {
   it("renders candidate cards", () => {
     const html = renderToStaticMarkup(
       <ExpansionResultsPanel
-        items={[{ id: "c1", search_id: "s1", parcel_id: "p1", lat: 24.7, lon: 46.7, brand_fit_score: 75, provider_density_score: 60, provider_whitespace_score: 55 }]}
+        items={[{ id: "c1", search_id: "s1", parcel_id: "p1", lat: 24.7, lon: 46.7, brand_fit_score: 75, provider_density_score: 60, provider_whitespace_score: 55, confidence_grade: "A", demand_thesis: "Demand is strong", cost_thesis: "Cost is manageable", gate_status_json: { overall_pass: true }, comparable_competitors_json: [{ id: "r1", name: "Comp", distance_m: 120 }] }]}
         selectedCandidateId={null}
         shortlistIds={[]}
         compareIds={[]}
@@ -25,6 +26,8 @@ describe("Expansion advisor UI behavior", () => {
       />,
     );
     expect(html).toContain("p1");
+    expect(html).toContain("Demand is strong");
+    expect(html).toContain("Cost is manageable");
   });
 
   it("compare button disables for <2 selections", () => {
@@ -75,8 +78,14 @@ describe("Expansion advisor UI behavior", () => {
   });
 
   it("report panel renders recommendation summary", () => {
-    const html = renderToStaticMarkup(<ExpansionReportPanel report={{ recommendation: { best_candidate_id: "c1", report_summary: "summary" }, top_candidates: [{ id: "c1", final_score: 90 }] }} />);
+    const html = renderToStaticMarkup(<ExpansionReportPanel report={{ recommendation: { best_candidate_id: "c1", runner_up_candidate_id: "c2", best_pass_candidate_id: "c1", best_confidence_candidate_id: "c2", report_summary: "summary" }, top_candidates: [{ id: "c1", final_score: 90, confidence_grade: "A", gate_status_json: { overall_pass: true } }] }} />);
     expect(html).toContain("c1");
     expect(html).toContain("summary");
+    expect(html).toContain("c2");
   });
+  it("memo panel renders comparable competitors text", () => {
+    const html = renderToStaticMarkup(<ExpansionMemoPanel loading={false} memo={{ recommendation: { verdict: "go", headline: "GO" }, candidate: { comparable_competitors: [{ id: "r1", name: "Comp", distance_m: 100 }], key_strengths: [], key_risks: [], gate_status: { overall_pass: true } }, market_research: {} }} />);
+    expect(html).toContain("Comp");
+  });
+
 });
