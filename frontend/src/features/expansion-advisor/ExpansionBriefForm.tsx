@@ -209,7 +209,7 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
         </div>
       </div>
 
-      <button type="submit" className="oak-btn oak-btn--primary" disabled={loading || !brief.brand_name}>{loading ? t("expansionAdvisor.loadingSearch") : t("expansionAdvisor.runSearch")}</button>
+      <button type="submit" className="oak-btn oak-btn--primary" disabled={loading || !brief.brand_name}>{loading ? t("expansionAdvisor.searchingCta") : t("expansionAdvisor.runSearchCta")}</button>
     </form>
   );
 }

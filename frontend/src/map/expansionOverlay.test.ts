@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildExpansionOverlayData } from "./expansionOverlay";
 
 describe("buildExpansionOverlayData", () => {
-  it("builds candidate and branch collections with selected/shortlisted flags", () => {
+  it("builds candidate and branch collections with selected/shortlisted/compared flags", () => {
     const { candidateFc, branchFc } = buildExpansionOverlayData(
       [
         { id: "a", lat: 24.7, lon: 46.7 } as any,
@@ -11,11 +11,12 @@ describe("buildExpansionOverlayData", () => {
       "b",
       ["a"],
       [{ lat: 24.6, lon: 46.6 }],
+      ["a", "b"],
     );
 
     expect(candidateFc.features).toHaveLength(2);
-    expect(candidateFc.features[0].properties).toMatchObject({ candidate_id: "a", selected: false, shortlisted: true });
-    expect(candidateFc.features[1].properties).toMatchObject({ candidate_id: "b", selected: true, shortlisted: false });
+    expect(candidateFc.features[0].properties).toMatchObject({ candidate_id: "a", selected: false, shortlisted: true, compared: true });
+    expect(candidateFc.features[1].properties).toMatchObject({ candidate_id: "b", selected: true, shortlisted: false, compared: true });
     expect(branchFc.features).toHaveLength(1);
   });
 

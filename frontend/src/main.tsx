@@ -64,6 +64,7 @@ function App() {
   const [expansionSelectedCandidateId, setExpansionSelectedCandidateId] = useState<string | null>(null);
   const [expansionShortlistIds, setExpansionShortlistIds] = useState<string[]>([]);
   const [expansionBranches, setExpansionBranches] = useState<ExpansionBrief["existing_branches"]>([]);
+  const [expansionCompareIds, setExpansionCompareIds] = useState<string[]>([]);
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
 
   const uiV2 = useMemo(() => {
@@ -301,7 +302,7 @@ function App() {
                     setRestaurantClickedLocation(null);
                   }}
                 >
-                  {t("app.modeFeasibility", { defaultValue: "Development Feasibility" })}
+                  {t("app.modeFeasibility", { defaultValue: "Feasibility (Internal)" })}
                 </button>
               </div>
               <div className={`ui-v2-map-wrap ${isMapHidden ? "ui-v2-map-wrap--hidden" : ""}`}>
@@ -325,6 +326,7 @@ function App() {
                   expansionCandidates={analysisMode === "expansion" ? expansionCandidates : []}
                   selectedExpansionCandidateId={expansionSelectedCandidateId}
                   shortlistExpansionCandidateIds={expansionShortlistIds}
+                  compareExpansionCandidateIds={expansionCompareIds}
                   existingBranches={expansionBranches}
                   onExpansionCandidateClick={(candidateId) => {
                     const candidate = expansionCandidates.find((item) => item.id === candidateId);
@@ -340,10 +342,11 @@ function App() {
             analysisMode === "expansion" ? (
               <ExpansionAdvisorPage
                 externalSelectedCandidateId={expansionSelectedCandidateId}
-                onCandidatesChange={(candidates, shortlistIds, selectedId, branches) => {
+                onCandidatesChange={(candidates, shortlistIds, selectedId, branches, compareIds) => {
                   setExpansionCandidates(candidates);
                   setExpansionShortlistIds(shortlistIds);
                   setExpansionSelectedCandidateId(selectedId);
+                  setExpansionCompareIds(compareIds || []);
                   setExpansionBranches(branches);
                 }}
                 onSelectedCandidateChange={(candidate) => {
