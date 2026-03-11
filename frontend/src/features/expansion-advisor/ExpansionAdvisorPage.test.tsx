@@ -653,6 +653,38 @@ describe("Update study dialog preserves existing values", () => {
     expect(html).toContain("New Study");
     expect(html).toMatch(/option[^>]*value="draft"[^>]*selected/);
   });
+
+  it("update preserves all existing metadata when user saves without changes", () => {
+    // Simulate exact scenario: saved study has title, description, and final status.
+    // Dialog opens for update. User clicks save immediately without editing anything.
+    // The rendered inputs must reflect the original values so onSave receives them unchanged.
+    const existingTitle = "Q4 Riyadh Expansion";
+    const existingDescription = "Flagship locations in Al Olaya and Al Malqa districts";
+    const existingStatus = "final" as const;
+
+    const html = renderToStaticMarkup(
+      <SaveStudyDialog
+        defaultTitle={existingTitle}
+        defaultDescription={existingDescription}
+        defaultStatus={existingStatus}
+        saving={false}
+        error={null}
+        isUpdate={true}
+        onSave={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    // Title input has existing value
+    expect(html).toContain(`value="${existingTitle}"`);
+    // Description input has existing value (not empty string)
+    expect(html).toContain(`value="${existingDescription}"`);
+    // Status select has "final" selected, NOT "draft"
+    expect(html).toMatch(/option[^>]*value="final"[^>]*selected/);
+    expect(html).not.toMatch(/option[^>]*value="draft"[^>]*selected/);
+    // Update button label is shown (not "Save")
+    expect(html).toContain("Update Study");
+  });
 });
 
 describe("Memo/report entry from multiple points", () => {
