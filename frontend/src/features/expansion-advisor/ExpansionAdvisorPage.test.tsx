@@ -10,6 +10,7 @@ import {
   restoreSavedUiState,
   shouldLoadMemoFromMapSelection,
   briefFromSavedSearch,
+  buildCandidateDistrictMap,
   getCompareRows,
   getNewSearchResetState,
   getNextCompareIds,
@@ -20,10 +21,10 @@ import {
 import { normalizeCandidate } from "../../lib/api/expansionAdvisor";
 
 describe("Expansion advisor UI behavior", () => {
-  it("renders candidate cards", () => {
+  it("renders candidate cards with full metrics", () => {
     const html = renderToStaticMarkup(
       <ExpansionResultsPanel
-        items={[{ id: "c1", search_id: "s1", parcel_id: "p1", lat: 24.7, lon: 46.7, brand_fit_score: 75, economics_score: 80, provider_density_score: 60, provider_whitespace_score: 55, confidence_grade: "A", demand_thesis: "Demand is strong", cost_thesis: "Cost is manageable", gate_status_json: { overall_pass: true }, top_positives_json: ["great"], top_risks_json: ["rent"], comparable_competitors_json: [{ id: "r1", name: "Comp", distance_m: 120 }] }]}
+        items={[{ id: "c1", search_id: "s1", parcel_id: "p1", lat: 24.7, lon: 46.7, brand_fit_score: 75, economics_score: 80, provider_density_score: 60, provider_whitespace_score: 55, confidence_grade: "A", demand_thesis: "Demand is strong", cost_thesis: "Cost is manageable", gate_status_json: { overall_pass: true }, top_positives_json: ["great"], top_risks_json: ["rent"], comparable_competitors_json: [{ id: "r1", name: "Comp", distance_m: 120 }], estimated_annual_rent_sar: 120000, estimated_fitout_cost_sar: 250000, estimated_revenue_index: 1.2, decision_summary: "Good site overall" }]}
         selectedCandidateId={null}
         shortlistIds={[]}
         compareIds={[]}
@@ -34,6 +35,7 @@ describe("Expansion advisor UI behavior", () => {
     );
     expect(html).toContain("great");
     expect(html).toContain("ea-candidate");
+    expect(html).toContain("Good site overall");
   });
 
   it("compare button disables for <2 selections", () => {
@@ -167,10 +169,11 @@ describe("Expansion advisor UI behavior", () => {
     expect(shouldLoadMemoFromMapSelection("c7", "c7")).toBe(false);
   });
 
-  it("report panel renders recommendation summary", () => {
+  it("report panel renders recommendation summary with district labels", () => {
     const html = renderToStaticMarkup(
       <ExpansionReportPanel
         loading={false}
+        candidateDistrictMap={{ c1: "Olaya", c2: "Malqa" }}
         report={{
           meta: { version: "6.1" },
           recommendation: { best_candidate_id: "c1", runner_up_candidate_id: "c2", best_pass_candidate_id: "c1", best_confidence_candidate_id: "c2", summary: "summary" },
@@ -180,7 +183,7 @@ describe("Expansion advisor UI behavior", () => {
         }}
       />,
     );
-    expect(html).toContain("c1");
+    expect(html).toContain("Olaya");
     expect(html).toContain("summary");
     expect(html).toContain("6.1");
     expect(html).toContain("rent growth");
@@ -302,5 +305,29 @@ describe("Expansion advisor UI behavior", () => {
     );
     expect(memoHtml).toContain("-");
     expect(reportHtml).toContain("c1");
+  });
+
+  it("buildCandidateDistrictMap creates id-to-district lookup", () => {
+    const map = buildCandidateDistrictMap([
+      { id: "c1", search_id: "s", parcel_id: "p1", lat: 0, lon: 0, district: "Olaya" },
+      { id: "c2", search_id: "s", parcel_id: "p2", lat: 0, lon: 0, district: "Malqa" },
+      { id: "c3", search_id: "s", parcel_id: "p3", lat: 0, lon: 0 },
+    ]);
+    expect(map).toEqual({ c1: "Olaya", c2: "Malqa" });
+    expect(map.c3).toBeUndefined();
+  });
+
+  it("new i18n keys are present for form helpers and workflow", () => {
+    expect(en.expansionAdvisor.brandBasicsHelper).toBeDefined();
+    expect(en.expansionAdvisor.unitSizingHelper).toBeDefined();
+    expect(en.expansionAdvisor.geographyHelper).toBeDefined();
+    expect(en.expansionAdvisor.existingBranchesHelper).toBeDefined();
+    expect(en.expansionAdvisor.brandPreferences).toBeDefined();
+    expect(en.expansionAdvisor.stepBrief).toBe("Brief");
+    expect(en.expansionAdvisor.stepCompare).toBe("Compare");
+    expect(en.expansionAdvisor.bestOnHighlights).toBeDefined();
+    expect(en.expansionAdvisor.addToCompare).toBe("Add to compare");
+    expect(en.expansionAdvisor.runSearchCta).toBe("Find Branch Candidates");
+    expect(en.expansionAdvisor.updateStudy).toBe("Update Study");
   });
 });

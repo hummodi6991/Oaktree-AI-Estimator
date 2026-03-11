@@ -3,23 +3,26 @@ import { useTranslation } from "react-i18next";
 
 type Props = {
   defaultTitle: string;
+  defaultDescription?: string;
+  defaultStatus?: "draft" | "final";
   saving: boolean;
   error: string | null;
+  isUpdate?: boolean;
   onSave: (title: string, description: string, status: "draft" | "final") => void;
   onClose: () => void;
 };
 
-export default function SaveStudyDialog({ defaultTitle, saving, error, onSave, onClose }: Props) {
+export default function SaveStudyDialog({ defaultTitle, defaultDescription, defaultStatus, saving, error, isUpdate, onSave, onClose }: Props) {
   const { t } = useTranslation();
   const [title, setTitle] = useState(defaultTitle);
-  const [description, setDescription] = useState("");
-  const [status, setStatus] = useState<"draft" | "final">("draft");
+  const [description, setDescription] = useState(defaultDescription || "");
+  const [status, setStatus] = useState<"draft" | "final">(defaultStatus || "draft");
 
   return (
     <div className="ea-dialog-backdrop" onClick={onClose}>
       <div className="ea-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="ea-dialog__header">
-          <h3 className="ea-dialog__title">{t("expansionAdvisor.saveStudyTitle")}</h3>
+          <h3 className="ea-dialog__title">{isUpdate ? t("expansionAdvisor.updateStudyTitle") : t("expansionAdvisor.saveStudyTitle")}</h3>
         </div>
         <div className="ea-dialog__body">
           <div className="ea-form__field">
@@ -48,7 +51,7 @@ export default function SaveStudyDialog({ defaultTitle, saving, error, onSave, o
             disabled={saving || !title.trim()}
             onClick={() => onSave(title.trim(), description.trim(), status)}
           >
-            {saving ? t("expansionAdvisor.saving") : t("expansionAdvisor.save")}
+            {saving ? t("expansionAdvisor.saving") : isUpdate ? t("expansionAdvisor.update") : t("expansionAdvisor.save")}
           </button>
         </div>
       </div>

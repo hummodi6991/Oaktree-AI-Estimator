@@ -11,15 +11,18 @@ export function triggerReportCandidateSelect(candidateId: string | undefined, on
 export default function ExpansionReportPanel({
   report,
   loading,
+  candidateDistrictMap,
   onSelectCandidateId,
   onClose,
 }: {
   report: RecommendationReportResponse | null;
   loading: boolean;
+  candidateDistrictMap?: Record<string, string>;
   onSelectCandidateId?: (candidateId: string) => void;
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
+  const districtOf = (id?: string | null) => (id && candidateDistrictMap?.[id]) || id?.slice(0, 8) || "\u2014";
 
   if (!report && !loading) return null;
 
@@ -59,23 +62,23 @@ export default function ExpansionReportPanel({
                   <div className="ea-detail__grid">
                     <div className="ea-detail__kv">
                       <span className="ea-detail__kv-label">{t("expansionAdvisor.bestCandidate")}</span>
-                      <span className="ea-detail__kv-value" style={{ cursor: rec.best_candidate_id ? "pointer" : "default" }} onClick={() => rec.best_candidate_id && onSelectCandidateId?.(rec.best_candidate_id)}>
-                        {rec.best_candidate_id?.slice(0, 8) || "—"}
+                      <span className="ea-detail__kv-value ea-report__clickable" onClick={() => rec.best_candidate_id && onSelectCandidateId?.(rec.best_candidate_id)}>
+                        {districtOf(rec.best_candidate_id)}
                       </span>
                     </div>
                     <div className="ea-detail__kv">
                       <span className="ea-detail__kv-label">{t("expansionAdvisor.runnerUp")}</span>
-                      <span className="ea-detail__kv-value" style={{ cursor: rec.runner_up_candidate_id ? "pointer" : "default" }} onClick={() => rec.runner_up_candidate_id && onSelectCandidateId?.(rec.runner_up_candidate_id)}>
-                        {rec.runner_up_candidate_id?.slice(0, 8) || "—"}
+                      <span className="ea-detail__kv-value ea-report__clickable" onClick={() => rec.runner_up_candidate_id && onSelectCandidateId?.(rec.runner_up_candidate_id)}>
+                        {districtOf(rec.runner_up_candidate_id)}
                       </span>
                     </div>
                     <div className="ea-detail__kv">
                       <span className="ea-detail__kv-label">{t("expansionAdvisor.bestPassCandidate")}</span>
-                      <span className="ea-detail__kv-value">{rec.best_pass_candidate_id?.slice(0, 8) || "—"}</span>
+                      <span className="ea-detail__kv-value">{districtOf(rec.best_pass_candidate_id)}</span>
                     </div>
                     <div className="ea-detail__kv">
                       <span className="ea-detail__kv-label">{t("expansionAdvisor.bestConfidenceCandidate")}</span>
-                      <span className="ea-detail__kv-value">{rec.best_confidence_candidate_id?.slice(0, 8) || "—"}</span>
+                      <span className="ea-detail__kv-value">{districtOf(rec.best_confidence_candidate_id)}</span>
                     </div>
                   </div>
 
@@ -87,7 +90,7 @@ export default function ExpansionReportPanel({
                 {/* Top candidates */}
                 {top.length > 0 && (
                   <div className="ea-report-section">
-                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.candidateParcels")}</h5>
+                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.topCandidates")}</h5>
                     <div style={{ display: "grid", gap: 8 }}>
                       {top.map((item) => (
                         <div
@@ -99,7 +102,7 @@ export default function ExpansionReportPanel({
                           <div className="ea-candidate__top">
                             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                               {item.rank_position && <span className="ea-candidate__rank">#{item.rank_position}</span>}
-                              <span className="ea-candidate__district">{item.id?.slice(0, 8) || "—"}</span>
+                              <span className="ea-candidate__district">{districtOf(item.id)}</span>
                             </div>
                             <div className="ea-candidate__badges">
                               <ScorePill value={item.final_score} />
