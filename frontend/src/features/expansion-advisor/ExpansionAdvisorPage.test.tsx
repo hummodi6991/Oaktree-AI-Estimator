@@ -14,6 +14,7 @@ import {
   getNewSearchResetState,
   getNextCompareIds,
   resolveCandidateById,
+  sameCandidateId,
   shouldKeepCompareResult,
 } from "./ExpansionAdvisorPage";
 import { normalizeCandidate } from "../../lib/api/expansionAdvisor";
@@ -76,6 +77,11 @@ describe("Expansion advisor UI behavior", () => {
     expect(restored.compareIds).toEqual(["c2", "c3"]);
     expect(restored.selectedCandidate?.id).toBe("c3");
     expect(restored.selectedCandidateId).toBe("c3");
+  });
+
+  it("sameCandidateId safely compares nullable candidates", () => {
+    expect(sameCandidateId({ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0 }, { id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0 })).toBe(true);
+    expect(sameCandidateId({ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0 }, null)).toBe(false);
   });
 
   it("briefFromSavedSearch prefers filters_json when present", () => {

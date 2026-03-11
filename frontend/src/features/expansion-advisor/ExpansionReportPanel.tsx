@@ -38,7 +38,7 @@ export default function ExpansionReportPanel({ report, loading, onSelectCandidat
             onClick={() => {
               triggerReportCandidateSelect(item.id, onSelectCandidateId);
             }}
-            style={{ border: "1px solid #d8e1dd", borderRadius: 6, padding: 8, textAlign: "left", background: "#fff" }}
+            style={{ border: "1px solid #d8e1dd", borderRadius: 6, padding: 8, textAlign: "left", background: "#fff", cursor: item.id ? "pointer" : "default" }}
           >
             <strong>{item.id}</strong> #{item.rank_position ?? "-"} — {item.final_score ?? "-"}
             <div>{t("expansionAdvisor.confidenceGrade")}: {item.confidence_grade || "-"}</div>

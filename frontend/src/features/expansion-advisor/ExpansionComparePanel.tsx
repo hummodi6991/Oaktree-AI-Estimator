@@ -19,6 +19,13 @@ function value(input?: string | number) {
   return input ?? "-";
 }
 
+function summaryLabel(key: string) {
+  return key
+    .replace(/_candidate_id$/, "")
+    .replace(/_/g, " ")
+    .trim();
+}
+
 export function getOrderedCompareSummaryEntries(summary: Record<string, string | null> = {}) {
   const sortedKnown = SUMMARY_KEY_ORDER.map((key) => [key, summary[key]] as const).filter((entry) => entry[1]);
   const knownKeys = new Set(SUMMARY_KEY_ORDER);
@@ -26,7 +33,21 @@ export function getOrderedCompareSummaryEntries(summary: Record<string, string |
   return [...sortedKnown, ...extras];
 }
 
-export default function ExpansionComparePanel({ compareIds, result, loading, error, onCompare }: { compareIds: string[]; result: CompareCandidatesResponse | null; loading: boolean; error: string | null; onCompare: () => void }) {
+export default function ExpansionComparePanel({
+  compareIds,
+  result,
+  loading,
+  error,
+  onCompare,
+  onSelectCandidateId,
+}: {
+  compareIds: string[];
+  result: CompareCandidatesResponse | null;
+  loading: boolean;
+  error: string | null;
+  onCompare: () => void;
+  onSelectCandidateId?: (candidateId: string) => void;
+}) {
   const { t } = useTranslation();
   const enabled = compareIds.length >= 2 && compareIds.length <= 6;
   const summaryEntries = getOrderedCompareSummaryEntries(result?.summary || {});
@@ -44,13 +65,13 @@ export default function ExpansionComparePanel({ compareIds, result, loading, err
             </thead>
             <tbody>
               {result.items.map((item) => (
-                <tr key={item.candidate_id}>
+                <tr key={item.candidate_id} onClick={() => item.candidate_id && onSelectCandidateId?.(item.candidate_id)} style={{ cursor: item.candidate_id ? "pointer" : "default" }}>
                   <td>{item.candidate_id}</td><td>{value(item.rank_position)}</td><td>{value(item.final_score)}</td><td>{value(item.confidence_grade)}</td><td>{item.gate_status_json?.overall_pass ? t("expansionAdvisor.pass") : t("expansionAdvisor.fail")}</td><td>{value(item.zoning_fit_score)}</td><td>{value(item.frontage_score)}</td><td>{value(item.access_score)}</td><td>{value(item.parking_score)}</td><td>{value(item.access_visibility_score)}</td><td>{value(item.economics_score)}</td><td>{value(item.brand_fit_score)}</td><td>{value(item.provider_density_score)}</td><td>{value(item.provider_whitespace_score)}</td><td>{value(item.estimated_payback_months)}</td><td>{value(item.payback_band)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {summaryEntries.length ? <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>{summaryEntries.map(([k, v]) => <span key={k} style={{ border: "1px solid #d8e1dd", borderRadius: 12, padding: "2px 8px" }}>{k.replace(/_/g, " ")}: {v}</span>)}</div> : null}
+          {summaryEntries.length ? <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>{summaryEntries.map(([k, v]) => <span key={k} style={{ border: "1px solid #d8e1dd", borderRadius: 12, padding: "2px 8px" }}>{summaryLabel(k)}: {v}</span>)}</div> : null}
         </div>
       ) : null}
     </div>
