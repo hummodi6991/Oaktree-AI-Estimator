@@ -572,6 +572,8 @@
     "errorMemo": "Unable to load memo.",
     "errorCompare": "Unable to compare candidates.",
     "errorReport": "Unable to load report.",
-    "errorSavedLoad": "Unable to load saved study."
+    "errorSavedLoad": "Unable to load saved study.",
+    "compareSummary": "Compare summary",
+    "clickToInspect": "Click a candidate to inspect details"
   }
 }

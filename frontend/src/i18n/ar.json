@@ -572,6 +572,8 @@
     "errorMemo": "تعذر تحميل المذكرة.",
     "errorCompare": "تعذر مقارنة المواقع.",
     "errorReport": "تعذر تحميل التقرير.",
-    "errorSavedLoad": "تعذر تحميل الدراسة المحفوظة."
+    "errorSavedLoad": "تعذر تحميل الدراسة المحفوظة.",
+    "compareSummary": "ملخص المقارنة",
+    "clickToInspect": "اضغط على المرشح لعرض التفاصيل"
   }
 }

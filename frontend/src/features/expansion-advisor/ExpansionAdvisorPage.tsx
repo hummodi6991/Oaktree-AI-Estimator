@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   compareExpansionCandidates,
@@ -112,7 +112,7 @@ export function briefFromSavedSearch(saved: SavedExpansionSearch): ExpansionBrie
   };
 }
 
-function sameCandidateId(a: ExpansionCandidate | null, b: ExpansionCandidate | null) {
+export function sameCandidateId(a: ExpansionCandidate | null, b: ExpansionCandidate | null): boolean {
   return (a?.id || null) === (b?.id || null);
 }
 
@@ -147,6 +147,8 @@ export default function ExpansionAdvisorPage({
   const [reportError, setReportError] = useState<string | null>(null);
   const [savedLoadError, setSavedLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const memoAnchorRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setLoadingSaved(true);
@@ -160,6 +162,47 @@ export default function ExpansionAdvisorPage({
   useEffect(() => {
     onCandidatesChange(candidates, shortlistIds, selectedCandidate?.id || null, brief.existing_branches);
   }, [candidates, shortlistIds, selectedCandidate, brief.existing_branches, onCandidatesChange]);
+
+  useEffect(() => {
+    if (shouldKeepCompareResult(compareIds, compareResult)) return;
+    if (compareResult !== null) {
+      setCompareResult(null);
+    }
+  }, [compareIds, compareResult]);
+
+  const loadReport = async (targetSearchId: string) => {
+    if (!targetSearchId) return;
+    setLoadingReport(true);
+    setReportError(null);
+    try {
+      setReport(await getExpansionRecommendationReport(targetSearchId));
+    } catch {
+      setReportError(t("expansionAdvisor.errorReport"));
+    } finally {
+      setLoadingReport(false);
+    }
+  };
+
+  const loadCompare = async (targetSearchId: string, targetCompareIds: string[]) => {
+    if (!targetSearchId || targetCompareIds.length < 2 || targetCompareIds.length > 6) {
+      setCompareResult(null);
+      return;
+    }
+    setLoadingCompare(true);
+    setCompareError(null);
+    try {
+      setCompareResult(await compareExpansionCandidates(targetSearchId, targetCompareIds));
+    } catch {
+      setCompareError(t("expansionAdvisor.errorCompare"));
+    } finally {
+      setLoadingCompare(false);
+    }
+  };
+
+  const refreshSavedStudies = async () => {
+    const latest = await listSavedExpansionSearches();
+    setSavedItems(latest.items || []);
+  };
 
   const handleSelectCandidate = async (candidate: ExpansionCandidate, forceReloadMemo = false) => {
     if (sameCandidateId(candidate, selectedCandidate) && !forceReloadMemo) {
@@ -175,6 +218,7 @@ export default function ExpansionAdvisorPage({
       setMemoError(t("expansionAdvisor.errorMemo"));
     } finally {
       setLoadingMemo(false);
+      requestAnimationFrame(() => memoAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
     }
   };
 
@@ -200,14 +244,16 @@ export default function ExpansionAdvisorPage({
     setMemo(resetState.memo);
     setReport(resetState.report);
     setCandidates([]);
-    setSearchId("");
     setMemoError(resetState.memoError);
     setReportError(resetState.reportError);
     setCompareError(resetState.compareError);
+    setSavedLoadError(null);
+    setSearchId("");
     try {
       const result = await createExpansionSearch(nextBrief);
       setSearchId(result.search_id);
       setCandidates(normalizeCandidates(result.items || []));
+      void loadReport(result.search_id);
     } catch {
       setSearchError(t("expansionAdvisor.errorSearch"));
     } finally {
@@ -263,27 +309,11 @@ export default function ExpansionAdvisorPage({
     }
 
     if (restored.searchId && restoredCompareIds.length >= 2 && restoredCompareIds.length <= 6) {
-      setLoadingCompare(true);
-      setCompareError(null);
-      try {
-        setCompareResult(await compareExpansionCandidates(restored.searchId, restoredCompareIds));
-      } catch {
-        setCompareError(t("expansionAdvisor.errorCompare"));
-      } finally {
-        setLoadingCompare(false);
-      }
+      await loadCompare(restored.searchId, restoredCompareIds);
     }
 
     if (restored.searchId) {
-      setLoadingReport(true);
-      setReportError(null);
-      try {
-        setReport(await getExpansionRecommendationReport(restored.searchId));
-      } catch {
-        setReportError(t("expansionAdvisor.errorReport"));
-      } finally {
-        setLoadingReport(false);
-      }
+      await loadReport(restored.searchId);
     }
   };
 
@@ -337,20 +367,16 @@ export default function ExpansionAdvisorPage({
             error={compareError}
             onCompare={async () => {
               if (!searchId) return;
-              setLoadingCompare(true);
-              setCompareError(null);
-              try {
-                setCompareResult(await compareExpansionCandidates(searchId, compareIds));
-              } catch {
-                setCompareError(t("expansionAdvisor.errorCompare"));
-              } finally {
-                setLoadingCompare(false);
-              }
+              await loadCompare(searchId, compareIds);
+            }}
+            onSelectCandidateId={(candidateId) => {
+              void handleSelectCandidateById(candidateId);
             }}
           />
           <button
             onClick={async () => {
               if (!searchId) return;
+              setSaving(true);
               setSaveError(null);
               try {
                 await createSavedExpansionSearch({
@@ -362,27 +388,21 @@ export default function ExpansionAdvisorPage({
                   filters_json: brief as unknown as Record<string, unknown>,
                   ui_state_json: { selected_candidate_id: selectedCandidate?.id || null, compare_ids: compareIds },
                 });
-                const latest = await listSavedExpansionSearches();
-                setSavedItems(latest.items || []);
+                await refreshSavedStudies();
               } catch {
                 setSaveError(t("expansionAdvisor.errorSavedLoad"));
+              } finally {
+                setSaving(false);
               }
             }}
+            disabled={!searchId || saving}
           >
-            {t("expansionAdvisor.saveSearch")}
+            {saving ? t("common.loading") : t("expansionAdvisor.saveSearch")}
           </button>
           <button
             onClick={async () => {
               if (!searchId) return;
-              setLoadingReport(true);
-              setReportError(null);
-              try {
-                setReport(await getExpansionRecommendationReport(searchId));
-              } catch {
-                setReportError(t("expansionAdvisor.errorReport"));
-              } finally {
-                setLoadingReport(false);
-              }
+              await loadReport(searchId);
             }}
           >
             {t("expansionAdvisor.loadReport")}
@@ -420,18 +440,13 @@ export default function ExpansionAdvisorPage({
               setShortlistIds((current) => (current.includes(candidateId) ? current.filter((id) => id !== candidateId) : [...current, candidateId]))
             }
             onToggleCompare={(candidateId) => {
-              setCompareIds((current) => {
-                const next = getNextCompareIds(current, candidateId);
-                if (!shouldKeepCompareResult(next, compareResult)) {
-                  setCompareResult(null);
-                }
-                return next;
-              });
+              setCompareIds((current) => getNextCompareIds(current, candidateId));
             }}
           />
         ) : (
           <div>{loadingSearch ? t("expansionAdvisor.loadingSearch") : t("expansionAdvisor.noCandidates")}</div>
         )}
+        <div ref={memoAnchorRef} />
         {memoError ? <small>{memoError}</small> : null}
         <ExpansionMemoPanel memo={memo} loading={loadingMemo} />
         {reportError ? <small>{reportError}</small> : null}
