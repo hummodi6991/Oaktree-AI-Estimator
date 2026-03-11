@@ -1,5 +1,19 @@
 import { buildApiUrl, fetchWithAuth } from "../../api";
 
+export type ExpansionBrandProfile = {
+  price_tier?: "value" | "mid" | "premium" | null;
+  average_check_sar?: number | null;
+  primary_channel?: "dine_in" | "delivery" | "balanced" | null;
+  parking_sensitivity?: "low" | "medium" | "high" | null;
+  frontage_sensitivity?: "low" | "medium" | "high" | null;
+  visibility_sensitivity?: "low" | "medium" | "high" | null;
+  target_customer?: string | null;
+  expansion_goal?: "flagship" | "neighborhood" | "delivery_led" | "balanced" | null;
+  cannibalization_tolerance_m?: number | null;
+  preferred_districts?: string[] | null;
+  excluded_districts?: string[] | null;
+};
+
 export type ExpansionBrief = {
   brand_name: string;
   category: string;
@@ -10,6 +24,7 @@ export type ExpansionBrief = {
   target_districts: string[];
   existing_branches: Array<{ name?: string; lat: number; lon: number; district?: string }>;
   limit: number;
+  brand_profile?: ExpansionBrandProfile | null;
 };
 
 export type ExpansionCandidate = {
@@ -21,6 +36,11 @@ export type ExpansionCandidate = {
   lon: number;
   final_score?: number;
   economics_score?: number;
+  brand_fit_score?: number;
+  provider_density_score?: number;
+  provider_whitespace_score?: number;
+  multi_platform_presence_score?: number;
+  delivery_competition_score?: number;
   compare_rank?: number;
 };
 
@@ -112,4 +132,9 @@ export async function deleteSavedExpansionSearch(savedId: string) {
     method: "DELETE",
   });
   return readJson<{ deleted: boolean }>(res);
+}
+
+export async function getExpansionRecommendationReport(searchId: string) {
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`));
+  return readJson<Record<string, unknown>>(res);
 }

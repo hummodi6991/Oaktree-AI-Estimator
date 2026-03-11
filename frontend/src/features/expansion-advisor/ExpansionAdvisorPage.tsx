@@ -5,6 +5,7 @@ import {
   createExpansionSearch,
   createSavedExpansionSearch,
   getExpansionCandidateMemo,
+  getExpansionRecommendationReport,
   getSavedExpansionSearch,
   listSavedExpansionSearches,
   type ExpansionBrief,
@@ -15,6 +16,7 @@ import ExpansionResultsPanel from "./ExpansionResultsPanel";
 import ExpansionComparePanel from "./ExpansionComparePanel";
 import ExpansionMemoPanel from "./ExpansionMemoPanel";
 import SavedSearchesPanel from "./SavedSearchesPanel";
+import ExpansionReportPanel from "./ExpansionReportPanel";
 
 type CompareResponseItem = {
   candidate_id: string;
@@ -22,6 +24,8 @@ type CompareResponseItem = {
   economics_score?: number;
   estimated_payback_months?: number;
   payback_band?: string;
+  brand_fit_score?: number;
+  provider_density_score?: number;
 };
 
 type CompareResponse = {
@@ -79,6 +83,7 @@ export default function ExpansionAdvisorPage({
   const [loadingMemo, setLoadingMemo] = useState(false);
   const [savedItems, setSavedItems] = useState<any[]>([]);
   const [compareResult, setCompareResult] = useState<CompareResponse | null>(null);
+  const [report, setReport] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     listSavedExpansionSearches().then((res) => setSavedItems(res.items || [])).catch(() => {});
@@ -175,6 +180,7 @@ export default function ExpansionAdvisorPage({
           >
             {t("expansionAdvisor.saveSearch")}
           </button>
+          <button onClick={async () => { if (!searchId) return; setReport(await getExpansionRecommendationReport(searchId)); }}>Load report</button>
         </div>
 
         {getCompareRows(compareResult).length ? (
@@ -186,6 +192,8 @@ export default function ExpansionAdvisorPage({
                   <th>candidate_id</th>
                   <th>final_score</th>
                   <th>economics_score</th>
+                  <th>brand_fit_score</th>
+                  <th>delivery_market_strength</th>
                   <th>estimated_payback_months</th>
                   <th>payback_band</th>
                 </tr>
@@ -196,6 +204,8 @@ export default function ExpansionAdvisorPage({
                     <td>{item.candidate_id}</td>
                     <td>{item.final_score ?? "-"}</td>
                     <td>{item.economics_score ?? "-"}</td>
+                    <td>{item.brand_fit_score ?? "-"}</td>
+                    <td>{item.provider_density_score ?? "-"}</td>
                     <td>{item.estimated_payback_months ?? "-"}</td>
                     <td>{item.payback_band ?? "-"}</td>
                   </tr>
@@ -225,6 +235,7 @@ export default function ExpansionAdvisorPage({
           <div>{loadingSearch ? t("expansionAdvisor.loadingSearch") : t("expansionAdvisor.noCandidates")}</div>
         )}
         <ExpansionMemoPanel memo={memo} loading={loadingMemo} />
+        <ExpansionReportPanel report={report as any} />
       </div>
     </div>
   );

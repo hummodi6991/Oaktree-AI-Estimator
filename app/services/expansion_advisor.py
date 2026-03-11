@@ -40,6 +40,89 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _default_brand_profile(brand_profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    base = {
+        "price_tier": None,
+        "average_check_sar": None,
+        "primary_channel": "balanced",
+        "parking_sensitivity": "medium",
+        "frontage_sensitivity": "medium",
+        "visibility_sensitivity": "medium",
+        "target_customer": None,
+        "expansion_goal": "balanced",
+        "cannibalization_tolerance_m": 1800.0,
+        "preferred_districts": [],
+        "excluded_districts": [],
+    }
+    if brand_profile:
+        base.update({k: v for k, v in brand_profile.items() if v is not None})
+    return base
+
+
+def _sensitivity_weight(level: str | None) -> float:
+    return {"low": 0.3, "medium": 0.6, "high": 1.0}.get(str(level or "medium"), 0.6)
+
+
+def _channel_fit_score(service_model: str, primary_channel: str | None, provider_density_score: float, multi_platform_presence_score: float) -> float:
+    channel = (primary_channel or "balanced").lower()
+    if channel == "delivery":
+        return _clamp(provider_density_score * 0.7 + multi_platform_presence_score * 0.3)
+    if channel == "dine_in":
+        dine_signal = 65.0 if service_model == "dine_in" else 50.0
+        return _clamp(dine_signal + (100.0 - provider_density_score) * 0.2)
+    return _clamp(55.0 + (multi_platform_presence_score - 50.0) * 0.2)
+
+
+def _brand_fit_score(*, district: str | None, area_m2: float, demand_score: float, fit_score: float, cannibalization_score: float,
+    provider_density_score: float, provider_whitespace_score: float, delivery_competition_score: float,
+    visibility_signal: float, parking_signal: float, brand_profile: dict[str, Any], service_model: str) -> float:
+    preferred = {normalize_district_key(d) for d in (brand_profile.get("preferred_districts") or []) if normalize_district_key(d)}
+    excluded = {normalize_district_key(d) for d in (brand_profile.get("excluded_districts") or []) if normalize_district_key(d)}
+    district_norm = normalize_district_key(district) if district else None
+    district_component = 60.0
+    if district_norm and district_norm in preferred:
+        district_component = 88.0
+    if district_norm and district_norm in excluded:
+        district_component = 20.0
+
+    tolerance = _safe_float(brand_profile.get("cannibalization_tolerance_m"), 1800.0)
+    overlap_fit = _clamp(100.0 - abs(cannibalization_score - _clamp((2500.0 - tolerance) / 25.0, 0, 100)) * 0.8)
+
+    goal = (brand_profile.get("expansion_goal") or "balanced").lower()
+    goal_component = 60.0
+    if goal == "flagship":
+        goal_component = _clamp((area_m2 / 350.0) * 60.0 + visibility_signal * 0.4 + demand_score * 0.2)
+    elif goal == "neighborhood":
+        spacing = 100.0 - abs(cannibalization_score - 45.0)
+        goal_component = _clamp(fit_score * 0.45 + spacing * 0.25 + parking_signal * 0.3)
+    elif goal == "delivery_led":
+        goal_component = _clamp(provider_density_score * 0.35 + provider_whitespace_score * 0.35 + (100.0 - delivery_competition_score) * 0.3)
+    else:
+        goal_component = _clamp((demand_score + fit_score + provider_whitespace_score) / 3.0)
+
+    channel_component = _channel_fit_score(service_model, brand_profile.get("primary_channel"), provider_density_score, 50.0)
+    parking_weight = _sensitivity_weight(brand_profile.get("parking_sensitivity"))
+    frontage_weight = _sensitivity_weight(brand_profile.get("frontage_sensitivity"))
+    visibility_weight = _sensitivity_weight(brand_profile.get("visibility_sensitivity"))
+
+    price_tier = (brand_profile.get("price_tier") or "mid").lower()
+    premium_penalty = 0.0
+    if price_tier == "premium":
+        premium_penalty = max(0.0, 65.0 - visibility_signal) * 0.35 + max(0.0, 60.0 - district_component) * 0.25
+
+    return _clamp(
+        district_component * 0.18
+        + goal_component * 0.2
+        + channel_component * 0.14
+        + overlap_fit * 0.14
+        + parking_signal * (0.1 + parking_weight * 0.06)
+        + fit_score * (0.12 + frontage_weight * 0.03)
+        + visibility_signal * (0.08 + visibility_weight * 0.05)
+        + provider_whitespace_score * 0.08
+        - premium_penalty
+    )
+
+
 def _landuse_fit(landuse_label: str | None, landuse_code: str | None) -> float:
     raw = f"{landuse_label or ''} {landuse_code or ''}".strip().lower()
     if not raw:
@@ -399,6 +482,72 @@ def persist_existing_branches(db: Session, search_id: str, existing_branches: li
         )
 
 
+
+
+def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, Any]) -> None:
+    profile = _default_brand_profile(brand_profile)
+    db.execute(
+        text(
+            """
+            INSERT INTO expansion_brand_profile (
+                id, search_id, price_tier, average_check_sar, primary_channel,
+                parking_sensitivity, frontage_sensitivity, visibility_sensitivity,
+                target_customer, expansion_goal, cannibalization_tolerance_m,
+                preferred_districts_json, excluded_districts_json
+            ) VALUES (
+                :id, :search_id, :price_tier, :average_check_sar, :primary_channel,
+                :parking_sensitivity, :frontage_sensitivity, :visibility_sensitivity,
+                :target_customer, :expansion_goal, :cannibalization_tolerance_m,
+                CAST(:preferred_districts_json AS jsonb), CAST(:excluded_districts_json AS jsonb)
+            )
+            ON CONFLICT (search_id) DO UPDATE SET
+                price_tier = EXCLUDED.price_tier,
+                average_check_sar = EXCLUDED.average_check_sar,
+                primary_channel = EXCLUDED.primary_channel,
+                parking_sensitivity = EXCLUDED.parking_sensitivity,
+                frontage_sensitivity = EXCLUDED.frontage_sensitivity,
+                visibility_sensitivity = EXCLUDED.visibility_sensitivity,
+                target_customer = EXCLUDED.target_customer,
+                expansion_goal = EXCLUDED.expansion_goal,
+                cannibalization_tolerance_m = EXCLUDED.cannibalization_tolerance_m,
+                preferred_districts_json = EXCLUDED.preferred_districts_json,
+                excluded_districts_json = EXCLUDED.excluded_districts_json,
+                updated_at = now()
+            """
+        ),
+        {
+            "id": str(uuid.uuid4()),
+            "search_id": search_id,
+            "price_tier": profile.get("price_tier"),
+            "average_check_sar": profile.get("average_check_sar"),
+            "primary_channel": profile.get("primary_channel"),
+            "parking_sensitivity": profile.get("parking_sensitivity"),
+            "frontage_sensitivity": profile.get("frontage_sensitivity"),
+            "visibility_sensitivity": profile.get("visibility_sensitivity"),
+            "target_customer": profile.get("target_customer"),
+            "expansion_goal": profile.get("expansion_goal"),
+            "cannibalization_tolerance_m": profile.get("cannibalization_tolerance_m"),
+            "preferred_districts_json": json.dumps(profile.get("preferred_districts") or [], ensure_ascii=False),
+            "excluded_districts_json": json.dumps(profile.get("excluded_districts") or [], ensure_ascii=False),
+        },
+    )
+
+
+def get_brand_profile(db: Session, search_id: str) -> dict[str, Any] | None:
+    row = db.execute(text("""
+        SELECT price_tier, average_check_sar, primary_channel, parking_sensitivity, frontage_sensitivity,
+               visibility_sensitivity, target_customer, expansion_goal, cannibalization_tolerance_m,
+               preferred_districts_json, excluded_districts_json
+        FROM expansion_brand_profile WHERE search_id = :search_id
+    """), {"search_id": search_id}).mappings().first()
+    if not row:
+        return None
+    data = dict(row)
+    data["preferred_districts"] = data.pop("preferred_districts_json") or []
+    data["excluded_districts"] = data.pop("excluded_districts_json") or []
+    return data
+
+
 def run_expansion_search(
     db: Session,
     *,
@@ -413,6 +562,7 @@ def run_expansion_search(
     bbox: dict[str, float] | None = None,
     target_districts: list[str] | None = None,
     existing_branches: list[dict[str, Any]] | None = None,
+    brand_profile: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     bbox = bbox or {}
     min_lon = bbox.get("min_lon")
@@ -423,6 +573,7 @@ def run_expansion_search(
     existing_branches = existing_branches or []
     target_districts = target_districts or []
     target_district_norm = {normalize_district_key(item) for item in target_districts if normalize_district_key(item)}
+    effective_brand_profile = _default_brand_profile(brand_profile)
 
     # ArcGIS-only candidate generation.
     sql = text(
@@ -511,7 +662,44 @@ def run_expansion_search(
                       ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
                       :demand_radius_m
                   )
-            ), 0) AS delivery_listing_count
+            ), 0) AS delivery_listing_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM delivery_source_record dsr
+                WHERE dsr.lat IS NOT NULL
+                  AND dsr.lon IS NOT NULL
+                  AND ST_DWithin(
+                      ST_SetSRID(ST_MakePoint(dsr.lon::float, dsr.lat::float), 4326)::geography,
+                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                      :provider_radius_m
+                  )
+            ), 0) AS provider_listing_count,
+            COALESCE((
+                SELECT COUNT(DISTINCT lower(COALESCE(dsr.platform, 'unknown')))
+                FROM delivery_source_record dsr
+                WHERE dsr.lat IS NOT NULL
+                  AND dsr.lon IS NOT NULL
+                  AND ST_DWithin(
+                      ST_SetSRID(ST_MakePoint(dsr.lon::float, dsr.lat::float), 4326)::geography,
+                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                      :provider_radius_m
+                  )
+            ), 0) AS provider_platform_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM delivery_source_record dsr
+                WHERE dsr.lat IS NOT NULL
+                  AND dsr.lon IS NOT NULL
+                  AND (
+                    lower(COALESCE(dsr.category_raw, '')) LIKE :category_like
+                    OR lower(COALESCE(dsr.cuisine_raw, '')) LIKE :category_like
+                  )
+                  AND ST_DWithin(
+                      ST_SetSRID(ST_MakePoint(dsr.lon::float, dsr.lat::float), 4326)::geography,
+                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                      :provider_radius_m
+                  )
+            ), 0) AS delivery_competition_count
         FROM candidate_base b
         """
     )
@@ -529,6 +717,7 @@ def run_expansion_search(
             "category_like": f"%{category.lower()}%",
             "demand_radius_m": 1200,
             "competition_radius_m": 1000,
+            "provider_radius_m": 1200,
         },
     ).mappings().all()
 
@@ -539,6 +728,9 @@ def run_expansion_search(
         population_reach = _safe_float(row.get("population_reach"))
         competitor_count = _safe_int(row.get("competitor_count"))
         delivery_listing_count = _safe_int(row.get("delivery_listing_count"))
+        provider_listing_count = _safe_int(row.get("provider_listing_count"))
+        provider_platform_count = _safe_int(row.get("provider_platform_count"))
+        delivery_competition_count = _safe_int(row.get("delivery_competition_count"))
         landuse_label = row.get("landuse_label")
         landuse_code = row.get("landuse_code")
         district = row.get("district")
@@ -556,6 +748,11 @@ def run_expansion_search(
         area_fit = _area_fit(area_m2, target_area_m2, min_area_m2, max_area_m2)
         use_fit = _landuse_fit(landuse_label, landuse_code)
         fit_score = _clamp(area_fit * 0.55 + use_fit * 0.45)
+
+        provider_density_score = _clamp((provider_listing_count / 45.0) * 100.0)
+        provider_whitespace_score = _clamp(100.0 - max(0.0, (delivery_competition_count - 6) * 6.0) - min(35.0, provider_density_score * 0.2))
+        multi_platform_presence_score = _clamp((provider_platform_count / 5.0) * 100.0)
+        delivery_competition_score = _clamp((delivery_competition_count / 35.0) * 100.0)
 
         confidence_score = _confidence_score(landuse_label, population_reach, delivery_listing_count)
         distance_to_nearest_branch_m = _nearest_branch_distance_m(
@@ -593,6 +790,23 @@ def run_expansion_search(
             confidence_score=confidence_score,
         )
         payback_band = _payback_band(estimated_payback_months)
+        visibility_signal = _clamp(use_fit * 0.55 + demand_score * 0.45)
+        parking_signal = _clamp(100.0 - competitor_count * 5.0)
+        brand_fit_score = _brand_fit_score(
+            district=district,
+            area_m2=area_m2,
+            demand_score=demand_score,
+            fit_score=fit_score,
+            cannibalization_score=cannibalization_score,
+            provider_density_score=provider_density_score,
+            provider_whitespace_score=provider_whitespace_score,
+            delivery_competition_score=delivery_competition_score,
+            visibility_signal=visibility_signal,
+            parking_signal=parking_signal,
+            brand_profile=effective_brand_profile,
+            service_model=service_model,
+        )
+
         key_strengths_json, key_risks_json = _build_strengths_and_risks(
             demand_score=demand_score,
             whitespace_score=whitespace_score,
@@ -602,13 +816,22 @@ def run_expansion_search(
             rent_source=rent_source,
         )
 
+        provider_intelligence_composite = _clamp(
+            provider_density_score * 0.28
+            + provider_whitespace_score * 0.30
+            + multi_platform_presence_score * 0.22
+            + (100.0 - delivery_competition_score) * 0.20
+        )
+
         final_score = _clamp(
-            demand_score * 0.22
-            + whitespace_score * 0.18
-            + fit_score * 0.18
-            + confidence_score * 0.08
-            + cannibalization_component * 0.12
-            + economics_score * 0.22
+            demand_score * 0.18
+            + whitespace_score * 0.14
+            + fit_score * 0.14
+            + confidence_score * 0.07
+            + cannibalization_component * 0.10
+            + economics_score * 0.18
+            + brand_fit_score * 0.10
+            + provider_intelligence_composite * 0.09
         )
 
         decision_summary = _decision_summary(
@@ -667,6 +890,11 @@ def run_expansion_search(
                 "estimated_fitout_cost_sar": round(estimated_fitout_cost_sar, 2),
                 "estimated_revenue_index": round(estimated_revenue_index, 2),
                 "economics_score": round(economics_score, 2),
+                "brand_fit_score": round(brand_fit_score, 2),
+                "provider_density_score": round(provider_density_score, 2),
+                "provider_whitespace_score": round(provider_whitespace_score, 2),
+                "multi_platform_presence_score": round(multi_platform_presence_score, 2),
+                "delivery_competition_score": round(delivery_competition_score, 2),
                 "estimated_payback_months": round(estimated_payback_months, 2),
                 "payback_band": payback_band,
                 "decision_summary": decision_summary,
@@ -709,6 +937,11 @@ def run_expansion_search(
             estimated_fitout_cost_sar,
             estimated_revenue_index,
             economics_score,
+            brand_fit_score,
+            provider_density_score,
+            provider_whitespace_score,
+            multi_platform_presence_score,
+            delivery_competition_score,
             estimated_payback_months,
             payback_band,
             decision_summary,
@@ -741,6 +974,11 @@ def run_expansion_search(
             :estimated_fitout_cost_sar,
             :estimated_revenue_index,
             :economics_score,
+            :brand_fit_score,
+            :provider_density_score,
+            :provider_whitespace_score,
+            :multi_platform_presence_score,
+            :delivery_competition_score,
             :estimated_payback_months,
             :payback_band,
             :decision_summary,
@@ -808,7 +1046,11 @@ def get_search(db: Session, search_id: str) -> dict[str, Any] | None:
         ),
         {"search_id": search_id},
     ).mappings().first()
-    return dict(row) if row else None
+    if not row:
+        return None
+    payload = dict(row)
+    payload["brand_profile"] = get_brand_profile(db, search_id)
+    return payload
 
 
 def get_candidates(db: Session, search_id: str) -> list[dict[str, Any]]:
@@ -839,6 +1081,11 @@ def get_candidates(db: Session, search_id: str) -> list[dict[str, Any]]:
                 estimated_fitout_cost_sar,
                 estimated_revenue_index,
                 economics_score,
+                brand_fit_score,
+                provider_density_score,
+                provider_whitespace_score,
+                multi_platform_presence_score,
+                delivery_competition_score,
                 estimated_payback_months,
                 payback_band,
                 decision_summary,
@@ -983,6 +1230,11 @@ def get_saved_search(db: Session, saved_id: str) -> dict[str, Any] | None:
     candidates = get_candidates(db, str(saved["search_id"]))
     saved["search"] = search
     saved["candidates"] = candidates
+    if search and search.get("brand_profile"):
+        saved["brand_profile"] = search.get("brand_profile")
+        filters_json = dict(saved.get("filters_json") or {})
+        filters_json["brand_profile"] = search.get("brand_profile")
+        saved["filters_json"] = filters_json
     return saved
 
 
@@ -1084,6 +1336,11 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 estimated_fitout_cost_sar,
                 estimated_revenue_index,
                 economics_score,
+                brand_fit_score,
+                provider_density_score,
+                provider_whitespace_score,
+                multi_platform_presence_score,
+                delivery_competition_score,
                 estimated_payback_months,
                 payback_band,
                 competitor_count,
@@ -1138,6 +1395,11 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 "estimated_fitout_cost_sar": row.get("estimated_fitout_cost_sar"),
                 "estimated_revenue_index": row.get("estimated_revenue_index"),
                 "economics_score": row.get("economics_score"),
+                "brand_fit_score": row.get("brand_fit_score"),
+                "provider_density_score": row.get("provider_density_score"),
+                "provider_whitespace_score": row.get("provider_whitespace_score"),
+                "multi_platform_presence_score": row.get("multi_platform_presence_score"),
+                "delivery_competition_score": row.get("delivery_competition_score"),
                 "estimated_payback_months": row.get("estimated_payback_months"),
                 "payback_band": row.get("payback_band"),
                 "competitor_count": row.get("competitor_count"),
@@ -1154,6 +1416,9 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
     highest_demand = max(items, key=lambda item: _safe_float(item.get("demand_score")))["candidate_id"]
     best_fit = max(items, key=lambda item: _safe_float(item.get("fit_score")))["candidate_id"]
     best_economics = max(items, key=lambda item: _safe_float(item.get("economics_score")))["candidate_id"]
+    best_brand_fit = max(items, key=lambda item: _safe_float(item.get("brand_fit_score")))["candidate_id"]
+    strongest_delivery_market = max(items, key=lambda item: _safe_float(item.get("provider_density_score")) + _safe_float(item.get("multi_platform_presence_score")))["candidate_id"]
+    strongest_whitespace = max(items, key=lambda item: _safe_float(item.get("provider_whitespace_score")))["candidate_id"]
     lowest_rent_burden = min(items, key=lambda item: _safe_float(item.get("estimated_annual_rent_sar"), 10**12))["candidate_id"]
     fastest_payback = min(items, key=lambda item: _safe_float(item.get("estimated_payback_months"), 10**6))["candidate_id"]
 
@@ -1165,6 +1430,9 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "highest_demand_candidate_id": highest_demand,
             "best_fit_candidate_id": best_fit,
             "best_economics_candidate_id": best_economics,
+            "best_brand_fit_candidate_id": best_brand_fit,
+            "strongest_delivery_market_candidate_id": strongest_delivery_market,
+            "strongest_whitespace_candidate_id": strongest_whitespace,
             "lowest_rent_burden_candidate_id": lowest_rent_burden,
             "fastest_payback_candidate_id": fastest_payback,
         },
@@ -1187,6 +1455,11 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
                 c.landuse_label,
                 c.final_score,
                 c.economics_score,
+                c.brand_fit_score,
+                c.provider_density_score,
+                c.provider_whitespace_score,
+                c.multi_platform_presence_score,
+                c.delivery_competition_score,
                 c.demand_score,
                 c.whitespace_score,
                 c.fit_score,
@@ -1213,6 +1486,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
         return None
 
     candidate = dict(row)
+    brand_profile = get_brand_profile(db, str(candidate.get("search_id"))) or {}
     strengths = candidate.get("key_strengths_json") or []
     risks = candidate.get("key_risks_json") or []
     final_score = _safe_float(candidate.get("final_score"))
@@ -1233,6 +1507,18 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
     main_watchout = risks[0] if risks else "Validate lease and capex assumptions before commitment"
     district = candidate.get("district") or "Riyadh"
     headline = f"{verdict.upper()}: {district} parcel shows {economics_score:.1f}/100 economics for {best_use_case}"
+    expansion_goal = (brand_profile.get("expansion_goal") or "balanced").replace("_", " ")
+    delivery_market_summary = (
+        f"For a {expansion_goal} strategy, delivery activity is {'strong' if _safe_float(candidate.get('provider_density_score')) >= 65 else 'moderate'} "
+        f"with platform breadth score {_safe_float(candidate.get('multi_platform_presence_score')):.1f}/100."
+    )
+    competitive_context = (
+        f"Provider whitespace is {_safe_float(candidate.get('provider_whitespace_score')):.1f}/100 while delivery competition is "
+        f"{_safe_float(candidate.get('delivery_competition_score')):.1f}/100."
+    )
+    district_fit_summary = (
+        f"District fit is driven by brand fit {_safe_float(candidate.get('brand_fit_score')):.1f}/100 and {('delivery-led' if (brand_profile.get('primary_channel')=='delivery') else 'balanced')} channel posture."
+    )
 
     return {
         "candidate_id": candidate["candidate_id"],
@@ -1241,6 +1527,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "brand_name": candidate.get("brand_name"),
             "category": candidate.get("category"),
             "service_model": candidate.get("service_model"),
+            **brand_profile,
         },
         "candidate": {
             "parcel_id": candidate.get("parcel_id"),
@@ -1249,6 +1536,11 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "landuse_label": candidate.get("landuse_label"),
             "final_score": candidate.get("final_score"),
             "economics_score": candidate.get("economics_score"),
+            "brand_fit_score": candidate.get("brand_fit_score"),
+            "provider_density_score": candidate.get("provider_density_score"),
+            "provider_whitespace_score": candidate.get("provider_whitespace_score"),
+            "multi_platform_presence_score": candidate.get("multi_platform_presence_score"),
+            "delivery_competition_score": candidate.get("delivery_competition_score"),
             "demand_score": candidate.get("demand_score"),
             "whitespace_score": candidate.get("whitespace_score"),
             "fit_score": candidate.get("fit_score"),
@@ -1270,5 +1562,62 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "verdict": verdict,
             "best_use_case": best_use_case,
             "main_watchout": main_watchout,
+        },
+        "market_research": {
+            "delivery_market_summary": delivery_market_summary,
+            "competitive_context": competitive_context,
+            "district_fit_summary": district_fit_summary,
+        },
+    }
+
+
+def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | None:
+    search = get_search(db, search_id)
+    if not search:
+        return None
+    candidates = get_candidates(db, search_id)
+    if not candidates:
+        return {
+            "search_id": search_id,
+            "brand_profile": search.get("brand_profile") or {},
+            "top_candidates": [],
+            "recommendation": {},
+            "assumptions": {
+                "parcel_source": "arcgis_only",
+                "city": "riyadh",
+                "heuristic_metrics": [
+                    "provider_density_score",
+                    "provider_whitespace_score",
+                    "multi_platform_presence_score",
+                    "delivery_competition_score",
+                    "brand_fit_score",
+                ],
+            },
+        }
+    top = sorted(candidates, key=lambda item: _safe_float(item.get("final_score")), reverse=True)[:3]
+    best = top[0]
+    runner = top[1] if len(top) > 1 else None
+    return {
+        "search_id": search_id,
+        "brand_profile": search.get("brand_profile") or {},
+        "top_candidates": top,
+        "recommendation": {
+            "best_candidate_id": best.get("id"),
+            "runner_up_candidate_id": runner.get("id") if runner else None,
+            "why_best": f"Highest blended final score with brand fit {_safe_float(best.get('brand_fit_score')):.1f}/100 and economics {_safe_float(best.get('economics_score')):.1f}/100.",
+            "main_risk": (best.get("key_risks_json") or ["Validate lease and execution assumptions"])[0],
+            "best_format": _recommended_use_case(str(search.get("service_model") or "qsr"), _safe_float(best.get("area_m2"))),
+            "report_summary": f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner.get('district') if runner else 'backup options'} as runner-up.",
+        },
+        "assumptions": {
+            "parcel_source": "arcgis_only",
+            "city": "riyadh",
+            "heuristic_metrics": [
+                "provider_density_score",
+                "provider_whitespace_score",
+                "multi_platform_presence_score",
+                "delivery_competition_score",
+                "brand_fit_score",
+            ],
         },
     }

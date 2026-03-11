@@ -16,9 +16,11 @@ from app.services.expansion_advisor import (
     delete_saved_search,
     get_candidate_memo,
     get_candidates,
+    get_recommendation_report,
     get_saved_search,
     get_search,
     list_saved_searches,
+    persist_brand_profile,
     persist_existing_branches,
     run_expansion_search,
     update_saved_search,
@@ -42,6 +44,23 @@ class ExistingBranchInput(BaseModel):
     district: str | None = Field(default=None, min_length=1, max_length=128)
 
 
+class ExpansionBrandProfileInput(BaseModel):
+    price_tier: Literal["value", "mid", "premium"] | None = None
+    average_check_sar: float | None = None
+    primary_channel: Literal["dine_in", "delivery", "balanced"] | None = None
+    parking_sensitivity: Literal["low", "medium", "high"] | None = None
+    frontage_sensitivity: Literal["low", "medium", "high"] | None = None
+    visibility_sensitivity: Literal["low", "medium", "high"] | None = None
+    target_customer: str | None = Field(default=None, max_length=64)
+    expansion_goal: Literal["flagship", "neighborhood", "delivery_led", "balanced"] | None = None
+    cannibalization_tolerance_m: float | None = None
+    preferred_districts: list[str] | None = None
+    excluded_districts: list[str] | None = None
+
+
+
+
+
 class ExpansionAdvisorSearchRequest(BaseModel):
     brand_name: str = Field(..., min_length=1, max_length=256)
     category: str = Field(..., min_length=1, max_length=128)
@@ -54,6 +73,7 @@ class ExpansionAdvisorSearchRequest(BaseModel):
     comparison_candidate_ids: list[str] | None = None
     bbox: ExpansionAdvisorBBox | None = None
     limit: int = Field(25, ge=1, le=100)
+    brand_profile: ExpansionBrandProfileInput | None = None
 
 
 class CompareCandidatesRequest(BaseModel):
@@ -99,6 +119,7 @@ def create_expansion_search(
     request_json = req.model_dump()
     bbox_json = req.bbox.model_dump() if req.bbox else None
     existing_branches_payload = [branch.model_dump() for branch in req.existing_branches]
+    brand_profile_payload = req.brand_profile.model_dump() if req.brand_profile else None
 
     try:
         db.execute(
@@ -154,6 +175,8 @@ def create_expansion_search(
         )
 
         persist_existing_branches(db, search_id, existing_branches_payload)
+        if brand_profile_payload:
+            persist_brand_profile(db, search_id, brand_profile_payload)
 
         items = run_expansion_search(
             db=db,
@@ -168,6 +191,7 @@ def create_expansion_search(
             bbox=bbox_json,
             target_districts=req.target_districts,
             existing_branches=existing_branches_payload,
+            brand_profile=brand_profile_payload,
         )
         db.commit()
     except Exception:
@@ -185,6 +209,7 @@ def create_expansion_search(
             "target_area_m2": target_area_m2,
             "target_districts": req.target_districts,
             "existing_branches": existing_branches_payload,
+            "brand_profile": brand_profile_payload,
         },
         "items": items,
         "meta": {
@@ -209,6 +234,14 @@ def get_expansion_search_candidates(search_id: str, db: Session = Depends(get_db
     if not search:
         raise HTTPException(status_code=404, detail="Expansion search not found")
     return {"items": get_candidates(db, search_id)}
+
+
+@router.get("/searches/{search_id}/report")
+def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    report = get_recommendation_report(db, search_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Expansion search not found")
+    return report
 
 
 

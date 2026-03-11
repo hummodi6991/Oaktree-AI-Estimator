@@ -113,7 +113,7 @@ The fetch step writes Riyadh-only `.csv.gz` JSONL files into `data/ms_buildings/
     (scales above-ground `area_ratio` by `3.5 / baseline_floors`) so BUA/FAR reflect that.
   - Land pricing defaults to **blended_v1** (Suhail anchor + Kaggle Aqar median, district-resolved once via `resolve_district`), shared with `GET /v1/pricing/land`.
 
-### Expansion Advisor API (v3)
+### Expansion Advisor API (v4)
 
 Endpoints:
 - `POST /v1/expansion-advisor/searches`
@@ -121,6 +121,7 @@ Endpoints:
 - `GET /v1/expansion-advisor/searches/{search_id}/candidates`
 - `POST /v1/expansion-advisor/candidates/compare`
 - `GET /v1/expansion-advisor/candidates/{candidate_id}/memo`
+- `GET /v1/expansion-advisor/searches/{search_id}/report`
 - `POST /v1/expansion-advisor/saved-searches`
 - `GET /v1/expansion-advisor/saved-searches`
 - `GET /v1/expansion-advisor/saved-searches/{saved_id}`
@@ -137,6 +138,7 @@ Endpoints:
 - `comparison_candidate_ids` (optional string array for client workflows)
 - `bbox` (`min_lon`, `min_lat`, `max_lon`, `max_lat`)
 - `limit` (1..100)
+- `brand_profile` (optional object) with fields: `price_tier`, `average_check_sar`, `primary_channel`, `parking_sensitivity`, `frontage_sensitivity`, `visibility_sensitivity`, `target_customer`, `expansion_goal`, `cannibalization_tolerance_m`, `preferred_districts`, `excluded_districts`
 
 Search/candidate responses now include:
 - `existing_branches` in search payloads
@@ -146,6 +148,8 @@ Search/candidate responses now include:
 - candidate economics fields: `estimated_rent_sar_m2_year`, `estimated_annual_rent_sar`, `estimated_fitout_cost_sar`, `estimated_revenue_index`, `economics_score`, `estimated_payback_months`, `payback_band`
 - candidate decision memo fields: `decision_summary`, `key_strengths_json`, `key_risks_json`
 - candidate `compare_rank` (stored ranked order)
+- candidate `brand_fit_score`
+- candidate provider intelligence fields: `provider_density_score`, `provider_whitespace_score`, `multi_platform_presence_score`, `delivery_competition_score`
 
 `POST /v1/expansion-advisor/candidates/compare` request:
 - `search_id` (string)
@@ -154,12 +158,15 @@ Search/candidate responses now include:
 Compare response:
 - `items` in the same order as requested `candidate_ids`
 - per-item score breakdown + pros/cons + economics fields
-- `summary` with best-overall, lowest-cannibalization, highest-demand, best-fit, best-economics, lowest-rent-burden, and fastest-payback candidate IDs
+- `summary` with best-overall, lowest-cannibalization, highest-demand, best-fit, best-economics, lowest-rent-burden, fastest-payback, best-brand-fit, strongest-delivery-market, and strongest-whitespace candidate IDs
 
 `GET /v1/expansion-advisor/candidates/{candidate_id}/memo` returns a deterministic decision memo with:
 - candidate economics + scoring breakdown
 - deterministic recommendation verdict (`go` | `consider` | `caution`)
 - a headline, best-use-case branch format, and primary watchout
+- deterministic `market_research` summaries for delivery-market context, competitive context, and district fit
+
+`GET /v1/expansion-advisor/searches/{search_id}/report` returns a deterministic executive-style JSON recommendation with `top_candidates` (top 3), `recommendation` (best, runner-up, why, risk, best format, summary), and explicit assumptions.
 
 
 Saved studies payload fields:
@@ -176,7 +183,7 @@ Notes:
 - ArcGIS Riyadh parcels are the only supported parcel source.
 - Suhail and inferred parcels are intentionally excluded.
 - Cannibalization scoring is deterministic and distance-based, adjusted by service model.
-- Revenue index and payback are heuristic decision-support signals (not guaranteed revenue forecasts).
+- Revenue index, provider intelligence, and payback are heuristic decision-support signals (not guaranteed revenue forecasts).
 
 Payback band meanings:
 - `strong`: <= 18 months
