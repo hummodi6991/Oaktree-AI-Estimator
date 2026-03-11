@@ -3,16 +3,19 @@ import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
-import { fmtSAR, fmtMeters, fmtScore, fmtM2 } from "./formatHelpers";
+import WhyThisRank from "./WhyThisRank";
+import { fmtSAR, fmtMeters, fmtScore } from "./formatHelpers";
 
 type Props = {
   candidate: ExpansionCandidate;
   selected: boolean;
   shortlisted: boolean;
   compared: boolean;
+  localSortActive?: boolean;
   onSelect: () => void;
   onToggleShortlist: () => void;
   onCompareToggle: () => void;
+  onOpenMemo?: () => void;
 };
 
 export default function ExpansionCandidateCard({
@@ -20,9 +23,11 @@ export default function ExpansionCandidateCard({
   selected,
   shortlisted,
   compared,
+  localSortActive,
   onSelect,
   onToggleShortlist,
   onCompareToggle,
+  onOpenMemo,
 }: Props) {
   const { t } = useTranslation();
   const pass = Boolean(candidate.gate_status_json?.overall_pass);
@@ -39,14 +44,21 @@ export default function ExpansionCandidateCard({
     .join(" ");
 
   return (
-    <div className={cls} onClick={onSelect} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(); }}>
+    <div className={cls} onClick={onSelect} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(); }} data-candidate-id={candidate.id}>
       {/* Top row: rank + district + badges */}
       <div className="ea-candidate__top">
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {candidate.rank_position ? (
-            <span className="ea-candidate__rank">#{candidate.rank_position}</span>
+            <span className="ea-candidate__rank" title={localSortActive ? t("expansionAdvisor.backendRank") : undefined}>
+              #{candidate.rank_position}
+            </span>
           ) : null}
           <span className="ea-candidate__district">{candidate.district || t("common.notAvailable")}</span>
+          {localSortActive && (
+            <span className="ea-badge ea-badge--neutral ea-candidate__rank-note">
+              {t("expansionAdvisor.backendRankLabel", { rank: candidate.rank_position })}
+            </span>
+          )}
         </div>
         <div className="ea-candidate__badges">
           <ScorePill value={candidate.final_score} />
@@ -123,10 +135,13 @@ export default function ExpansionCandidateCard({
         </div>
       )}
 
+      {/* Why this rank? - expandable drill-down */}
+      <WhyThisRank candidate={candidate} />
+
       {/* Actions */}
       <div className="ea-candidate__actions" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="oak-btn oak-btn--sm oak-btn--primary" onClick={onSelect}>
-          {t("expansionAdvisor.viewMemo")}
+        <button type="button" className="oak-btn oak-btn--sm oak-btn--primary" onClick={onOpenMemo || onSelect}>
+          {t("expansionAdvisor.viewDecisionMemo")}
         </button>
         <button
           type="button"
@@ -140,7 +155,7 @@ export default function ExpansionCandidateCard({
           className={`oak-btn oak-btn--sm ${compared ? "oak-btn--secondary" : "oak-btn--tertiary"}`}
           onClick={onCompareToggle}
         >
-          {compared ? t("expansionAdvisor.removeCompare") : t("expansionAdvisor.compareCandidates")}
+          {compared ? t("expansionAdvisor.removeCompare") : t("expansionAdvisor.addToCompare")}
         </button>
       </div>
     </div>
