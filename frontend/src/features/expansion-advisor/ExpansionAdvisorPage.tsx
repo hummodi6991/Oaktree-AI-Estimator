@@ -54,6 +54,10 @@ import FinalistsWorkspace from "./FinalistsWorkspace";
 import DecisionChecklist from "./DecisionChecklist";
 import NextStepsStrip from "./NextStepsStrip";
 import CopySummaryBlock from "./CopySummaryBlock";
+import ValidationPlanPanel from "./ValidationPlanPanel";
+import AssumptionsCard from "./AssumptionsCard";
+import DecisionSnapshotCard from "./DecisionSnapshotCard";
+import CompareOutcomeBanner from "./CompareOutcomeBanner";
 import "./expansion-advisor.css";
 
 /* ─── Pure helpers (exported for tests) ─── */
@@ -172,6 +176,7 @@ export default function ExpansionAdvisorPage({
   const [activeDrawer, setActiveDrawer] = useState<DrawerState>("none");
   const [searchMeta, setSearchMeta] = useState<Record<string, unknown>>({});
   const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
+  const [activeSavedStatus, setActiveSavedStatus] = useState<"draft" | "final">("draft");
   const detailRef = useRef<HTMLDivElement | null>(null);
 
   // Brief edit/run state
@@ -211,6 +216,19 @@ export default function ExpansionAdvisorPage({
   useEffect(() => {
     if (searchId && candidates.length > 0) setBriefMode("summary");
   }, [searchId, candidates.length]);
+
+  // When lead candidate changes, sync map focus and scroll finalist tile into view
+  useEffect(() => {
+    if (!leadCandidateId) return;
+    const lead = resolveCandidateById(candidates, leadCandidateId);
+    if (lead) {
+      onSelectedCandidateChange(lead);
+      requestAnimationFrame(() => {
+        const el = document.querySelector(`[data-candidate-id="${lead.id}"]`);
+        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    }
+  }, [leadCandidateId]); // intentionally minimal deps — fires only when lead changes
 
   const loadReport = useCallback(async (targetSearchId: string) => {
     if (!targetSearchId) return;
@@ -296,6 +314,7 @@ export default function ExpansionAdvisorPage({
     setSearchMeta({});
     setActiveDrawer("none");
     setActiveSavedId(null);
+    setActiveSavedStatus("draft");
     setLeadCandidateId(null);
     setActiveFilter("all");
     setActiveSort("rank");
@@ -316,6 +335,7 @@ export default function ExpansionAdvisorPage({
     setMemoError(null); setReportError(null); setCompareError(null); setSaveError(null);
     setActiveDrawer("none");
     setActiveSavedId(saved.id);
+    setActiveSavedStatus(saved.status || "draft");
     memoCacheRef.current.clear();
     reportCacheRef.current.clear();
     let hydratedCandidates = normalizeCandidates(saved.candidates || []);
@@ -370,6 +390,7 @@ export default function ExpansionAdvisorPage({
         ui_state_json: buildUiStateJson(selectedCandidate?.id || null, compareIds, leadCandidateId, activeFilter, activeSort, districtFilter),
       });
       await refreshSavedStudies();
+      setActiveSavedStatus(status);
       setActiveDrawer("none");
     } catch { setSaveError(t("expansionAdvisor.errorUpdate")); } finally { setSaving(false); }
   };
@@ -407,6 +428,8 @@ export default function ExpansionAdvisorPage({
 
   const localSortActive = activeSort !== "rank" || activeFilter !== "all" || districtFilter !== "";
   const compareShortlistEnabled = shortlistIds.length >= 2 && shortlistIds.length <= 6;
+  const isFinalStudy = activeSavedId !== null && activeSavedStatus === "final";
+  const leadCandidate = useMemo(() => resolveCandidateById(candidates, leadCandidateId), [candidates, leadCandidateId]);
 
   return (
     <div className="ea-page">
@@ -443,8 +466,18 @@ export default function ExpansionAdvisorPage({
         />
       )}
 
+      {/* Decision snapshot — shown when lead candidate exists */}
+      {searchId && hasResults && leadCandidate && (
+        <DecisionSnapshotCard
+          candidate={leadCandidate}
+          report={report}
+          memo={leadCandidateId && selectedCandidate?.id === leadCandidateId ? memo : null}
+          prominent={isFinalStudy}
+        />
+      )}
+
       {/* Two-column layout: form + results */}
-      <div className="ea-layout">
+      <div className={`ea-layout${isFinalStudy ? " ea-layout--final" : ""}`}>
         {/* Left column: brief form/summary + shortlist tray + saved studies */}
         <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
           {/* Brief: edit or summary mode */}
@@ -667,6 +700,15 @@ export default function ExpansionAdvisorPage({
               <div className="ea-card__body">
                 <CandidateDetailPanel candidate={selectedCandidate} />
                 <DecisionChecklist candidate={selectedCandidate} memo={memo} />
+                {selectedCandidate.id === leadCandidateId && (
+                  <>
+                    <ValidationPlanPanel candidate={selectedCandidate} memo={memo} report={report} />
+                    <AssumptionsCard candidate={selectedCandidate} report={report} />
+                  </>
+                )}
+                {selectedCandidate.id !== leadCandidateId && (
+                  <AssumptionsCard candidate={selectedCandidate} report={report} compact />
+                )}
               </div>
             </div>
           )}
@@ -689,16 +731,26 @@ export default function ExpansionAdvisorPage({
       )}
 
       {activeDrawer === "compare" && (
-        <ExpansionComparePanel
-          compareIds={compareIds}
-          result={compareResult}
-          loading={loadingCompare}
-          error={compareError}
-          leadCandidateId={leadCandidateId}
-          onCompare={async () => { if (searchId) await loadCompare(searchId, compareIds); }}
-          onSelectCandidateId={(candidateId) => { setActiveDrawer("none"); void handleSelectCandidateById(candidateId); }}
-          onClose={() => setActiveDrawer("none")}
-        />
+        <>
+          {compareResult && (
+            <CompareOutcomeBanner
+              result={compareResult}
+              candidates={candidates}
+              leadCandidateId={leadCandidateId}
+              onSelectCandidateId={(candidateId) => { setActiveDrawer("none"); void handleSelectCandidateById(candidateId); }}
+            />
+          )}
+          <ExpansionComparePanel
+            compareIds={compareIds}
+            result={compareResult}
+            loading={loadingCompare}
+            error={compareError}
+            leadCandidateId={leadCandidateId}
+            onCompare={async () => { if (searchId) await loadCompare(searchId, compareIds); }}
+            onSelectCandidateId={(candidateId) => { setActiveDrawer("none"); void handleSelectCandidateById(candidateId); }}
+            onClose={() => setActiveDrawer("none")}
+          />
+        </>
       )}
 
       {activeDrawer === "report" && (

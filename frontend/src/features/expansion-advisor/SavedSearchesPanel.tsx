@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SavedExpansionSearch } from "../../lib/api/expansionAdvisor";
+import { extractSavedStudyMeta } from "./studyAdapters";
 
 type Props = {
   items: SavedExpansionSearch[];
@@ -20,20 +21,35 @@ export default function SavedSearchesPanel({ items, loading, activeSavedId, onOp
   return (
     <div className="ea-saved-list">
       {items.map((item) => {
-        const shortlistCount = (item.selected_candidate_ids || []).length;
+        const meta = extractSavedStudyMeta(item);
         const isActive = item.id === activeSavedId;
         return (
-          <div key={item.id} className={`ea-saved-item${isActive ? " ea-saved-item--active" : ""}`} onClick={() => onOpen(item.id)}>
+          <div key={item.id} className={`ea-saved-item${isActive ? " ea-saved-item--active" : ""}${meta.isFinal ? " ea-saved-item--final" : ""}`} onClick={() => onOpen(item.id)}>
             <div className="ea-saved-item__info">
               <span className="ea-saved-item__title">{item.title}</span>
               <span className="ea-saved-item__meta">
-                <span className={`ea-badge ea-badge--${item.status === "final" ? "green" : "neutral"}`} style={{ marginInlineEnd: 6 }}>
-                  {item.status === "final" ? t("expansionAdvisor.savedStudyFinal") : t("expansionAdvisor.savedStudyDraft")}
+                <span className={`ea-badge ea-badge--${meta.isFinal ? "green" : "neutral"}`} style={{ marginInlineEnd: 6 }}>
+                  {meta.isFinal ? t("expansionAdvisor.savedStudyFinal") : t("expansionAdvisor.savedStudyDraft")}
                 </span>
+                {meta.leadDistrict && (
+                  <span className="ea-saved-item__meta-chip" style={{ marginInlineEnd: 6 }}>
+                    {t("expansionAdvisor.leadSite")}: {meta.leadDistrict}
+                  </span>
+                )}
                 {item.description && <span style={{ marginInlineEnd: 6 }}>{item.description.slice(0, 60)}{item.description.length > 60 ? "…" : ""}</span>}
-                {shortlistCount > 0 && (
+                {meta.shortlistCount > 0 && (
                   <span style={{ marginInlineEnd: 6 }}>
-                    {t("expansionAdvisor.shortlistedCount", { count: shortlistCount })}
+                    {t("expansionAdvisor.shortlistedCount", { count: meta.shortlistCount })}
+                  </span>
+                )}
+                {meta.compareCount > 0 && (
+                  <span style={{ marginInlineEnd: 6 }}>
+                    {t("expansionAdvisor.smCompared", { count: meta.compareCount })}
+                  </span>
+                )}
+                {meta.lastSort && (
+                  <span className="ea-saved-item__meta-chip" style={{ marginInlineEnd: 6 }}>
+                    {t("expansionAdvisor.sortLabel")}: {meta.lastSort.replace(/_/g, " ")}
                   </span>
                 )}
                 {item.updated_at || item.created_at || ""}
