@@ -1345,3 +1345,118 @@ def test_production_payload_c3ace4a6_regression(monkeypatch):
         assert "decision_summary" in item
         assert "demand_thesis" in item
         assert "cost_thesis" in item
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: bbox params must never cause AmbiguousParameter (GH #500)
+# ---------------------------------------------------------------------------
+
+_BBOX_CANDIDATE_ROW = {
+    "parcel_id": "bbox-p1",
+    "landuse_label": "Commercial",
+    "landuse_code": "C",
+    "area_m2": 200,
+    "lon": 46.7,
+    "lat": 24.7,
+    "district": "Al Olaya",
+    "population_reach": 12000,
+    "competitor_count": 3,
+    "delivery_listing_count": 8,
+    "provider_listing_count": 5,
+    "provider_platform_count": 2,
+    "delivery_competition_count": 4,
+}
+
+_BBOX_BASE_KWARGS = dict(
+    search_id="search-1",
+    brand_name="Test",
+    category="Burger",
+    service_model="qsr",
+    min_area_m2=100,
+    max_area_m2=500,
+    target_area_m2=200,
+    limit=25,
+    target_districts=["Al Olaya"],
+    existing_branches=[],
+)
+
+
+def test_run_expansion_search_no_bbox():
+    """bbox=None must not trigger AmbiguousParameter."""
+    db = FakeDB(candidate_rows=[_BBOX_CANDIDATE_ROW])
+    items = run_expansion_search(db, **_BBOX_BASE_KWARGS, bbox=None)
+    assert isinstance(items, list)
+    for item in items:
+        assert 0.0 <= item["final_score"] <= 100.0
+
+
+def test_run_expansion_search_empty_bbox():
+    """bbox={} (no keys) must not trigger AmbiguousParameter."""
+    db = FakeDB(candidate_rows=[_BBOX_CANDIDATE_ROW])
+    items = run_expansion_search(db, **_BBOX_BASE_KWARGS, bbox={})
+    assert isinstance(items, list)
+    for item in items:
+        assert 0.0 <= item["final_score"] <= 100.0
+
+
+def test_run_expansion_search_partial_bbox():
+    """One-sided bbox (only min_lon, min_lat) must work."""
+    db = FakeDB(candidate_rows=[_BBOX_CANDIDATE_ROW])
+    items = run_expansion_search(
+        db,
+        **_BBOX_BASE_KWARGS,
+        bbox={"min_lon": 46.5, "min_lat": 24.5},
+    )
+    assert isinstance(items, list)
+    for item in items:
+        assert 0.0 <= item["final_score"] <= 100.0
+
+
+def test_run_expansion_search_full_bbox():
+    """Full bbox with all four bounds must work."""
+    db = FakeDB(candidate_rows=[_BBOX_CANDIDATE_ROW])
+    items = run_expansion_search(
+        db,
+        **_BBOX_BASE_KWARGS,
+        bbox={"min_lon": 46.5, "min_lat": 24.5, "max_lon": 46.9, "max_lat": 24.9},
+    )
+    assert isinstance(items, list)
+    for item in items:
+        assert 0.0 <= item["final_score"] <= 100.0
+
+
+def test_run_expansion_search_production_payload():
+    """Exact production payload that triggered the 500 must return safely."""
+    db = FakeDB(candidate_rows=[_BBOX_CANDIDATE_ROW])
+    items = run_expansion_search(
+        db,
+        search_id="search-1",
+        brand_name="Test",
+        category="Burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=25,
+        bbox=None,
+        target_districts=["Al Olaya", "Al Malqa", "Al Nakheel"],
+        existing_branches=[],
+        brand_profile={
+            "strategy": "balanced",
+            "price_tier": "mid",
+            "target_customer": "Families",
+            "visibility_sensitivity": "35",
+            "cannibalization_tolerance_m": 1500,
+        },
+    )
+    assert isinstance(items, list)
+    for item in items:
+        assert 0.0 <= item["final_score"] <= 100.0
+        assert item["payback_band"] in {"strong", "promising", "borderline", "weak"}
+
+
+def test_run_expansion_search_no_bbox_empty_result():
+    """No matching candidates with null bbox returns empty list, not 500."""
+    db = FakeDB(candidate_rows=[])
+    items = run_expansion_search(db, **_BBOX_BASE_KWARGS, bbox=None)
+    assert items == []
