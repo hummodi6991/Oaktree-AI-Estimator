@@ -574,6 +574,7 @@
     "errorCompare": "Unable to compare candidates.",
     "errorReport": "Unable to load report.",
     "errorSavedLoad": "Unable to load saved study.",
+    "retry": "Retry",
     "compareSummary": "Compare summary",
     "clickToInspect": "Click a candidate to inspect details",
     "heroSubtitle": "Find the best location for your next branch in Riyadh",

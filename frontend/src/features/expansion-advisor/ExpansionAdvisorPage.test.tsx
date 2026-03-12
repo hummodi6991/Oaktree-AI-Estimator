@@ -21,6 +21,7 @@ import {
 } from "./ExpansionAdvisorPage";
 import { normalizeCandidate, normalizeSavedSearch, normalizeReportResponse, normalizeMemoResponse, normalizeCompareResponse } from "../../lib/api/expansionAdvisor";
 import { validateBrief } from "./ExpansionBriefForm";
+import ExpansionBriefForm, { defaultBrief } from "./ExpansionBriefForm";
 import {
   normalizeBriefPayload,
   filterCandidates,
@@ -2992,5 +2993,108 @@ describe("Landlord briefing text generation", () => {
     expect(text).toContain("Test");
     expect(text).toContain("TBD");
     expect(text).toContain("Pending verification");
+  });
+});
+
+/* ─── Regression: Branch rows layout ─── */
+
+describe("Existing branches rendering", () => {
+  it("renders branch rows with all four input fields visible", () => {
+    const brief = {
+      ...defaultBrief,
+      existing_branches: [
+        { name: "HQ", lat: 24.7, lon: 46.7, district: "Al Olaya" },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <ExpansionBriefForm initialValue={brief} onSubmit={() => {}} loading={false} />,
+    );
+    expect(html).toContain("ea-branch-row");
+    expect(html).toContain('value="HQ"');
+    expect(html).toContain('value="24.7"');
+    expect(html).toContain('value="46.7"');
+    expect(html).toContain('value="Al Olaya"');
+  });
+
+  it("renders multiple branch rows without overlapping", () => {
+    const brief = {
+      ...defaultBrief,
+      existing_branches: [
+        { name: "Branch 1", lat: 24.7, lon: 46.7, district: "Al Olaya" },
+        { name: "Branch 2", lat: 24.8, lon: 46.8, district: "Al Malqa" },
+        { name: "Branch 3", lat: 24.9, lon: 46.9, district: "Al Nakheel" },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <ExpansionBriefForm initialValue={brief} onSubmit={() => {}} loading={false} />,
+    );
+    // All three rows should be rendered
+    const rowMatches = html.match(/ea-branch-row/g);
+    expect(rowMatches).not.toBeNull();
+    expect(rowMatches!.length).toBeGreaterThanOrEqual(3);
+    // All branch names present
+    expect(html).toContain('value="Branch 1"');
+    expect(html).toContain('value="Branch 2"');
+    expect(html).toContain('value="Branch 3"');
+  });
+
+  it("renders add-branch button and remove-branch button per row", () => {
+    const brief = {
+      ...defaultBrief,
+      existing_branches: [
+        { name: "HQ", lat: 24.7, lon: 46.7, district: "Al Olaya" },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <ExpansionBriefForm initialValue={brief} onSubmit={() => {}} loading={false} />,
+    );
+    // Add branch button
+    expect(html).toContain(en.expansionAdvisor.addBranch);
+    // Remove branch button
+    expect(html).toContain(en.expansionAdvisor.removeBranch);
+  });
+
+  it("renders submit button in normal flow after branches section", () => {
+    const brief = {
+      ...defaultBrief,
+      brand_name: "Al Baik",
+      existing_branches: [
+        { name: "HQ", lat: 24.7, lon: 46.7, district: "Al Olaya" },
+        { name: "Branch 2", lat: 24.8, lon: 46.8, district: "Al Malqa" },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <ExpansionBriefForm initialValue={brief} onSubmit={() => {}} loading={false} />,
+    );
+    // Submit button should be present after branches
+    expect(html).toContain(en.expansionAdvisor.runSearchCta);
+    // Branches section title should be present
+    expect(html).toContain(en.expansionAdvisor.existingBranchesLabel);
+  });
+
+  it("renders empty state when no branches exist", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionBriefForm initialValue={defaultBrief} onSubmit={() => {}} loading={false} />,
+    );
+    expect(html).toContain(en.expansionAdvisor.noBranchesYet);
+    expect(html).toContain(en.expansionAdvisor.addBranch);
+    // No branch rows
+    expect(html).not.toContain("ea-branch-row");
+  });
+
+  it("handles long branch name and district values", () => {
+    const longName = "A Very Long Branch Name That Should Still Render Correctly";
+    const longDistrict = "Al Olaya Al Malqa Al Nakheel Combined Super District";
+    const brief = {
+      ...defaultBrief,
+      existing_branches: [
+        { name: longName, lat: 24.7, lon: 46.7, district: longDistrict },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <ExpansionBriefForm initialValue={brief} onSubmit={() => {}} loading={false} />,
+    );
+    expect(html).toContain(longName);
+    expect(html).toContain(longDistrict);
   });
 });
