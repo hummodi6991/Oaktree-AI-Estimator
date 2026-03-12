@@ -1,9 +1,10 @@
+import React from "react";
 import { useTranslation } from "react-i18next";
 import type { CompareCandidatesResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
-import { fmtScore, gateColor } from "./formatHelpers";
+import { fmtScore, fmtSAR, fmtMonths, gateColor } from "./formatHelpers";
 
 const SUMMARY_KEY_ORDER = [
   "best_overall_candidate_id",
@@ -19,8 +20,22 @@ const SUMMARY_KEY_ORDER = [
   "most_confident_candidate_id",
 ] as const;
 
+const SUMMARY_LABELS: Record<string, string> = {
+  best_overall_candidate_id: "Best Overall",
+  best_gate_pass_candidate_id: "Best Gate Pass",
+  best_economics_candidate_id: "Best Economics",
+  fastest_payback_candidate_id: "Fastest Payback",
+  lowest_rent_burden_candidate_id: "Lowest Rent Burden",
+  best_brand_fit_candidate_id: "Best Brand Fit",
+  highest_demand_candidate_id: "Highest Demand",
+  strongest_delivery_market_candidate_id: "Strongest Delivery",
+  strongest_whitespace_candidate_id: "Strongest Whitespace",
+  lowest_cannibalization_candidate_id: "Lowest Cannibalization",
+  most_confident_candidate_id: "Most Confident",
+};
+
 function summaryLabel(key: string) {
-  return key.replace(/_candidate_id$/, "").replace(/_/g, " ").trim();
+  return SUMMARY_LABELS[key] || key.replace(/_candidate_id$/, "").replace(/_/g, " ").trim();
 }
 
 export function getOrderedCompareSummaryEntries(summary: Record<string, string | null> = {}) {
@@ -32,7 +47,7 @@ export function getOrderedCompareSummaryEntries(summary: Record<string, string |
 
 type DimensionGroup = {
   label: string;
-  rows: Array<{ label: string; key: string }>;
+  rows: Array<{ label: string; key: string; fmt?: "sar" | "months" }>;
 };
 
 const DIMENSION_GROUPS: DimensionGroup[] = [
@@ -51,6 +66,8 @@ const DIMENSION_GROUPS: DimensionGroup[] = [
       { label: "Brand fit", key: "brand_fit_score" },
       { label: "Provider density", key: "provider_density_score" },
       { label: "Whitespace", key: "provider_whitespace_score" },
+      { label: "Delivery competition", key: "delivery_competition_score" },
+      { label: "Multi-platform", key: "multi_platform_presence_score" },
     ],
   },
   {
@@ -58,7 +75,9 @@ const DIMENSION_GROUPS: DimensionGroup[] = [
     rows: [
       { label: "Economics", key: "economics_score" },
       { label: "Payback", key: "payback_band" },
-      { label: "Payback months", key: "estimated_payback_months" },
+      { label: "Payback months", key: "estimated_payback_months", fmt: "months" },
+      { label: "Annual rent", key: "estimated_annual_rent_sar", fmt: "sar" },
+      { label: "Cannibalization", key: "cannibalization_score" },
     ],
   },
   {
@@ -76,11 +95,15 @@ const DIMENSION_GROUPS: DimensionGroup[] = [
 function findBestOnKey(items: Array<Record<string, unknown>>, key: string): string | null {
   if (!items.length) return null;
   if (key === "gate" || key === "confidence_grade" || key === "payback_band") return null;
-  let best: { id: string | null; val: number } = { id: null, val: -Infinity };
+  // For payback/cannibalization, lower is better
+  const lowerIsBetter = key === "estimated_payback_months" || key === "cannibalization_score";
+  let best: { id: string | null; val: number } = { id: null, val: lowerIsBetter ? Infinity : -Infinity };
   for (const item of items) {
     const raw = item[key];
-    if (typeof raw === "number" && raw > best.val) {
-      best = { id: item.candidate_id as string, val: raw };
+    if (typeof raw === "number") {
+      if (lowerIsBetter ? raw < best.val : raw > best.val) {
+        best = { id: item.candidate_id as string, val: raw };
+      }
     }
   }
   return best.id;
@@ -133,7 +156,7 @@ export default function ExpansionComparePanel({
           {loading && <div className="ea-state ea-state--loading">{t("expansionAdvisor.loading")}</div>}
           {error && <div className="ea-state ea-state--error">{error}</div>}
 
-          {/* Best-on highlights */}
+          {/* Best-on highlights — surface winners */}
           {summaryEntries.length > 0 && (
             <div className="ea-compare-highlights">
               {summaryEntries.map(([k, v]) => (
@@ -167,8 +190,8 @@ export default function ExpansionComparePanel({
                 </thead>
                 <tbody>
                   {DIMENSION_GROUPS.map((group) => (
-                    <>
-                      <tr key={`group-${group.label}`} className="ea-compare-table__group-header">
+                    <React.Fragment key={`group-${group.label}`}>
+                      <tr className="ea-compare-table__group-header">
                         <td colSpan={items.length + 1}>{group.label}</td>
                       </tr>
                       {group.rows.map((row) => {
@@ -184,13 +207,15 @@ export default function ExpansionComparePanel({
                               if (row.key === "confidence_grade") return <td key={item.candidate_id}><ConfidenceBadge grade={item.confidence_grade} /></td>;
                               if (row.key === "gate") return <td key={item.candidate_id}><span className={`ea-badge ea-badge--${gateColor(item.gate_status_json?.overall_pass ?? null)}`}>{item.gate_status_json?.overall_pass ? t("expansionAdvisor.gatePass") : t("expansionAdvisor.gateFail")}</span></td>;
                               if (row.key === "payback_band") return <td key={item.candidate_id}><PaybackBadge band={item.payback_band} months={item.estimated_payback_months} /></td>;
+                              if (row.fmt === "sar" && typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtSAR(raw)}</td>;
+                              if (row.fmt === "months" && typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtMonths(raw)}</td>;
                               if (typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtScore(raw)}</td>;
                               return <td key={item.candidate_id}>{raw != null ? String(raw) : "—"}</td>;
                             })}
                           </tr>
                         );
                       })}
-                    </>
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>

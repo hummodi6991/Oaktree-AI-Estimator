@@ -12,6 +12,7 @@ export default function ExpansionResultsPanel(props: {
   onToggleShortlist: (candidateId: string) => void;
   onToggleCompare: (candidateId: string) => void;
   onOpenMemo?: (candidateId: string) => void;
+  onShowOnMap?: (candidate: ExpansionCandidate) => void;
 }) {
   return (
     <div className="ea-candidate-list">
@@ -28,6 +29,7 @@ export default function ExpansionResultsPanel(props: {
           onToggleShortlist={() => props.onToggleShortlist(item.id)}
           onCompareToggle={() => props.onToggleCompare(item.id)}
           onOpenMemo={props.onOpenMemo ? () => props.onOpenMemo!(item.id) : undefined}
+          onShowOnMap={props.onShowOnMap ? () => props.onShowOnMap!(item) : undefined}
         />
       ))}
     </div>

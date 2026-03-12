@@ -64,6 +64,7 @@ import AssumptionsCard from "./AssumptionsCard";
 import DecisionSnapshotCard from "./DecisionSnapshotCard";
 import CompareOutcomeBanner from "./CompareOutcomeBanner";
 import { CandidateListSkeleton, DetailSkeleton } from "./SkeletonLoaders";
+import { trackEvent } from "../../api";
 import "./expansion-advisor.css";
 
 /* ─── Pure helpers (exported for tests) ─── */
@@ -257,6 +258,7 @@ export default function ExpansionAdvisorPage({
     if (cached) { setReport(cached); return; }
     setLoadingReport(true);
     setReportError(null);
+    void trackEvent("report_opened", { meta: { search_id: targetSearchId } });
     try {
       const result = await getExpansionRecommendationReport(targetSearchId);
       reportCacheRef.current.set(cacheKey, result);
@@ -268,6 +270,7 @@ export default function ExpansionAdvisorPage({
     if (!targetSearchId || targetCompareIds.length < 2 || targetCompareIds.length > 6) { setCompareResult(null); return; }
     setLoadingCompare(true);
     setCompareError(null);
+    void trackEvent("compare_opened", { meta: { search_id: targetSearchId, count: targetCompareIds.length } });
     try { setCompareResult(await compareExpansionCandidates(targetSearchId, targetCompareIds)); } catch { setCompareError(t("expansionAdvisor.errorCompare")); } finally { setLoadingCompare(false); }
   };
 
@@ -341,12 +344,14 @@ export default function ExpansionAdvisorPage({
     setDistrictFilter("");
     memoCacheRef.current.clear();
     reportCacheRef.current.clear();
+    void trackEvent("search_started", { meta: { brand: normalized.brand_name, category: normalized.category } });
     try {
       const result = await createExpansionSearch(normalized);
       setSearchId(result.search_id);
       setCandidates(normalizeCandidates(result.items || []));
       setSearchMeta(result.meta || {});
       void loadReport(result.search_id);
+      void trackEvent("search_completed", { meta: { search_id: result.search_id, count: (result.items || []).length } });
     } catch { setSearchError(t("expansionAdvisor.errorSearch")); } finally { setLoadingSearch(false); }
   };
 
@@ -728,10 +733,14 @@ export default function ExpansionAdvisorPage({
               compareIds={compareIds}
               leadCandidateId={leadCandidateId}
               localSortActive={localSortActive}
-              onSelectCandidate={(candidate) => void handleSelectCandidate(candidate)}
+              onSelectCandidate={(candidate) => { void handleSelectCandidate(candidate); void trackEvent("candidate_opened", { meta: { candidate_id: candidate.id } }); }}
               onToggleShortlist={(candidateId) => setShortlistIds((cur) => cur.includes(candidateId) ? cur.filter((id) => id !== candidateId) : [...cur, candidateId])}
               onToggleCompare={(candidateId) => setCompareIds((cur) => getNextCompareIds(cur, candidateId))}
               onOpenMemo={(candidateId) => void handleOpenMemoById(candidateId)}
+              onShowOnMap={(candidate) => {
+                onSelectedCandidateChange(candidate);
+                setSelectedCandidate(candidate);
+              }}
             />
           ) : loadingSearch ? (
             <CandidateListSkeleton count={5} />
@@ -927,6 +936,7 @@ export default function ExpansionAdvisorPage({
               await refreshSavedStudies();
               setActiveDrawer("none");
               showToast("success", t("expansionAdvisor.studySaveSuccess"));
+              void trackEvent("saved_search_created", { meta: { saved_id: created.id, search_id: searchId } });
             } catch { setSaveError(t("expansionAdvisor.saveFailed")); showToast("error", t("expansionAdvisor.saveFailed")); } finally { setSaving(false); }
           }}
         />;

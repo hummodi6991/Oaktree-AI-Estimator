@@ -4,7 +4,7 @@ import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import WhyThisRank from "./WhyThisRank";
-import { fmtSAR, fmtMeters, fmtScore } from "./formatHelpers";
+import { fmtSAR, fmtMeters, fmtScore, fmtM2, fmtSarPerM2, fmtMonths } from "./formatHelpers";
 
 type Props = {
   candidate: ExpansionCandidate;
@@ -17,6 +17,7 @@ type Props = {
   onToggleShortlist: () => void;
   onCompareToggle: () => void;
   onOpenMemo?: () => void;
+  onShowOnMap?: () => void;
 };
 
 export default function ExpansionCandidateCard({
@@ -30,6 +31,7 @@ export default function ExpansionCandidateCard({
   onToggleShortlist,
   onCompareToggle,
   onOpenMemo,
+  onShowOnMap,
 }: Props) {
   const { t } = useTranslation();
   const pass = Boolean(candidate.gate_status_json?.overall_pass);
@@ -86,6 +88,16 @@ export default function ExpansionCandidateCard({
 
       {/* Metrics grid */}
       <div className="ea-candidate__metrics">
+        {candidate.area_m2 != null && (
+          <div className="ea-candidate__metric">
+            <span className="ea-candidate__metric-label">{t("expansionAdvisor.areaLabel")}:</span>
+            <span>{fmtM2(candidate.area_m2)}</span>
+          </div>
+        )}
+        <div className="ea-candidate__metric">
+          <span className="ea-candidate__metric-label">{t("expansionAdvisor.rent")}:</span>
+          <span>{fmtSarPerM2(candidate.estimated_rent_sar_m2_year)}</span>
+        </div>
         <div className="ea-candidate__metric">
           <span className="ea-candidate__metric-label">{t("expansionAdvisor.annualRent")}:</span>
           <span>{fmtSAR(candidate.estimated_annual_rent_sar)}</span>
@@ -97,6 +109,10 @@ export default function ExpansionCandidateCard({
         <div className="ea-candidate__metric">
           <span className="ea-candidate__metric-label">{t("expansionAdvisor.revenueIndex")}:</span>
           <span>{fmtScore(candidate.estimated_revenue_index, 1)}</span>
+        </div>
+        <div className="ea-candidate__metric">
+          <span className="ea-candidate__metric-label">{t("expansionAdvisor.payback")}:</span>
+          <span>{fmtMonths(candidate.estimated_payback_months)}</span>
         </div>
         <div className="ea-candidate__metric">
           <span className="ea-candidate__metric-label">{t("expansionAdvisor.economicsLabel")}:</span>
@@ -164,6 +180,15 @@ export default function ExpansionCandidateCard({
         >
           {compared ? t("expansionAdvisor.removeCompare") : t("expansionAdvisor.addToCompare")}
         </button>
+        {onShowOnMap && (
+          <button
+            type="button"
+            className="oak-btn oak-btn--sm oak-btn--tertiary"
+            onClick={onShowOnMap}
+          >
+            {t("expansionAdvisor.showOnMap")}
+          </button>
+        )}
       </div>
     </div>
   );

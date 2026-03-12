@@ -5,7 +5,7 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
 import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
-import { fmtSAR, fmtMeters, fmtScore, fmtPct, fmtSarPerM2 } from "./formatHelpers";
+import { fmtSAR, fmtMeters, fmtScore, fmtPct, fmtSarPerM2, fmtM2, fmtMonths } from "./formatHelpers";
 
 type Props = {
   candidate: ExpansionCandidate;
@@ -108,8 +108,14 @@ export default function CandidateDetailPanel({ candidate }: Props) {
             <span className="ea-detail__kv-value">{fmtScore(candidate.delivery_competition_score)}</span>
           </div>
         </div>
-        {/* Economics row */}
+        {/* Economics & site row */}
         <div className="ea-detail__grid" style={{ marginTop: 8 }}>
+          {candidate.area_m2 != null && (
+            <div className="ea-detail__kv">
+              <span className="ea-detail__kv-label">{t("expansionAdvisor.areaLabel")}</span>
+              <span className="ea-detail__kv-value">{fmtM2(candidate.area_m2)}</span>
+            </div>
+          )}
           <div className="ea-detail__kv">
             <span className="ea-detail__kv-label">{t("expansionAdvisor.rent")}</span>
             <span className="ea-detail__kv-value">{fmtSarPerM2(candidate.estimated_rent_sar_m2_year)}</span>
@@ -127,9 +133,19 @@ export default function CandidateDetailPanel({ candidate }: Props) {
             <span className="ea-detail__kv-value">{fmtScore(candidate.estimated_revenue_index, 1)}</span>
           </div>
           <div className="ea-detail__kv">
+            <span className="ea-detail__kv-label">{t("expansionAdvisor.payback")}</span>
+            <span className="ea-detail__kv-value"><PaybackBadge band={candidate.payback_band} months={candidate.estimated_payback_months} /></span>
+          </div>
+          <div className="ea-detail__kv">
             <span className="ea-detail__kv-label">{t("expansionAdvisor.nearestBranch")}</span>
             <span className="ea-detail__kv-value">{fmtMeters(candidate.distance_to_nearest_branch_m)}</span>
           </div>
+          {candidate.cannibalization_score != null && (
+            <div className="ea-detail__kv">
+              <span className="ea-detail__kv-label">{t("expansionAdvisor.cannibalization")}</span>
+              <ScorePill value={candidate.cannibalization_score} />
+            </div>
+          )}
         </div>
         <ScoreBreakdownCompact breakdown={breakdown} />
       </div>
