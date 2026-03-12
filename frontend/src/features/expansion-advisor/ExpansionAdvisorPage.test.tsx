@@ -1439,7 +1439,7 @@ describe("Top-3 candidate highlight", () => {
 
 describe("GateSummary unknown gates", () => {
   it("renders unknown gates with neutral styling", () => {
-    const gates = { parking_pass: true, access_pass: false, zoning_pass: null as unknown as boolean };
+    const gates = { parking_pass: true, access_pass: false, zoning_pass: null };
     const html = renderToStaticMarkup(
       <GateSummary gates={gates} unknownGates={["zoning_pass"]} />,
     );
@@ -1466,6 +1466,10 @@ describe("ScoreBreakdownCompact", () => {
     };
     const html = renderToStaticMarkup(<ScoreBreakdownCompact breakdown={breakdown} />);
     expect(html).toContain("ea-score-breakdown-compact");
+    expect(html).toContain("ea-score-breakdown-compact__bar-wrap");
+    expect(html).toContain("ea-score-breakdown-compact__bar ");
+    expect(html).toContain("ea-score-breakdown-compact__weight");
+    expect(html).toContain("ea-score-breakdown-compact__title");
     expect(html).toContain("economics");
     expect(html).toContain("brand fit");
     expect(html).toContain("30%");
@@ -1483,7 +1487,7 @@ describe("ScoreBreakdownCompact", () => {
 describe("CandidateDetailPanel with unknownGates", () => {
   it("passes unknownGates from gate_reasons_json to GateSummary", () => {
     const candidate = makeCandidate({
-      gate_status_json: { overall_pass: true, parking_pass: true, zoning_pass: null as unknown as boolean },
+      gate_status_json: { overall_pass: true, parking_pass: true, zoning_pass: null },
       gate_reasons_json: { passed: ["parking_pass"], failed: [], unknown: ["zoning_pass"], thresholds: {}, explanations: {} },
     });
     const html = renderToStaticMarkup(<CandidateDetailPanel candidate={candidate} />);

@@ -1,7 +1,7 @@
 import { useTranslation } from "react-i18next";
 import type { CandidateScoreBreakdown } from "../../lib/api/expansionAdvisor";
 import { parseScoreBreakdown } from "./studyAdapters";
-import { fmtScore } from "./formatHelpers";
+import { fmtScore, scoreColor } from "./formatHelpers";
 
 type Props = {
   breakdown: CandidateScoreBreakdown | undefined;
@@ -20,25 +20,23 @@ export default function ScoreBreakdownCompact({ breakdown }: Props) {
       <h5 className="ea-score-breakdown-compact__title">
         {t("expansionAdvisor.scoreBreakdown")}
       </h5>
-      <div className="ea-score-breakdown-compact__rows">
-        {components.map((comp) => (
-          <div key={comp.label} className="ea-score-breakdown-compact__row">
-            <span className="ea-score-breakdown-compact__label">{comp.label}</span>
-            <div className="ea-score-breakdown-compact__bar-track">
-              <div
-                className="ea-score-breakdown-compact__bar-fill"
-                style={{ width: `${Math.max((comp.weighted / maxWeighted) * 100, 2)}%` }}
-              />
-            </div>
-            <span className="ea-score-breakdown-compact__value">
-              {fmtScore(comp.weighted)}
-            </span>
-            <span className="ea-score-breakdown-compact__weight">
-              ({(comp.weight * 100).toFixed(0)}%)
-            </span>
+      {components.map((comp) => (
+        <div key={comp.label} className="ea-score-breakdown-compact__row">
+          <span className="ea-score-breakdown-compact__label">{comp.label}</span>
+          <div className="ea-score-breakdown-compact__bar-wrap">
+            <div
+              className={`ea-score-breakdown-compact__bar ea-score-breakdown-compact__bar--${scoreColor(comp.input)}`}
+              style={{ width: `${Math.max((comp.weighted / maxWeighted) * 100, 2)}%` }}
+            />
           </div>
-        ))}
-      </div>
+          <span className="ea-score-breakdown-compact__value">
+            {fmtScore(comp.weighted)}
+          </span>
+          <span className="ea-score-breakdown-compact__weight">
+            ({(comp.weight * 100).toFixed(0)}%)
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

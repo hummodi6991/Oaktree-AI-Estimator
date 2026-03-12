@@ -110,7 +110,7 @@ export type ExpansionCandidate = {
   estimated_payback_months?: number;
   payback_band?: string;
   decision_summary?: string;
-  gate_status_json?: Record<string, boolean>;
+  gate_status_json?: Record<string, boolean | null | undefined>;
   gate_reasons_json?: CandidateGateReasons;
   feature_snapshot_json?: CandidateFeatureSnapshot;
   score_breakdown_json?: CandidateScoreBreakdown;
@@ -159,7 +159,7 @@ export type CompareCandidateItem = {
   rank_position?: number;
   final_score?: number;
   confidence_grade?: string;
-  gate_status_json?: Record<string, boolean>;
+  gate_status_json?: Record<string, boolean | null | undefined>;
   zoning_fit_score?: number;
   frontage_score?: number;
   access_score?: number;

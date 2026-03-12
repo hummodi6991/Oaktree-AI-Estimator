@@ -2089,11 +2089,19 @@
 .ea-score-breakdown-compact {
   display: grid;
   gap: 4px;
+  margin-top: 8px;
+}
+
+.ea-score-breakdown-compact__title {
+  margin: 0 0 4px;
+  font-size: var(--oak-fs-sm, 13px);
+  font-weight: var(--oak-fw-semibold, 600);
+  color: var(--oak-text-dark, #171717);
 }
 
 .ea-score-breakdown-compact__row {
   display: grid;
-  grid-template-columns: 110px 1fr 36px;
+  grid-template-columns: 110px 1fr 36px 40px;
   gap: 6px;
   align-items: center;
   font-size: var(--oak-fs-xs, 12px);
@@ -2129,6 +2137,12 @@
   text-align: end;
   font-weight: var(--oak-fw-semibold, 600);
   color: var(--oak-text-dark, #171717);
+  font-variant-numeric: tabular-nums;
+}
+
+.ea-score-breakdown-compact__weight {
+  text-align: end;
+  color: var(--oak-text-light, #828282);
   font-variant-numeric: tabular-nums;
 }
 

@@ -50,7 +50,7 @@ export default function ExpansionMemoPanel({
             const rec = memo.recommendation || {};
             const mr = memo.market_research || {};
             const cand = memo.candidate || {};
-            const gates = (cand.gate_status || {}) as Record<string, boolean>;
+            const gates = (cand.gate_status || {}) as Record<string, boolean | null | undefined>;
             const gateReasons = cand.gate_reasons;
             const snapshot = cand.feature_snapshot;
             const breakdown = cand.score_breakdown_json;

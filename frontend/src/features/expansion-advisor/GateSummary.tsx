@@ -1,7 +1,9 @@
 import { useTranslation } from "react-i18next";
 
+type GateValue = boolean | null | undefined;
+
 type GateSummaryProps = {
-  gates: Record<string, boolean> | null | undefined;
+  gates: Record<string, GateValue> | null | undefined;
   unknownGates?: string[];
 };
 

@@ -224,17 +224,19 @@ export type GateEntry = {
 };
 
 export function parseGateEntries(
-  gateStatus: Record<string, boolean> | undefined,
+  gateStatus: Record<string, boolean | null | undefined> | undefined,
   gateReasons: CandidateGateReasons | undefined,
 ): GateEntry[] {
   if (!gateStatus) return [];
   const explanations = gateReasons?.explanations || {};
+  const unknownSet = new Set(gateReasons?.unknown || []);
   const entries: GateEntry[] = [];
 
   for (const [key, passed] of Object.entries(gateStatus)) {
+    const isUnknown = unknownSet.has(key) || passed === null || passed === undefined;
     entries.push({
       name: key.replace(/_/g, " ").replace(/\bpass\b/gi, "").trim(),
-      status: passed ? "pass" : "fail",
+      status: isUnknown ? "unknown" : (passed ? "pass" : "fail"),
       explanation: explanations[key] ? String(explanations[key]) : undefined,
     });
   }
