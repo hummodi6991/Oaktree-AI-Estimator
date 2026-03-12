@@ -292,7 +292,7 @@ function App() {
                   style={{ borderRadius: "var(--oak-radius) 0 0 var(--oak-radius)" }}
                   onClick={() => setAnalysisMode("expansion")}
                 >
-                  {t("app.modeExpansion", { defaultValue: "Branch Expansion Advisor" })}
+                  {t("app.modeExpansion", { defaultValue: "Expansion Advisor" })}
                 </button>
                 <button
                   type="button"
@@ -304,11 +304,11 @@ function App() {
                     setRestaurantClickedLocation(null);
                   }}
                 >
-                  {t("app.modeFeasibility", { defaultValue: "Feasibility (Internal)" })}
+                  {t("app.modeFeasibility", { defaultValue: "Development Feasibility" })}
                 </button>
                 {analysisMode === "expansion" && (
                   <span style={{ marginInlineStart: 12, fontSize: "var(--oak-fs-xs, 12px)", color: "var(--oak-text-light, #828282)" }}>
-                    {t("app.expansionSubtitle", { defaultValue: "Find your next F&B branch location in Riyadh" })}
+                    {t("app.expansionSubtitle", { defaultValue: "Find the best next branch for your F&B brand" })}
                   </span>
                 )}
               </div>
@@ -363,6 +363,13 @@ function App() {
                   setExpansionSelectedCandidateId(candidate.id);
                   handleExpansionFlyTo(candidate.lon, candidate.lat);
                   handleRestaurantHighlight(candidate.lon, candidate.lat);
+                }}
+                onMapViewRequest={(view) => {
+                  const map = mapInstanceRef.current;
+                  if (!map) return;
+                  if (view.center) {
+                    map.flyTo({ center: view.center, zoom: view.zoom ?? 14, duration: 800 });
+                  }
                 }}
               />
             ) : parcel ? (

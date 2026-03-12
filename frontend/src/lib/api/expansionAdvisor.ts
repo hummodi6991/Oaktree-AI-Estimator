@@ -84,6 +84,7 @@ export type ExpansionCandidate = {
   search_id: string;
   parcel_id: string;
   district?: string;
+  area_m2?: number;
   lat: number;
   lon: number;
   rank_position?: number;
@@ -169,8 +170,15 @@ export type CompareCandidateItem = {
   brand_fit_score?: number;
   provider_density_score?: number;
   provider_whitespace_score?: number;
+  delivery_competition_score?: number;
+  multi_platform_presence_score?: number;
+  cannibalization_score?: number;
   estimated_payback_months?: number;
   payback_band?: string;
+  estimated_rent_sar_m2_year?: number;
+  estimated_annual_rent_sar?: number;
+  demand_score?: number;
+  fit_score?: number;
 };
 
 export type CompareCandidatesResponse = {
@@ -236,6 +244,13 @@ export type RecommendationReportResponse = {
     runner_up_candidate_id?: string;
     best_pass_candidate_id?: string;
     best_confidence_candidate_id?: string;
+    best_economics_candidate_id?: string;
+    best_brand_fit_candidate_id?: string;
+    highest_demand_candidate_id?: string;
+    strongest_whitespace_candidate_id?: string;
+    fastest_payback_candidate_id?: string;
+    lowest_cannibalization_candidate_id?: string;
+    most_confident_candidate_id?: string;
     why_best?: string;
     main_risk?: string;
     best_format?: string;
@@ -306,6 +321,45 @@ export function normalizeSavedSearch(saved: SavedExpansionSearch): SavedExpansio
   };
 }
 
+export function normalizeReportResponse(data: RecommendationReportResponse): RecommendationReportResponse {
+  return {
+    ...data,
+    top_candidates: (data.top_candidates || []).map((tc) => ({
+      ...tc,
+      top_positives_json: tc.top_positives_json || [],
+      top_risks_json: tc.top_risks_json || [],
+      score_breakdown_json: tc.score_breakdown_json || DEFAULT_SCORE_BREAKDOWN,
+      feature_snapshot_json: tc.feature_snapshot_json || {},
+    })),
+    assumptions: data.assumptions || {},
+    recommendation: {
+      ...(data.recommendation || {}),
+    },
+    brand_profile: data.brand_profile || {},
+    meta: data.meta || {},
+  };
+}
+
+export function normalizeMemoResponse(data: CandidateMemoResponse): CandidateMemoResponse {
+  const cand = data.candidate || {};
+  return {
+    ...data,
+    brand_profile: data.brand_profile || {},
+    recommendation: data.recommendation || {},
+    candidate: {
+      ...cand,
+      top_positives_json: (cand.top_positives_json as string[] | undefined) || [],
+      top_risks_json: (cand.top_risks_json as string[] | undefined) || [],
+      comparable_competitors: (cand.comparable_competitors as ComparableCompetitor[] | undefined) || [],
+      score_breakdown_json: (cand.score_breakdown_json as CandidateScoreBreakdown | undefined) || DEFAULT_SCORE_BREAKDOWN,
+      gate_status: (cand.gate_status as Record<string, boolean> | undefined) || {},
+      gate_reasons: (cand.gate_reasons as CandidateGateReasons | undefined) || DEFAULT_GATE_REASONS,
+      feature_snapshot: (cand.feature_snapshot as CandidateFeatureSnapshot | undefined) || DEFAULT_FEATURE_SNAPSHOT,
+    },
+    market_research: data.market_research || {},
+  };
+}
+
 async function readJson<T>(res: Response): Promise<T> {
   const text = await res.text();
   return (text ? JSON.parse(text) : {}) as T;
@@ -334,8 +388,8 @@ export async function getExpansionCandidates(searchId: string): Promise<Expansio
   return { ...data, items: normalizeCandidates(data.items || []), meta: data.meta || {} };
 }
 export async function compareExpansionCandidates(searchId: string, candidateIds: string[]): Promise<CompareCandidatesResponse> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/candidates/compare"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search_id: searchId, candidate_ids: candidateIds }) }); const data = await readJson<CompareCandidatesResponse>(res); return { ...data, items: data.items || [], summary: data.summary || {} }; }
-export async function getExpansionCandidateMemo(candidateId: string): Promise<CandidateMemoResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo`)); const data = await readJson<CandidateMemoResponse>(res); return { ...data, brand_profile: data.brand_profile || {}, recommendation: data.recommendation || {}, candidate: data.candidate || {}, market_research: data.market_research || {} }; }
-export async function getExpansionRecommendationReport(searchId: string): Promise<RecommendationReportResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`)); const data = await readJson<RecommendationReportResponse>(res); return { ...data, top_candidates: data.top_candidates || [], assumptions: data.assumptions || {}, recommendation: data.recommendation || {}, brand_profile: data.brand_profile || {}, meta: data.meta || {} }; }
+export async function getExpansionCandidateMemo(candidateId: string): Promise<CandidateMemoResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo`)); const data = await readJson<CandidateMemoResponse>(res); return normalizeMemoResponse(data); }
+export async function getExpansionRecommendationReport(searchId: string): Promise<RecommendationReportResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`)); const data = await readJson<RecommendationReportResponse>(res); return normalizeReportResponse(data); }
 export async function createSavedExpansionSearch(payload: Omit<SavedExpansionSearch, "id">): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/saved-searches"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }
 export async function listSavedExpansionSearches(status?: "draft" | "final", limit = 20): Promise<SavedExpansionSearchListResponse> { const params = new URLSearchParams({ limit: String(limit) }); if (status) params.set("status", status); const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches?${params.toString()}`)); const data = await readJson<SavedExpansionSearchListResponse>(res); return { items: (data.items || []).map(normalizeSavedSearch) }; }
 export async function getSavedExpansionSearch(savedId: string): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`)); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }

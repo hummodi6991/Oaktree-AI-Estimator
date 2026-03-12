@@ -19,7 +19,7 @@ import {
   sameCandidateId,
   shouldKeepCompareResult,
 } from "./ExpansionAdvisorPage";
-import { normalizeCandidate, normalizeSavedSearch } from "../../lib/api/expansionAdvisor";
+import { normalizeCandidate, normalizeSavedSearch, normalizeReportResponse, normalizeMemoResponse } from "../../lib/api/expansionAdvisor";
 import {
   normalizeBriefPayload,
   filterCandidates,
@@ -2205,5 +2205,279 @@ describe("extractSavedStudyMeta", () => {
     expect(meta.leadDistrict).toBeNull();
     expect(meta.lastSort).toBeNull();
     expect(meta.lastFilter).toBeNull();
+  });
+});
+
+/* ─── Response normalizer resilience ─── */
+
+describe("normalizeReportResponse", () => {
+  it("fills defaults for missing top_candidates, assumptions, recommendation", () => {
+    const raw = {} as Parameters<typeof normalizeReportResponse>[0];
+    const result = normalizeReportResponse(raw);
+    expect(result.top_candidates).toEqual([]);
+    expect(result.assumptions).toEqual({});
+    expect(result.recommendation).toEqual({});
+    expect(result.brand_profile).toEqual({});
+    expect(result.meta).toEqual({});
+  });
+
+  it("normalizes each top_candidate with safe defaults", () => {
+    const raw = {
+      top_candidates: [{ id: "c1", final_score: 80 }],
+      recommendation: {},
+      assumptions: {},
+      brand_profile: {},
+      meta: {},
+    } as Parameters<typeof normalizeReportResponse>[0];
+    const result = normalizeReportResponse(raw);
+    expect(result.top_candidates[0].top_positives_json).toEqual([]);
+    expect(result.top_candidates[0].top_risks_json).toEqual([]);
+    expect(result.top_candidates[0].score_breakdown_json).toBeDefined();
+    expect(result.top_candidates[0].score_breakdown_json.weights).toEqual({});
+  });
+
+  it("preserves existing data when already present", () => {
+    const raw = {
+      top_candidates: [{
+        id: "c1",
+        final_score: 90,
+        top_positives_json: ["Great location"],
+        top_risks_json: ["High rent"],
+        score_breakdown_json: { weights: { economics: 0.3 }, inputs: { economics: 85 }, weighted_components: { economics: 25.5 }, final_score: 90 },
+      }],
+      recommendation: { summary: "Go" },
+      assumptions: { rent_model: "comp" },
+      brand_profile: { price_tier: "mid" },
+      meta: { version: "1" },
+    } as Parameters<typeof normalizeReportResponse>[0];
+    const result = normalizeReportResponse(raw);
+    expect(result.top_candidates[0].top_positives_json).toEqual(["Great location"]);
+    expect(result.recommendation.summary).toBe("Go");
+    expect(result.assumptions.rent_model).toBe("comp");
+  });
+});
+
+describe("normalizeMemoResponse", () => {
+  it("fills defaults for empty memo response", () => {
+    const raw = {} as Parameters<typeof normalizeMemoResponse>[0];
+    const result = normalizeMemoResponse(raw);
+    expect(result.brand_profile).toEqual({});
+    expect(result.recommendation).toEqual({});
+    expect(result.market_research).toEqual({});
+    expect(result.candidate).toBeDefined();
+    expect(result.candidate.top_positives_json).toEqual([]);
+    expect(result.candidate.top_risks_json).toEqual([]);
+    expect(result.candidate.comparable_competitors).toEqual([]);
+    expect(result.candidate.gate_status).toEqual({});
+    expect(result.candidate.gate_reasons).toBeDefined();
+    expect(result.candidate.gate_reasons.passed).toEqual([]);
+    expect(result.candidate.feature_snapshot).toBeDefined();
+    expect(result.candidate.feature_snapshot.missing_context).toEqual([]);
+  });
+
+  it("preserves existing candidate fields", () => {
+    const raw = {
+      candidate: {
+        top_positives_json: ["Low rent"],
+        gate_status: { overall_pass: true },
+      },
+      recommendation: { headline: "Go" },
+      brand_profile: {},
+      market_research: {},
+    } as Parameters<typeof normalizeMemoResponse>[0];
+    const result = normalizeMemoResponse(raw);
+    expect(result.candidate.top_positives_json).toEqual(["Low rent"]);
+    expect(result.candidate.gate_status.overall_pass).toBe(true);
+    expect(result.recommendation.headline).toBe("Go");
+  });
+});
+
+/* ─── Compare panel findBestOnKey lower-is-better logic ─── */
+
+describe("Compare panel dimension groups", () => {
+  it("getOrderedCompareSummaryEntries orders known keys first, then extras", () => {
+    const summary = {
+      best_overall_candidate_id: "c1",
+      best_economics_candidate_id: "c2",
+      some_custom_candidate_id: "c3",
+      fastest_payback_candidate_id: "c1",
+    };
+    const entries = getOrderedCompareSummaryEntries(summary);
+    const keys = entries.map(([k]) => k);
+    // Known keys first in defined order
+    expect(keys.indexOf("best_overall_candidate_id")).toBeLessThan(keys.indexOf("best_economics_candidate_id"));
+    expect(keys.indexOf("best_economics_candidate_id")).toBeLessThan(keys.indexOf("fastest_payback_candidate_id"));
+    // Custom key last
+    expect(keys.indexOf("some_custom_candidate_id")).toBe(keys.length - 1);
+  });
+
+  it("filters out null values from summary entries", () => {
+    const summary = {
+      best_overall_candidate_id: "c1",
+      best_economics_candidate_id: null,
+    };
+    const entries = getOrderedCompareSummaryEntries(summary);
+    expect(entries).toHaveLength(1);
+    expect(entries[0][0]).toBe("best_overall_candidate_id");
+  });
+
+  it("returns empty array for empty summary", () => {
+    expect(getOrderedCompareSummaryEntries({})).toEqual([]);
+    expect(getOrderedCompareSummaryEntries()).toEqual([]);
+  });
+});
+
+describe("Compare panel rendering with full result", () => {
+  it("renders dimension group headers and score cells", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionComparePanel
+        compareIds={["c1", "c2"]}
+        result={{
+          items: [
+            {
+              candidate_id: "c1",
+              district: "Olaya",
+              final_score: 85,
+              rank_position: 1,
+              confidence_grade: "A",
+              payback_band: "fast",
+              estimated_payback_months: 18,
+              estimated_annual_rent_sar: 120000,
+              brand_fit_score: 80,
+              economics_score: 75,
+              provider_density_score: 60,
+              provider_whitespace_score: 70,
+              delivery_competition_score: 55,
+              multi_platform_presence_score: 65,
+              cannibalization_score: 20,
+              zoning_fit_score: 80,
+              frontage_score: 70,
+              access_score: 75,
+              parking_score: 60,
+              access_visibility_score: 55,
+              gate_status_json: { overall_pass: true },
+            },
+            {
+              candidate_id: "c2",
+              district: "Malqa",
+              final_score: 72,
+              rank_position: 2,
+              confidence_grade: "B",
+              payback_band: "medium",
+              estimated_payback_months: 24,
+              estimated_annual_rent_sar: 90000,
+              brand_fit_score: 65,
+              economics_score: 80,
+              cannibalization_score: 15,
+              gate_status_json: { overall_pass: false },
+            },
+          ],
+          summary: { best_overall_candidate_id: "c1" },
+        }}
+        loading={false}
+        error={null}
+        onCompare={() => {}}
+      />,
+    );
+    // Group headers
+    expect(html).toContain("Overall Rank &amp; Score");
+    expect(html).toContain("Demand &amp; Whitespace");
+    expect(html).toContain("Economics &amp; Rent");
+    expect(html).toContain("Site Quality");
+    // District names in column headers
+    expect(html).toContain("Olaya");
+    expect(html).toContain("Malqa");
+    // Summary highlight
+    expect(html).toContain("ea-compare-highlight");
+  });
+
+  it("highlights lower-is-better winner for cannibalization", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionComparePanel
+        compareIds={["c1", "c2"]}
+        result={{
+          items: [
+            { candidate_id: "c1", cannibalization_score: 30, final_score: 80, gate_status_json: { overall_pass: true } },
+            { candidate_id: "c2", cannibalization_score: 10, final_score: 75, gate_status_json: { overall_pass: true } },
+          ],
+          summary: {},
+        }}
+        loading={false}
+        error={null}
+        onCompare={() => {}}
+      />,
+    );
+    // c2 has lower cannibalization and should be the winner
+    expect(html).toContain("ea-compare-winner");
+  });
+});
+
+/* ─── Candidate card area_m2 and showOnMap ─── */
+
+describe("Candidate card enhanced fields", () => {
+  it("renders area_m2 when present", () => {
+    const candidate = makeCandidate({ area_m2: 150 });
+    const html = renderToStaticMarkup(
+      <ExpansionResultsPanel
+        items={[candidate]}
+        selectedCandidateId={null}
+        shortlistIds={[]}
+        compareIds={[]}
+        onSelectCandidate={() => {}}
+        onToggleShortlist={() => {}}
+        onToggleCompare={() => {}}
+      />,
+    );
+    expect(html).toContain("150");
+    expect(html).toContain(en.expansionAdvisor.areaLabel);
+  });
+
+  it("renders showOnMap button when handler is provided", () => {
+    const candidate = makeCandidate({});
+    const html = renderToStaticMarkup(
+      <ExpansionResultsPanel
+        items={[candidate]}
+        selectedCandidateId={null}
+        shortlistIds={[]}
+        compareIds={[]}
+        onSelectCandidate={() => {}}
+        onToggleShortlist={() => {}}
+        onToggleCompare={() => {}}
+        onShowOnMap={() => {}}
+      />,
+    );
+    expect(html).toContain(en.expansionAdvisor.showOnMap);
+  });
+
+  it("does not render showOnMap button when handler is absent", () => {
+    const candidate = makeCandidate({});
+    const html = renderToStaticMarkup(
+      <ExpansionResultsPanel
+        items={[candidate]}
+        selectedCandidateId={null}
+        shortlistIds={[]}
+        compareIds={[]}
+        onSelectCandidate={() => {}}
+        onToggleShortlist={() => {}}
+        onToggleCompare={() => {}}
+      />,
+    );
+    expect(html).not.toContain(en.expansionAdvisor.showOnMap);
+  });
+});
+
+/* ─── CandidateDetailPanel enhanced economics fields ─── */
+
+describe("CandidateDetailPanel enhanced economics", () => {
+  it("renders area_m2, payback, and cannibalization in detail view", () => {
+    const candidate = makeCandidate({
+      area_m2: 200,
+      estimated_payback_months: 14,
+      payback_band: "fast",
+      cannibalization_score: 25,
+    });
+    const html = renderToStaticMarkup(<CandidateDetailPanel candidate={candidate} />);
+    expect(html).toContain("200");
+    expect(html).toContain(en.expansionAdvisor.cannibalization);
   });
 });

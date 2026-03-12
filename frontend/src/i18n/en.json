@@ -28,7 +28,8 @@
       "mixed": "Mixed/Commercial"
     },
     "modeExpansion": "Expansion Advisor",
-    "modeFeasibility": "Development Feasibility"
+    "modeFeasibility": "Development Feasibility",
+    "expansionSubtitle": "Find the best next branch for your F&B brand"
   },
   "map": {
     "status": {
@@ -861,6 +862,9 @@
     "workflowStep3": "Review ranked candidate branch sites",
     "workflowStep4": "Shortlist finalists and compare side by side",
     "workflowStep5": "Review decision memos and executive report",
-    "workflowStep6": "Save your expansion study for later"
+    "workflowStep6": "Save your expansion study for later",
+    "showOnMap": "Show on Map",
+    "areaLabel": "Area",
+    "retryAction": "Retry"
   }
 }
