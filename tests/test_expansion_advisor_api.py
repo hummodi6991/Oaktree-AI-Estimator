@@ -434,3 +434,108 @@ def test_report_endpoint_404(monkeypatch):
     finally:
         app.dependency_overrides.pop(get_db, None)
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Regression: full payload matching the exact shape that triggered the 500
+# ---------------------------------------------------------------------------
+
+def test_post_expansion_search_full_payload_with_brand_profile(monkeypatch):
+    """Regression: the complete payload (brand_profile + existing_branches +
+    target_districts + bbox) must return 200 without hitting an unhandled
+    exception.
+    """
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(expansion_api, "persist_existing_branches", lambda _db, _search_id, _branches: None)
+    monkeypatch.setattr(expansion_api, "persist_brand_profile", lambda _db, _search_id, _profile: None)
+    monkeypatch.setattr(
+        expansion_api,
+        "run_expansion_search",
+        lambda **kwargs: [
+            {
+                "id": "c-regr-1",
+                "search_id": kwargs["search_id"],
+                "parcel_id": "parcel-regr",
+                "district": "حي العليا",
+                "lat": 24.7,
+                "lon": 46.7,
+                "cannibalization_score": 42.0,
+                "distance_to_nearest_branch_m": 1800.0,
+                "compare_rank": 1,
+                "final_score": 78.3,
+                "explanation": {"summary": "regression candidate", "positives": [], "risks": [], "inputs": {}},
+            }
+        ],
+    )
+
+    client = _client_with_db(db)
+    try:
+        payload = {
+            "brand_name": "Test Burger",
+            "category": "burger",
+            "service_model": "qsr",
+            "min_area_m2": 100,
+            "max_area_m2": 350,
+            "existing_branches": [
+                {"name": "HQ", "lat": 24.71, "lon": 46.68, "district": "Olaya"},
+                {"name": "Branch 2", "lat": 24.75, "lon": 46.72, "district": "Malqa"},
+            ],
+            "target_districts": ["Olaya", "Al Mohammadiyah"],
+            "bbox": {"min_lon": 46.5, "min_lat": 24.5, "max_lon": 46.9, "max_lat": 24.9},
+            "limit": 20,
+            "brand_profile": {
+                "price_tier": "premium",
+                "primary_channel": "delivery",
+                "expansion_goal": "delivery_led",
+                "preferred_districts": ["Olaya"],
+                "excluded_districts": ["Malqa"],
+            },
+        }
+        response = client.post("/v1/expansion-advisor/searches", json=payload)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["search_id"] is not None
+    assert len(body["items"]) == 1
+    assert body["items"][0]["district"] == "حي العليا"
+    assert body["brand_profile"]["existing_branches"][0]["name"] == "HQ"
+    assert body["brand_profile"]["target_districts"] == ["Olaya", "Al Mohammadiyah"]
+    assert db.committed is True
+
+
+def test_post_expansion_search_logs_on_failure(monkeypatch, caplog):
+    """Verify the endpoint logs exception details when scoring fails."""
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(expansion_api, "persist_existing_branches", lambda *_a, **_kw: None)
+
+    def _boom(**_kwargs):
+        raise RuntimeError("simulated DB failure")
+
+    monkeypatch.setattr(expansion_api, "run_expansion_search", _boom)
+
+    import logging
+    with caplog.at_level(logging.ERROR, logger="app.api.expansion_advisor"):
+        client = _client_with_db(db)
+        try:
+            payload = {
+                "brand_name": "Test Brand",
+                "category": "coffee",
+                "service_model": "dine_in",
+                "min_area_m2": 80,
+                "max_area_m2": 200,
+            }
+            response = client.post("/v1/expansion-advisor/searches", json=payload)
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 500
+    assert db.rolled_back is True
+    assert any("Expansion search failed" in r.message for r in caplog.records)

@@ -827,3 +827,104 @@ def test_get_recommendation_report_empty_state_is_deterministic(monkeypatch):
         "report_summary",
     }
     assert "parcel_source" in report["assumptions"]
+
+
+# ---------------------------------------------------------------------------
+# Regression: full payload with brand_profile + existing_branches + districts
+# ---------------------------------------------------------------------------
+
+def test_run_expansion_search_with_brand_profile_and_branches():
+    """Regression test: the exact payload shape that triggered the 500.
+
+    Ensures the scoring pipeline handles brand_profile, existing_branches,
+    and target_districts together without raising.
+    """
+    db = FakeDB(
+        candidate_rows=[
+            {
+                "parcel_id": "p1",
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 200,
+                "lon": 46.7,
+                "lat": 24.7,
+                "district": "حي العليا",
+                "population_reach": 18000,
+                "competitor_count": 4,
+                "delivery_listing_count": 12,
+            }
+        ]
+    )
+
+    brand_profile = {
+        "price_tier": "premium",
+        "primary_channel": "delivery",
+        "expansion_goal": "delivery_led",
+        "preferred_districts": ["Olaya"],
+        "excluded_districts": ["Malqa"],
+    }
+    existing_branches = [
+        {"name": "HQ", "lat": 24.71, "lon": 46.68, "district": "Olaya"},
+        {"name": "Branch 2", "lat": 24.75, "lon": 46.72, "district": "Malqa"},
+    ]
+
+    items = run_expansion_search(
+        db,
+        search_id="search-regression",
+        brand_name="Brand X",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=350,
+        target_area_m2=200,
+        limit=10,
+        target_districts=["العليا"],
+        existing_branches=existing_branches,
+        brand_profile=brand_profile,
+    )
+
+    assert len(items) == 1
+    item = items[0]
+    assert item["parcel_id"] == "p1"
+    assert 0.0 <= item["final_score"] <= 100.0
+    assert item["cannibalization_score"] is not None
+    assert item["distance_to_nearest_branch_m"] is not None
+    assert item["economics_score"] is not None
+    assert item["estimated_payback_months"] is not None
+    assert item["payback_band"] in {"strong", "promising", "borderline", "weak"}
+    assert "gate_status_json" in item
+    assert "score_breakdown_json" in item
+    assert "top_positives_json" in item
+    assert "top_risks_json" in item
+    assert "comparable_competitors_json" in item
+    assert "feature_snapshot_json" in item
+
+
+def test_run_expansion_search_no_candidates_returns_empty():
+    """When the main query returns no rows, we should get an empty list—not a crash."""
+    db = FakeDB(candidate_rows=[])
+
+    items = run_expansion_search(
+        db,
+        search_id="search-empty",
+        brand_name="Brand X",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=300,
+        target_area_m2=180,
+        limit=10,
+    )
+
+    assert items == []
+
+
+def test_comparable_competitors_returns_empty_on_db_error():
+    """_comparable_competitors should gracefully return [] if the DB query fails."""
+
+    class BrokenDB:
+        def execute(self, _stmt, _params=None):
+            raise RuntimeError("connection lost")
+
+    result = _comparable_competitors(BrokenDB(), category="burger", lat=24.7, lon=46.7)
+    assert result == []

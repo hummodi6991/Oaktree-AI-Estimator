@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Any, Literal
 
@@ -12,6 +13,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
+
+logger = logging.getLogger(__name__)
 from app.services.expansion_advisor import (
     compare_candidates,
     create_saved_search,
@@ -410,6 +413,10 @@ def create_expansion_search(
         )
         db.commit()
     except Exception:
+        logger.exception(
+            "Expansion search failed: brand=%s category=%s districts=%s",
+            req.brand_name, req.category, req.target_districts,
+        )
         db.rollback()
         raise
 
