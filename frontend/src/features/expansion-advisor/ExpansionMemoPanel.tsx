@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { CandidateMemoResponse, RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
+import type { CandidateMemoResponse, RecommendationReportResponse, ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
 import CopySummaryBlock from "./CopySummaryBlock";
+import AssumptionsCard from "./AssumptionsCard";
+import ValidationPlanPanel from "./ValidationPlanPanel";
 import { fmtScore, fmtMeters, fmtSAR } from "./formatHelpers";
 
 function toList(input: unknown): string[] {
@@ -17,12 +19,18 @@ export default function ExpansionMemoPanel({
   loading,
   isLeadCandidate,
   report,
+  candidate,
+  shortlistCount,
+  compareCount,
   onClose,
 }: {
   memo: CandidateMemoResponse | null;
   loading: boolean;
   isLeadCandidate?: boolean;
   report?: RecommendationReportResponse | null;
+  candidate?: ExpansionCandidate | null;
+  shortlistCount?: number;
+  compareCount?: number;
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
@@ -36,6 +44,17 @@ export default function ExpansionMemoPanel({
         <div className="ea-drawer__header">
           {isLeadCandidate && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
           <h3 className="ea-drawer__title">{t("expansionAdvisor.decisionMemo")}</h3>
+          {/* Study context chips */}
+          {((shortlistCount != null && shortlistCount > 0) || (compareCount != null && compareCount > 0)) && (
+            <div className="ea-drawer__context-chips">
+              {shortlistCount != null && shortlistCount > 0 && (
+                <span className="ea-badge ea-badge--neutral">{t("expansionAdvisor.shortlistedCount", { count: shortlistCount })}</span>
+              )}
+              {compareCount != null && compareCount > 0 && (
+                <span className="ea-badge ea-badge--neutral">{t("expansionAdvisor.smCompared", { count: compareCount })}</span>
+              )}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 6, alignItems: "center", marginInlineStart: "auto" }}>
             <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={() => setPresentationMode((m) => !m)}>
               {presentationMode ? t("expansionAdvisor.exitPresentation") : t("expansionAdvisor.presentationMode")}
@@ -196,10 +215,24 @@ export default function ExpansionMemoPanel({
                   </div>
                 )}
 
+                {/* Assumptions & confidence — shown for all candidates in memo context */}
+                {candidate && (
+                  <div className="ea-report-section">
+                    <AssumptionsCard candidate={candidate} report={report} compact={!isLeadCandidate} />
+                  </div>
+                )}
+
+                {/* Validation plan — shown for lead candidate in memo context */}
+                {isLeadCandidate && candidate && (
+                  <div className="ea-report-section">
+                    <ValidationPlanPanel candidate={candidate} memo={memo} report={report} />
+                  </div>
+                )}
+
                 {/* Copy-ready summary block */}
                 {isLeadCandidate && (
                   <CopySummaryBlock
-                    candidate={null}
+                    candidate={candidate || null}
                     report={report || null}
                     memo={memo}
                   />

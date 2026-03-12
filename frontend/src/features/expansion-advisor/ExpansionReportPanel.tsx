@@ -4,6 +4,9 @@ import type { RecommendationReportResponse, ExpansionCandidate, CandidateMemoRes
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import CopySummaryBlock from "./CopySummaryBlock";
+import AssumptionsCard from "./AssumptionsCard";
+import ValidationPlanPanel from "./ValidationPlanPanel";
+import DecisionSnapshotCard from "./DecisionSnapshotCard";
 
 export function triggerReportCandidateSelect(candidateId: string | undefined, onSelectCandidateId?: (candidateId: string) => void) {
   if (!candidateId) return;
@@ -16,6 +19,9 @@ export default function ExpansionReportPanel({
   leadCandidateId,
   leadCandidate,
   memo,
+  shortlistCount,
+  compareCount,
+  isFinalStudy,
   onSelectCandidateId,
   onClose,
 }: {
@@ -24,6 +30,9 @@ export default function ExpansionReportPanel({
   leadCandidateId?: string | null;
   leadCandidate?: ExpansionCandidate | null;
   memo?: CandidateMemoResponse | null;
+  shortlistCount?: number;
+  compareCount?: number;
+  isFinalStudy?: boolean;
   onSelectCandidateId?: (candidateId: string) => void;
   onClose?: () => void;
 }) {
@@ -42,6 +51,20 @@ export default function ExpansionReportPanel({
               v{report.meta.version}
             </span>
           )}
+          {/* Study context chips */}
+          {((shortlistCount != null && shortlistCount > 0) || (compareCount != null && compareCount > 0) || isFinalStudy) && (
+            <div className="ea-drawer__context-chips">
+              {isFinalStudy && (
+                <span className="ea-badge ea-badge--green">{t("expansionAdvisor.savedStudyFinal")}</span>
+              )}
+              {shortlistCount != null && shortlistCount > 0 && (
+                <span className="ea-badge ea-badge--neutral">{t("expansionAdvisor.shortlistedCount", { count: shortlistCount })}</span>
+              )}
+              {compareCount != null && compareCount > 0 && (
+                <span className="ea-badge ea-badge--neutral">{t("expansionAdvisor.smCompared", { count: compareCount })}</span>
+              )}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={() => setPresentationMode((m) => !m)}>
               {presentationMode ? t("expansionAdvisor.exitPresentation") : t("expansionAdvisor.presentationMode")}
@@ -59,6 +82,18 @@ export default function ExpansionReportPanel({
 
             return (
               <>
+                {/* Decision snapshot — prominent in report when lead exists */}
+                {leadCandidate && (
+                  <div className="ea-report-section">
+                    <DecisionSnapshotCard
+                      candidate={leadCandidate}
+                      report={report}
+                      memo={memo}
+                      prominent={isFinalStudy}
+                    />
+                  </div>
+                )}
+
                 {/* Summary narrative */}
                 {(rec.summary || rec.report_summary) && (
                   <div className="ea-report-hero">
@@ -176,6 +211,20 @@ export default function ExpansionReportPanel({
                   </div>
                 )}
 
+                {/* Validation plan for lead candidate — within report context */}
+                {leadCandidate && (
+                  <div className="ea-report-section">
+                    <ValidationPlanPanel candidate={leadCandidate} memo={memo} report={report} />
+                  </div>
+                )}
+
+                {/* Assumptions & confidence — lead candidate view in report */}
+                {leadCandidate && (
+                  <div className="ea-report-section">
+                    <AssumptionsCard candidate={leadCandidate} report={report} />
+                  </div>
+                )}
+
                 {/* Copy-ready executive summary block */}
                 <CopySummaryBlock
                   candidate={leadCandidate || null}
@@ -183,7 +232,7 @@ export default function ExpansionReportPanel({
                   memo={memo || null}
                 />
 
-                {/* Assumptions */}
+                {/* Raw report assumptions (non-presentation) */}
                 {!presentationMode && assumptions.length > 0 && (
                   <div className="ea-report-section">
                     <h5 className="ea-detail__section-title">{t("expansionAdvisor.assumptions")}</h5>

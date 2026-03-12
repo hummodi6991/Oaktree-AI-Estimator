@@ -34,6 +34,14 @@ export default function SavedSearchesPanel({ items, loading, activeSavedId, onOp
                 {meta.leadDistrict && (
                   <span className="ea-saved-item__meta-chip" style={{ marginInlineEnd: 6 }}>
                     {t("expansionAdvisor.leadSite")}: {meta.leadDistrict}
+                    {meta.leadParcelId && meta.leadParcelId !== meta.leadDistrict && (
+                      <> ({meta.leadParcelId.slice(0, 8)})</>
+                    )}
+                  </span>
+                )}
+                {!meta.leadDistrict && meta.leadParcelId && (
+                  <span className="ea-saved-item__meta-chip" style={{ marginInlineEnd: 6 }}>
+                    {t("expansionAdvisor.leadSite")}: {meta.leadParcelId.slice(0, 8)}
                   </span>
                 )}
                 {item.description && <span style={{ marginInlineEnd: 6 }}>{item.description.slice(0, 60)}{item.description.length > 60 ? "…" : ""}</span>}
@@ -50,6 +58,11 @@ export default function SavedSearchesPanel({ items, loading, activeSavedId, onOp
                 {meta.lastSort && (
                   <span className="ea-saved-item__meta-chip" style={{ marginInlineEnd: 6 }}>
                     {t("expansionAdvisor.sortLabel")}: {meta.lastSort.replace(/_/g, " ")}
+                  </span>
+                )}
+                {meta.lastFilter && (
+                  <span className="ea-saved-item__meta-chip" style={{ marginInlineEnd: 6 }}>
+                    {t("expansionAdvisor.filterLabel")}: {meta.lastFilter.replace(/_/g, " ")}
                   </span>
                 )}
                 {item.updated_at || item.created_at || ""}

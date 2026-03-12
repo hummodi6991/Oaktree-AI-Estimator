@@ -2074,3 +2074,34 @@
 .ea-layout--final .ea-card__header {
   opacity: 0.85;
 }
+
+.ea-layout--final .ea-brief-rail__actions--muted {
+  opacity: 0.5;
+}
+
+.ea-layout--final .ea-candidate__actions .oak-btn--primary {
+  opacity: 0.6;
+}
+
+.ea-layout--final .ea-finalist-tile--lead {
+  border-width: 2px;
+  box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.15);
+}
+
+.ea-layout--final .ea-decision-snapshot {
+  border-color: var(--oak-success, #16a34a);
+}
+
+/* ─ Drawer context chips ─ */
+.ea-drawer__context-chips {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-inline-start: 8px;
+}
+
+/* ─ Brief rail actions muted state ─ */
+.ea-brief-rail__actions--muted {
+  opacity: 0.6;
+  pointer-events: auto;
+}

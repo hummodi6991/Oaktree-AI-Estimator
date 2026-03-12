@@ -498,6 +498,7 @@ export default function ExpansionAdvisorPage({
               onEditBrief={() => setBriefMode("edit")}
               onRunAgain={() => void onSubmitBrief(brief)}
               loading={loadingSearch}
+              isFinalStudy={isFinalStudy}
             />
           )}
 
@@ -727,7 +728,16 @@ export default function ExpansionAdvisorPage({
       {/* ─── Drawers / dialogs ─── */}
 
       {activeDrawer === "memo" && (
-        <ExpansionMemoPanel memo={memo} loading={loadingMemo} isLeadCandidate={selectedCandidate?.id === leadCandidateId} report={report} onClose={() => setActiveDrawer("none")} />
+        <ExpansionMemoPanel
+          memo={memo}
+          loading={loadingMemo}
+          isLeadCandidate={selectedCandidate?.id === leadCandidateId}
+          report={report}
+          candidate={selectedCandidate}
+          shortlistCount={shortlistIds.length}
+          compareCount={compareIds.length}
+          onClose={() => setActiveDrawer("none")}
+        />
       )}
 
       {activeDrawer === "compare" && (
@@ -760,6 +770,9 @@ export default function ExpansionAdvisorPage({
           leadCandidateId={leadCandidateId}
           leadCandidate={resolveCandidateById(candidates, leadCandidateId)}
           memo={leadCandidateId && selectedCandidate?.id === leadCandidateId ? memo : null}
+          shortlistCount={shortlistIds.length}
+          compareCount={compareIds.length}
+          isFinalStudy={isFinalStudy}
           onSelectCandidateId={(candidateId) => { setActiveDrawer("none"); void handleSelectCandidateById(candidateId); }}
           onClose={() => setActiveDrawer("none")}
         />
