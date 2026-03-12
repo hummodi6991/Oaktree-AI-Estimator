@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Any
 
@@ -9,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.services.aqar_district_match import normalize_district_key
 from app.services.rent import aqar_rent_median
+
+logger = logging.getLogger(__name__)
 
 
 ARCGIS_PARCELS_TABLE = "public.riyadh_parcels_arcgis_proxy"
@@ -746,50 +749,54 @@ def _comparable_competitors(
     if lat is None or lon is None:
         return []
 
-    rows = db.execute(
-        text(
-            """
-            WITH candidate_point AS (
-                SELECT ST_SetSRID(ST_MakePoint(:lon, :lat), 4326) AS geom
-            ),
-            poi_base AS (
+    try:
+        rows = db.execute(
+            text(
+                """
+                WITH candidate_point AS (
+                    SELECT ST_SetSRID(ST_MakePoint(:lon, :lat), 4326) AS geom
+                ),
+                poi_base AS (
+                    SELECT
+                        rp.id,
+                        rp.name,
+                        rp.category,
+                        rp.district,
+                        rp.rating,
+                        rp.review_count,
+                        rp.source,
+                        COALESCE(
+                            rp.geom,
+                            CASE
+                                WHEN rp.lon IS NOT NULL AND rp.lat IS NOT NULL THEN ST_SetSRID(ST_MakePoint(rp.lon, rp.lat), 4326)
+                                ELSE NULL
+                            END
+                        ) AS poi_geom
+                    FROM restaurant_poi rp
+                    WHERE lower(COALESCE(rp.category, '')) = lower(:category)
+                )
                 SELECT
-                    rp.id,
-                    rp.name,
-                    rp.category,
-                    rp.district,
-                    rp.rating,
-                    rp.review_count,
-                    rp.source,
-                    COALESCE(
-                        rp.geom,
-                        CASE
-                            WHEN rp.lon IS NOT NULL AND rp.lat IS NOT NULL THEN ST_SetSRID(ST_MakePoint(rp.lon, rp.lat), 4326)
-                            ELSE NULL
-                        END
-                    ) AS poi_geom
-                FROM restaurant_poi rp
-                WHERE lower(COALESCE(rp.category, '')) = lower(:category)
-            )
-            SELECT
-                p.id,
-                p.name,
-                p.category,
-                p.district,
-                p.rating,
-                p.review_count,
-                p.source,
-                ST_Distance(p.poi_geom::geography, cp.geom::geography) AS distance_m
-            FROM poi_base p
-            CROSS JOIN candidate_point cp
-            WHERE p.poi_geom IS NOT NULL
-              AND ST_DWithin(p.poi_geom::geography, cp.geom::geography, 1500)
-            ORDER BY distance_m ASC
-            LIMIT 5
-            """
-        ),
-        {"lat": lat, "lon": lon, "category": category},
-    ).mappings().all()
+                    p.id,
+                    p.name,
+                    p.category,
+                    p.district,
+                    p.rating,
+                    p.review_count,
+                    p.source,
+                    ST_Distance(p.poi_geom::geography, cp.geom::geography) AS distance_m
+                FROM poi_base p
+                CROSS JOIN candidate_point cp
+                WHERE p.poi_geom IS NOT NULL
+                  AND ST_DWithin(p.poi_geom::geography, cp.geom::geography, 1500)
+                ORDER BY distance_m ASC
+                LIMIT 5
+                """
+            ),
+            {"lat": lat, "lon": lon, "category": category},
+        ).mappings().all()
+    except Exception:
+        logger.warning("comparable_competitors query failed for category=%s lat=%s lon=%s", category, lat, lon, exc_info=True)
+        return []
 
     return [
         {
@@ -1341,22 +1348,29 @@ def run_expansion_search(
         """
     )
 
-    rows = db.execute(
-        sql,
-        {
-            "min_area_m2": min_area_m2,
-            "max_area_m2": max_area_m2,
-            "min_lon": min_lon,
-            "min_lat": min_lat,
-            "max_lon": max_lon,
-            "max_lat": max_lat,
-            "category": category,
-            "category_like": f"%{category.lower()}%",
-            "demand_radius_m": 1200,
-            "competition_radius_m": 1000,
-            "provider_radius_m": 1200,
-        },
-    ).mappings().all()
+    try:
+        rows = db.execute(
+            sql,
+            {
+                "min_area_m2": min_area_m2,
+                "max_area_m2": max_area_m2,
+                "min_lon": min_lon,
+                "min_lat": min_lat,
+                "max_lon": max_lon,
+                "max_lat": max_lat,
+                "category": category,
+                "category_like": f"%{category.lower()}%",
+                "demand_radius_m": 1200,
+                "competition_radius_m": 1000,
+                "provider_radius_m": 1200,
+            },
+        ).mappings().all()
+    except Exception:
+        logger.exception(
+            "Expansion search main query failed: search_id=%s category=%s area=[%s-%s] districts=%s",
+            search_id, category, min_area_m2, max_area_m2, target_districts,
+        )
+        raise
 
     candidates: list[dict[str, Any]] = []
     prepared: list[dict[str, Any]] = []
@@ -1882,22 +1896,29 @@ def run_expansion_search(
     )
 
     for candidate in candidates:
-        db.execute(
-            insert_sql,
-            {
-                **candidate,
-                "explanation": json.dumps(candidate["explanation"], ensure_ascii=False),
-                "key_risks_json": json.dumps(candidate["key_risks_json"], ensure_ascii=False),
-                "key_strengths_json": json.dumps(candidate["key_strengths_json"], ensure_ascii=False),
-                "gate_status_json": json.dumps(candidate["gate_status_json"], ensure_ascii=False),
-                "gate_reasons_json": json.dumps(candidate["gate_reasons_json"], ensure_ascii=False),
-                "feature_snapshot_json": json.dumps(candidate["feature_snapshot_json"], ensure_ascii=False),
-                "score_breakdown_json": json.dumps(candidate["score_breakdown_json"], ensure_ascii=False),
-                "top_positives_json": json.dumps(candidate["top_positives_json"], ensure_ascii=False),
-                "top_risks_json": json.dumps(candidate["top_risks_json"], ensure_ascii=False),
-                "comparable_competitors_json": json.dumps(candidate["comparable_competitors_json"], ensure_ascii=False),
-            },
-        )
+        try:
+            db.execute(
+                insert_sql,
+                {
+                    **candidate,
+                    "explanation": json.dumps(candidate["explanation"], ensure_ascii=False),
+                    "key_risks_json": json.dumps(candidate["key_risks_json"], ensure_ascii=False),
+                    "key_strengths_json": json.dumps(candidate["key_strengths_json"], ensure_ascii=False),
+                    "gate_status_json": json.dumps(candidate["gate_status_json"], ensure_ascii=False),
+                    "gate_reasons_json": json.dumps(candidate["gate_reasons_json"], ensure_ascii=False),
+                    "feature_snapshot_json": json.dumps(candidate["feature_snapshot_json"], ensure_ascii=False),
+                    "score_breakdown_json": json.dumps(candidate["score_breakdown_json"], ensure_ascii=False),
+                    "top_positives_json": json.dumps(candidate["top_positives_json"], ensure_ascii=False),
+                    "top_risks_json": json.dumps(candidate["top_risks_json"], ensure_ascii=False),
+                    "comparable_competitors_json": json.dumps(candidate["comparable_competitors_json"], ensure_ascii=False),
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist expansion candidate id=%s search_id=%s parcel_id=%s",
+                candidate.get("id"), search_id, candidate.get("parcel_id"),
+            )
+            raise
 
     return [_normalize_candidate_payload(candidate) for candidate in candidates]
 
