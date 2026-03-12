@@ -936,14 +936,18 @@ def _build_explanation(
 
 def _estimate_rent_sar_m2_year(db: Session, district: str | None) -> tuple[float, str]:
     try:
-        result = aqar_rent_median(
-            db,
-            city=_EXPANSION_CITY,
-            district=district,
-            asset_type=_EXPANSION_AQAR_ASSET,
-            unit_type=_EXPANSION_AQAR_UNIT,
-            since_days=730,
-        )
+        # Use a SAVEPOINT so that a failed ORM query inside aqar_rent_median
+        # does not corrupt the outer transaction (which would cause every
+        # subsequent db.execute() to raise InFailedSqlTransaction).
+        with db.begin_nested():
+            result = aqar_rent_median(
+                db,
+                city=_EXPANSION_CITY,
+                district=district,
+                asset_type=_EXPANSION_AQAR_ASSET,
+                unit_type=_EXPANSION_AQAR_UNIT,
+                since_days=730,
+            )
         if result.district_median is not None and result.n_district >= 5:
             return float(result.district_median) * 12.0, "aqar_district"
         if result.district_median is not None and result.n_district > 0 and result.city_median is not None:
@@ -955,7 +959,11 @@ def _estimate_rent_sar_m2_year(db: Session, district: str | None) -> tuple[float
         if result.city_asset_median is not None:
             return float(result.city_asset_median) * 12.0, "aqar_city_asset"
     except Exception:
-        pass
+        logger.warning(
+            "aqar_rent_median failed for district=%s; falling back to default",
+            district,
+            exc_info=True,
+        )
     return _EXPANSION_DEFAULT_RENT_SAR_M2_YEAR, "conservative_default"
 
 
