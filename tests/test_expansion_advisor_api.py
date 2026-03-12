@@ -539,3 +539,187 @@ def test_post_expansion_search_logs_on_failure(monkeypatch, caplog):
     assert response.status_code == 500
     assert db.rolled_back is True
     assert any("Expansion search failed" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Regression: empty existing_branches payload (production 500 trigger)
+# ---------------------------------------------------------------------------
+
+
+def test_post_expansion_search_empty_existing_branches(monkeypatch):
+    """Regression: empty existing_branches list must not crash the endpoint."""
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(expansion_api, "persist_existing_branches", lambda _db, _sid, _b: None)
+    monkeypatch.setattr(expansion_api, "persist_brand_profile", lambda _db, _sid, _p: None)
+    monkeypatch.setattr(
+        expansion_api,
+        "run_expansion_search",
+        lambda **kwargs: [
+            {
+                "id": "c-empty-br",
+                "search_id": kwargs["search_id"],
+                "parcel_id": "parcel-e1",
+                "district": "Al Olaya",
+                "lat": 24.7,
+                "lon": 46.7,
+                "cannibalization_score": 25.0,
+                "distance_to_nearest_branch_m": None,
+                "compare_rank": 1,
+                "final_score": 72.0,
+                "explanation": {"summary": "ok", "positives": [], "risks": [], "inputs": {}},
+            }
+        ],
+    )
+
+    client = _client_with_db(db)
+    try:
+        payload = {
+            "brand_name": "Test",
+            "category": "Burger",
+            "service_model": "qsr",
+            "min_area_m2": 100,
+            "max_area_m2": 500,
+            "target_area_m2": 200,
+            "target_districts": ["Al Olaya", "Al Malqa", "Al Nakheel"],
+            "existing_branches": [],
+            "brand_profile": {
+                "preferred_districts": ["Alolaya"],
+            },
+        }
+        response = client.post("/v1/expansion-advisor/searches", json=payload)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["brand_profile"]["existing_branches"] == []
+    assert body["items"][0]["distance_to_nearest_branch_m"] is None
+    assert body["items"][0]["cannibalization_score"] == 25.0
+    assert db.committed is True
+
+
+def test_post_expansion_search_unmatched_preferred_districts(monkeypatch):
+    """Regression: misspelled preferred_districts must not crash."""
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(expansion_api, "persist_existing_branches", lambda _db, _sid, _b: None)
+    monkeypatch.setattr(expansion_api, "persist_brand_profile", lambda _db, _sid, _p: None)
+    monkeypatch.setattr(
+        expansion_api,
+        "run_expansion_search",
+        lambda **kwargs: [],
+    )
+
+    client = _client_with_db(db)
+    try:
+        payload = {
+            "brand_name": "Test",
+            "category": "Burger",
+            "service_model": "qsr",
+            "min_area_m2": 100,
+            "max_area_m2": 500,
+            "existing_branches": [],
+            "brand_profile": {
+                "preferred_districts": ["Alolaya", "NonexistentDistrict"],
+            },
+        }
+        response = client.post("/v1/expansion-advisor/searches", json=payload)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"] == []
+    assert db.committed is True
+
+
+def test_post_expansion_search_failure_returns_clean_500(monkeypatch):
+    """When run_expansion_search raises, the API returns a structured 500 with search_id."""
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(expansion_api, "persist_existing_branches", lambda *_a, **_kw: None)
+
+    def _boom(**_kwargs):
+        raise RuntimeError("simulated scoring crash")
+
+    monkeypatch.setattr(expansion_api, "run_expansion_search", _boom)
+
+    client = _client_with_db(db)
+    try:
+        payload = {
+            "brand_name": "Test",
+            "category": "Burger",
+            "service_model": "qsr",
+            "min_area_m2": 100,
+            "max_area_m2": 500,
+            "existing_branches": [],
+        }
+        response = client.post("/v1/expansion-advisor/searches", json=payload)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 500
+    body = response.json()
+    assert "search_id" in body["detail"]
+    assert db.rolled_back is True
+
+
+def test_post_expansion_search_with_one_branch(monkeypatch):
+    """Valid payload with exactly one existing branch must succeed."""
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(expansion_api, "persist_existing_branches", lambda _db, _sid, _b: None)
+    monkeypatch.setattr(expansion_api, "persist_brand_profile", lambda _db, _sid, _p: None)
+    monkeypatch.setattr(
+        expansion_api,
+        "run_expansion_search",
+        lambda **kwargs: [
+            {
+                "id": "c-1br",
+                "search_id": kwargs["search_id"],
+                "parcel_id": "parcel-1br",
+                "district": "Olaya",
+                "lat": 24.7,
+                "lon": 46.7,
+                "cannibalization_score": 55.0,
+                "distance_to_nearest_branch_m": 1400.0,
+                "compare_rank": 1,
+                "final_score": 80.0,
+                "explanation": {"summary": "ok", "positives": [], "risks": [], "inputs": {}},
+            }
+        ],
+    )
+
+    client = _client_with_db(db)
+    try:
+        payload = {
+            "brand_name": "Test",
+            "category": "Burger",
+            "service_model": "qsr",
+            "min_area_m2": 100,
+            "max_area_m2": 500,
+            "existing_branches": [
+                {"name": "Main Branch", "lat": 24.71, "lon": 46.68, "district": "Olaya"}
+            ],
+            "brand_profile": {
+                "preferred_districts": ["Olaya"],
+            },
+        }
+        response = client.post("/v1/expansion-advisor/searches", json=payload)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["brand_profile"]["existing_branches"]) == 1
+    assert body["items"][0]["distance_to_nearest_branch_m"] == 1400.0
+    assert db.committed is True

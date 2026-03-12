@@ -928,3 +928,178 @@ def test_comparable_competitors_returns_empty_on_db_error():
 
     result = _comparable_competitors(BrokenDB(), category="burger", lat=24.7, lon=46.7)
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Regression: empty existing_branches must not crash (production 500 trigger)
+# ---------------------------------------------------------------------------
+
+
+def test_run_expansion_search_empty_existing_branches():
+    """Regression: empty existing_branches list must score candidates without crash."""
+    db = FakeDB(
+        candidate_rows=[
+            {
+                "parcel_id": "p1",
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 200,
+                "lon": 46.7,
+                "lat": 24.7,
+                "district": "حي العليا",
+                "population_reach": 18000,
+                "competitor_count": 4,
+                "delivery_listing_count": 12,
+            }
+        ]
+    )
+
+    items = run_expansion_search(
+        db,
+        search_id="search-empty-branches",
+        brand_name="Test",
+        category="Burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=25,
+        existing_branches=[],
+        brand_profile={
+            "preferred_districts": ["Alolaya"],
+        },
+    )
+
+    assert len(items) == 1
+    item = items[0]
+    assert item["distance_to_nearest_branch_m"] is None
+    assert item["cannibalization_score"] == 25.0
+    assert 0.0 <= item["final_score"] <= 100.0
+    assert item["economics_score"] is not None
+    assert item["estimated_payback_months"] is not None
+
+
+def test_run_expansion_search_preferred_districts_typo_no_crash():
+    """Regression: misspelled preferred_districts must not crash; they simply have no effect."""
+    db = FakeDB(
+        candidate_rows=[
+            {
+                "parcel_id": "p1",
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 200,
+                "lon": 46.7,
+                "lat": 24.7,
+                "district": "حي العليا",
+                "population_reach": 15000,
+                "competitor_count": 3,
+                "delivery_listing_count": 10,
+            }
+        ]
+    )
+
+    items = run_expansion_search(
+        db,
+        search_id="search-typo-district",
+        brand_name="Test",
+        category="Burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=25,
+        existing_branches=[{"name": "HQ", "lat": 24.71, "lon": 46.68}],
+        brand_profile={
+            "preferred_districts": ["Alolaya"],
+            "excluded_districts": ["Nonexistent"],
+        },
+    )
+
+    assert len(items) == 1
+    assert 0.0 <= items[0]["brand_fit_score"] <= 100.0
+    assert 0.0 <= items[0]["final_score"] <= 100.0
+
+
+def test_run_expansion_search_unmatched_target_districts_returns_empty():
+    """When target_districts don't match any DB districts, return empty list—not a crash."""
+    db = FakeDB(
+        candidate_rows=[
+            {
+                "parcel_id": "p1",
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 200,
+                "lon": 46.7,
+                "lat": 24.7,
+                "district": "حي العليا",
+                "population_reach": 15000,
+                "competitor_count": 3,
+                "delivery_listing_count": 10,
+            }
+        ]
+    )
+
+    items = run_expansion_search(
+        db,
+        search_id="search-unmatched",
+        brand_name="Test",
+        category="Burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=25,
+        target_districts=["Nonexistent District"],
+        existing_branches=[],
+    )
+
+    assert items == []
+
+
+def test_run_expansion_search_exact_production_payload():
+    """Regression: exact payload shape that triggered the production 500."""
+    db = FakeDB(
+        candidate_rows=[
+            {
+                "parcel_id": "p1",
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 200,
+                "lon": 46.7,
+                "lat": 24.7,
+                "district": "Al Olaya",
+                "population_reach": 18000,
+                "competitor_count": 4,
+                "delivery_listing_count": 12,
+            }
+        ]
+    )
+
+    brand_profile = {
+        "preferred_districts": ["Alolaya"],
+    }
+
+    items = run_expansion_search(
+        db,
+        search_id="search-prod-repro",
+        brand_name="Test",
+        category="Burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=25,
+        target_districts=["Al Olaya", "Al Malqa", "Al Nakheel"],
+        existing_branches=[],
+        brand_profile=brand_profile,
+    )
+
+    # "Al Olaya" in candidate matches "Al Olaya" in target_districts
+    assert len(items) == 1
+    item = items[0]
+    assert item["distance_to_nearest_branch_m"] is None
+    assert item["cannibalization_score"] == 25.0
+    assert 0.0 <= item["final_score"] <= 100.0
+    assert item["payback_band"] in {"strong", "promising", "borderline", "weak"}
+    assert "gate_status_json" in item
+    assert "score_breakdown_json" in item
