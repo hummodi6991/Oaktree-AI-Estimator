@@ -34,7 +34,12 @@ export default function ExpansionCandidateCard({
   onShowOnMap,
 }: Props) {
   const { t } = useTranslation();
-  const pass = Boolean(candidate.gate_status_json?.overall_pass);
+  const gateOverall = candidate.gate_status_json?.overall_pass;
+  // Distinguish true pass, explicit fail, and unknown (null/undefined = some
+  // gates lacked data so verdict is indeterminate, not a hard fail).
+  const gateVerdict: "pass" | "fail" | "unknown" =
+    gateOverall === true ? "pass" : gateOverall === false ? "fail" : "unknown";
+  const pass = gateVerdict === "pass";
   const positives = (candidate.top_positives_json || []).slice(0, 2);
   const risks = (candidate.top_risks_json || []).slice(0, 2);
 
@@ -72,8 +77,8 @@ export default function ExpansionCandidateCard({
         <div className="ea-candidate__badges">
           <ScorePill value={candidate.final_score} />
           <ConfidenceBadge grade={candidate.confidence_grade} />
-          <span className={`ea-badge ea-badge--${pass ? "green" : "red"}`}>
-            {pass ? t("expansionAdvisor.gatePass") : t("expansionAdvisor.gateFail")}
+          <span className={`ea-badge ea-badge--${gateVerdict === "pass" ? "green" : gateVerdict === "fail" ? "red" : "amber"}`}>
+            {gateVerdict === "pass" ? t("expansionAdvisor.gatePass") : gateVerdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateUnknown")}
           </span>
           {candidate.payback_band && (
             <PaybackBadge band={candidate.payback_band} months={candidate.estimated_payback_months} />

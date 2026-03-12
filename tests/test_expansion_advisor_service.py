@@ -438,7 +438,9 @@ def test_brand_fit_responds_to_multi_platform_presence():
 def test_gate_status_logic():
     gates, reasons = _candidate_gate_status(
         fit_score=60,
+        area_fit_score=80,
         zoning_fit_score=80,
+        landuse_available=True,
         frontage_score=70,
         access_score=66,
         parking_score=55,
@@ -505,7 +507,9 @@ def test_v6_feature_scores_are_bounded():
 def test_gate_status_uses_v6_scores_for_failure():
     gates, reasons = _candidate_gate_status(
         fit_score=75,
+        area_fit_score=80,
         zoning_fit_score=40,
+        landuse_available=True,
         frontage_score=30,
         access_score=30,
         parking_score=20,
@@ -538,7 +542,9 @@ def test_missing_road_context_uses_neutral_scores_and_unknown_gate(monkeypatch):
     assert item["frontage_score"] == 55.0
     assert item["access_score"] == 55.0
     assert "frontage_access_pass" in item["gate_reasons_json"]["unknown"]
-    assert item["gate_status_json"]["overall_pass"] is True
+    # With both road tables missing, frontage/parking gates are unknown (None),
+    # so overall_pass is None (indeterminate), not True.
+    assert item["gate_status_json"]["overall_pass"] is None
 
 
 def test_missing_parking_context_uses_neutral_score_and_unknown_gate(monkeypatch):
@@ -1460,3 +1466,114 @@ def test_run_expansion_search_no_bbox_empty_result():
     db = FakeDB(candidate_rows=[])
     items = run_expansion_search(db, **_BBOX_BASE_KWARGS, bbox=None)
     assert items == []
+
+
+# ---------------------------------------------------------------------------
+# Regression: gate logic fix — area_fit_pass uses area_fit directly, zoning
+# gate treats missing landuse as unknown, and overall_pass is three-state.
+# ---------------------------------------------------------------------------
+
+_GATE_BASE = dict(
+    fit_score=75,
+    frontage_score=70,
+    access_score=66,
+    parking_score=55,
+    district="Olaya",
+    distance_to_nearest_branch_m=2200,
+    provider_density_score=50,
+    multi_platform_presence_score=40,
+    economics_score=65,
+    payback_band="promising",
+    brand_profile={"excluded_districts": [], "cannibalization_tolerance_m": 1800},
+    road_context_available=True,
+    parking_context_available=True,
+)
+
+
+def test_area_inside_range_passes_area_gate():
+    """Candidate with real parcel area inside the requested range -> area_fit_pass True."""
+    gates, reasons = _candidate_gate_status(
+        **_GATE_BASE,
+        area_fit_score=85.0,  # well inside range
+        zoning_fit_score=80.0,
+        landuse_available=True,
+    )
+    assert gates["area_fit_pass"] is True
+    assert "area_fit_pass" in reasons["passed"]
+
+
+def test_area_outside_range_fails_area_gate():
+    """Candidate with parcel area outside range -> area_fit_pass False."""
+    gates, reasons = _candidate_gate_status(
+        **_GATE_BASE,
+        area_fit_score=20.0,  # outside range (score < 55 threshold)
+        zoning_fit_score=80.0,
+        landuse_available=True,
+    )
+    assert gates["area_fit_pass"] is False
+    assert "area_fit_pass" in reasons["failed"]
+
+
+def test_missing_zoning_context_produces_unknown_not_fail():
+    """Candidate with missing landuse context -> zoning gate unknown, not hard fail."""
+    gates, reasons = _candidate_gate_status(
+        **_GATE_BASE,
+        area_fit_score=85.0,
+        zoning_fit_score=45.0,  # below threshold, but landuse data is absent
+        landuse_available=False,
+    )
+    assert gates["zoning_fit_pass"] is None
+    assert "zoning_fit_pass" in reasons["unknown"]
+    assert "zoning_fit_pass" not in reasons["failed"]
+    # overall should NOT be False just because zoning is unknown
+    assert gates["overall_pass"] is not False
+
+
+def test_contradictory_zoning_fails_gate():
+    """Candidate with clearly incompatible zoning (e.g. residential) -> zoning_fit_pass False."""
+    gates, reasons = _candidate_gate_status(
+        **_GATE_BASE,
+        area_fit_score=85.0,
+        zoning_fit_score=40.0,  # residential zone, below 60 threshold
+        landuse_available=True,  # real data, legitimately fails
+    )
+    assert gates["zoning_fit_pass"] is False
+    assert "zoning_fit_pass" in reasons["failed"]
+    assert gates["overall_pass"] is False
+
+
+def test_production_like_mixed_verdicts():
+    """Production-like scenario: candidates with varying data should produce
+    a mix of pass/unknown/fail instead of universal fail."""
+    # Candidate 1: good area, good zoning (Commercial)
+    g1, r1 = _candidate_gate_status(
+        **_GATE_BASE,
+        area_fit_score=90.0,
+        zoning_fit_score=100.0,
+        landuse_available=True,
+    )
+
+    # Candidate 2: good area, missing zoning
+    g2, r2 = _candidate_gate_status(
+        **_GATE_BASE,
+        area_fit_score=85.0,
+        zoning_fit_score=45.0,
+        landuse_available=False,
+    )
+
+    # Candidate 3: area outside range, good zoning
+    g3, r3 = _candidate_gate_status(
+        **_GATE_BASE,
+        area_fit_score=20.0,
+        zoning_fit_score=100.0,
+        landuse_available=True,
+    )
+
+    # Should produce discriminative verdicts, not all False
+    assert g1["overall_pass"] is True, "good candidate should pass"
+    assert g2["overall_pass"] is None, "missing-zoning candidate should be unknown, not fail"
+    assert g3["overall_pass"] is False, "out-of-range candidate should fail"
+
+    # Verify they are distinct
+    verdicts = {g1["overall_pass"], g2["overall_pass"], g3["overall_pass"]}
+    assert len(verdicts) == 3, f"expected 3 distinct verdicts, got {verdicts}"

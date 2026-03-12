@@ -210,7 +210,7 @@ export default function ExpansionComparePanel({
                               const cellCls = isBest ? "ea-compare-winner" : "";
                               if (row.key === "final_score") return <td key={item.candidate_id} className={cellCls}><ScorePill value={item.final_score} /></td>;
                               if (row.key === "confidence_grade") return <td key={item.candidate_id}><ConfidenceBadge grade={item.confidence_grade} /></td>;
-                              if (row.key === "gate") return <td key={item.candidate_id}><span className={`ea-badge ea-badge--${gateColor(item.gate_status_json?.overall_pass ?? null)}`}>{item.gate_status_json?.overall_pass ? t("expansionAdvisor.gatePass") : t("expansionAdvisor.gateFail")}</span></td>;
+                              if (row.key === "gate") { const gv = item.gate_status_json?.overall_pass; return <td key={item.candidate_id}><span className={`ea-badge ea-badge--${gateColor(gv ?? null)}`}>{gv === true ? t("expansionAdvisor.gatePass") : gv === false ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateUnknown")}</span></td>; }
                               if (row.key === "payback_band") return <td key={item.candidate_id}><PaybackBadge band={item.payback_band} months={item.estimated_payback_months} /></td>;
                               if (row.fmt === "sar" && typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtSAR(raw)}</td>;
                               if (row.fmt === "sar_m2_year" && typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtSarPerM2Year(raw)}</td>;

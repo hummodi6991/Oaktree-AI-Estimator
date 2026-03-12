@@ -169,7 +169,7 @@ export default function ExpansionReportPanel({
                               <ScorePill value={item.final_score} />
                               <ConfidenceBadge grade={item.confidence_grade} />
                               {item.gate_verdict && (
-                                <span className={`ea-badge ea-badge--${item.gate_verdict === "pass" ? "green" : "red"}`}>
+                                <span className={`ea-badge ea-badge--${item.gate_verdict === "pass" ? "green" : item.gate_verdict === "fail" ? "red" : "amber"}`}>
                                   {item.gate_verdict}
                                 </span>
                               )}

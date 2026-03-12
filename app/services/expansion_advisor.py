@@ -524,7 +524,9 @@ def _confidence_score(landuse_label: str | None, population_reach: float, delive
 def _candidate_gate_status(
     *,
     fit_score: float,
+    area_fit_score: float,
     zoning_fit_score: float,
+    landuse_available: bool,
     frontage_score: float,
     access_score: float,
     parking_score: float,
@@ -537,7 +539,7 @@ def _candidate_gate_status(
     brand_profile: dict[str, Any],
     road_context_available: bool,
     parking_context_available: bool,
-) -> tuple[dict[str, bool], dict[str, Any]]:
+) -> tuple[dict[str, bool | None], dict[str, Any]]:
     thresholds = {
         "area_fit_min": 55.0,
         "zoning_fit_min": 60.0,
@@ -548,8 +550,12 @@ def _candidate_gate_status(
         "delivery_platform_presence_min": 35.0,
         "cannibalization_min_distance_m": _safe_float(brand_profile.get("cannibalization_tolerance_m"), 1800.0),
     }
-    area_fit_pass = fit_score >= thresholds["area_fit_min"]
-    zoning_fit_pass = zoning_fit_score >= thresholds["zoning_fit_min"]
+    area_fit_pass = area_fit_score >= thresholds["area_fit_min"]
+    # When no landuse data is available, zoning gate is unknown (None), not hard fail.
+    if not landuse_available:
+        zoning_fit_pass: bool | None = None
+    else:
+        zoning_fit_pass = zoning_fit_score >= thresholds["zoning_fit_min"]
     frontage_access_pass = (frontage_score >= thresholds["frontage_access_min"]) and (access_score >= thresholds["frontage_access_min"])
     parking_pass = parking_score >= thresholds["parking_min"]
 
@@ -585,19 +591,38 @@ def _candidate_gate_status(
     passed = [k for k, v in gate_states.items() if v is True]
     unknown = [k for k, v in gate_states.items() if v is None]
 
-    core_gates = ["zoning_fit_pass", "area_fit_pass", "district_pass", "cannibalization_pass", "delivery_market_pass", "economics_pass"]
-    core_pass = all(gate_states[g] is True for g in core_gates)
-    overall_pass = len(failed) == 0 and core_pass
+    # Core gates that block overall pass only when explicitly failed (False).
+    # Unknown (None) gates are treated as non-blocking — they don't fail the
+    # candidate but also don't count as passed.
+    hard_fail_core = ["area_fit_pass", "district_pass", "cannibalization_pass", "delivery_market_pass", "economics_pass"]
+    has_hard_fail = any(gate_states[g] is False for g in hard_fail_core)
+    # Zoning gate blocks only when it explicitly failed (real contradictory
+    # evidence); unknown/missing landuse does NOT block.
+    if gate_states["zoning_fit_pass"] is False:
+        has_hard_fail = True
 
-    gate_status = {
-        "zoning_fit_pass": bool(zoning_fit_pass),
-        "area_fit_pass": bool(area_fit_pass),
-        "frontage_access_pass": bool(frontage_access_pass) if road_context_available else True,
-        "parking_pass": bool(parking_pass) if parking_context_available else True,
-        "district_pass": bool(district_pass),
-        "cannibalization_pass": bool(cannibalization_pass),
-        "delivery_market_pass": bool(delivery_market_pass),
-        "economics_pass": bool(economics_pass),
+    # Three-state verdict:
+    #   True  – all evaluated gates passed, no failures
+    #   False – at least one gate hard-failed
+    #   None  – no hard failures, but some gates are unknown/indeterminate
+    if has_hard_fail or len(failed) > 0:
+        overall_pass: bool | None = False
+    elif len(unknown) > 0:
+        overall_pass = None
+    else:
+        overall_pass = True
+
+    # Expose None (unknown) to callers instead of collapsing to True/False so
+    # the frontend can distinguish "not evaluated" from "passed".
+    gate_status: dict[str, bool | None] = {
+        "zoning_fit_pass": zoning_fit_pass,
+        "area_fit_pass": area_fit_pass,
+        "frontage_access_pass": frontage_access_pass if road_context_available else None,
+        "parking_pass": parking_pass if parking_context_available else None,
+        "district_pass": district_pass,
+        "cannibalization_pass": cannibalization_pass,
+        "delivery_market_pass": delivery_market_pass,
+        "economics_pass": economics_pass,
         "overall_pass": overall_pass,
     }
     explanations = {
@@ -1658,7 +1683,9 @@ def run_expansion_search(
         )
         gate_status_json, gate_reasons_json = _candidate_gate_status(
             fit_score=fit_score,
+            area_fit_score=area_fit,
             zoning_fit_score=zoning_fit_score,
+            landuse_available=bool(landuse_label or landuse_code),
             frontage_score=frontage_score,
             access_score=access_score,
             parking_score=parking_score,
