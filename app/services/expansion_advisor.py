@@ -252,20 +252,25 @@ def _table_available(db: Session, table_name: str) -> bool:
     schema, _, table = table_name.partition(".")
     if not table:
         schema, table = "public", schema
-    row = db.execute(
-        text(
-            """
-            SELECT EXISTS(
-                SELECT 1
-                FROM information_schema.tables
-                WHERE table_schema = :schema
-                  AND table_name = :table
-            ) AS available
-            """
-        ),
-        {"schema": schema, "table": table},
-    ).mappings().first()
-    return bool(row and row.get("available"))
+    try:
+        with db.begin_nested():
+            row = db.execute(
+                text(
+                    """
+                    SELECT EXISTS(
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = :schema
+                          AND table_name = :table
+                    ) AS available
+                    """
+                ),
+                {"schema": schema, "table": table},
+            ).mappings().first()
+            return bool(row and row.get("available"))
+    except Exception:
+        logger.debug("_table_available check failed for %s", table_name, exc_info=True)
+        return False
 
 
 def _frontage_score(*, parcel_perimeter_m: float, touches_road: bool, nearby_road_count: int, nearest_major_road_m: float | None,
@@ -350,113 +355,116 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
         base["data_completeness_score"] = 50
         return base
     try:
-        perimeter_row = db.execute(
-            text(
-                f"""
-                SELECT COALESCE(ST_Perimeter(p.geom::geography), 0) AS parcel_perimeter_m
-                FROM {ARCGIS_PARCELS_TABLE} p
-                WHERE p.id::text = :parcel_id
-                LIMIT 1
-                """
-            ),
-            {"parcel_id": str(parcel_id)},
-        ).mappings().first()
-        if perimeter_row:
-            base["parcel_perimeter_m"] = round(_safe_float(perimeter_row.get("parcel_perimeter_m")), 2)
+        with db.begin_nested():
+            perimeter_row = db.execute(
+                text(
+                    f"""
+                    SELECT COALESCE(ST_Perimeter(p.geom::geography), 0) AS parcel_perimeter_m
+                    FROM {ARCGIS_PARCELS_TABLE} p
+                    WHERE p.id::text = :parcel_id
+                    LIMIT 1
+                    """
+                ),
+                {"parcel_id": str(parcel_id)},
+            ).mappings().first()
+            if perimeter_row:
+                base["parcel_perimeter_m"] = round(_safe_float(perimeter_row.get("parcel_perimeter_m")), 2)
     except Exception:
-        pass
+        logger.debug("perimeter query failed for parcel_id=%s", parcel_id, exc_info=True)
 
     if roads_table_available:
         try:
-            road_row = db.execute(
-                text(
-                    f"""
-                    WITH p AS (
-                        SELECT geom
-                        FROM {ARCGIS_PARCELS_TABLE}
-                        WHERE id::text = :parcel_id
-                        LIMIT 1
+            with db.begin_nested():
+                road_row = db.execute(
+                    text(
+                        f"""
+                        WITH p AS (
+                            SELECT geom
+                            FROM {ARCGIS_PARCELS_TABLE}
+                            WHERE id::text = :parcel_id
+                            LIMIT 1
+                        )
+                        SELECT
+                            COALESCE((
+                                SELECT MIN(ST_Distance(l.way::geography, p.geom::geography))
+                                FROM planet_osm_line l
+                                WHERE l.way IS NOT NULL
+                                  AND (l.highway IS NOT NULL OR NULLIF(l.name, '') IS NOT NULL)
+                                  AND ST_DWithin(l.way::geography, p.geom::geography, 700)
+                                  AND (
+                                    l.highway IN ('motorway','trunk','primary','secondary')
+                                    OR NULLIF(l.name, '') IS NOT NULL
+                                  )
+                            ), 5000) AS nearest_major_road_distance_m,
+                            COALESCE((
+                                SELECT COUNT(*)
+                                FROM planet_osm_line l
+                                WHERE l.way IS NOT NULL
+                                  AND l.highway IS NOT NULL
+                                  AND ST_DWithin(l.way::geography, ST_Centroid(p.geom)::geography, 250)
+                            ), 0) AS nearby_road_segment_count,
+                            EXISTS(
+                                SELECT 1
+                                FROM planet_osm_line l
+                                WHERE l.way IS NOT NULL
+                                  AND l.highway IS NOT NULL
+                                  AND ST_DWithin(l.way::geography, p.geom::geography, 18)
+                            ) AS touches_road
+                        FROM p
+                        """
+                    ),
+                    {"parcel_id": str(parcel_id)},
+                ).mappings().first()
+                if road_row:
+                    nearby_road_segment_count = _safe_int(road_row.get("nearby_road_segment_count"))
+                    touches_road = bool(road_row.get("touches_road"))
+                    nearest_major_road_distance_m = _safe_float(road_row.get("nearest_major_road_distance_m"))
+                    base.update(
+                        {
+                            "nearest_major_road_distance_m": round(nearest_major_road_distance_m, 2),
+                            "nearby_road_segment_count": nearby_road_segment_count,
+                            "touches_road": touches_road,
+                        }
                     )
-                    SELECT
-                        COALESCE((
-                            SELECT MIN(ST_Distance(l.way::geography, p.geom::geography))
-                            FROM planet_osm_line l
-                            WHERE l.way IS NOT NULL
-                              AND (l.highway IS NOT NULL OR NULLIF(l.name, '') IS NOT NULL)
-                              AND ST_DWithin(l.way::geography, p.geom::geography, 700)
-                              AND (
-                                l.highway IN ('motorway','trunk','primary','secondary')
-                                OR NULLIF(l.name, '') IS NOT NULL
-                              )
-                        ), 5000) AS nearest_major_road_distance_m,
-                        COALESCE((
-                            SELECT COUNT(*)
-                            FROM planet_osm_line l
-                            WHERE l.way IS NOT NULL
-                              AND l.highway IS NOT NULL
-                              AND ST_DWithin(l.way::geography, ST_Centroid(p.geom)::geography, 250)
-                        ), 0) AS nearby_road_segment_count,
-                        EXISTS(
-                            SELECT 1
-                            FROM planet_osm_line l
-                            WHERE l.way IS NOT NULL
-                              AND l.highway IS NOT NULL
-                              AND ST_DWithin(l.way::geography, p.geom::geography, 18)
-                        ) AS touches_road
-                    FROM p
-                    """
-                ),
-                {"parcel_id": str(parcel_id)},
-            ).mappings().first()
-            if road_row:
-                nearby_road_segment_count = _safe_int(road_row.get("nearby_road_segment_count"))
-                touches_road = bool(road_row.get("touches_road"))
-                nearest_major_road_distance_m = _safe_float(road_row.get("nearest_major_road_distance_m"))
-                base.update(
-                    {
-                        "nearest_major_road_distance_m": round(nearest_major_road_distance_m, 2),
-                        "nearby_road_segment_count": nearby_road_segment_count,
-                        "touches_road": touches_road,
-                    }
-                )
-                base["context_sources"]["road_context_available"] = (
-                    nearby_road_segment_count > 0 or touches_road or nearest_major_road_distance_m < 5000
-                )
+                    base["context_sources"]["road_context_available"] = (
+                        nearby_road_segment_count > 0 or touches_road or nearest_major_road_distance_m < 5000
+                    )
         except Exception:
-            pass
+            logger.debug("road context query failed for parcel_id=%s", parcel_id, exc_info=True)
 
     if parking_table_available:
         try:
-            parking_row = db.execute(
-                text(
-                    f"""
-                    WITH p AS (
-                        SELECT geom
-                        FROM {ARCGIS_PARCELS_TABLE}
-                        WHERE id::text = :parcel_id
-                        LIMIT 1
-                    )
-                    SELECT COALESCE((
-                        SELECT COUNT(*)
-                        FROM planet_osm_polygon op
-                        WHERE op.way IS NOT NULL
-                          AND (
-                            lower(COALESCE(op.amenity, '')) = 'parking'
-                            OR lower(COALESCE(op.parking, '')) IN ('surface','multi-storey','underground')
-                          )
-                          AND ST_DWithin(op.way::geography, ST_Centroid(p.geom)::geography, 350)
-                    ), 0) AS nearby_parking_amenity_count
-                    FROM p
-                    """
-                ),
-                {"parcel_id": str(parcel_id)},
-            ).mappings().first()
-            if parking_row:
-                nearby_parking_amenity_count = _safe_int(parking_row.get("nearby_parking_amenity_count"))
-                base["nearby_parking_amenity_count"] = nearby_parking_amenity_count
-                base["context_sources"]["parking_context_available"] = nearby_parking_amenity_count >= 0
+            with db.begin_nested():
+                parking_row = db.execute(
+                    text(
+                        f"""
+                        WITH p AS (
+                            SELECT geom
+                            FROM {ARCGIS_PARCELS_TABLE}
+                            WHERE id::text = :parcel_id
+                            LIMIT 1
+                        )
+                        SELECT COALESCE((
+                            SELECT COUNT(*)
+                            FROM planet_osm_polygon op
+                            WHERE op.way IS NOT NULL
+                              AND (
+                                lower(COALESCE(op.amenity, '')) = 'parking'
+                                OR lower(COALESCE(op.parking, '')) IN ('surface','multi-storey','underground')
+                              )
+                              AND ST_DWithin(op.way::geography, ST_Centroid(p.geom)::geography, 350)
+                        ), 0) AS nearby_parking_amenity_count
+                        FROM p
+                        """
+                    ),
+                    {"parcel_id": str(parcel_id)},
+                ).mappings().first()
+                if parking_row:
+                    nearby_parking_amenity_count = _safe_int(parking_row.get("nearby_parking_amenity_count"))
+                    base["nearby_parking_amenity_count"] = nearby_parking_amenity_count
+                    base["context_sources"]["parking_context_available"] = nearby_parking_amenity_count >= 0
         except Exception:
-            pass
+            logger.debug("parking context query failed for parcel_id=%s", parcel_id, exc_info=True)
 
     missing_context: list[str] = []
     if not roads_table_available:
@@ -750,50 +758,51 @@ def _comparable_competitors(
         return []
 
     try:
-        rows = db.execute(
-            text(
-                """
-                WITH candidate_point AS (
-                    SELECT ST_SetSRID(ST_MakePoint(:lon, :lat), 4326) AS geom
-                ),
-                poi_base AS (
+        with db.begin_nested():
+            rows = db.execute(
+                text(
+                    """
+                    WITH candidate_point AS (
+                        SELECT ST_SetSRID(ST_MakePoint(:lon, :lat), 4326) AS geom
+                    ),
+                    poi_base AS (
+                        SELECT
+                            rp.id,
+                            rp.name,
+                            rp.category,
+                            rp.district,
+                            rp.rating,
+                            rp.review_count,
+                            rp.source,
+                            COALESCE(
+                                rp.geom,
+                                CASE
+                                    WHEN rp.lon IS NOT NULL AND rp.lat IS NOT NULL THEN ST_SetSRID(ST_MakePoint(rp.lon, rp.lat), 4326)
+                                    ELSE NULL
+                                END
+                            ) AS poi_geom
+                        FROM restaurant_poi rp
+                        WHERE lower(COALESCE(rp.category, '')) = lower(:category)
+                    )
                     SELECT
-                        rp.id,
-                        rp.name,
-                        rp.category,
-                        rp.district,
-                        rp.rating,
-                        rp.review_count,
-                        rp.source,
-                        COALESCE(
-                            rp.geom,
-                            CASE
-                                WHEN rp.lon IS NOT NULL AND rp.lat IS NOT NULL THEN ST_SetSRID(ST_MakePoint(rp.lon, rp.lat), 4326)
-                                ELSE NULL
-                            END
-                        ) AS poi_geom
-                    FROM restaurant_poi rp
-                    WHERE lower(COALESCE(rp.category, '')) = lower(:category)
-                )
-                SELECT
-                    p.id,
-                    p.name,
-                    p.category,
-                    p.district,
-                    p.rating,
-                    p.review_count,
-                    p.source,
-                    ST_Distance(p.poi_geom::geography, cp.geom::geography) AS distance_m
-                FROM poi_base p
-                CROSS JOIN candidate_point cp
-                WHERE p.poi_geom IS NOT NULL
-                  AND ST_DWithin(p.poi_geom::geography, cp.geom::geography, 1500)
-                ORDER BY distance_m ASC
-                LIMIT 5
-                """
-            ),
-            {"lat": lat, "lon": lon, "category": category},
-        ).mappings().all()
+                        p.id,
+                        p.name,
+                        p.category,
+                        p.district,
+                        p.rating,
+                        p.review_count,
+                        p.source,
+                        ST_Distance(p.poi_geom::geography, cp.geom::geography) AS distance_m
+                    FROM poi_base p
+                    CROSS JOIN candidate_point cp
+                    WHERE p.poi_geom IS NOT NULL
+                      AND ST_DWithin(p.poi_geom::geography, cp.geom::geography, 1500)
+                    ORDER BY distance_m ASC
+                    LIMIT 5
+                    """
+                ),
+                {"lat": lat, "lon": lon, "category": category},
+            ).mappings().all()
     except Exception:
         logger.warning("comparable_competitors query failed for category=%s lat=%s lon=%s", category, lat, lon, exc_info=True)
         return []
@@ -1357,22 +1366,23 @@ def run_expansion_search(
     )
 
     try:
-        rows = db.execute(
-            sql,
-            {
-                "min_area_m2": min_area_m2,
-                "max_area_m2": max_area_m2,
-                "min_lon": min_lon,
-                "min_lat": min_lat,
-                "max_lon": max_lon,
-                "max_lat": max_lat,
-                "category": category,
-                "category_like": f"%{category.lower()}%",
-                "demand_radius_m": 1200,
-                "competition_radius_m": 1000,
-                "provider_radius_m": 1200,
-            },
-        ).mappings().all()
+        with db.begin_nested():
+            rows = db.execute(
+                sql,
+                {
+                    "min_area_m2": min_area_m2,
+                    "max_area_m2": max_area_m2,
+                    "min_lon": min_lon,
+                    "min_lat": min_lat,
+                    "max_lon": max_lon,
+                    "max_lat": max_lat,
+                    "category": category,
+                    "category_like": f"%{category.lower()}%",
+                    "demand_radius_m": 1200,
+                    "competition_radius_m": 1000,
+                    "provider_radius_m": 1200,
+                },
+            ).mappings().all()
     except Exception:
         logger.exception(
             "Expansion search main query failed: search_id=%s category=%s area=[%s-%s] districts=%s",
@@ -1903,32 +1913,35 @@ def run_expansion_search(
         """
     )
 
+    persisted_candidates: list[dict[str, Any]] = []
     for candidate in candidates:
         try:
-            db.execute(
-                insert_sql,
-                {
-                    **candidate,
-                    "explanation": json.dumps(candidate["explanation"], ensure_ascii=False),
-                    "key_risks_json": json.dumps(candidate["key_risks_json"], ensure_ascii=False),
-                    "key_strengths_json": json.dumps(candidate["key_strengths_json"], ensure_ascii=False),
-                    "gate_status_json": json.dumps(candidate["gate_status_json"], ensure_ascii=False),
-                    "gate_reasons_json": json.dumps(candidate["gate_reasons_json"], ensure_ascii=False),
-                    "feature_snapshot_json": json.dumps(candidate["feature_snapshot_json"], ensure_ascii=False),
-                    "score_breakdown_json": json.dumps(candidate["score_breakdown_json"], ensure_ascii=False),
-                    "top_positives_json": json.dumps(candidate["top_positives_json"], ensure_ascii=False),
-                    "top_risks_json": json.dumps(candidate["top_risks_json"], ensure_ascii=False),
-                    "comparable_competitors_json": json.dumps(candidate["comparable_competitors_json"], ensure_ascii=False),
-                },
-            )
+            with db.begin_nested():
+                db.execute(
+                    insert_sql,
+                    {
+                        **candidate,
+                        "explanation": json.dumps(candidate["explanation"], ensure_ascii=False),
+                        "key_risks_json": json.dumps(candidate["key_risks_json"], ensure_ascii=False),
+                        "key_strengths_json": json.dumps(candidate["key_strengths_json"], ensure_ascii=False),
+                        "gate_status_json": json.dumps(candidate["gate_status_json"], ensure_ascii=False),
+                        "gate_reasons_json": json.dumps(candidate["gate_reasons_json"], ensure_ascii=False),
+                        "feature_snapshot_json": json.dumps(candidate["feature_snapshot_json"], ensure_ascii=False),
+                        "score_breakdown_json": json.dumps(candidate["score_breakdown_json"], ensure_ascii=False),
+                        "top_positives_json": json.dumps(candidate["top_positives_json"], ensure_ascii=False),
+                        "top_risks_json": json.dumps(candidate["top_risks_json"], ensure_ascii=False),
+                        "comparable_competitors_json": json.dumps(candidate["comparable_competitors_json"], ensure_ascii=False),
+                    },
+                )
+            persisted_candidates.append(candidate)
         except Exception:
-            logger.exception(
-                "Failed to persist expansion candidate id=%s search_id=%s parcel_id=%s",
+            logger.warning(
+                "Failed to persist expansion candidate id=%s search_id=%s parcel_id=%s – skipping",
                 candidate.get("id"), search_id, candidate.get("parcel_id"),
+                exc_info=True,
             )
-            raise
 
-    return [_normalize_candidate_payload(candidate) for candidate in candidates]
+    return [_normalize_candidate_payload(candidate) for candidate in persisted_candidates]
 
 
 def get_search(db: Session, search_id: str) -> dict[str, Any] | None:

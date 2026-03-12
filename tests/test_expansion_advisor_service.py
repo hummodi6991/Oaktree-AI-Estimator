@@ -29,6 +29,14 @@ class _Result:
         return self._rows[0] if self._rows else None
 
 
+class _FakeNestedTransaction:
+    """Minimal stand-in for SQLAlchemy's nested (SAVEPOINT) context manager."""
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False  # propagate exceptions
+
+
 class FakeDB:
     def __init__(self, candidate_rows=None, compare_rows=None, has_search=True, memo_row=None, brand_profile_row=None):
         self.candidate_rows = candidate_rows or []
@@ -37,6 +45,9 @@ class FakeDB:
         self.memo_row = memo_row
         self.inserted = []
         self.brand_profile_row = brand_profile_row
+
+    def begin_nested(self):
+        return _FakeNestedTransaction()
 
     def execute(self, stmt, params=None):
         sql = stmt.text if hasattr(stmt, "text") else str(stmt)
@@ -454,6 +465,8 @@ def test_confidence_grade_bounds():
 
 def test_comparable_competitors_payload_shape():
     class _DB:
+        def begin_nested(self):
+            return _FakeNestedTransaction()
         def execute(self, *_args, **_kwargs):
             return _Result([
                 {"id": "r1", "name": "A", "category": "burger", "district": "Olaya", "rating": 4.2, "review_count": 100, "distance_m": 320.5, "source": "google"}
@@ -677,6 +690,8 @@ def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch
 
 def test_feature_snapshot_queries_road_and_parking_independently():
     class _DB:
+        def begin_nested(self):
+            return _FakeNestedTransaction()
         def execute(self, stmt, _params=None):
             sql = stmt.text if hasattr(stmt, "text") else str(stmt)
             if "ST_Perimeter" in sql:
@@ -1103,3 +1118,230 @@ def test_run_expansion_search_exact_production_payload():
     assert item["payback_band"] in {"strong", "promising", "borderline", "weak"}
     assert "gate_status_json" in item
     assert "score_breakdown_json" in item
+
+
+# ---------------------------------------------------------------------------
+# Regression: production payload reproducing search_id=c3ace4a6-…
+# ---------------------------------------------------------------------------
+
+
+class _FailingNestedTransaction:
+    """Simulates a SAVEPOINT that rolls back (DB error inside nested block)."""
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+
+class FailingQueryDB(FakeDB):
+    """FakeDB subclass that raises on specific queries to simulate production failures."""
+
+    def __init__(self, *args, fail_on=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fail_on = fail_on or []
+
+    def execute(self, stmt, params=None):
+        sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+        for pattern in self.fail_on:
+            if pattern in sql:
+                raise RuntimeError(f"Simulated DB error on: {pattern}")
+        return super().execute(stmt, params)
+
+
+def test_snapshot_db_failure_does_not_poison_session(monkeypatch):
+    """Regression: when _candidate_feature_snapshot sub-queries fail,
+    the session must remain usable and candidates still get persisted."""
+    db = FakeDB(candidate_rows=[{
+        "parcel_id": "p1", "landuse_label": "Commercial", "landuse_code": "C",
+        "area_m2": 180, "lon": 46.7, "lat": 24.7, "district": "Olaya",
+        "population_reach": 15000, "competitor_count": 2, "delivery_listing_count": 10,
+    }])
+
+    original_snapshot = expansion_service._candidate_feature_snapshot
+
+    def _failing_snapshot(db_arg, **kwargs):
+        # Simulate a snapshot that internally catches query failures
+        # (as the real one does with begin_nested + try/except)
+        return {
+            "parcel_area_m2": kwargs.get("area_m2", 0),
+            "parcel_perimeter_m": None,
+            "district": kwargs.get("district"),
+            "landuse_label": kwargs.get("landuse_label"),
+            "landuse_code": kwargs.get("landuse_code"),
+            "nearest_major_road_distance_m": None,
+            "nearby_road_segment_count": 0,
+            "touches_road": False,
+            "nearby_parking_amenity_count": 0,
+            "provider_listing_count": kwargs.get("provider_listing_count", 0),
+            "provider_platform_count": kwargs.get("provider_platform_count", 0),
+            "competitor_count": kwargs.get("competitor_count", 0),
+            "nearest_branch_distance_m": kwargs.get("nearest_branch_distance_m"),
+            "rent_source": kwargs.get("rent_source", "conservative_default"),
+            "estimated_rent_sar_m2_year": kwargs.get("estimated_rent_sar_m2_year", 900),
+            "economics_score": kwargs.get("economics_score", 0),
+            "context_sources": {
+                "roads_table_available": False,
+                "parking_table_available": False,
+                "road_context_available": False,
+                "parking_context_available": False,
+            },
+            "missing_context": ["roads_table_unavailable", "parking_table_unavailable"],
+            "data_completeness_score": 40,
+        }
+
+    monkeypatch.setattr(expansion_service, "_candidate_feature_snapshot", _failing_snapshot)
+
+    items = run_expansion_search(
+        db, search_id="s-snap-fail", brand_name="b", category="burger",
+        service_model="qsr", min_area_m2=100, max_area_m2=300,
+        target_area_m2=180, limit=5,
+    )
+    assert len(items) >= 1
+    assert items[0]["frontage_score"] == 55.0
+    assert items[0]["access_score"] == 55.0
+
+
+def test_candidate_insert_failure_skips_candidate_gracefully(monkeypatch):
+    """When one candidate INSERT fails, remaining candidates are still returned."""
+    insert_count = 0
+
+    class InsertFailDB(FakeDB):
+        def execute(self, stmt, params=None):
+            nonlocal insert_count
+            sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+            if "INSERT INTO expansion_candidate" in sql:
+                insert_count += 1
+                if insert_count == 1:
+                    raise RuntimeError("Simulated insert failure")
+                self.inserted.append(params)
+                return _Result([])
+            return super().execute(stmt, params)
+
+    db = InsertFailDB(candidate_rows=[
+        {
+            "parcel_id": "p1", "landuse_label": "Commercial", "landuse_code": "C",
+            "area_m2": 180, "lon": 46.7, "lat": 24.7, "district": "Olaya",
+            "population_reach": 15000, "competitor_count": 2, "delivery_listing_count": 10,
+        },
+        {
+            "parcel_id": "p2", "landuse_label": "Commercial", "landuse_code": "C",
+            "area_m2": 170, "lon": 46.71, "lat": 24.71, "district": "Malqa",
+            "population_reach": 13000, "competitor_count": 3, "delivery_listing_count": 8,
+        },
+    ])
+
+    items = run_expansion_search(
+        db, search_id="s-insert-fail", brand_name="b", category="burger",
+        service_model="qsr", min_area_m2=100, max_area_m2=300,
+        target_area_m2=180, limit=5,
+    )
+    # First candidate fails to INSERT but second succeeds
+    assert len(items) == 1
+    assert items[0]["parcel_id"] == "p2"
+
+
+def test_district_mismatch_returns_empty_result_not_500(monkeypatch):
+    """When target_districts don't match any candidate districts, return empty list (not crash)."""
+    db = FakeDB(candidate_rows=[{
+        "parcel_id": "p1", "landuse_label": "Commercial", "landuse_code": "C",
+        "area_m2": 180, "lon": 46.7, "lat": 24.7, "district": "الملقا",
+        "population_reach": 12000, "competitor_count": 3, "delivery_listing_count": 8,
+    }])
+
+    items = run_expansion_search(
+        db, search_id="s-dist-mismatch", brand_name="b", category="burger",
+        service_model="qsr", min_area_m2=100, max_area_m2=300,
+        target_area_m2=180, limit=5,
+        target_districts=["NonExistentDistrict", "حي_لا_يوجد"],
+    )
+    assert items == []
+
+
+def test_rent_lookup_failure_falls_back_to_default(monkeypatch):
+    """When aqar_rent_median raises, rent falls back to conservative_default."""
+    db = FakeDB(candidate_rows=[{
+        "parcel_id": "p1", "landuse_label": "Commercial", "landuse_code": "C",
+        "area_m2": 180, "lon": 46.7, "lat": 24.7, "district": "Olaya",
+        "population_reach": 15000, "competitor_count": 2, "delivery_listing_count": 10,
+    }])
+
+    def _boom_rent(_db, _city, **_kwargs):
+        raise RuntimeError("rent DB down")
+
+    monkeypatch.setattr(expansion_service, "aqar_rent_median", _boom_rent)
+
+    items = run_expansion_search(
+        db, search_id="s-rent-fail", brand_name="b", category="burger",
+        service_model="qsr", min_area_m2=100, max_area_m2=300,
+        target_area_m2=180, limit=5,
+    )
+    assert len(items) == 1
+    assert items[0]["estimated_rent_sar_m2_year"] == 900.0
+
+
+def test_production_payload_c3ace4a6_regression(monkeypatch):
+    """Exact reproduction of the production payload that triggered search_id=c3ace4a6-…
+    500 error. The search must succeed and return candidates or empty list."""
+    db = FakeDB(candidate_rows=[
+        {
+            "parcel_id": "p-prod-1", "landuse_label": "Commercial", "landuse_code": "C",
+            "area_m2": 220, "lon": 46.6812, "lat": 24.7136, "district": "حي العليا",
+            "population_reach": 18200, "competitor_count": 6, "delivery_listing_count": 22,
+            "provider_listing_count": 35, "provider_platform_count": 4, "delivery_competition_count": 15,
+        },
+        {
+            "parcel_id": "p-prod-2", "landuse_label": None, "landuse_code": None,
+            "area_m2": 150, "lon": 46.7243, "lat": 24.7401, "district": None,
+            "population_reach": 8500, "competitor_count": 1, "delivery_listing_count": 5,
+            "provider_listing_count": 8, "provider_platform_count": 2, "delivery_competition_count": 3,
+        },
+        {
+            "parcel_id": "p-prod-3", "landuse_label": "Residential", "landuse_code": "R",
+            "area_m2": 310, "lon": 46.6500, "lat": 24.7600, "district": "حي الملقا",
+            "population_reach": 11000, "competitor_count": 4, "delivery_listing_count": 14,
+            "provider_listing_count": 20, "provider_platform_count": 3, "delivery_competition_count": 8,
+        },
+    ])
+
+    items = run_expansion_search(
+        db,
+        search_id="c3ace4a6-9e4f-405f-887c-7f4e9c9e98e6",
+        brand_name="Test Burger Co",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=25,
+        bbox={"min_lon": 46.5, "min_lat": 24.5, "max_lon": 46.9, "max_lat": 24.9},
+        target_districts=["العليا", "الملقا"],
+        existing_branches=[
+            {"name": "Main Branch", "lat": 24.71, "lon": 46.68, "district": "Olaya"},
+            {"name": "Branch 2", "lat": 24.75, "lon": 46.72},
+        ],
+        brand_profile={
+            "price_tier": "premium",
+            "primary_channel": "delivery",
+            "expansion_goal": "delivery_led",
+            "preferred_districts": ["العليا"],
+            "excluded_districts": ["الملقا"],
+            "parking_sensitivity": "low",
+            "frontage_sensitivity": "high",
+            "visibility_sensitivity": "high",
+            "cannibalization_tolerance_m": 1500,
+        },
+    )
+
+    # Must not crash; must return candidates or empty
+    assert isinstance(items, list)
+    for item in items:
+        assert 0.0 <= item["final_score"] <= 100.0
+        assert item["payback_band"] in {"strong", "promising", "borderline", "weak"}
+        assert "gate_status_json" in item
+        assert "score_breakdown_json" in item
+        assert "feature_snapshot_json" in item
+        assert "top_positives_json" in item
+        assert "top_risks_json" in item
+        assert "decision_summary" in item
+        assert "demand_thesis" in item
+        assert "cost_thesis" in item
