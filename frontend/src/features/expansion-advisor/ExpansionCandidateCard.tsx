@@ -36,12 +36,15 @@ export default function ExpansionCandidateCard({
   const positives = (candidate.top_positives_json || []).slice(0, 2);
   const risks = (candidate.top_risks_json || []).slice(0, 2);
 
+  const isTop3 = (candidate.rank_position ?? 999) <= 3;
+
   const cls = [
     "ea-candidate",
     selected && "ea-candidate--selected",
     shortlisted && "ea-candidate--shortlisted",
     compared && "ea-candidate--compared",
     isLead && "ea-candidate--lead",
+    isTop3 && "ea-candidate--top3",
   ]
     .filter(Boolean)
     .join(" ");

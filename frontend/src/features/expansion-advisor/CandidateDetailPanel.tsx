@@ -4,6 +4,7 @@ import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
+import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
 import { fmtSAR, fmtMeters, fmtScore, fmtPct, fmtSarPerM2 } from "./formatHelpers";
 
 type Props = {
@@ -130,12 +131,13 @@ export default function CandidateDetailPanel({ candidate }: Props) {
             <span className="ea-detail__kv-value">{fmtMeters(candidate.distance_to_nearest_branch_m)}</span>
           </div>
         </div>
+        <ScoreBreakdownCompact breakdown={breakdown} />
       </div>
 
       {/* Gate summary */}
       <div className="ea-detail__section">
         <h5 className="ea-detail__section-title">{t("expansionAdvisor.gateChecklist")}</h5>
-        <GateSummary gates={gates} />
+        <GateSummary gates={gates} unknownGates={gateReasons?.unknown} />
         {gateReasons && (
           <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 6 }}>
             {gateReasons.passed.length > 0 && (

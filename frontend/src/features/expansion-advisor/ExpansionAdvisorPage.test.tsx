@@ -52,7 +52,11 @@ import ValidationPlanPanel from "./ValidationPlanPanel";
 import AssumptionsCard from "./AssumptionsCard";
 import DecisionSnapshotCard from "./DecisionSnapshotCard";
 import CompareOutcomeBanner from "./CompareOutcomeBanner";
-import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
+import type { ExpansionCandidate, CandidateScoreBreakdown } from "../../lib/api/expansionAdvisor";
+import GateSummary from "./GateSummary";
+import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
+import { CandidateListSkeleton, DetailSkeleton } from "./SkeletonLoaders";
+import CandidateDetailPanel from "./CandidateDetailPanel";
 
 /* ─── Helpers for test data ─── */
 function makeCandidate(overrides: Partial<ExpansionCandidate> = {}): ExpansionCandidate {
@@ -1391,5 +1395,115 @@ describe("Assumptions card rendering", () => {
       <AssumptionsCard candidate={candidate} compact />,
     );
     expect(html).toContain("ea-assumptions-strip");
+  });
+});
+
+/* ─── Top-3 candidate highlight ─── */
+
+describe("Top-3 candidate highlight", () => {
+  it("adds ea-candidate--top3 class for rank <= 3", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionResultsPanel
+        items={[makeCandidate({ id: "c1", rank_position: 1 }), makeCandidate({ id: "c2", rank_position: 4 })]}
+        selectedCandidateId={null}
+        shortlistIds={[]}
+        compareIds={[]}
+        onSelectCandidate={() => {}}
+        onToggleShortlist={() => {}}
+        onToggleCompare={() => {}}
+      />,
+    );
+    expect(html).toContain("ea-candidate--top3");
+    // Second candidate (rank 4) should NOT have top3 class — count occurrences
+    const matches = html.match(/ea-candidate--top3/g);
+    expect(matches?.length).toBe(1);
+  });
+
+  it("does not add top3 class when rank_position is missing", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionResultsPanel
+        items={[makeCandidate({ id: "c1", rank_position: undefined })]}
+        selectedCandidateId={null}
+        shortlistIds={[]}
+        compareIds={[]}
+        onSelectCandidate={() => {}}
+        onToggleShortlist={() => {}}
+        onToggleCompare={() => {}}
+      />,
+    );
+    expect(html).not.toContain("ea-candidate--top3");
+  });
+});
+
+/* ─── GateSummary unknown gates ─── */
+
+describe("GateSummary unknown gates", () => {
+  it("renders unknown gates with neutral styling", () => {
+    const gates = { parking_pass: true, access_pass: false, zoning_pass: null as unknown as boolean };
+    const html = renderToStaticMarkup(
+      <GateSummary gates={gates} unknownGates={["zoning_pass"]} />,
+    );
+    expect(html).toContain("ea-gate-item--pass");
+    expect(html).toContain("ea-gate-item--fail");
+    expect(html).toContain("ea-gate-item--unknown");
+  });
+
+  it("renders neutral badge when gates are empty", () => {
+    const html = renderToStaticMarkup(<GateSummary gates={{}} />);
+    expect(html).toContain("ea-badge--neutral");
+  });
+});
+
+/* ─── ScoreBreakdownCompact ─── */
+
+describe("ScoreBreakdownCompact", () => {
+  it("renders bar rows for each score component", () => {
+    const breakdown: CandidateScoreBreakdown = {
+      final_score: 80,
+      weights: { economics: 0.3, brand_fit: 0.2 },
+      inputs: { economics: 85, brand_fit: 70 },
+      weighted_components: { economics: 25.5, brand_fit: 14 },
+    };
+    const html = renderToStaticMarkup(<ScoreBreakdownCompact breakdown={breakdown} />);
+    expect(html).toContain("ea-score-breakdown-compact");
+    expect(html).toContain("economics");
+    expect(html).toContain("brand fit");
+    expect(html).toContain("30%");
+    expect(html).toContain("20%");
+  });
+
+  it("returns null for undefined breakdown", () => {
+    const html = renderToStaticMarkup(<ScoreBreakdownCompact breakdown={undefined} />);
+    expect(html).toBe("");
+  });
+});
+
+/* ─── CandidateDetailPanel passes unknownGates ─── */
+
+describe("CandidateDetailPanel with unknownGates", () => {
+  it("passes unknownGates from gate_reasons_json to GateSummary", () => {
+    const candidate = makeCandidate({
+      gate_status_json: { overall_pass: true, parking_pass: true, zoning_pass: null as unknown as boolean },
+      gate_reasons_json: { passed: ["parking_pass"], failed: [], unknown: ["zoning_pass"], thresholds: {}, explanations: {} },
+    });
+    const html = renderToStaticMarkup(<CandidateDetailPanel candidate={candidate} />);
+    expect(html).toContain("ea-gate-item--unknown");
+    expect(html).toContain("ea-gate-item--pass");
+  });
+});
+
+/* ─── Skeleton loaders ─── */
+
+describe("Skeleton loaders", () => {
+  it("renders candidate list skeleton with correct count", () => {
+    const html = renderToStaticMarkup(<CandidateListSkeleton count={3} />);
+    const matches = html.match(/ea-skeleton--card/g);
+    expect(matches?.length).toBe(3);
+  });
+
+  it("renders detail skeleton with text and badge placeholders", () => {
+    const html = renderToStaticMarkup(<DetailSkeleton />);
+    expect(html).toContain("ea-skeleton--text");
+    expect(html).toContain("ea-skeleton--badge");
   });
 });

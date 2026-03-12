@@ -283,6 +283,7 @@ function App() {
                   padding: "8px 24px",
                   background: "var(--ui2-bg, #f5f7f6)",
                   borderBottom: "1px solid var(--ui2-border, #e4e8e6)",
+                  alignItems: "center",
                 }}
               >
                 <button
@@ -291,7 +292,7 @@ function App() {
                   style={{ borderRadius: "var(--oak-radius) 0 0 var(--oak-radius)" }}
                   onClick={() => setAnalysisMode("expansion")}
                 >
-                  {t("app.modeExpansion", { defaultValue: "Expansion Advisor" })}
+                  {t("app.modeExpansion", { defaultValue: "Branch Expansion Advisor" })}
                 </button>
                 <button
                   type="button"
@@ -305,6 +306,11 @@ function App() {
                 >
                   {t("app.modeFeasibility", { defaultValue: "Feasibility (Internal)" })}
                 </button>
+                {analysisMode === "expansion" && (
+                  <span style={{ marginInlineStart: 12, fontSize: "var(--oak-fs-xs, 12px)", color: "var(--oak-text-light, #828282)" }}>
+                    {t("app.expansionSubtitle", { defaultValue: "Find your next F&B branch location in Riyadh" })}
+                  </span>
+                )}
               </div>
               <div className={`ui-v2-map-wrap ${isMapHidden ? "ui-v2-map-wrap--hidden" : ""}`}>
                 <Map

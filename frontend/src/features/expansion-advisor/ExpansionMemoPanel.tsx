@@ -142,7 +142,7 @@ export default function ExpansionMemoPanel({
                 <div className="ea-report-section">
                   <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoGateAudit")}</h5>
                   {rec.gate_verdict && <p className="ea-detail__text" style={{ fontStyle: "italic" }}>{rec.gate_verdict}</p>}
-                  <GateSummary gates={gates} />
+                  <GateSummary gates={gates} unknownGates={toList(gateReasons?.unknown)} />
                   {gateReasons && (
                     <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 6, display: "grid", gap: 4 }}>
                       {toList(gateReasons.passed).length > 0 && <div><span className="ea-badge ea-badge--green">{t("expansionAdvisor.gatesPassed")}</span> {toList(gateReasons.passed).join(", ")}</div>}
