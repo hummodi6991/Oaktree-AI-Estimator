@@ -811,6 +811,12 @@
     "coWhatWouldChange": "What would change:",
     "coLeadMismatch": "Compare winner differs from lead",
     "smCompared": "{{count}} compared",
-    "copySiteVisitBriefing": "Copy Site Visit Briefing"
+    "copySiteVisitBriefing": "Copy Site Visit Briefing",
+    "onboardStep1": "Define your brand brief — name, category, service model, and target area",
+    "onboardStep2": "Enter your existing branch locations so we can assess cannibalization",
+    "onboardStep3": "Search ranked candidate units across Riyadh districts",
+    "onboardStep4": "Shortlist finalists and compare them side by side",
+    "onboardStep5": "Review each candidate's decision memo and the executive recommendation",
+    "onboardStep6": "Save your expansion study to revisit or share with your team"
   }
 }

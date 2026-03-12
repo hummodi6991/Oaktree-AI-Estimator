@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { RecommendationReportResponse, ExpansionCandidate, CandidateMemoResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
+import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
 import CopySummaryBlock from "./CopySummaryBlock";
 
 export function triggerReportCandidateSelect(candidateId: string | undefined, onSelectCandidateId?: (candidateId: string) => void) {
@@ -145,6 +146,9 @@ export default function ExpansionReportPanel({
                               </div>
                             ))}
                           </div>
+                          {item.score_breakdown_json && (
+                            <ScoreBreakdownCompact breakdown={item.score_breakdown_json} />
+                          )}
                         </div>
                       ))}
                     </div>
