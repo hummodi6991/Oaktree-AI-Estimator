@@ -2595,7 +2595,7 @@ describe("normalizeCompareResponse", () => {
       items: [{ candidate_id: "c1", final_score: 80, gate_status_json: { overall_pass: true } }],
       summary: {},
     } as Parameters<typeof normalizeCompareResponse>[0]);
-    expect(result.items[0].gate_status_json.overall_pass).toBe(true);
+    expect(result.items[0]?.gate_status_json?.overall_pass).toBe(true);
   });
 });
 
