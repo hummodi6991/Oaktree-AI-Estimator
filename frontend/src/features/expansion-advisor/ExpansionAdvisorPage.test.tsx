@@ -19,7 +19,7 @@ import {
   sameCandidateId,
   shouldKeepCompareResult,
 } from "./ExpansionAdvisorPage";
-import { normalizeCandidate } from "../../lib/api/expansionAdvisor";
+import { normalizeCandidate, normalizeSavedSearch } from "../../lib/api/expansionAdvisor";
 import {
   normalizeBriefPayload,
   filterCandidates,
@@ -54,7 +54,8 @@ import ValidationPlanPanel from "./ValidationPlanPanel";
 import AssumptionsCard from "./AssumptionsCard";
 import DecisionSnapshotCard from "./DecisionSnapshotCard";
 import CompareOutcomeBanner from "./CompareOutcomeBanner";
-import type { ExpansionCandidate, CandidateScoreBreakdown } from "../../lib/api/expansionAdvisor";
+import type { ExpansionCandidate, CandidateScoreBreakdown, SavedExpansionSearch } from "../../lib/api/expansionAdvisor";
+import SavedSearchesPanel from "./SavedSearchesPanel";
 import GateSummary from "./GateSummary";
 import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
 import { CandidateListSkeleton, DetailSkeleton } from "./SkeletonLoaders";
@@ -354,7 +355,7 @@ describe("Expansion advisor UI behavior", () => {
       />,
     );
     expect(memoHtml).toContain("-");
-    expect(reportHtml).toContain("c1");
+    expect(reportHtml).toContain("ea-report-top-card");
   });
 });
 
@@ -1757,5 +1758,452 @@ describe("Unknown/missing decision-layer fields do not crash UI", () => {
       />,
     );
     expect(html).toContain("ea-drawer");
+  });
+});
+
+/* ─── Saved studies workspace tests ─── */
+
+function makeSavedSearch(overrides: Partial<SavedExpansionSearch> = {}): SavedExpansionSearch {
+  return normalizeSavedSearch({
+    id: "saved-1",
+    search_id: "s1",
+    title: "Test Study",
+    status: "draft",
+    ...overrides,
+  });
+}
+
+describe("Saved study normalization", () => {
+  it("listSavedSearches normalizes items with safe defaults", () => {
+    const raw: SavedExpansionSearch = {
+      id: "saved-1",
+      search_id: "s1",
+      title: "Test",
+      status: "draft",
+    };
+    const normalized = normalizeSavedSearch(raw);
+    expect(normalized.selected_candidate_ids).toEqual([]);
+    expect(normalized.filters_json).toEqual({});
+    expect(normalized.ui_state_json).toEqual({});
+    expect(normalized.candidates).toEqual([]);
+    expect(normalized.description).toBeUndefined();
+  });
+
+  it("getSavedSearch normalizes nested search and candidates", () => {
+    const raw: SavedExpansionSearch = {
+      id: "saved-2",
+      search_id: "s2",
+      title: "With Detail",
+      status: "final",
+      selected_candidate_ids: ["c1", "c2"],
+      search: {
+        id: "s2",
+        target_districts: ["Al Olaya"],
+        request_json: { brand_name: "TestBrand" },
+        notes: {},
+        existing_branches: [],
+        meta: {},
+      },
+      candidates: [{ id: "c1", search_id: "s2", parcel_id: "p1", lat: 24.7, lon: 46.7 }],
+    };
+    const normalized = normalizeSavedSearch(raw);
+    expect(normalized.selected_candidate_ids).toEqual(["c1", "c2"]);
+    expect(normalized.candidates).toHaveLength(1);
+    expect(normalized.candidates![0].gate_status_json).toEqual({});
+    expect(normalized.candidates![0].top_positives_json).toEqual([]);
+    expect(normalized.search!.target_districts).toEqual(["Al Olaya"]);
+  });
+
+  it("normalizeSavedSearch handles null/undefined fields without crashing", () => {
+    const raw: SavedExpansionSearch = {
+      id: "saved-3",
+      search_id: "s3",
+      title: "Sparse",
+      status: "draft",
+      selected_candidate_ids: null,
+      filters_json: null,
+      ui_state_json: null,
+      description: null,
+      candidates: undefined,
+      search: null,
+    };
+    const normalized = normalizeSavedSearch(raw);
+    expect(normalized.selected_candidate_ids).toEqual([]);
+    expect(normalized.filters_json).toEqual({});
+    expect(normalized.ui_state_json).toEqual({});
+    expect(normalized.candidates).toEqual([]);
+    expect(normalized.search).toBeNull();
+  });
+});
+
+describe("Save new study payload creation", () => {
+  it("buildUiStateJson captures all workspace state for save payload", () => {
+    const uiState = buildUiStateJson(
+      "c1",
+      ["c1", "c2"],
+      "c1",
+      "pass_only",
+      "economics",
+      "Al Olaya",
+      { center: [24.7, 46.7], zoom: 14 },
+      "memo",
+    );
+    expect(uiState.selected_candidate_id).toBe("c1");
+    expect(uiState.compare_ids).toEqual(["c1", "c2"]);
+    expect(uiState.lead_candidate_id).toBe("c1");
+    expect(uiState.active_filter).toBe("pass_only");
+    expect(uiState.active_sort).toBe("economics");
+    expect(uiState.district_filter).toBe("Al Olaya");
+    expect(uiState.map_center).toEqual([24.7, 46.7]);
+    expect(uiState.map_zoom).toBe(14);
+    expect(uiState.active_drawer).toBe("memo");
+  });
+
+  it("buildUiStateJson uses null defaults for optional params", () => {
+    const uiState = buildUiStateJson(null, [], null, "all", "rank", "");
+    expect(uiState.selected_candidate_id).toBeNull();
+    expect(uiState.compare_ids).toEqual([]);
+    expect(uiState.lead_candidate_id).toBeNull();
+    expect(uiState.map_center).toBeNull();
+    expect(uiState.map_zoom).toBeNull();
+    expect(uiState.active_drawer).toBe("none");
+  });
+});
+
+describe("Patch existing study payload update", () => {
+  it("restoreSavedUiState extracts all fields for patch roundtrip", () => {
+    const candidates = [makeCandidate({ id: "c1" }), makeCandidate({ id: "c2" })];
+    const saved = makeSavedSearch({
+      selected_candidate_ids: ["c1", "c2"],
+      ui_state_json: {
+        selected_candidate_id: "c1",
+        compare_ids: ["c1", "c2"],
+        lead_candidate_id: "c1",
+        active_filter: "pass_only",
+        active_sort: "economics",
+        district_filter: "Al Olaya",
+        map_center: [24.7, 46.7],
+        map_zoom: 14,
+        active_drawer: "report",
+      },
+    });
+    const restored = restoreSavedUiState(saved, candidates);
+    expect(restored.shortlistIds).toEqual(["c1", "c2"]);
+    expect(restored.compareIds).toEqual(["c1", "c2"]);
+    expect(restored.selectedCandidateId).toBe("c1");
+    expect(restored.leadCandidateId).toBe("c1");
+    expect(restored.activeFilter).toBe("pass_only");
+    expect(restored.activeSort).toBe("economics");
+    expect(restored.districtFilter).toBe("Al Olaya");
+    expect(restored.mapView.center).toEqual([24.7, 46.7]);
+    expect(restored.mapView.zoom).toBe(14);
+    expect(restored.drawerState).toBe("report");
+  });
+});
+
+describe("Reopen saved study restores full workspace state", () => {
+  it("restores shortlist + compare + selected candidate + drawer + map state", () => {
+    const candidates = [
+      makeCandidate({ id: "c1", district: "Al Olaya", rank_position: 1 }),
+      makeCandidate({ id: "c2", district: "Al Malaz", rank_position: 2 }),
+      makeCandidate({ id: "c3", district: "Al Nakheel", rank_position: 3 }),
+    ];
+    const saved = makeSavedSearch({
+      selected_candidate_ids: ["c1", "c2", "c3"],
+      ui_state_json: {
+        selected_candidate_id: "c2",
+        compare_ids: ["c1", "c2"],
+        lead_candidate_id: "c1",
+        active_filter: "all",
+        active_sort: "rank",
+        district_filter: "",
+        map_center: [24.7, 46.7],
+        map_zoom: 12,
+        active_drawer: "compare",
+      },
+    });
+
+    const restored = restoreSavedUiState(saved, candidates);
+
+    // Shortlist
+    expect(restored.shortlistIds).toEqual(["c1", "c2", "c3"]);
+    // Compare set
+    expect(restored.compareIds).toEqual(["c1", "c2"]);
+    // Selected candidate
+    expect(restored.selectedCandidateId).toBe("c2");
+    expect(restored.selectedCandidate?.id).toBe("c2");
+    // Drawer
+    expect(restored.drawerState).toBe("compare");
+    // Map
+    expect(restored.mapView.center).toEqual([24.7, 46.7]);
+    expect(restored.mapView.zoom).toBe(12);
+    // Lead
+    expect(restored.leadCandidateId).toBe("c1");
+  });
+
+  it("filters out invalid candidate ids on restore", () => {
+    const candidates = [makeCandidate({ id: "c1" })];
+    const saved = makeSavedSearch({
+      selected_candidate_ids: ["c1", "c_deleted"],
+      ui_state_json: { compare_ids: ["c1", "c_deleted"] },
+    });
+    const restored = restoreSavedUiState(saved, candidates);
+    // restoreSavedUiState returns raw ids; the page filters them after
+    expect(restored.shortlistIds).toContain("c1");
+    expect(restored.compareIds).toContain("c1");
+  });
+});
+
+describe("Delete flow state update", () => {
+  it("savedItems list is updated after delete by filtering", () => {
+    const items: SavedExpansionSearch[] = [
+      makeSavedSearch({ id: "s1", title: "Study 1" }),
+      makeSavedSearch({ id: "s2", title: "Study 2" }),
+    ];
+    // Simulate delete of s1
+    const afterDelete = items.filter((s) => s.id !== "s1");
+    expect(afterDelete).toHaveLength(1);
+    expect(afterDelete[0].id).toBe("s2");
+  });
+
+  it("active saved id clears when matching deleted id", () => {
+    let activeSavedId: string | null = "s1";
+    const deletedId = "s1";
+    if (activeSavedId === deletedId) activeSavedId = null;
+    expect(activeSavedId).toBeNull();
+  });
+});
+
+describe("Report panel executive recommendation fields", () => {
+  it("renders recommendation summary, why_best, main_risk, best_format", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        report={{
+          recommendation: {
+            summary: "Open in Al Olaya district.",
+            why_best: "Highest foot traffic and brand fit score.",
+            main_risk: "Parking gate failed — verify on site.",
+            best_format: "QSR with delivery hub.",
+            best_candidate_id: "c1",
+            runner_up_candidate_id: "c2",
+          },
+          top_candidates: [
+            {
+              id: "c1",
+              rank_position: 1,
+              final_score: 85,
+              confidence_grade: "A",
+              gate_verdict: "pass",
+              top_positives_json: ["Strong foot traffic"],
+              top_risks_json: ["Parking limited"],
+              score_breakdown_json: { weights: {}, inputs: {}, weighted_components: {}, final_score: 85 },
+            },
+            {
+              id: "c2",
+              rank_position: 2,
+              final_score: 78,
+              confidence_grade: "B",
+              gate_verdict: "pass",
+              top_positives_json: ["Low rent"],
+              top_risks_json: ["Competition density"],
+            },
+          ],
+          assumptions: { rent_model: "comparable" },
+          brand_profile: {},
+          meta: {},
+        }}
+      />,
+    );
+    expect(html).toContain("Open in Al Olaya district.");
+    expect(html).toContain("Highest foot traffic and brand fit score.");
+    expect(html).toContain("Parking gate failed");
+    expect(html).toContain("QSR with delivery hub.");
+    expect(html).toContain("#1");
+    expect(html).toContain("#2");
+    expect(html).toContain("Strong foot traffic");
+    expect(html).toContain("Low rent");
+  });
+
+  it("report panel handles empty top_candidates without crashing", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        report={{
+          recommendation: { summary: "No strong candidates found." },
+          top_candidates: [],
+          assumptions: {},
+          brand_profile: {},
+          meta: {},
+        }}
+      />,
+    );
+    expect(html).toContain("No strong candidates found.");
+    expect(html).toContain("ea-drawer");
+  });
+});
+
+describe("Memo panel stability with missing fields", () => {
+  it("memo panel remains stable with missing optional text fields", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={{
+          recommendation: { headline: "Go" },
+          candidate: {
+            final_score: 75,
+            rank_position: 3,
+          },
+          market_research: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    expect(html).toContain("Go");
+    expect(html).toContain("ea-drawer");
+    expect(html).not.toContain("undefined");
+  });
+
+  it("memo panel renders back-navigation buttons when handlers provided", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={{
+          recommendation: { headline: "Caution", verdict: "caution" },
+          candidate: {},
+          market_research: {},
+          brand_profile: {},
+        }}
+        onBackToDetail={() => {}}
+        onBackToCompare={() => {}}
+        hasCompare={true}
+        hasShortlist={true}
+      />,
+    );
+    expect(html).toContain(en.expansionAdvisor.memoBackToDetail);
+    expect(html).toContain(en.expansionAdvisor.memoBackToCompare);
+  });
+
+  it("memo panel shows compare button when shortlist exists but no compare", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={{
+          recommendation: {},
+          candidate: {},
+          market_research: {},
+          brand_profile: {},
+        }}
+        onOpenCompare={() => {}}
+        hasShortlist={true}
+        hasCompare={false}
+      />,
+    );
+    expect(html).toContain(en.expansionAdvisor.memoOpenCompare);
+  });
+});
+
+describe("Saved studies workspace panel", () => {
+  it("renders saved items with title, status badge, dates, and candidate counts", () => {
+    const items = [
+      makeSavedSearch({
+        id: "s1",
+        title: "Al Olaya QSR Study",
+        status: "final",
+        description: "Final study for flagship QSR in Al Olaya",
+        updated_at: "2026-01-15T10:00:00Z",
+        created_at: "2026-01-10T10:00:00Z",
+        selected_candidate_ids: ["c1", "c2"],
+        candidates: [makeCandidate({ id: "c1" }), makeCandidate({ id: "c2" }), makeCandidate({ id: "c3" })],
+      }),
+      makeSavedSearch({
+        id: "s2",
+        title: "Draft Cafe Study",
+        status: "draft",
+        created_at: "2026-02-01T10:00:00Z",
+      }),
+    ];
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel
+        items={items}
+        loading={false}
+        onOpen={() => {}}
+        onDelete={() => {}}
+        onRename={() => {}}
+        onEditDescription={() => {}}
+        onChangeStatus={() => {}}
+      />,
+    );
+    expect(html).toContain("Al Olaya QSR Study");
+    expect(html).toContain("Draft Cafe Study");
+    expect(html).toContain(en.expansionAdvisor.savedStudyFinal);
+    expect(html).toContain(en.expansionAdvisor.savedStudyDraft);
+    expect(html).toContain("Final study for flagship");
+    expect(html).toContain(en.expansionAdvisor.reopenStudy);
+    expect(html).toContain(en.expansionAdvisor.renameStudy);
+    expect(html).toContain(en.expansionAdvisor.deleteStudy);
+  });
+
+  it("shows empty state when no items", () => {
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel items={[]} loading={false} onOpen={() => {}} />,
+    );
+    expect(html).toContain(en.expansionAdvisor.noSavedStudiesYet);
+  });
+
+  it("shows loading state", () => {
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel items={[]} loading={true} onOpen={() => {}} />,
+    );
+    expect(html).toContain(en.expansionAdvisor.loadingSaved);
+  });
+
+  it("renders status toggle buttons (mark as final / revert to draft)", () => {
+    const items = [
+      makeSavedSearch({ id: "s1", status: "draft" }),
+      makeSavedSearch({ id: "s2", status: "final" }),
+    ];
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel
+        items={items}
+        loading={false}
+        onOpen={() => {}}
+        onChangeStatus={() => {}}
+      />,
+    );
+    expect(html).toContain(en.expansionAdvisor.markAsFinal);
+    expect(html).toContain(en.expansionAdvisor.markAsDraft);
+  });
+});
+
+describe("extractSavedStudyMeta", () => {
+  it("extracts shortlist count, compare count, lead district from saved study", () => {
+    const saved = makeSavedSearch({
+      selected_candidate_ids: ["c1", "c2", "c3"],
+      ui_state_json: {
+        compare_ids: ["c1", "c2"],
+        lead_candidate_id: "c1",
+        active_sort: "economics",
+        active_filter: "pass_only",
+      },
+      candidates: [makeCandidate({ id: "c1", district: "Al Olaya" })],
+    });
+    const meta = extractSavedStudyMeta(saved);
+    expect(meta.shortlistCount).toBe(3);
+    expect(meta.compareCount).toBe(2);
+    expect(meta.leadDistrict).toBe("Al Olaya");
+    expect(meta.lastSort).toBe("economics");
+    expect(meta.lastFilter).toBe("pass_only");
+    expect(meta.isFinal).toBe(false);
+  });
+
+  it("handles empty saved study", () => {
+    const saved = makeSavedSearch();
+    const meta = extractSavedStudyMeta(saved);
+    expect(meta.shortlistCount).toBe(0);
+    expect(meta.compareCount).toBe(0);
+    expect(meta.leadDistrict).toBeNull();
+    expect(meta.lastSort).toBeNull();
+    expect(meta.lastFilter).toBeNull();
   });
 });

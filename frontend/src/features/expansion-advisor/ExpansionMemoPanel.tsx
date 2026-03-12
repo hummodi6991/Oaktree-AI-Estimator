@@ -18,12 +18,22 @@ export default function ExpansionMemoPanel({
   isLeadCandidate,
   report,
   onClose,
+  onBackToDetail,
+  onBackToCompare,
+  onOpenCompare,
+  hasShortlist,
+  hasCompare,
 }: {
   memo: CandidateMemoResponse | null;
   loading: boolean;
   isLeadCandidate?: boolean;
   report?: RecommendationReportResponse | null;
   onClose?: () => void;
+  onBackToDetail?: () => void;
+  onBackToCompare?: () => void;
+  onOpenCompare?: () => void;
+  hasShortlist?: boolean;
+  hasCompare?: boolean;
 }) {
   const { t } = useTranslation();
   const [presentationMode, setPresentationMode] = useState(false);
@@ -36,7 +46,22 @@ export default function ExpansionMemoPanel({
         <div className="ea-drawer__header">
           {isLeadCandidate && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
           <h3 className="ea-drawer__title">{t("expansionAdvisor.decisionMemo")}</h3>
-          <div style={{ display: "flex", gap: 6, alignItems: "center", marginInlineStart: "auto" }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginInlineStart: "auto", flexWrap: "wrap" }}>
+            {onBackToDetail && (
+              <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={onBackToDetail}>
+                {t("expansionAdvisor.memoBackToDetail")}
+              </button>
+            )}
+            {hasCompare && onBackToCompare && (
+              <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={onBackToCompare}>
+                {t("expansionAdvisor.memoBackToCompare")}
+              </button>
+            )}
+            {hasShortlist && !hasCompare && onOpenCompare && (
+              <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={onOpenCompare}>
+                {t("expansionAdvisor.memoOpenCompare")}
+              </button>
+            )}
             <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={() => setPresentationMode((m) => !m)}>
               {presentationMode ? t("expansionAdvisor.exitPresentation") : t("expansionAdvisor.presentationMode")}
             </button>
