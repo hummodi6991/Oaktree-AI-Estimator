@@ -155,12 +155,28 @@ export type ExpansionCandidatesListResponse = {
 
 export type CompareCandidateItem = {
   candidate_id: string;
+  id?: string;
+  search_id?: string;
   district?: string;
   parcel_id?: string;
+  area_m2?: number;
+  lat?: number;
+  lon?: number;
   rank_position?: number;
+  compare_rank?: number;
   final_score?: number;
   confidence_grade?: string;
+  gate_verdict?: string;
   gate_status_json?: Record<string, boolean | null | undefined>;
+  gate_reasons_json?: CandidateGateReasons;
+  feature_snapshot_json?: CandidateFeatureSnapshot;
+  score_breakdown_json?: CandidateScoreBreakdown;
+  top_positives_json?: string[];
+  top_risks_json?: string[];
+  comparable_competitors_json?: ComparableCompetitor[];
+  decision_summary?: string;
+  demand_thesis?: string;
+  cost_thesis?: string;
   zoning_fit_score?: number;
   frontage_score?: number;
   access_score?: number;
@@ -177,6 +193,9 @@ export type CompareCandidateItem = {
   payback_band?: string;
   estimated_rent_sar_m2_year?: number;
   estimated_annual_rent_sar?: number;
+  estimated_fitout_cost_sar?: number;
+  estimated_revenue_index?: number;
+  distance_to_nearest_branch_m?: number;
   demand_score?: number;
   fit_score?: number;
 };
@@ -287,13 +306,26 @@ const DEFAULT_SCORE_BREAKDOWN: CandidateScoreBreakdown = { weights: {}, inputs: 
 export function normalizeCandidate(candidate: ExpansionCandidate): ExpansionCandidate {
   return {
     ...candidate,
-    gate_status_json: candidate.gate_status_json || {},
-    gate_reasons_json: candidate.gate_reasons_json || DEFAULT_GATE_REASONS,
-    feature_snapshot_json: candidate.feature_snapshot_json || DEFAULT_FEATURE_SNAPSHOT,
-    score_breakdown_json: candidate.score_breakdown_json || DEFAULT_SCORE_BREAKDOWN,
-    top_positives_json: candidate.top_positives_json || [],
-    top_risks_json: candidate.top_risks_json || [],
-    comparable_competitors_json: candidate.comparable_competitors_json || [],
+    rank_position: candidate.rank_position ?? undefined,
+    confidence_grade: candidate.confidence_grade || "D",
+    payback_band: candidate.payback_band || "",
+    compare_rank: candidate.compare_rank ?? undefined,
+    decision_summary: candidate.decision_summary || "",
+    demand_thesis: candidate.demand_thesis || "",
+    cost_thesis: candidate.cost_thesis || "",
+    gate_status_json: (typeof candidate.gate_status_json === "object" && candidate.gate_status_json !== null) ? candidate.gate_status_json : {},
+    gate_reasons_json: candidate.gate_reasons_json
+      ? { ...DEFAULT_GATE_REASONS, ...candidate.gate_reasons_json, passed: candidate.gate_reasons_json.passed || [], failed: candidate.gate_reasons_json.failed || [], unknown: candidate.gate_reasons_json.unknown || [] }
+      : DEFAULT_GATE_REASONS,
+    feature_snapshot_json: candidate.feature_snapshot_json
+      ? { ...DEFAULT_FEATURE_SNAPSHOT, ...candidate.feature_snapshot_json, context_sources: candidate.feature_snapshot_json.context_sources || {}, missing_context: candidate.feature_snapshot_json.missing_context || [] }
+      : DEFAULT_FEATURE_SNAPSHOT,
+    score_breakdown_json: candidate.score_breakdown_json
+      ? { ...DEFAULT_SCORE_BREAKDOWN, ...candidate.score_breakdown_json }
+      : DEFAULT_SCORE_BREAKDOWN,
+    top_positives_json: Array.isArray(candidate.top_positives_json) ? candidate.top_positives_json : [],
+    top_risks_json: Array.isArray(candidate.top_risks_json) ? candidate.top_risks_json : [],
+    comparable_competitors_json: Array.isArray(candidate.comparable_competitors_json) ? candidate.comparable_competitors_json : [],
   };
 }
 
@@ -304,6 +336,8 @@ export function normalizeCandidates(candidates: ExpansionCandidate[] = []): Expa
 export function normalizeSavedSearch(saved: SavedExpansionSearch): SavedExpansionSearch {
   return {
     ...saved,
+    title: saved.title || "",
+    status: saved.status || "draft",
     selected_candidate_ids: saved.selected_candidate_ids || [],
     filters_json: saved.filters_json || {},
     ui_state_json: saved.ui_state_json || {},
@@ -315,6 +349,7 @@ export function normalizeSavedSearch(saved: SavedExpansionSearch): SavedExpansio
           request_json: saved.search.request_json || {},
           notes: saved.search.notes || {},
           existing_branches: saved.search.existing_branches || [],
+          brand_profile: saved.search.brand_profile || null,
           meta: saved.search.meta || {},
         }
       : saved.search,
@@ -365,7 +400,18 @@ export function normalizeCompareResponse(data: CompareCandidatesResponse): Compa
     ...data,
     items: (data.items || []).map((item) => ({
       ...item,
-      gate_status_json: item.gate_status_json || {},
+      confidence_grade: item.confidence_grade || "D",
+      payback_band: item.payback_band || "",
+      gate_status_json: (typeof item.gate_status_json === "object" && item.gate_status_json !== null) ? item.gate_status_json : {},
+      gate_reasons_json: item.gate_reasons_json || DEFAULT_GATE_REASONS,
+      feature_snapshot_json: item.feature_snapshot_json || DEFAULT_FEATURE_SNAPSHOT,
+      score_breakdown_json: item.score_breakdown_json || DEFAULT_SCORE_BREAKDOWN,
+      top_positives_json: Array.isArray(item.top_positives_json) ? item.top_positives_json : [],
+      top_risks_json: Array.isArray(item.top_risks_json) ? item.top_risks_json : [],
+      comparable_competitors_json: Array.isArray(item.comparable_competitors_json) ? item.comparable_competitors_json : [],
+      decision_summary: item.decision_summary || "",
+      demand_thesis: item.demand_thesis || "",
+      cost_thesis: item.cost_thesis || "",
     })),
     summary: data.summary || {},
   };

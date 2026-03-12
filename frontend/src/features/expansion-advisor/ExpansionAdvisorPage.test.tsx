@@ -2745,3 +2745,252 @@ describe("Memo panel structured score breakdown and feature snapshot", () => {
     expect(html).toContain("Caution");
   });
 });
+
+/* ─── Regression: Normalizer robustness against missing/null backend fields ─── */
+
+describe("Normalizer robustness against edge-case backend payloads", () => {
+  it("normalizeCandidate handles gate_status_json as null or non-object", () => {
+    const c1 = normalizeCandidate({ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0, gate_status_json: null as unknown as Record<string, boolean> });
+    expect(c1.gate_status_json).toEqual({});
+    const c2 = normalizeCandidate({ id: "c2", search_id: "s", parcel_id: "p", lat: 0, lon: 0, gate_status_json: undefined });
+    expect(c2.gate_status_json).toEqual({});
+  });
+
+  it("normalizeCandidate defaults decision strings", () => {
+    const c = normalizeCandidate({ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0 });
+    expect(c.decision_summary).toBe("");
+    expect(c.demand_thesis).toBe("");
+    expect(c.cost_thesis).toBe("");
+    expect(c.confidence_grade).toBe("D");
+    expect(c.payback_band).toBe("");
+  });
+
+  it("normalizeCandidate handles non-array top_positives_json / top_risks_json", () => {
+    const c = normalizeCandidate({ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0, top_positives_json: "bad" as unknown as string[], top_risks_json: null as unknown as string[] });
+    expect(Array.isArray(c.top_positives_json)).toBe(true);
+    expect(c.top_positives_json).toEqual([]);
+    expect(Array.isArray(c.top_risks_json)).toBe(true);
+    expect(c.top_risks_json).toEqual([]);
+  });
+
+  it("normalizeCandidate deep-defaults gate_reasons_json sub-arrays", () => {
+    const c = normalizeCandidate({ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0, gate_reasons_json: { thresholds: {}, explanations: {} } as any });
+    expect(c.gate_reasons_json?.passed).toEqual([]);
+    expect(c.gate_reasons_json?.failed).toEqual([]);
+    expect(c.gate_reasons_json?.unknown).toEqual([]);
+  });
+
+  it("normalizeCandidate deep-defaults feature_snapshot_json sub-fields", () => {
+    const c = normalizeCandidate({ id: "c1", search_id: "s", parcel_id: "p", lat: 0, lon: 0, feature_snapshot_json: { data_completeness_score: 42 } as any });
+    expect(c.feature_snapshot_json?.context_sources).toEqual({});
+    expect(c.feature_snapshot_json?.missing_context).toEqual([]);
+    expect(c.feature_snapshot_json?.data_completeness_score).toBe(42);
+  });
+
+  it("normalizeSavedSearch defaults title and status", () => {
+    const saved = normalizeSavedSearch({ id: "sv1", search_id: "s1" } as any);
+    expect(saved.title).toBe("");
+    expect(saved.status).toBe("draft");
+    expect(saved.selected_candidate_ids).toEqual([]);
+    expect(saved.filters_json).toEqual({});
+    expect(saved.ui_state_json).toEqual({});
+    expect(saved.candidates).toEqual([]);
+  });
+
+  it("normalizeSavedSearch handles nested search with null brand_profile", () => {
+    const saved = normalizeSavedSearch({
+      id: "sv2",
+      search_id: "s2",
+      title: "test",
+      status: "final",
+      search: { id: "s2", target_districts: null as unknown as string[], request_json: null as unknown as Record<string, unknown>, notes: null as unknown as Record<string, unknown>, existing_branches: null as unknown as Array<Record<string, unknown>>, brand_profile: null, meta: null as unknown as any },
+    } as any);
+    expect(saved.search?.target_districts).toEqual([]);
+    expect(saved.search?.request_json).toEqual({});
+    expect(saved.search?.notes).toEqual({});
+    expect(saved.search?.existing_branches).toEqual([]);
+    expect(saved.search?.brand_profile).toBeNull();
+    expect(saved.search?.meta).toEqual({});
+  });
+
+  it("normalizeCompareResponse defaults item fields", () => {
+    const result = normalizeCompareResponse({
+      items: [{ candidate_id: "c1" } as any],
+      summary: null as unknown as Record<string, string | null>,
+    });
+    expect(result.summary).toEqual({});
+    const item = result.items[0];
+    expect(item.gate_status_json).toEqual({});
+    expect(item.confidence_grade).toBe("D");
+    expect(item.decision_summary).toBe("");
+    expect(Array.isArray(item.top_positives_json)).toBe(true);
+    expect(Array.isArray(item.top_risks_json)).toBe(true);
+  });
+
+  it("normalizeReportResponse handles completely empty payload", () => {
+    const report = normalizeReportResponse({} as any);
+    expect(report.top_candidates).toEqual([]);
+    expect(report.assumptions).toEqual({});
+    expect(report.brand_profile).toEqual({});
+    expect(report.meta).toEqual({});
+    expect(report.recommendation).toBeDefined();
+  });
+});
+
+/* ─── Regression: Saved-study update/delete/restore lifecycle ─── */
+
+describe("Saved-study update/delete/restore lifecycle", () => {
+  it("restoreSavedUiState defaults to sane state when ui_state_json is empty", () => {
+    const restored = restoreSavedUiState(
+      { id: "sv1", search_id: "s1", title: "t", status: "draft", ui_state_json: {} },
+      [],
+    );
+    expect(restored.compareIds).toEqual([]);
+    expect(restored.selectedCandidateId).toBeNull();
+    expect(restored.leadCandidateId).toBeNull();
+    expect(restored.activeFilter).toBe("all");
+    expect(restored.activeSort).toBe("rank");
+    expect(restored.districtFilter).toBe("");
+    expect(restored.drawerState).toBe("none");
+    expect(restored.mapView).toEqual({ center: null, zoom: null });
+  });
+
+  it("buildUiStateJson round-trips through restore functions", () => {
+    const state = buildUiStateJson("c1", ["c1", "c2"], "c1", "pass_only", "economics", "Olaya", { center: [46.7, 24.7], zoom: 15 }, "compare");
+    const sortFilter = restoreSortFilter(state);
+    const mapView = restoreMapViewState(state);
+    const drawer = restoreDrawerState(state);
+    const lead = restoreLeadCandidateId(state, [makeCandidate({ id: "c1" })]);
+    expect(sortFilter.activeFilter).toBe("pass_only");
+    expect(sortFilter.activeSort).toBe("economics");
+    expect(sortFilter.districtFilter).toBe("Olaya");
+    expect(mapView.center).toEqual([46.7, 24.7]);
+    expect(mapView.zoom).toBe(15);
+    expect(drawer).toBe("compare");
+    expect(lead).toBe("c1");
+  });
+
+  it("extractSavedStudyMeta summarizes saved study correctly", () => {
+    const meta = extractSavedStudyMeta({
+      id: "sv1",
+      search_id: "s1",
+      title: "Final Study",
+      status: "final",
+      selected_candidate_ids: ["c1", "c2", "c3"],
+      ui_state_json: { compare_ids: ["c1", "c2"], lead_candidate_id: "c1", active_sort: "economics", active_filter: "pass_only" },
+      candidates: [makeCandidate({ id: "c1", district: "Olaya" }), makeCandidate({ id: "c2" }), makeCandidate({ id: "c3" })],
+    });
+    expect(meta.isFinal).toBe(true);
+    expect(meta.shortlistCount).toBe(3);
+    expect(meta.compareCount).toBe(2);
+    expect(meta.leadDistrict).toBe("Olaya");
+    expect(meta.lastSort).toBe("economics");
+    expect(meta.lastFilter).toBe("pass_only");
+  });
+
+  it("extractSavedStudyMeta handles missing lead candidate gracefully", () => {
+    const meta = extractSavedStudyMeta({
+      id: "sv2",
+      search_id: "s2",
+      title: "Draft Study",
+      status: "draft",
+      selected_candidate_ids: [],
+      ui_state_json: {},
+      candidates: [],
+    });
+    expect(meta.leadDistrict).toBeNull();
+    expect(meta.leadParcelId).toBeNull();
+    expect(meta.isFinal).toBe(false);
+    expect(meta.shortlistCount).toBe(0);
+    expect(meta.compareCount).toBe(0);
+    expect(meta.lastSort).toBeNull();
+    expect(meta.lastFilter).toBeNull();
+  });
+});
+
+/* ─── Regression: Compare outcome derivation ─── */
+
+describe("Compare outcome derivation regression", () => {
+  it("deriveCompareOutcome identifies winner and runner-up strengths", () => {
+    const candidates = [
+      makeCandidate({ id: "c1", rank_position: 1, district: "Olaya" }),
+      makeCandidate({ id: "c2", rank_position: 2, district: "Malqa" }),
+    ];
+    const outcome = deriveCompareOutcome(
+      {
+        items: [{ candidate_id: "c1" }, { candidate_id: "c2" }] as any[],
+        summary: {
+          best_overall_candidate_id: "c1",
+          best_economics_candidate_id: "c2",
+          fastest_payback_candidate_id: "c2",
+          best_brand_fit_candidate_id: "c1",
+        },
+      },
+      candidates,
+      "c1",
+    );
+    expect(outcome.winnerId).toBe("c1");
+    expect(outcome.winnerLabel).toContain("Olaya");
+    expect(outcome.leadsAligned).toBe(true);
+    expect(outcome.runnerUpStrengths).toContain("best economics");
+    expect(outcome.runnerUpStrengths).toContain("fastest payback");
+    expect(outcome.whatWouldChange).toContain("best economics");
+  });
+
+  it("deriveCompareOutcome detects lead mismatch", () => {
+    const candidates = [
+      makeCandidate({ id: "c1", rank_position: 1 }),
+      makeCandidate({ id: "c2", rank_position: 2 }),
+    ];
+    const outcome = deriveCompareOutcome(
+      {
+        items: [{ candidate_id: "c1" }, { candidate_id: "c2" }] as any[],
+        summary: { best_overall_candidate_id: "c2" },
+      },
+      candidates,
+      "c1",
+    );
+    expect(outcome.winnerId).toBe("c2");
+    expect(outcome.leadsAligned).toBe(false);
+  });
+
+  it("deriveCompareOutcome handles null result gracefully", () => {
+    const outcome = deriveCompareOutcome(null, [], null);
+    expect(outcome.winnerId).toBeNull();
+    expect(outcome.winnerLabel).toBe("—");
+    expect(outcome.leadsAligned).toBe(true);
+    expect(outcome.runnerUpStrengths).toEqual([]);
+  });
+});
+
+/* ─── Regression: Landlord briefing text ─── */
+
+describe("Landlord briefing text generation", () => {
+  it("formatLandlordBriefingText includes district, rent, and verification items", () => {
+    const text = formatLandlordBriefingText(
+      makeCandidate({
+        district: "Al Olaya",
+        parcel_id: "P-12345",
+        rank_position: 1,
+        estimated_rent_sar_m2_year: 1200,
+        estimated_annual_rent_sar: 360000,
+        gate_status_json: { overall_pass: true },
+      }),
+    );
+    expect(text).toContain("Al Olaya");
+    expect(text).toContain("P-12345");
+    expect(text).toContain("#1");
+    expect(text).toContain("1200 SAR/m²/yr");
+    expect(text).toContain("360,000 SAR/yr");
+    expect(text).toContain("All gates passed");
+    expect(text).toContain("Confirm street frontage");
+    expect(text).toContain("Verify parking");
+  });
+
+  it("formatLandlordBriefingText handles missing economics gracefully", () => {
+    const text = formatLandlordBriefingText(makeCandidate({ district: "Test" }));
+    expect(text).toContain("Test");
+    expect(text).toContain("TBD");
+    expect(text).toContain("Pending verification");
+  });
+});
