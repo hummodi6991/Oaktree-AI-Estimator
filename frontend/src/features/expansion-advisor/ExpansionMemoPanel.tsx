@@ -221,6 +221,44 @@ export default function ExpansionMemoPanel({
                   </div>
                 )}
 
+                {/* Score breakdown — structured view */}
+                {breakdown && breakdown.weighted_components && Object.keys(breakdown.weighted_components).length > 0 && (
+                  <div className="ea-report-section">
+                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoScoreBreakdown")}</h5>
+                    <div className="ea-detail__grid">
+                      {Object.entries(breakdown.weighted_components).map(([key, val]) => (
+                        <div key={key} className="ea-detail__kv">
+                          <span className="ea-detail__kv-label">{key.replace(/_/g, " ").replace(/\bscore\b/gi, "").trim()}</span>
+                          <span className="ea-detail__kv-value">{typeof val === "number" ? fmtScore(val) : String(val ?? "—")}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Feature snapshot — data quality */}
+                {snapshot && (
+                  <div className="ea-report-section">
+                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoFeatureSnapshot")}</h5>
+                    <div className="ea-detail__grid">
+                      <div className="ea-detail__kv">
+                        <span className="ea-detail__kv-label">{t("expansionAdvisor.dataCompleteness")}</span>
+                        <span className="ea-detail__kv-value">{snapshot.data_completeness_score != null ? `${Math.round(Number(snapshot.data_completeness_score))}%` : "—"}</span>
+                      </div>
+                    </div>
+                    {Object.keys(snapshot.context_sources || {}).length > 0 && (
+                      <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 4, color: "var(--oak-text-light)" }}>
+                        {t("expansionAdvisor.contextSources")}: {Object.keys(snapshot.context_sources).join(", ")}
+                      </div>
+                    )}
+                    {(snapshot.missing_context || []).length > 0 && (
+                      <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 4, color: "var(--oak-error, #d4183d)" }}>
+                        {t("expansionAdvisor.missingData")}: {snapshot.missing_context.join(", ")}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Copy-ready summary block */}
                 {isLeadCandidate && (
                   <CopySummaryBlock
@@ -228,13 +266,6 @@ export default function ExpansionMemoPanel({
                     report={report || null}
                     memo={memo}
                   />
-                )}
-
-                {!presentationMode && (snapshot || breakdown) && (
-                  <details className="ea-debug">
-                    <summary>{t("expansionAdvisor.debugDetails")}</summary>
-                    <pre>{JSON.stringify({ feature_snapshot: snapshot, score_breakdown: breakdown }, null, 2)}</pre>
-                  </details>
                 )}
               </>
             );

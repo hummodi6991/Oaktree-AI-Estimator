@@ -63,6 +63,8 @@ const DIMENSION_GROUPS: DimensionGroup[] = [
   {
     label: "Demand & Whitespace",
     rows: [
+      { label: "Demand", key: "demand_score" },
+      { label: "Fit", key: "fit_score" },
       { label: "Brand fit", key: "brand_fit_score" },
       { label: "Provider density", key: "provider_density_score" },
       { label: "Whitespace", key: "provider_whitespace_score" },
@@ -76,6 +78,7 @@ const DIMENSION_GROUPS: DimensionGroup[] = [
       { label: "Economics", key: "economics_score" },
       { label: "Payback", key: "payback_band" },
       { label: "Payback months", key: "estimated_payback_months", fmt: "months" },
+      { label: "Rent/m²/yr", key: "estimated_rent_sar_m2_year", fmt: "sar" },
       { label: "Annual rent", key: "estimated_annual_rent_sar", fmt: "sar" },
       { label: "Cannibalization", key: "cannibalization_score" },
     ],
@@ -95,8 +98,8 @@ const DIMENSION_GROUPS: DimensionGroup[] = [
 function findBestOnKey(items: Array<Record<string, unknown>>, key: string): string | null {
   if (!items.length) return null;
   if (key === "gate" || key === "confidence_grade" || key === "payback_band") return null;
-  // For payback/cannibalization, lower is better
-  const lowerIsBetter = key === "estimated_payback_months" || key === "cannibalization_score";
+  // For payback/cannibalization/rent, lower is better
+  const lowerIsBetter = key === "estimated_payback_months" || key === "cannibalization_score" || key === "estimated_rent_sar_m2_year" || key === "estimated_annual_rent_sar";
   let best: { id: string | null; val: number } = { id: null, val: lowerIsBetter ? Infinity : -Infinity };
   for (const item of items) {
     const raw = item[key];
@@ -136,10 +139,12 @@ export default function ExpansionComparePanel({
   // Inline compact view when no result yet
   if (!result && !loading && !error) {
     return (
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button className="oak-btn oak-btn--sm oak-btn--primary" disabled={!enabled || loading} onClick={onCompare}>
           {enabled ? t("expansionAdvisor.compareSelected", { count: compareIds.length }) : t("expansionAdvisor.compareNeedTwo")}
         </button>
+        {compareIds.length > 6 && <span className="ea-form__error">{t("expansionAdvisor.compareLimitWarning")}</span>}
+        {compareIds.length === 1 && <span style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)" }}>{t("expansionAdvisor.compareMinWarning")}</span>}
       </div>
     );
   }

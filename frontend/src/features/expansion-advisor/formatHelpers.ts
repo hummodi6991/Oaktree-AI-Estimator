@@ -38,6 +38,11 @@ export function fmtSarPerM2(value: number | null | undefined): string {
   return `${formatInteger(Math.round(value), FALLBACK)} SAR/m²`;
 }
 
+export function fmtSarPerM2Year(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return FALLBACK;
+  return `${formatInteger(Math.round(value), FALLBACK)} SAR/m²/yr`;
+}
+
 /** Color semantic: >=70 green, >=40 amber, <40 red */
 export function scoreColor(value: number | null | undefined): "green" | "amber" | "red" | "neutral" {
   if (value == null || !Number.isFinite(value)) return "neutral";
