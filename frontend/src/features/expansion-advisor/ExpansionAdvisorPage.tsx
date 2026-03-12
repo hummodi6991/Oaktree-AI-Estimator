@@ -53,6 +53,7 @@ import {
   type DrawerKey,
   memoCacheKey,
   reportCacheKey,
+  extractSavedStudyMeta,
 } from "./studyAdapters";
 import FinalistsWorkspace from "./FinalistsWorkspace";
 import DecisionChecklist from "./DecisionChecklist";
@@ -187,7 +188,16 @@ export default function ExpansionAdvisorPage({
   const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
   const [activeSavedStatus, setActiveSavedStatus] = useState<"draft" | "final">("draft");
   const [mapViewState, setMapViewState] = useState<MapViewState>({});
+  const [saveToast, setSaveToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [showSavedWorkspace, setShowSavedWorkspace] = useState(false);
   const detailRef = useRef<HTMLDivElement | null>(null);
+  const saveToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((type: "success" | "error", message: string) => {
+    if (saveToastTimerRef.current) clearTimeout(saveToastTimerRef.current);
+    setSaveToast({ type, message });
+    saveToastTimerRef.current = setTimeout(() => setSaveToast(null), 4000);
+  }, []);
 
   // Brief edit/run state
   const [briefMode, setBriefMode] = useState<"edit" | "summary">("edit");
@@ -394,6 +404,30 @@ export default function ExpansionAdvisorPage({
     } catch { setSavedLoadError(t("expansionAdvisor.errorDelete")); }
   };
 
+  const handleRenameSaved = async (savedId: string, title: string) => {
+    try {
+      await updateSavedExpansionSearch(savedId, { title });
+      await refreshSavedStudies();
+      showToast("success", t("expansionAdvisor.studyRenamed"));
+    } catch { showToast("error", t("expansionAdvisor.updateFailed")); }
+  };
+
+  const handleEditDescriptionSaved = async (savedId: string, description: string) => {
+    try {
+      await updateSavedExpansionSearch(savedId, { description });
+      await refreshSavedStudies();
+    } catch { showToast("error", t("expansionAdvisor.updateFailed")); }
+  };
+
+  const handleChangeStatusSaved = async (savedId: string, status: "draft" | "final") => {
+    try {
+      await updateSavedExpansionSearch(savedId, { status });
+      await refreshSavedStudies();
+      if (activeSavedId === savedId) setActiveSavedStatus(status);
+      showToast("success", t("expansionAdvisor.studyStatusChanged"));
+    } catch { showToast("error", t("expansionAdvisor.updateFailed")); }
+  };
+
   const handleUpdateSaved = async (studyTitle: string, description: string, status: "draft" | "final") => {
     if (!activeSavedId) return;
     setSaving(true);
@@ -410,7 +444,8 @@ export default function ExpansionAdvisorPage({
       await refreshSavedStudies();
       setActiveSavedStatus(status);
       setActiveDrawer("none");
-    } catch { setSaveError(t("expansionAdvisor.errorUpdate")); } finally { setSaving(false); }
+      showToast("success", t("expansionAdvisor.studyUpdateSuccess"));
+    } catch { setSaveError(t("expansionAdvisor.errorUpdate")); showToast("error", t("expansionAdvisor.updateFailed")); } finally { setSaving(false); }
   };
 
   // External map selection sync
@@ -481,6 +516,7 @@ export default function ExpansionAdvisorPage({
             }
           }}
           compareEnabled={compareShortlistEnabled}
+          onOpenSavedStudies={() => setShowSavedWorkspace(true)}
         />
       )}
 
@@ -566,6 +602,11 @@ export default function ExpansionAdvisorPage({
           <div className="ea-card">
             <div className="ea-card__header">
               <h3 className="ea-card__title">{t("expansionAdvisor.expansionStudies")}</h3>
+              {savedItems.length > 0 && (
+                <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={() => setShowSavedWorkspace(true)}>
+                  {t("expansionAdvisor.openSavedStudies")}
+                </button>
+              )}
             </div>
             <div className="ea-card__body">
               {savedLoadError && <div className="ea-state ea-state--error">{savedLoadError}</div>}
@@ -576,9 +617,13 @@ export default function ExpansionAdvisorPage({
                 onOpen={async (savedId) => {
                   setLoadingSaved(true);
                   setSavedLoadError(null);
+                  setShowSavedWorkspace(false);
                   try { const saved = await getSavedExpansionSearch(savedId); await hydrateSavedStudy(saved); } catch { setSavedLoadError(t("expansionAdvisor.errorSavedLoad")); } finally { setLoadingSaved(false); }
                 }}
                 onDelete={handleDeleteSaved}
+                onRename={handleRenameSaved}
+                onEditDescription={handleEditDescriptionSaved}
+                onChangeStatus={handleChangeStatusSaved}
               />
             </div>
           </div>
@@ -696,13 +741,51 @@ export default function ExpansionAdvisorPage({
                 <h3 className="ea-first-run__title">{t("expansionAdvisor.heroTitle")}</h3>
                 <p className="ea-first-run__subtitle">{t("expansionAdvisor.heroSubtitle")}</p>
               </div>
+              {/* Resume previous study prompt */}
+              {savedItems.length > 0 && (
+                <div className="ea-first-run__resume">
+                  <p className="ea-first-run__resume-text">{t("expansionAdvisor.resumeStudyPrompt")}</p>
+                  <div className="ea-first-run__resume-list">
+                    {savedItems.slice(0, 3).map((item) => {
+                      const meta = extractSavedStudyMeta(item);
+                      return (
+                        <button
+                          key={item.id}
+                          className="ea-first-run__resume-item"
+                          onClick={async () => {
+                            setLoadingSaved(true);
+                            setSavedLoadError(null);
+                            try { const saved = await getSavedExpansionSearch(item.id); await hydrateSavedStudy(saved); } catch { setSavedLoadError(t("expansionAdvisor.errorSavedLoad")); } finally { setLoadingSaved(false); }
+                          }}
+                        >
+                          <span className="ea-first-run__resume-title">{item.title}</span>
+                          <span className="ea-first-run__resume-meta">
+                            <span className={`ea-badge ea-badge--${meta.isFinal ? "green" : "neutral"}`} style={{ fontSize: "var(--oak-fs-xs)" }}>
+                              {meta.isFinal ? t("expansionAdvisor.savedStudyFinal") : t("expansionAdvisor.savedStudyDraft")}
+                            </span>
+                            {meta.shortlistCount > 0 && <span>{t("expansionAdvisor.shortlistCountBadge", { count: meta.shortlistCount })}</span>}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {savedItems.length > 3 && (
+                    <button className="oak-btn oak-btn--sm oak-btn--tertiary" style={{ marginTop: 8 }} onClick={() => setShowSavedWorkspace(true)}>
+                      {t("expansionAdvisor.openSavedStudies")} ({savedItems.length})
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="ea-first-run__divider">
+                <span>{savedItems.length > 0 ? t("expansionAdvisor.startNewStudy") : ""}</span>
+              </div>
               <ol className="ea-first-run__steps">
-                <li className="ea-first-run__step">{t("expansionAdvisor.onboardStep1")}</li>
-                <li className="ea-first-run__step">{t("expansionAdvisor.onboardStep2")}</li>
-                <li className="ea-first-run__step">{t("expansionAdvisor.onboardStep3")}</li>
-                <li className="ea-first-run__step">{t("expansionAdvisor.onboardStep4")}</li>
-                <li className="ea-first-run__step">{t("expansionAdvisor.onboardStep5")}</li>
-                <li className="ea-first-run__step">{t("expansionAdvisor.onboardStep6")}</li>
+                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep1")}</li>
+                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep2")}</li>
+                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep3")}</li>
+                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep4")}</li>
+                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep5")}</li>
+                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep6")}</li>
               </ol>
             </div>
           )}
@@ -759,7 +842,22 @@ export default function ExpansionAdvisorPage({
       {/* ─── Drawers / dialogs ─── */}
 
       {activeDrawer === "memo" && (
-        <ExpansionMemoPanel memo={memo} loading={loadingMemo} isLeadCandidate={selectedCandidate?.id === leadCandidateId} report={report} onClose={() => setActiveDrawer("none")} />
+        <ExpansionMemoPanel
+          memo={memo}
+          loading={loadingMemo}
+          isLeadCandidate={selectedCandidate?.id === leadCandidateId}
+          report={report}
+          onClose={() => setActiveDrawer("none")}
+          onBackToDetail={() => setActiveDrawer("none")}
+          onBackToCompare={compareResult ? () => setActiveDrawer("compare") : undefined}
+          onOpenCompare={compareShortlistEnabled ? async () => {
+            setCompareIds(shortlistIds.slice(0, 6));
+            await loadCompare(searchId, shortlistIds.slice(0, 6));
+            setActiveDrawer("compare");
+          } : undefined}
+          hasShortlist={shortlistIds.length >= 2}
+          hasCompare={Boolean(compareResult)}
+        />
       )}
 
       {activeDrawer === "compare" && (
@@ -825,14 +923,52 @@ export default function ExpansionAdvisorPage({
                 ui_state_json: buildUiStateJson(selectedCandidate?.id || null, compareIds, leadCandidateId, activeFilter, activeSort, districtFilter, mapViewState, activeDrawer),
               });
               setActiveSavedId(created.id);
+              setActiveSavedStatus(status);
               await refreshSavedStudies();
               setActiveDrawer("none");
-            } catch { setSaveError(t("expansionAdvisor.errorSavedLoad")); } finally { setSaving(false); }
+              showToast("success", t("expansionAdvisor.studySaveSuccess"));
+            } catch { setSaveError(t("expansionAdvisor.saveFailed")); showToast("error", t("expansionAdvisor.saveFailed")); } finally { setSaving(false); }
           }}
         />;
       })()}
 
       {reportError && activeDrawer !== "report" && <div className="ea-state ea-state--error">{reportError}</div>}
+
+      {/* Save toast */}
+      {saveToast && (
+        <div className={`ea-toast ea-toast--${saveToast.type}`} onClick={() => setSaveToast(null)}>
+          {saveToast.message}
+        </div>
+      )}
+
+      {/* Saved studies workspace overlay */}
+      {showSavedWorkspace && (
+        <div className="ea-dialog-backdrop" onClick={() => setShowSavedWorkspace(false)}>
+          <div className="ea-dialog ea-dialog--wide" onClick={(e) => e.stopPropagation()}>
+            <div className="ea-dialog__header">
+              <h3 className="ea-dialog__title">{t("expansionAdvisor.savedStudiesWorkspace")}</h3>
+              <button className="ea-drawer__close" onClick={() => setShowSavedWorkspace(false)}>{t("expansionAdvisor.close")}</button>
+            </div>
+            <div className="ea-dialog__body">
+              <SavedSearchesPanel
+                items={savedItems}
+                loading={loadingSaved}
+                activeSavedId={activeSavedId}
+                onOpen={async (savedId) => {
+                  setLoadingSaved(true);
+                  setSavedLoadError(null);
+                  setShowSavedWorkspace(false);
+                  try { const saved = await getSavedExpansionSearch(savedId); await hydrateSavedStudy(saved); } catch { setSavedLoadError(t("expansionAdvisor.errorSavedLoad")); } finally { setLoadingSaved(false); }
+                }}
+                onDelete={handleDeleteSaved}
+                onRename={handleRenameSaved}
+                onEditDescription={handleEditDescriptionSaved}
+                onChangeStatus={handleChangeStatusSaved}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

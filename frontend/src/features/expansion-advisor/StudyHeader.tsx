@@ -14,6 +14,7 @@ type Props = {
   onSaveStudy: () => void;
   onOpenReport: () => void;
   onCompareShortlist: () => void;
+  onOpenSavedStudies?: () => void;
   compareEnabled: boolean;
 };
 
@@ -28,6 +29,7 @@ export default function StudyHeader({
   onSaveStudy,
   onOpenReport,
   onCompareShortlist,
+  onOpenSavedStudies,
   compareEnabled,
 }: Props) {
   const { t } = useTranslation();
@@ -80,6 +82,15 @@ export default function StudyHeader({
               onClick={onCompareShortlist}
             >
               {t("expansionAdvisor.compareShortlist")}
+            </button>
+          )}
+          {onOpenSavedStudies && (
+            <button
+              type="button"
+              className="oak-btn oak-btn--sm oak-btn--tertiary"
+              onClick={onOpenSavedStudies}
+            >
+              {t("expansionAdvisor.savedStudiesWorkspace")}
             </button>
           )}
         </div>

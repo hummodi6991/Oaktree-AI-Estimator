@@ -60,14 +60,39 @@ export default function ExpansionReportPanel({
 
             return (
               <>
-                {/* Summary narrative */}
-                {(rec.summary || rec.report_summary) && (
-                  <div className="ea-report-hero">
-                    <p className="ea-report-hero__text">
-                      {String(rec.summary || rec.report_summary)}
-                    </p>
+                {/* Executive recommendation hero */}
+                <div className="ea-report-exec-hero">
+                  {(rec.summary || rec.report_summary) && (
+                    <div className="ea-report-hero">
+                      <h4 className="ea-report-hero__label">{t("expansionAdvisor.reportRecommendation")}</h4>
+                      <p className="ea-report-hero__text">
+                        {String(rec.summary || rec.report_summary)}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Key decision callouts in executive grid */}
+                  <div className="ea-report-exec-grid">
+                    {rec.why_best && (
+                      <div className="ea-memo-callout ea-memo-callout--positive">
+                        <span className="ea-memo-callout__label">{t("expansionAdvisor.reportWhyBest")}</span>
+                        <p className="ea-detail__text">{rec.why_best}</p>
+                      </div>
+                    )}
+                    {rec.main_risk && (
+                      <div className="ea-memo-callout ea-memo-callout--risk">
+                        <span className="ea-memo-callout__label">{t("expansionAdvisor.reportMainRisk")}</span>
+                        <p className="ea-detail__text">{rec.main_risk}</p>
+                      </div>
+                    )}
+                    {rec.best_format && (
+                      <div className="ea-memo-callout ea-memo-callout--neutral">
+                        <span className="ea-memo-callout__label">{t("expansionAdvisor.reportBestFormatLabel")}</span>
+                        <p className="ea-detail__text">{rec.best_format}</p>
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
 
                 {/* Best + runner up cards */}
                 <div className="ea-report-section">
@@ -83,46 +108,23 @@ export default function ExpansionReportPanel({
                   </div>
                 </div>
 
-                {/* Reasoning callouts */}
-                <div className="ea-report-section">
-                  {rec.why_best && (
-                    <div className="ea-memo-callout ea-memo-callout--positive">
-                      <span className="ea-memo-callout__label">{t("expansionAdvisor.reportWhyThisSite")}</span>
-                      <p className="ea-detail__text">{rec.why_best}</p>
-                    </div>
-                  )}
-                  {rec.main_risk && (
-                    <div className="ea-memo-callout ea-memo-callout--risk">
-                      <span className="ea-memo-callout__label">{t("expansionAdvisor.reportKeyRisk")}</span>
-                      <p className="ea-detail__text">{rec.main_risk}</p>
-                    </div>
-                  )}
-                  {rec.best_format && (
-                    <div className="ea-memo-callout ea-memo-callout--neutral">
-                      <span className="ea-memo-callout__label">{t("expansionAdvisor.reportBestFormat")}</span>
-                      <p className="ea-detail__text">{rec.best_format}</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Top candidates */}
+                {/* Top candidates with rank/confidence/gate/score breakdown */}
                 {top.length > 0 && (
                   <div className="ea-report-section">
-                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.reportTopPicks")}</h5>
-                    <div style={{ display: "grid", gap: 8 }}>
-                      {top.map((item, index) => (
+                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.reportTopCandidates")}</h5>
+                    <div className="ea-report-top-grid">
+                      {top.slice(0, 3).map((item, index) => (
                         <div
                           key={item.id || index}
-                          className={`ea-candidate ${index === 0 ? "ea-candidate--shortlisted" : ""}`}
+                          className={`ea-report-top-card${index === 0 ? " ea-report-top-card--best" : ""}`}
                           style={{ cursor: item.id ? "pointer" : "default" }}
                           onClick={() => item.id && triggerReportCandidateSelect(item.id, onSelectCandidateId)}
                         >
-                          <div className="ea-candidate__top">
-                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                              {item.rank_position && <span className="ea-candidate__rank">#{item.rank_position}</span>}
-                              <span className="ea-candidate__district">{item.id?.slice(0, 8) || "—"}</span>
-                            </div>
-                            <div className="ea-candidate__badges">
+                          <div className="ea-report-top-card__header">
+                            <span className="ea-report-top-card__rank">
+                              {item.rank_position ? t("expansionAdvisor.reportRankLabel", { rank: item.rank_position }) : `#${index + 1}`}
+                            </span>
+                            <div className="ea-report-top-card__badges">
                               <ScorePill value={item.final_score} />
                               <ConfidenceBadge grade={item.confidence_grade} />
                               {item.gate_verdict && (
@@ -132,6 +134,7 @@ export default function ExpansionReportPanel({
                               )}
                             </div>
                           </div>
+                          {/* Positives and risks */}
                           <div className="ea-candidate__insights">
                             {(item.top_positives_json || []).slice(0, 2).map((text, i) => (
                               <div key={`p-${i}`} className="ea-candidate__insight">
