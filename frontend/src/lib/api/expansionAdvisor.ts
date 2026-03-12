@@ -360,6 +360,17 @@ export function normalizeMemoResponse(data: CandidateMemoResponse): CandidateMem
   };
 }
 
+export function normalizeCompareResponse(data: CompareCandidatesResponse): CompareCandidatesResponse {
+  return {
+    ...data,
+    items: (data.items || []).map((item) => ({
+      ...item,
+      gate_status_json: item.gate_status_json || {},
+    })),
+    summary: data.summary || {},
+  };
+}
+
 async function readJson<T>(res: Response): Promise<T> {
   const text = await res.text();
   return (text ? JSON.parse(text) : {}) as T;
@@ -387,7 +398,7 @@ export async function getExpansionCandidates(searchId: string): Promise<Expansio
   const data = await readJson<ExpansionCandidatesListResponse>(res);
   return { ...data, items: normalizeCandidates(data.items || []), meta: data.meta || {} };
 }
-export async function compareExpansionCandidates(searchId: string, candidateIds: string[]): Promise<CompareCandidatesResponse> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/candidates/compare"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search_id: searchId, candidate_ids: candidateIds }) }); const data = await readJson<CompareCandidatesResponse>(res); return { ...data, items: data.items || [], summary: data.summary || {} }; }
+export async function compareExpansionCandidates(searchId: string, candidateIds: string[]): Promise<CompareCandidatesResponse> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/candidates/compare"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search_id: searchId, candidate_ids: candidateIds }) }); const data = await readJson<CompareCandidatesResponse>(res); return normalizeCompareResponse(data); }
 export async function getExpansionCandidateMemo(candidateId: string): Promise<CandidateMemoResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo`)); const data = await readJson<CandidateMemoResponse>(res); return normalizeMemoResponse(data); }
 export async function getExpansionRecommendationReport(searchId: string): Promise<RecommendationReportResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`)); const data = await readJson<RecommendationReportResponse>(res); return normalizeReportResponse(data); }
 export async function createSavedExpansionSearch(payload: Omit<SavedExpansionSearch, "id">): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/saved-searches"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }

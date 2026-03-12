@@ -19,7 +19,8 @@ import {
   sameCandidateId,
   shouldKeepCompareResult,
 } from "./ExpansionAdvisorPage";
-import { normalizeCandidate, normalizeSavedSearch, normalizeReportResponse, normalizeMemoResponse } from "../../lib/api/expansionAdvisor";
+import { normalizeCandidate, normalizeSavedSearch, normalizeReportResponse, normalizeMemoResponse, normalizeCompareResponse } from "../../lib/api/expansionAdvisor";
+import { validateBrief } from "./ExpansionBriefForm";
 import {
   normalizeBriefPayload,
   filterCandidates,
@@ -2479,5 +2480,268 @@ describe("CandidateDetailPanel enhanced economics", () => {
     const html = renderToStaticMarkup(<CandidateDetailPanel candidate={candidate} />);
     expect(html).toContain("200");
     expect(html).toContain(en.expansionAdvisor.cannibalization);
+  });
+});
+
+/* ─── validateBrief pure function ─── */
+
+describe("validateBrief", () => {
+  it("returns error when brand_name is empty or whitespace", () => {
+    const errors = validateBrief({
+      brand_name: "  ",
+      category: "qsr",
+      service_model: "qsr",
+      min_area_m2: 100,
+      max_area_m2: 500,
+      target_districts: [],
+      existing_branches: [],
+      limit: 25,
+    });
+    expect(errors.brand_name).toBe("validationRequired");
+  });
+
+  it("returns no errors for valid brief", () => {
+    const errors = validateBrief({
+      brand_name: "TestBrand",
+      category: "qsr",
+      service_model: "qsr",
+      min_area_m2: 100,
+      max_area_m2: 500,
+      target_districts: [],
+      existing_branches: [],
+      limit: 25,
+    });
+    expect(Object.keys(errors)).toHaveLength(0);
+  });
+
+  it("returns area_range error when min > max", () => {
+    const errors = validateBrief({
+      brand_name: "TestBrand",
+      category: "qsr",
+      service_model: "qsr",
+      min_area_m2: 600,
+      max_area_m2: 200,
+      target_districts: [],
+      existing_branches: [],
+      limit: 25,
+    });
+    expect(errors.area_range).toBe("validationAreaRange");
+  });
+
+  it("returns branch lat error for out-of-range latitude", () => {
+    const errors = validateBrief({
+      brand_name: "TestBrand",
+      category: "qsr",
+      service_model: "qsr",
+      min_area_m2: 100,
+      max_area_m2: 500,
+      target_districts: [],
+      existing_branches: [{ lat: 100, lon: 46.7 }],
+      limit: 25,
+    });
+    expect(errors.branches).toBeDefined();
+    expect(errors.branches![0]).toBe("validationLatRange");
+  });
+
+  it("returns branch lon error for out-of-range longitude", () => {
+    const errors = validateBrief({
+      brand_name: "TestBrand",
+      category: "qsr",
+      service_model: "qsr",
+      min_area_m2: 100,
+      max_area_m2: 500,
+      target_districts: [],
+      existing_branches: [{ lat: 24.7, lon: 200 }],
+      limit: 25,
+    });
+    expect(errors.branches).toBeDefined();
+    expect(errors.branches![0]).toBe("validationLonRange");
+  });
+
+  it("skips branch validation for default 0,0 coordinates", () => {
+    const errors = validateBrief({
+      brand_name: "TestBrand",
+      category: "qsr",
+      service_model: "qsr",
+      min_area_m2: 100,
+      max_area_m2: 500,
+      target_districts: [],
+      existing_branches: [{ lat: 0, lon: 0 }],
+      limit: 25,
+    });
+    expect(errors.branches).toBeUndefined();
+  });
+});
+
+/* ─── normalizeCompareResponse ─── */
+
+describe("normalizeCompareResponse", () => {
+  it("fills default items and summary when missing", () => {
+    const result = normalizeCompareResponse({} as Parameters<typeof normalizeCompareResponse>[0]);
+    expect(result.items).toEqual([]);
+    expect(result.summary).toEqual({});
+  });
+
+  it("ensures gate_status_json defaults on each item", () => {
+    const result = normalizeCompareResponse({
+      items: [{ candidate_id: "c1", final_score: 80 }],
+      summary: { best_overall_candidate_id: "c1" },
+    } as Parameters<typeof normalizeCompareResponse>[0]);
+    expect(result.items[0].gate_status_json).toEqual({});
+  });
+
+  it("preserves existing gate_status_json when present", () => {
+    const result = normalizeCompareResponse({
+      items: [{ candidate_id: "c1", final_score: 80, gate_status_json: { overall_pass: true } }],
+      summary: {},
+    } as Parameters<typeof normalizeCompareResponse>[0]);
+    expect(result.items[0].gate_status_json.overall_pass).toBe(true);
+  });
+});
+
+/* ─── Sorting candidates by rank_position then final_score ─── */
+
+describe("sortCandidates rank stability", () => {
+  it("sorts by rank_position ascending with null ranks last", () => {
+    const candidates = [
+      makeCandidate({ id: "c3", rank_position: undefined, final_score: 90 }),
+      makeCandidate({ id: "c1", rank_position: 1, final_score: 85 }),
+      makeCandidate({ id: "c2", rank_position: 2, final_score: 80 }),
+    ];
+    const sorted = sortCandidates(candidates, "rank");
+    expect(sorted[0].id).toBe("c1");
+    expect(sorted[1].id).toBe("c2");
+    expect(sorted[2].id).toBe("c3");
+  });
+
+  it("sorts by economics descending with null scores at bottom", () => {
+    const candidates = [
+      makeCandidate({ id: "c1", economics_score: 60 }),
+      makeCandidate({ id: "c2", economics_score: 90 }),
+      makeCandidate({ id: "c3", economics_score: undefined }),
+    ];
+    const sorted = sortCandidates(candidates, "economics");
+    expect(sorted[0].id).toBe("c2");
+    expect(sorted[1].id).toBe("c1");
+    expect(sorted[2].id).toBe("c3");
+  });
+});
+
+/* ─── Report panel dimension winners ─── */
+
+describe("Report panel dimension winners rendering", () => {
+  it("renders dimension winner badges when recommendation has multiple winner IDs", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        report={{
+          meta: {},
+          recommendation: {
+            summary: "Test summary",
+            best_candidate_id: "c1",
+            highest_demand_candidate_id: "c2",
+            best_economics_candidate_id: "c1",
+            best_brand_fit_candidate_id: "c3",
+            strongest_whitespace_candidate_id: "c2",
+            fastest_payback_candidate_id: "c1",
+            most_confident_candidate_id: "c3",
+            best_pass_candidate_id: "c1",
+          },
+          top_candidates: [],
+          assumptions: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    expect(html).toContain("ea-compare-highlights");
+    expect(html).toContain("ea-compare-highlight");
+    expect(html).toContain("ea-badge--green");
+  });
+
+  it("renders report_summary when it differs from summary", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        report={{
+          meta: {},
+          recommendation: {
+            summary: "Short executive summary.",
+            report_summary: "A longer detailed report summary with more info.",
+          },
+          top_candidates: [],
+          assumptions: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    expect(html).toContain("Short executive summary.");
+    expect(html).toContain("A longer detailed report summary with more info.");
+  });
+
+  it("does not render dimension winners section with fewer than 2 winners", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        report={{
+          meta: {},
+          recommendation: { summary: "Test", best_candidate_id: "c1" },
+          top_candidates: [],
+          assumptions: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    const highlightCount = (html.match(/ea-compare-highlights/g) || []).length;
+    expect(highlightCount).toBe(0);
+  });
+});
+
+/* ─── Memo panel structured sections ─── */
+
+describe("Memo panel structured score breakdown and feature snapshot", () => {
+  it("renders memo with score breakdown data without crashing", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={{
+          recommendation: { headline: "Go", verdict: "go" },
+          candidate: {
+            final_score: 80,
+            score_breakdown: {
+              final_score: 80,
+              weights: { economics: 0.3, brand_fit: 0.25 },
+              inputs: { economics: 85, brand_fit: 70 },
+              weighted_components: { economics: 25.5, brand_fit: 17.5 },
+            },
+          },
+          market_research: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    expect(html).toContain("ea-drawer");
+    expect(html).toContain("Go");
+  });
+
+  it("renders memo with feature snapshot data without crashing", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={{
+          recommendation: { headline: "Caution" },
+          candidate: {
+            feature_snapshot: {
+              data_completeness_score: 72,
+              context_sources: { google_places: {}, osm: {} },
+              missing_context: ["delivery_platforms", "traffic_data"],
+            },
+          },
+          market_research: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    expect(html).toContain("ea-drawer");
+    expect(html).toContain("Caution");
   });
 });

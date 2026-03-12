@@ -94,6 +94,14 @@ export default function ExpansionReportPanel({
                   </div>
                 </div>
 
+                {/* Detailed report summary if separate from summary */}
+                {rec.report_summary && rec.summary && rec.report_summary !== rec.summary && (
+                  <div className="ea-report-section">
+                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.reportDetailedSummary")}</h5>
+                    <p className="ea-detail__text">{rec.report_summary}</p>
+                  </div>
+                )}
+
                 {/* Best + runner up cards */}
                 <div className="ea-report-section">
                   <div className="ea-report-picks">
@@ -107,6 +115,39 @@ export default function ExpansionReportPanel({
                     </div>
                   </div>
                 </div>
+
+                {/* Dimension winners */}
+                {(() => {
+                  const dimensionWinners: Array<{ label: string; id: string | undefined | null }> = [
+                    { label: t("expansionAdvisor.compareWinnerBestOverall"), id: rec.best_candidate_id },
+                    { label: t("expansionAdvisor.compareWinnerHighestDemand"), id: rec.highest_demand_candidate_id },
+                    { label: t("expansionAdvisor.compareWinnerBestEconomics"), id: rec.best_economics_candidate_id },
+                    { label: t("expansionAdvisor.compareWinnerBestBrandFit"), id: rec.best_brand_fit_candidate_id },
+                    { label: t("expansionAdvisor.compareWinnerStrongestWhitespace"), id: rec.strongest_whitespace_candidate_id },
+                    { label: t("expansionAdvisor.compareWinnerFastestPayback"), id: rec.fastest_payback_candidate_id },
+                    { label: t("expansionAdvisor.compareWinnerMostConfident"), id: rec.most_confident_candidate_id },
+                    { label: t("expansionAdvisor.compareWinnerBestGatePass"), id: rec.best_pass_candidate_id },
+                  ].filter((d) => d.id);
+                  if (dimensionWinners.length < 2) return null;
+                  return (
+                    <div className="ea-report-section">
+                      <h5 className="ea-detail__section-title">{t("expansionAdvisor.reportDimensionWinners")}</h5>
+                      <div className="ea-compare-highlights">
+                        {dimensionWinners.map((d) => (
+                          <span
+                            key={d.label}
+                            className="ea-compare-highlight"
+                            style={{ cursor: d.id ? "pointer" : "default" }}
+                            onClick={() => d.id && onSelectCandidateId?.(d.id)}
+                          >
+                            <span className="ea-compare-highlight__dim">{d.label}</span>
+                            <span className="ea-badge ea-badge--green">{d.id?.slice(0, 8)}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Top candidates with rank/confidence/gate/score breakdown */}
                 {top.length > 0 && (
