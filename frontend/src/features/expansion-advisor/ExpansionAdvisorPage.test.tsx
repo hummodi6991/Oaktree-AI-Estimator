@@ -3098,3 +3098,212 @@ describe("Existing branches rendering", () => {
     expect(html).toContain(longDistrict);
   });
 });
+
+/* ─── Regression: Expansion Advisor search payload normalization ─── */
+
+describe("Expansion Advisor payload normalization regression", () => {
+  it("normalizes service_model display labels to backend enum values", () => {
+    const variants: [string, string][] = [
+      ["QSR", "qsr"],
+      ["qsr", "qsr"],
+      ["Dine In", "dine_in"],
+      ["dine_in", "dine_in"],
+      ["Delivery First", "delivery_first"],
+      ["delivery_first", "delivery_first"],
+      ["CAFE", "cafe"],
+      ["café", "cafe"],
+    ];
+    for (const [input, expected] of variants) {
+      const result = normalizeBriefPayload({
+        ...defaultBrief,
+        brand_name: "Test",
+        service_model: input as any,
+      });
+      expect(result.service_model).toBe(expected);
+    }
+  });
+
+  it("falls back to 'qsr' for unknown service_model values", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      service_model: "unknown_model" as any,
+    });
+    expect(result.service_model).toBe("qsr");
+  });
+
+  it("normalizes price_tier display labels to backend enum values", () => {
+    for (const tier of ["Value", "MID", "Premium"]) {
+      const result = normalizeBriefPayload({
+        ...defaultBrief,
+        brand_name: "Test",
+        brand_profile: { price_tier: tier as any },
+      });
+      expect(result.brand_profile?.price_tier).toBe(tier.toLowerCase());
+    }
+  });
+
+  it("nullifies unknown price_tier values", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      brand_profile: { price_tier: "expensive" as any },
+    });
+    expect(result.brand_profile?.price_tier).toBeNull();
+  });
+
+  it("normalizes primary_channel and expansion_goal enums", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      brand_profile: {
+        primary_channel: "Dine In" as any,
+        expansion_goal: "Delivery Led" as any,
+      },
+    });
+    expect(result.brand_profile?.primary_channel).toBe("dine_in");
+    expect(result.brand_profile?.expansion_goal).toBe("delivery_led");
+  });
+
+  it("coerces existing branch empty name/district to undefined (not empty string)", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      existing_branches: [
+        { name: "", lat: 24.7, lon: 46.7, district: "" },
+        { name: "HQ", lat: 24.8, lon: 46.8, district: "Olaya" },
+        { name: "  ", lat: 24.9, lon: 46.9, district: "  " },
+      ],
+    });
+    expect(result.existing_branches).toHaveLength(3);
+    // First branch: empty strings become undefined
+    expect(result.existing_branches[0].name).toBeUndefined();
+    expect(result.existing_branches[0].district).toBeUndefined();
+    // Second branch: valid strings preserved
+    expect(result.existing_branches[1].name).toBe("HQ");
+    expect(result.existing_branches[1].district).toBe("Olaya");
+    // Third branch: whitespace-only strings become undefined
+    expect(result.existing_branches[2].name).toBeUndefined();
+    expect(result.existing_branches[2].district).toBeUndefined();
+  });
+
+  it("coerces branch lat/lon to numbers", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      existing_branches: [
+        { name: "A", lat: "24.7" as any, lon: "46.7" as any },
+      ],
+    });
+    expect(result.existing_branches[0].lat).toBe(24.7);
+    expect(result.existing_branches[0].lon).toBe(46.7);
+    expect(typeof result.existing_branches[0].lat).toBe("number");
+    expect(typeof result.existing_branches[0].lon).toBe("number");
+  });
+
+  it("filters out branches with NaN lat/lon", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      existing_branches: [
+        { name: "Bad", lat: NaN, lon: 46.7 },
+        { name: "OK", lat: 24.7, lon: 46.7 },
+      ],
+    });
+    expect(result.existing_branches).toHaveLength(1);
+    expect(result.existing_branches[0].name).toBe("OK");
+  });
+
+  it("falls back category to service_model when empty", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      category: "",
+      service_model: "cafe",
+    });
+    expect(result.category).toBe("cafe");
+  });
+
+  it("falls back category to service_model when whitespace-only", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      category: "   ",
+      service_model: "dine_in",
+    });
+    expect(result.category).toBe("dine_in");
+  });
+
+  it("generates a valid payload with no parcel-selection dependency", () => {
+    // This test confirms that Expansion Advisor submit does NOT depend on
+    // any map/parcel selection state from Development Feasibility mode.
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Al Baik",
+      category: "Burgers",
+    });
+    expect(result.brand_name).toBe("Al Baik");
+    expect(result.category).toBe("Burgers");
+    expect(result.service_model).toBe("qsr");
+    expect(result.existing_branches).toEqual([]);
+    expect(result.target_districts).toEqual([]);
+    expect(result.limit).toBe(25);
+    // Payload has no parcel_ids, geometry, or bbox fields
+    expect((result as any).parcel_ids).toBeUndefined();
+    expect((result as any).geometry).toBeUndefined();
+  });
+
+  it("produces a complete valid payload from default brief", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test Brand",
+    });
+    // All required fields present and valid
+    expect(result.brand_name).toBe("Test Brand");
+    expect(result.category.length).toBeGreaterThan(0);
+    expect(["qsr", "dine_in", "delivery_first", "cafe"]).toContain(result.service_model);
+    expect(result.min_area_m2).toBeGreaterThanOrEqual(0);
+    expect(result.max_area_m2).toBeGreaterThanOrEqual(0);
+    expect(result.limit).toBeGreaterThanOrEqual(1);
+    expect(result.limit).toBeLessThanOrEqual(100);
+    // Brand profile enums are all valid
+    const bp = result.brand_profile!;
+    if (bp.price_tier) expect(["value", "mid", "premium"]).toContain(bp.price_tier);
+    if (bp.primary_channel) expect(["dine_in", "delivery", "balanced"]).toContain(bp.primary_channel);
+    if (bp.expansion_goal) expect(["flagship", "neighborhood", "delivery_led", "balanced"]).toContain(bp.expansion_goal);
+    if (bp.parking_sensitivity) expect(["low", "medium", "high"]).toContain(bp.parking_sensitivity);
+    if (bp.frontage_sensitivity) expect(["low", "medium", "high"]).toContain(bp.frontage_sensitivity);
+    if (bp.visibility_sensitivity) expect(["low", "medium", "high"]).toContain(bp.visibility_sensitivity);
+  });
+
+  it("JSON.stringify of normalized payload omits undefined branch fields", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      existing_branches: [
+        { name: "", lat: 24.7, lon: 46.7, district: "" },
+      ],
+    });
+    const json = JSON.parse(JSON.stringify(result));
+    // name and district should be absent from serialized JSON (not empty strings)
+    expect(json.existing_branches[0]).not.toHaveProperty("name");
+    expect(json.existing_branches[0]).not.toHaveProperty("district");
+    expect(json.existing_branches[0].lat).toBe(24.7);
+    expect(json.existing_branches[0].lon).toBe(46.7);
+  });
+
+  it("normalizes sensitivity fields to valid enum values", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      brand_profile: {
+        parking_sensitivity: "HIGH" as any,
+        frontage_sensitivity: "Low" as any,
+        visibility_sensitivity: "MEDIUM" as any,
+      },
+    });
+    expect(result.brand_profile?.parking_sensitivity).toBe("high");
+    expect(result.brand_profile?.frontage_sensitivity).toBe("low");
+    expect(result.brand_profile?.visibility_sensitivity).toBe("medium");
+  });
+});

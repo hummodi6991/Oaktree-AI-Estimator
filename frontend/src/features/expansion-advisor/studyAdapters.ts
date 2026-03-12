@@ -19,18 +19,75 @@ import { defaultBrief } from "./ExpansionBriefForm";
 
 /* ─── Brief payload normalization ─── */
 
+/* Enum lookup maps — map display-labels and case variants to valid backend values */
+const SERVICE_MODEL_MAP: Record<string, ExpansionBrief["service_model"]> = {
+  qsr: "qsr",
+  "quick service": "qsr",
+  dine_in: "dine_in",
+  "dine in": "dine_in",
+  dinein: "dine_in",
+  delivery_first: "delivery_first",
+  "delivery first": "delivery_first",
+  deliveryfirst: "delivery_first",
+  cafe: "cafe",
+  café: "cafe",
+};
+
+const PRICE_TIER_MAP: Record<string, NonNullable<ExpansionBrief["brand_profile"]>["price_tier"]> = {
+  value: "value",
+  mid: "mid",
+  premium: "premium",
+};
+
+const PRIMARY_CHANNEL_MAP: Record<string, "dine_in" | "delivery" | "balanced"> = {
+  dine_in: "dine_in",
+  "dine in": "dine_in",
+  dinein: "dine_in",
+  delivery: "delivery",
+  balanced: "balanced",
+};
+
+const EXPANSION_GOAL_MAP: Record<string, "flagship" | "neighborhood" | "delivery_led" | "balanced"> = {
+  flagship: "flagship",
+  neighborhood: "neighborhood",
+  delivery_led: "delivery_led",
+  "delivery led": "delivery_led",
+  balanced: "balanced",
+};
+
+const SENSITIVITY_MAP: Record<string, "low" | "medium" | "high"> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+};
+
+function normalizeEnum<T>(value: unknown, map: Record<string, T>): T | null {
+  if (value == null || value === "") return null;
+  const key = String(value).toLowerCase().trim();
+  return map[key] ?? null;
+}
+
+/** Coerce empty/whitespace-only strings to undefined so JSON.stringify omits them */
+function emptyToUndefined(v: string | undefined | null): string | undefined {
+  if (v == null) return undefined;
+  const trimmed = v.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 /** Strip blank strings and zero-valued optional fields before submit */
 export function normalizeBriefPayload(raw: ExpansionBrief): ExpansionBrief {
   const profile = raw.brand_profile ? { ...raw.brand_profile } : {};
 
-  // Coerce empty strings to null for optional profile fields
-  if (!profile.price_tier) profile.price_tier = null;
-  if (!profile.primary_channel) profile.primary_channel = null;
-  if (!profile.target_customer) profile.target_customer = null;
-  if (!profile.expansion_goal) profile.expansion_goal = null;
-  if (!profile.parking_sensitivity) profile.parking_sensitivity = null;
-  if (!profile.frontage_sensitivity) profile.frontage_sensitivity = null;
-  if (!profile.visibility_sensitivity) profile.visibility_sensitivity = null;
+  // Normalize enum profile fields to valid backend Literal values
+  profile.price_tier = normalizeEnum(profile.price_tier, PRICE_TIER_MAP);
+  profile.primary_channel = normalizeEnum(profile.primary_channel, PRIMARY_CHANNEL_MAP);
+  profile.expansion_goal = normalizeEnum(profile.expansion_goal, EXPANSION_GOAL_MAP);
+  profile.parking_sensitivity = normalizeEnum(profile.parking_sensitivity, SENSITIVITY_MAP);
+  profile.frontage_sensitivity = normalizeEnum(profile.frontage_sensitivity, SENSITIVITY_MAP);
+  profile.visibility_sensitivity = normalizeEnum(profile.visibility_sensitivity, SENSITIVITY_MAP);
+
+  // Coerce empty strings to null for free-text optional profile fields
+  if (!profile.target_customer || !profile.target_customer.trim()) profile.target_customer = null;
 
   // Clean district arrays
   if (profile.preferred_districts?.length === 0) profile.preferred_districts = null;
@@ -43,10 +100,26 @@ export function normalizeBriefPayload(raw: ExpansionBrief): ExpansionBrief {
   // Clean target_area_m2
   const target_area_m2 = raw.target_area_m2 && raw.target_area_m2 > 0 ? raw.target_area_m2 : null;
 
-  // Filter empty branches
-  const existing_branches = (raw.existing_branches || []).filter(
-    (b) => Number.isFinite(b.lat) && Number.isFinite(b.lon) && (b.lat !== 0 || b.lon !== 0),
-  );
+  // Normalize service_model — map display labels/case variants to backend enum
+  const service_model: ExpansionBrief["service_model"] =
+    normalizeEnum(raw.service_model, SERVICE_MODEL_MAP) ?? "qsr";
+
+  // Ensure category is non-empty (backend requires min_length=1)
+  const category = (raw.category || "").trim() || service_model;
+
+  // Coerce lat/lon to numbers first, then filter invalid/zero entries,
+  // then clean name/district (backend ExistingBranchInput has min_length=1; empty strings → 422)
+  const existing_branches = (raw.existing_branches || [])
+    .map((b) => ({
+      ...b,
+      lat: Number(b.lat),
+      lon: Number(b.lon),
+      name: emptyToUndefined(b.name),
+      district: emptyToUndefined(b.district),
+    }))
+    .filter(
+      (b) => Number.isFinite(b.lat) && Number.isFinite(b.lon) && (b.lat !== 0 || b.lon !== 0),
+    );
 
   // Clean target_districts
   const target_districts = (raw.target_districts || []).filter((d) => d && d.trim());
@@ -54,7 +127,8 @@ export function normalizeBriefPayload(raw: ExpansionBrief): ExpansionBrief {
   return {
     ...raw,
     brand_name: (raw.brand_name || "").trim(),
-    category: (raw.category || "").trim(),
+    category,
+    service_model,
     target_area_m2,
     target_districts,
     existing_branches,

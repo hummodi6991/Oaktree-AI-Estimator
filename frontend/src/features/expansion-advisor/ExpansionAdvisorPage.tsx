@@ -352,7 +352,11 @@ export default function ExpansionAdvisorPage({
       setSearchMeta(result.meta || {});
       void loadReport(result.search_id);
       void trackEvent("ui_expansion_search_completed", { meta: { search_id: result.search_id, count: (result.items || []).length } });
-    } catch { setSearchError(t("expansionAdvisor.errorSearch")); } finally { setLoadingSearch(false); }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error("[ExpansionAdvisor] search failed:", detail);
+      setSearchError(`${t("expansionAdvisor.errorSearch")} — ${detail}`);
+    } finally { setLoadingSearch(false); }
   };
 
   const hydrateSavedStudy = async (saved: SavedExpansionSearch) => {
