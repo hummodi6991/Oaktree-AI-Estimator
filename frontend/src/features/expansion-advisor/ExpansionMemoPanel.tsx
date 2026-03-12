@@ -50,7 +50,7 @@ export default function ExpansionMemoPanel({
             const rec = memo.recommendation || {};
             const mr = memo.market_research || {};
             const cand = memo.candidate || {};
-            const gates = (cand.gate_status || {}) as Record<string, boolean>;
+            const gates = (cand.gate_status || {}) as Record<string, boolean | null | undefined>;
             const gateReasons = cand.gate_reasons;
             const snapshot = cand.feature_snapshot;
             const breakdown = cand.score_breakdown_json;
@@ -142,7 +142,7 @@ export default function ExpansionMemoPanel({
                 <div className="ea-report-section">
                   <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoGateAudit")}</h5>
                   {rec.gate_verdict && <p className="ea-detail__text" style={{ fontStyle: "italic" }}>{rec.gate_verdict}</p>}
-                  <GateSummary gates={gates} />
+                  <GateSummary gates={gates} unknownGates={toList(gateReasons?.unknown)} />
                   {gateReasons && (
                     <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 6, display: "grid", gap: 4 }}>
                       {toList(gateReasons.passed).length > 0 && <div><span className="ea-badge ea-badge--green">{t("expansionAdvisor.gatesPassed")}</span> {toList(gateReasons.passed).join(", ")}</div>}

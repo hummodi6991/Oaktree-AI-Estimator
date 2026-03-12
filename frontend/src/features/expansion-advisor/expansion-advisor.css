@@ -2074,3 +2074,104 @@
 .ea-layout--final .ea-card__header {
   opacity: 0.85;
 }
+
+/* ─ Top-3 candidate highlight ─ */
+.ea-candidate--top3 {
+  border-inline-start: 3px solid var(--oak-primary, #14312c);
+}
+
+.ea-candidate--top3 .ea-candidate__rank {
+  background: linear-gradient(135deg, #14312c, #1e5245);
+  box-shadow: 0 1px 3px rgba(20, 49, 44, 0.3);
+}
+
+/* ─ Score breakdown compact card ─ */
+.ea-score-breakdown-compact {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.ea-score-breakdown-compact__title {
+  margin: 0 0 4px;
+  font-size: var(--oak-fs-sm, 13px);
+  font-weight: var(--oak-fw-semibold, 600);
+  color: var(--oak-text-dark, #171717);
+}
+
+.ea-score-breakdown-compact__row {
+  display: grid;
+  grid-template-columns: 110px 1fr 36px 40px;
+  gap: 6px;
+  align-items: center;
+  font-size: var(--oak-fs-xs, 12px);
+}
+
+.ea-score-breakdown-compact__label {
+  text-transform: capitalize;
+  color: var(--oak-text-gray, #4c4c4c);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ea-score-breakdown-compact__bar-wrap {
+  height: 6px;
+  background: #f3f4f6;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.ea-score-breakdown-compact__bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.ea-score-breakdown-compact__bar--green { background: #16a34a; }
+.ea-score-breakdown-compact__bar--amber { background: #f59e0b; }
+.ea-score-breakdown-compact__bar--red { background: #d4183d; }
+.ea-score-breakdown-compact__bar--neutral { background: #9ca3af; }
+
+.ea-score-breakdown-compact__value {
+  text-align: end;
+  font-weight: var(--oak-fw-semibold, 600);
+  color: var(--oak-text-dark, #171717);
+  font-variant-numeric: tabular-nums;
+}
+
+.ea-score-breakdown-compact__weight {
+  text-align: end;
+  color: var(--oak-text-light, #828282);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─ Skeleton loading ─ */
+.ea-skeleton {
+  background: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+  background-size: 200% 100%;
+  animation: ea-skeleton-shimmer 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+@keyframes ea-skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.ea-skeleton--text {
+  height: 14px;
+  width: 80%;
+}
+
+.ea-skeleton--card {
+  height: 100px;
+  border-radius: var(--oak-radius, 8px);
+}
+
+.ea-skeleton--badge {
+  height: 22px;
+  width: 48px;
+  border-radius: 6px;
+  display: inline-block;
+}

@@ -58,6 +58,7 @@ import ValidationPlanPanel from "./ValidationPlanPanel";
 import AssumptionsCard from "./AssumptionsCard";
 import DecisionSnapshotCard from "./DecisionSnapshotCard";
 import CompareOutcomeBanner from "./CompareOutcomeBanner";
+import { CandidateListSkeleton, DetailSkeleton } from "./SkeletonLoaders";
 import "./expansion-advisor.css";
 
 /* ─── Pure helpers (exported for tests) ─── */
@@ -669,16 +670,18 @@ export default function ExpansionAdvisorPage({
               onToggleCompare={(candidateId) => setCompareIds((cur) => getNextCompareIds(cur, candidateId))}
               onOpenMemo={(candidateId) => void handleOpenMemoById(candidateId)}
             />
+          ) : loadingSearch ? (
+            <CandidateListSkeleton count={5} />
           ) : (
             <div className="ea-state">
-              {loadingSearch ? t("expansionAdvisor.searchingCta") : t("expansionAdvisor.noResults")}
+              {t("expansionAdvisor.noResults")}
             </div>
           )}
 
           {/* Selected candidate detail */}
           <div ref={detailRef} />
           {memoError && <div className="ea-state ea-state--error">{memoError}</div>}
-          {loadingMemo && <div className="ea-state ea-state--loading">{t("expansionAdvisor.loadingMemo")}</div>}
+          {loadingMemo && <DetailSkeleton />}
           {selectedCandidate && !loadingMemo && (
             <div className="ea-card">
               <div className="ea-card__header">
