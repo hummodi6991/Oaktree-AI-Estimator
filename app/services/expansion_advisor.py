@@ -1273,10 +1273,10 @@ def run_expansion_search(
             FROM {ARCGIS_PARCELS_TABLE} p
             WHERE p.geom IS NOT NULL
               AND p.area_m2 BETWEEN :min_area_m2 AND :max_area_m2
-              AND (:min_lon IS NULL OR ST_X(ST_Centroid(p.geom)) >= :min_lon)
-              AND (:max_lon IS NULL OR ST_X(ST_Centroid(p.geom)) <= :max_lon)
-              AND (:min_lat IS NULL OR ST_Y(ST_Centroid(p.geom)) >= :min_lat)
-              AND (:max_lat IS NULL OR ST_Y(ST_Centroid(p.geom)) <= :max_lat)
+              AND (CAST(:min_lon AS double precision) IS NULL OR ST_X(ST_Centroid(p.geom)) >= CAST(:min_lon AS double precision))
+              AND (CAST(:max_lon AS double precision) IS NULL OR ST_X(ST_Centroid(p.geom)) <= CAST(:max_lon AS double precision))
+              AND (CAST(:min_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) >= CAST(:min_lat AS double precision))
+              AND (CAST(:max_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) <= CAST(:max_lat AS double precision))
             ORDER BY p.area_m2 DESC
             LIMIT 600
         )
