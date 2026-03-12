@@ -2233,7 +2233,7 @@ describe("normalizeReportResponse", () => {
     expect(result.top_candidates[0].top_positives_json).toEqual([]);
     expect(result.top_candidates[0].top_risks_json).toEqual([]);
     expect(result.top_candidates[0].score_breakdown_json).toBeDefined();
-    expect(result.top_candidates[0].score_breakdown_json.weights).toEqual({});
+    expect(result.top_candidates[0].score_breakdown_json?.weights ?? {}).toEqual({});
   });
 
   it("preserves existing data when already present", () => {
@@ -2270,9 +2270,9 @@ describe("normalizeMemoResponse", () => {
     expect(result.candidate.comparable_competitors).toEqual([]);
     expect(result.candidate.gate_status).toEqual({});
     expect(result.candidate.gate_reasons).toBeDefined();
-    expect(result.candidate.gate_reasons.passed).toEqual([]);
+    expect(result.candidate.gate_reasons?.passed ?? []).toEqual([]);
     expect(result.candidate.feature_snapshot).toBeDefined();
-    expect(result.candidate.feature_snapshot.missing_context).toEqual([]);
+    expect(result.candidate.feature_snapshot?.missing_context ?? []).toEqual([]);
   });
 
   it("preserves existing candidate fields", () => {
@@ -2287,7 +2287,7 @@ describe("normalizeMemoResponse", () => {
     } as Parameters<typeof normalizeMemoResponse>[0];
     const result = normalizeMemoResponse(raw);
     expect(result.candidate.top_positives_json).toEqual(["Low rent"]);
-    expect(result.candidate.gate_status.overall_pass).toBe(true);
+    expect(result.candidate.gate_status?.overall_pass).toBe(true);
     expect(result.recommendation.headline).toBe("Go");
   });
 });
