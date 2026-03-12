@@ -2175,3 +2175,62 @@
   border-radius: 6px;
   display: inline-block;
 }
+
+/* ─── First-run onboarding ─── */
+
+.ea-first-run {
+  background: var(--oak-bg-surface, #fff);
+  border: 1px solid var(--oak-outlines, #d7d7d7);
+  border-radius: var(--oak-radius, 8px);
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.ea-first-run__hero {
+  margin-bottom: 24px;
+}
+
+.ea-first-run__title {
+  font-size: var(--oak-fs-xl, 20px);
+  font-weight: var(--oak-fw-semibold, 600);
+  color: var(--oak-text-dark, #171717);
+  margin: 0 0 8px;
+}
+
+.ea-first-run__subtitle {
+  font-size: var(--oak-fs-base, 15px);
+  color: var(--oak-text-light, #828282);
+  margin: 0;
+}
+
+.ea-first-run__steps {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+  text-align: start;
+  max-width: 480px;
+  margin-inline: auto;
+  counter-reset: onboard;
+}
+
+.ea-first-run__step {
+  counter-increment: onboard;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--oak-fs-sm, 14px);
+  color: var(--oak-text-dark, #171717);
+  padding: 8px 12px;
+  background: var(--oak-secondary, #fffbea);
+  border-radius: var(--oak-radius, 8px);
+  line-height: 1.45;
+}
+
+.ea-first-run__step::before {
+  content: counter(onboard) ".";
+  font-weight: var(--oak-fw-semibold, 600);
+  color: var(--oak-brand, #b08d57);
+  min-width: 18px;
+}

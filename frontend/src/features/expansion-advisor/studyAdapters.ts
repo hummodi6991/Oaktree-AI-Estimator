@@ -316,6 +316,13 @@ export function restoreSortFilter(
   return { activeFilter: f, activeSort: s, districtFilter: d };
 }
 
+export type MapViewState = {
+  center?: [number, number] | null;
+  zoom?: number | null;
+};
+
+export type DrawerKey = "none" | "memo" | "compare" | "report" | "save";
+
 export function buildUiStateJson(
   selectedCandidateId: string | null,
   compareIds: string[],
@@ -323,6 +330,8 @@ export function buildUiStateJson(
   activeFilter: FilterKey,
   activeSort: SortKey,
   districtFilter: string,
+  mapView?: MapViewState | null,
+  activeDrawer?: DrawerKey,
 ): Record<string, unknown> {
   return {
     selected_candidate_id: selectedCandidateId,
@@ -331,7 +340,32 @@ export function buildUiStateJson(
     active_filter: activeFilter,
     active_sort: activeSort,
     district_filter: districtFilter,
+    map_center: mapView?.center ?? null,
+    map_zoom: mapView?.zoom ?? null,
+    active_drawer: activeDrawer ?? "none",
   };
+}
+
+export function restoreMapViewState(
+  uiState: Record<string, unknown> | null | undefined,
+): MapViewState {
+  const raw = (uiState || {}) as Record<string, unknown>;
+  const center = Array.isArray(raw.map_center) && raw.map_center.length === 2
+    ? [Number(raw.map_center[0]), Number(raw.map_center[1])] as [number, number]
+    : null;
+  const zoom = typeof raw.map_zoom === "number" ? raw.map_zoom : null;
+  return { center, zoom };
+}
+
+export function restoreDrawerState(
+  uiState: Record<string, unknown> | null | undefined,
+): DrawerKey {
+  const raw = (uiState || {}) as Record<string, unknown>;
+  const validDrawers: DrawerKey[] = ["none", "memo", "compare", "report", "save"];
+  const d = typeof raw.active_drawer === "string" && validDrawers.includes(raw.active_drawer as DrawerKey)
+    ? (raw.active_drawer as DrawerKey)
+    : "none";
+  return d;
 }
 
 /* ─── Finalist workspace view models ─── */

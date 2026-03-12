@@ -36,6 +36,8 @@ import {
   restoreLeadCandidateId,
   restoreSortFilter,
   buildUiStateJson,
+  restoreMapViewState,
+  restoreDrawerState,
   buildFinalistTiles,
   deriveDecisionChecklist,
   buildCopySummary,
@@ -1509,5 +1511,251 @@ describe("Skeleton loaders", () => {
     const html = renderToStaticMarkup(<DetailSkeleton />);
     expect(html).toContain("ea-skeleton--text");
     expect(html).toContain("ea-skeleton--badge");
+  });
+});
+
+/* ─── Map state + drawer persistence ─── */
+
+describe("Map view state persistence", () => {
+  it("buildUiStateJson includes map center, zoom, and drawer", () => {
+    const ui = buildUiStateJson(
+      "c1",
+      ["c1", "c2"],
+      "c1",
+      "all",
+      "rank",
+      "",
+      { center: [46.7, 24.7], zoom: 15 },
+      "report",
+    );
+    expect(ui.map_center).toEqual([46.7, 24.7]);
+    expect(ui.map_zoom).toBe(15);
+    expect(ui.active_drawer).toBe("report");
+  });
+
+  it("buildUiStateJson defaults map and drawer when omitted", () => {
+    const ui = buildUiStateJson("c1", [], null, "all", "rank", "");
+    expect(ui.map_center).toBeNull();
+    expect(ui.map_zoom).toBeNull();
+    expect(ui.active_drawer).toBe("none");
+  });
+
+  it("restoreMapViewState extracts valid center and zoom", () => {
+    const result = restoreMapViewState({ map_center: [46.7, 24.7], map_zoom: 14 });
+    expect(result.center).toEqual([46.7, 24.7]);
+    expect(result.zoom).toBe(14);
+  });
+
+  it("restoreMapViewState handles missing/invalid data", () => {
+    expect(restoreMapViewState(null).center).toBeNull();
+    expect(restoreMapViewState(null).zoom).toBeNull();
+    expect(restoreMapViewState({ map_center: "bad" }).center).toBeNull();
+    expect(restoreMapViewState({ map_center: [1] }).center).toBeNull();
+  });
+
+  it("restoreDrawerState extracts valid drawer key", () => {
+    expect(restoreDrawerState({ active_drawer: "report" })).toBe("report");
+    expect(restoreDrawerState({ active_drawer: "memo" })).toBe("memo");
+    expect(restoreDrawerState({ active_drawer: "compare" })).toBe("compare");
+  });
+
+  it("restoreDrawerState defaults to none for unknown values", () => {
+    expect(restoreDrawerState({ active_drawer: "bogus" })).toBe("none");
+    expect(restoreDrawerState(null)).toBe("none");
+    expect(restoreDrawerState({})).toBe("none");
+  });
+});
+
+describe("Saved study reopen hydration with map + drawer state", () => {
+  it("restoreSavedUiState includes mapView and drawerState", () => {
+    const candidates = [
+      makeCandidate({ id: "c1" }),
+      makeCandidate({ id: "c2" }),
+    ];
+    const restored = restoreSavedUiState(
+      {
+        id: "sv1",
+        search_id: "s1",
+        title: "study",
+        status: "draft",
+        selected_candidate_ids: ["c1"],
+        ui_state_json: {
+          compare_ids: ["c1", "c2"],
+          selected_candidate_id: "c1",
+          map_center: [46.7, 24.7],
+          map_zoom: 16,
+          active_drawer: "report",
+        },
+        candidates,
+      },
+      candidates,
+    );
+    expect(restored.mapView.center).toEqual([46.7, 24.7]);
+    expect(restored.mapView.zoom).toBe(16);
+    expect(restored.drawerState).toBe("report");
+  });
+
+  it("restoreSavedUiState falls back gracefully for missing map/drawer fields", () => {
+    const candidates = [makeCandidate({ id: "c1" })];
+    const restored = restoreSavedUiState(
+      {
+        id: "sv2",
+        search_id: "s2",
+        title: "study2",
+        status: "draft",
+        selected_candidate_ids: [],
+        ui_state_json: {},
+        candidates,
+      },
+      candidates,
+    );
+    expect(restored.mapView.center).toBeNull();
+    expect(restored.mapView.zoom).toBeNull();
+    expect(restored.drawerState).toBe("none");
+  });
+});
+
+describe("Compare CTA enable/disable rules", () => {
+  it("getNextCompareIds caps at 6 and toggles correctly", () => {
+    // Adding
+    expect(getNextCompareIds([], "c1")).toEqual(["c1"]);
+    expect(getNextCompareIds(["c1"], "c2")).toEqual(["c1", "c2"]);
+    // Toggling off
+    expect(getNextCompareIds(["c1", "c2"], "c1")).toEqual(["c2"]);
+    // At max capacity
+    const full = ["c1", "c2", "c3", "c4", "c5", "c6"];
+    expect(getNextCompareIds(full, "c7")).toEqual(full);
+    // Can still remove from full
+    expect(getNextCompareIds(full, "c3")).toEqual(["c1", "c2", "c4", "c5", "c6"]);
+  });
+
+  it("compare panel button disabled when fewer than 2 selected", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionComparePanel
+        compareIds={["c1"]}
+        result={null}
+        loading={false}
+        error={null}
+        onCompare={() => {}}
+      />,
+    );
+    expect(html).toContain("disabled");
+  });
+
+  it("compare panel button enabled when 2-6 selected", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionComparePanel
+        compareIds={["c1", "c2", "c3"]}
+        result={null}
+        loading={false}
+        error={null}
+        onCompare={() => {}}
+      />,
+    );
+    expect(html).not.toContain("disabled");
+    expect(html).toContain("3");
+  });
+});
+
+describe("Report panel renders score breakdown for top candidates", () => {
+  it("renders ScoreBreakdownCompact when top candidate has score_breakdown_json", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        report={{
+          meta: {},
+          recommendation: { summary: "Test summary" },
+          top_candidates: [{
+            id: "c1",
+            final_score: 88,
+            confidence_grade: "A",
+            gate_verdict: "pass",
+            rank_position: 1,
+            top_positives_json: ["good location"],
+            top_risks_json: ["high rent"],
+            score_breakdown_json: {
+              weights: { economics: 0.3, brand_fit: 0.25 },
+              inputs: { economics: 80, brand_fit: 70 },
+              weighted_components: { economics: 24, brand_fit: 17.5 },
+              final_score: 88,
+            },
+          }],
+          assumptions: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    expect(html).toContain("ea-score-breakdown-compact");
+    expect(html).toContain("economics");
+  });
+});
+
+describe("Unknown/missing decision-layer fields do not crash UI", () => {
+  it("candidate card renders safely with all optional fields undefined", () => {
+    const candidate = normalizeCandidate({
+      id: "c-sparse",
+      search_id: "s",
+      parcel_id: "p",
+      lat: 24.7,
+      lon: 46.7,
+    });
+    const html = renderToStaticMarkup(
+      <ExpansionResultsPanel
+        items={[candidate]}
+        selectedCandidateId={null}
+        shortlistIds={[]}
+        compareIds={[]}
+        onSelectCandidate={() => {}}
+        onToggleShortlist={() => {}}
+        onToggleCompare={() => {}}
+      />,
+    );
+    expect(html).toContain("ea-candidate");
+    expect(html).not.toContain("undefined");
+    expect(html).not.toContain("NaN");
+  });
+
+  it("CandidateDetailPanel renders with minimal candidate", () => {
+    const candidate = normalizeCandidate({
+      id: "c-min",
+      search_id: "s",
+      parcel_id: "p",
+      lat: 24.7,
+      lon: 46.7,
+    });
+    const html = renderToStaticMarkup(<CandidateDetailPanel candidate={candidate} />);
+    expect(html).toContain("ea-detail");
+    expect(html).not.toContain("undefined");
+  });
+
+  it("report panel handles completely empty recommendation and top_candidates", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        report={{
+          recommendation: {},
+          top_candidates: [],
+          assumptions: {},
+          brand_profile: {},
+          meta: {},
+        }}
+      />,
+    );
+    expect(html).toContain("ea-drawer");
+  });
+
+  it("memo panel handles completely empty candidate and recommendation", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={{
+          recommendation: {},
+          candidate: {},
+          market_research: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    expect(html).toContain("ea-drawer");
   });
 });
