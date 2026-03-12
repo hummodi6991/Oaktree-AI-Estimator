@@ -615,22 +615,42 @@ export default function ExpansionAdvisorPage({
               )}
             </div>
             <div className="ea-card__body">
-              {savedLoadError && <div className="ea-state ea-state--error">{savedLoadError}</div>}
-              <SavedSearchesPanel
-                items={savedItems}
-                loading={loadingSaved}
-                activeSavedId={activeSavedId}
-                onOpen={async (savedId) => {
-                  setLoadingSaved(true);
-                  setSavedLoadError(null);
-                  setShowSavedWorkspace(false);
-                  try { const saved = await getSavedExpansionSearch(savedId); await hydrateSavedStudy(saved); } catch { setSavedLoadError(t("expansionAdvisor.errorSavedLoad")); } finally { setLoadingSaved(false); }
-                }}
-                onDelete={handleDeleteSaved}
-                onRename={handleRenameSaved}
-                onEditDescription={handleEditDescriptionSaved}
-                onChangeStatus={handleChangeStatusSaved}
-              />
+              {savedLoadError && (
+                <div className="ea-state ea-state--error">
+                  {savedLoadError}
+                  <button
+                    className="oak-btn oak-btn--xs oak-btn--tertiary"
+                    style={{ marginTop: 8 }}
+                    onClick={() => {
+                      setLoadingSaved(true);
+                      setSavedLoadError(null);
+                      listSavedExpansionSearches()
+                        .then((res) => setSavedItems(res.items || []))
+                        .catch(() => setSavedLoadError(t("expansionAdvisor.errorSavedLoad")))
+                        .finally(() => setLoadingSaved(false));
+                    }}
+                  >
+                    {t("expansionAdvisor.retry")}
+                  </button>
+                </div>
+              )}
+              {!savedLoadError && (
+                <SavedSearchesPanel
+                  items={savedItems}
+                  loading={loadingSaved}
+                  activeSavedId={activeSavedId}
+                  onOpen={async (savedId) => {
+                    setLoadingSaved(true);
+                    setSavedLoadError(null);
+                    setShowSavedWorkspace(false);
+                    try { const saved = await getSavedExpansionSearch(savedId); await hydrateSavedStudy(saved); } catch { setSavedLoadError(t("expansionAdvisor.errorSavedLoad")); } finally { setLoadingSaved(false); }
+                  }}
+                  onDelete={handleDeleteSaved}
+                  onRename={handleRenameSaved}
+                  onEditDescription={handleEditDescriptionSaved}
+                  onChangeStatus={handleChangeStatusSaved}
+                />
+              )}
             </div>
           </div>
         </div>
