@@ -4,7 +4,7 @@ import type { CompareCandidatesResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
-import { fmtScore, fmtSAR, fmtMonths, gateColor } from "./formatHelpers";
+import { fmtScore, fmtSAR, fmtMonths, fmtSarPerM2Year, gateColor } from "./formatHelpers";
 
 const SUMMARY_KEY_ORDER = [
   "best_overall_candidate_id",
@@ -47,7 +47,7 @@ export function getOrderedCompareSummaryEntries(summary: Record<string, string |
 
 type DimensionGroup = {
   label: string;
-  rows: Array<{ label: string; key: string; fmt?: "sar" | "months" }>;
+  rows: Array<{ label: string; key: string; fmt?: "sar" | "months" | "sar_m2_year" }>;
 };
 
 const DIMENSION_GROUPS: DimensionGroup[] = [
@@ -78,7 +78,7 @@ const DIMENSION_GROUPS: DimensionGroup[] = [
       { label: "Economics", key: "economics_score" },
       { label: "Payback", key: "payback_band" },
       { label: "Payback months", key: "estimated_payback_months", fmt: "months" },
-      { label: "Rent/m²/yr", key: "estimated_rent_sar_m2_year", fmt: "sar" },
+      { label: "Rent/m²/yr", key: "estimated_rent_sar_m2_year", fmt: "sar_m2_year" },
       { label: "Annual rent", key: "estimated_annual_rent_sar", fmt: "sar" },
       { label: "Cannibalization", key: "cannibalization_score" },
     ],
@@ -213,6 +213,7 @@ export default function ExpansionComparePanel({
                               if (row.key === "gate") return <td key={item.candidate_id}><span className={`ea-badge ea-badge--${gateColor(item.gate_status_json?.overall_pass ?? null)}`}>{item.gate_status_json?.overall_pass ? t("expansionAdvisor.gatePass") : t("expansionAdvisor.gateFail")}</span></td>;
                               if (row.key === "payback_band") return <td key={item.candidate_id}><PaybackBadge band={item.payback_band} months={item.estimated_payback_months} /></td>;
                               if (row.fmt === "sar" && typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtSAR(raw)}</td>;
+                              if (row.fmt === "sar_m2_year" && typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtSarPerM2Year(raw)}</td>;
                               if (row.fmt === "months" && typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtMonths(raw)}</td>;
                               if (typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtScore(raw)}</td>;
                               return <td key={item.candidate_id}>{raw != null ? String(raw) : "—"}</td>;

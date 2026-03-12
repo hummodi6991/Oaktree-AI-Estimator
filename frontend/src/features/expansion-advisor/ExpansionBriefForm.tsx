@@ -73,7 +73,11 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
     e.preventDefault();
     setTouched(true);
     if (hasErrors) return;
-    onSubmit(brief);
+    // Strip untouched placeholder branches (0,0 with no name) before submit
+    const cleanedBranches = (brief.existing_branches || []).filter(
+      (b) => (b.lat !== 0 || b.lon !== 0) || (b.name && b.name.trim()),
+    );
+    onSubmit({ ...brief, existing_branches: cleanedBranches });
   };
 
   return (
@@ -252,7 +256,7 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
             );
           })}
           {branches.length === 0 && <p style={{ margin: 0, fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)" }}>{t("expansionAdvisor.noBranchesYet")}</p>}
-          <button type="button" className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => set("existing_branches", [...branches, { name: "", lat: 24.7136, lon: 46.6753, district: "" }])} disabled={loading}>+ {t("expansionAdvisor.addBranch")}</button>
+          <button type="button" className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => set("existing_branches", [...branches, { name: "", lat: 0, lon: 0, district: "" }])} disabled={loading}>+ {t("expansionAdvisor.addBranch")}</button>
         </div>
       </div>
 
