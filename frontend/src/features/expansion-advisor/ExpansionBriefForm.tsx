@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { DistrictOption, ExpansionBrief } from "../../lib/api/expansionAdvisor";
 import { getExpansionDistricts } from "../../lib/api/expansionAdvisor";
+import CategorySelect from "./CategorySelect";
 import DistrictMultiSelect from "./DistrictMultiSelect";
 import BranchLocationPicker from "./BranchLocationPicker";
 
 export const defaultBrief: ExpansionBrief = {
   brand_name: "",
-  category: "qsr",
+  category: "",
   service_model: "qsr",
   min_area_m2: 100,
   max_area_m2: 500,
@@ -111,7 +112,12 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
           </div>
           <div className="ea-form__field">
             <label className="ea-form__label">{t("expansionAdvisor.category")}</label>
-            <input className="ea-form__input" value={brief.category} onChange={(e) => set("category", e.target.value)} disabled={loading} placeholder="e.g. Burgers, Coffee" />
+            <CategorySelect
+              value={brief.category}
+              onChange={(val) => set("category", val)}
+              disabled={loading}
+              placeholder="Select a restaurant category"
+            />
           </div>
         </div>
         <div className="ea-form__row">

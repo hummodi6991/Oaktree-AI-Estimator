@@ -2893,3 +2893,177 @@
   color: var(--oak-text-light, #828282);
   font-size: var(--oak-fs-sm, 14px);
 }
+
+/* ─ Category Select (single-select searchable combobox) ─ */
+.ea-category-select {
+  position: relative;
+}
+.ea-category-select--disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.ea-category-select__control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid var(--oak-outlines, #d7d7d7);
+  border-radius: 6px;
+  background: var(--oak-bg-surface, #fff);
+  min-height: 34px;
+  cursor: text;
+}
+.ea-category-select__control:focus-within {
+  border-color: var(--oak-primary, #14312c);
+  box-shadow: 0 0 0 2px rgba(20, 49, 44, 0.12);
+}
+.ea-category-select__input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: var(--oak-fs-sm, 14px);
+  font-family: var(--oak-font);
+  color: var(--oak-text-dark, #171717);
+  flex: 1 1 80px;
+  min-width: 80px;
+  padding: 2px 0;
+}
+.ea-category-select__input::placeholder {
+  color: var(--oak-text-light, #828282);
+}
+.ea-category-select__chevron {
+  font-size: 10px;
+  color: var(--oak-text-light, #828282);
+  flex-shrink: 0;
+  pointer-events: none;
+  margin-left: auto;
+}
+
+/* Selected pill */
+.ea-category-select__pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: var(--oak-fs-sm, 14px);
+  font-family: var(--oak-font);
+  background: rgba(20, 49, 44, 0.08);
+  color: var(--oak-primary, #14312c);
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+.ea-category-select__pill--fallback {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px dashed #f59e0b;
+}
+.ea-category-select__pill-ar {
+  font-size: var(--oak-fs-xs, 12px);
+  color: var(--oak-text-light, #828282);
+  margin-left: 2px;
+}
+.ea-category-select__pill-remove {
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.6;
+}
+.ea-category-select__pill-remove:hover {
+  opacity: 1;
+}
+
+/* Helper text */
+.ea-category-select__helper {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--oak-fs-xs, 12px);
+  color: var(--oak-text-light, #828282);
+  font-style: italic;
+}
+
+/* Dropdown */
+.ea-category-select__dropdown {
+  position: absolute;
+  z-index: 50;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  background: var(--oak-bg-surface, #fff);
+  border: 1px solid var(--oak-outlines, #d7d7d7);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  max-height: 280px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.ea-category-select__group {
+  list-style: none;
+}
+.ea-category-select__group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 2px;
+  font-size: var(--oak-fs-xs, 12px);
+  font-weight: var(--oak-fw-medium, 500);
+  color: var(--oak-text-light, #828282);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  position: sticky;
+  top: 0;
+  background: var(--oak-bg-surface, #fff);
+}
+.ea-category-select__group-header-ar {
+  font-size: 11px;
+  font-weight: normal;
+  text-transform: none;
+}
+.ea-category-select__group-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.ea-category-select__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: var(--oak-fs-sm, 14px);
+  font-family: var(--oak-font);
+  color: var(--oak-text-dark, #171717);
+}
+.ea-category-select__option:hover {
+  background: rgba(20, 49, 44, 0.04);
+}
+.ea-category-select__option--selected {
+  background: rgba(20, 49, 44, 0.06);
+}
+.ea-category-select__option-label {
+  flex: 1;
+}
+.ea-category-select__option-ar {
+  font-size: var(--oak-fs-xs, 12px);
+  color: var(--oak-text-light, #828282);
+}
+.ea-category-select__check {
+  color: var(--oak-primary, #14312c);
+  font-weight: bold;
+}
+.ea-category-select__no-results {
+  padding: 12px;
+  text-align: center;
+  color: var(--oak-text-light, #828282);
+  font-size: var(--oak-fs-sm, 14px);
+}
