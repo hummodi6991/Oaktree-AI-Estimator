@@ -65,7 +65,7 @@ import { CandidateListSkeleton, DetailSkeleton } from "./SkeletonLoaders";
 import CandidateDetailPanel from "./CandidateDetailPanel";
 import ExpansionCandidateCard from "./ExpansionCandidateCard";
 import FinalistsWorkspace from "./FinalistsWorkspace";
-import { humanGateLabel, humanGateSentence, isGarbledText, safeDistrictLabel, paybackColor } from "./formatHelpers";
+import { humanGateLabel, humanGateSentence, isGarbledText, safeDistrictLabel, candidateDistrictLabel, paybackColor } from "./formatHelpers";
 
 /* ─── Helpers for test data ─── */
 function makeCandidate(overrides: Partial<ExpansionCandidate> = {}): ExpansionCandidate {
@@ -3676,6 +3676,83 @@ describe("UI/UX correctness: district label fallback", () => {
     expect(safeDistrictLabel("\uFFFD\uFFFD", "Al Olaya", "al_olaya")).toBe("Al Olaya");
     expect(safeDistrictLabel(null, null, "al_olaya")).toBe("al olaya");
     expect(safeDistrictLabel(null, null, null)).toBe("Unknown district");
+  });
+
+  it("candidateDistrictLabel uses district_display when present", () => {
+    const c = makeCandidate({
+      district: "garbled_raw",
+      district_display: "الملقا",
+      district_name_ar: "الملقا",
+      district_name_en: "Al Malqa",
+      district_key: "الملقا",
+    } as any);
+    expect(candidateDistrictLabel(c)).toBe("الملقا");
+  });
+
+  it("candidateDistrictLabel falls back through safeDistrictLabel when district_display is missing", () => {
+    const c = makeCandidate({
+      district: "Al Olaya",
+      district_display: null,
+      district_name_ar: null,
+      district_name_en: "Al Olaya",
+      district_key: "al_olaya",
+    } as any);
+    expect(candidateDistrictLabel(c)).toBe("Al Olaya");
+  });
+
+  it("candidateDistrictLabel shows Unknown district when all fields are garbled", () => {
+    const c = makeCandidate({
+      district: "\uFFFD\uFFFD\uFFFD",
+      district_display: null,
+      district_name_ar: null,
+      district_name_en: null,
+      district_key: null,
+    } as any);
+    expect(candidateDistrictLabel(c)).toBe("Unknown district");
+  });
+
+  it("candidateDistrictLabel uses raw district as fallback when it is clean", () => {
+    // No canonical fields from backend — only raw district
+    const c = makeCandidate({
+      district: "الرياض",
+    });
+    expect(candidateDistrictLabel(c)).toBe("الرياض");
+  });
+
+  it("candidateDistrictLabel returns fallback for null candidate", () => {
+    expect(candidateDistrictLabel(null)).toBe("Unknown district");
+    expect(candidateDistrictLabel(undefined)).toBe("Unknown district");
+  });
+
+  it("buildFinalistTiles uses canonical district label", () => {
+    const c = makeCandidate({
+      district: "\uFFFD\uFFFD\uFFFD",
+      district_display: "الملقا",
+    } as any);
+    const tiles = buildFinalistTiles([c], ["c1"], null);
+    expect(tiles[0].district).toBe("الملقا");
+  });
+
+  it("buildFinalistTiles shows Unknown district when no fallback exists", () => {
+    const c = makeCandidate({
+      district: "\uFFFD\uFFFD\uFFFD",
+      district_display: null,
+      district_name_ar: null,
+      district_name_en: null,
+      district_key: null,
+    } as any);
+    const tiles = buildFinalistTiles([c], ["c1"], null);
+    // Should not show garbled text
+    expect(tiles[0].district).not.toContain("\uFFFD");
+  });
+
+  it("extractDistricts uses canonical labels", () => {
+    const c1 = makeCandidate({ id: "c1", district: "\uFFFD\uFFFD\uFFFD", district_display: "الملقا" } as any);
+    const c2 = makeCandidate({ id: "c2", district: "العليا", district_display: "العليا" } as any);
+    const districts = extractDistricts([c1, c2]);
+    expect(districts).toContain("الملقا");
+    expect(districts).toContain("العليا");
+    expect(districts.some((d) => d.includes("\uFFFD"))).toBe(false);
   });
 });
 

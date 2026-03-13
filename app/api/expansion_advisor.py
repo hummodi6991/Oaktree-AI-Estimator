@@ -590,6 +590,24 @@ def create_expansion_search(
     target_area_m2 = req.target_area_m2 or ((req.min_area_m2 + req.max_area_m2) / 2.0)
     search_id = str(uuid.uuid4())
 
+    # ── Canonicalize target districts ──
+    # Normalize each target district string to its canonical key so that
+    # garbled or variant input strings resolve to the same clean key used
+    # in spatial filtering.  Preserve order and deduplicate.
+    seen_td: set[str] = set()
+    canonical_target_districts: list[str] = []
+    for td_raw in req.target_districts:
+        norm = normalize_district_key(td_raw)
+        if norm and norm not in seen_td:
+            seen_td.add(norm)
+            canonical_target_districts.append(norm)
+        elif td_raw.strip() and td_raw.strip() not in seen_td:
+            # Keep the original if normalization produced nothing,
+            # so we don't silently drop user input.
+            seen_td.add(td_raw.strip())
+            canonical_target_districts.append(td_raw.strip())
+    req_target_districts = canonical_target_districts
+
     request_json = req.model_dump()
     bbox_json = req.bbox.model_dump() if req.bbox else None
     existing_branches_payload = [branch.model_dump() for branch in req.existing_branches]
@@ -631,7 +649,7 @@ def create_expansion_search(
                 "brand_name": req.brand_name,
                 "category": req.category,
                 "service_model": req.service_model,
-                "target_districts": json.dumps(req.target_districts, ensure_ascii=False),
+                "target_districts": json.dumps(req_target_districts, ensure_ascii=False),
                 "min_area_m2": req.min_area_m2,
                 "max_area_m2": req.max_area_m2,
                 "target_area_m2": target_area_m2,
@@ -663,7 +681,7 @@ def create_expansion_search(
             target_area_m2=target_area_m2,
             limit=req.limit,
             bbox=bbox_json,
-            target_districts=req.target_districts,
+            target_districts=req_target_districts,
             existing_branches=existing_branches_payload,
             brand_profile=brand_profile_payload,
         )
@@ -697,7 +715,7 @@ def create_expansion_search(
             "min_area_m2": req.min_area_m2,
             "max_area_m2": req.max_area_m2,
             "target_area_m2": target_area_m2,
-            "target_districts": req.target_districts,
+            "target_districts": req_target_districts,
             "existing_branches": existing_branches_payload,
             "brand_profile": brand_profile_payload,
         },

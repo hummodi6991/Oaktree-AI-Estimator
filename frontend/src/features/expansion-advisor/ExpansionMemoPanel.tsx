@@ -6,7 +6,7 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
 import CopySummaryBlock from "./CopySummaryBlock";
-import { fmtScore, fmtMeters, fmtSAR, humanGateLabel } from "./formatHelpers";
+import { fmtScore, fmtMeters, fmtSAR, humanGateLabel, safeDistrictLabel } from "./formatHelpers";
 
 function toList(input: unknown): string[] {
   return Array.isArray(input) ? input.map(String) : [];
@@ -216,7 +216,7 @@ export default function ExpansionMemoPanel({
                         {comps.map((c, i) => (
                           <tr key={String(c.id || i)}>
                             <td>{String(c.name || "—")}</td>
-                            <td>{String(c.district || "—")}</td>
+                            <td>{String(c.district_display || c.district || "—")}</td>
                             <td>{fmtMeters(c.distance_m as number | undefined)}</td>
                           </tr>
                         ))}

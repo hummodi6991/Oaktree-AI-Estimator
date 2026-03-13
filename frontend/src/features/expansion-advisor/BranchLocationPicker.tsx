@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { BranchSuggestion } from "../../lib/api/expansionAdvisor";
 import { searchBranchSuggestions } from "../../lib/api/expansionAdvisor";
+import { isGarbledText } from "./formatHelpers";
 
 export type BranchEntry = {
   name?: string;
@@ -153,7 +154,7 @@ function BranchSearchInput({
             >
               <span className="ea-branch-search__option-name">{s.name}</span>
               <span className="ea-branch-search__option-meta">
-                {s.district ? `${s.district} · ` : ""}
+                {s.district && !isGarbledText(s.district) ? `${s.district} · ` : ""}
                 {formatCoords(s.lat, s.lon)}
               </span>
             </li>

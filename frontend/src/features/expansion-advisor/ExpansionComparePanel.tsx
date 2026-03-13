@@ -4,7 +4,7 @@ import type { CompareCandidatesResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
-import { fmtScore, fmtSAR, fmtMonths, fmtSarPerM2Year, gateColor } from "./formatHelpers";
+import { fmtScore, fmtSAR, fmtMonths, fmtSarPerM2Year, gateColor, candidateDistrictLabel } from "./formatHelpers";
 
 const SUMMARY_KEY_ORDER = [
   "best_overall_candidate_id",
@@ -188,7 +188,7 @@ export default function ExpansionComparePanel({
                       <th key={item.candidate_id} style={{ cursor: "pointer" }} onClick={() => item.candidate_id && onSelectCandidateId?.(item.candidate_id)} className={item.candidate_id === leadCandidateId ? "ea-compare-table__lead" : ""}>
                         {item.candidate_id === leadCandidateId && (item as Record<string, unknown>).gate_verdict === "pass" && <span className="ea-lead-tag ea-lead-tag--sm">{t("expansionAdvisor.leadSite")}</span>}{" "}
                         {item.candidate_id === leadCandidateId && (item as Record<string, unknown>).gate_verdict !== "pass" && <span className="ea-lead-tag ea-lead-tag--sm ea-lead-tag--exploratory">{t("expansionAdvisor.topExploratoryCandidate")}</span>}{" "}
-                        {item.district || item.candidate_id?.slice(0, 8) || "—"}
+                        {candidateDistrictLabel(item, item.candidate_id?.slice(0, 8) || "—")}
                         {item.rank_position ? <span className="ea-compare-table__rank"> #{item.rank_position}</span> : null}
                       </th>
                     ))}
