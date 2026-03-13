@@ -221,16 +221,8 @@ export default function ExpansionAdvisorPage({
         setSavedItems(res.items || []);
         setSavedLoadError(null);
       })
-      .catch((err) => {
-        // Treat "not found" (404) and "table missing" (500) as empty —
-        // these indicate the saved-search feature isn't set up yet, not
-        // a genuine load failure that users need to act on.
-        const msg = err instanceof Error ? err.message : "";
-        if (/^(404|500)\b/.test(msg)) {
-          setSavedItems([]);
-        } else {
-          setSavedLoadError(t("expansionAdvisor.errorSavedLoad"));
-        }
+      .catch(() => {
+        setSavedLoadError(t("expansionAdvisor.errorSavedLoad"));
       })
       .finally(() => setLoadingSaved(false));
   }, [t]);
@@ -646,13 +638,8 @@ export default function ExpansionAdvisorPage({
                           setSavedItems(res.items || []);
                           setSavedLoadError(null);
                         })
-                        .catch((err) => {
-                          const msg = err instanceof Error ? err.message : "";
-                          if (/^(404|500)\b/.test(msg)) {
-                            setSavedItems([]);
-                          } else {
-                            setSavedLoadError(t("expansionAdvisor.errorSavedLoad"));
-                          }
+                        .catch(() => {
+                          setSavedLoadError(t("expansionAdvisor.errorSavedLoad"));
                         })
                         .finally(() => setLoadingSaved(false));
                     }}
