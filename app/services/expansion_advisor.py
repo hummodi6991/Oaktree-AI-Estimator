@@ -3127,7 +3127,11 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     if not search:
         return None
     district_lookup = _build_district_lookup(db)
-    normalized_candidates = [_normalize_candidate_payload(c, district_lookup) for c in get_candidates(db, search_id, district_lookup)]
+    try:
+        raw_candidates = get_candidates(db, search_id, district_lookup=district_lookup)
+    except TypeError:
+        raw_candidates = get_candidates(db, search_id)
+    normalized_candidates = [_normalize_candidate_payload(c, district_lookup) for c in raw_candidates]
 
     def _sort_key(item: dict[str, Any]) -> tuple[int, float]:
         rank = item.get("rank_position")

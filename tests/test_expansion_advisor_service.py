@@ -389,7 +389,7 @@ def test_report_happy_path_returns_best_and_runner_up():
     db = FakeDB(candidate_rows=[], brand_profile_row={"price_tier": "mid", "preferred_districts_json": [], "excluded_districts_json": []})
     import app.services.expansion_advisor as svc
     svc.get_search = lambda _db, _sid: {"id": "search-1", "service_model": "qsr", "brand_profile": {"expansion_goal": "balanced"}}
-    svc.get_candidates = lambda _db, _sid: [
+    svc.get_candidates = lambda _db, _sid, district_lookup=None: [
         {"id": "c1", "final_score": 90, "brand_fit_score": 82, "economics_score": 70, "area_m2": 170, "district": "Olaya", "key_risks_json": ["risk"]},
         {"id": "c2", "final_score": 86, "brand_fit_score": 79, "economics_score": 68, "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"]},
     ]
@@ -483,7 +483,7 @@ def test_report_includes_new_decision_outputs():
     db = FakeDB(candidate_rows=[])
     import app.services.expansion_advisor as svc
     svc.get_search = lambda _db, _sid: {"id": "search-1", "service_model": "qsr", "brand_profile": {"expansion_goal": "balanced"}}
-    svc.get_candidates = lambda _db, _sid: [
+    svc.get_candidates = lambda _db, _sid, district_lookup=None: [
         {"id": "c1", "final_score": 90, "brand_fit_score": 82, "economics_score": 70, "area_m2": 170, "district": "Olaya", "key_risks_json": ["risk"], "confidence_grade": "A", "confidence_score": 85, "gate_status_json": {"overall_pass": True}, "demand_thesis": "d", "cost_thesis": "c", "comparable_competitors_json": [{"id": "x"}], "zoning_fit_score": 88, "frontage_score": 65, "access_score": 67, "parking_score": 62, "access_visibility_score": 66, "feature_snapshot_json": {"parcel_area_m2": 170, "data_completeness_score": 90}, "rank_position": 1, "score_breakdown_json": {"final_score": 90}, "top_positives_json": ["pos"], "top_risks_json": ["risk"]},
         {"id": "c2", "final_score": 86, "brand_fit_score": 79, "economics_score": 68, "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"], "confidence_grade": "B", "confidence_score": 72, "gate_status_json": {"overall_pass": False}, "demand_thesis": "d2", "cost_thesis": "c2", "comparable_competitors_json": [], "zoning_fit_score": 78, "frontage_score": 61, "access_score": 60, "parking_score": 58, "access_visibility_score": 61, "feature_snapshot_json": {"parcel_area_m2": 180, "data_completeness_score": 80}, "rank_position": 2, "score_breakdown_json": {"final_score": 86}, "top_positives_json": ["pos2"], "top_risks_json": ["risk2"]},
     ]
@@ -1622,7 +1622,7 @@ def test_report_best_pass_candidate_id_null_when_no_pass():
         "brand_profile": {"expansion_goal": "balanced"},
     }
     # Both candidates have overall_pass=False
-    svc.get_candidates = lambda _db, _sid: [
+    svc.get_candidates = lambda _db, _sid, district_lookup=None: [
         {
             "id": "c1", "final_score": 75, "brand_fit_score": 60, "economics_score": 55,
             "area_m2": 200, "district": "Olaya", "key_risks_json": ["risk"],
@@ -1757,7 +1757,7 @@ def test_report_gate_verdict_uses_tristate():
         "service_model": "qsr",
         "brand_profile": {"expansion_goal": "balanced"},
     }
-    svc.get_candidates = lambda _db, _sid: [
+    svc.get_candidates = lambda _db, _sid, district_lookup=None: [
         {
             "id": "c1", "final_score": 85, "brand_fit_score": 70, "economics_score": 65,
             "area_m2": 200, "district": "Olaya", "key_risks_json": ["risk"],
@@ -1897,3 +1897,22 @@ def test_derive_site_fit_context_empty_snapshot():
     ctx = _derive_site_fit_context({})
     assert ctx["frontage_score_mode"] == "estimated"
     assert ctx["parking_score_mode"] == "estimated"
+
+
+def test_report_compatible_with_legacy_two_arg_get_candidates():
+    """get_recommendation_report must work when get_candidates is a 2-arg callable (legacy monkeypatch)."""
+    db = FakeDB(candidate_rows=[])
+    import app.services.expansion_advisor as svc
+    svc.get_search = lambda _db, _sid: {
+        "id": "search-1",
+        "service_model": "qsr",
+        "brand_profile": {"expansion_goal": "balanced"},
+    }
+    # Legacy 2-arg callable — must not raise TypeError
+    svc.get_candidates = lambda _db, _sid: [
+        {"id": "c1", "final_score": 80, "brand_fit_score": 70, "economics_score": 60,
+         "area_m2": 150, "district": "Olaya", "key_risks_json": []},
+    ]
+    report = get_recommendation_report(db, "search-1")
+    assert report is not None
+    assert report["recommendation"]["best_candidate_id"] == "c1"
