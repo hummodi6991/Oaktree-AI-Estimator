@@ -44,7 +44,11 @@ export default function ExpansionMemoPanel({
     <div className="ea-drawer-backdrop" onClick={() => onClose?.()}>
       <div className={`ea-drawer ea-drawer--wide${presentationMode ? " ea-drawer--presentation" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="ea-drawer__header">
-          {isLeadCandidate && <span className="ea-lead-tag">{t("expansionAdvisor.leadCandidate")}</span>}
+          {isLeadCandidate && (() => {
+            const cand = memo?.candidate || {};
+            const gatePass = (cand.gate_status as Record<string, unknown> | undefined)?.overall_pass === true;
+            return <span className={`ea-lead-tag${gatePass ? "" : " ea-lead-tag--exploratory"}`}>{gatePass ? t("expansionAdvisor.leadCandidate") : t("expansionAdvisor.topExploratoryCandidate")}</span>;
+          })()}
           <h3 className="ea-drawer__title">{t("expansionAdvisor.decisionMemo")}</h3>
           <div style={{ display: "flex", gap: 6, alignItems: "center", marginInlineStart: "auto", flexWrap: "wrap" }}>
             {onBackToDetail && (

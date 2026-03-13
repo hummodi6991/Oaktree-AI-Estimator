@@ -846,6 +846,15 @@
     "workflowStep6": "احفظ دراسة التوسع للمراجعة لاحقاً",
     "showOnMap": "عرض على الخريطة",
     "areaLabel": "المساحة",
-    "retryAction": "إعادة المحاولة"
+    "retryAction": "إعادة المحاولة",
+    "topExploratoryCandidate": "أفضل مرشح استكشافي",
+    "topCandidateAnalysis": "تحليل المرشح الأفضل",
+    "exploratoryCandidateSelected": "تم اختيار مرشح استكشافي",
+    "openCandidateMemo": "فتح مذكرة المرشح",
+    "markExploratoryPick": "تحديد كمرشح استكشافي",
+    "estimatedLabel": "(تقديري)",
+    "noPassNotice": "لا يوجد مرشح يجتاز جميع البوابات المطلوبة حالياً.",
+    "leadCandidate": "المرشح الرئيسي",
+    "gateNeedsValidation": "يحتاج تحقق"
   }
 }

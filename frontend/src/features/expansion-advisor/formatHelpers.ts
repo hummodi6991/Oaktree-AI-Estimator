@@ -64,8 +64,8 @@ export function confidenceColor(grade: string | null | undefined): "green" | "am
 export function paybackColor(band: string | null | undefined): "green" | "amber" | "red" | "neutral" {
   if (!band) return "neutral";
   const b = band.toLowerCase();
-  if (b === "fast" || b === "promising") return "green";
-  if (b === "moderate" || b === "standard") return "amber";
+  if (b === "fast" || b === "promising" || b === "strong") return "green";
+  if (b === "moderate" || b === "standard" || b === "borderline") return "amber";
   return "red";
 }
 

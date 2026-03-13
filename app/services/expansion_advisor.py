@@ -91,6 +91,32 @@ def _nonnegative_int(value: Any) -> int:
     return max(0, _safe_int(value, 0))
 
 
+def _derive_site_fit_context(feature_snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    """Derive site-fit context metadata from a candidate's feature snapshot.
+
+    Returns score-mode flags so the frontend can distinguish observed
+    measurements from fallback/estimated values.
+    """
+    if not feature_snapshot:
+        return {
+            "road_context_available": False,
+            "parking_context_available": False,
+            "frontage_score_mode": "estimated",
+            "access_score_mode": "estimated",
+            "parking_score_mode": "estimated",
+        }
+    cs = feature_snapshot.get("context_sources") or {}
+    road_avail = bool(cs.get("road_context_available"))
+    parking_avail = bool(cs.get("parking_context_available"))
+    return {
+        "road_context_available": road_avail,
+        "parking_context_available": parking_avail,
+        "frontage_score_mode": "observed" if road_avail else "estimated",
+        "access_score_mode": "observed" if road_avail else "estimated",
+        "parking_score_mode": "observed" if parking_avail else "estimated",
+    }
+
+
 def _normalize_gate_status(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
@@ -2086,6 +2112,13 @@ def run_expansion_search(
                 "zoning_signal_source": zoning_source,
                 "zoning_signal_class": zoning_class,
                 "zoning_verification_needed": zoning_hint != "pass",
+                "site_fit_context": {
+                    "road_context_available": road_context_available,
+                    "parking_context_available": parking_context_available,
+                    "frontage_score_mode": "observed" if road_context_available else "estimated",
+                    "access_score_mode": "observed" if road_context_available else "estimated",
+                    "parking_score_mode": "observed" if parking_context_available else "estimated",
+                },
             }
         )
 
@@ -2930,6 +2963,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "key_risks": risks,
             "decision_summary": candidate.get("decision_summary") or "",
             "rank_position": candidate.get("rank_position"),
+            "site_fit_context": _derive_site_fit_context(candidate.get("feature_snapshot_json")),
         },
         "recommendation": {
             "headline": headline,

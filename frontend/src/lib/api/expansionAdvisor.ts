@@ -78,6 +78,14 @@ export type ComparableCompetitor = {
   source?: string;
 };
 
+export type SiteFitContext = {
+  road_context_available: boolean;
+  parking_context_available: boolean;
+  frontage_score_mode: "observed" | "estimated";
+  access_score_mode: "observed" | "estimated";
+  parking_score_mode: "observed" | "estimated";
+};
+
 export type ExpansionCandidate = {
   id: string;
   candidate_id?: string;
@@ -121,6 +129,7 @@ export type ExpansionCandidate = {
   cost_thesis?: string;
   comparable_competitors_json?: ComparableCompetitor[];
   compare_rank?: number;
+  site_fit_context?: SiteFitContext;
 };
 
 export type ExpansionSearchResponse = {
@@ -233,6 +242,7 @@ export type CandidateMemoResponse = {
     comparable_competitors?: ComparableCompetitor[];
     demand_thesis?: string;
     cost_thesis?: string;
+    site_fit_context?: SiteFitContext;
     [key: string]: unknown;
   };
   market_research: {
@@ -351,6 +361,7 @@ export function normalizeCandidate(candidate: ExpansionCandidate): ExpansionCand
     top_positives_json: Array.isArray(candidate.top_positives_json) ? candidate.top_positives_json : [],
     top_risks_json: Array.isArray(candidate.top_risks_json) ? candidate.top_risks_json : [],
     comparable_competitors_json: Array.isArray(candidate.comparable_competitors_json) ? candidate.comparable_competitors_json : [],
+    site_fit_context: candidate.site_fit_context || undefined,
   };
 }
 

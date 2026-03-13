@@ -64,7 +64,8 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import { CandidateListSkeleton, DetailSkeleton } from "./SkeletonLoaders";
 import CandidateDetailPanel from "./CandidateDetailPanel";
 import ExpansionCandidateCard from "./ExpansionCandidateCard";
-import { humanGateLabel, humanGateSentence, isGarbledText, safeDistrictLabel } from "./formatHelpers";
+import FinalistsWorkspace from "./FinalistsWorkspace";
+import { humanGateLabel, humanGateSentence, isGarbledText, safeDistrictLabel, paybackColor } from "./formatHelpers";
 
 /* ─── Helpers for test data ─── */
 function makeCandidate(overrides: Partial<ExpansionCandidate> = {}): ExpansionCandidate {
@@ -3854,6 +3855,244 @@ describe("Regression: scoreInvariants dev assertion", () => {
       expect(warnings.length).toBe(0);
     } finally {
       console.warn = origWarn;
+    }
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Expansion Advisor UX correctness patch — additional tests
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+describe("UX correctness: no-pass state never shows Lead-approval wording", () => {
+  it("NextStepsStrip renders exploratory wording when lead does not pass gates", () => {
+    const lead = makeCandidate({
+      id: "lead1",
+      district: "Olaya",
+      rank_position: 1,
+      gate_status_json: { overall_pass: false },
+    });
+    const html = renderToStaticMarkup(
+      <NextStepsStrip
+        candidates={[lead]}
+        shortlistIds={["lead1"]}
+        leadCandidateId="lead1"
+        report={null}
+        onOpenMemo={() => {}}
+        onOpenReport={() => {}}
+        onCompare={() => {}}
+      />,
+    );
+    // Should NOT contain lead-approval wording
+    expect(html).not.toContain("Lead site selected");
+    expect(html).not.toContain("Open Lead Memo");
+    // Should contain exploratory wording
+    expect(html).toContain("Top exploratory candidate selected");
+    expect(html).toContain("Open Candidate Memo");
+  });
+
+  it("NextStepsStrip renders lead wording when candidate passes gates", () => {
+    const lead = makeCandidate({
+      id: "lead1",
+      district: "Olaya",
+      rank_position: 1,
+      gate_status_json: { overall_pass: true },
+    });
+    const html = renderToStaticMarkup(
+      <NextStepsStrip
+        candidates={[lead]}
+        shortlistIds={["lead1"]}
+        leadCandidateId="lead1"
+        report={null}
+        onOpenMemo={() => {}}
+        onOpenReport={() => {}}
+        onCompare={() => {}}
+      />,
+    );
+    expect(html).toContain("Lead site selected");
+    expect(html).toContain("Open Lead Memo");
+  });
+
+  it("FinalistsWorkspace shows 'Mark exploratory pick' for non-passing tile", () => {
+    const c = makeCandidate({
+      id: "f1",
+      district: "Al Malaz",
+      gate_status_json: { overall_pass: false },
+      top_positives_json: ["good"],
+      top_risks_json: ["bad"],
+    });
+    const html = renderToStaticMarkup(
+      <FinalistsWorkspace
+        candidates={[c]}
+        shortlistIds={["f1"]}
+        leadCandidateId={null}
+        selectedCandidateId={null}
+        onSetLead={() => {}}
+        onClearLead={() => {}}
+        onOpenMemo={() => {}}
+        onCompare={() => {}}
+        onRemoveShortlist={() => {}}
+        onSelectCandidate={() => {}}
+        compareEnabled={false}
+      />,
+    );
+    expect(html).toContain("Mark exploratory pick");
+    expect(html).not.toContain("Set as Lead");
+  });
+
+  it("FinalistsWorkspace shows 'Set as Lead' for passing tile", () => {
+    const c = makeCandidate({
+      id: "f1",
+      district: "Al Malaz",
+      gate_status_json: { overall_pass: true },
+      top_positives_json: ["good"],
+      top_risks_json: ["bad"],
+    });
+    const html = renderToStaticMarkup(
+      <FinalistsWorkspace
+        candidates={[c]}
+        shortlistIds={["f1"]}
+        leadCandidateId={null}
+        selectedCandidateId={null}
+        onSetLead={() => {}}
+        onClearLead={() => {}}
+        onOpenMemo={() => {}}
+        onCompare={() => {}}
+        onRemoveShortlist={() => {}}
+        onSelectCandidate={() => {}}
+        compareEnabled={false}
+      />,
+    );
+    expect(html).toContain("Set as Lead");
+    expect(html).not.toContain("Mark exploratory pick");
+  });
+});
+
+describe("UX correctness: payback status renders correctly in checklist", () => {
+  it("strong payback (14 mo) renders as pass, not fail", () => {
+    const c = makeCandidate({
+      payback_band: "strong",
+      estimated_payback_months: 14,
+      economics_score: 80,
+    });
+    const items = deriveDecisionChecklist(c);
+    const paybackItem = items.find((i) => i.label.startsWith("Payback:"));
+    expect(paybackItem).toBeDefined();
+    expect(paybackItem!.status).toBe("strong");
+    expect(paybackItem!.label).toContain("strong");
+    expect(paybackItem!.label).toContain("14 mo");
+  });
+
+  it("promising payback renders as pass", () => {
+    const c = makeCandidate({
+      payback_band: "promising",
+      estimated_payback_months: 24,
+    });
+    const items = deriveDecisionChecklist(c);
+    const paybackItem = items.find((i) => i.label.startsWith("Payback:"));
+    expect(paybackItem!.status).toBe("strong");
+  });
+
+  it("borderline payback renders as neutral/caution", () => {
+    const c = makeCandidate({
+      payback_band: "borderline",
+      estimated_payback_months: 35,
+    });
+    const items = deriveDecisionChecklist(c);
+    const paybackItem = items.find((i) => i.label.startsWith("Payback:"));
+    expect(paybackItem!.status).toBe("caution");
+  });
+
+  it("weak payback renders as risk/fail", () => {
+    const c = makeCandidate({
+      payback_band: "weak",
+      estimated_payback_months: 52,
+    });
+    const items = deriveDecisionChecklist(c);
+    const paybackItem = items.find((i) => i.label.startsWith("Payback:"));
+    expect(paybackItem!.status).toBe("risk");
+  });
+});
+
+describe("UX correctness: paybackColor handles backend band values", () => {
+  it("strong band → green", () => {
+    expect(paybackColor("strong")).toBe("green");
+  });
+
+  it("borderline band → amber", () => {
+    expect(paybackColor("borderline")).toBe("amber");
+  });
+
+  it("weak band → red", () => {
+    expect(paybackColor("weak")).toBe("red");
+  });
+});
+
+describe("UX correctness: estimated site-fit metrics labeled in checklist", () => {
+  it("frontage/access show estimated when road context unavailable", () => {
+    const c = makeCandidate({
+      frontage_score: 45,
+      access_score: 50,
+      parking_score: 60,
+      site_fit_context: {
+        road_context_available: false,
+        parking_context_available: true,
+        frontage_score_mode: "estimated",
+        access_score_mode: "estimated",
+        parking_score_mode: "observed",
+      },
+    });
+    const items = deriveDecisionChecklist(c);
+    const frontageItem = items.find((i) => i.label.toLowerCase().includes("frontage"));
+    const accessItem = items.find((i) => i.label.toLowerCase().includes("access") && !i.label.toLowerCase().includes("visibility"));
+    const parkingItem = items.find((i) => i.label.toLowerCase().includes("parking"));
+    expect(frontageItem).toBeDefined();
+    expect(frontageItem!.label).toContain("estimated");
+    expect(frontageItem!.status).toBe("verify");
+
+    expect(accessItem).toBeDefined();
+    expect(accessItem!.label).toContain("estimated");
+    expect(accessItem!.status).toBe("verify");
+
+    // Parking is observed — should NOT be estimated
+    expect(parkingItem).toBeDefined();
+    expect(parkingItem!.label).not.toContain("estimated");
+  });
+
+  it("parking shows estimated when parking context unavailable", () => {
+    const c = makeCandidate({
+      parking_score: 40,
+      site_fit_context: {
+        road_context_available: true,
+        parking_context_available: false,
+        frontage_score_mode: "observed",
+        access_score_mode: "observed",
+        parking_score_mode: "estimated",
+      },
+    });
+    const items = deriveDecisionChecklist(c);
+    const parkingItem = items.find((i) => i.label.toLowerCase().includes("parking"));
+    expect(parkingItem).toBeDefined();
+    expect(parkingItem!.label).toContain("estimated");
+    expect(parkingItem!.status).toBe("verify");
+  });
+
+  it("all site-fit scores render normally when context available", () => {
+    const c = makeCandidate({
+      frontage_score: 80,
+      access_score: 75,
+      parking_score: 60,
+      site_fit_context: {
+        road_context_available: true,
+        parking_context_available: true,
+        frontage_score_mode: "observed",
+        access_score_mode: "observed",
+        parking_score_mode: "observed",
+      },
+    });
+    const items = deriveDecisionChecklist(c);
+    const siteFitItems = items.filter((i) => i.category === "site_fit");
+    for (const item of siteFitItems) {
+      expect(item.label).not.toContain("estimated");
     }
   });
 });

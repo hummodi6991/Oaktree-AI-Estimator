@@ -132,7 +132,7 @@ export default function SavedSearchesPanel({
                 )}
                 {meta.leadDistrict && (
                   <span className="ea-saved-item__meta-chip">
-                    {t("expansionAdvisor.leadSite")}: {meta.leadDistrict}
+                    {meta.leadGatesPass ? t("expansionAdvisor.leadSite") : t("expansionAdvisor.topExploratoryCandidate")}: {meta.leadDistrict}
                   </span>
                 )}
                 {item.updated_at && (

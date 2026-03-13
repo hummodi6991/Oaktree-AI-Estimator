@@ -849,7 +849,7 @@ export default function ExpansionAdvisorPage({
                 <div style={{ display: "flex", gap: 6 }}>
                   {selectedCandidate.id !== leadCandidateId && shortlistIds.includes(selectedCandidate.id) && (
                     <button className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => setLeadCandidateId(selectedCandidate.id)}>
-                      {t("expansionAdvisor.setAsLead")}
+                      {selectedCandidate.gate_status_json?.overall_pass === true ? t("expansionAdvisor.setAsLead") : t("expansionAdvisor.markExploratoryPick")}
                     </button>
                   )}
                   <button className="oak-btn oak-btn--sm oak-btn--primary" onClick={() => setActiveDrawer("memo")}>
