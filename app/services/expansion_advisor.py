@@ -45,6 +45,18 @@ def _safe_int(value: Any, default: int = 0) -> int:
     except Exception:
         return default
 
+def _context_checked(value: Any) -> bool:
+    """
+    Distinguish between:
+    - None  => context unavailable / query failed / not computed
+    - 0     => context available, but no nearby matches were found
+    """
+    return value is not None
+
+
+def _nonnegative_int(value: Any) -> int:
+    return max(0, _safe_int(value, 0))
+
 
 def _normalize_gate_status(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
@@ -307,6 +319,38 @@ def _parking_score(*, area_m2: float, service_model: str, nearby_parking_count: 
     return _clamp(area_signal * 0.35 + parking_amenity_signal * 0.30 + model_adjustment * 0.20 + access_score * 0.15)
 
 
+def _parking_evidence_band(nearby_parking_count: int | None) -> str:
+    """
+    Lightweight debug/helper field for UI + memo rendering.
+    Helps distinguish 'none found' from 'strong parking supply'.
+    """
+    if nearby_parking_count is None:
+        return "unknown"
+    count = _nonnegative_int(nearby_parking_count)
+    if count == 0:
+        return "none_found"
+    if count <= 2:
+        return "limited"
+    if count <= 5:
+        return "moderate"
+    return "strong"
+
+
+def _road_evidence_band(nearby_road_count: int | None, touches_road: bool | None) -> str:
+    if nearby_road_count is None and touches_road is None:
+        return "unknown"
+    roads = _nonnegative_int(nearby_road_count)
+    if touches_road:
+        return "direct_frontage"
+    if roads == 0:
+        return "none_found"
+    if roads <= 2:
+        return "limited"
+    if roads <= 5:
+        return "moderate"
+    return "strong"
+
+
 def _access_visibility_score(*, frontage_score: float, access_score: float, brand_profile: dict[str, Any]) -> float:
     visibility_weight = _sensitivity_weight(brand_profile.get("visibility_sensitivity"))
     frontage_weight = _sensitivity_weight(brand_profile.get("frontage_sensitivity"))
@@ -466,6 +510,15 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
         except Exception:
             logger.debug("parking context query failed for parcel_id=%s", parcel_id, exc_info=True)
 
+    # Add evidence band metadata for UI / memo rendering.
+    base["context_sources"]["road_evidence_band"] = _road_evidence_band(
+        base.get("nearby_road_segment_count") if base["context_sources"].get("road_context_available") else None,
+        base.get("touches_road") if base["context_sources"].get("road_context_available") else None,
+    )
+    base["context_sources"]["parking_evidence_band"] = _parking_evidence_band(
+        base.get("nearby_parking_amenity_count") if base["context_sources"].get("parking_context_available") else None,
+    )
+
     missing_context: list[str] = []
     if not roads_table_available:
         missing_context.append("roads_table_unavailable")
@@ -598,7 +651,9 @@ def _candidate_gate_status(
         "area_fit_pass",
     }
 
-    # Non-core failures should remain visible, but not automatically force FAIL.
+    # Surface advisory failures separately so the frontend can render
+    # caution/attention states without labeling the site as a hard FAIL.
+    advisory_failures = [gate for gate in failed if gate not in hard_fail_gates]
     blocking_failures = [gate for gate in failed if gate in hard_fail_gates]
 
     # Three-state verdict:
@@ -635,7 +690,13 @@ def _candidate_gate_status(
         "delivery_market_pass": "Delivery-market gate applies when primary channel is delivery.",
         "economics_pass": "Economics gate requires minimum economics score and non-weak payback.",
     }
-    reasons = {"passed": passed, "failed": failed, "blocking_failures": blocking_failures, "unknown": unknown, "thresholds": thresholds, "explanations": explanations}
+    reasons = {
+        "passed": passed,
+        "failed": failed,
+        "blocking_failures": blocking_failures,
+        "advisory_failures": advisory_failures,
+        "unknown": unknown,
+        "thresholds": thresholds, "explanations": explanations}
     return gate_status, reasons
 
 
@@ -1630,20 +1691,20 @@ def run_expansion_search(
         frontage_score = _frontage_score(
             parcel_perimeter_m=_safe_float(feature_snapshot_json.get("parcel_perimeter_m")),
             touches_road=bool(feature_snapshot_json.get("touches_road")),
-            nearby_road_count=_safe_int(feature_snapshot_json.get("nearby_road_segment_count")),
+            nearby_road_count=_nonnegative_int(feature_snapshot_json.get("nearby_road_segment_count")),
             nearest_major_road_m=_safe_float(feature_snapshot_json.get("nearest_major_road_distance_m")),
             road_context_available=road_context_available,
         )
         access_score = _access_score(
             touches_road=bool(feature_snapshot_json.get("touches_road")),
             nearest_major_road_m=_safe_float(feature_snapshot_json.get("nearest_major_road_distance_m")),
-            nearby_road_count=_safe_int(feature_snapshot_json.get("nearby_road_segment_count")),
+            nearby_road_count=_nonnegative_int(feature_snapshot_json.get("nearby_road_segment_count")),
             road_context_available=road_context_available,
         )
         parking_score = _parking_score(
             area_m2=area_m2,
             service_model=service_model,
-            nearby_parking_count=_safe_int(feature_snapshot_json.get("nearby_parking_amenity_count")),
+            nearby_parking_count=_nonnegative_int(feature_snapshot_json.get("nearby_parking_amenity_count")),
             access_score=access_score,
             parking_context_available=parking_context_available,
         )
@@ -1677,6 +1738,10 @@ def run_expansion_search(
             confidence_score=confidence_score,
         )
         score_breakdown_json["inputs"]["rent_fallback_used"] = rent_fallback_used
+        score_breakdown_json["inputs"]["parking_context_available"] = bool(feature_snapshot_json["context_sources"].get("parking_context_available"))
+        score_breakdown_json["inputs"]["road_context_available"] = bool(feature_snapshot_json["context_sources"].get("road_context_available"))
+        score_breakdown_json["inputs"]["parking_evidence_band"] = feature_snapshot_json["context_sources"].get("parking_evidence_band")
+        score_breakdown_json["inputs"]["road_evidence_band"] = feature_snapshot_json["context_sources"].get("road_evidence_band")
         final_score = _safe_float(score_breakdown_json.get("final_score"))
         key_strengths_json, key_risks_json = _build_strengths_and_risks(
             demand_score=demand_score,
