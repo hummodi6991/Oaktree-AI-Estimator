@@ -217,8 +217,13 @@ export default function ExpansionAdvisorPage({
     setLoadingSaved(true);
     setSavedLoadError(null);
     listSavedExpansionSearches()
-      .then((res) => setSavedItems(res.items || []))
-      .catch(() => setSavedLoadError(t("expansionAdvisor.errorSavedLoad")))
+      .then((res) => {
+        setSavedItems(res.items || []);
+        setSavedLoadError(null);
+      })
+      .catch(() => {
+        setSavedLoadError(t("expansionAdvisor.errorSavedLoad"));
+      })
       .finally(() => setLoadingSaved(false));
   }, [t]);
 
@@ -629,8 +634,13 @@ export default function ExpansionAdvisorPage({
                       setLoadingSaved(true);
                       setSavedLoadError(null);
                       listSavedExpansionSearches()
-                        .then((res) => setSavedItems(res.items || []))
-                        .catch(() => setSavedLoadError(t("expansionAdvisor.errorSavedLoad")))
+                        .then((res) => {
+                          setSavedItems(res.items || []);
+                          setSavedLoadError(null);
+                        })
+                        .catch(() => {
+                          setSavedLoadError(t("expansionAdvisor.errorSavedLoad"));
+                        })
                         .finally(() => setLoadingSaved(false));
                     }}
                   >
