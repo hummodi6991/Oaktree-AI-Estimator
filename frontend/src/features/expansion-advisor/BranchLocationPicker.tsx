@@ -117,6 +117,9 @@ function BranchSearchInput({
   return (
     <div className="ea-branch-search" ref={wrapperRef}>
       <div className="ea-branch-search__input-wrap">
+        <span className="ea-branch-search__search-icon" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        </span>
         <input
           ref={inputRef}
           className="ea-form__input ea-branch-search__input"

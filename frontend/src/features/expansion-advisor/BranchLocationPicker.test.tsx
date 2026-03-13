@@ -125,6 +125,25 @@ describe("BranchLocationPicker hydration compatibility", () => {
   });
 });
 
+describe("BranchLocationPicker search affordance", () => {
+  it("renders a search icon in the autocomplete input", () => {
+    const html = renderToStaticMarkup(
+      <BranchLocationPicker branches={[]} onChange={noop} />,
+    );
+    expect(html).toContain("ea-branch-search__search-icon");
+    // SVG search icon (magnifying glass)
+    expect(html).toContain("<svg");
+    expect(html).toContain("<circle");
+  });
+
+  it("search icon is marked aria-hidden", () => {
+    const html = renderToStaticMarkup(
+      <BranchLocationPicker branches={[]} onChange={noop} />,
+    );
+    expect(html).toContain('aria-hidden="true"');
+  });
+});
+
 describe("BranchLocationPicker iPad/Safari rendering", () => {
   it("cards use tap-highlight-transparent CSS class", () => {
     const html = renderToStaticMarkup(
