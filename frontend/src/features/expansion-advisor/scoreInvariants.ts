@@ -34,7 +34,7 @@ export function assertWeightedPointsSane(
   rawInput: number,
   label: string,
 ): void {
-  if (process.env.NODE_ENV === "production") return;
+  if (!import.meta.env.DEV) return;
   if (weighted > rawInput + 0.5) {
     console.warn(
       `[score-invariant] ${label}: weighted_points (${weighted}) exceeds ` +
