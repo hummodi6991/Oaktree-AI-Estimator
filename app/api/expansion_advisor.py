@@ -10,6 +10,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from app.db.deps import get_db
@@ -781,7 +782,15 @@ def list_expansion_saved_searches(
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     safe_limit = min(max(limit, 1), 100)
-    return {"items": list_saved_searches(db, status=status, limit=safe_limit)}
+    try:
+        return {"items": list_saved_searches(db, status=status, limit=safe_limit)}
+    except ProgrammingError:
+        # Table may not exist if the migration hasn't been applied yet.
+        # Return an empty list instead of a 500 so the UI shows a clean
+        # empty state rather than a misleading error alert.
+        db.rollback()
+        logger.debug("saved-searches table not queryable, returning empty list")
+        return {"items": []}
 
 
 @router.get("/saved-searches/{saved_id}", response_model=SavedSearchResponse)
