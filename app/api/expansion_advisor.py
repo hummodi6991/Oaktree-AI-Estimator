@@ -33,6 +33,7 @@ from app.services.expansion_advisor import (
 
 
 from app.services.aqar_district_match import normalize_district_key
+from app.api.search import normalize_search_text
 
 router = APIRouter(prefix="/expansion-advisor", tags=["expansion-advisor"])
 
@@ -48,6 +49,19 @@ class DistrictOptionResponse(BaseModel):
 
 class DistrictOptionsListResponse(BaseModel):
     items: list[DistrictOptionResponse]
+
+
+class BranchSuggestionItem(BaseModel):
+    id: str
+    name: str
+    district: str = ""
+    lat: float
+    lon: float
+    source: str = ""
+
+
+class BranchSuggestionsResponse(BaseModel):
+    items: list[BranchSuggestionItem]
 
 
 class StrictResponseModel(BaseModel):
@@ -413,6 +427,151 @@ def list_districts(db: Session = Depends(get_db)) -> dict[str, Any]:
         item.pop("_priority", None)
 
     return {"items": items}
+
+
+# ---------------------------------------------------------------------------
+# Riyadh bounding box for branch suggestion spatial filter
+# ---------------------------------------------------------------------------
+_RIYADH_BBOX = {"min_lon": 46.0, "min_lat": 24.2, "max_lon": 47.5, "max_lat": 25.2}
+
+
+@router.get("/branch-suggestions", response_model=BranchSuggestionsResponse)
+def search_branch_suggestions(
+    q: str = "",
+    limit: int = 15,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Return Riyadh-only branch/location suggestions for the Expansion Advisor
+    existing-branches picker.
+
+    Searches ``restaurant_poi`` (name, name_ar, chain_name, district) and
+    ``delivery_source_record`` (restaurant_name_normalized, brand_raw,
+    district_text) for matches, then deduplicates by name+location proximity.
+    """
+    q = (q or "").strip()
+    if not q or len(q) < 2:
+        return {"items": []}
+
+    safe_limit = min(max(limit, 1), 50)
+    norm_q = normalize_search_text(q).lower()
+    like_pattern = f"%{norm_q}%"
+
+    # ── 1. restaurant_poi ──
+    poi_items: list[dict[str, Any]] = []
+    try:
+        poi_rows = db.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    COALESCE(NULLIF(name, ''), NULLIF(name_ar, ''), chain_name) AS display_name,
+                    COALESCE(district, '') AS district,
+                    lat, lon,
+                    'restaurant_poi' AS source
+                FROM restaurant_poi
+                WHERE lat BETWEEN :min_lat AND :max_lat
+                  AND lon BETWEEN :min_lon AND :max_lon
+                  AND (
+                    LOWER(name) LIKE :q
+                    OR LOWER(COALESCE(name_ar, '')) LIKE :q
+                    OR LOWER(COALESCE(chain_name, '')) LIKE :q
+                    OR LOWER(COALESCE(district, '')) LIKE :q
+                  )
+                ORDER BY review_count DESC NULLS LAST
+                LIMIT :lim
+                """
+            ),
+            {
+                "q": like_pattern,
+                "lim": safe_limit * 2,
+                **_RIYADH_BBOX,
+            },
+        ).fetchall()
+        for r in poi_rows:
+            name_val = (r[1] or "").strip()
+            if not name_val:
+                continue
+            poi_items.append(
+                {
+                    "id": str(r[0]),
+                    "name": name_val,
+                    "district": (r[2] or "").strip(),
+                    "lat": float(r[3]),
+                    "lon": float(r[4]),
+                    "source": r[5],
+                }
+            )
+    except Exception:
+        logger.warning("Branch suggestion: restaurant_poi query failed", exc_info=True)
+
+    # ── 2. delivery_source_record ──
+    dsr_items: list[dict[str, Any]] = []
+    try:
+        dsr_rows = db.execute(
+            text(
+                """
+                SELECT
+                    id::text,
+                    COALESCE(
+                        NULLIF(restaurant_name_normalized, ''),
+                        NULLIF(restaurant_name_raw, ''),
+                        NULLIF(brand_raw, '')
+                    ) AS display_name,
+                    COALESCE(district_text, '') AS district,
+                    lat, lon,
+                    'delivery:' || platform AS source
+                FROM delivery_source_record
+                WHERE lat IS NOT NULL AND lon IS NOT NULL
+                  AND lat BETWEEN :min_lat AND :max_lat
+                  AND lon BETWEEN :min_lon AND :max_lon
+                  AND (
+                    LOWER(COALESCE(restaurant_name_normalized, '')) LIKE :q
+                    OR LOWER(COALESCE(restaurant_name_raw, '')) LIKE :q
+                    OR LOWER(COALESCE(brand_raw, '')) LIKE :q
+                    OR LOWER(COALESCE(district_text, '')) LIKE :q
+                    OR LOWER(COALESCE(address_raw, '')) LIKE :q
+                  )
+                ORDER BY rating DESC NULLS LAST
+                LIMIT :lim
+                """
+            ),
+            {
+                "q": like_pattern,
+                "lim": safe_limit * 2,
+                **_RIYADH_BBOX,
+            },
+        ).fetchall()
+        for r in dsr_rows:
+            name_val = (r[1] or "").strip()
+            if not name_val:
+                continue
+            dsr_items.append(
+                {
+                    "id": f"dsr:{r[0]}",
+                    "name": name_val,
+                    "district": (r[2] or "").strip(),
+                    "lat": float(r[3]),
+                    "lon": float(r[4]),
+                    "source": r[5],
+                }
+            )
+    except Exception:
+        logger.warning("Branch suggestion: delivery_source_record query failed", exc_info=True)
+
+    # ── 3. Deduplicate by name+proximity ──
+    merged: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for item in poi_items + dsr_items:
+        # Rough dedup key: lowercase name + rounded coords (≈110m grid)
+        dedup_key = f"{item['name'].lower().strip()}|{round(item['lat'], 3)}|{round(item['lon'], 3)}"
+        if dedup_key in seen_keys:
+            continue
+        seen_keys.add(dedup_key)
+        merged.append(item)
+        if len(merged) >= safe_limit:
+            break
+
+    return {"items": merged}
 
 
 @router.post("/searches", response_model=ExpansionSearchResponse)

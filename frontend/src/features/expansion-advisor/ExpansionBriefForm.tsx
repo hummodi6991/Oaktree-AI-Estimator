@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { DistrictOption, ExpansionBrief } from "../../lib/api/expansionAdvisor";
 import { getExpansionDistricts } from "../../lib/api/expansionAdvisor";
 import DistrictMultiSelect from "./DistrictMultiSelect";
+import BranchLocationPicker from "./BranchLocationPicker";
 
 export const defaultBrief: ExpansionBrief = {
   brand_name: "",
@@ -272,23 +273,14 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
       {/* Existing branches */}
       <div className="ea-form__section">
         <h4 className="ea-form__section-title">{t("expansionAdvisor.existingBranchesLabel")}</h4>
-        <div className="ea-branch-list">
-          {branches.map((branch, index) => {
-            const branchError = errors.branches?.[index];
-            return (
-              <div key={index} className={`ea-branch-row${branchError ? " ea-branch-row--error" : ""}`}>
-                <input placeholder={t("expansionAdvisor.branchName")} value={branch.name || ""} onChange={(e) => { const next = [...branches]; next[index] = { ...next[index], name: e.target.value }; set("existing_branches", next); }} disabled={loading} />
-                <input type="number" placeholder={t("expansionAdvisor.branchLat")} value={branch.lat ?? ""} step="any" onChange={(e) => { const next = [...branches]; next[index] = { ...next[index], lat: Number(e.target.value) }; set("existing_branches", next); }} disabled={loading} />
-                <input type="number" placeholder={t("expansionAdvisor.branchLon")} value={branch.lon ?? ""} step="any" onChange={(e) => { const next = [...branches]; next[index] = { ...next[index], lon: Number(e.target.value) }; set("existing_branches", next); }} disabled={loading} />
-                <input placeholder={t("expansionAdvisor.branchDistrict")} value={branch.district || ""} onChange={(e) => { const next = [...branches]; next[index] = { ...next[index], district: e.target.value }; set("existing_branches", next); }} disabled={loading} />
-                <button type="button" className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => set("existing_branches", branches.filter((_, i) => i !== index))} disabled={loading}>{t("expansionAdvisor.removeBranch")}</button>
-                {touched && branchError && <span className="ea-form__error">{t(`expansionAdvisor.${branchError}`)}</span>}
-              </div>
-            );
-          })}
-          {branches.length === 0 && <p style={{ margin: 0, fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)" }}>{t("expansionAdvisor.noBranchesYet")}</p>}
-          <button type="button" className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => set("existing_branches", [...branches, { name: "", lat: 0, lon: 0, district: "" }])} disabled={loading}>+ {t("expansionAdvisor.addBranch")}</button>
-        </div>
+        <BranchLocationPicker
+          branches={branches}
+          onChange={(next) => set("existing_branches", next)}
+          disabled={loading}
+        />
+        {touched && errors.branches && errors.branches.length > 0 && (
+          <span className="ea-form__error">{t("expansionAdvisor.validationLatRange")}</span>
+        )}
       </div>
 
       {showErrors && <div className="ea-form__validation-summary">{t("expansionAdvisor.validationRequired")}</div>}
