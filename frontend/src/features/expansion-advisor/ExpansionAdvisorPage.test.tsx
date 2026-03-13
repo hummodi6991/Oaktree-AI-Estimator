@@ -3099,6 +3099,20 @@ describe("Existing branches rendering", () => {
   });
 });
 
+/* ─── Regression: Native select dropdown indicators ─── */
+
+describe("Native select elements render with ea-form__select class for dropdown indicators", () => {
+  it("service model, price tier, and sensitivity selects use ea-form__select", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionBriefForm initialValue={defaultBrief} onSubmit={() => {}} loading={false} />,
+    );
+    // Count the number of ea-form__select occurrences (7 native selects)
+    const selectMatches = html.match(/ea-form__select/g);
+    expect(selectMatches).not.toBeNull();
+    expect(selectMatches!.length).toBeGreaterThanOrEqual(7);
+  });
+});
+
 /* ─── Regression: Expansion Advisor search payload normalization ─── */
 
 describe("Expansion Advisor payload normalization regression", () => {

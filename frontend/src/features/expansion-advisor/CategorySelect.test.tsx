@@ -142,6 +142,23 @@ describe("Saved-study hydration", () => {
   });
 });
 
+describe("CategorySelect dropdown indicator", () => {
+  it("renders a visible chevron indicator", () => {
+    const html = renderToStaticMarkup(
+      <CategorySelect value="" onChange={() => {}} />,
+    );
+    expect(html).toContain("ea-category-select__chevron");
+    expect(html).toContain("▼");
+  });
+
+  it("renders chevron even when a value is selected", () => {
+    const html = renderToStaticMarkup(
+      <CategorySelect value="burger" onChange={() => {}} />,
+    );
+    expect(html).toContain("ea-category-select__chevron");
+  });
+});
+
 describe("Category catalog completeness", () => {
   it("has at least 35 categories", () => {
     expect(CATEGORY_OPTIONS.length).toBeGreaterThanOrEqual(35);

@@ -77,6 +77,32 @@ describe("DistrictMultiSelect", () => {
   });
 });
 
+describe("DistrictMultiSelect dropdown indicator", () => {
+  it("renders a visible chevron indicator", () => {
+    const html = renderToStaticMarkup(
+      <DistrictMultiSelect
+        options={SAMPLE_OPTIONS}
+        selected={[]}
+        onChange={() => {}}
+        placeholder="Select districts"
+      />,
+    );
+    expect(html).toContain("ea-district-ms__chevron");
+    expect(html).toContain("▼");
+  });
+
+  it("renders chevron even with selected chips", () => {
+    const html = renderToStaticMarkup(
+      <DistrictMultiSelect
+        options={SAMPLE_OPTIONS}
+        selected={["العليا"]}
+        onChange={() => {}}
+      />,
+    );
+    expect(html).toContain("ea-district-ms__chevron");
+  });
+});
+
 describe("DistrictMultiSelect payload shape", () => {
   it("onChange receives string[] matching payload shape", () => {
     // Verify the type contract: selected is string[], onChange receives string[]

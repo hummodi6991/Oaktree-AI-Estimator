@@ -190,6 +190,9 @@ export default function DistrictMultiSelect({
           role="combobox"
           aria-expanded={open}
         />
+        <span className="ea-district-ms__chevron" aria-hidden="true">
+          {open ? "▲" : "▼"}
+        </span>
       </div>
       {open && !disabled && (
         <ul className="ea-district-ms__dropdown" role="listbox">
