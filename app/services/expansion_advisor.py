@@ -2174,6 +2174,7 @@ def run_expansion_search(
             "gate_status_json": gate_status_json,
         }
         top_positives_json, top_risks_json = _top_positives_and_risks(candidate=seed_candidate, gate_reasons=gate_reasons_json)
+        district_canon = _canonicalize_district_label(district, district_lookup)
         decision_summary = _decision_summary(
             district=district_canon["district_display"] or district,
             final_score=final_score,
@@ -2184,7 +2185,6 @@ def run_expansion_search(
             area_m2=area_m2,
         )
 
-        district_canon = _canonicalize_district_label(district, district_lookup)
         candidates.append(
             {
                 "id": str(uuid.uuid4()),
