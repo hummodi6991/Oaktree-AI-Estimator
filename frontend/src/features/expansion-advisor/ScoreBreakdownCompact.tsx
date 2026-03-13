@@ -30,10 +30,10 @@ export default function ScoreBreakdownCompact({ breakdown }: Props) {
             />
           </div>
           <span className="ea-score-breakdown-compact__value">
-            {fmtScore(comp.weighted)}
+            {fmtScore(comp.weighted, 1)} pts
           </span>
           <span className="ea-score-breakdown-compact__weight">
-            ({(comp.weight * 100).toFixed(0)}%)
+            {(comp.weight * 100).toFixed(0)}% weight
           </span>
         </div>
       ))}

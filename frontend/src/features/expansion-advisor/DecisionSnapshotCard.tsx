@@ -21,19 +21,27 @@ export default function DecisionSnapshotCard({ candidate, report, memo, prominen
         <h4 className="ea-decision-snapshot__title">{t("expansionAdvisor.decisionSnapshot")}</h4>
         <div className="ea-decision-snapshot__badges">
           <ScorePill value={snap.finalScore} />
-          <ConfidenceBadge grade={snap.confidenceGrade} />
+          {/* Verdict badge */}
           <span className={`ea-badge ea-badge--${snap.gateVerdict === "pass" ? "green" : snap.gateVerdict === "fail" ? "red" : "neutral"}`}>
-            {snap.gateVerdict === "pass" ? t("expansionAdvisor.gatePass") : snap.gateVerdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateUnknown")}
+            {snap.gateVerdict === "pass" ? t("expansionAdvisor.gatePass") : snap.gateVerdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateNeedsValidation")}
           </span>
+          {/* Confidence badge — separate from verdict */}
+          <ConfidenceBadge grade={snap.confidenceGrade} />
         </div>
       </div>
       <div className="ea-decision-snapshot__body">
+        {/* No-pass notice when no gates pass */}
+        {!snap.allGatesPass && (
+          <div className="ea-decision-snapshot__notice">
+            {t("expansionAdvisor.noPassNotice")}
+          </div>
+        )}
         <div className="ea-decision-snapshot__row">
-          <span className="ea-decision-snapshot__label">{t("expansionAdvisor.leadSite")}</span>
+          <span className="ea-decision-snapshot__label">{snap.siteLabel}</span>
           <span className="ea-decision-snapshot__value ea-decision-snapshot__value--lead">{snap.leadSite}</span>
         </div>
         <div className="ea-decision-snapshot__row">
-          <span className="ea-decision-snapshot__label">{t("expansionAdvisor.dsWhyItWins")}</span>
+          <span className="ea-decision-snapshot__label">{snap.whyItWinsLabel}</span>
           <span className="ea-decision-snapshot__value">{snap.whyItWins}</span>
         </div>
         <div className="ea-decision-snapshot__row">

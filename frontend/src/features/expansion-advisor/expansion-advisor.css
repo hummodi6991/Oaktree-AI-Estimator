@@ -1648,6 +1648,16 @@
   font-size: 10px;
 }
 
+.ea-lead-tag--exploratory {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.ea-finalist-tile__lead-badge--exploratory {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
 .ea-candidate--lead {
   border-color: #f59e0b;
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
@@ -2255,6 +2265,16 @@
   padding: 12px 16px;
   display: grid;
   gap: 6px;
+}
+
+.ea-decision-snapshot__notice,
+.ea-copy-summary__notice {
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: var(--oak-fs-xs, 12px);
+  font-weight: var(--oak-fw-medium, 500);
 }
 
 .ea-decision-snapshot__row {

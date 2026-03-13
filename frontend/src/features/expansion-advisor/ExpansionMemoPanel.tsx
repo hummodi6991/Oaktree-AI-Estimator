@@ -6,7 +6,7 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
 import CopySummaryBlock from "./CopySummaryBlock";
-import { fmtScore, fmtMeters, fmtSAR } from "./formatHelpers";
+import { fmtScore, fmtMeters, fmtSAR, humanGateLabel } from "./formatHelpers";
 
 function toList(input: unknown): string[] {
   return Array.isArray(input) ? input.map(String) : [];
@@ -44,7 +44,7 @@ export default function ExpansionMemoPanel({
     <div className="ea-drawer-backdrop" onClick={() => onClose?.()}>
       <div className={`ea-drawer ea-drawer--wide${presentationMode ? " ea-drawer--presentation" : ""}`} onClick={(e) => e.stopPropagation()}>
         <div className="ea-drawer__header">
-          {isLeadCandidate && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
+          {isLeadCandidate && <span className="ea-lead-tag">{t("expansionAdvisor.leadCandidate")}</span>}
           <h3 className="ea-drawer__title">{t("expansionAdvisor.decisionMemo")}</h3>
           <div style={{ display: "flex", gap: 6, alignItems: "center", marginInlineStart: "auto", flexWrap: "wrap" }}>
             {onBackToDetail && (
@@ -170,9 +170,9 @@ export default function ExpansionMemoPanel({
                   <GateSummary gates={gates} unknownGates={toList(gateReasons?.unknown)} />
                   {gateReasons && (
                     <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 6, display: "grid", gap: 4 }}>
-                      {toList(gateReasons.passed).length > 0 && <div><span className="ea-badge ea-badge--green">{t("expansionAdvisor.gatesPassed")}</span> {toList(gateReasons.passed).join(", ")}</div>}
-                      {toList(gateReasons.failed).length > 0 && <div><span className="ea-badge ea-badge--red">{t("expansionAdvisor.gatesFailed")}</span> {toList(gateReasons.failed).join(", ")}</div>}
-                      {toList(gateReasons.unknown).length > 0 && <div><span className="ea-badge ea-badge--neutral">{t("expansionAdvisor.gatesUnknown")}</span> {toList(gateReasons.unknown).join(", ")}</div>}
+                      {toList(gateReasons.passed).length > 0 && <div><span className="ea-badge ea-badge--green">{t("expansionAdvisor.gatesPassed")}</span> {toList(gateReasons.passed).map(humanGateLabel).join(", ")}</div>}
+                      {toList(gateReasons.failed).length > 0 && <div><span className="ea-badge ea-badge--red">{t("expansionAdvisor.gatesFailed")}</span> {toList(gateReasons.failed).map(humanGateLabel).join(", ")}</div>}
+                      {toList(gateReasons.unknown).length > 0 && <div><span className="ea-badge ea-badge--amber">{t("expansionAdvisor.gatesNeedVerification")}</span> {toList(gateReasons.unknown).map(humanGateLabel).join(", ")}</div>}
                     </div>
                   )}
                 </div>

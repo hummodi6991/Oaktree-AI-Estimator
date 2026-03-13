@@ -170,7 +170,7 @@ export default function ExpansionReportPanel({
                               <ConfidenceBadge grade={item.confidence_grade} />
                               {item.gate_verdict && (
                                 <span className={`ea-badge ea-badge--${item.gate_verdict === "pass" ? "green" : item.gate_verdict === "fail" ? "red" : "amber"}`}>
-                                  {item.gate_verdict}
+                                  {item.gate_verdict === "pass" ? t("expansionAdvisor.gatePass") : item.gate_verdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateNeedsValidation")}
                                 </span>
                               )}
                             </div>
@@ -200,29 +200,38 @@ export default function ExpansionReportPanel({
                 )}
 
                 {/* Lead candidate focus callouts */}
-                {leadCandidateId && (
-                  <div className="ea-report-section">
-                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.leadSiteAnalysis")}</h5>
-                    {rec.why_best && (
-                      <div className="ea-memo-callout ea-memo-callout--positive">
-                        <span className="ea-memo-callout__label">{t("expansionAdvisor.whyLeadSite")}</span>
-                        <p className="ea-detail__text">{rec.why_best}</p>
-                      </div>
-                    )}
-                    {rec.main_risk && (
-                      <div className="ea-memo-callout ea-memo-callout--risk">
-                        <span className="ea-memo-callout__label">{t("expansionAdvisor.whyNotRunnerUp")}</span>
-                        <p className="ea-detail__text">{rec.main_risk}</p>
-                      </div>
-                    )}
-                    {rec.best_format && (
-                      <div className="ea-memo-callout ea-memo-callout--neutral">
-                        <span className="ea-memo-callout__label">{t("expansionAdvisor.beforeSigning")}</span>
-                        <p className="ea-detail__text">{rec.best_format}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {leadCandidateId && (() => {
+                  const leadPasses = leadCandidate?.gate_status_json?.overall_pass === true;
+                  const sectionTitle = leadPasses ? t("expansionAdvisor.leadSiteAnalysis") : t("expansionAdvisor.topCandidateAnalysis");
+                  return (
+                    <div className="ea-report-section">
+                      <h5 className="ea-detail__section-title">{sectionTitle}</h5>
+                      {!leadPasses && (
+                        <div className="ea-memo-callout ea-memo-callout--risk">
+                          <span className="ea-memo-callout__label">{t("expansionAdvisor.noPassNotice")}</span>
+                        </div>
+                      )}
+                      {rec.why_best && (
+                        <div className="ea-memo-callout ea-memo-callout--positive">
+                          <span className="ea-memo-callout__label">{leadPasses ? t("expansionAdvisor.whyLeadSite") : t("expansionAdvisor.topStrength")}</span>
+                          <p className="ea-detail__text">{rec.why_best}</p>
+                        </div>
+                      )}
+                      {rec.main_risk && (
+                        <div className="ea-memo-callout ea-memo-callout--risk">
+                          <span className="ea-memo-callout__label">{t("expansionAdvisor.whyNotRunnerUp")}</span>
+                          <p className="ea-detail__text">{rec.main_risk}</p>
+                        </div>
+                      )}
+                      {rec.best_format && (
+                        <div className="ea-memo-callout ea-memo-callout--neutral">
+                          <span className="ea-memo-callout__label">{t("expansionAdvisor.beforeSigning")}</span>
+                          <p className="ea-detail__text">{rec.best_format}</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Copy-ready executive summary block */}
                 <CopySummaryBlock

@@ -51,8 +51,12 @@ export default function CopySummaryBlock({ candidate, report, memo }: Props) {
         </div>
       </div>
       <div className="ea-copy-summary__body">
+        {/* No-pass notice */}
+        {summary.noPassNotice && (
+          <div className="ea-copy-summary__notice">{summary.noPassNotice}</div>
+        )}
         <div className="ea-copy-summary__row">
-          <span className="ea-copy-summary__label">{t("expansionAdvisor.leadSite")}</span>
+          <span className="ea-copy-summary__label">{summary.siteLabel}</span>
           <span className="ea-copy-summary__value">{summary.bestCandidate}</span>
         </div>
         <div className="ea-copy-summary__row">

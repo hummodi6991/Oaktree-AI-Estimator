@@ -5,7 +5,7 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
 import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
-import { fmtSAR, fmtMeters, fmtScore, fmtPct, fmtSarPerM2, fmtM2, fmtMonths } from "./formatHelpers";
+import { fmtSAR, fmtMeters, fmtScore, fmtPct, fmtSarPerM2, fmtM2, fmtMonths, humanGateLabel } from "./formatHelpers";
 
 type Props = {
   candidate: ExpansionCandidate;
@@ -157,13 +157,13 @@ export default function CandidateDetailPanel({ candidate }: Props) {
         {gateReasons && (
           <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 6 }}>
             {gateReasons.passed.length > 0 && (
-              <div><span className="ea-badge ea-badge--green">{t("expansionAdvisor.gatesPassed")}</span> {gateReasons.passed.join(", ")}</div>
+              <div><span className="ea-badge ea-badge--green">{t("expansionAdvisor.gatesPassed")}</span> {gateReasons.passed.map(humanGateLabel).join(", ")}</div>
             )}
             {gateReasons.failed.length > 0 && (
-              <div><span className="ea-badge ea-badge--red">{t("expansionAdvisor.gatesFailed")}</span> {gateReasons.failed.join(", ")}</div>
+              <div><span className="ea-badge ea-badge--red">{t("expansionAdvisor.gatesFailed")}</span> {gateReasons.failed.map(humanGateLabel).join(", ")}</div>
             )}
             {gateReasons.unknown.length > 0 && (
-              <div><span className="ea-badge ea-badge--neutral">{t("expansionAdvisor.gatesUnknown")}</span> {gateReasons.unknown.join(", ")}</div>
+              <div><span className="ea-badge ea-badge--amber">{t("expansionAdvisor.gatesNeedVerification")}</span> {gateReasons.unknown.map(humanGateLabel).join(", ")}</div>
             )}
           </div>
         )}

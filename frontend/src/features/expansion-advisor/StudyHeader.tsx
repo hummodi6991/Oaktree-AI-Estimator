@@ -35,7 +35,11 @@ export default function StudyHeader({
   const { t } = useTranslation();
 
   const heroCandidate = leadCandidate || bestCandidate;
-  const heroLabel = leadCandidate ? t("expansionAdvisor.leadSite") : t("expansionAdvisor.topRanked");
+  // Only use "Lead Site" framing if the lead candidate actually passes all gates
+  const leadPasses = leadCandidate?.gate_status_json?.overall_pass === true;
+  const heroLabel = leadCandidate
+    ? (leadPasses ? t("expansionAdvisor.leadSite") : t("expansionAdvisor.topExploratoryCandidate"))
+    : t("expansionAdvisor.topRanked");
 
   return (
     <div className="ea-study-header">
