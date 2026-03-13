@@ -3677,3 +3677,183 @@ describe("UI/UX correctness: district label fallback", () => {
     expect(safeDistrictLabel(null, null, null)).toBe("Unknown district");
   });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Regression tests for expansion advisor fixes
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+import { normalizeWeightPercent, assertWeightedPointsSane } from "./scoreInvariants";
+
+describe("Regression: no Lead Site framing when pass gates = 0", () => {
+  it("buildCopySummary.siteLabel is 'Top ranked candidate' when overall_pass is false", () => {
+    const c = makeCandidate({ gate_status_json: { overall_pass: false } });
+    const summary = buildCopySummary(c, null, null);
+    expect(summary.siteLabel).not.toBe("Lead site");
+    expect(summary.siteLabel).toBe("Top ranked candidate");
+  });
+
+  it("buildDecisionSnapshot.siteLabel is 'Top ranked candidate' when overall_pass is null (unknown)", () => {
+    const c = makeCandidate({ gate_status_json: { overall_pass: null as any } });
+    const snap = buildDecisionSnapshot(c);
+    expect(snap.siteLabel).toBe("Top ranked candidate");
+  });
+
+  it("buildFinalistTiles marks gateVerdict=unknown for null overall_pass", () => {
+    const c = makeCandidate({ id: "f1", gate_status_json: { overall_pass: null as any } });
+    const tiles = buildFinalistTiles([c], ["f1"], null);
+    expect(tiles[0].gateVerdict).toBe("unknown");
+  });
+});
+
+describe("Regression: unknown gates render as neutral/question mark", () => {
+  it("GateSummary renders ? for null-valued gates", () => {
+    const html = renderToStaticMarkup(
+      <GateSummary
+        gates={{ parking_pass: null as any, frontage_access_pass: null as any }}
+        unknownGates={["parking_pass", "frontage_access_pass"]}
+      />,
+    );
+    // Every gate should have the ? icon, not ✗
+    expect(html).not.toContain("✗");
+    expect(html).toContain("?");
+    expect(html).toContain("ea-gate-item--unknown");
+    expect(html).not.toContain("ea-gate-item--fail");
+  });
+});
+
+describe("Regression: score breakdown never renders 2000%, 2500%, etc.", () => {
+  it("normalizeWeightPercent handles backend integer weights (25 → '25')", () => {
+    expect(normalizeWeightPercent(25)).toBe("25");
+    expect(normalizeWeightPercent(20)).toBe("20");
+    expect(normalizeWeightPercent(5)).toBe("5");
+  });
+
+  it("normalizeWeightPercent handles fractional weights (0.25 → '25')", () => {
+    expect(normalizeWeightPercent(0.25)).toBe("25");
+    expect(normalizeWeightPercent(0.2)).toBe("20");
+    expect(normalizeWeightPercent(0.05)).toBe("5");
+  });
+
+  it("normalizeWeightPercent handles edge cases", () => {
+    expect(normalizeWeightPercent(0)).toBe("0");
+    expect(normalizeWeightPercent(NaN)).toBe("0");
+    expect(normalizeWeightPercent(100)).toBe("100");
+  });
+
+  it("ScoreBreakdownCompact with backend-style integer weights (25) shows 25% not 2500%", () => {
+    const breakdown = {
+      weights: { demand_potential: 25, brand_fit: 20 },
+      inputs: { demand_potential: 80, brand_fit: 70 },
+      weighted_components: { demand_potential: 20, brand_fit: 14 },
+      final_score: 72,
+    };
+    const html = renderToStaticMarkup(<ScoreBreakdownCompact breakdown={breakdown} />);
+    expect(html).toContain("25% weight");
+    expect(html).toContain("20% weight");
+    expect(html).not.toMatch(/\b2500%/);
+    expect(html).not.toMatch(/\b2000%/);
+  });
+
+  it("ScoreBreakdownCompact with fractional weights (0.25) also shows 25%", () => {
+    const breakdown = {
+      weights: { demand_potential: 0.25, brand_fit: 0.20 },
+      inputs: { demand_potential: 80, brand_fit: 70 },
+      weighted_components: { demand_potential: 20, brand_fit: 14 },
+      final_score: 72,
+    };
+    const html = renderToStaticMarkup(<ScoreBreakdownCompact breakdown={breakdown} />);
+    expect(html).toContain("25% weight");
+    expect(html).toContain("20% weight");
+  });
+});
+
+describe("Regression: Fail and confidence grade are separate UI elements", () => {
+  it("CandidateCard keeps verdict and confidence visually separate", () => {
+    const c = makeCandidate({
+      gate_status_json: { overall_pass: false, zoning_fit_pass: false },
+      confidence_grade: "B",
+      final_score: 65,
+    });
+    const html = renderToStaticMarkup(
+      <ExpansionCandidateCard
+        candidate={c}
+        selected={false}
+        shortlisted={false}
+        compared={false}
+        onSelect={() => {}}
+        onToggleShortlist={() => {}}
+        onCompareToggle={() => {}}
+      />,
+    );
+    // Both should be present
+    expect(html).toContain("Fail");
+    expect(html).toContain("Data: B");
+    // They should NOT be mashed together
+    expect(html).not.toContain("FailB");
+    expect(html).not.toContain("Fail B");
+    expect(html).not.toContain("BFail");
+  });
+});
+
+describe("Regression: raw keys like zoning_fit_pass never appear in user-visible text", () => {
+  it("deriveDecisionChecklist uses human-readable labels for unknowns", () => {
+    const c = makeCandidate({
+      gate_status_json: { overall_pass: null as any, zoning_fit_pass: null as any },
+      gate_reasons_json: {
+        passed: [],
+        failed: [],
+        unknown: ["zoning_fit_pass"],
+        thresholds: {},
+        explanations: {},
+      },
+      feature_snapshot_json: {
+        data_completeness_score: 50,
+        missing_context: ["parking_context_unavailable"],
+        context_sources: {},
+      },
+    });
+    const items = deriveDecisionChecklist(c);
+    for (const item of items) {
+      expect(item.label).not.toContain("_pass");
+      expect(item.label).not.toMatch(/^[a-z_]+$/); // no raw snake_case keys
+    }
+  });
+
+  it("parseGateEntries never exposes raw key as the name", () => {
+    const entries = parseGateEntries(
+      { zoning_fit_pass: true, parking_pass: false, economics_pass: null as any },
+      { passed: ["zoning_fit_pass"], failed: ["parking_pass"], unknown: ["economics_pass"], thresholds: {}, explanations: {} },
+    );
+    for (const e of entries) {
+      expect(e.name).not.toContain("_pass");
+      expect(e.name).not.toContain("_fit_");
+    }
+  });
+});
+
+describe("Regression: scoreInvariants dev assertion", () => {
+  it("assertWeightedPointsSane warns when weighted > rawInput", () => {
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (msg: string) => warnings.push(msg);
+    try {
+      assertWeightedPointsSane(2500, 80, "demand_potential");
+      expect(warnings.length).toBe(1);
+      expect(warnings[0]).toContain("score-invariant");
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+
+  it("assertWeightedPointsSane is silent when values are sane", () => {
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (msg: string) => warnings.push(msg);
+    try {
+      assertWeightedPointsSane(20, 80, "demand_potential");
+      expect(warnings.length).toBe(0);
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+});
