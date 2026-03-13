@@ -23,6 +23,13 @@ OSM_DISTRICT_SQL = text(
         place IN ('neighbourhood', 'quarter', 'suburb')
         OR (boundary = 'administrative' AND admin_level IN ('9','10','11'))
       )
+      AND ST_Intersects(
+            way,
+            ST_Transform(
+                ST_MakeEnvelope(46.0, 24.2, 47.5, 25.2, 4326),
+                ST_SRID(way)
+            )
+      )
     """
 )
 
