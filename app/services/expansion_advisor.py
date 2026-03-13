@@ -470,8 +470,13 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
                             "touches_road": touches_road,
                         }
                     )
+                    # Context is available when the query succeeded and returned
+                    # data — even if every count is 0 (meaning "no nearby roads
+                    # found").  The old heuristic conflated 0 with unavailable.
                     base["context_sources"]["road_context_available"] = (
-                        nearby_road_segment_count > 0 or touches_road or nearest_major_road_distance_m < 5000
+                        _context_checked(road_row.get("nearby_road_segment_count"))
+                        or _context_checked(road_row.get("touches_road"))
+                        or _context_checked(road_row.get("nearest_major_road_distance_m"))
                     )
         except Exception:
             logger.debug("road context query failed for parcel_id=%s", parcel_id, exc_info=True)
@@ -506,7 +511,11 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
                 if parking_row:
                     nearby_parking_amenity_count = _safe_int(parking_row.get("nearby_parking_amenity_count"))
                     base["nearby_parking_amenity_count"] = nearby_parking_amenity_count
-                    base["context_sources"]["parking_context_available"] = nearby_parking_amenity_count >= 0
+                    # Context is available when the query returned a value —
+                    # 0 means "looked and found nothing", not "unavailable".
+                    base["context_sources"]["parking_context_available"] = _context_checked(
+                        parking_row.get("nearby_parking_amenity_count")
+                    )
         except Exception:
             logger.debug("parking context query failed for parcel_id=%s", parcel_id, exc_info=True)
 
