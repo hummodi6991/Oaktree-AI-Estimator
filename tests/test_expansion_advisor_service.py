@@ -1577,3 +1577,261 @@ def test_production_like_mixed_verdicts():
     # Verify they are distinct
     verdicts = {g1["overall_pass"], g2["overall_pass"], g3["overall_pass"]}
     assert len(verdicts) == 3, f"expected 3 distinct verdicts, got {verdicts}"
+
+
+# ---------------------------------------------------------------------------
+# New focused tests for expansion-advisor backend fix patch
+# ---------------------------------------------------------------------------
+
+from app.services.expansion_advisor import (
+    _area_fit,
+    _gate_key_to_label,
+    _gate_verdict_label,
+    _score_breakdown,
+    _top_positives_and_risks,
+)
+
+
+def test_large_parcel_not_favored_when_target_is_small():
+    """A 500 m² parcel with target 200 m² and min/max 100/500 should yield low
+    area_fit and should NOT be the top-ranked candidate just because it is the
+    max-size parcel."""
+    area_fit_500 = _area_fit(500, target_area_m2=200, min_area_m2=100, max_area_m2=500)
+    area_fit_200 = _area_fit(200, target_area_m2=200, min_area_m2=100, max_area_m2=500)
+    area_fit_250 = _area_fit(250, target_area_m2=200, min_area_m2=100, max_area_m2=500)
+
+    # 500 is 300 away from target in a 400-span, so ~25 — much lower than 200
+    assert area_fit_200 == 100.0, "Exact target should score 100"
+    assert area_fit_500 < 30, f"500 m² with target 200 should score low, got {area_fit_500}"
+    assert area_fit_250 > area_fit_500, "250 m² should score better than 500 m²"
+
+
+def test_report_best_pass_candidate_id_null_when_no_pass():
+    """get_recommendation_report() must set best_pass_candidate_id = None when
+    no candidates pass all gates."""
+    import app.services.expansion_advisor as svc
+
+    db = FakeDB(candidate_rows=[], brand_profile_row={
+        "price_tier": "mid",
+        "preferred_districts_json": [],
+        "excluded_districts_json": [],
+    })
+    svc.get_search = lambda _db, _sid: {
+        "id": "search-1",
+        "service_model": "qsr",
+        "brand_profile": {"expansion_goal": "balanced"},
+    }
+    # Both candidates have overall_pass=False
+    svc.get_candidates = lambda _db, _sid: [
+        {
+            "id": "c1", "final_score": 75, "brand_fit_score": 60, "economics_score": 55,
+            "area_m2": 200, "district": "Olaya", "key_risks_json": ["risk"],
+            "gate_status_json": {"overall_pass": False},
+            "confidence_grade": "C", "confidence_score": 60,
+            "rank_position": 1,
+            "score_breakdown_json": {"final_score": 75},
+            "top_positives_json": [], "top_risks_json": ["risk"],
+            "feature_snapshot_json": {"parcel_area_m2": 200, "data_completeness_score": 70},
+        },
+        {
+            "id": "c2", "final_score": 70, "brand_fit_score": 58, "economics_score": 52,
+            "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"],
+            "gate_status_json": {"overall_pass": False},
+            "confidence_grade": "C", "confidence_score": 55,
+            "rank_position": 2,
+            "score_breakdown_json": {"final_score": 70},
+            "top_positives_json": [], "top_risks_json": ["risk2"],
+            "feature_snapshot_json": {"parcel_area_m2": 180, "data_completeness_score": 60},
+        },
+    ]
+
+    report = get_recommendation_report(db, "search-1")
+
+    assert report is not None
+    assert report["recommendation"]["best_pass_candidate_id"] is None
+    # best_candidate_id should still be set (exploratory)
+    assert report["recommendation"]["best_candidate_id"] == "c1"
+    # Language should be explicitly exploratory
+    assert "no" in report["recommendation"]["why_best"].lower() or "not" in report["recommendation"]["why_best"].lower()
+    assert "pass" in report["recommendation"]["why_best"].lower() or "gate" in report["recommendation"]["why_best"].lower()
+
+
+def test_gate_verdict_serializes_to_pass_fail_unknown():
+    """_gate_verdict_label must map True/False/None to pass/fail/unknown."""
+    assert _gate_verdict_label(True) == "pass"
+    assert _gate_verdict_label(False) == "fail"
+    assert _gate_verdict_label(None) == "unknown"
+    # Edge case: non-bool values map to "unknown" since only exact True/False are matched
+    assert _gate_verdict_label(0) == "unknown"
+    assert _gate_verdict_label("") == "unknown"
+
+
+def test_top_positives_and_risks_no_raw_gate_keys():
+    """top_positives and top_risks must not contain raw internal gate keys
+    like 'zoning_fit_pass' or 'frontage_access_pass'."""
+    candidate = {
+        "demand_score": 30,
+        "whitespace_score": 30,
+        "brand_fit_score": 30,
+        "economics_score": 30,
+        "delivery_competition_score": 30,
+        "cannibalization_score": 80,
+        "gate_status_json": {"overall_pass": False},
+    }
+    gate_reasons = {
+        "passed": ["district_pass"],
+        "failed": ["zoning_fit_pass", "frontage_access_pass"],
+        "unknown": ["parking_pass"],
+    }
+
+    positives, risks = _top_positives_and_risks(
+        candidate=candidate, gate_reasons=gate_reasons,
+    )
+
+    all_text = " ".join(positives + risks)
+    for raw_key in ["zoning_fit_pass", "area_fit_pass", "frontage_access_pass",
+                     "parking_pass", "district_pass", "cannibalization_pass",
+                     "delivery_market_pass", "economics_pass"]:
+        assert raw_key not in all_text, f"Raw gate key '{raw_key}' leaked into user-facing text"
+
+    # Verify human labels are used instead
+    assert any("zoning fit" in r.lower() for r in risks), "Should mention 'zoning fit'"
+    assert any("frontage/access" in r.lower() for r in risks), "Should mention 'frontage/access'"
+    assert any("parking" in r.lower() for r in risks), "Should mention 'parking'"
+
+
+def test_gate_key_to_label_mapping():
+    """Verify the gate-key mapping covers all known gates."""
+    assert _gate_key_to_label("zoning_fit_pass") == "zoning fit"
+    assert _gate_key_to_label("area_fit_pass") == "area fit"
+    assert _gate_key_to_label("frontage_access_pass") == "frontage/access"
+    assert _gate_key_to_label("parking_pass") == "parking"
+    assert _gate_key_to_label("district_pass") == "district"
+    assert _gate_key_to_label("cannibalization_pass") == "cannibalization"
+    assert _gate_key_to_label("delivery_market_pass") == "delivery market"
+    assert _gate_key_to_label("economics_pass") == "economics"
+
+
+def test_score_breakdown_has_display_structure():
+    """score_breakdown must include a 'display' dict with raw_input_score,
+    weight_percent, and weighted_points for each component."""
+    breakdown = _score_breakdown(
+        demand_score=80,
+        whitespace_score=70,
+        brand_fit_score=75,
+        economics_score=60,
+        provider_intelligence_composite=65,
+        access_visibility_score=55,
+        confidence_score=50,
+    )
+
+    assert "display" in breakdown
+    assert "demand_potential" in breakdown["display"]
+
+    dp = breakdown["display"]["demand_potential"]
+    assert "raw_input_score" in dp
+    assert "weight_percent" in dp
+    assert "weighted_points" in dp
+    assert dp["raw_input_score"] == 80.0
+    assert dp["weight_percent"] == 25
+    assert dp["weighted_points"] == round(80.0 * 0.25, 2)
+
+    # Verify weighted_points != weight_percent (they are NOT the same thing)
+    for name, entry in breakdown["display"].items():
+        assert entry["weighted_points"] != entry["weight_percent"] or entry["raw_input_score"] == 100.0, \
+            f"{name}: weighted_points should differ from weight_percent unless input is 100"
+
+
+def test_report_gate_verdict_uses_tristate():
+    """top_candidates[].gate_verdict in reports must use tri-state mapping,
+    not bool()."""
+    import app.services.expansion_advisor as svc
+
+    db = FakeDB(candidate_rows=[], brand_profile_row={
+        "price_tier": "mid",
+        "preferred_districts_json": [],
+        "excluded_districts_json": [],
+    })
+    svc.get_search = lambda _db, _sid: {
+        "id": "search-1",
+        "service_model": "qsr",
+        "brand_profile": {"expansion_goal": "balanced"},
+    }
+    svc.get_candidates = lambda _db, _sid: [
+        {
+            "id": "c1", "final_score": 85, "brand_fit_score": 70, "economics_score": 65,
+            "area_m2": 200, "district": "Olaya", "key_risks_json": ["risk"],
+            "gate_status_json": {"overall_pass": None},
+            "confidence_grade": "B", "confidence_score": 72,
+            "rank_position": 1,
+            "score_breakdown_json": {"final_score": 85},
+            "top_positives_json": ["pos"], "top_risks_json": ["risk"],
+            "feature_snapshot_json": {"parcel_area_m2": 200, "data_completeness_score": 80},
+        },
+    ]
+
+    report = get_recommendation_report(db, "search-1")
+
+    # With overall_pass=None, gate_verdict must be "unknown", not "fail"
+    assert report["top_candidates"][0]["gate_verdict"] == "unknown"
+
+
+def test_memo_gate_verdict_uses_tristate():
+    """Candidate memo gate_verdict must render None overall_pass as 'unknown'."""
+    db = FakeDB(
+        memo_row={
+            "candidate_id": "c1",
+            "search_id": "search-1",
+            "brand_name": "Brand X",
+            "category": "burger",
+            "service_model": "qsr",
+            "parcel_id": "p1",
+            "district": "Olaya",
+            "area_m2": 180,
+            "landuse_label": "Commercial",
+            "final_score": 72,
+            "economics_score": 55,
+            "demand_score": 60,
+            "whitespace_score": 60,
+            "fit_score": 65,
+            "zoning_fit_score": 70,
+            "frontage_score": 55,
+            "access_score": 55,
+            "parking_score": 50,
+            "access_visibility_score": 55,
+            "confidence_score": 65,
+            "cannibalization_score": 40,
+            "distance_to_nearest_branch_m": 2000,
+            "estimated_rent_sar_m2_year": 900,
+            "estimated_annual_rent_sar": 162000,
+            "estimated_fitout_cost_sar": 468000,
+            "estimated_revenue_index": 60,
+            "estimated_payback_months": 28,
+            "payback_band": "promising",
+            "key_strengths_json": ["strength"],
+            "key_risks_json": ["risk"],
+            "decision_summary": "summary",
+            "gate_status_json": {"overall_pass": None, "zoning_fit_pass": True, "frontage_access_pass": None},
+            "gate_reasons_json": {"passed": ["zoning_fit_pass"], "failed": [], "unknown": ["frontage_access_pass"]},
+            "feature_snapshot_json": {"parcel_area_m2": 180},
+            "comparable_competitors_json": [],
+            "demand_thesis": "d",
+            "cost_thesis": "c",
+            "confidence_grade": "C",
+            "brand_fit_score": 60,
+            "provider_density_score": 50,
+            "provider_whitespace_score": 55,
+            "multi_platform_presence_score": 45,
+            "delivery_competition_score": 40,
+            "score_breakdown_json": {},
+            "top_positives_json": [],
+            "top_risks_json": [],
+            "rank_position": 3,
+        }
+    )
+
+    memo = get_candidate_memo(db, "c1")
+
+    assert memo is not None
+    # With overall_pass=None, verdict should be "unknown", not "fail"
+    assert memo["recommendation"]["gate_verdict"] == "unknown"
