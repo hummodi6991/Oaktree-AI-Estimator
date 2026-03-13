@@ -32,8 +32,22 @@ from app.services.expansion_advisor import (
 )
 
 
+from app.services.aqar_district_match import normalize_district_key
+
 router = APIRouter(prefix="/expansion-advisor", tags=["expansion-advisor"])
 
+
+
+class DistrictOptionResponse(BaseModel):
+    value: str
+    label: str
+    label_ar: str
+    label_en: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+
+
+class DistrictOptionsListResponse(BaseModel):
+    items: list[DistrictOptionResponse]
 
 
 class StrictResponseModel(BaseModel):
@@ -318,6 +332,80 @@ class SavedSearchPatchRequest(BaseModel):
     filters_json: dict[str, Any] = Field(default_factory=dict)
     ui_state_json: dict[str, Any] = Field(default_factory=dict)
 
+
+
+@router.get("/districts", response_model=DistrictOptionsListResponse)
+def list_districts(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Return deduplicated, sorted list of Riyadh districts from external_feature polygons."""
+    rows = db.execute(
+        text(
+            """
+            SELECT
+                ef.layer_name,
+                COALESCE(
+                    NULLIF(ef.properties->>'district', ''),
+                    NULLIF(ef.properties->>'district_raw', ''),
+                    NULLIF(ef.properties->>'name', '')
+                ) AS label_ar,
+                NULLIF(ef.properties->>'district_en', '') AS label_en
+            FROM external_feature ef
+            WHERE ef.layer_name IN ('aqar_district_hulls', 'osm_districts')
+              AND COALESCE(
+                    NULLIF(ef.properties->>'district', ''),
+                    NULLIF(ef.properties->>'district_raw', ''),
+                    NULLIF(ef.properties->>'name', '')
+              ) IS NOT NULL
+            """
+        )
+    ).fetchall()
+
+    # Build a map keyed by normalized district value.
+    # Prefer aqar_district_hulls labels when both sources exist.
+    LAYER_PRIORITY = {"aqar_district_hulls": 0, "osm_districts": 1}
+    district_map: dict[str, dict[str, Any]] = {}
+
+    for row in rows:
+        layer_name = row[0]
+        label_ar = (row[1] or "").strip()
+        label_en = (row[2] or "").strip() or None
+        if not label_ar:
+            continue
+
+        norm_key = normalize_district_key(label_ar)
+        if not norm_key:
+            continue
+
+        existing = district_map.get(norm_key)
+        if existing is None:
+            district_map[norm_key] = {
+                "value": norm_key,
+                "label": label_ar,
+                "label_ar": label_ar,
+                "label_en": label_en,
+                "aliases": [],
+                "_priority": LAYER_PRIORITY.get(layer_name, 99),
+            }
+        else:
+            current_priority = LAYER_PRIORITY.get(layer_name, 99)
+            # Track aliases
+            if label_ar != existing["label_ar"] and label_ar not in existing["aliases"]:
+                existing["aliases"].append(label_ar)
+            if label_en and not existing["label_en"]:
+                existing["label_en"] = label_en
+            # Prefer higher-priority (lower number) layer labels
+            if current_priority < existing["_priority"]:
+                if label_ar != existing["label_ar"]:
+                    existing["aliases"].append(existing["label_ar"])
+                existing["label"] = label_ar
+                existing["label_ar"] = label_ar
+                existing["_priority"] = current_priority
+
+    # Sort by Arabic label and strip internal _priority field
+    items = sorted(district_map.values(), key=lambda d: d["label_ar"])
+    for item in items:
+        item.pop("_priority", None)
+
+    return {"items": items}
 
 
 @router.post("/searches", response_model=ExpansionSearchResponse)
