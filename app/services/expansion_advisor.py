@@ -507,7 +507,8 @@ def _delivery_score(delivery_listing_count: int) -> float:
 
 
 def _competition_whitespace_score(competitor_count: int) -> float:
-    return _clamp(100.0 - competitor_count * 9.0)
+    # Less brittle decay in dense Riyadh districts; avoids too many sites collapsing to zero.
+    return _clamp(100.0 - competitor_count * 6.0)
 
 
 def _confidence_score(landuse_label: str | None, population_reach: float, delivery_listing_count: int) -> float:
@@ -591,21 +592,20 @@ def _candidate_gate_status(
     passed = [k for k, v in gate_states.items() if v is True]
     unknown = [k for k, v in gate_states.items() if v is None]
 
-    # Core gates that block overall pass only when explicitly failed (False).
-    # Unknown (None) gates are treated as non-blocking — they don't fail the
-    # candidate but also don't count as passed.
-    hard_fail_core = ["area_fit_pass", "district_pass", "cannibalization_pass", "delivery_market_pass", "economics_pass"]
-    has_hard_fail = any(gate_states[g] is False for g in hard_fail_core)
-    # Zoning gate blocks only when it explicitly failed (real contradictory
-    # evidence); unknown/missing landuse does NOT block.
-    if gate_states["zoning_fit_pass"] is False:
-        has_hard_fail = True
+    # Only these should hard-fail the site.
+    hard_fail_gates = {
+        "zoning_fit_pass",
+        "area_fit_pass",
+    }
+
+    # Non-core failures should remain visible, but not automatically force FAIL.
+    blocking_failures = [gate for gate in failed if gate in hard_fail_gates]
 
     # Three-state verdict:
-    #   True  – all evaluated gates passed, no failures
-    #   False – at least one gate hard-failed
-    #   None  – no hard failures, but some gates are unknown/indeterminate
-    if has_hard_fail or len(failed) > 0:
+    #   True  – no blocking failures
+    #   False – at least one hard-fail gate failed
+    #   None  – no blocking failures, but some gates are unknown/indeterminate
+    if len(blocking_failures) > 0:
         overall_pass: bool | None = False
     elif len(unknown) > 0:
         overall_pass = None
@@ -635,7 +635,7 @@ def _candidate_gate_status(
         "delivery_market_pass": "Delivery-market gate applies when primary channel is delivery.",
         "economics_pass": "Economics gate requires minimum economics score and non-weak payback.",
     }
-    reasons = {"passed": passed, "failed": failed, "unknown": unknown, "thresholds": thresholds, "explanations": explanations}
+    reasons = {"passed": passed, "failed": failed, "blocking_failures": blocking_failures, "unknown": unknown, "thresholds": thresholds, "explanations": explanations}
     return gate_status, reasons
 
 
@@ -726,7 +726,8 @@ def _confidence_grade(
     adjusted = _safe_float(confidence_score)
     if district:
         adjusted += 2.5
-    if (provider_platform_count is not None and provider_platform_count > 0) or (multi_platform_presence_score is not None):
+    # Do not award a bonus merely because the field exists with value 0.0.
+    if float(multi_platform_presence_score or 0.0) > 0:
         adjusted += 2.5
     if rent_source != "conservative_default":
         adjusted += 3.0
@@ -1547,6 +1548,7 @@ def run_expansion_search(
                 "demand_score": demand_score,
                 "whitespace_score": whitespace_score,
                 "fit_score": fit_score,
+                "area_fit": area_fit,
                 "zoning_fit_score": zoning_fit_score,
                 "provider_density_score": provider_density_score,
                 "provider_whitespace_score": provider_whitespace_score,
@@ -1584,6 +1586,7 @@ def run_expansion_search(
         demand_score = prepared_item["demand_score"]
         whitespace_score = prepared_item["whitespace_score"]
         fit_score = prepared_item["fit_score"]
+        area_fit = float(prepared_item.get("area_fit") or 0.0)
         zoning_fit_score = prepared_item["zoning_fit_score"]
         provider_density_score = prepared_item["provider_density_score"]
         provider_whitespace_score = prepared_item["provider_whitespace_score"]
@@ -1594,6 +1597,7 @@ def run_expansion_search(
         cannibalization_score = prepared_item["cannibalization_score"]
         estimated_rent_sar_m2_year = prepared_item["estimated_rent_sar_m2_year"]
         rent_source = prepared_item["rent_source"]
+        rent_fallback_used = rent_source == "conservative_default"
         estimated_annual_rent_sar = prepared_item["estimated_annual_rent_sar"]
         estimated_fitout_cost_sar = prepared_item["estimated_fitout_cost_sar"]
         estimated_revenue_index = prepared_item["estimated_revenue_index"]
@@ -1672,6 +1676,7 @@ def run_expansion_search(
             access_visibility_score=access_visibility_score,
             confidence_score=confidence_score,
         )
+        score_breakdown_json["inputs"]["rent_fallback_used"] = rent_fallback_used
         final_score = _safe_float(score_breakdown_json.get("final_score"))
         key_strengths_json, key_risks_json = _build_strengths_and_risks(
             demand_score=demand_score,
