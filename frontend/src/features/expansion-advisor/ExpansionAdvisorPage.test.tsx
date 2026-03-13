@@ -2178,6 +2178,41 @@ describe("Saved studies workspace panel", () => {
   });
 });
 
+describe("Saved studies panel: empty vs error state (regression)", () => {
+  it("successful fetch with [] → empty state only, no error alert", () => {
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel items={[]} loading={false} onOpen={() => {}} />,
+    );
+    expect(html).toContain(en.expansionAdvisor.noSavedStudiesYet);
+    expect(html).not.toContain("ea-state--error");
+    expect(html).not.toContain(en.expansionAdvisor.retry);
+    expect(html).not.toContain(en.expansionAdvisor.errorSavedLoad);
+  });
+
+  it("successful fetch with items → list renders with titles", () => {
+    const items = [
+      makeSavedSearch({ id: "s1", title: "Study A" }),
+      makeSavedSearch({ id: "s2", title: "Study B" }),
+    ];
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel items={items} loading={false} onOpen={() => {}} />,
+    );
+    expect(html).toContain("Study A");
+    expect(html).toContain("Study B");
+    expect(html).not.toContain(en.expansionAdvisor.noSavedStudiesYet);
+    expect(html).not.toContain("ea-state--error");
+  });
+
+  it("loading state → loading UI renders, no error or empty state", () => {
+    const html = renderToStaticMarkup(
+      <SavedSearchesPanel items={[]} loading={true} onOpen={() => {}} />,
+    );
+    expect(html).toContain(en.expansionAdvisor.loadingSaved);
+    expect(html).not.toContain(en.expansionAdvisor.noSavedStudiesYet);
+    expect(html).not.toContain("ea-state--error");
+  });
+});
+
 describe("extractSavedStudyMeta", () => {
   it("extracts shortlist count, compare count, lead district from saved study", () => {
     const saved = makeSavedSearch({
