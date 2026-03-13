@@ -279,19 +279,86 @@ def _brand_fit_score(*, district: str | None, area_m2: float, demand_score: floa
     )
 
 
+def _arcgis_classification_semantics(
+    landuse_code: str | int | None,
+    landuse_label: str | None,
+) -> dict[str, Any]:
+    """Interpret ArcGIS numeric parcel classification codes.
+
+    Returns structured metadata:
+      normalized_class  – "commercial" | "mixed_use" | "residential" | "public_service" | "industrial" | "unknown"
+      score             – 0-100 zoning fitness for restaurant expansion
+      verdict_hint      – "pass" | "fail" | "unknown"
+      source            – "arcgis_code" | "label_tokens" | "none"
+    """
+    # ── 1. Try numeric code first (resilient to str/int forms) ──
+    code_int: int | None = None
+    if landuse_code is not None:
+        try:
+            code_int = int(str(landuse_code).strip())
+        except (ValueError, TypeError):
+            pass
+
+    _CODE_MAP: dict[int, tuple[str, int, str]] = {
+        # code: (normalized_class, score, verdict_hint)
+        2000: ("commercial", 100, "pass"),
+        7500: ("mixed_use", 100, "pass"),
+        1000: ("residential", 40, "unknown"),   # weak signal, NOT hard fail
+        3000: ("public_service", 55, "unknown"),
+        4000: ("industrial", 55, "unknown"),
+    }
+
+    if code_int is not None and code_int in _CODE_MAP:
+        cls, score, hint = _CODE_MAP[code_int]
+        return {
+            "normalized_class": cls,
+            "score": score,
+            "verdict_hint": hint,
+            "source": "arcgis_code",
+        }
+
+    # ── 2. Label-token fallback ──
+    raw = (landuse_label or "").strip().lower()
+    if raw:
+        if any(tok in raw for tok in ["commercial", "retail", "تجاري"]):
+            return {"normalized_class": "commercial", "score": 100, "verdict_hint": "pass", "source": "label_tokens"}
+        if any(tok in raw for tok in ["mixed", "مختلط"]):
+            return {"normalized_class": "mixed_use", "score": 100, "verdict_hint": "pass", "source": "label_tokens"}
+        if any(tok in raw for tok in ["residential", "سكني"]):
+            return {"normalized_class": "residential", "score": 40, "verdict_hint": "unknown", "source": "label_tokens"}
+        # Label present but unrecognized – neutral
+        return {"normalized_class": "unknown", "score": 60, "verdict_hint": "unknown", "source": "label_tokens"}
+
+    # ── 3. No signal at all ──
+    return {"normalized_class": "unknown", "score": 45, "verdict_hint": "unknown", "source": "none"}
+
+
 def _landuse_fit(landuse_label: str | None, landuse_code: str | None) -> float:
-    raw = f"{landuse_label or ''} {landuse_code or ''}".strip().lower()
-    if not raw:
-        return 45.0
-    if any(token in raw for token in ["commercial", "mixed", "retail", "تجاري", "مختلط"]):
-        return 100.0
-    if any(token in raw for token in ["residential", "سكني"]):
-        return 55.0
-    return 70.0
+    """Zoning fitness score (0-100) using ArcGIS classification semantics."""
+    sem = _arcgis_classification_semantics(landuse_code, landuse_label)
+    return float(sem["score"])
 
 
 def _zoning_fit_score(landuse_label: str | None, landuse_code: str | None) -> float:
     return _clamp(_landuse_fit(landuse_label, landuse_code))
+
+
+def _zoning_verdict(landuse_label: str | None, landuse_code: str | None) -> str:
+    """Return tri-state verdict hint: 'pass' | 'fail' | 'unknown'."""
+    sem = _arcgis_classification_semantics(landuse_code, landuse_label)
+    return sem["verdict_hint"]
+
+
+def _zoning_signal_class(landuse_label: str | None, landuse_code: str | None) -> str:
+    """Return normalized ArcGIS class name."""
+    sem = _arcgis_classification_semantics(landuse_code, landuse_label)
+    return sem["normalized_class"]
+
+
+def _zoning_signal_source(landuse_label: str | None, landuse_code: str | None) -> str:
+    """Return the provenance of the zoning signal."""
+    sem = _arcgis_classification_semantics(landuse_code, landuse_label)
+    return sem["source"]
 
 
 def _table_available(db: Session, table_name: str) -> bool:
@@ -636,6 +703,7 @@ def _candidate_gate_status(
     brand_profile: dict[str, Any],
     road_context_available: bool,
     parking_context_available: bool,
+    zoning_verdict_hint: str | None = None,
 ) -> tuple[dict[str, bool | None], dict[str, Any]]:
     thresholds = {
         "area_fit_min": 55.0,
@@ -648,10 +716,27 @@ def _candidate_gate_status(
         "cannibalization_min_distance_m": _safe_float(brand_profile.get("cannibalization_tolerance_m"), 1800.0),
     }
     area_fit_pass = area_fit_score >= thresholds["area_fit_min"]
-    # When no landuse data is available, zoning gate is unknown (None), not hard fail.
+    # Tri-state zoning gate using ArcGIS classification semantics:
+    #   - "pass" verdict  => True  (clearly commercial/mixed-use)
+    #   - "fail" verdict  => False (clearly disallowed)
+    #   - "unknown" or weak signal => None (needs verification)
+    #   - no landuse data => None
     if not landuse_available:
         zoning_fit_pass: bool | None = None
+    elif zoning_verdict_hint == "pass":
+        zoning_fit_pass = True
+    elif zoning_verdict_hint == "fail":
+        zoning_fit_pass = False
+    elif zoning_verdict_hint == "unknown":
+        # Weak/ambiguous ArcGIS signal: gate is indeterminate, not hard fail.
+        # Still use score threshold as a soft check — high enough score
+        # (from label tokens) can push to pass, but low score stays unknown.
+        if zoning_fit_score >= thresholds["zoning_fit_min"]:
+            zoning_fit_pass = True
+        else:
+            zoning_fit_pass = None
     else:
+        # Legacy fallback: plain threshold
         zoning_fit_pass = zoning_fit_score >= thresholds["zoning_fit_min"]
     frontage_access_pass = (frontage_score >= thresholds["frontage_access_min"]) and (access_score >= thresholds["frontage_access_min"])
     parking_pass = parking_score >= thresholds["parking_min"]
@@ -1454,6 +1539,13 @@ def run_expansion_search(
               AND (CAST(:max_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) <= CAST(:max_lat AS double precision))
               {_district_filter_sql}
             ORDER BY
+                CASE
+                    WHEN CAST(NULLIF(p.landuse_code, '') AS INTEGER) IN (2000, 7500) THEN 0
+                    WHEN CAST(NULLIF(p.landuse_code, '') AS INTEGER) IN (3000, 4000) THEN 1
+                    WHEN p.landuse_code IS NULL AND p.landuse_label IS NULL THEN 2
+                    WHEN CAST(NULLIF(p.landuse_code, '') AS INTEGER) = 1000 THEN 3
+                    ELSE 1
+                END,
                 ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) ASC,
                 CASE WHEN p.landuse_label IS NOT NULL THEN 0 ELSE 1 END,
                 p.id ASC
@@ -1849,6 +1941,9 @@ def run_expansion_search(
             payback_band=payback_band,
             rent_source=rent_source,
         )
+        zoning_hint = _zoning_verdict(landuse_label, landuse_code)
+        zoning_class = _zoning_signal_class(landuse_label, landuse_code)
+        zoning_source = _zoning_signal_source(landuse_label, landuse_code)
         gate_status_json, gate_reasons_json = _candidate_gate_status(
             fit_score=fit_score,
             area_fit_score=area_fit,
@@ -1866,6 +1961,7 @@ def run_expansion_search(
             brand_profile=effective_brand_profile,
             road_context_available=road_context_available,
             parking_context_available=parking_context_available,
+            zoning_verdict_hint=zoning_hint,
         )
         confidence_grade = _confidence_grade(
             confidence_score=confidence_score,
@@ -1987,8 +2083,20 @@ def run_expansion_search(
                 "key_strengths_json": key_strengths_json,
                 "final_score": round(final_score, 2),
                 "explanation": explanation,
+                "zoning_signal_source": zoning_source,
+                "zoning_signal_class": zoning_class,
+                "zoning_verification_needed": zoning_hint != "pass",
             }
         )
+
+    _ZONING_CLASS_RANK = {
+        "commercial": 0,
+        "mixed_use": 0,
+        "unknown": 1,
+        "public_service": 1,
+        "industrial": 1,
+        "residential": 2,
+    }
 
     def _rank_sort_key(item: dict[str, Any]) -> tuple:
         """Deterministic ranking with rich tie-breakers (change #6).
@@ -1996,17 +2104,21 @@ def run_expansion_search(
         Priority (descending preference):
         1. Higher final_score
         2. Better gate verdict: pass > unknown > fail
-        3. Smaller area distance to target
-        4. Higher economics_score
-        5. Lower cannibalization_score
-        6. Stable parcel_id as ultimate tie-breaker
+        3. Zoning class priority: commercial/mixed first, then neutral, then residential
+        4. Smaller area distance to target
+        5. Higher economics_score
+        6. Lower cannibalization_score
+        7. Stable parcel_id as ultimate tie-breaker
         """
         overall = (item.get("gate_status_json") or {}).get("overall_pass")
         gate_rank = {True: 0, None: 1, False: 2}.get(overall, 2)
+        zoning_class = item.get("zoning_signal_class", "unknown")
+        zoning_rank = _ZONING_CLASS_RANK.get(zoning_class, 1)
         area_dist = abs(item.get("area_m2", 0) - target_area_m2)
         return (
             -item.get("final_score", 0),
             gate_rank,
+            zoning_rank,
             area_dist,
             -item.get("economics_score", 0),
             item.get("cannibalization_score", 100),
