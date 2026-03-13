@@ -4,7 +4,7 @@ import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import WhyThisRank from "./WhyThisRank";
-import { fmtSAR, fmtMeters, fmtScore, fmtM2, fmtSarPerM2, fmtMonths } from "./formatHelpers";
+import { fmtSAR, fmtMeters, fmtScore, fmtM2, fmtSarPerM2, fmtMonths, candidateDistrictLabel } from "./formatHelpers";
 
 type Props = {
   candidate: ExpansionCandidate;
@@ -72,7 +72,7 @@ export default function ExpansionCandidateCard({
               #{candidate.rank_position}
             </span>
           ) : null}
-          <span className="ea-candidate__district">{candidate.district || t("common.notAvailable")}</span>
+          <span className="ea-candidate__district">{candidateDistrictLabel(candidate, t("common.notAvailable"))}</span>
           {localSortActive && (
             <span className="ea-badge ea-badge--neutral ea-candidate__rank-note">
               {t("expansionAdvisor.backendRankLabel", { rank: candidate.rank_position })}

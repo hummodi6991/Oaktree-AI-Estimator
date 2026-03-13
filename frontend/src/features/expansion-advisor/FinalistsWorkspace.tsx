@@ -4,7 +4,7 @@ import { buildFinalistTiles, type FinalistTile } from "./studyAdapters";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
-import { fmtSAR, fmtScore } from "./formatHelpers";
+import { fmtSAR, fmtScore, isGarbledText } from "./formatHelpers";
 
 type Props = {
   candidates: ExpansionCandidate[];

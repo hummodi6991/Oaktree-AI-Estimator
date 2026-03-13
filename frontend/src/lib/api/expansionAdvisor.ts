@@ -92,6 +92,10 @@ export type ExpansionCandidate = {
   search_id: string;
   parcel_id: string;
   district?: string;
+  district_key?: string | null;
+  district_name_ar?: string | null;
+  district_name_en?: string | null;
+  district_display?: string | null;
   area_m2?: number;
   lat: number;
   lon: number;
@@ -167,6 +171,10 @@ export type CompareCandidateItem = {
   id?: string;
   search_id?: string;
   district?: string;
+  district_key?: string | null;
+  district_name_ar?: string | null;
+  district_name_en?: string | null;
+  district_display?: string | null;
   parcel_id?: string;
   area_m2?: number;
   lat?: number;
@@ -258,6 +266,11 @@ export type RecommendationTopCandidate = {
   rank_position?: number;
   confidence_grade?: string;
   gate_verdict?: string;
+  district?: string;
+  district_key?: string | null;
+  district_name_ar?: string | null;
+  district_name_en?: string | null;
+  district_display?: string | null;
   top_positives_json?: string[];
   top_risks_json?: string[];
   feature_snapshot_json?: Record<string, unknown>;

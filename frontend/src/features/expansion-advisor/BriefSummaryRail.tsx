@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { ExpansionBrief } from "../../lib/api/expansionAdvisor";
+import { safeDistrictLabel } from "./formatHelpers";
 
 type Props = {
   brief: ExpansionBrief;
@@ -60,7 +61,7 @@ export default function BriefSummaryRail({ brief, onEditBrief, onRunAgain, loadi
         {brief.target_districts.length > 0 && (
           <div className="ea-brief-rail__item">
             <span className="ea-brief-rail__label">{t("expansionAdvisor.targetDistrictsLabel")}</span>
-            <span className="ea-brief-rail__value">{brief.target_districts.join(", ")}</span>
+            <span className="ea-brief-rail__value">{brief.target_districts.map((d) => safeDistrictLabel(d, null, d)).join(", ")}</span>
           </div>
         )}
         <div className="ea-brief-rail__item">

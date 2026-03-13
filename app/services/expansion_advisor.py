@@ -48,6 +48,121 @@ def _gate_verdict_label(overall_pass: Any) -> str:
     if overall_pass is False:
         return "fail"
     return "unknown"
+def _canonicalize_district_label(
+    district_raw: str | None,
+    district_lookup: dict[str, dict[str, str]] | None = None,
+) -> dict[str, str | None]:
+    """Derive canonical district fields from a raw district string.
+
+    Returns a dict with:
+      district_key       – normalized key (e.g. "الملقا")
+      district_name_ar   – clean Arabic label (from lookup if available)
+      district_name_en   – English label (from lookup if available)
+      district_display   – best display label (arabic → english → key → fallback)
+    """
+    if not district_raw or not district_raw.strip():
+        return {
+            "district_key": None,
+            "district_name_ar": None,
+            "district_name_en": None,
+            "district_display": None,
+        }
+
+    norm_key = normalize_district_key(district_raw)
+    if not norm_key:
+        return {
+            "district_key": None,
+            "district_name_ar": None,
+            "district_name_en": None,
+            "district_display": None,
+        }
+
+    # Try canonical lookup first (keyed by normalized district key)
+    name_ar: str | None = None
+    name_en: str | None = None
+    if district_lookup and norm_key in district_lookup:
+        entry = district_lookup[norm_key]
+        name_ar = entry.get("label_ar") or None
+        name_en = entry.get("label_en") or None
+
+    # If no lookup hit, use the raw string as Arabic label if it looks okay
+    if not name_ar:
+        name_ar = district_raw.strip() if district_raw.strip() else None
+
+    # Build display: prefer arabic → english → normalized key
+    display = name_ar or name_en or norm_key.replace("_", " ")
+
+    return {
+        "district_key": norm_key,
+        "district_name_ar": name_ar,
+        "district_name_en": name_en,
+        "district_display": display,
+    }
+
+
+def _build_district_lookup(db: Session) -> dict[str, dict[str, str]]:
+    """Build a lookup table from external_feature polygons: norm_key → {label_ar, label_en}.
+
+    Used to provide canonical district names for expansion candidates.
+    """
+    try:
+        with db.begin_nested():
+            rows = db.execute(
+                text(
+                    """
+                    SELECT
+                        COALESCE(
+                            NULLIF(ef.properties->>'district', ''),
+                            NULLIF(ef.properties->>'district_raw', ''),
+                            NULLIF(ef.properties->>'name', '')
+                        ) AS label_ar,
+                        NULLIF(ef.properties->>'district_en', '') AS label_en,
+                        ef.layer_name
+                    FROM external_feature ef
+                    WHERE ef.layer_name IN ('aqar_district_hulls', 'osm_districts')
+                      AND COALESCE(
+                            NULLIF(ef.properties->>'district', ''),
+                            NULLIF(ef.properties->>'district_raw', ''),
+                            NULLIF(ef.properties->>'name', '')
+                      ) IS NOT NULL
+                    """
+                )
+            ).fetchall()
+    except Exception:
+        logger.debug("_build_district_lookup query failed", exc_info=True)
+        return {}
+
+    LAYER_PRIORITY = {"aqar_district_hulls": 0, "osm_districts": 1}
+    lookup: dict[str, dict[str, str]] = {}
+    for row in rows:
+        label_ar = (row[0] or "").strip()
+        label_en = (row[1] or "").strip() or None
+        layer = row[2]
+        if not label_ar:
+            continue
+        nk = normalize_district_key(label_ar)
+        if not nk:
+            continue
+        existing = lookup.get(nk)
+        if existing is None:
+            lookup[nk] = {
+                "label_ar": label_ar,
+                "label_en": label_en,
+                "_priority": LAYER_PRIORITY.get(layer, 99),
+            }
+        else:
+            cur_priority = LAYER_PRIORITY.get(layer, 99)
+            if label_en and not existing.get("label_en"):
+                existing["label_en"] = label_en
+            if cur_priority < existing.get("_priority", 99):
+                existing["label_ar"] = label_ar
+                existing["_priority"] = cur_priority
+    # Strip internal priority field
+    for entry in lookup.values():
+        entry.pop("_priority", None)
+    return lookup
+
+
 _EXPANSION_CITY = "riyadh"
 _EXPANSION_AQAR_ASSET = "commercial"
 _EXPANSION_AQAR_UNIT = "retail"
@@ -156,7 +271,10 @@ def _normalize_score_breakdown(value: Any, final_score: Any) -> dict[str, Any]:
     return raw
 
 
-def _normalize_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+def _normalize_candidate_payload(
+    candidate: dict[str, Any],
+    district_lookup: dict[str, dict[str, str]] | None = None,
+) -> dict[str, Any]:
     payload = dict(candidate)
     payload["gate_status_json"] = _normalize_gate_status(payload.get("gate_status_json"))
     payload["gate_reasons_json"] = _normalize_gate_reasons(payload.get("gate_reasons_json"))
@@ -170,6 +288,16 @@ def _normalize_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     payload["decision_summary"] = payload.get("decision_summary") or ""
     payload["demand_thesis"] = payload.get("demand_thesis") or ""
     payload["cost_thesis"] = payload.get("cost_thesis") or ""
+
+    # ── Canonical district fields (additive) ──
+    # Only compute if not already present (avoids re-computing on double-normalize).
+    if "district_display" not in payload:
+        canon = _canonicalize_district_label(payload.get("district"), district_lookup)
+        payload["district_key"] = canon["district_key"]
+        payload["district_name_ar"] = canon["district_name_ar"]
+        payload["district_name_en"] = canon["district_name_en"]
+        payload["district_display"] = canon["district_display"]
+
     return payload
 
 
@@ -206,7 +334,7 @@ def _normalize_saved_search_payload(
     payload["description"] = payload.get("description")
     payload["search"] = _normalize_search_payload(search if search is not None else payload.get("search"))
     normalized_candidates = candidates if candidates is not None else payload.get("candidates")
-    payload["candidates"] = [_normalize_candidate_payload(dict(item)) for item in (normalized_candidates or [])]
+    payload["candidates"] = [_normalize_candidate_payload(dict(item)) for item in (normalized_candidates or [])]  # district_lookup=None is OK: additive fields filled from raw district
 
     search_payload = payload.get("search") or {}
     if search_payload.get("brand_profile"):
@@ -1696,6 +1824,7 @@ def run_expansion_search(
     candidates: list[dict[str, Any]] = []
     prepared: list[dict[str, Any]] = []
     rent_cache: dict[str | None, tuple[float, str]] = {}
+    district_lookup = _build_district_lookup(db)
     roads_table_available = _table_available(db, "public.planet_osm_line")
     parking_table_available = _table_available(db, "public.planet_osm_polygon")
     for row in rows:
@@ -2046,7 +2175,7 @@ def run_expansion_search(
         }
         top_positives_json, top_risks_json = _top_positives_and_risks(candidate=seed_candidate, gate_reasons=gate_reasons_json)
         decision_summary = _decision_summary(
-            district=district,
+            district=district_canon["district_display"] or district,
             final_score=final_score,
             economics_score=economics_score,
             payback_band=payback_band,
@@ -2055,6 +2184,7 @@ def run_expansion_search(
             area_m2=area_m2,
         )
 
+        district_canon = _canonicalize_district_label(district, district_lookup)
         candidates.append(
             {
                 "id": str(uuid.uuid4()),
@@ -2064,6 +2194,10 @@ def run_expansion_search(
                 "lon": _safe_float(row.get("lon")),
                 "area_m2": area_m2,
                 "district": district,
+                "district_key": district_canon["district_key"],
+                "district_name_ar": district_canon["district_name_ar"],
+                "district_name_en": district_canon["district_name_en"],
+                "district_display": district_canon["district_display"],
                 "landuse_label": landuse_label,
                 "landuse_code": landuse_code,
                 "population_reach": population_reach,
@@ -2304,7 +2438,7 @@ def run_expansion_search(
                 exc_info=True,
             )
 
-    return [_normalize_candidate_payload(candidate) for candidate in persisted_candidates]
+    return [_normalize_candidate_payload(candidate, district_lookup) for candidate in persisted_candidates]
 
 
 def get_search(db: Session, search_id: str) -> dict[str, Any] | None:
@@ -2356,7 +2490,9 @@ def get_search(db: Session, search_id: str) -> dict[str, Any] | None:
     return _normalize_search_payload(payload)
 
 
-def get_candidates(db: Session, search_id: str) -> list[dict[str, Any]]:
+def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[str, str]] | None = None) -> list[dict[str, Any]]:
+    if district_lookup is None:
+        district_lookup = _build_district_lookup(db)
     rows = db.execute(
         text(
             """
@@ -2421,7 +2557,7 @@ def get_candidates(db: Session, search_id: str) -> list[dict[str, Any]]:
         ),
         {"search_id": search_id},
     ).mappings().all()
-    return [_normalize_candidate_payload(dict(row)) for row in rows]
+    return [_normalize_candidate_payload(dict(row), district_lookup) for row in rows]
 
 
 
@@ -2646,6 +2782,7 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
     search = db.execute(text("SELECT id FROM expansion_search WHERE id = :search_id"), {"search_id": search_id}).first()
     if not search:
         raise ValueError("not_found")
+    district_lookup = _build_district_lookup(db)
 
     rows = db.execute(
         text(
@@ -2768,7 +2905,7 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "population_reach": row.get("population_reach"),
             "landuse_label": row.get("landuse_label"),
             "rank_position": row.get("rank_position"),
-        })
+        }, district_lookup)
         item["pros"] = pros
         item["cons"] = cons
         items.append(item)
@@ -2876,7 +3013,8 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
     if not row:
         return None
 
-    candidate = _normalize_candidate_payload(dict(row))
+    district_lookup = _build_district_lookup(db)
+    candidate = _normalize_candidate_payload(dict(row), district_lookup)
     brand_profile = get_brand_profile(db, str(candidate.get("search_id"))) or {}
     strengths = candidate.get("key_strengths_json") or []
     risks = candidate.get("key_risks_json") or []
@@ -2896,7 +3034,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
         _safe_float(candidate.get("area_m2")),
     )
     main_watchout = risks[0] if risks else "Validate lease and capex assumptions before commitment"
-    district = candidate.get("district") or "Riyadh"
+    district = candidate.get("district_display") or candidate.get("district") or "Riyadh"
     headline = f"{verdict.upper()}: {district} parcel shows {economics_score:.1f}/100 economics for {best_use_case}"
     expansion_goal = (brand_profile.get("expansion_goal") or "balanced").replace("_", " ")
     delivery_market_summary = (
@@ -2923,6 +3061,10 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
         "candidate": {
             "parcel_id": candidate.get("parcel_id"),
             "district": candidate.get("district"),
+            "district_key": candidate.get("district_key"),
+            "district_name_ar": candidate.get("district_name_ar"),
+            "district_name_en": candidate.get("district_name_en"),
+            "district_display": candidate.get("district_display"),
             "area_m2": candidate.get("area_m2"),
             "landuse_label": candidate.get("landuse_label"),
             "final_score": candidate.get("final_score"),
@@ -2984,7 +3126,8 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     search = get_search(db, search_id)
     if not search:
         return None
-    normalized_candidates = [_normalize_candidate_payload(c) for c in get_candidates(db, search_id)]
+    district_lookup = _build_district_lookup(db)
+    normalized_candidates = [_normalize_candidate_payload(c, district_lookup) for c in get_candidates(db, search_id, district_lookup)]
 
     def _sort_key(item: dict[str, Any]) -> tuple[int, float]:
         rank = item.get("rank_position")
@@ -3053,6 +3196,11 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
                 "gate_verdict": _gate_verdict_label((item.get("gate_status_json") or {}).get("overall_pass")),
                 "top_positives_json": (item.get("top_positives_json") or [])[:3],
                 "top_risks_json": (item.get("top_risks_json") or [])[:3],
+                "district": item.get("district"),
+                "district_key": item.get("district_key"),
+                "district_name_ar": item.get("district_name_ar"),
+                "district_name_en": item.get("district_name_en"),
+                "district_display": item.get("district_display"),
                 "feature_snapshot_json": {
                     "district": snapshot.get("district"),
                     "parcel_area_m2": snapshot.get("parcel_area_m2"),
@@ -3077,7 +3225,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     # Build recommendation language (change #3) – exploratory when nothing passes.
     if any_passing:
         why_best = f"Highest blended final score with brand fit {_safe_float(best.get('brand_fit_score')):.1f}/100 and economics {_safe_float(best.get('economics_score')):.1f}/100."
-        summary_text = f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner_item.get('district') if runner_item else 'backup options'} as runner-up."
+        summary_text = f"Recommend {best.get('district_display') or best.get('district') or 'the top district'} first, then sequence {runner_item.get('district_display') or runner_item.get('district') if runner_item else 'backup options'} as runner-up."
         report_summary_text = summary_text
     else:
         why_best = (
@@ -3087,7 +3235,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
         )
         summary_text = (
             "No candidate currently meets all required gates. "
-            f"Consider {best.get('district') or 'the top district'} as an exploratory lead pending further validation."
+            f"Consider {best.get('district_display') or best.get('district') or 'the top district'} as an exploratory lead pending further validation."
         )
         report_summary_text = summary_text
 

@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
+import { candidateDistrictLabel } from "./formatHelpers";
 
 type Props = {
   candidates: ExpansionCandidate[];
@@ -74,7 +75,7 @@ export default function ShortlistTray({
               <div className="ea-shortlist-tray__item-info">
                 <span className="ea-candidate__rank">#{candidate.rank_position}</span>
                 <span className="ea-shortlist-tray__item-district">
-                  {candidate.district || candidate.parcel_id}
+                  {candidateDistrictLabel(candidate, candidate.parcel_id || "—")}
                 </span>
                 <ScorePill value={candidate.final_score} />
               </div>

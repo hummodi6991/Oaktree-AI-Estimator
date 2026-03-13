@@ -61,6 +61,7 @@ import NextStepsStrip from "./NextStepsStrip";
 import CopySummaryBlock from "./CopySummaryBlock";
 import ValidationPlanPanel from "./ValidationPlanPanel";
 import AssumptionsCard from "./AssumptionsCard";
+import { candidateDistrictLabel } from "./formatHelpers";
 import DecisionSnapshotCard from "./DecisionSnapshotCard";
 import CompareOutcomeBanner from "./CompareOutcomeBanner";
 import { CandidateListSkeleton, DetailSkeleton } from "./SkeletonLoaders";
@@ -690,7 +691,7 @@ export default function ExpansionAdvisorPage({
               )}
               <div className="ea-summary-strip__item">
                 <span className="ea-summary-strip__label">{t("expansionAdvisor.topDistrict")}:</span>
-                <span className="ea-summary-strip__value">{candidates.find((c) => c.district)?.district || "—"}</span>
+                <span className="ea-summary-strip__value">{candidateDistrictLabel(candidates.find((c) => c.district), "—")}</span>
               </div>
               {searchMeta.parcel_source ? (
                 <div className="ea-summary-strip__item">
@@ -844,7 +845,7 @@ export default function ExpansionAdvisorPage({
                 <h3 className="ea-card__title">
                   {selectedCandidate.id === leadCandidateId && selectedCandidate.gate_status_json?.overall_pass === true && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
                   {selectedCandidate.id === leadCandidateId && selectedCandidate.gate_status_json?.overall_pass !== true && <span className="ea-lead-tag ea-lead-tag--exploratory">{t("expansionAdvisor.topExploratoryCandidate")}</span>}
-                  #{selectedCandidate.rank_position} {selectedCandidate.district || selectedCandidate.parcel_id}
+                  #{selectedCandidate.rank_position} {candidateDistrictLabel(selectedCandidate, selectedCandidate.parcel_id || "")}
                 </h3>
                 <div style={{ display: "flex", gap: 6 }}>
                   {selectedCandidate.id !== leadCandidateId && shortlistIds.includes(selectedCandidate.id) && (

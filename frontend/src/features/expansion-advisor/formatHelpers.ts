@@ -117,12 +117,15 @@ export function humanGateSentence(key: string, status: "pass" | "fail" | "unknow
 // garbled Arabic byte ranges, consider the string broken.
 const GARBLED_RE = /[\uFFFD\uFFFE\uFFF0-\uFFFF]{2,}/;
 const EMPTY_RE = /^\s*$/;
+// Latin mojibake patterns common with mis-encoded Arabic text (e.g. Ø§Ù„, Ã, Â)
+const MOJIBAKE_RE = /(?:[Ã\xC3][\x80-\xBF]|Ø[§-¿]Ù[„\x80-\x8F]|Ã¢|Ã©|Ã¨|Ã±){2,}/;
 
 /** Return true if a string looks like garbled / broken text. */
 export function isGarbledText(text: string | null | undefined): boolean {
   if (!text) return true;
   if (EMPTY_RE.test(text)) return true;
   if (GARBLED_RE.test(text)) return true;
+  if (MOJIBAKE_RE.test(text)) return true;
   return false;
 }
 
@@ -140,4 +143,39 @@ export function safeDistrictLabel(
   if (english && !isGarbledText(english)) return english;
   if (key && !isGarbledText(key)) return key.replace(/_/g, " ");
   return fallback;
+}
+
+/**
+ * Extract the best district label from a candidate-like object.
+ *
+ * Prefers canonical fields from the backend (district_display, district_name_ar,
+ * district_name_en, district_key) and falls back through safeDistrictLabel
+ * if those are missing.  Returns "Unknown district" if everything is garbled.
+ */
+export function candidateDistrictLabel(
+  candidate: {
+    district_display?: string | null;
+    district_name_ar?: string | null;
+    district_name_en?: string | null;
+    district_key?: string | null;
+    district?: string | null;
+  } | null | undefined,
+  fallback = "Unknown district",
+): string {
+  if (!candidate) return fallback;
+
+  // 1. Use backend canonical display if clean
+  const display = candidate.district_display;
+  if (display && !isGarbledText(display)) return display;
+
+  // 2. Fall through safeDistrictLabel cascade
+  return safeDistrictLabel(
+    candidate.district_name_ar,
+    candidate.district_name_en,
+    candidate.district_key,
+    // 3. Try raw district before giving up
+    candidate.district && !isGarbledText(candidate.district)
+      ? candidate.district
+      : fallback,
+  );
 }

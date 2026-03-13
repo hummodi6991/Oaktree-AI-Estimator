@@ -16,7 +16,7 @@ import type {
   CandidateFeatureSnapshot,
 } from "../../lib/api/expansionAdvisor";
 import { defaultBrief } from "./ExpansionBriefForm";
-import { humanGateLabel, humanGateSentence } from "./formatHelpers";
+import { humanGateLabel, humanGateSentence, candidateDistrictLabel } from "./formatHelpers";
 
 /* ─── Brief payload normalization ─── */
 
@@ -167,7 +167,7 @@ export function filterCandidates(
 
   if (districtFilter) {
     const d = districtFilter.toLowerCase();
-    result = result.filter((c) => c.district?.toLowerCase().includes(d));
+    result = result.filter((c) => candidateDistrictLabel(c, "").toLowerCase().includes(d));
   }
 
   switch (filter) {
@@ -222,7 +222,7 @@ export function sortCandidates(candidates: ExpansionCandidate[], sortKey: SortKe
           ((a.provider_whitespace_score ?? 0) + (a.multi_platform_presence_score ?? 0)),
       );
     case "district":
-      return sorted.sort((a, b) => (a.district || "").localeCompare(b.district || ""));
+      return sorted.sort((a, b) => candidateDistrictLabel(a, "").localeCompare(candidateDistrictLabel(b, "")));
     default:
       return sorted;
   }
@@ -371,7 +371,8 @@ export function generateStudyTitle(brief: ExpansionBrief): string {
 export function extractDistricts(candidates: ExpansionCandidate[]): string[] {
   const set = new Set<string>();
   for (const c of candidates) {
-    if (c.district) set.add(c.district);
+    const label = candidateDistrictLabel(c, "");
+    if (label) set.add(label);
   }
   return Array.from(set).sort();
 }
@@ -487,7 +488,7 @@ export function buildFinalistTiles(
       return {
         id: candidate.id,
         rankPosition: candidate.rank_position ?? null,
-        district: candidate.district || candidate.parcel_id || "—",
+        district: candidateDistrictLabel(candidate, candidate.parcel_id || "—"),
         gateVerdict: gatePass === true ? "pass" : gatePass === false ? "fail" : "unknown",
         paybackBand: candidate.payback_band || "—",
         paybackMonths: candidate.estimated_payback_months ?? null,
@@ -681,7 +682,7 @@ export function buildCopySummary(
   return {
     siteLabel: allGatesPass ? "Lead site" : "Top ranked candidate",
     bestCandidate: candidate
-      ? `#${candidate.rank_position || "?"} ${candidate.district || candidate.parcel_id || "—"}`
+      ? `#${candidate.rank_position || "?"} ${candidateDistrictLabel(candidate, candidate.parcel_id || "—")}`
       : "—",
     topReason: rec.why_best || memoRec.best_use_case || positives[0] || "—",
     mainRisk: rec.main_risk || memoRec.main_watchout || risks[0] || "—",
@@ -966,8 +967,8 @@ export function buildDecisionSnapshot(
 
   return {
     siteLabel: allGatesPass ? "Lead Site" : "Top ranked candidate",
-    leadSite: `#${candidate.rank_position || "?"} ${candidate.district || candidate.parcel_id || "—"}`,
-    leadDistrict: candidate.district || "—",
+    leadSite: `#${candidate.rank_position || "?"} ${candidateDistrictLabel(candidate, candidate.parcel_id || "—")}`,
+    leadDistrict: candidateDistrictLabel(candidate, "—"),
     leadParcelId: candidate.parcel_id || "—",
     whyItWins: rec.why_best || memoRec.best_use_case || positives[0] || "—",
     whyItWinsLabel: allGatesPass ? "Why it wins" : "Top strength",
@@ -1003,7 +1004,7 @@ export function deriveCompareOutcome(
   const bestOverall = result.summary?.best_overall_candidate_id || null;
   const bestCandidate = bestOverall ? candidates.find((c) => c.id === bestOverall) : null;
   const winnerLabel = bestCandidate
-    ? `#${bestCandidate.rank_position || "?"} ${bestCandidate.district || bestCandidate.parcel_id || "—"}`
+    ? `#${bestCandidate.rank_position || "?"} ${candidateDistrictLabel(bestCandidate, bestCandidate.parcel_id || "—")}`
     : bestOverall?.slice(0, 8) || "—";
 
   // Find dimensions where runner-up wins
@@ -1064,7 +1065,7 @@ export function extractSavedStudyMeta(saved: SavedExpansionSearch): SavedStudyMe
   const sortFilter = restoreSortFilter(saved.ui_state_json);
 
   return {
-    leadDistrict: lead?.district || null,
+    leadDistrict: lead ? candidateDistrictLabel(lead, "—") : null,
     leadParcelId: lead?.parcel_id || leadId?.slice(0, 8) || null,
     leadGatesPass: lead?.gate_status_json?.overall_pass === true,
     shortlistCount: (saved.selected_candidate_ids || []).length,
@@ -1082,7 +1083,7 @@ export function formatLandlordBriefingText(
   report?: RecommendationReportResponse | null,
   memo?: CandidateMemoResponse | null,
 ): string {
-  const district = candidate.district || "—";
+  const district = candidateDistrictLabel(candidate, "—");
   const parcelId = candidate.parcel_id || "—";
   const rank = candidate.rank_position || "?";
   const rentM2 = candidate.estimated_rent_sar_m2_year ? `${Math.round(candidate.estimated_rent_sar_m2_year)} SAR/m²/yr` : "TBD";
