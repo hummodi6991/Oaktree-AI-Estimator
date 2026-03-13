@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ExpansionBrief } from "../../lib/api/expansionAdvisor";
+import type { DistrictOption, ExpansionBrief } from "../../lib/api/expansionAdvisor";
+import { getExpansionDistricts } from "../../lib/api/expansionAdvisor";
+import DistrictMultiSelect from "./DistrictMultiSelect";
 
 export const defaultBrief: ExpansionBrief = {
   brand_name: "",
@@ -55,8 +57,17 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
   const { t } = useTranslation();
   const [brief, setBrief] = useState<ExpansionBrief>(initialValue);
   const [touched, setTouched] = useState(false);
+  const [districtOptions, setDistrictOptions] = useState<DistrictOption[]>([]);
 
   useEffect(() => setBrief(initialValue), [initialValue]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getExpansionDistricts()
+      .then((items) => { if (!cancelled) setDistrictOptions(items); })
+      .catch(() => { /* endpoint unavailable – fallback to empty list */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const set = <K extends keyof ExpansionBrief>(key: K, value: ExpansionBrief[K]) =>
     setBrief((prev) => ({ ...prev, [key]: value }));
@@ -224,16 +235,36 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
         <h4 className="ea-form__section-title">{t("expansionAdvisor.geography")}</h4>
         <div className="ea-form__field">
           <label className="ea-form__label">{t("expansionAdvisor.targetDistricts")}</label>
-          <input className="ea-form__input" value={brief.target_districts.join(", ")} onChange={(e) => set("target_districts", e.target.value.split(",").map((d) => d.trim()).filter(Boolean))} disabled={loading} placeholder="e.g. Al Olaya, Al Malqa, Al Nakheel" />
+          <DistrictMultiSelect
+            options={districtOptions}
+            selected={brief.target_districts}
+            onChange={(vals) => set("target_districts", vals)}
+            disabled={loading}
+            placeholder="e.g. العليا، الملقا، النخيل"
+          />
         </div>
         <div className="ea-form__row">
           <div className="ea-form__field">
             <label className="ea-form__label">{t("expansionAdvisor.preferredDistricts")}</label>
-            <input className="ea-form__input" value={(brief.brand_profile?.preferred_districts || []).join(", ")} onChange={(e) => setProfile("preferred_districts", e.target.value.split(",").map((d) => d.trim()).filter(Boolean))} disabled={loading} />
+            <DistrictMultiSelect
+              options={districtOptions}
+              selected={brief.brand_profile?.preferred_districts || []}
+              onChange={(vals) => setProfile("preferred_districts", vals)}
+              disabled={loading}
+              placeholder={t("expansionAdvisor.preferredDistricts")}
+              conflictValues={brief.brand_profile?.excluded_districts || []}
+            />
           </div>
           <div className="ea-form__field">
             <label className="ea-form__label">{t("expansionAdvisor.excludedDistricts")}</label>
-            <input className="ea-form__input" value={(brief.brand_profile?.excluded_districts || []).join(", ")} onChange={(e) => setProfile("excluded_districts", e.target.value.split(",").map((d) => d.trim()).filter(Boolean))} disabled={loading} />
+            <DistrictMultiSelect
+              options={districtOptions}
+              selected={brief.brand_profile?.excluded_districts || []}
+              onChange={(vals) => setProfile("excluded_districts", vals)}
+              disabled={loading}
+              placeholder={t("expansionAdvisor.excludedDistricts")}
+              conflictValues={brief.brand_profile?.preferred_districts || []}
+            />
           </div>
         </div>
       </div>

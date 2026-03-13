@@ -299,6 +299,18 @@ export type SavedExpansionSearchListResponse = {
   items: SavedExpansionSearch[];
 };
 
+export type DistrictOption = {
+  value: string;
+  label: string;
+  label_ar: string;
+  label_en?: string | null;
+  aliases: string[];
+};
+
+export type DistrictOptionsResponse = {
+  items: DistrictOption[];
+};
+
 const DEFAULT_GATE_REASONS: CandidateGateReasons = { passed: [], failed: [], unknown: [], thresholds: {}, explanations: {} };
 const DEFAULT_FEATURE_SNAPSHOT: CandidateFeatureSnapshot = { context_sources: {}, missing_context: [], data_completeness_score: 0 };
 const DEFAULT_SCORE_BREAKDOWN: CandidateScoreBreakdown = { weights: {}, inputs: {}, weighted_components: {}, final_score: 0 };
@@ -452,3 +464,9 @@ export async function listSavedExpansionSearches(status?: "draft" | "final", lim
 export async function getSavedExpansionSearch(savedId: string): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`)); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }
 export async function updateSavedExpansionSearch(savedId: string, payload: Partial<SavedExpansionSearch>): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }
 export async function deleteSavedExpansionSearch(savedId: string): Promise<{ deleted: boolean }> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`), { method: "DELETE" }); return readJson<{ deleted: boolean }>(res); }
+
+export async function getExpansionDistricts(): Promise<DistrictOption[]> {
+  const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/districts"));
+  const data = await readJson<DistrictOptionsResponse>(res);
+  return data.items || [];
+}
