@@ -311,6 +311,19 @@ export type DistrictOptionsResponse = {
   items: DistrictOption[];
 };
 
+export type BranchSuggestion = {
+  id: string;
+  name: string;
+  district: string;
+  lat: number;
+  lon: number;
+  source: string;
+};
+
+export type BranchSuggestionsResponse = {
+  items: BranchSuggestion[];
+};
+
 const DEFAULT_GATE_REASONS: CandidateGateReasons = { passed: [], failed: [], unknown: [], thresholds: {}, explanations: {} };
 const DEFAULT_FEATURE_SNAPSHOT: CandidateFeatureSnapshot = { context_sources: {}, missing_context: [], data_completeness_score: 0 };
 const DEFAULT_SCORE_BREAKDOWN: CandidateScoreBreakdown = { weights: {}, inputs: {}, weighted_components: {}, final_score: 0 };
@@ -468,5 +481,13 @@ export async function deleteSavedExpansionSearch(savedId: string): Promise<{ del
 export async function getExpansionDistricts(): Promise<DistrictOption[]> {
   const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/districts"));
   const data = await readJson<DistrictOptionsResponse>(res);
+  return data.items || [];
+}
+
+export async function searchBranchSuggestions(q: string, limit = 15): Promise<BranchSuggestion[]> {
+  if (!q || q.trim().length < 2) return [];
+  const params = new URLSearchParams({ q: q.trim(), limit: String(limit) });
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/branch-suggestions?${params.toString()}`));
+  const data = await readJson<BranchSuggestionsResponse>(res);
   return data.items || [];
 }
