@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import ProgrammingError
 
 from app.db.deps import get_db
 from app.main import app
@@ -134,3 +135,62 @@ def test_saved_search_404_paths(monkeypatch):
     assert get_res.status_code == 404
     assert patch_res.status_code == 404
     assert delete_res.status_code == 404
+
+
+def test_list_saved_searches_table_missing_returns_empty(monkeypatch):
+    """When the saved-searches table doesn't exist (migration pending),
+    the endpoint should return 200 with an empty list, not 500."""
+    db = DummyDB()
+    from app.api import expansion_advisor as api
+
+    def _raise_programming_error(*_args, **_kwargs):
+        raise ProgrammingError(
+            "SELECT",
+            {},
+            Exception('relation "expansion_saved_search" does not exist'),
+        )
+
+    monkeypatch.setattr(api, "list_saved_searches", _raise_programming_error)
+
+    client = _client(db)
+    try:
+        res = client.get("/v1/expansion-advisor/saved-searches")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert res.status_code == 200
+    assert res.json() == {"items": []}
+    assert db.rolled_back
+
+
+def test_list_saved_searches_empty_returns_200(monkeypatch):
+    """A successful query returning zero rows should give 200 {items: []}."""
+    db = DummyDB()
+    from app.api import expansion_advisor as api
+
+    monkeypatch.setattr(api, "list_saved_searches", lambda *_args, **_kwargs: [])
+
+    client = _client(db)
+    try:
+        res = client.get("/v1/expansion-advisor/saved-searches")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert res.status_code == 200
+    assert res.json() == {"items": []}
+
+
+def test_list_saved_searches_generic_error_propagates(monkeypatch):
+    """Non-ProgrammingError exceptions should still surface as 500."""
+    db = DummyDB()
+    from app.api import expansion_advisor as api
+
+    monkeypatch.setattr(api, "list_saved_searches", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("db connection lost")))
+
+    client = _client(db)
+    try:
+        res = client.get("/v1/expansion-advisor/saved-searches")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert res.status_code == 500
