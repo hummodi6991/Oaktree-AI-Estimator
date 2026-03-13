@@ -60,8 +60,11 @@ import type { ExpansionCandidate, CandidateScoreBreakdown, SavedExpansionSearch 
 import SavedSearchesPanel from "./SavedSearchesPanel";
 import GateSummary from "./GateSummary";
 import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
+import ConfidenceBadge from "./ConfidenceBadge";
 import { CandidateListSkeleton, DetailSkeleton } from "./SkeletonLoaders";
 import CandidateDetailPanel from "./CandidateDetailPanel";
+import ExpansionCandidateCard from "./ExpansionCandidateCard";
+import { humanGateLabel, humanGateSentence, isGarbledText, safeDistrictLabel } from "./formatHelpers";
 
 /* ─── Helpers for test data ─── */
 function makeCandidate(overrides: Partial<ExpansionCandidate> = {}): ExpansionCandidate {
@@ -262,7 +265,7 @@ describe("Expansion advisor UI behavior", () => {
       />,
     );
     expect(html).toContain("Comp");
-    expect(html).toContain("zoning");
+    expect(html).toContain("Zoning");
     expect(html).toContain("demand");
     expect(html).toContain("cost");
   });
@@ -889,7 +892,7 @@ describe("Copy summary builder", () => {
     expect(summary.topReason).toBe("Strong demand area");
     expect(summary.mainRisk).toBe("Rental costs");
     expect(summary.bestFormat).toBe("QSR with drive-through");
-    expect(summary.nextValidation).toBe("access");
+    expect(summary.nextValidation).toBe("Access needs field verification.");
   });
 
   it("falls back gracefully with no report", () => {
@@ -902,11 +905,14 @@ describe("Copy summary builder", () => {
 
   it("formatCopySummaryText produces readable text", () => {
     const text = formatCopySummaryText({
+      siteLabel: "Lead site",
       bestCandidate: "#1 Olaya",
       topReason: "Strong demand",
       mainRisk: "High rent",
       bestFormat: "QSR",
       nextValidation: "Site visit",
+      allGatesPass: true,
+      noPassNotice: null,
     });
     expect(text).toContain("Lead site: #1 Olaya");
     expect(text).toContain("Top reason: Strong demand");
@@ -1172,7 +1178,7 @@ describe("Decision snapshot", () => {
     expect(snap.bestFormat).toBe("QSR");
     expect(snap.confidenceGrade).toBe("A");
     expect(snap.gateVerdict).toBe("pass");
-    expect(snap.nextValidation).toBe("parking");
+    expect(snap.nextValidation).toBe("Parking needs field verification.");
   });
 
   it("renders DecisionSnapshotCard component", () => {
@@ -3085,7 +3091,7 @@ describe("Landlord briefing text generation", () => {
     const text = formatLandlordBriefingText(makeCandidate({ district: "Test" }));
     expect(text).toContain("Test");
     expect(text).toContain("TBD");
-    expect(text).toContain("Pending verification");
+    expect(text).toContain("Gates pending verification");
   });
 });
 
@@ -3412,5 +3418,262 @@ describe("Expansion Advisor payload normalization regression", () => {
     expect(result.brand_profile?.parking_sensitivity).toBe("high");
     expect(result.brand_profile?.frontage_sensitivity).toBe("low");
     expect(result.brand_profile?.visibility_sensitivity).toBe("medium");
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+ *  UI/UX correctness patch tests
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+describe("UI/UX correctness: zero passing candidates => no Lead Site approval framing", () => {
+  it("buildDecisionSnapshot uses 'Top ranked candidate' when gates fail", () => {
+    const c = makeCandidate({ gate_status_json: { overall_pass: false, zoning_fit_pass: false } });
+    const snap = buildDecisionSnapshot(c);
+    expect(snap.siteLabel).toBe("Top ranked candidate");
+    expect(snap.allGatesPass).toBe(false);
+    expect(snap.whyItWinsLabel).toBe("Top strength");
+  });
+
+  it("buildDecisionSnapshot uses 'Lead Site' when gates pass", () => {
+    const c = makeCandidate({ gate_status_json: { overall_pass: true, zoning_fit_pass: true } });
+    const snap = buildDecisionSnapshot(c);
+    expect(snap.siteLabel).toBe("Lead Site");
+    expect(snap.allGatesPass).toBe(true);
+    expect(snap.whyItWinsLabel).toBe("Why it wins");
+  });
+
+  it("buildDecisionSnapshot uses 'Top ranked candidate' when overall_pass is null", () => {
+    const c = makeCandidate({ gate_status_json: { overall_pass: null as any } });
+    const snap = buildDecisionSnapshot(c);
+    expect(snap.siteLabel).toBe("Top ranked candidate");
+    expect(snap.allGatesPass).toBe(false);
+  });
+
+  it("buildCopySummary shows noPassNotice when gates fail", () => {
+    const c = makeCandidate({ gate_status_json: { overall_pass: false } });
+    const summary = buildCopySummary(c, null, null);
+    expect(summary.noPassNotice).toContain("No candidate currently passes");
+    expect(summary.siteLabel).toBe("Top ranked candidate");
+  });
+
+  it("buildCopySummary hides noPassNotice when gates pass", () => {
+    const c = makeCandidate({ gate_status_json: { overall_pass: true } });
+    const summary = buildCopySummary(c, null, null);
+    expect(summary.noPassNotice).toBeNull();
+    expect(summary.siteLabel).toBe("Lead site");
+  });
+
+  it("formatCopySummaryText includes noPassNotice when gates fail", () => {
+    const c = makeCandidate({ gate_status_json: { overall_pass: false } });
+    const summary = buildCopySummary(c, null, null);
+    const text = formatCopySummaryText(summary);
+    expect(text).toContain("No candidate currently passes");
+    expect(text).toContain("Top ranked candidate:");
+    expect(text).not.toContain("Lead site:");
+  });
+
+  it("CandidateCard does not show Lead Site tag when gates fail", () => {
+    const c = makeCandidate({ district: "Al Olaya", gate_status_json: { overall_pass: false } });
+    const html = renderToStaticMarkup(
+      <ExpansionCandidateCard
+        candidate={c}
+        selected={false}
+        shortlisted={false}
+        compared={false}
+        isLead={true}
+        onSelect={() => {}}
+        onToggleShortlist={() => {}}
+        onCompareToggle={() => {}}
+      />,
+    );
+    expect(html).not.toContain("Lead Site");
+    expect(html).toContain("Top exploratory candidate");
+  });
+
+  it("CandidateCard shows Lead Site tag when gates pass", () => {
+    const c = makeCandidate({ district: "Al Olaya", gate_status_json: { overall_pass: true } });
+    const html = renderToStaticMarkup(
+      <ExpansionCandidateCard
+        candidate={c}
+        selected={false}
+        shortlisted={false}
+        compared={false}
+        isLead={true}
+        onSelect={() => {}}
+        onToggleShortlist={() => {}}
+        onCompareToggle={() => {}}
+      />,
+    );
+    expect(html).toContain("Lead Site");
+  });
+});
+
+describe("UI/UX correctness: unknown gates render as ? not ✗", () => {
+  it("parseGateEntries marks null gates as unknown, not fail", () => {
+    const entries = parseGateEntries(
+      { zoning_fit_pass: true, parking_pass: null as any, frontage_access_pass: false },
+      { passed: ["zoning_fit_pass"], failed: ["frontage_access_pass"], unknown: ["parking_pass"], thresholds: {}, explanations: {} },
+    );
+    const parking = entries.find((e) => e.name === "Parking");
+    expect(parking).toBeDefined();
+    expect(parking!.status).toBe("unknown");
+
+    const zoning = entries.find((e) => e.name === "Zoning fit");
+    expect(zoning!.status).toBe("pass");
+
+    const frontage = entries.find((e) => e.name === "Frontage / access");
+    expect(frontage!.status).toBe("fail");
+  });
+
+  it("parseGateEntries marks undefined gates as unknown", () => {
+    const entries = parseGateEntries(
+      { parking_pass: undefined as any },
+      undefined,
+    );
+    expect(entries[0].status).toBe("unknown");
+  });
+
+  it("GateSummary renders ✓ for pass, ✗ for fail, ? for unknown", () => {
+    const html = renderToStaticMarkup(
+      <GateSummary
+        gates={{ zoning_fit_pass: true, parking_pass: null as any, frontage_access_pass: false }}
+        unknownGates={["parking_pass"]}
+      />,
+    );
+    // Check pass icon
+    expect(html).toContain("✓");
+    // Check fail icon
+    expect(html).toContain("✗");
+    // Check unknown icon
+    expect(html).toContain("?");
+    // Check human labels are used
+    expect(html).toContain("Zoning fit");
+    expect(html).toContain("Parking");
+    expect(html).toContain("Frontage / access");
+    // Raw keys should NOT appear
+    expect(html).not.toContain("zoning_fit_pass");
+    expect(html).not.toContain("parking_pass");
+    expect(html).not.toContain("frontage_access_pass");
+  });
+});
+
+describe("UI/UX correctness: score breakdown shows points + weight %, not huge percentages", () => {
+  it("ScoreBreakdownCompact renders pts and weight%", () => {
+    const breakdown = {
+      weights: { competition_whitespace: 0.2, brand_fit: 0.2 },
+      inputs: { competition_whitespace: 75, brand_fit: 62 },
+      weighted_components: { competition_whitespace: 19, brand_fit: 15.4 },
+      final_score: 68,
+    };
+    const html = renderToStaticMarkup(<ScoreBreakdownCompact breakdown={breakdown} />);
+    // Should show points with 'pts'
+    expect(html).toContain("pts");
+    // Should show weight %
+    expect(html).toContain("20% weight");
+    // Should NOT show 1900% or 2000% (the old percentage bug)
+    expect(html).not.toMatch(/\b1[5-9]\d{2}%/);
+    expect(html).not.toMatch(/\b2\d{3}%/);
+  });
+
+  it("parseScoreBreakdown returns correct component values", () => {
+    const bd = {
+      weights: { econ: 0.3 },
+      inputs: { econ: 80 },
+      weighted_components: { econ: 24 },
+      final_score: 72,
+    };
+    const comps = parseScoreBreakdown(bd);
+    expect(comps).toHaveLength(1);
+    expect(comps[0].weight).toBe(0.3);
+    expect(comps[0].input).toBe(80);
+    expect(comps[0].weighted).toBe(24);
+  });
+});
+
+describe("UI/UX correctness: verdict and confidence badges are separated", () => {
+  it("ConfidenceBadge renders with Data: prefix by default", () => {
+    const html = renderToStaticMarkup(<ConfidenceBadge grade="A" />);
+    expect(html).toContain("Data: A");
+  });
+
+  it("ConfidenceBadge renders compact without prefix", () => {
+    const html = renderToStaticMarkup(<ConfidenceBadge grade="B" compact />);
+    expect(html).toContain(">B<");
+    expect(html).not.toContain("Data:");
+  });
+
+  it("CandidateCard renders separate verdict and confidence badges", () => {
+    const c = makeCandidate({ gate_status_json: { overall_pass: false }, confidence_grade: "A" });
+    const html = renderToStaticMarkup(
+      <ExpansionCandidateCard
+        candidate={c}
+        selected={false}
+        shortlisted={false}
+        compared={false}
+        onSelect={() => {}}
+        onToggleShortlist={() => {}}
+        onCompareToggle={() => {}}
+      />,
+    );
+    // Verdict badge should say Fail, not "Fail A"
+    expect(html).toContain("Fail");
+    // Confidence badge should be separate
+    expect(html).toContain("Data: A");
+    // Should NOT show "Fail A" combined
+    expect(html).not.toContain("Fail A");
+  });
+});
+
+describe("UI/UX correctness: raw gate keys never appear in rendered text", () => {
+  it("humanGateLabel converts raw keys to clean labels", () => {
+    expect(humanGateLabel("zoning_fit_pass")).toBe("Zoning fit");
+    expect(humanGateLabel("frontage_access_pass")).toBe("Frontage / access");
+    expect(humanGateLabel("parking_pass")).toBe("Parking");
+    expect(humanGateLabel("visibility_pass")).toBe("Visibility");
+    expect(humanGateLabel("some_new_gate_pass")).toBe("Some new gate");
+  });
+
+  it("humanGateSentence produces polished copy", () => {
+    expect(humanGateSentence("zoning_fit_pass", "fail")).toBe("Zoning fit failed.");
+    expect(humanGateSentence("frontage_access_pass", "unknown")).toBe("Frontage / access needs field verification.");
+    expect(humanGateSentence("parking_pass", "pass")).toBe("Parking passed.");
+  });
+
+  it("CandidateDetailPanel renders human labels for gate reasons", () => {
+    const c = makeCandidate({
+      gate_status_json: { overall_pass: false, zoning_fit_pass: false, parking_pass: null as any },
+      gate_reasons_json: {
+        passed: [],
+        failed: ["zoning_fit_pass"],
+        unknown: ["parking_pass"],
+        thresholds: {},
+        explanations: {},
+      },
+    });
+    const html = renderToStaticMarkup(<CandidateDetailPanel candidate={c} />);
+    // Human label should appear
+    expect(html).toContain("Zoning fit");
+    expect(html).toContain("Parking");
+    // Raw key should NOT appear in user-facing text
+    expect(html).not.toContain("zoning_fit_pass");
+    expect(html).not.toContain("parking_pass");
+  });
+});
+
+describe("UI/UX correctness: district label fallback", () => {
+  it("isGarbledText detects garbled sequences", () => {
+    expect(isGarbledText(null)).toBe(true);
+    expect(isGarbledText("")).toBe(true);
+    expect(isGarbledText("   ")).toBe(true);
+    expect(isGarbledText("\uFFFD\uFFFD\uFFFD")).toBe(true);
+    expect(isGarbledText("Al Olaya")).toBe(false);
+    expect(isGarbledText("العليا")).toBe(false);
+  });
+
+  it("safeDistrictLabel prefers valid Arabic, then English, then key", () => {
+    expect(safeDistrictLabel("العليا", "Al Olaya", "al_olaya")).toBe("العليا");
+    expect(safeDistrictLabel("\uFFFD\uFFFD", "Al Olaya", "al_olaya")).toBe("Al Olaya");
+    expect(safeDistrictLabel(null, null, "al_olaya")).toBe("al olaya");
+    expect(safeDistrictLabel(null, null, null)).toBe("Unknown district");
   });
 });

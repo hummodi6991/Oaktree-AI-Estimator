@@ -39,7 +39,11 @@ export default function ExpansionCandidateCard({
   // gates lacked data so verdict is indeterminate, not a hard fail).
   const gateVerdict: "pass" | "fail" | "unknown" =
     gateOverall === true ? "pass" : gateOverall === false ? "fail" : "unknown";
-  const pass = gateVerdict === "pass";
+  const allGatesPass = gateVerdict === "pass";
+  // Only show "Lead Site" tag when the candidate actually passes all gates.
+  // Otherwise use exploratory framing.
+  const showLeadTag = isLead && allGatesPass;
+  const showExploratoryTag = isLead && !allGatesPass;
   const positives = (candidate.top_positives_json || []).slice(0, 2);
   const risks = (candidate.top_risks_json || []).slice(0, 2);
 
@@ -61,7 +65,8 @@ export default function ExpansionCandidateCard({
       {/* Top row: rank + district + badges */}
       <div className="ea-candidate__top">
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {isLead && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
+          {showLeadTag && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
+          {showExploratoryTag && <span className="ea-lead-tag ea-lead-tag--exploratory">{t("expansionAdvisor.topExploratoryCandidate")}</span>}
           {candidate.rank_position ? (
             <span className="ea-candidate__rank" title={localSortActive ? t("expansionAdvisor.backendRank") : undefined}>
               #{candidate.rank_position}
@@ -76,10 +81,12 @@ export default function ExpansionCandidateCard({
         </div>
         <div className="ea-candidate__badges">
           <ScorePill value={candidate.final_score} />
-          <ConfidenceBadge grade={candidate.confidence_grade} />
+          {/* Verdict badge — separate from confidence */}
           <span className={`ea-badge ea-badge--${gateVerdict === "pass" ? "green" : gateVerdict === "fail" ? "red" : "amber"}`}>
-            {gateVerdict === "pass" ? t("expansionAdvisor.gatePass") : gateVerdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateUnknown")}
+            {gateVerdict === "pass" ? t("expansionAdvisor.gatePass") : gateVerdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateNeedsValidation")}
           </span>
+          {/* Confidence badge — data quality, not site approval */}
+          <ConfidenceBadge grade={candidate.confidence_grade} />
           {candidate.payback_band && (
             <PaybackBadge band={candidate.payback_band} months={candidate.estimated_payback_months} />
           )}

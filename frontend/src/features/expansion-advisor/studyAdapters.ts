@@ -16,6 +16,7 @@ import type {
   CandidateFeatureSnapshot,
 } from "../../lib/api/expansionAdvisor";
 import { defaultBrief } from "./ExpansionBriefForm";
+import { humanGateLabel, humanGateSentence } from "./formatHelpers";
 
 /* ─── Brief payload normalization ─── */
 
@@ -292,6 +293,7 @@ export function parseScoreBreakdown(breakdown: CandidateScoreBreakdown | undefin
 /* ─── Gate presentation ─── */
 
 export type GateEntry = {
+  key: string;
   name: string;
   status: "pass" | "fail" | "unknown";
   explanation?: string;
@@ -305,24 +307,32 @@ export function parseGateEntries(
   const explanations = gateReasons?.explanations || {};
   const unknownSet = new Set(gateReasons?.unknown || []);
   const entries: GateEntry[] = [];
+  const seenLabels = new Set<string>();
 
   for (const [key, passed] of Object.entries(gateStatus)) {
+    if (key === "overall_pass") continue; // skip meta-key
     const isUnknown = unknownSet.has(key) || passed === null || passed === undefined;
+    const label = humanGateLabel(key);
+    seenLabels.add(label);
     entries.push({
-      name: key.replace(/_/g, " ").replace(/\bpass\b/gi, "").trim(),
+      key,
+      name: label,
       status: isUnknown ? "unknown" : (passed ? "pass" : "fail"),
       explanation: explanations[key] ? String(explanations[key]) : undefined,
     });
   }
 
-  // Add unknown gates from reasons
+  // Add unknown gates from reasons that aren't already listed
   if (gateReasons?.unknown) {
-    for (const name of gateReasons.unknown) {
-      if (!entries.find((e) => e.name === name.replace(/_/g, " ").trim())) {
+    for (const rawKey of gateReasons.unknown) {
+      const label = humanGateLabel(rawKey);
+      if (!seenLabels.has(label)) {
+        seenLabels.add(label);
         entries.push({
-          name: name.replace(/_/g, " ").trim(),
+          key: rawKey,
+          name: label,
           status: "unknown",
-          explanation: explanations[name] ? String(explanations[name]) : undefined,
+          explanation: explanations[rawKey] ? String(explanations[rawKey]) : undefined,
         });
       }
     }
@@ -536,10 +546,11 @@ export function deriveDecisionChecklist(
     const gateKey = `${key}_pass`;
     const scoreKey = `${key === "visibility" ? "access_visibility" : key}_score`;
     if (gateKey in gates) {
+      const gateVal = gates[gateKey];
       items.push({
         category: "site_fit",
         label: `${key.charAt(0).toUpperCase() + key.slice(1)} gate`,
-        status: gates[gateKey] ? "strong" : "risk",
+        status: gateVal === true ? "strong" : gateVal === false ? "risk" : "verify",
       });
     } else if ((candidate as Record<string, unknown>)[scoreKey] != null) {
       const val = Number((candidate as Record<string, unknown>)[scoreKey]);
@@ -621,11 +632,14 @@ export function deriveDecisionChecklist(
 /* ─── Copy-summary block generation ─── */
 
 export type CopySummary = {
+  siteLabel: string;
   bestCandidate: string;
   topReason: string;
   mainRisk: string;
   bestFormat: string;
   nextValidation: string;
+  allGatesPass: boolean;
+  noPassNotice: string | null;
 };
 
 export function buildCopySummary(
@@ -639,26 +653,38 @@ export function buildCopySummary(
   const risks = candidate?.top_risks_json || [];
   const unknowns = candidate?.gate_reasons_json?.unknown || [];
   const missing = candidate?.feature_snapshot_json?.missing_context || [];
+  const gatePass = candidate?.gate_status_json?.overall_pass;
+  const allGatesPass = gatePass === true;
+
+  const nextRaw = unknowns[0] || missing[0] || null;
+  const nextValidation = nextRaw ? humanGateLabel(nextRaw) + " needs field verification." : "Site visit recommended";
 
   return {
+    siteLabel: allGatesPass ? "Lead site" : "Top ranked candidate",
     bestCandidate: candidate
       ? `#${candidate.rank_position || "?"} ${candidate.district || candidate.parcel_id || "—"}`
       : "—",
     topReason: rec.why_best || memoRec.best_use_case || positives[0] || "—",
     mainRisk: rec.main_risk || memoRec.main_watchout || risks[0] || "—",
     bestFormat: rec.best_format || memoRec.best_use_case || "—",
-    nextValidation: unknowns[0]?.replace(/_/g, " ") || missing[0]?.replace(/_/g, " ") || "Site visit recommended",
+    nextValidation,
+    allGatesPass,
+    noPassNotice: allGatesPass ? null : "No candidate currently passes all required gates.",
   };
 }
 
 export function formatCopySummaryText(summary: CopySummary): string {
-  return [
-    `Lead site: ${summary.bestCandidate}`,
+  const lines = [
+    `${summary.siteLabel}: ${summary.bestCandidate}`,
+  ];
+  if (summary.noPassNotice) lines.push(`Note: ${summary.noPassNotice}`);
+  lines.push(
     `Top reason: ${summary.topReason}`,
     `Main risk: ${summary.mainRisk}`,
     `Best format: ${summary.bestFormat}`,
     `Next step: ${summary.nextValidation}`,
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 /* ─── Runner-up helper ─── */
@@ -885,15 +911,19 @@ export function deriveAssumptions(
 /* ─── Decision snapshot shaping ─── */
 
 export type DecisionSnapshot = {
+  /** Label for the lead row — "Lead Site" only when gates pass. */
+  siteLabel: string;
   leadSite: string;
   leadDistrict: string;
   leadParcelId: string;
   whyItWins: string;
+  whyItWinsLabel: string;
   mainRisk: string;
   bestFormat: string;
   nextValidation: string;
   confidenceGrade: string;
   gateVerdict: string;
+  allGatesPass: boolean;
   finalScore: number | null;
   rankPosition: number | null;
 };
@@ -910,17 +940,24 @@ export function buildDecisionSnapshot(
   const unknowns = candidate.gate_reasons_json?.unknown || [];
   const missing = candidate.feature_snapshot_json?.missing_context || [];
   const gatePass = candidate.gate_status_json?.overall_pass;
+  const allGatesPass = gatePass === true;
+
+  const nextRaw = unknowns[0] || missing[0] || null;
+  const nextValidation = nextRaw ? humanGateLabel(nextRaw) + " needs field verification." : "Site visit recommended";
 
   return {
+    siteLabel: allGatesPass ? "Lead Site" : "Top ranked candidate",
     leadSite: `#${candidate.rank_position || "?"} ${candidate.district || candidate.parcel_id || "—"}`,
     leadDistrict: candidate.district || "—",
     leadParcelId: candidate.parcel_id || "—",
     whyItWins: rec.why_best || memoRec.best_use_case || positives[0] || "—",
+    whyItWinsLabel: allGatesPass ? "Why it wins" : "Top strength",
     mainRisk: rec.main_risk || memoRec.main_watchout || risks[0] || "—",
     bestFormat: rec.best_format || memoRec.best_use_case || "—",
-    nextValidation: unknowns[0]?.replace(/_/g, " ") || missing[0]?.replace(/_/g, " ") || "Site visit recommended",
+    nextValidation,
     confidenceGrade: candidate.confidence_grade || "—",
     gateVerdict: gatePass === true ? "pass" : gatePass === false ? "fail" : "unknown",
+    allGatesPass,
     finalScore: candidate.final_score ?? null,
     rankPosition: candidate.rank_position ?? null,
   };
@@ -1031,7 +1068,7 @@ export function formatLandlordBriefingText(
   const annualRent = candidate.estimated_annual_rent_sar ? `${Math.round(candidate.estimated_annual_rent_sar).toLocaleString()} SAR/yr` : "TBD";
   const format = report?.recommendation?.best_format || memo?.recommendation?.best_use_case || "F&B outlet";
   const gatePass = candidate.gate_status_json?.overall_pass;
-  const gateLabel = gatePass === true ? "All gates passed" : gatePass === false ? "Some gates require review" : "Pending verification";
+  const gateLabel = gatePass === true ? "All gates passed" : gatePass === false ? "Some gates require review" : "Gates pending verification";
 
   return [
     `Site Visit Briefing`,

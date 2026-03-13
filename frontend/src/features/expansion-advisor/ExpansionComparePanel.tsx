@@ -186,7 +186,8 @@ export default function ExpansionComparePanel({
                     <th>{t("expansionAdvisor.compareDimensions")}</th>
                     {items.map((item) => (
                       <th key={item.candidate_id} style={{ cursor: "pointer" }} onClick={() => item.candidate_id && onSelectCandidateId?.(item.candidate_id)} className={item.candidate_id === leadCandidateId ? "ea-compare-table__lead" : ""}>
-                        {item.candidate_id === leadCandidateId && <span className="ea-lead-tag ea-lead-tag--sm">{t("expansionAdvisor.leadSite")}</span>}{" "}
+                        {item.candidate_id === leadCandidateId && (item as Record<string, unknown>).gate_verdict === "pass" && <span className="ea-lead-tag ea-lead-tag--sm">{t("expansionAdvisor.leadSite")}</span>}{" "}
+                        {item.candidate_id === leadCandidateId && (item as Record<string, unknown>).gate_verdict !== "pass" && <span className="ea-lead-tag ea-lead-tag--sm ea-lead-tag--exploratory">{t("expansionAdvisor.topExploratoryCandidate")}</span>}{" "}
                         {item.district || item.candidate_id?.slice(0, 8) || "—"}
                         {item.rank_position ? <span className="ea-compare-table__rank"> #{item.rank_position}</span> : null}
                       </th>

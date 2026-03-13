@@ -75,3 +75,69 @@ export function gateColor(pass: boolean | null | undefined): "green" | "red" | "
   if (pass === false) return "red";
   return "neutral";
 }
+
+/* ─── Human-readable gate labels ─── */
+
+const GATE_LABEL_MAP: Record<string, string> = {
+  zoning_fit_pass: "Zoning fit",
+  zoning_pass: "Zoning",
+  frontage_access_pass: "Frontage / access",
+  frontage_pass: "Frontage",
+  access_pass: "Access",
+  parking_pass: "Parking",
+  visibility_pass: "Visibility",
+  competition_pass: "Competition",
+  brand_fit_pass: "Brand fit",
+  economics_pass: "Economics",
+  cannibalization_pass: "Cannibalization",
+  overall_pass: "Overall",
+};
+
+/** Return a clean human-readable label for a gate key. */
+export function humanGateLabel(key: string): string {
+  if (GATE_LABEL_MAP[key]) return GATE_LABEL_MAP[key];
+  return key
+    .replace(/_/g, " ")
+    .replace(/\bpass\b/gi, "")
+    .trim()
+    .replace(/^\w/, (c) => c.toUpperCase());
+}
+
+/** Produce a human-readable one-line explanation for a gate verdict. */
+export function humanGateSentence(key: string, status: "pass" | "fail" | "unknown"): string {
+  const label = humanGateLabel(key);
+  if (status === "pass") return `${label} passed.`;
+  if (status === "fail") return `${label} failed.`;
+  return `${label} needs field verification.`;
+}
+
+/* ─── District label fallback ─── */
+
+// Rough heuristic: if >40% of chars are replacement-character or within known
+// garbled Arabic byte ranges, consider the string broken.
+const GARBLED_RE = /[\uFFFD\uFFFE\uFFF0-\uFFFF]{2,}/;
+const EMPTY_RE = /^\s*$/;
+
+/** Return true if a string looks like garbled / broken text. */
+export function isGarbledText(text: string | null | undefined): boolean {
+  if (!text) return true;
+  if (EMPTY_RE.test(text)) return true;
+  if (GARBLED_RE.test(text)) return true;
+  return false;
+}
+
+/**
+ * Pick the best available district label.
+ * Prefers arabic → english → normalized key → fallback.
+ */
+export function safeDistrictLabel(
+  arabic: string | null | undefined,
+  english: string | null | undefined,
+  key: string | null | undefined,
+  fallback = "Unknown district",
+): string {
+  if (arabic && !isGarbledText(arabic)) return arabic;
+  if (english && !isGarbledText(english)) return english;
+  if (key && !isGarbledText(key)) return key.replace(/_/g, " ");
+  return fallback;
+}

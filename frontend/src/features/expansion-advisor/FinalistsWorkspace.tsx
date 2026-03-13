@@ -49,7 +49,8 @@ function TileCard({
 
   return (
     <div className={cls} onClick={onSelect} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(); }}>
-      {tile.isLead && <div className="ea-finalist-tile__lead-badge">{t("expansionAdvisor.leadSite")}</div>}
+      {tile.isLead && tile.gateVerdict === "pass" && <div className="ea-finalist-tile__lead-badge">{t("expansionAdvisor.leadSite")}</div>}
+      {tile.isLead && tile.gateVerdict !== "pass" && <div className="ea-finalist-tile__lead-badge ea-finalist-tile__lead-badge--exploratory">{t("expansionAdvisor.topExploratoryCandidate")}</div>}
       <div className="ea-finalist-tile__header">
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {tile.rankPosition && <span className="ea-candidate__rank">#{tile.rankPosition}</span>}
@@ -58,8 +59,8 @@ function TileCard({
         <div className="ea-candidate__badges">
           <ScorePill value={tile.finalScore} />
           <ConfidenceBadge grade={tile.confidenceGrade} />
-          <span className={`ea-badge ea-badge--${tile.gateVerdict === "pass" ? "green" : tile.gateVerdict === "fail" ? "red" : "neutral"}`}>
-            {tile.gateVerdict === "pass" ? t("expansionAdvisor.gatePass") : tile.gateVerdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateUnknown")}
+          <span className={`ea-badge ea-badge--${tile.gateVerdict === "pass" ? "green" : tile.gateVerdict === "fail" ? "red" : "amber"}`}>
+            {tile.gateVerdict === "pass" ? t("expansionAdvisor.gatePass") : tile.gateVerdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateNeedsValidation")}
           </span>
         </div>
       </div>

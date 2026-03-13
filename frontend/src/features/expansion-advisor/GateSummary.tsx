@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { humanGateLabel } from "./formatHelpers";
 
 type GateValue = boolean | null | undefined;
 
@@ -6,13 +7,6 @@ type GateSummaryProps = {
   gates: Record<string, GateValue> | null | undefined;
   unknownGates?: string[];
 };
-
-function gateLabel(key: string): string {
-  return key
-    .replace(/_/g, " ")
-    .replace(/\bpass\b/gi, "")
-    .trim();
-}
 
 function gateIcon(status: "pass" | "fail" | "unknown"): string {
   if (status === "pass") return "\u2713";
@@ -31,15 +25,17 @@ export default function GateSummary({ gates, unknownGates }: GateSummaryProps) {
   return (
     <div className="ea-gate-list">
       {Object.entries(gates).map(([key, passed]) => {
+        if (key === "overall_pass") return null;
+        // Tri-state: explicit null/undefined or in unknown list → unknown (not fail)
         const isUnknown = unknownSet.has(key) || passed === null || passed === undefined;
-        const status: "pass" | "fail" | "unknown" = isUnknown ? "unknown" : (passed ? "pass" : "fail");
+        const status: "pass" | "fail" | "unknown" = isUnknown ? "unknown" : (passed === true ? "pass" : "fail");
         return (
           <span
             key={key}
             className={`ea-gate-item ea-gate-item--${status}`}
-            title={key}
+            title={humanGateLabel(key)}
           >
-            {gateIcon(status)} {gateLabel(key)}
+            {gateIcon(status)} {humanGateLabel(key)}
           </span>
         );
       })}

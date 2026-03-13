@@ -842,7 +842,8 @@ export default function ExpansionAdvisorPage({
             <div className="ea-card">
               <div className="ea-card__header">
                 <h3 className="ea-card__title">
-                  {selectedCandidate.id === leadCandidateId && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
+                  {selectedCandidate.id === leadCandidateId && selectedCandidate.gate_status_json?.overall_pass === true && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
+                  {selectedCandidate.id === leadCandidateId && selectedCandidate.gate_status_json?.overall_pass !== true && <span className="ea-lead-tag ea-lead-tag--exploratory">{t("expansionAdvisor.topExploratoryCandidate")}</span>}
                   #{selectedCandidate.rank_position} {selectedCandidate.district || selectedCandidate.parcel_id}
                 </h3>
                 <div style={{ display: "flex", gap: 6 }}>
