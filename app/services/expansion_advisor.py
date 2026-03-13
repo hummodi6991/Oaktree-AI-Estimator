@@ -15,6 +15,39 @@ logger = logging.getLogger(__name__)
 
 
 ARCGIS_PARCELS_TABLE = "public.riyadh_parcels_arcgis_proxy"
+
+# ---------------------------------------------------------------------------
+# Gate-key to human-readable label mapping (change #4)
+# ---------------------------------------------------------------------------
+_GATE_HUMAN_LABELS: dict[str, str] = {
+    "zoning_fit_pass": "zoning fit",
+    "area_fit_pass": "area fit",
+    "frontage_access_pass": "frontage/access",
+    "parking_pass": "parking",
+    "district_pass": "district",
+    "cannibalization_pass": "cannibalization",
+    "delivery_market_pass": "delivery market",
+    "economics_pass": "economics",
+}
+
+
+def _gate_key_to_label(gate_key: str) -> str:
+    """Return a human-friendly label for an internal gate key."""
+    return _GATE_HUMAN_LABELS.get(gate_key, gate_key.replace("_pass", "").replace("_", " "))
+
+
+def _gate_verdict_label(overall_pass: Any) -> str:
+    """Map the tri-state overall_pass to a stable string verdict.
+
+    True  -> "pass"
+    False -> "fail"
+    None  -> "unknown"
+    """
+    if overall_pass is True:
+        return "pass"
+    if overall_pass is False:
+        return "fail"
+    return "unknown"
 _EXPANSION_CITY = "riyadh"
 _EXPANSION_AQAR_ASSET = "commercial"
 _EXPANSION_AQAR_UNIT = "retail"
@@ -92,6 +125,7 @@ def _normalize_score_breakdown(value: Any, final_score: Any) -> dict[str, Any]:
     raw["weights"] = raw.get("weights") or {}
     raw["inputs"] = raw.get("inputs") or {}
     raw["weighted_components"] = raw.get("weighted_components") or {}
+    raw["display"] = raw.get("display") or {}
     raw["final_score"] = _safe_float(raw.get("final_score"), _safe_float(final_score))
     return raw
 
@@ -719,6 +753,7 @@ def _score_breakdown(
     access_visibility_score: float,
     confidence_score: float,
 ) -> dict[str, Any]:
+    # weight_percent values sum to 100 and represent each component's share.
     component_weights = {
         "demand_potential": 25,
         "competition_whitespace": 20,
@@ -728,6 +763,16 @@ def _score_breakdown(
         "access_visibility": 5,
         "confidence": 5,
     }
+    raw_inputs = {
+        "demand_potential": round(_safe_float(demand_score), 2),
+        "competition_whitespace": round(_safe_float(whitespace_score), 2),
+        "brand_fit": round(_safe_float(brand_fit_score), 2),
+        "occupancy_economics": round(_safe_float(economics_score), 2),
+        "delivery_demand": round(_safe_float(provider_intelligence_composite), 2),
+        "access_visibility": round(_safe_float(access_visibility_score), 2),
+        "confidence": round(_safe_float(confidence_score), 2),
+    }
+    # weighted_components are weighted *points* (input * weight/100), NOT percentages.
     weighted_components = {
         "demand_potential": round(_safe_float(demand_score) * 0.25, 2),
         "competition_whitespace": round(_safe_float(whitespace_score) * 0.20, 2),
@@ -738,18 +783,20 @@ def _score_breakdown(
         "confidence": round(_safe_float(confidence_score) * 0.05, 2),
     }
     final_score = round(sum(weighted_components.values()), 2)
+    # Display structure for frontend rendering (change #5).
+    display = {
+        name: {
+            "raw_input_score": raw_inputs[name],
+            "weight_percent": component_weights[name],
+            "weighted_points": weighted_components[name],
+        }
+        for name in component_weights
+    }
     return {
         "weights": component_weights,
-        "inputs": {
-            "demand_potential": round(_safe_float(demand_score), 2),
-            "competition_whitespace": round(_safe_float(whitespace_score), 2),
-            "brand_fit": round(_safe_float(brand_fit_score), 2),
-            "occupancy_economics": round(_safe_float(economics_score), 2),
-            "delivery_demand": round(_safe_float(provider_intelligence_composite), 2),
-            "access_visibility": round(_safe_float(access_visibility_score), 2),
-            "confidence": round(_safe_float(confidence_score), 2),
-        },
+        "inputs": raw_inputs,
         "weighted_components": weighted_components,
+        "display": display,
         "final_score": round(_clamp(final_score), 2),
     }
 
@@ -769,7 +816,8 @@ def _top_positives_and_risks(
         positives.append("Brand-fit profile aligns with site characteristics.")
     if _safe_float(candidate.get("economics_score")) >= 65:
         positives.append("Economics profile meets target screening band.")
-    if bool((candidate.get("gate_status_json") or {}).get("overall_pass")):
+    overall = (candidate.get("gate_status_json") or {}).get("overall_pass")
+    if overall is True:
         positives.append("All required gates pass under available context.")
 
     if _safe_float(candidate.get("cannibalization_score")) >= 70:
@@ -779,9 +827,11 @@ def _top_positives_and_risks(
     if _safe_float(candidate.get("delivery_competition_score")) >= 65:
         risks.append("Delivery competition intensity is high.")
     for gate in gate_reasons.get("failed") or []:
-        risks.append(f"Gate failed: {gate}.")
+        label = _gate_key_to_label(gate)
+        risks.append(f"{label.capitalize()} gate failed.")
     for gate in gate_reasons.get("unknown") or []:
-        risks.append(f"Gate unknown due to missing context: {gate}.")
+        label = _gate_key_to_label(gate)
+        risks.append(f"{label.capitalize()} could not be verified from current data.")
     return positives[:5], risks[:5]
 
 
@@ -1333,6 +1383,34 @@ def run_expansion_search(
     effective_brand_profile = _default_brand_profile(brand_profile)
 
     # ArcGIS-only candidate generation.
+    # Build optional target-district SQL filter when districts are specified.
+    _district_filter_sql = ""
+    if target_district_norm:
+        # We cannot bind a set directly; use a VALUES list for safety.
+        _district_values = ", ".join(
+            f"(:td_{i})" for i in range(len(target_district_norm))
+        )
+        _district_filter_sql = f"""
+            AND EXISTS (
+                SELECT 1
+                FROM external_feature ef
+                CROSS JOIN (VALUES {_district_values}) AS td(val)
+                WHERE ef.layer_name IN ('osm_districts', 'aqar_district_hulls', 'rydpolygons')
+                  AND ef.geometry IS NOT NULL
+                  AND ST_Contains(
+                      ST_SetSRID(ST_GeomFromGeoJSON(ef.geometry::text), 4326),
+                      ST_Centroid(p.geom)
+                  )
+                  AND LOWER(COALESCE(
+                      NULLIF(ef.properties->>'district', ''),
+                      NULLIF(ef.properties->>'district_raw', ''),
+                      NULLIF(ef.properties->>'name', ''),
+                      NULLIF(ef.properties->>'district_en', ''),
+                      ''
+                  )) = td.val
+            )
+        """
+
     sql = text(
         f"""
         WITH candidate_base AS (
@@ -1344,6 +1422,7 @@ def run_expansion_search(
                 p.geom,
                 ST_X(ST_Centroid(p.geom)) AS lon,
                 ST_Y(ST_Centroid(p.geom)) AS lat,
+                ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) AS area_distance,
                 (
                     SELECT
                         COALESCE(
@@ -1373,7 +1452,11 @@ def run_expansion_search(
               AND (CAST(:max_lon AS double precision) IS NULL OR ST_X(ST_Centroid(p.geom)) <= CAST(:max_lon AS double precision))
               AND (CAST(:min_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) >= CAST(:min_lat AS double precision))
               AND (CAST(:max_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) <= CAST(:max_lat AS double precision))
-            ORDER BY p.area_m2 DESC
+              {_district_filter_sql}
+            ORDER BY
+                ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) ASC,
+                CASE WHEN p.landuse_label IS NOT NULL THEN 0 ELSE 1 END,
+                p.id ASC
             LIMIT 600
         )
         SELECT
@@ -1461,23 +1544,29 @@ def run_expansion_search(
         """
     )
 
+    sql_params: dict[str, Any] = {
+        "min_area_m2": min_area_m2,
+        "max_area_m2": max_area_m2,
+        "target_area_m2": target_area_m2,
+        "min_lon": min_lon,
+        "min_lat": min_lat,
+        "max_lon": max_lon,
+        "max_lat": max_lat,
+        "category": category,
+        "category_like": f"%{category.lower()}%",
+        "demand_radius_m": 1200,
+        "competition_radius_m": 1000,
+        "provider_radius_m": 1200,
+    }
+    # Bind target-district values when district SQL filter is active.
+    for i, td_val in enumerate(sorted(target_district_norm)):
+        sql_params[f"td_{i}"] = td_val.lower()
+
     try:
         with db.begin_nested():
             rows = db.execute(
                 sql,
-                {
-                    "min_area_m2": min_area_m2,
-                    "max_area_m2": max_area_m2,
-                    "min_lon": min_lon,
-                    "min_lat": min_lat,
-                    "max_lon": max_lon,
-                    "max_lat": max_lat,
-                    "category": category,
-                    "category_like": f"%{category.lower()}%",
-                    "demand_radius_m": 1200,
-                    "competition_radius_m": 1000,
-                    "provider_radius_m": 1200,
-                },
+                sql_params,
             ).mappings().all()
     except Exception:
         logger.exception(
@@ -1901,7 +1990,30 @@ def run_expansion_search(
             }
         )
 
-    candidates.sort(key=lambda item: item["final_score"], reverse=True)
+    def _rank_sort_key(item: dict[str, Any]) -> tuple:
+        """Deterministic ranking with rich tie-breakers (change #6).
+
+        Priority (descending preference):
+        1. Higher final_score
+        2. Better gate verdict: pass > unknown > fail
+        3. Smaller area distance to target
+        4. Higher economics_score
+        5. Lower cannibalization_score
+        6. Stable parcel_id as ultimate tie-breaker
+        """
+        overall = (item.get("gate_status_json") or {}).get("overall_pass")
+        gate_rank = {True: 0, None: 1, False: 2}.get(overall, 2)
+        area_dist = abs(item.get("area_m2", 0) - target_area_m2)
+        return (
+            -item.get("final_score", 0),
+            gate_rank,
+            area_dist,
+            -item.get("economics_score", 0),
+            item.get("cannibalization_score", 100),
+            str(item.get("parcel_id", "")),
+        )
+
+    candidates.sort(key=_rank_sort_key)
     candidates = candidates[:limit]
     for index, candidate in enumerate(candidates, start=1):
         candidate["compare_rank"] = index
@@ -2712,7 +2824,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "verdict": verdict,
             "best_use_case": best_use_case,
             "main_watchout": main_watchout,
-            "gate_verdict": "pass" if bool((candidate.get("gate_status_json") or {}).get("overall_pass")) else "fail",
+            "gate_verdict": _gate_verdict_label((candidate.get("gate_status_json") or {}).get("overall_pass")),
         },
         "market_research": {
             "delivery_market_summary": delivery_market_summary,
@@ -2777,8 +2889,10 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
             _safe_float(item.get("confidence_score")),
         ),
     )
-    pass_candidates = [c for c in normalized_candidates if bool((c.get("gate_status_json") or {}).get("overall_pass"))]
-    best_pass = max(pass_candidates or normalized_candidates, key=lambda item: _safe_float(item.get("final_score")))
+    pass_candidates = [c for c in normalized_candidates if (c.get("gate_status_json") or {}).get("overall_pass") is True]
+    # best_pass_candidate_id is NULL when no candidates pass (change #3).
+    best_pass = max(pass_candidates, key=lambda item: _safe_float(item.get("final_score"))) if pass_candidates else None
+    any_passing = len(pass_candidates) > 0
 
     top_payload: list[dict[str, Any]] = []
     for item in top:
@@ -2790,7 +2904,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
                 "final_score": item.get("final_score"),
                 "rank_position": item.get("rank_position"),
                 "confidence_grade": item.get("confidence_grade") or "D",
-                "gate_verdict": "pass" if bool((item.get("gate_status_json") or {}).get("overall_pass")) else "fail",
+                "gate_verdict": _gate_verdict_label((item.get("gate_status_json") or {}).get("overall_pass")),
                 "top_positives_json": (item.get("top_positives_json") or [])[:3],
                 "top_risks_json": (item.get("top_risks_json") or [])[:3],
                 "feature_snapshot_json": {
@@ -2808,10 +2922,28 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
                     "weights": score_breakdown.get("weights") or {},
                     "inputs": score_breakdown.get("inputs") or {},
                     "weighted_components": score_breakdown.get("weighted_components") or {},
+                    "display": score_breakdown.get("display") or {},
                     "final_score": _safe_float(score_breakdown.get("final_score"), _safe_float(item.get("final_score"))),
                 },
             }
         )
+
+    # Build recommendation language (change #3) – exploratory when nothing passes.
+    if any_passing:
+        why_best = f"Highest blended final score with brand fit {_safe_float(best.get('brand_fit_score')):.1f}/100 and economics {_safe_float(best.get('economics_score')):.1f}/100."
+        summary_text = f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner_item.get('district') if runner_item else 'backup options'} as runner-up."
+        report_summary_text = summary_text
+    else:
+        why_best = (
+            f"No site currently passes all required gates. "
+            f"The top-ranked exploratory candidate scores {_safe_float(best.get('final_score')):.1f}/100 "
+            f"but has unresolved gate failures."
+        )
+        summary_text = (
+            "No candidate currently meets all required gates. "
+            f"Consider {best.get('district') or 'the top district'} as an exploratory lead pending further validation."
+        )
+        report_summary_text = summary_text
 
     return {
         "search_id": search_id,
@@ -2821,13 +2953,13 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
         "recommendation": {
             "best_candidate_id": best.get("id"),
             "runner_up_candidate_id": runner_item.get("id") if runner_item else None,
-            "best_pass_candidate_id": best_pass.get("id"),
+            "best_pass_candidate_id": best_pass.get("id") if best_pass else None,
             "best_confidence_candidate_id": best_confidence.get("id"),
-            "why_best": f"Highest blended final score with brand fit {_safe_float(best.get('brand_fit_score')):.1f}/100 and economics {_safe_float(best.get('economics_score')):.1f}/100.",
+            "why_best": why_best,
             "main_risk": (best.get("key_risks_json") or ["Validate lease and execution assumptions"])[0],
             "best_format": _recommended_use_case(str(search.get("service_model") or "qsr"), _safe_float(best.get("area_m2"))),
-            "summary": f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner_item.get('district') if runner_item else 'backup options'} as runner-up.",
-            "report_summary": f"Recommend {best.get('district') or 'the top district'} first, then sequence {runner_item.get('district') if runner_item else 'backup options'} as runner-up.",
+            "summary": summary_text,
+            "report_summary": report_summary_text,
         },
         "assumptions": {
             "parcel_source": _EXPANSION_PARCEL_SOURCE,

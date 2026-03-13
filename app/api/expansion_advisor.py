@@ -161,6 +161,7 @@ class CandidateScoreBreakdownResponse(StrictResponseModel):
     weights: dict[str, Any] = Field(default_factory=dict)
     inputs: dict[str, Any] = Field(default_factory=dict)
     weighted_components: dict[str, Any] = Field(default_factory=dict)
+    display: dict[str, Any] = Field(default_factory=dict)
     final_score: float = 0.0
 
 
