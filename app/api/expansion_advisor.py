@@ -337,6 +337,9 @@ class SavedSearchPatchRequest(BaseModel):
 @router.get("/districts", response_model=DistrictOptionsListResponse)
 def list_districts(db: Session = Depends(get_db)) -> dict[str, Any]:
     """Return deduplicated, sorted list of Riyadh districts from external_feature polygons."""
+    # Riyadh metropolitan bounding box (generous to include suburbs).
+    # Used to spatially filter out non-Riyadh rows that leaked in via
+    # the global OSM ingest.
     rows = db.execute(
         text(
             """
@@ -355,6 +358,10 @@ def list_districts(db: Session = Depends(get_db)) -> dict[str, Any]:
                     NULLIF(ef.properties->>'district_raw', ''),
                     NULLIF(ef.properties->>'name', '')
               ) IS NOT NULL
+              AND ST_Intersects(
+                    ST_GeomFromGeoJSON(ef.geometry::text),
+                    ST_MakeEnvelope(46.0, 24.2, 47.5, 25.2, 4326)
+              )
             """
         )
     ).fetchall()
