@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import type { CandidateScoreBreakdown } from "../../lib/api/expansionAdvisor";
 import { parseScoreBreakdown } from "./studyAdapters";
 import { fmtScore, scoreColor } from "./formatHelpers";
+import { normalizeWeightPercent } from "./scoreInvariants";
 
 type Props = {
   breakdown: CandidateScoreBreakdown | undefined;
@@ -33,7 +34,7 @@ export default function ScoreBreakdownCompact({ breakdown }: Props) {
             {fmtScore(comp.weighted, 1)} pts
           </span>
           <span className="ea-score-breakdown-compact__weight">
-            {(comp.weight * 100).toFixed(0)}% weight
+            {normalizeWeightPercent(comp.weight)}% weight
           </span>
         </div>
       ))}
