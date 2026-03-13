@@ -6,14 +6,23 @@ Covers:
 - gate verdict serializer returns pass/fail/unknown
 - score breakdown structure distinguishes weight_percent vs weighted_points
 - target-area preference outranks max-area bias
+- ArcGIS parcel classification codes: 2000, 7500, 1000, 3000, 4000
+- Tri-state zoning gate with weak evidence handling
+- Candidate ordering prefers commercial/mixed over residential
 """
 from __future__ import annotations
 
 from app.services.expansion_advisor import (
+    _arcgis_classification_semantics,
     _area_fit,
     _candidate_gate_status,
     _gate_verdict_label,
+    _landuse_fit,
     _score_breakdown,
+    _zoning_fit_score,
+    _zoning_signal_class,
+    _zoning_signal_source,
+    _zoning_verdict,
 )
 
 
@@ -226,3 +235,250 @@ def test_has_pass_candidate_returns_id():
     best_pass = max(pass_candidates, key=lambda c: c["final_score"]) if pass_candidates else None
     assert best_pass is not None
     assert best_pass["id"] == "c1"
+
+
+# ---------------------------------------------------------------------------
+# ArcGIS classification semantics
+# ---------------------------------------------------------------------------
+
+def test_arcgis_2000_is_commercial_pass():
+    sem = _arcgis_classification_semantics(2000, None)
+    assert sem["normalized_class"] == "commercial"
+    assert sem["score"] == 100
+    assert sem["verdict_hint"] == "pass"
+    assert sem["source"] == "arcgis_code"
+
+
+def test_arcgis_2000_string_form():
+    """Code as string should work identically."""
+    sem = _arcgis_classification_semantics("2000", None)
+    assert sem["normalized_class"] == "commercial"
+    assert sem["verdict_hint"] == "pass"
+
+
+def test_arcgis_7500_is_mixed_use_pass():
+    sem = _arcgis_classification_semantics(7500, None)
+    assert sem["normalized_class"] == "mixed_use"
+    assert sem["score"] == 100
+    assert sem["verdict_hint"] == "pass"
+    assert sem["source"] == "arcgis_code"
+
+
+def test_arcgis_1000_residential_is_not_hard_fail():
+    """Residential code alone should NOT hard fail — verdict_hint = unknown."""
+    sem = _arcgis_classification_semantics(1000, None)
+    assert sem["normalized_class"] == "residential"
+    assert sem["verdict_hint"] == "unknown"
+    assert sem["verdict_hint"] != "fail"
+    assert sem["score"] < 60  # below zoning threshold, but not a hard fail
+
+
+def test_arcgis_3000_neutral():
+    sem = _arcgis_classification_semantics(3000, None)
+    assert sem["normalized_class"] == "public_service"
+    assert sem["verdict_hint"] == "unknown"
+
+
+def test_arcgis_4000_neutral():
+    sem = _arcgis_classification_semantics(4000, None)
+    assert sem["normalized_class"] == "industrial"
+    assert sem["verdict_hint"] == "unknown"
+
+
+def test_arcgis_unknown_code_with_commercial_label():
+    """When code is unrecognized, label-token fallback should work."""
+    sem = _arcgis_classification_semantics(9999, "Commercial Zone")
+    assert sem["normalized_class"] == "commercial"
+    assert sem["verdict_hint"] == "pass"
+    assert sem["source"] == "label_tokens"
+
+
+def test_arcgis_no_data_returns_unknown():
+    sem = _arcgis_classification_semantics(None, None)
+    assert sem["normalized_class"] == "unknown"
+    assert sem["verdict_hint"] == "unknown"
+    assert sem["source"] == "none"
+
+
+# ---------------------------------------------------------------------------
+# _landuse_fit uses ArcGIS semantics
+# ---------------------------------------------------------------------------
+
+def test_landuse_fit_commercial_code_scores_100():
+    assert _landuse_fit(None, "2000") == 100.0
+
+
+def test_landuse_fit_mixed_use_code_scores_100():
+    assert _landuse_fit(None, "7500") == 100.0
+
+
+def test_landuse_fit_residential_code_scores_low():
+    score = _landuse_fit(None, "1000")
+    assert score < 60  # below threshold but not zero
+
+
+def test_zoning_fit_score_clamps():
+    assert 0.0 <= _zoning_fit_score(None, "2000") <= 100.0
+    assert 0.0 <= _zoning_fit_score(None, None) <= 100.0
+
+
+# ---------------------------------------------------------------------------
+# Tri-state zoning gate with ArcGIS verdict hints
+# ---------------------------------------------------------------------------
+
+_GATE_DEFAULTS = dict(
+    fit_score=80.0,
+    area_fit_score=80.0,
+    frontage_score=80.0,
+    access_score=80.0,
+    parking_score=80.0,
+    district="Al Olaya",
+    distance_to_nearest_branch_m=3000.0,
+    provider_density_score=80.0,
+    multi_platform_presence_score=80.0,
+    economics_score=80.0,
+    payback_band="healthy",
+    brand_profile={"primary_channel": "balanced"},
+    road_context_available=True,
+    parking_context_available=True,
+)
+
+
+def test_gate_zoning_pass_with_commercial_hint():
+    gate_status, reasons = _candidate_gate_status(
+        **_GATE_DEFAULTS,
+        zoning_fit_score=100.0,
+        landuse_available=True,
+        zoning_verdict_hint="pass",
+    )
+    assert gate_status["zoning_fit_pass"] is True
+
+
+def test_gate_zoning_fail_with_fail_hint():
+    gate_status, reasons = _candidate_gate_status(
+        **_GATE_DEFAULTS,
+        zoning_fit_score=20.0,
+        landuse_available=True,
+        zoning_verdict_hint="fail",
+    )
+    assert gate_status["zoning_fit_pass"] is False
+
+
+def test_gate_zoning_unknown_with_weak_residential():
+    """Residential with low score should be unknown, NOT hard fail."""
+    gate_status, reasons = _candidate_gate_status(
+        **_GATE_DEFAULTS,
+        zoning_fit_score=40.0,
+        landuse_available=True,
+        zoning_verdict_hint="unknown",
+    )
+    assert gate_status["zoning_fit_pass"] is None
+    assert "zoning_fit_pass" in reasons["unknown"]
+    # overall should not be hard-fail since zoning is unknown
+    assert gate_status["overall_pass"] is not False
+
+
+def test_gate_zoning_unknown_hint_high_score_passes():
+    """Unknown hint but high enough score can still pass via threshold."""
+    gate_status, reasons = _candidate_gate_status(
+        **_GATE_DEFAULTS,
+        zoning_fit_score=80.0,
+        landuse_available=True,
+        zoning_verdict_hint="unknown",
+    )
+    assert gate_status["zoning_fit_pass"] is True
+
+
+def test_gate_backward_compat_no_hint():
+    """Without zoning_verdict_hint, falls back to threshold logic."""
+    gate_status, reasons = _candidate_gate_status(
+        **_GATE_DEFAULTS,
+        zoning_fit_score=80.0,
+        landuse_available=True,
+    )
+    assert gate_status["zoning_fit_pass"] is True
+
+
+# ---------------------------------------------------------------------------
+# Zoning helper functions
+# ---------------------------------------------------------------------------
+
+def test_zoning_verdict_pass_for_commercial():
+    assert _zoning_verdict(None, "2000") == "pass"
+
+
+def test_zoning_verdict_unknown_for_residential():
+    assert _zoning_verdict(None, "1000") == "unknown"
+
+
+def test_zoning_signal_class_commercial():
+    assert _zoning_signal_class(None, "2000") == "commercial"
+
+
+def test_zoning_signal_class_mixed():
+    assert _zoning_signal_class(None, "7500") == "mixed_use"
+
+
+def test_zoning_signal_source_arcgis():
+    assert _zoning_signal_source(None, "2000") == "arcgis_code"
+
+
+def test_zoning_signal_source_label():
+    assert _zoning_signal_source("Commercial", None) == "label_tokens"
+
+
+# ---------------------------------------------------------------------------
+# Candidate ordering: commercial/mixed preferred over residential
+# ---------------------------------------------------------------------------
+
+def test_candidate_ordering_prefers_commercial_over_residential():
+    """With equal final scores, commercial/mixed should rank before residential."""
+    candidates = [
+        {"final_score": 70, "gate_status_json": {"overall_pass": None}, "zoning_signal_class": "residential",
+         "area_m2": 200, "economics_score": 70, "cannibalization_score": 50, "parcel_id": "res1"},
+        {"final_score": 70, "gate_status_json": {"overall_pass": None}, "zoning_signal_class": "commercial",
+         "area_m2": 200, "economics_score": 70, "cannibalization_score": 50, "parcel_id": "com1"},
+        {"final_score": 70, "gate_status_json": {"overall_pass": None}, "zoning_signal_class": "mixed_use",
+         "area_m2": 200, "economics_score": 70, "cannibalization_score": 50, "parcel_id": "mix1"},
+    ]
+
+    _ZONING_CLASS_RANK = {
+        "commercial": 0, "mixed_use": 0,
+        "unknown": 1, "public_service": 1, "industrial": 1,
+        "residential": 2,
+    }
+    target_area_m2 = 200.0
+
+    def sort_key(item):
+        overall = (item.get("gate_status_json") or {}).get("overall_pass")
+        gate_rank = {True: 0, None: 1, False: 2}.get(overall, 2)
+        zoning_class = item.get("zoning_signal_class", "unknown")
+        zoning_rank = _ZONING_CLASS_RANK.get(zoning_class, 1)
+        area_dist = abs(item.get("area_m2", 0) - target_area_m2)
+        return (
+            -item.get("final_score", 0),
+            gate_rank,
+            zoning_rank,
+            area_dist,
+            -item.get("economics_score", 0),
+            item.get("cannibalization_score", 100),
+            str(item.get("parcel_id", "")),
+        )
+
+    candidates.sort(key=sort_key)
+    classes = [c["zoning_signal_class"] for c in candidates]
+    # commercial and mixed_use should come before residential
+    assert classes.index("residential") > classes.index("commercial")
+    assert classes.index("residential") > classes.index("mixed_use")
+
+
+# ---------------------------------------------------------------------------
+# No regression: area-fit ranking unaffected
+# ---------------------------------------------------------------------------
+
+def test_area_fit_still_works_after_zoning_changes():
+    """Verify area_fit scoring not broken by zoning refactor."""
+    target = _area_fit(area_m2=200.0, target_area_m2=200.0, min_area_m2=100.0, max_area_m2=500.0)
+    assert target > 90.0  # perfect match should score high
+    far = _area_fit(area_m2=450.0, target_area_m2=200.0, min_area_m2=100.0, max_area_m2=500.0)
+    assert target > far
