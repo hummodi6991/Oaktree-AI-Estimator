@@ -105,7 +105,7 @@ function TileCard({
           </button>
         ) : (
           <button type="button" className="oak-btn oak-btn--xs oak-btn--primary" onClick={onSetLead}>
-            {t("expansionAdvisor.setAsLead")}
+            {tile.gateVerdict === "pass" ? t("expansionAdvisor.setAsLead") : t("expansionAdvisor.markExploratoryPick")}
           </button>
         )}
         <button type="button" className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={onOpenMemo}>

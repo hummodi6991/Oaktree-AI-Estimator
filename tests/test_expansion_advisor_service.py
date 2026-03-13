@@ -1835,3 +1835,65 @@ def test_memo_gate_verdict_uses_tristate():
     assert memo is not None
     # With overall_pass=None, verdict should be "unknown", not "fail"
     assert memo["recommendation"]["gate_verdict"] == "unknown"
+
+
+# ─── _derive_site_fit_context tests ──────────────────────────────
+
+from app.services.expansion_advisor import _derive_site_fit_context
+
+
+def test_derive_site_fit_context_with_road_and_parking():
+    snapshot = {
+        "context_sources": {
+            "road_context_available": True,
+            "parking_context_available": True,
+        }
+    }
+    ctx = _derive_site_fit_context(snapshot)
+    assert ctx["road_context_available"] is True
+    assert ctx["parking_context_available"] is True
+    assert ctx["frontage_score_mode"] == "observed"
+    assert ctx["access_score_mode"] == "observed"
+    assert ctx["parking_score_mode"] == "observed"
+
+
+def test_derive_site_fit_context_no_road_context():
+    snapshot = {
+        "context_sources": {
+            "road_context_available": False,
+            "parking_context_available": True,
+        }
+    }
+    ctx = _derive_site_fit_context(snapshot)
+    assert ctx["road_context_available"] is False
+    assert ctx["frontage_score_mode"] == "estimated"
+    assert ctx["access_score_mode"] == "estimated"
+    assert ctx["parking_score_mode"] == "observed"
+
+
+def test_derive_site_fit_context_no_parking_context():
+    snapshot = {
+        "context_sources": {
+            "road_context_available": True,
+            "parking_context_available": False,
+        }
+    }
+    ctx = _derive_site_fit_context(snapshot)
+    assert ctx["parking_context_available"] is False
+    assert ctx["parking_score_mode"] == "estimated"
+    assert ctx["frontage_score_mode"] == "observed"
+
+
+def test_derive_site_fit_context_none_snapshot():
+    ctx = _derive_site_fit_context(None)
+    assert ctx["road_context_available"] is False
+    assert ctx["parking_context_available"] is False
+    assert ctx["frontage_score_mode"] == "estimated"
+    assert ctx["access_score_mode"] == "estimated"
+    assert ctx["parking_score_mode"] == "estimated"
+
+
+def test_derive_site_fit_context_empty_snapshot():
+    ctx = _derive_site_fit_context({})
+    assert ctx["frontage_score_mode"] == "estimated"
+    assert ctx["parking_score_mode"] == "estimated"

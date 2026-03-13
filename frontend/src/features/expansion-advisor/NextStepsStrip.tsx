@@ -28,6 +28,7 @@ export default function NextStepsStrip({
   const lead = candidates.find((c) => c.id === leadCandidateId);
   if (!lead) return null;
 
+  const leadPasses = lead.gate_status_json?.overall_pass === true;
   const runnerUp = findRunnerUp(candidates, shortlistIds, leadCandidateId);
   const unknowns = lead.gate_reasons_json?.unknown || [];
   const missing = lead.feature_snapshot_json?.missing_context || [];
@@ -37,7 +38,7 @@ export default function NextStepsStrip({
     <div className="ea-next-steps">
       <div className="ea-next-steps__items">
         <div className="ea-next-steps__item ea-next-steps__item--lead">
-          <span className="ea-next-steps__label">{t("expansionAdvisor.leadSiteSelected")}</span>
+          <span className="ea-next-steps__label">{leadPasses ? t("expansionAdvisor.leadSiteSelected") : t("expansionAdvisor.exploratoryCandidateSelected")}</span>
           <span className="ea-next-steps__value">
             #{lead.rank_position} {lead.district || lead.parcel_id}
           </span>
@@ -57,7 +58,7 @@ export default function NextStepsStrip({
       </div>
       <div className="ea-next-steps__actions">
         <button type="button" className="oak-btn oak-btn--sm oak-btn--primary" onClick={() => onOpenMemo(leadCandidateId)}>
-          {t("expansionAdvisor.openLeadMemo")}
+          {leadPasses ? t("expansionAdvisor.openLeadMemo") : t("expansionAdvisor.openCandidateMemo")}
         </button>
         <button type="button" className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={onOpenReport}>
           {t("expansionAdvisor.openExecutiveReport")}

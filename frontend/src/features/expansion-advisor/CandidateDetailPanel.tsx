@@ -7,6 +7,11 @@ import GateSummary from "./GateSummary";
 import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
 import { fmtSAR, fmtMeters, fmtScore, fmtPct, fmtSarPerM2, fmtM2, fmtMonths, humanGateLabel } from "./formatHelpers";
 
+function EstimatedTag({ mode, t }: { mode?: "observed" | "estimated"; t: (k: string) => string }) {
+  if (mode !== "estimated") return null;
+  return <span className="ea-badge ea-badge--amber" style={{ marginInlineStart: 4, fontSize: "0.75em" }}>{t("expansionAdvisor.estimatedLabel")}</span>;
+}
+
 type Props = {
   candidate: ExpansionCandidate;
 };
@@ -18,6 +23,7 @@ export default function CandidateDetailPanel({ candidate }: Props) {
   const snapshot = candidate.feature_snapshot_json;
   const breakdown = candidate.score_breakdown_json;
   const comps = (candidate.comparable_competitors_json || []).slice(0, 5);
+  const sfc = candidate.site_fit_context;
 
   return (
     <div className="ea-detail">
@@ -76,15 +82,15 @@ export default function CandidateDetailPanel({ candidate }: Props) {
             <span className="ea-detail__kv-value">{fmtScore(candidate.zoning_fit_score)}</span>
           </div>
           <div className="ea-detail__kv">
-            <span className="ea-detail__kv-label">{t("expansionAdvisor.frontageScore")}</span>
+            <span className="ea-detail__kv-label">{t("expansionAdvisor.frontageScore")}<EstimatedTag mode={sfc?.frontage_score_mode} t={t} /></span>
             <span className="ea-detail__kv-value">{fmtScore(candidate.frontage_score)}</span>
           </div>
           <div className="ea-detail__kv">
-            <span className="ea-detail__kv-label">{t("expansionAdvisor.accessScore")}</span>
+            <span className="ea-detail__kv-label">{t("expansionAdvisor.accessScore")}<EstimatedTag mode={sfc?.access_score_mode} t={t} /></span>
             <span className="ea-detail__kv-value">{fmtScore(candidate.access_score)}</span>
           </div>
           <div className="ea-detail__kv">
-            <span className="ea-detail__kv-label">{t("expansionAdvisor.parkingScore")}</span>
+            <span className="ea-detail__kv-label">{t("expansionAdvisor.parkingScore")}<EstimatedTag mode={sfc?.parking_score_mode} t={t} /></span>
             <span className="ea-detail__kv-value">{fmtScore(candidate.parking_score)}</span>
           </div>
           <div className="ea-detail__kv">

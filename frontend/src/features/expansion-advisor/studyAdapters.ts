@@ -541,24 +541,41 @@ export function deriveDecisionChecklist(
     items.push({ category: "market_demand", label: "District fit assessed", status: "strong" });
   }
 
-  // Site fit
+  // Site fit — check if scores are estimated (fallback) vs observed
+  const sfc = candidate.site_fit_context;
+  const scoreModeMap: Record<string, "observed" | "estimated" | undefined> = {
+    frontage: sfc?.frontage_score_mode,
+    access: sfc?.access_score_mode,
+    parking: sfc?.parking_score_mode,
+  };
   for (const key of ["zoning", "frontage", "parking", "access", "visibility"]) {
     const gateKey = `${key}_pass`;
     const scoreKey = `${key === "visibility" ? "access_visibility" : key}_score`;
+    const isEstimated = scoreModeMap[key] === "estimated";
     if (gateKey in gates) {
       const gateVal = gates[gateKey];
+      // When context is unavailable, unknown/null gates should be "verify", not "risk"
+      const estimatedSuffix = isEstimated ? " (estimated)" : "";
       items.push({
         category: "site_fit",
-        label: `${key.charAt(0).toUpperCase() + key.slice(1)} gate`,
-        status: gateVal === true ? "strong" : gateVal === false ? "risk" : "verify",
+        label: `${key.charAt(0).toUpperCase() + key.slice(1)} gate${estimatedSuffix}`,
+        status: gateVal === true ? "strong" : gateVal === null || gateVal === undefined || isEstimated ? "verify" : "risk",
       });
     } else if ((candidate as Record<string, unknown>)[scoreKey] != null) {
       const val = Number((candidate as Record<string, unknown>)[scoreKey]);
-      items.push({
-        category: "site_fit",
-        label: `${key.charAt(0).toUpperCase() + key.slice(1)} score: ${Math.round(val)}`,
-        status: val >= 70 ? "strong" : val >= 40 ? "caution" : "risk",
-      });
+      if (isEstimated) {
+        items.push({
+          category: "site_fit",
+          label: `${key.charAt(0).toUpperCase() + key.slice(1)} score: ${Math.round(val)} (estimated)`,
+          status: "verify",
+        });
+      } else {
+        items.push({
+          category: "site_fit",
+          label: `${key.charAt(0).toUpperCase() + key.slice(1)} score: ${Math.round(val)}`,
+          status: val >= 70 ? "strong" : val >= 40 ? "caution" : "risk",
+        });
+      }
     }
   }
 
@@ -605,10 +622,12 @@ export function deriveDecisionChecklist(
   }
   if (candidate.payback_band) {
     const band = candidate.payback_band.toLowerCase();
+    const isStrong = band === "fast" || band === "promising" || band === "strong";
+    const isNeutral = band === "moderate" || band === "standard" || band === "borderline";
     items.push({
       category: "economics",
       label: `Payback: ${candidate.payback_band}${candidate.estimated_payback_months ? ` (${Math.round(candidate.estimated_payback_months)} mo)` : ""}`,
-      status: band === "fast" || band === "promising" ? "strong" : band === "moderate" || band === "standard" ? "caution" : "risk",
+      status: isStrong ? "strong" : isNeutral ? "caution" : "risk",
     });
   }
 
@@ -1028,6 +1047,7 @@ export function deriveCompareOutcome(
 export type SavedStudyMeta = {
   leadDistrict: string | null;
   leadParcelId: string | null;
+  leadGatesPass: boolean;
   shortlistCount: number;
   compareCount: number;
   lastSort: string | null;
@@ -1046,6 +1066,7 @@ export function extractSavedStudyMeta(saved: SavedExpansionSearch): SavedStudyMe
   return {
     leadDistrict: lead?.district || null,
     leadParcelId: lead?.parcel_id || leadId?.slice(0, 8) || null,
+    leadGatesPass: lead?.gate_status_json?.overall_pass === true,
     shortlistCount: (saved.selected_candidate_ids || []).length,
     compareCount: compareIds.length,
     lastSort: sortFilter.activeSort !== "rank" ? sortFilter.activeSort : null,
