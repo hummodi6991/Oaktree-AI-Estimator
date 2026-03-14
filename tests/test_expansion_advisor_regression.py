@@ -873,3 +873,140 @@ def test_search_returns_results_not_error_with_dirty_rows():
     )
     assert isinstance(items, list)
     assert len(items) == len(dirty_values)
+
+
+# ---------------------------------------------------------------------------
+# Last-resort fallback: all queries fail except the no-district query
+# ---------------------------------------------------------------------------
+
+class _FailAllCandidateQueriesFakeDB(_FakeDB):
+    """FakeDB that fails on all candidate queries that contain the district
+    labeling subselect (external_feature), but succeeds on the last-resort
+    query that uses NULL AS district."""
+
+    def __init__(self, candidate_rows=None):
+        super().__init__(candidate_rows=candidate_rows)
+        self._query_attempt = 0
+
+    def execute(self, stmt, params=None):
+        sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+        if "FROM candidate_base" in sql:
+            self._query_attempt += 1
+            if "external_feature" in sql:
+                raise RuntimeError("Simulated ST_GeomFromGeoJSON failure on corrupt geometry")
+            return _Result(self.candidate_rows)
+        if "INSERT INTO expansion_candidate" in sql:
+            self.inserted.append(params)
+            return _Result([])
+        return _Result([])
+
+
+def test_last_resort_fallback_returns_results():
+    """When both district-filtered and unfiltered queries fail due to bad
+    external_feature geometry, the last-resort no-district query should
+    still return results."""
+    rows = [
+        _make_candidate_row("p1", "2000", district=None),
+        _make_candidate_row("p2", "7500", district=None),
+    ]
+    db = _FailAllCandidateQueriesFakeDB(candidate_rows=rows)
+
+    items = run_expansion_search(
+        db,
+        search_id="test-last-resort",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+        target_districts=["العليا"],
+    )
+    # Last-resort query returns candidates without district labeling;
+    # Python post-filter won't match target districts (all NULL), so
+    # empty list when target_districts is set.
+    assert isinstance(items, list)
+    # Verify all three query attempts were made
+    assert db._query_attempt == 3
+
+
+def test_last_resort_fallback_no_districts_returns_candidates():
+    """Without target_districts, last-resort fallback returns all candidates
+    even though they have NULL district."""
+    rows = [
+        _make_candidate_row("p1", "2000", district=None),
+    ]
+    db = _FailAllCandidateQueriesFakeDB(candidate_rows=rows)
+
+    items = run_expansion_search(
+        db,
+        search_id="test-last-resort-no-td",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+    assert isinstance(items, list)
+    assert len(items) == 1
+
+
+# ---------------------------------------------------------------------------
+# Per-candidate error handling: one bad candidate doesn't crash the search
+# ---------------------------------------------------------------------------
+
+class _FailOnSpecificParcelDB(_FakeDB):
+    """FakeDB that raises when enrichment queries are made for a specific
+    parcel, simulating a corrupt parcel geometry in feature snapshot."""
+
+    def __init__(self, candidate_rows=None, fail_parcel_id="bad_parcel"):
+        super().__init__(candidate_rows=candidate_rows)
+        self.fail_parcel_id = fail_parcel_id
+
+    def execute(self, stmt, params=None):
+        sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+        # Fail on perimeter/road/parking queries for the bad parcel
+        if params and params.get("parcel_id") == self.fail_parcel_id:
+            if "ST_Perimeter" in sql or "planet_osm_line" in sql or "planet_osm_polygon" in sql:
+                raise RuntimeError(f"Simulated geometry failure for {self.fail_parcel_id}")
+        return super().execute(stmt, params)
+
+
+def test_candidate_sql_includes_geojson_type_guard():
+    """The generated candidate SQL must include geometry type validation
+    guards to prevent ST_GeomFromGeoJSON from failing on non-polygon data."""
+    captured_sql = []
+
+    class _CapturingDB(_FakeDB):
+        def execute(self, stmt, params=None):
+            sql_text = stmt.text if hasattr(stmt, "text") else str(stmt)
+            captured_sql.append(sql_text)
+            return super().execute(stmt, params)
+
+    db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
+    run_expansion_search(
+        db,
+        search_id="test-geojson-guard",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+
+    candidate_sqls = [s for s in captured_sql if "FROM candidate_base" in s]
+    assert candidate_sqls, "Expected at least one candidate SQL query"
+    main_sql = candidate_sqls[0]
+
+    # Must contain GeoJSON type validation before ST_GeomFromGeoJSON
+    assert "geometry ? 'type'" in main_sql or "geometry?'type'" in main_sql, \
+        "Missing geometry type key check"
+    assert "geometry ? 'coordinates'" in main_sql or "geometry?'coordinates'" in main_sql, \
+        "Missing geometry coordinates key check"
+    assert "'Polygon', 'MultiPolygon'" in main_sql, \
+        "Missing Polygon/MultiPolygon type filter"

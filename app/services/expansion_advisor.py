@@ -1667,6 +1667,9 @@ def run_expansion_search(
                 CROSS JOIN (VALUES {_district_values}) AS td(val)
                 WHERE ef.layer_name IN ('osm_districts', 'aqar_district_hulls', 'rydpolygons')
                   AND ef.geometry IS NOT NULL
+                  AND ef.geometry ? 'type'
+                  AND ef.geometry ? 'coordinates'
+                  AND ef.geometry->>'type' IN ('Polygon', 'MultiPolygon')
                   AND ST_Contains(
                       ST_SetSRID(ST_GeomFromGeoJSON(ef.geometry::text), 4326),
                       ST_Centroid(p.geom)
@@ -1752,6 +1755,9 @@ def run_expansion_search(
                     FROM external_feature ef
                     WHERE ef.layer_name IN ('osm_districts', 'aqar_district_hulls', 'rydpolygons')
                       AND ef.geometry IS NOT NULL
+                      AND ef.geometry ? 'type'
+                      AND ef.geometry ? 'coordinates'
+                      AND ef.geometry->>'type' IN ('Polygon', 'MultiPolygon')
                       AND ST_Contains(
                           ST_SetSRID(ST_GeomFromGeoJSON(ef.geometry::text), 4326),
                           ST_Centroid(p.geom)
@@ -1771,6 +1777,118 @@ def run_expansion_search(
               AND (CAST(:min_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) >= CAST(:min_lat AS double precision))
               AND (CAST(:max_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) <= CAST(:max_lat AS double precision))
               {district_filter_sql}
+            ORDER BY
+                {_SAFE_LANDUSE_ORDER},
+                ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) ASC,
+                CASE WHEN p.landuse_label IS NOT NULL THEN 0 ELSE 1 END,
+                p.id ASC
+            LIMIT 600
+        )
+        SELECT
+            b.parcel_id,
+            b.landuse_label,
+            b.landuse_code,
+            b.area_m2,
+            b.lon,
+            b.lat,
+            b.district,
+            COALESCE((
+                SELECT SUM(pd.population)
+                FROM population_density pd
+                WHERE {_SAFE_PD_COORD_WHERE}
+                  AND ST_DWithin(
+                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                      {_SAFE_PD_GEO},
+                      :demand_radius_m
+                  )
+            ), 0) AS population_reach,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM restaurant_poi rp
+                WHERE lower(rp.category) = lower(:category)
+                  AND ST_DWithin(
+                      rp.geom::geography,
+                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                      :competition_radius_m
+                  )
+            ), 0) AS competitor_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM delivery_source_record dsr
+                WHERE {_SAFE_DSR_COORD_WHERE}
+                  AND (
+                    lower(COALESCE(dsr.category_raw, '')) LIKE :category_like
+                    OR lower(COALESCE(dsr.cuisine_raw, '')) LIKE :category_like
+                  )
+                  AND ST_DWithin(
+                      {_SAFE_DSR_GEO},
+                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                      :demand_radius_m
+                  )
+            ), 0) AS delivery_listing_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM delivery_source_record dsr
+                WHERE {_SAFE_DSR_COORD_WHERE}
+                  AND ST_DWithin(
+                      {_SAFE_DSR_GEO},
+                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                      :provider_radius_m
+                  )
+            ), 0) AS provider_listing_count,
+            COALESCE((
+                SELECT COUNT(DISTINCT lower(COALESCE(dsr.platform, 'unknown')))
+                FROM delivery_source_record dsr
+                WHERE {_SAFE_DSR_COORD_WHERE}
+                  AND ST_DWithin(
+                      {_SAFE_DSR_GEO},
+                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                      :provider_radius_m
+                  )
+            ), 0) AS provider_platform_count,
+            COALESCE((
+                SELECT COUNT(*)
+                FROM delivery_source_record dsr
+                WHERE {_SAFE_DSR_COORD_WHERE}
+                  AND (
+                    lower(COALESCE(dsr.category_raw, '')) LIKE :category_like
+                    OR lower(COALESCE(dsr.cuisine_raw, '')) LIKE :category_like
+                  )
+                  AND ST_DWithin(
+                      {_SAFE_DSR_GEO},
+                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                      :provider_radius_m
+                  )
+            ), 0) AS delivery_competition_count
+        FROM candidate_base b
+        """
+        )
+
+    def _build_candidate_sql_no_district() -> text:
+        """Last-resort candidate query that skips the external_feature district
+        subselect entirely.  Used when ST_GeomFromGeoJSON fails on corrupt
+        geometry data so the search can still return results (without district
+        labels)."""
+        return text(
+            f"""
+        WITH candidate_base AS (
+            SELECT
+                p.id AS parcel_id,
+                p.landuse_label,
+                p.landuse_code,
+                p.area_m2,
+                p.geom,
+                ST_X(ST_Centroid(p.geom)) AS lon,
+                ST_Y(ST_Centroid(p.geom)) AS lat,
+                ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) AS area_distance,
+                NULL AS district
+            FROM {ARCGIS_PARCELS_TABLE} p
+            WHERE p.geom IS NOT NULL
+              AND p.area_m2 BETWEEN :min_area_m2 AND :max_area_m2
+              AND (CAST(:min_lon AS double precision) IS NULL OR ST_X(ST_Centroid(p.geom)) >= CAST(:min_lon AS double precision))
+              AND (CAST(:max_lon AS double precision) IS NULL OR ST_X(ST_Centroid(p.geom)) <= CAST(:max_lon AS double precision))
+              AND (CAST(:min_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) >= CAST(:min_lat AS double precision))
+              AND (CAST(:max_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) <= CAST(:max_lat AS double precision))
             ORDER BY
                 {_SAFE_LANDUSE_ORDER},
                 ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) ASC,
@@ -1906,13 +2024,33 @@ def run_expansion_search(
                 sql = _build_candidate_sql("")
                 rows = db.execute(sql, sql_params).mappings().all()
         except Exception:
-            logger.exception(
-                "Expansion search main query failed: search_id=%s category=%s "
-                "area=[%s-%s] target_districts=%s district_sql_enabled=False",
+            logger.warning(
+                "Expansion search main query failed, retrying without district labeling: "
+                "search_id=%s category=%s area=[%s-%s] target_districts=%s "
+                "district_sql_enabled=False",
                 search_id, category, min_area_m2, max_area_m2, target_districts,
+                exc_info=True,
             )
             # Log sample dirty coordinate values to aid diagnosis.
             _log_dirty_coord_samples(db, search_id)
+            rows = None
+
+    if rows is None:
+        try:
+            with db.begin_nested():
+                sql = _build_candidate_sql_no_district()
+                rows = db.execute(sql, sql_params).mappings().all()
+            logger.info(
+                "Expansion search used last-resort query (no district labeling): "
+                "search_id=%s returned %d rows",
+                search_id, len(rows),
+            )
+        except Exception:
+            logger.exception(
+                "Expansion search last-resort query failed: search_id=%s category=%s "
+                "area=[%s-%s]",
+                search_id, category, min_area_m2, max_area_m2,
+            )
             raise
 
     # Debug: log sample non-numeric landuse_code values for diagnosis
@@ -1938,6 +2076,7 @@ def run_expansion_search(
     roads_table_available = _table_available(db, "public.planet_osm_line")
     parking_table_available = _table_available(db, "public.planet_osm_polygon")
     for row in rows:
+      try:
         area_m2 = _safe_float(row.get("area_m2"))
         population_reach = _safe_float(row.get("population_reach"))
         competitor_count = _safe_int(row.get("competitor_count"))
@@ -2085,10 +2224,17 @@ def run_expansion_search(
                 "preliminary_final_score": _safe_float(preliminary_breakdown.get("final_score")),
             }
         )
+      except Exception:
+        logger.warning(
+            "Expansion search: skipping candidate parcel_id=%s due to scoring error: search_id=%s",
+            row.get("parcel_id"), search_id,
+            exc_info=True,
+        )
 
     prepared.sort(key=lambda item: item["preliminary_final_score"], reverse=True)
     shortlist_size = min(len(prepared), max(limit, 50))
     for prepared_item in prepared[:shortlist_size]:
+      try:
         row = prepared_item["row"]
         area_m2 = prepared_item["area_m2"]
         population_reach = prepared_item["population_reach"]
@@ -2364,6 +2510,12 @@ def run_expansion_search(
                     "parking_score_mode": "observed" if parking_context_available else "estimated",
                 },
             }
+        )
+      except Exception:
+        logger.warning(
+            "Expansion search: skipping shortlist candidate parcel_id=%s due to enrichment error: search_id=%s",
+            prepared_item.get("row", {}).get("parcel_id"), search_id,
+            exc_info=True,
         )
 
     _ZONING_CLASS_RANK = {
