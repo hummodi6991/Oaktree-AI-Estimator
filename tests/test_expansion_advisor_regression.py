@@ -873,3 +873,37 @@ def test_search_returns_results_not_error_with_dirty_rows():
     )
     assert isinstance(items, list)
     assert len(items) == len(dirty_values)
+
+
+def test_candidate_sql_uses_safe_external_feature_geometry_parse():
+    """District matching SQL must guard GeoJSON parsing for external_feature."""
+    captured_sql = []
+
+    class _CapturingDB(_FakeDB):
+        def execute(self, stmt, params=None):
+            sql_text = stmt.text if hasattr(stmt, "text") else str(stmt)
+            captured_sql.append(sql_text)
+            return super().execute(stmt, params)
+
+    db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000", district="حي العليا")])
+    run_expansion_search(
+        db,
+        search_id="test-ef-geom-guard",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+        target_districts=["العليا"],
+    )
+
+    candidate_sqls = [s for s in captured_sql if "FROM candidate_base" in s]
+    assert candidate_sqls, "Expected at least one candidate SQL query"
+    main_sql = candidate_sqls[0]
+
+    assert "jsonb_typeof(ef.geometry) = 'object'" in main_sql
+    assert "(ef.geometry ? 'type')" in main_sql
+    assert "(ef.geometry ? 'coordinates' OR ef.geometry ? 'geometries')" in main_sql
+    assert "CASE  WHEN ef.geometry IS NOT NULL" in main_sql

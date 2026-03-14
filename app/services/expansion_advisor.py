@@ -1652,6 +1652,26 @@ def run_expansion_search(
     target_district_norm = {normalize_district_key(item) for item in target_districts if normalize_district_key(item)}
     effective_brand_profile = _default_brand_profile(brand_profile)
 
+    def _safe_external_feature_geom(alias: str) -> str:
+        """Return a SQL CASE expression that parses GeoJSON only when the
+        payload shape is minimally valid.
+
+        This prevents hard query failures when external_feature.geometry
+        contains dirty/non-GeoJSON payloads.
+        """
+        return (
+            "CASE"
+            f"  WHEN {alias}.geometry IS NOT NULL"
+            f"   AND jsonb_typeof({alias}.geometry) = 'object'"
+            f"   AND ({alias}.geometry ? 'type')"
+            f"   AND ({alias}.geometry ? 'coordinates' OR {alias}.geometry ? 'geometries')"
+            f"  THEN ST_SetSRID(ST_GeomFromGeoJSON({alias}.geometry::text), 4326)"
+            "  ELSE NULL"
+            " END"
+        )
+
+    _SAFE_EF_GEOM = _safe_external_feature_geom("ef")
+
     # ArcGIS-only candidate generation.
     # Build optional target-district SQL filter when districts are specified.
     def _build_district_filter_sql(td_norm: set[str]) -> str:
@@ -1666,9 +1686,8 @@ def run_expansion_search(
                 FROM external_feature ef
                 CROSS JOIN (VALUES {_district_values}) AS td(val)
                 WHERE ef.layer_name IN ('osm_districts', 'aqar_district_hulls', 'rydpolygons')
-                  AND ef.geometry IS NOT NULL
                   AND ST_Contains(
-                      ST_SetSRID(ST_GeomFromGeoJSON(ef.geometry::text), 4326),
+                      {_SAFE_EF_GEOM},
                       ST_Centroid(p.geom)
                   )
                   AND LOWER(COALESCE(
@@ -1751,9 +1770,8 @@ def run_expansion_search(
                         )
                     FROM external_feature ef
                     WHERE ef.layer_name IN ('osm_districts', 'aqar_district_hulls', 'rydpolygons')
-                      AND ef.geometry IS NOT NULL
                       AND ST_Contains(
-                          ST_SetSRID(ST_GeomFromGeoJSON(ef.geometry::text), 4326),
+                          {_SAFE_EF_GEOM},
                           ST_Centroid(p.geom)
                       )
                     ORDER BY CASE ef.layer_name
