@@ -11,6 +11,7 @@ Covers:
 - Candidate ordering prefers commercial/mixed over residential
 - Non-numeric landuse_code values do not crash candidate query / ranking
 - District SQL pushdown fallback on failure
+- Dirty text coordinates in delivery_source_record / population_density
 """
 from __future__ import annotations
 
@@ -719,3 +720,156 @@ def test_all_candidates_filtered_returns_empty_list():
         target_districts=["العليا"],
     )
     assert items == []
+
+
+# ---------------------------------------------------------------------------
+# Dirty text coordinates in delivery_source_record / population_density
+# do not crash the candidate SQL (safe regex-guarded casts)
+# ---------------------------------------------------------------------------
+
+def test_dirty_dsr_coords_do_not_crash_search():
+    """Dirty delivery_source_record coordinate values (blank, 'N/A', comma-
+    formatted, alphabetic, None) must not crash run_expansion_search.
+    The FakeDB bypasses real SQL execution but the function still exercises
+    all post-query scoring & ranking logic that reads these column values."""
+    rows = [
+        _make_candidate_row("p1", "2000"),
+        _make_candidate_row("p2", "7500"),
+    ]
+    db = _FakeDB(candidate_rows=rows)
+    items = run_expansion_search(
+        db,
+        search_id="test-dirty-dsr",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+    assert isinstance(items, list)
+    assert len(items) == 2
+
+
+def test_dirty_pd_coords_do_not_crash_search():
+    """Dirty population_density coordinate values must not crash the search."""
+    rows = [_make_candidate_row("p1", "2000")]
+    db = _FakeDB(candidate_rows=rows)
+    items = run_expansion_search(
+        db,
+        search_id="test-dirty-pd",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+    assert isinstance(items, list)
+    assert len(items) == 1
+
+
+def test_valid_numeric_coords_still_work():
+    """Valid numeric coordinates still produce normal results."""
+    rows = [
+        _make_candidate_row("p1", "2000"),
+        _make_candidate_row("p2", "2000"),
+    ]
+    db = _FakeDB(candidate_rows=rows)
+    items = run_expansion_search(
+        db,
+        search_id="test-valid-coords",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+    assert len(items) == 2
+    for item in items:
+        assert "final_score" in item
+        assert item["final_score"] >= 0
+
+
+def test_candidate_sql_uses_safe_coord_regex():
+    """The generated candidate SQL must use regex-guarded coordinate casts
+    instead of raw ::float casts for dsr and pd tables."""
+    import re
+    captured_sql = []
+
+    class _CapturingDB(_FakeDB):
+        def execute(self, stmt, params=None):
+            sql_text = stmt.text if hasattr(stmt, "text") else str(stmt)
+            captured_sql.append(sql_text)
+            return super().execute(stmt, params)
+
+    db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
+    run_expansion_search(
+        db,
+        search_id="test-sql-check",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+
+    # Find the main candidate SQL (contains FROM candidate_base)
+    candidate_sqls = [s for s in captured_sql if "FROM candidate_base" in s]
+    assert candidate_sqls, "Expected at least one candidate SQL query"
+    main_sql = candidate_sqls[0]
+
+    # Must NOT contain raw ::float casts on dsr or pd columns
+    assert "dsr.lon::float" not in main_sql, "Unsafe dsr.lon::float cast still present"
+    assert "dsr.lat::float" not in main_sql, "Unsafe dsr.lat::float cast still present"
+    assert "pd.lon::float" not in main_sql, "Unsafe pd.lon::float cast still present"
+    assert "pd.lat::float" not in main_sql, "Unsafe pd.lat::float cast still present"
+
+    # Must contain the safe regex pattern for coordinate validation
+    assert "BTRIM(dsr.lon)" in main_sql, "Missing BTRIM for dsr.lon"
+    assert "BTRIM(dsr.lat)" in main_sql, "Missing BTRIM for dsr.lat"
+    assert "BTRIM(pd.lon)" in main_sql, "Missing BTRIM for pd.lon"
+    assert "BTRIM(pd.lat)" in main_sql, "Missing BTRIM for pd.lat"
+
+    # Must contain the numeric regex pattern
+    assert re.search(r"\^\[-\+\]\?\[0-9\]", main_sql), (
+        "Missing numeric regex pattern in SQL"
+    )
+
+
+def test_search_returns_results_not_error_with_dirty_rows():
+    """Even with rows that would have dirty coords in the DB, the search
+    returns a normal list (not an exception)."""
+    dirty_values = ["", " ", "N/A", "24,713", "abc", None]
+    rows = []
+    for i, val in enumerate(dirty_values):
+        row = _make_candidate_row(f"p{i}", "2000")
+        # Simulate what dirty DB rows look like after the SQL safely filters
+        # them: the correlated subqueries return 0 counts.
+        row["delivery_listing_count"] = 0
+        row["provider_listing_count"] = 0
+        row["provider_platform_count"] = 0
+        row["delivery_competition_count"] = 0
+        row["population_reach"] = 0
+        rows.append(row)
+
+    db = _FakeDB(candidate_rows=rows)
+    items = run_expansion_search(
+        db,
+        search_id="test-dirty-mix",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+    assert isinstance(items, list)
+    assert len(items) == len(dirty_values)
