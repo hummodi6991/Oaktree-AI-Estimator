@@ -9,6 +9,8 @@ Covers:
 - ArcGIS parcel classification codes: 2000, 7500, 1000, 3000, 4000
 - Tri-state zoning gate with weak evidence handling
 - Candidate ordering prefers commercial/mixed over residential
+- Non-numeric landuse_code values do not crash candidate query / ranking
+- District SQL pushdown fallback on failure
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from app.services.expansion_advisor import (
     _zoning_signal_class,
     _zoning_signal_source,
     _zoning_verdict,
+    run_expansion_search,
 )
 
 
@@ -482,3 +485,237 @@ def test_area_fit_still_works_after_zoning_changes():
     assert target > 90.0  # perfect match should score high
     far = _area_fit(area_m2=450.0, target_area_m2=200.0, min_area_m2=100.0, max_area_m2=500.0)
     assert target > far
+
+
+# ---------------------------------------------------------------------------
+# Non-numeric landuse_code values must not crash scoring / ranking
+# ---------------------------------------------------------------------------
+
+class _Result:
+    def __init__(self, rows):
+        self._rows = rows
+    def mappings(self):
+        return self
+    def all(self):
+        return self._rows
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _FakeNestedTransaction:
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+
+class _FakeDB:
+    def __init__(self, candidate_rows=None):
+        self.candidate_rows = candidate_rows or []
+        self.inserted = []
+
+    def begin_nested(self):
+        return _FakeNestedTransaction()
+
+    def execute(self, stmt, params=None):
+        sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+        if "FROM candidate_base" in sql:
+            return _Result(self.candidate_rows)
+        if "INSERT INTO expansion_candidate" in sql:
+            self.inserted.append(params)
+            return _Result([])
+        return _Result([])
+
+
+def _make_candidate_row(parcel_id, landuse_code, landuse_label=None, district=None):
+    return {
+        "parcel_id": parcel_id,
+        "landuse_label": landuse_label,
+        "landuse_code": landuse_code,
+        "area_m2": 200,
+        "lon": 46.7,
+        "lat": 24.7,
+        "district": district or "حي العليا",
+        "population_reach": 10000,
+        "competitor_count": 2,
+        "delivery_listing_count": 5,
+    }
+
+
+def test_non_numeric_landuse_codes_do_not_crash():
+    """Blank, whitespace, non-numeric, and mixed landuse_code values must not crash."""
+    bad_codes = ["", " 2000 ", "N/A", "mixed", None]
+    rows = [_make_candidate_row(f"p{i}", code) for i, code in enumerate(bad_codes)]
+    db = _FakeDB(candidate_rows=rows)
+
+    items = run_expansion_search(
+        db,
+        search_id="test-bad-codes",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+    assert isinstance(items, list)
+    assert len(items) == len(rows)
+
+
+def test_normal_numeric_landuse_codes_still_rank_correctly():
+    """Normal numeric ArcGIS codes (1000, 2000, 7500) still produce correct scoring."""
+    rows = [
+        _make_candidate_row("commercial", "2000"),
+        _make_candidate_row("mixed", "7500"),
+        _make_candidate_row("residential", "1000"),
+    ]
+    db = _FakeDB(candidate_rows=rows)
+
+    items = run_expansion_search(
+        db,
+        search_id="test-numeric-codes",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+    assert len(items) == 3
+    # Commercial/mixed should score higher on zoning than residential
+    scores = {item["parcel_id"]: item["zoning_fit_score"] for item in items}
+    assert scores["commercial"] > scores["residential"]
+    assert scores["mixed"] > scores["residential"]
+
+
+def test_landuse_fit_non_numeric_values_safe():
+    """_landuse_fit must not raise for non-numeric landuse_code values."""
+    for code in ["", "N/A", "mixed", "   ", None, "abc123"]:
+        score = _landuse_fit(None, code)
+        assert isinstance(score, float)
+        assert 0.0 <= score <= 100.0
+
+
+def test_zoning_fit_score_non_numeric_values_safe():
+    """_zoning_fit_score must not raise for non-numeric landuse_code values."""
+    for code in ["", "N/A", " 2000 ", None]:
+        score = _zoning_fit_score(None, code)
+        assert isinstance(score, float)
+        assert 0.0 <= score <= 100.0
+
+
+# ---------------------------------------------------------------------------
+# District SQL pushdown fallback on failure
+# ---------------------------------------------------------------------------
+
+class _FailOnceFakeDB(_FakeDB):
+    """FakeDB that fails on first candidate query (with district filter) and
+    succeeds on second (without district filter)."""
+
+    def __init__(self, candidate_rows=None):
+        super().__init__(candidate_rows=candidate_rows)
+        self._query_attempt = 0
+
+    def execute(self, stmt, params=None):
+        sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+        if "FROM candidate_base" in sql:
+            self._query_attempt += 1
+            if self._query_attempt == 1:
+                raise RuntimeError("Simulated district SQL filter failure (bad GeoJSON)")
+            return _Result(self.candidate_rows)
+        if "INSERT INTO expansion_candidate" in sql:
+            self.inserted.append(params)
+            return _Result([])
+        return _Result([])
+
+
+def test_district_sql_fallback_retries_without_filter():
+    """If district SQL pushdown fails, run_expansion_search retries without it."""
+    rows = [
+        _make_candidate_row("p1", "2000", district="حي العليا"),
+        _make_candidate_row("p2", "2000", district="الملقا"),
+    ]
+    db = _FailOnceFakeDB(candidate_rows=rows)
+
+    items = run_expansion_search(
+        db,
+        search_id="test-fallback",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+        target_districts=["العليا"],
+    )
+    # Should succeed via fallback; Python post-filter keeps only العليا match
+    assert len(items) == 1
+    assert items[0]["parcel_id"] == "p1"
+    # Verify it actually attempted 2 queries
+    assert db._query_attempt == 2
+
+
+def test_district_python_postfilter_works_after_fallback():
+    """Target-district Python post-filter correctly narrows results when SQL
+    pushdown is skipped (all rows returned from unfiltered query)."""
+    rows = [
+        _make_candidate_row("p1", "2000", district="حي العليا"),
+        _make_candidate_row("p2", "2000", district="الملقا"),
+        _make_candidate_row("p3", "2000", district="النرجس"),
+    ]
+    db = _FailOnceFakeDB(candidate_rows=rows)
+
+    items = run_expansion_search(
+        db,
+        search_id="test-postfilter",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+        target_districts=["العليا"],
+    )
+    # Only the العليا candidate should survive post-filter
+    assert all("العليا" in (item.get("district") or "") for item in items)
+
+
+def test_empty_query_result_returns_empty_list():
+    """When candidate query returns no rows, return empty list without raising."""
+    db = _FakeDB(candidate_rows=[])
+    items = run_expansion_search(
+        db,
+        search_id="test-empty",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+    assert items == []
+
+
+def test_all_candidates_filtered_returns_empty_list():
+    """When all candidates are filtered out by district post-filter, return empty list."""
+    rows = [_make_candidate_row("p1", "2000", district="الملقا")]
+    db = _FakeDB(candidate_rows=rows)
+
+    items = run_expansion_search(
+        db,
+        search_id="test-all-filtered",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+        target_districts=["العليا"],
+    )
+    assert items == []

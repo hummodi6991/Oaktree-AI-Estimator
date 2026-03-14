@@ -1623,13 +1623,13 @@ def run_expansion_search(
 
     # ArcGIS-only candidate generation.
     # Build optional target-district SQL filter when districts are specified.
-    _district_filter_sql = ""
-    if target_district_norm:
-        # We cannot bind a set directly; use a VALUES list for safety.
+    def _build_district_filter_sql(td_norm: set[str]) -> str:
+        if not td_norm:
+            return ""
         _district_values = ", ".join(
-            f"(:td_{i})" for i in range(len(target_district_norm))
+            f"(:td_{i})" for i in range(len(td_norm))
         )
-        _district_filter_sql = f"""
+        return f"""
             AND EXISTS (
                 SELECT 1
                 FROM external_feature ef
@@ -1650,8 +1650,24 @@ def run_expansion_search(
             )
         """
 
-    sql = text(
-        f"""
+    # SQL-safe landuse_code ordering: use regex to validate numeric before CAST.
+    # This prevents crashes from non-numeric ArcGIS landuse_code values like
+    # "N/A", "mixed", or whitespace-padded entries.
+    _SAFE_LANDUSE_ORDER = """
+                CASE
+                    WHEN NULLIF(BTRIM(p.landuse_code), '') ~ '^[0-9]+$'
+                         AND CAST(BTRIM(p.landuse_code) AS INTEGER) IN (2000, 7500) THEN 0
+                    WHEN NULLIF(BTRIM(p.landuse_code), '') ~ '^[0-9]+$'
+                         AND CAST(BTRIM(p.landuse_code) AS INTEGER) IN (3000, 4000) THEN 1
+                    WHEN p.landuse_code IS NULL AND p.landuse_label IS NULL THEN 2
+                    WHEN NULLIF(BTRIM(p.landuse_code), '') ~ '^[0-9]+$'
+                         AND CAST(BTRIM(p.landuse_code) AS INTEGER) = 1000 THEN 3
+                    ELSE 1
+                END"""
+
+    def _build_candidate_sql(district_filter_sql: str) -> text:
+        return text(
+            f"""
         WITH candidate_base AS (
             SELECT
                 p.id AS parcel_id,
@@ -1691,15 +1707,9 @@ def run_expansion_search(
               AND (CAST(:max_lon AS double precision) IS NULL OR ST_X(ST_Centroid(p.geom)) <= CAST(:max_lon AS double precision))
               AND (CAST(:min_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) >= CAST(:min_lat AS double precision))
               AND (CAST(:max_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) <= CAST(:max_lat AS double precision))
-              {_district_filter_sql}
+              {district_filter_sql}
             ORDER BY
-                CASE
-                    WHEN CAST(NULLIF(p.landuse_code, '') AS INTEGER) IN (2000, 7500) THEN 0
-                    WHEN CAST(NULLIF(p.landuse_code, '') AS INTEGER) IN (3000, 4000) THEN 1
-                    WHEN p.landuse_code IS NULL AND p.landuse_label IS NULL THEN 2
-                    WHEN CAST(NULLIF(p.landuse_code, '') AS INTEGER) = 1000 THEN 3
-                    ELSE 1
-                END,
+                {_SAFE_LANDUSE_ORDER},
                 ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) ASC,
                 CASE WHEN p.landuse_label IS NOT NULL THEN 0 ELSE 1 END,
                 p.id ASC
@@ -1788,7 +1798,7 @@ def run_expansion_search(
             ), 0) AS delivery_competition_count
         FROM candidate_base b
         """
-    )
+        )
 
     sql_params: dict[str, Any] = {
         "min_area_m2": min_area_m2,
@@ -1808,18 +1818,58 @@ def run_expansion_search(
     for i, td_val in enumerate(sorted(target_district_norm)):
         sql_params[f"td_{i}"] = td_val.lower()
 
-    try:
-        with db.begin_nested():
-            rows = db.execute(
-                sql,
-                sql_params,
-            ).mappings().all()
-    except Exception:
-        logger.exception(
-            "Expansion search main query failed: search_id=%s category=%s area=[%s-%s] districts=%s",
-            search_id, category, min_area_m2, max_area_m2, target_districts,
+    # Execute candidate query with district SQL filter fallback.
+    # If district filter is active and the query fails (e.g. malformed
+    # external_feature GeoJSON), retry once without the SQL pushdown.
+    # The Python post-filter still enforces district correctness.
+    district_sql_used = bool(target_district_norm)
+    rows = None
+
+    if district_sql_used:
+        try:
+            with db.begin_nested():
+                sql = _build_candidate_sql(_build_district_filter_sql(target_district_norm))
+                rows = db.execute(sql, sql_params).mappings().all()
+        except Exception:
+            logger.warning(
+                "Expansion search district-filtered query failed, retrying without SQL district filter: "
+                "search_id=%s category=%s area=[%s-%s] target_districts=%s "
+                "district_sql_enabled=True exc_class=%s",
+                search_id, category, min_area_m2, max_area_m2, target_districts,
+                type(Exception).__name__,
+                exc_info=True,
+            )
+            district_sql_used = False
+            rows = None
+
+    if rows is None:
+        try:
+            with db.begin_nested():
+                sql = _build_candidate_sql("")
+                rows = db.execute(sql, sql_params).mappings().all()
+        except Exception:
+            logger.exception(
+                "Expansion search main query failed: search_id=%s category=%s "
+                "area=[%s-%s] target_districts=%s district_sql_enabled=False",
+                search_id, category, min_area_m2, max_area_m2, target_districts,
+            )
+            raise
+
+    # Debug: log sample non-numeric landuse_code values for diagnosis
+    _bad_landuse_sample: list[str] = []
+    for row in rows:
+        lc = row.get("landuse_code")
+        if lc is not None:
+            lc_stripped = str(lc).strip()
+            if lc_stripped and not lc_stripped.isdigit() and lc_stripped not in _bad_landuse_sample:
+                _bad_landuse_sample.append(lc_stripped)
+                if len(_bad_landuse_sample) >= 10:
+                    break
+    if _bad_landuse_sample:
+        logger.info(
+            "Expansion search non-numeric landuse_code samples (search_id=%s): %s",
+            search_id, _bad_landuse_sample,
         )
-        raise
 
     candidates: list[dict[str, Any]] = []
     prepared: list[dict[str, Any]] = []
