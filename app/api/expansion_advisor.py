@@ -686,11 +686,11 @@ def create_expansion_search(
             brand_profile=brand_profile_payload,
         )
         db.commit()
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "Expansion search failed: search_id=%s brand=%s category=%s "
             "service_model=%s districts=%s existing_branches_count=%d "
-            "brand_profile_keys=%s",
+            "brand_profile_keys=%s exc_type=%s exc_msg=%s",
             search_id,
             req.brand_name,
             req.category,
@@ -698,8 +698,13 @@ def create_expansion_search(
             req.target_districts,
             len(existing_branches_payload),
             list((brand_profile_payload or {}).keys()),
+            type(exc).__name__,
+            str(exc)[:500],
         )
-        db.rollback()
+        try:
+            db.rollback()
+        except Exception:
+            logger.debug("rollback failed after search error", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail="Expansion search failed due to an internal error. "

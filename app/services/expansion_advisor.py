@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import uuid
 from typing import Any
 
@@ -172,7 +173,38 @@ _EXPANSION_PARCEL_SOURCE = "arcgis_only"
 _EXPANSION_EXCLUDED_SOURCES = ["suhail", "inferred_parcels"]
 
 
+def _safe_json_dumps(obj: Any, **kwargs: Any) -> str:
+    """json.dumps that replaces NaN/Infinity with None to avoid serialization errors."""
+    kwargs.setdefault("ensure_ascii", False)
+    return json.dumps(obj, default=str, **kwargs)
+
+
+class _SafeFloatEncoder(json.JSONEncoder):
+    """JSON encoder that converts NaN and Infinity to None."""
+
+    def default(self, o: Any) -> Any:
+        return super().default(o)
+
+    def encode(self, o: Any) -> str:
+        return super().encode(_sanitize_for_json(o))
+
+
+def _sanitize_for_json(obj: Any) -> Any:
+    """Recursively replace NaN/Infinity float values with None."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(v) for v in obj]
+    return obj
+
+
 def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    if math.isnan(value):
+        return low
     return max(low, min(high, value))
 
 
@@ -180,7 +212,10 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         if value is None:
             return default
-        return float(value)
+        result = float(value)
+        if math.isnan(result) or math.isinf(result):
+            return default
+        return result
     except Exception:
         return default
 
@@ -1514,69 +1549,85 @@ def persist_existing_branches(db: Session, search_id: str, existing_branches: li
         """
     )
     for branch in existing_branches:
-        db.execute(
-            insert_sql,
-            {
-                "id": str(uuid.uuid4()),
-                "search_id": search_id,
-                "name": branch.get("name"),
-                "lat": _safe_float(branch.get("lat")),
-                "lon": _safe_float(branch.get("lon")),
-                "district": branch.get("district"),
-                "source": branch.get("source") or "manual",
-            },
-        )
+        try:
+            with db.begin_nested():
+                db.execute(
+                    insert_sql,
+                    {
+                        "id": str(uuid.uuid4()),
+                        "search_id": search_id,
+                        "name": branch.get("name"),
+                        "lat": _safe_float(branch.get("lat")),
+                        "lon": _safe_float(branch.get("lon")),
+                        "district": branch.get("district"),
+                        "source": branch.get("source") or "manual",
+                    },
+                )
+        except Exception:
+            logger.warning(
+                "Failed to persist existing branch name=%s search_id=%s – skipping",
+                branch.get("name"), search_id,
+                exc_info=True,
+            )
 
 
 
 
 def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, Any]) -> None:
     profile = _default_brand_profile(brand_profile)
-    db.execute(
-        text(
-            """
-            INSERT INTO expansion_brand_profile (
-                id, search_id, price_tier, average_check_sar, primary_channel,
-                parking_sensitivity, frontage_sensitivity, visibility_sensitivity,
-                target_customer, expansion_goal, cannibalization_tolerance_m,
-                preferred_districts_json, excluded_districts_json
-            ) VALUES (
-                :id, :search_id, :price_tier, :average_check_sar, :primary_channel,
-                :parking_sensitivity, :frontage_sensitivity, :visibility_sensitivity,
-                :target_customer, :expansion_goal, :cannibalization_tolerance_m,
-                CAST(:preferred_districts_json AS jsonb), CAST(:excluded_districts_json AS jsonb)
+    try:
+        with db.begin_nested():
+            db.execute(
+                text(
+                    """
+                    INSERT INTO expansion_brand_profile (
+                        id, search_id, price_tier, average_check_sar, primary_channel,
+                        parking_sensitivity, frontage_sensitivity, visibility_sensitivity,
+                        target_customer, expansion_goal, cannibalization_tolerance_m,
+                        preferred_districts_json, excluded_districts_json
+                    ) VALUES (
+                        :id, :search_id, :price_tier, :average_check_sar, :primary_channel,
+                        :parking_sensitivity, :frontage_sensitivity, :visibility_sensitivity,
+                        :target_customer, :expansion_goal, :cannibalization_tolerance_m,
+                        CAST(:preferred_districts_json AS jsonb), CAST(:excluded_districts_json AS jsonb)
+                    )
+                    ON CONFLICT (search_id) DO UPDATE SET
+                        price_tier = EXCLUDED.price_tier,
+                        average_check_sar = EXCLUDED.average_check_sar,
+                        primary_channel = EXCLUDED.primary_channel,
+                        parking_sensitivity = EXCLUDED.parking_sensitivity,
+                        frontage_sensitivity = EXCLUDED.frontage_sensitivity,
+                        visibility_sensitivity = EXCLUDED.visibility_sensitivity,
+                        target_customer = EXCLUDED.target_customer,
+                        expansion_goal = EXCLUDED.expansion_goal,
+                        cannibalization_tolerance_m = EXCLUDED.cannibalization_tolerance_m,
+                        preferred_districts_json = EXCLUDED.preferred_districts_json,
+                        excluded_districts_json = EXCLUDED.excluded_districts_json,
+                        updated_at = now()
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "search_id": search_id,
+                    "price_tier": profile.get("price_tier"),
+                    "average_check_sar": profile.get("average_check_sar"),
+                    "primary_channel": profile.get("primary_channel"),
+                    "parking_sensitivity": profile.get("parking_sensitivity"),
+                    "frontage_sensitivity": profile.get("frontage_sensitivity"),
+                    "visibility_sensitivity": profile.get("visibility_sensitivity"),
+                    "target_customer": profile.get("target_customer"),
+                    "expansion_goal": profile.get("expansion_goal"),
+                    "cannibalization_tolerance_m": profile.get("cannibalization_tolerance_m"),
+                    "preferred_districts_json": json.dumps(profile.get("preferred_districts") or [], ensure_ascii=False),
+                    "excluded_districts_json": json.dumps(profile.get("excluded_districts") or [], ensure_ascii=False),
+                },
             )
-            ON CONFLICT (search_id) DO UPDATE SET
-                price_tier = EXCLUDED.price_tier,
-                average_check_sar = EXCLUDED.average_check_sar,
-                primary_channel = EXCLUDED.primary_channel,
-                parking_sensitivity = EXCLUDED.parking_sensitivity,
-                frontage_sensitivity = EXCLUDED.frontage_sensitivity,
-                visibility_sensitivity = EXCLUDED.visibility_sensitivity,
-                target_customer = EXCLUDED.target_customer,
-                expansion_goal = EXCLUDED.expansion_goal,
-                cannibalization_tolerance_m = EXCLUDED.cannibalization_tolerance_m,
-                preferred_districts_json = EXCLUDED.preferred_districts_json,
-                excluded_districts_json = EXCLUDED.excluded_districts_json,
-                updated_at = now()
-            """
-        ),
-        {
-            "id": str(uuid.uuid4()),
-            "search_id": search_id,
-            "price_tier": profile.get("price_tier"),
-            "average_check_sar": profile.get("average_check_sar"),
-            "primary_channel": profile.get("primary_channel"),
-            "parking_sensitivity": profile.get("parking_sensitivity"),
-            "frontage_sensitivity": profile.get("frontage_sensitivity"),
-            "visibility_sensitivity": profile.get("visibility_sensitivity"),
-            "target_customer": profile.get("target_customer"),
-            "expansion_goal": profile.get("expansion_goal"),
-            "cannibalization_tolerance_m": profile.get("cannibalization_tolerance_m"),
-            "preferred_districts_json": json.dumps(profile.get("preferred_districts") or [], ensure_ascii=False),
-            "excluded_districts_json": json.dumps(profile.get("excluded_districts") or [], ensure_ascii=False),
-        },
-    )
+    except Exception:
+        logger.warning(
+            "Failed to persist brand profile search_id=%s – continuing without it",
+            search_id,
+            exc_info=True,
+        )
 
 
 def get_brand_profile(db: Session, search_id: str) -> dict[str, Any] | None:
@@ -2675,21 +2726,22 @@ def run_expansion_search(
     persisted_candidates: list[dict[str, Any]] = []
     for candidate in candidates:
         try:
+            safe_candidate = _sanitize_for_json(candidate)
             with db.begin_nested():
                 db.execute(
                     insert_sql,
                     {
-                        **candidate,
-                        "explanation": json.dumps(candidate["explanation"], ensure_ascii=False),
-                        "key_risks_json": json.dumps(candidate["key_risks_json"], ensure_ascii=False),
-                        "key_strengths_json": json.dumps(candidate["key_strengths_json"], ensure_ascii=False),
-                        "gate_status_json": json.dumps(candidate["gate_status_json"], ensure_ascii=False),
-                        "gate_reasons_json": json.dumps(candidate["gate_reasons_json"], ensure_ascii=False),
-                        "feature_snapshot_json": json.dumps(candidate["feature_snapshot_json"], ensure_ascii=False),
-                        "score_breakdown_json": json.dumps(candidate["score_breakdown_json"], ensure_ascii=False),
-                        "top_positives_json": json.dumps(candidate["top_positives_json"], ensure_ascii=False),
-                        "top_risks_json": json.dumps(candidate["top_risks_json"], ensure_ascii=False),
-                        "comparable_competitors_json": json.dumps(candidate["comparable_competitors_json"], ensure_ascii=False),
+                        **safe_candidate,
+                        "explanation": json.dumps(_sanitize_for_json(candidate["explanation"]), ensure_ascii=False),
+                        "key_risks_json": json.dumps(_sanitize_for_json(candidate["key_risks_json"]), ensure_ascii=False),
+                        "key_strengths_json": json.dumps(_sanitize_for_json(candidate["key_strengths_json"]), ensure_ascii=False),
+                        "gate_status_json": json.dumps(_sanitize_for_json(candidate["gate_status_json"]), ensure_ascii=False),
+                        "gate_reasons_json": json.dumps(_sanitize_for_json(candidate["gate_reasons_json"]), ensure_ascii=False),
+                        "feature_snapshot_json": json.dumps(_sanitize_for_json(candidate["feature_snapshot_json"]), ensure_ascii=False),
+                        "score_breakdown_json": json.dumps(_sanitize_for_json(candidate["score_breakdown_json"]), ensure_ascii=False),
+                        "top_positives_json": json.dumps(_sanitize_for_json(candidate["top_positives_json"]), ensure_ascii=False),
+                        "top_risks_json": json.dumps(_sanitize_for_json(candidate["top_risks_json"]), ensure_ascii=False),
+                        "comparable_competitors_json": json.dumps(_sanitize_for_json(candidate["comparable_competitors_json"]), ensure_ascii=False),
                     },
                 )
             persisted_candidates.append(candidate)
@@ -2700,7 +2752,17 @@ def run_expansion_search(
                 exc_info=True,
             )
 
-    return [_normalize_candidate_payload(candidate, district_lookup) for candidate in persisted_candidates]
+    result: list[dict[str, Any]] = []
+    for candidate in persisted_candidates:
+        try:
+            result.append(_normalize_candidate_payload(candidate, district_lookup))
+        except Exception:
+            logger.warning(
+                "Failed to normalize candidate id=%s search_id=%s – skipping",
+                candidate.get("id"), search_id,
+                exc_info=True,
+            )
+    return result
 
 
 def get_search(db: Session, search_id: str) -> dict[str, Any] | None:
