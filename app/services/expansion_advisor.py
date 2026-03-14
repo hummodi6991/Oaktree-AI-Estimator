@@ -1597,18 +1597,30 @@ def get_brand_profile(db: Session, search_id: str) -> dict[str, Any] | None:
 _NUMERIC_COORD_RE = r"'^[-+]?[0-9]*\.?[0-9]+$'"
 
 
+def _coord_text(alias: str, column: str) -> str:
+    """Return a trimmed text expression for lat/lon columns.
+
+    delivery_source_record.lat/lon and population_density.lat/lon are Numeric
+    in the ORM + Alembic schema, so string functions must cast to text first.
+    This also remains safe if an environment has drifted to text columns.
+    """
+    return f"BTRIM(CAST({alias}.{column} AS text))"
+
+
 def _log_dirty_coord_samples(db: Session, search_id: str) -> None:
     """Log up to 10 non-numeric lat/lon samples from delivery_source_record
     and population_density.  Called only when the main candidate query fails,
     to aid root-cause diagnosis.  Best-effort: any error is swallowed."""
     for table, alias in [("delivery_source_record", "dsr"), ("population_density", "pd")]:
         try:
+            lon_text = _coord_text(alias, "lon")
+            lat_text = _coord_text(alias, "lat")
             sample_sql = text(
                 f"SELECT {alias}.lat, {alias}.lon"
                 f" FROM {table} {alias}"
                 f" WHERE ({alias}.lat IS NOT NULL OR {alias}.lon IS NOT NULL)"
-                f"   AND (NULLIF(BTRIM({alias}.lon), '') !~ {_NUMERIC_COORD_RE}"
-                f"        OR NULLIF(BTRIM({alias}.lat), '') !~ {_NUMERIC_COORD_RE})"
+                f"   AND (NULLIF({lon_text}, '') !~ {_NUMERIC_COORD_RE}"
+                f"        OR NULLIF({lat_text}, '') !~ {_NUMERIC_COORD_RE})"
                 f" LIMIT 10"
             )
             with db.begin_nested():
@@ -1688,13 +1700,15 @@ def run_expansion_search(
         """Return a SQL CASE expression that builds a geography point only when
         both lon and lat for *alias* (e.g. 'dsr', 'pd') are valid numeric
         strings.  Returns NULL for dirty/blank/non-numeric values."""
+        lon_text = _coord_text(alias, "lon")
+        lat_text = _coord_text(alias, "lat")
         return (
             f"CASE"
-            f"  WHEN NULLIF(BTRIM({alias}.lon), '') ~ {_COORD_REGEX}"
-            f"   AND NULLIF(BTRIM({alias}.lat), '') ~ {_COORD_REGEX}"
+            f"  WHEN NULLIF({lon_text}, '') ~ {_COORD_REGEX}"
+            f"   AND NULLIF({lat_text}, '') ~ {_COORD_REGEX}"
             f"  THEN ST_SetSRID(ST_MakePoint("
-            f"    CAST(BTRIM({alias}.lon) AS double precision),"
-            f"    CAST(BTRIM({alias}.lat) AS double precision)"
+            f"    CAST({lon_text} AS double precision),"
+            f"    CAST({lat_text} AS double precision)"
             f"  ), 4326)::geography"
             f"  ELSE NULL"
             f" END"
@@ -1705,9 +1719,11 @@ def run_expansion_search(
 
     # Predicate fragment: only rows with valid numeric coords participate.
     def _safe_coord_where(alias: str) -> str:
+        lon_text = _coord_text(alias, "lon")
+        lat_text = _coord_text(alias, "lat")
         return (
-            f"NULLIF(BTRIM({alias}.lon), '') ~ {_COORD_REGEX}"
-            f" AND NULLIF(BTRIM({alias}.lat), '') ~ {_COORD_REGEX}"
+            f"NULLIF({lon_text}, '') ~ {_COORD_REGEX}"
+            f" AND NULLIF({lat_text}, '') ~ {_COORD_REGEX}"
         )
 
     _SAFE_DSR_COORD_WHERE = _safe_coord_where("dsr")
