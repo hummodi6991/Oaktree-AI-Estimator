@@ -1594,6 +1594,37 @@ def get_brand_profile(db: Session, search_id: str) -> dict[str, Any] | None:
     return data
 
 
+_NUMERIC_COORD_RE = r"'^[-+]?[0-9]*\.?[0-9]+$'"
+
+
+def _log_dirty_coord_samples(db: Session, search_id: str) -> None:
+    """Log up to 10 non-numeric lat/lon samples from delivery_source_record
+    and population_density.  Called only when the main candidate query fails,
+    to aid root-cause diagnosis.  Best-effort: any error is swallowed."""
+    for table, alias in [("delivery_source_record", "dsr"), ("population_density", "pd")]:
+        try:
+            sample_sql = text(
+                f"SELECT {alias}.lat, {alias}.lon"
+                f" FROM {table} {alias}"
+                f" WHERE ({alias}.lat IS NOT NULL OR {alias}.lon IS NOT NULL)"
+                f"   AND (NULLIF(BTRIM({alias}.lon), '') !~ {_NUMERIC_COORD_RE}"
+                f"        OR NULLIF(BTRIM({alias}.lat), '') !~ {_NUMERIC_COORD_RE})"
+                f" LIMIT 10"
+            )
+            with db.begin_nested():
+                bad_rows = db.execute(sample_sql).mappings().all()
+            if bad_rows:
+                samples = [(r["lat"], r["lon"]) for r in bad_rows]
+                logger.warning(
+                    "Dirty coordinate samples in %s (search_id=%s): %s",
+                    table, search_id, samples,
+                )
+        except Exception:
+            logger.debug(
+                "Could not query dirty coord samples from %s", table, exc_info=True,
+            )
+
+
 def run_expansion_search(
     db: Session,
     *,
@@ -1649,6 +1680,38 @@ def run_expansion_search(
                   )) = td.val
             )
         """
+
+    # SQL-safe coordinate regex: accepts signed decimals, rejects blanks/malformed.
+    _COORD_REGEX = r"'^[-+]?[0-9]*\.?[0-9]+$'"
+
+    def _safe_geo(alias: str) -> str:
+        """Return a SQL CASE expression that builds a geography point only when
+        both lon and lat for *alias* (e.g. 'dsr', 'pd') are valid numeric
+        strings.  Returns NULL for dirty/blank/non-numeric values."""
+        return (
+            f"CASE"
+            f"  WHEN NULLIF(BTRIM({alias}.lon), '') ~ {_COORD_REGEX}"
+            f"   AND NULLIF(BTRIM({alias}.lat), '') ~ {_COORD_REGEX}"
+            f"  THEN ST_SetSRID(ST_MakePoint("
+            f"    CAST(BTRIM({alias}.lon) AS double precision),"
+            f"    CAST(BTRIM({alias}.lat) AS double precision)"
+            f"  ), 4326)::geography"
+            f"  ELSE NULL"
+            f" END"
+        )
+
+    _SAFE_DSR_GEO = _safe_geo("dsr")
+    _SAFE_PD_GEO = _safe_geo("pd")
+
+    # Predicate fragment: only rows with valid numeric coords participate.
+    def _safe_coord_where(alias: str) -> str:
+        return (
+            f"NULLIF(BTRIM({alias}.lon), '') ~ {_COORD_REGEX}"
+            f" AND NULLIF(BTRIM({alias}.lat), '') ~ {_COORD_REGEX}"
+        )
+
+    _SAFE_DSR_COORD_WHERE = _safe_coord_where("dsr")
+    _SAFE_PD_COORD_WHERE = _safe_coord_where("pd")
 
     # SQL-safe landuse_code ordering: use regex to validate numeric before CAST.
     # This prevents crashes from non-numeric ArcGIS landuse_code values like
@@ -1726,11 +1789,10 @@ def run_expansion_search(
             COALESCE((
                 SELECT SUM(pd.population)
                 FROM population_density pd
-                WHERE pd.lat IS NOT NULL
-                  AND pd.lon IS NOT NULL
+                WHERE {_SAFE_PD_COORD_WHERE}
                   AND ST_DWithin(
                       ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      ST_SetSRID(ST_MakePoint(pd.lon::float, pd.lat::float), 4326)::geography,
+                      {_SAFE_PD_GEO},
                       :demand_radius_m
                   )
             ), 0) AS population_reach,
@@ -1747,14 +1809,13 @@ def run_expansion_search(
             COALESCE((
                 SELECT COUNT(*)
                 FROM delivery_source_record dsr
-                WHERE dsr.lat IS NOT NULL
-                  AND dsr.lon IS NOT NULL
+                WHERE {_SAFE_DSR_COORD_WHERE}
                   AND (
                     lower(COALESCE(dsr.category_raw, '')) LIKE :category_like
                     OR lower(COALESCE(dsr.cuisine_raw, '')) LIKE :category_like
                   )
                   AND ST_DWithin(
-                      ST_SetSRID(ST_MakePoint(dsr.lon::float, dsr.lat::float), 4326)::geography,
+                      {_SAFE_DSR_GEO},
                       ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
                       :demand_radius_m
                   )
@@ -1762,10 +1823,9 @@ def run_expansion_search(
             COALESCE((
                 SELECT COUNT(*)
                 FROM delivery_source_record dsr
-                WHERE dsr.lat IS NOT NULL
-                  AND dsr.lon IS NOT NULL
+                WHERE {_SAFE_DSR_COORD_WHERE}
                   AND ST_DWithin(
-                      ST_SetSRID(ST_MakePoint(dsr.lon::float, dsr.lat::float), 4326)::geography,
+                      {_SAFE_DSR_GEO},
                       ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
                       :provider_radius_m
                   )
@@ -1773,10 +1833,9 @@ def run_expansion_search(
             COALESCE((
                 SELECT COUNT(DISTINCT lower(COALESCE(dsr.platform, 'unknown')))
                 FROM delivery_source_record dsr
-                WHERE dsr.lat IS NOT NULL
-                  AND dsr.lon IS NOT NULL
+                WHERE {_SAFE_DSR_COORD_WHERE}
                   AND ST_DWithin(
-                      ST_SetSRID(ST_MakePoint(dsr.lon::float, dsr.lat::float), 4326)::geography,
+                      {_SAFE_DSR_GEO},
                       ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
                       :provider_radius_m
                   )
@@ -1784,14 +1843,13 @@ def run_expansion_search(
             COALESCE((
                 SELECT COUNT(*)
                 FROM delivery_source_record dsr
-                WHERE dsr.lat IS NOT NULL
-                  AND dsr.lon IS NOT NULL
+                WHERE {_SAFE_DSR_COORD_WHERE}
                   AND (
                     lower(COALESCE(dsr.category_raw, '')) LIKE :category_like
                     OR lower(COALESCE(dsr.cuisine_raw, '')) LIKE :category_like
                   )
                   AND ST_DWithin(
-                      ST_SetSRID(ST_MakePoint(dsr.lon::float, dsr.lat::float), 4326)::geography,
+                      {_SAFE_DSR_GEO},
                       ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
                       :provider_radius_m
                   )
@@ -1853,6 +1911,8 @@ def run_expansion_search(
                 "area=[%s-%s] target_districts=%s district_sql_enabled=False",
                 search_id, category, min_area_m2, max_area_m2, target_districts,
             )
+            # Log sample dirty coordinate values to aid diagnosis.
+            _log_dirty_coord_samples(db, search_id)
             raise
 
     # Debug: log sample non-numeric landuse_code values for diagnosis
