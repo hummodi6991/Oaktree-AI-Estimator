@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 import xml.etree.ElementTree as ET
 from typing import Any, Iterator
@@ -43,6 +44,11 @@ _BACKOFF_BASE = 2.0  # seconds; retry delays: 2, 4, 8, 16
 # over all available platforms without hard-coding function names.
 SCRAPER_REGISTRY: dict[str, dict[str, Any]] = {}
 
+# robots.txt decisions are stable enough for a single ingest run; avoid
+# re-fetching robots.txt for every page request.
+_ROBOTS_ALLOWED_CACHE: dict[tuple[str, str], bool] = {}
+_ROBOTS_ALLOWED_CACHE_LOCK = threading.Lock()
+
 _RIYADH_URL_TOKENS = (
     "riyadh",
     "ar-riyadh",
@@ -56,6 +62,19 @@ def _decoded_url(url: str) -> str:
         return unquote(url or "")
     except Exception:
         return url or ""
+
+
+def _robots_allows_cached(url: str, user_agent: str) -> bool:
+    parsed = urlparse(url)
+    key = (f"{parsed.scheme}://{parsed.netloc}".lower(), user_agent)
+    with _ROBOTS_ALLOWED_CACHE_LOCK:
+        cached = _ROBOTS_ALLOWED_CACHE.get(key)
+    if cached is not None:
+        return cached
+    allowed = robots_allows(url, user_agent)
+    with _ROBOTS_ALLOWED_CACHE_LOCK:
+        _ROBOTS_ALLOWED_CACHE[key] = allowed
+    return allowed
 
 
 def _register(source: str, *, label: str, url: str):
@@ -154,7 +173,7 @@ def _parse_sitemap(url: str) -> list[str]:
 
 def _safe_get(url: str, crawl_delay: float = 2.0) -> httpx.Response | None:
     """GET a URL after checking robots.txt and respecting crawl delay."""
-    if not robots_allows(url, _UA):
+    if not _robots_allows_cached(url, _UA):
         logger.debug("robots.txt disallows: %s", url)
         return None
     time.sleep(crawl_delay)
@@ -202,19 +221,59 @@ def _is_riyadh_url(url: str) -> bool:
 
 def _is_hungerstation_riyadh_restaurant_shard(url: str) -> bool:
     """
-    Keep only HungerStation restaurant-vendor sitemap shards for Riyadh.
+    Keep only HungerStation restaurant-vendor sitemap shards for *Riyadh city*.
 
     This is the critical fix:
     - do not expand all cities
     - do not expand flowers/pharmacies/supermarkets/pickup shards
-    - do not rely on page-level URL filtering after truncating to max_pages
+    - do not accidentally match nearby/non-Riyadh cities like 'riyadh-al-khabra'
     """
     lower = _decoded_url(url).lower()
-    if "hungerstation.com/sitemaps/" not in lower:
+    m = re.search(
+        r"hungerstation\.com/sitemaps/(?:sa-(?:ar|en))/modules/restaurants/vendors/([^/]+)/part-\d+\.xml(?:\.gz)?$",
+        lower,
+    )
+    if not m:
         return False
-    if "/modules/restaurants/vendors/" not in lower:
-        return False
-    return any(token in lower for token in _RIYADH_URL_TOKENS)
+    city_slug = m.group(1).strip("/")
+    return city_slug in {"riyadh", "الرياض"}
+
+
+def _canonical_hungerstation_shard_key(url: str) -> str | None:
+    """
+    Canonicalize Riyadh shard URLs so Arabic/English sitemap variants collapse
+    to a single logical shard key. This avoids expanding both sa-ar and sa-en
+    copies when they point to the same vendor pages.
+    """
+    lower = _decoded_url(url).lower()
+    m = re.search(
+        r"/modules/restaurants/vendors/(riyadh|الرياض)/part-(\d+)\.xml(?:\.gz)?$",
+        lower,
+    )
+    if not m:
+        return None
+    return f"{m.group(1)}:part-{m.group(2)}"
+
+
+def _prefer_hungerstation_shard(current: str | None, candidate: str) -> str:
+    """
+    Prefer sa-ar over sa-en when both languages expose the same logical shard.
+    """
+    if current is None:
+        return candidate
+    current_lower = _decoded_url(current).lower()
+    candidate_lower = _decoded_url(candidate).lower()
+    if "/sa-ar/" in candidate_lower and "/sa-en/" in current_lower:
+        return candidate
+    return current
+
+
+def _target_candidate_pool(max_pages: int) -> int:
+    """
+    Enough URLs to fill the requested batch after dedupe/rejections, but not so
+    many that we expand hundreds of sitemap shards unnecessarily.
+    """
+    return max(max_pages * 8, 1200)
 
 
 def _is_hungerstation_candidate_restaurant_url(url: str) -> bool:
@@ -226,6 +285,9 @@ def _is_hungerstation_candidate_restaurant_url(url: str) -> bool:
     lower = _decoded_url(url).lower()
 
     blocked = (
+        "/vendors/riyadh-al-",
+        "/vendors/ar-riyadh-",
+        "/vendors/al-riyadh-",
         "/regions/",
         "/cuisines",
         "/flowers/",
@@ -482,20 +544,32 @@ def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]
         sitemap_urls[:10],
     )
 
-    # FIX:
-    # Restrict expansion to Riyadh restaurant-vendor shards only.
-    # The old code expanded *all* city shards (2.4M+ URLs in the failing run),
-    # then sliced to max_pages before meaningful Riyadh selection.
-    riyadh_restaurant_shards = [
+    # Restrict to exact Riyadh-city restaurant shards, then collapse sa-ar/sa-en
+    # duplicates down to one preferred shard per logical part number.
+    raw_riyadh_restaurant_shards = [
         u for u in sitemap_urls if _is_hungerstation_riyadh_restaurant_shard(u)
     ]
 
+    shard_map: dict[str, str] = {}
+    for u in raw_riyadh_restaurant_shards:
+        key = _canonical_hungerstation_shard_key(u)
+        if not key:
+            continue
+        shard_map[key] = _prefer_hungerstation_shard(shard_map.get(key), u)
+
+    riyadh_restaurant_shards = list(shard_map.values())
+
     logger.info(
-        "HungerStation Riyadh restaurant shards: %d",
+        "HungerStation Riyadh restaurant shards: %d raw, %d canonical",
+        len(raw_riyadh_restaurant_shards),
         len(riyadh_restaurant_shards),
     )
 
     restaurant_urls: list[str] = []
+    seen_urls: set[str] = set()
+    target_pool = _target_candidate_pool(max_pages)
+    expanded_shards = 0
+
     for url in riyadh_restaurant_shards:
         try:
             expanded = _parse_sitemap(url)
@@ -503,21 +577,37 @@ def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]
                 u for u in expanded
                 if _is_hungerstation_candidate_restaurant_url(u)
             ]
+            added = 0
+            for candidate in expanded:
+                if candidate in seen_urls:
+                    continue
+                seen_urls.add(candidate)
+                restaurant_urls.append(candidate)
+                added += 1
+            expanded_shards += 1
             logger.info(
-                "HungerStation Riyadh shard %s yielded %d candidate restaurant URLs",
+                "HungerStation Riyadh shard %s yielded %d candidate restaurant URLs (%d new, pool=%d/%d)",
                 url,
                 len(expanded),
+                added,
+                len(restaurant_urls),
+                target_pool,
             )
-            restaurant_urls.extend(expanded)
+            if len(restaurant_urls) >= target_pool:
+                logger.info(
+                    "HungerStation early-stop after %d shard(s): gathered %d unique candidate URLs for max_pages=%d",
+                    expanded_shards,
+                    len(restaurant_urls),
+                    max_pages,
+                )
+                break
         except Exception as exc:
             logger.warning("HungerStation shard %s failed: %s", url, exc)
 
-    # Deduplicate while preserving order.
-    restaurant_urls = list(dict.fromkeys(restaurant_urls))
-
     logger.info(
-        "Found %d Riyadh restaurant candidate URLs from HungerStation",
+        "Found %d Riyadh restaurant candidate URLs from HungerStation after expanding %d shard(s)",
         len(restaurant_urls),
+        expanded_shards,
     )
 
     count = 0
