@@ -17,6 +17,7 @@ from app.db.deps import get_db
 
 logger = logging.getLogger(__name__)
 from app.services.expansion_advisor import (
+    clear_expansion_caches,
     compare_candidates,
     create_saved_search,
     delete_saved_search,
@@ -587,6 +588,9 @@ def create_expansion_search(
             status_code=400,
             detail="min_area_m2 must be less than or equal to max_area_m2",
         )
+    # Clear cached lookups at the start of each new search so they pick up
+    # any data changes since the last request.
+    clear_expansion_caches()
 
     target_area_m2 = req.target_area_m2 or ((req.min_area_m2 + req.max_area_m2) / 2.0)
     search_id = str(uuid.uuid4())
@@ -765,18 +769,67 @@ def get_expansion_search_candidates(search_id: str, db: Session = Depends(get_db
 def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     import time as _time
     t0 = _time.monotonic()
+
+    # Verify the search exists first to distinguish 404 from 500.
+    search = get_search(db, search_id)
+    if not search:
+        logger.info("Report: search not found search_id=%s", search_id)
+        raise HTTPException(status_code=404, detail="Expansion search not found")
+
     try:
         report = get_recommendation_report(db, search_id)
     except Exception:
         logger.exception(
-            "Report generation failed: search_id=%s elapsed=%.2fs",
+            "Report generation failed, returning sparse fallback: search_id=%s elapsed=%.2fs",
             search_id, _time.monotonic() - t0,
         )
-        raise HTTPException(status_code=500, detail="Report generation failed")
+        # Return a valid sparse report instead of 500 so the UI can show
+        # whatever data is available rather than "Unable to load report."
+        report = {
+            "search_id": search_id,
+            "brand_profile": search.get("brand_profile") or search.get("request_json") or {},
+            "meta": {"version": "expansion_advisor_v6.1"},
+            "top_candidates": [],
+            "recommendation": {
+                "best_candidate_id": None,
+                "runner_up_candidate_id": None,
+                "best_pass_candidate_id": None,
+                "best_confidence_candidate_id": None,
+                "pass_count": 0,
+                "why_best": "",
+                "main_risk": "Report generation encountered an error — results may be incomplete.",
+                "best_format": "",
+                "summary": "Report could not be fully generated. The search results are still available.",
+                "report_summary": "",
+            },
+            "assumptions": {"parcel_source": "arcgis_only", "city": "riyadh"},
+        }
+
     if not report:
-        logger.info("Report: search not found search_id=%s", search_id)
-        raise HTTPException(status_code=404, detail="Expansion search not found")
+        # get_recommendation_report returned None (search found but no candidates)
+        logger.info("Report: no candidates for search_id=%s", search_id)
+        report = {
+            "search_id": search_id,
+            "brand_profile": search.get("brand_profile") or {},
+            "meta": {"version": "expansion_advisor_v6.1"},
+            "top_candidates": [],
+            "recommendation": {
+                "best_candidate_id": None,
+                "runner_up_candidate_id": None,
+                "best_pass_candidate_id": None,
+                "best_confidence_candidate_id": None,
+                "pass_count": 0,
+                "why_best": "",
+                "main_risk": "",
+                "best_format": "",
+                "summary": "",
+                "report_summary": "",
+            },
+            "assumptions": {},
+        }
+
     rec = report.get("recommendation", {})
+    elapsed = _time.monotonic() - t0
     logger.info(
         "Report served: search_id=%s pass_count=%s top_candidates=%d "
         "best_candidate=%s best_pass=%s elapsed=%.2fs",
@@ -785,7 +838,7 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
         len(report.get("top_candidates", [])),
         (rec.get("best_candidate_id") or "none")[:8],
         (rec.get("best_pass_candidate_id") or "none")[:8],
-        _time.monotonic() - t0,
+        elapsed,
     )
     return report
 

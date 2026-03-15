@@ -202,6 +202,42 @@ def _build_district_lookup(db: Session) -> dict[str, dict[str, str]]:
     return lookup
 
 
+# ---------------------------------------------------------------------------
+# Session-level caches to avoid repeated DB roundtrips within a single request
+# ---------------------------------------------------------------------------
+_district_lookup_cache: dict[int, dict[str, dict[str, str]]] = {}
+_table_avail_cache: dict[str, bool] = {}
+
+
+def _cached_district_lookup(db: Session) -> dict[str, dict[str, str]]:
+    """Return district lookup, cached by db session id within a process."""
+    key = id(db)
+    if key not in _district_lookup_cache:
+        _district_lookup_cache[key] = _build_district_lookup(db)
+    return _district_lookup_cache[key]
+
+
+def _cached_table_available(db: Session, table_name: str) -> bool:
+    """Cache table availability checks per table name within a process."""
+    if table_name not in _table_avail_cache:
+        _table_avail_cache[table_name] = _table_available(db, table_name)
+    return _table_avail_cache[table_name]
+
+
+def _cached_ea_table_has_rows(db: Session, table_name: str) -> bool:
+    """Cache EA table row-presence checks."""
+    cache_key = f"ea_rows:{table_name}"
+    if cache_key not in _table_avail_cache:
+        _table_avail_cache[cache_key] = _ea_table_has_rows(db, table_name)
+    return _table_avail_cache[cache_key]
+
+
+def clear_expansion_caches() -> None:
+    """Clear all in-process caches. Call between requests or in tests."""
+    _district_lookup_cache.clear()
+    _table_avail_cache.clear()
+
+
 _EXPANSION_CITY = "riyadh"
 _EXPANSION_AQAR_ASSET = "commercial"
 _EXPANSION_AQAR_UNIT = "retail"
@@ -218,21 +254,24 @@ def _dedupe_candidates(
 ) -> list[dict[str, Any]]:
     """Post-ranking dedupe: collapse near-clone candidates.
 
-    Uses a two-pass approach:
+    Uses a multi-key approach:
     1. Exact parcel_id match (primary key)
-    2. Composite spatial+attribute key with tight grid:
-       - snapped centroid (0.001 degree ≈ 110m grid)
+    2. Tight spatial+attribute composite key:
+       - snapped centroid (0.0005 degree ≈ 55m grid)
        - normalized district key
        - rounded area bucket (50m² steps)
        - rounded rent bucket (100 SAR steps)
        - nearest-branch distance bucket (500m steps)
+    3. Looser economics-similarity key that catches near-clones with
+       slightly different positions but identical economic profiles:
+       - district + area bucket + economics bucket + rent bucket
 
     Candidates with distinct non-empty parcel_ids are NEVER collapsed
     by spatial/attribute keys — parcel_id is the strongest identity.
 
     When *aggressive=True* (used for report shortlist), an additional
     district+area+score composite key catches near-clones that differ
-    only in sub-110m position.
+    only in sub-55m position.
 
     Keeps the highest-ranked (first) candidate in each cluster.
     """
@@ -248,6 +287,7 @@ def _dedupe_candidates(
         rent_bucket = int(round(_safe_float(c.get("estimated_rent_sar_m2_year")) / 100.0))
         branch_dist = c.get("distance_to_nearest_branch_m")
         branch_bucket = int(round(_safe_float(branch_dist) / 500.0)) if branch_dist is not None else -1
+        economics_bucket = int(round(_safe_float(c.get("economics_score")) / 5.0))
 
         # 1. Exact parcel_id dedupe
         if parcel_id:
@@ -259,13 +299,19 @@ def _dedupe_candidates(
             result.append(c)
             continue
 
-        # 2. Spatial+attribute grid for parcels without a parcel_id
+        # 2. Tight spatial+attribute grid (55m snap vs old 110m)
         spatial_key = (
-            f"{round(lat, 3)}|{round(lon, 3)}|{district_key}"
+            f"{round(lat, 4) // 0.0005 * 0.0005:.4f}|{round(lon, 4) // 0.0005 * 0.0005:.4f}|{district_key}"
             f"|{area_bucket}|{rent_bucket}|{branch_bucket}"
         )
 
         keys: list[str] = [spatial_key]
+
+        # 3. Economics-similarity key: catches near-clones at slightly different
+        #    positions but same economic profile within the same district.
+        if district_key:
+            econ_key = f"econ:{district_key}|{area_bucket}|{economics_bucket}|{rent_bucket}"
+            keys.append(econ_key)
 
         # Aggressive mode: extra composite key for report shortlists
         if aggressive and district_key:
@@ -811,11 +857,11 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
     base["context_sources"]["rent_source"] = rent_source
     base["context_sources"]["competitor_source"] = "legacy"
 
-    # Use pre-computed values when available, otherwise check (fallback for backward compat)
+    # Use pre-computed values when available, otherwise check with cache
     if ea_roads_available is None:
-        ea_roads_available = _ea_table_has_rows(db, _EA_ROADS_TABLE)
+        ea_roads_available = _cached_ea_table_has_rows(db, _EA_ROADS_TABLE)
     if ea_parking_available is None:
-        ea_parking_available = _ea_table_has_rows(db, _EA_PARKING_TABLE)
+        ea_parking_available = _cached_ea_table_has_rows(db, _EA_PARKING_TABLE)
 
     if ea_roads_available:
         base["context_sources"]["road_source"] = "expansion_road_context"
@@ -1221,6 +1267,27 @@ def _candidate_gate_status(
         "economics_pass": economics_pass,
         "overall_pass": overall_pass,
     }
+    # Determine delivery observation status for honest gate explanations.
+    _delivery_observed_for_gate = (
+        provider_density_score > 0
+        or multi_platform_presence_score > 0
+    )
+    if primary_channel == "delivery":
+        if _delivery_observed_for_gate:
+            delivery_explanation = "Delivery-market gate checks observed provider density and platform breadth."
+        else:
+            delivery_explanation = (
+                "Delivery-market gate requires observed provider density and platform breadth, "
+                "but no delivery activity was observed near this site. Gate result is based on inferred data."
+            )
+    else:
+        if _delivery_observed_for_gate:
+            delivery_explanation = "Delivery-market gate auto-passes for non-delivery channels. Observed delivery activity is available."
+        else:
+            delivery_explanation = (
+                "Delivery-market gate auto-passes for non-delivery channels. "
+                "No delivery activity was observed near this site — delivery scores are inferred."
+            )
     explanations = {
         "zoning_fit_pass": "Zoning fit compares parcel land-use compatibility against threshold.",
         "area_fit_pass": "Area fit checks candidate area against requested branch range.",
@@ -1228,7 +1295,7 @@ def _candidate_gate_status(
         "parking_pass": "Parking gate depends on nearby parking amenity context and parcel suitability.",
         "district_pass": "District gate fails only for explicitly excluded districts.",
         "cannibalization_pass": "Cannibalization gate checks minimum spacing from existing branches.",
-        "delivery_market_pass": "Delivery-market gate applies when primary channel is delivery.",
+        "delivery_market_pass": delivery_explanation,
         "economics_pass": "Economics gate requires minimum economics score and non-weak payback.",
     }
     reasons = {
@@ -1237,7 +1304,10 @@ def _candidate_gate_status(
         "blocking_failures": blocking_failures,
         "advisory_failures": advisory_failures,
         "unknown": unknown,
-        "thresholds": thresholds, "explanations": explanations}
+        "thresholds": thresholds,
+        "explanations": explanations,
+        "delivery_observation_mode": "observed" if _delivery_observed_for_gate else "inferred",
+    }
     return gate_status, reasons
 
 
@@ -1306,10 +1376,23 @@ def _top_positives_and_risks(
 ) -> tuple[list[str], list[str]]:
     positives: list[str] = []
     risks: list[str] = []
+
+    # Determine delivery observation status upfront so wording can be qualified.
+    delivery_observed = (
+        _safe_float(candidate.get("provider_density_score")) > 0
+        or _safe_float(candidate.get("multi_platform_presence_score")) > 0
+        or _safe_float(candidate.get("delivery_competition_score")) > 0
+    )
+
     if _safe_float(candidate.get("demand_score")) >= 70:
         positives.append("Demand potential is strong for this district.")
     if _safe_float(candidate.get("whitespace_score")) >= 65:
-        positives.append("Competitive whitespace remains favorable.")
+        if delivery_observed:
+            positives.append("Competitive whitespace remains favorable.")
+        else:
+            # Whitespace is high only because no delivery activity was observed —
+            # phrase as inferred opportunity, not observed strength.
+            positives.append("Inferred whitespace opportunity — low observed delivery activity nearby.")
     if _safe_float(candidate.get("brand_fit_score")) >= 70:
         positives.append("Brand-fit profile aligns with site characteristics.")
     if _safe_float(candidate.get("economics_score")) >= 65:
@@ -1322,7 +1405,7 @@ def _top_positives_and_risks(
         risks.append("Cannibalization risk is elevated versus branch network.")
     if _safe_float(candidate.get("economics_score")) < 50:
         risks.append("Economics score is below preferred threshold.")
-    if _safe_float(candidate.get("delivery_competition_score")) >= 65:
+    if delivery_observed and _safe_float(candidate.get("delivery_competition_score")) >= 65:
         risks.append("Delivery competition intensity is high.")
     for gate in gate_reasons.get("failed") or []:
         label = _gate_key_to_label(gate)
@@ -1331,11 +1414,6 @@ def _top_positives_and_risks(
         label = _gate_key_to_label(gate)
         risks.append(f"{label.capitalize()} could not be verified from current data.")
     # Flag when delivery scores are inferred (no observed listings).
-    # Placed after gate risks so gate-specific mentions are not displaced.
-    delivery_observed = (
-        _safe_float(candidate.get("provider_density_score")) > 0
-        or _safe_float(candidate.get("multi_platform_presence_score")) > 0
-    )
     if not delivery_observed:
         risks.append("Delivery market data is inferred — no observed listings near site.")
     return positives[:5], risks[:6]
@@ -2502,14 +2580,14 @@ def run_expansion_search(
     candidates: list[dict[str, Any]] = []
     prepared: list[dict[str, Any]] = []
     rent_cache: dict[str | None, tuple[float, str]] = {}
-    district_lookup = _build_district_lookup(db)
+    district_lookup = _cached_district_lookup(db)
     # Check normalized Expansion Advisor tables first, then legacy OSM tables
-    ea_roads_populated = _ea_table_has_rows(db, _EA_ROADS_TABLE)
-    ea_parking_populated = _ea_table_has_rows(db, _EA_PARKING_TABLE)
-    ea_delivery_populated = _ea_table_has_rows(db, _EA_DELIVERY_TABLE)
-    ea_competitor_populated = _ea_table_has_rows(db, _EA_COMPETITOR_TABLE)
-    roads_table_available = ea_roads_populated or _table_available(db, "public.planet_osm_line")
-    parking_table_available = ea_parking_populated or _table_available(db, "public.planet_osm_polygon")
+    ea_roads_populated = _cached_ea_table_has_rows(db, _EA_ROADS_TABLE)
+    ea_parking_populated = _cached_ea_table_has_rows(db, _EA_PARKING_TABLE)
+    ea_delivery_populated = _cached_ea_table_has_rows(db, _EA_DELIVERY_TABLE)
+    ea_competitor_populated = _cached_ea_table_has_rows(db, _EA_COMPETITOR_TABLE)
+    roads_table_available = ea_roads_populated or _cached_table_available(db, "public.planet_osm_line")
+    parking_table_available = ea_parking_populated or _cached_table_available(db, "public.planet_osm_polygon")
     for row in rows:
       try:
         area_m2 = _safe_float(row.get("area_m2"))
@@ -3266,7 +3344,7 @@ def get_search(db: Session, search_id: str) -> dict[str, Any] | None:
 
 def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[str, str]] | None = None) -> list[dict[str, Any]]:
     if district_lookup is None:
-        district_lookup = _build_district_lookup(db)
+        district_lookup = _cached_district_lookup(db)
     rows = db.execute(
         text(
             """
@@ -3788,7 +3866,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
     if not row:
         return None
 
-    district_lookup = _build_district_lookup(db)
+    district_lookup = _cached_district_lookup(db)
     candidate = _normalize_candidate_payload(dict(row), district_lookup)
     brand_profile = get_brand_profile(db, str(candidate.get("search_id"))) or {}
     strengths = candidate.get("key_strengths_json") or []
@@ -3919,7 +3997,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     search = get_search(db, search_id)
     if not search:
         return None
-    district_lookup = _build_district_lookup(db)
+    district_lookup = _cached_district_lookup(db)
     t_lookup = time.monotonic()
     try:
         raw_candidates = get_candidates(db, search_id, district_lookup=district_lookup)
@@ -3993,8 +4071,12 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
         and not (c.get("gate_reasons_json") or {}).get("blocking_failures")
     ]
     best_pass = max(pass_candidates, key=lambda item: _safe_float(item.get("final_score"))) if pass_candidates else None
-    any_passing = len(pass_candidates) > 0
-    pass_count = len(pass_candidates)
+    # pass_count includes both hard-pass AND unknown-no-blocking-failure candidates,
+    # because the UI renders both as "Pass" badges.  Using only strict True would
+    # cause the summary to say "no candidate passes" while the UI shows Pass badges.
+    effective_pass_count = len(pass_candidates) + len(unknown_candidates)
+    any_passing = effective_pass_count > 0
+    pass_count = effective_pass_count
 
     top_payload: list[dict[str, Any]] = []
     for item in top:

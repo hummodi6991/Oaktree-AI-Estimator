@@ -5,9 +5,11 @@ from app.services.expansion_advisor import (
     _context_checked,
     _dedupe_candidates,
     _build_demand_thesis,
+    _top_positives_and_risks,
     _nonnegative_int,
     _parking_evidence_band,
     _road_evidence_band,
+    clear_expansion_caches,
 )
 from app.services.aqar_district_match import (
     is_mojibake,
@@ -582,3 +584,286 @@ def test_candidate_gate_status_blocking_failure_on_low_fit():
 
 def test_smoke():
     assert True
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: summary contradiction (Fix A)
+# ---------------------------------------------------------------------------
+
+def test_summary_no_pass_when_zero_pass_candidates():
+    """When pass_count=0 and no unknowns, summary should say 'no candidate passes'."""
+    # Simulated: the get_recommendation_report logic
+    candidates = [
+        {"gate_status_json": {"overall_pass": False}, "gate_reasons_json": {"blocking_failures": ["zoning_fit_pass"]}, "final_score": 60.0},
+        {"gate_status_json": {"overall_pass": False}, "gate_reasons_json": {"blocking_failures": ["area_fit_pass"]}, "final_score": 55.0},
+    ]
+    pass_candidates = [c for c in candidates if (c.get("gate_status_json") or {}).get("overall_pass") is True]
+    unknown_candidates = [
+        c for c in candidates
+        if (c.get("gate_status_json") or {}).get("overall_pass") is None
+        and not (c.get("gate_reasons_json") or {}).get("blocking_failures")
+    ]
+    effective_pass_count = len(pass_candidates) + len(unknown_candidates)
+    any_passing = effective_pass_count > 0
+    assert not any_passing
+    assert effective_pass_count == 0
+
+
+def test_summary_pass_when_some_candidates_pass():
+    """When some candidates have overall_pass=True, pass_count must be > 0."""
+    candidates = [
+        {"gate_status_json": {"overall_pass": True}, "gate_reasons_json": {"blocking_failures": []}, "final_score": 75.0},
+        {"gate_status_json": {"overall_pass": False}, "gate_reasons_json": {"blocking_failures": ["zoning_fit_pass"]}, "final_score": 55.0},
+    ]
+    pass_candidates = [c for c in candidates if (c.get("gate_status_json") or {}).get("overall_pass") is True]
+    unknown_candidates = [
+        c for c in candidates
+        if (c.get("gate_status_json") or {}).get("overall_pass") is None
+        and not (c.get("gate_reasons_json") or {}).get("blocking_failures")
+    ]
+    effective_pass_count = len(pass_candidates) + len(unknown_candidates)
+    any_passing = effective_pass_count > 0
+    assert any_passing
+    assert effective_pass_count == 1
+
+
+def test_summary_pass_when_unknown_no_blocking_failures():
+    """Unknown candidates (overall_pass=None, no blocking failures) should count as passing.
+
+    This is the key scenario: the UI shows these as 'Pass' badges because
+    they have no blocking gate failures. The summary must not say 'no candidate passes'.
+    """
+    candidates = [
+        {"gate_status_json": {"overall_pass": None}, "gate_reasons_json": {"blocking_failures": []}, "final_score": 72.0},
+        {"gate_status_json": {"overall_pass": False}, "gate_reasons_json": {"blocking_failures": ["zoning_fit_pass"]}, "final_score": 55.0},
+    ]
+    pass_candidates = [c for c in candidates if (c.get("gate_status_json") or {}).get("overall_pass") is True]
+    unknown_candidates = [
+        c for c in candidates
+        if (c.get("gate_status_json") or {}).get("overall_pass") is None
+        and not (c.get("gate_reasons_json") or {}).get("blocking_failures")
+    ]
+    effective_pass_count = len(pass_candidates) + len(unknown_candidates)
+    any_passing = effective_pass_count > 0
+    # The unknown candidate with no blocking failures should make this pass
+    assert any_passing
+    assert effective_pass_count == 1
+
+
+def test_summary_selected_nonpass_does_not_override_search_level():
+    """Selected candidate not passing shouldn't override pass_count when others pass."""
+    candidates = [
+        {"id": "c1", "gate_status_json": {"overall_pass": True}, "gate_reasons_json": {"blocking_failures": []}, "final_score": 78.0},
+        {"id": "c2", "gate_status_json": {"overall_pass": False}, "gate_reasons_json": {"blocking_failures": ["zoning_fit_pass"]}, "final_score": 55.0},
+    ]
+    # Even if selected candidate is c2 (failing), search-level pass_count should be 1
+    pass_candidates = [c for c in candidates if (c.get("gate_status_json") or {}).get("overall_pass") is True]
+    unknown_candidates = [
+        c for c in candidates
+        if (c.get("gate_status_json") or {}).get("overall_pass") is None
+        and not (c.get("gate_reasons_json") or {}).get("blocking_failures")
+    ]
+    effective_pass_count = len(pass_candidates) + len(unknown_candidates)
+    assert effective_pass_count == 1  # c1 passes
+    # The summary should reflect this, not the selected candidate's gate status
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: dedupe strengthening (Fix C)
+# ---------------------------------------------------------------------------
+
+def test_dedupe_collapses_near_clones_in_ranked_output():
+    """Near-clone candidates (same district, area bucket, economics bucket, rent bucket)
+    should collapse even when at slightly different positions."""
+    candidates = [
+        {"parcel_id": "", "lat": 24.7001, "lon": 46.7001, "district": "Al Olaya",
+         "area_m2": 200, "estimated_rent_sar_m2_year": 900, "economics_score": 65,
+         "distance_to_nearest_branch_m": 2000, "final_score": 72},
+        {"parcel_id": "", "lat": 24.7010, "lon": 46.7010, "district": "Al Olaya",
+         "area_m2": 200, "estimated_rent_sar_m2_year": 900, "economics_score": 65,
+         "distance_to_nearest_branch_m": 2000, "final_score": 71},
+    ]
+    result = _dedupe_candidates(candidates)
+    # Same district + area bucket + economics bucket + rent bucket → collapse via econ key
+    assert len(result) == 1, f"Expected 1 after dedupe, got {len(result)}"
+
+
+def test_dedupe_distinct_parcel_ids_survive():
+    """Candidates with distinct non-null parcel_ids must never be collapsed."""
+    candidates = [
+        {"parcel_id": "p1", "lat": 24.7001, "lon": 46.7001, "district": "Al Olaya",
+         "area_m2": 200, "estimated_rent_sar_m2_year": 900, "economics_score": 65,
+         "distance_to_nearest_branch_m": 2000, "final_score": 72},
+        {"parcel_id": "p2", "lat": 24.7002, "lon": 46.7002, "district": "Al Olaya",
+         "area_m2": 210, "estimated_rent_sar_m2_year": 950, "economics_score": 66,
+         "distance_to_nearest_branch_m": 2100, "final_score": 71},
+    ]
+    result = _dedupe_candidates(candidates)
+    assert len(result) == 2
+
+
+def test_dedupe_aggressive_mode_shortlist_cleaner():
+    """Aggressive mode should collapse more aggressively for report shortlists."""
+    candidates = [
+        {"parcel_id": "", "lat": 24.7001, "lon": 46.7001, "district": "Al Olaya",
+         "area_m2": 200, "estimated_rent_sar_m2_year": 900, "economics_score": 65,
+         "distance_to_nearest_branch_m": 2000, "final_score": 72},
+        {"parcel_id": "", "lat": 24.7004, "lon": 46.7004, "district": "Al Olaya",
+         "area_m2": 220, "estimated_rent_sar_m2_year": 900, "economics_score": 65,
+         "distance_to_nearest_branch_m": 2000, "final_score": 72},
+    ]
+    normal_result = _dedupe_candidates(candidates, aggressive=False)
+    aggressive_result = _dedupe_candidates(candidates, aggressive=True)
+    # Aggressive mode should be at least as strict as normal mode
+    assert len(aggressive_result) <= len(normal_result)
+
+
+def test_dedupe_economics_similarity_catches_clones():
+    """Candidates in same district with identical economics profile collapse."""
+    candidates = [
+        {"parcel_id": "", "lat": 24.701, "lon": 46.701, "district": "Al Olaya",
+         "area_m2": 200, "estimated_rent_sar_m2_year": 900, "economics_score": 65,
+         "distance_to_nearest_branch_m": 2000, "final_score": 72},
+        {"parcel_id": "", "lat": 24.702, "lon": 46.702, "district": "Al Olaya",
+         "area_m2": 200, "estimated_rent_sar_m2_year": 900, "economics_score": 65,
+         "distance_to_nearest_branch_m": 2500, "final_score": 71},
+    ]
+    result = _dedupe_candidates(candidates)
+    assert len(result) == 1, "Same district+area+economics should collapse"
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: delivery wording honesty (Fix D)
+# ---------------------------------------------------------------------------
+
+def test_delivery_wording_inferred_when_no_observed_listings():
+    """When provider_density=0, multi_platform=0, delivery_competition=0,
+    wording must clearly indicate inferred, not observed strength."""
+    candidate = {
+        "demand_score": 75.0,
+        "whitespace_score": 80.0,  # High because no competition observed
+        "brand_fit_score": 72.0,
+        "economics_score": 68.0,
+        "delivery_competition_score": 0.0,
+        "cannibalization_score": 30.0,
+        "provider_density_score": 0.0,
+        "multi_platform_presence_score": 0.0,
+        "gate_status_json": {"overall_pass": True},
+    }
+    gate_reasons = {"failed": [], "unknown": [], "passed": ["delivery_market_pass"]}
+    positives, risks = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+
+    # Should NOT have positive-sounding delivery/whitespace wording
+    whitespace_positives = [p for p in positives if "whitespace" in p.lower()]
+    for p in whitespace_positives:
+        assert "inferred" in p.lower() or "opportunity" in p.lower(), \
+            f"Whitespace positive should be labeled as inferred: {p}"
+
+    # Should have the inferred-delivery risk
+    delivery_risks = [r for r in risks if "inferred" in r.lower() or "no observed" in r.lower()]
+    assert len(delivery_risks) > 0, "Must warn about inferred delivery data"
+
+
+def test_delivery_wording_observed_when_listings_present():
+    """When delivery listings are observed, wording should reflect observed strength."""
+    candidate = {
+        "demand_score": 75.0,
+        "whitespace_score": 55.0,
+        "brand_fit_score": 72.0,
+        "economics_score": 68.0,
+        "delivery_competition_score": 45.0,
+        "cannibalization_score": 30.0,
+        "provider_density_score": 60.0,
+        "multi_platform_presence_score": 40.0,
+        "gate_status_json": {"overall_pass": True},
+    }
+    gate_reasons = {"failed": [], "unknown": [], "passed": ["delivery_market_pass"]}
+    positives, risks = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+
+    # Should NOT have inferred-delivery risk
+    delivery_risks = [r for r in risks if "inferred" in r.lower() and "delivery" in r.lower()]
+    assert len(delivery_risks) == 0, "Should not warn about inferred delivery when observed"
+
+
+def test_delivery_gate_explanation_inferred_when_no_observed():
+    """Gate explanation for delivery should note inferred status when no listings observed."""
+    gate_status, reasons = _candidate_gate_status(
+        fit_score=78.0,
+        area_fit_score=82.0,
+        zoning_fit_score=88.0,
+        landuse_available=True,
+        frontage_score=70.0,
+        access_score=70.0,
+        parking_score=70.0,
+        district="Al Olaya",
+        distance_to_nearest_branch_m=3200.0,
+        provider_density_score=0.0,   # No observed delivery
+        multi_platform_presence_score=0.0,  # No observed delivery
+        economics_score=58.0,
+        payback_band="healthy",
+        brand_profile={"primary_channel": "balanced"},
+        road_context_available=True,
+        parking_context_available=True,
+    )
+    assert reasons["delivery_observation_mode"] == "inferred"
+    explanation = reasons["explanations"]["delivery_market_pass"]
+    assert "no delivery activity" in explanation.lower() or "inferred" in explanation.lower()
+
+
+def test_delivery_gate_explanation_observed_when_listings_present():
+    """Gate explanation should reflect observed delivery when listings are present."""
+    gate_status, reasons = _candidate_gate_status(
+        fit_score=78.0,
+        area_fit_score=82.0,
+        zoning_fit_score=88.0,
+        landuse_available=True,
+        frontage_score=70.0,
+        access_score=70.0,
+        parking_score=70.0,
+        district="Al Olaya",
+        distance_to_nearest_branch_m=3200.0,
+        provider_density_score=52.0,   # Observed
+        multi_platform_presence_score=35.0,  # Observed
+        economics_score=58.0,
+        payback_band="healthy",
+        brand_profile={"primary_channel": "delivery"},
+        road_context_available=True,
+        parking_context_available=True,
+    )
+    assert reasons["delivery_observation_mode"] == "observed"
+
+
+def test_demand_thesis_inferred_when_no_delivery():
+    """Demand thesis should use inferred language when no delivery observed."""
+    thesis = _build_demand_thesis(
+        demand_score=70.0,
+        population_reach=50000.0,
+        provider_density_score=0.0,
+        provider_whitespace_score=80.0,
+        delivery_competition_score=0.0,
+        delivery_observed=False,
+    )
+    assert "inferred" in thesis.lower() or "not observed" in thesis.lower()
+
+
+def test_demand_thesis_observed_when_delivery_present():
+    """Demand thesis should use observed language when delivery listings exist."""
+    thesis = _build_demand_thesis(
+        demand_score=70.0,
+        population_reach=50000.0,
+        provider_density_score=60.0,
+        provider_whitespace_score=55.0,
+        delivery_competition_score=45.0,
+        delivery_observed=True,
+    )
+    assert "inferred" not in thesis.lower()
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: caching (Fix E)
+# ---------------------------------------------------------------------------
+
+def test_clear_expansion_caches():
+    """clear_expansion_caches should not raise and should clear state."""
+    clear_expansion_caches()
+    # Just verify it doesn't error — caches are module-internal

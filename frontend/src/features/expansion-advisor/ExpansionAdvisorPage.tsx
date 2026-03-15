@@ -271,14 +271,24 @@ export default function ExpansionAdvisorPage({
       setReport(result);
       setReportError(null);
     } catch (err) {
-      // Only show error for true fetch failures / non-2xx / backend exceptions.
-      // A 404 for a report that doesn't exist yet is not an error if search has results.
+      // Only show error for true network failures.
+      // A 404 means the search doesn't exist — soft-handle.
+      // A 500 with the new backend returns a sparse payload so this path
+      // should rarely fire, but if it does, only show "Unable to load"
+      // for genuine hard failures (network down, malformed response).
       const msg = err instanceof Error ? err.message : "";
-      console.warn("[expansion-report] report fetch failed", { searchId: targetSearchId, error: msg });
-      if (msg.startsWith("404")) {
-        console.info("[expansion-report] report not found (404) for search", targetSearchId);
+      console.warn("[expansion-report] report fetch failed", { searchId: targetSearchId, error: msg, status: msg.slice(0, 3) });
+      if (msg.startsWith("404") || msg.startsWith("422")) {
+        // Search not found or validation error — not a reportable error
+        console.info("[expansion-report] report not available (soft)", targetSearchId, msg.slice(0, 3));
+        setReport(null);
+      } else if (msg.startsWith("500")) {
+        // Backend error but search exists — set null report, don't show error banner
+        // since the backend now tries to return sparse payloads for 500s
+        console.warn("[expansion-report] backend error, clearing report", targetSearchId);
         setReport(null);
       } else {
+        // True network/fetch failure
         setReportError(t("expansionAdvisor.errorReport"));
       }
     } finally { setLoadingReport(false); }

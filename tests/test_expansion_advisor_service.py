@@ -619,6 +619,7 @@ def test_compare_includes_v61_fields():
 
 
 def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch):
+    expansion_service.clear_expansion_caches()
     candidate_rows = []
     for idx in range(120):
         candidate_rows.append(
@@ -674,7 +675,11 @@ def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch
             "data_completeness_score": 100,
         }
 
+    def _fake_ea_table_has_rows(_db, table_name):
+        return False
+
     monkeypatch.setattr(expansion_service, "_table_available", _fake_table_available)
+    monkeypatch.setattr(expansion_service, "_ea_table_has_rows", _fake_ea_table_has_rows)
     monkeypatch.setattr(expansion_service, "_candidate_feature_snapshot", _fake_snapshot)
 
     items = run_expansion_search(
