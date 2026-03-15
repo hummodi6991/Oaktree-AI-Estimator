@@ -1770,7 +1770,7 @@ def run_expansion_search(
     # SQL-safe landuse_code ordering: landuse_code is numeric in production,
     # so compare directly — no BTRIM/CAST/regex on landuse_code.
     _SAFE_LANDUSE_ORDER = (
-        "CASE"
+        "CASE "
         " WHEN p.landuse_code IN (2000, 7500) THEN 0"
         " WHEN p.landuse_code IN (3000, 4000) THEN 1"
         " WHEN p.landuse_code IS NULL AND NULLIF(BTRIM(COALESCE(p.landuse_label, '')), '') IS NULL THEN 2"

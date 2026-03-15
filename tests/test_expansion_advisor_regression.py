@@ -1073,6 +1073,25 @@ def test_candidate_sql_landuse_order_uses_direct_numeric_comparisons():
     ) or True  # structural guard — the explicit checks above are definitive
 
 
+def test_source_text_no_btrim_on_landuse_code():
+    """Direct source-text regression: the expansion_advisor module must contain
+    zero occurrences of BTRIM/CAST/NULLIF wrapping p.landuse_code.
+    Guards against reintroduction of the psycopg 500:
+    'function btrim(numeric) does not exist'."""
+    from pathlib import Path
+
+    src = Path("app/services/expansion_advisor.py").read_text()
+    for needle in [
+        "BTRIM(p.landuse_code)",
+        "CAST(BTRIM(p.landuse_code)",
+        "NULLIF(BTRIM(p.landuse_code)",
+        "CAST(p.landuse_code AS text)",
+    ]:
+        assert src.count(needle) == 0, (
+            f"Found {src.count(needle)} occurrence(s) of {needle!r} in source"
+        )
+
+
 def test_candidate_sql_landuse_ordering_semantics_unchanged():
     """The landuse ordering block must still rank 2000/7500 as 0 (best),
     3000/4000 as 1, NULL+blank-label as 2, and 1000 as 3."""
