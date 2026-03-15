@@ -1010,3 +1010,81 @@ def test_candidate_sql_includes_geojson_type_guard():
         "Missing geometry coordinates key check"
     assert "'Polygon', 'MultiPolygon'" in main_sql, \
         "Missing Polygon/MultiPolygon type filter"
+
+
+# ---------------------------------------------------------------------------
+# landuse_code SQL casts to text before BTRIM (integer column fix)
+# ---------------------------------------------------------------------------
+
+def test_candidate_sql_casts_landuse_code_to_text_before_btrim():
+    """The generated candidate SQL must CAST(p.landuse_code AS text) before
+    calling BTRIM, so that integer columns don't crash with
+    'function btrim(integer) does not exist'."""
+    captured_sql = []
+
+    class _CapturingDB(_FakeDB):
+        def execute(self, stmt, params=None):
+            sql_text = stmt.text if hasattr(stmt, "text") else str(stmt)
+            captured_sql.append(sql_text)
+            return super().execute(stmt, params)
+
+    db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
+    run_expansion_search(
+        db,
+        search_id="test-landuse-cast",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+
+    candidate_sqls = [s for s in captured_sql if "FROM candidate_base" in s]
+    assert candidate_sqls, "Expected at least one candidate SQL query"
+    main_sql = candidate_sqls[0]
+
+    # Must NOT contain raw BTRIM(p.landuse_code) — only BTRIM(CAST(... AS text))
+    assert "BTRIM(p.landuse_code)" not in main_sql, (
+        "Raw BTRIM(p.landuse_code) still present — integer column will crash"
+    )
+    assert "BTRIM(CAST(p.landuse_code AS text))" in main_sql, (
+        "Missing CAST(p.landuse_code AS text) before BTRIM"
+    )
+
+
+def test_candidate_sql_landuse_ordering_semantics_unchanged():
+    """The landuse ordering block must still rank 2000/7500 as 0 (best),
+    3000/4000 as 1, NULL as 2, and 1000 as 3."""
+    captured_sql = []
+
+    class _CapturingDB(_FakeDB):
+        def execute(self, stmt, params=None):
+            sql_text = stmt.text if hasattr(stmt, "text") else str(stmt)
+            captured_sql.append(sql_text)
+            return super().execute(stmt, params)
+
+    db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
+    run_expansion_search(
+        db,
+        search_id="test-landuse-order",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+
+    candidate_sqls = [s for s in captured_sql if "FROM candidate_base" in s]
+    assert candidate_sqls
+    main_sql = candidate_sqls[0]
+
+    # 2000, 7500 → rank 0 (commercial / mixed-use preferred)
+    assert "IN (2000, 7500) THEN 0" in main_sql
+    # 3000, 4000 → rank 1
+    assert "IN (3000, 4000) THEN 1" in main_sql
+    # 1000 → rank 3 (residential deprioritised)
+    assert "= 1000 THEN 3" in main_sql
