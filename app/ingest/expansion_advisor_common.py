@@ -68,6 +68,23 @@ def table_row_count(db: Session, table_name: str) -> int:
         return 0
 
 
+def get_table_columns(db: Session, table_name: str, schema: str = "public") -> set[str]:
+    """Return the set of column names for *table_name* (lower-cased)."""
+    try:
+        rows = db.execute(
+            text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = :schema AND table_name = :table
+            """),
+            {"schema": schema, "table": table_name},
+        ).fetchall()
+        return {r[0].lower() for r in rows}
+    except Exception:
+        db.rollback()
+        return set()
+
+
 def detect_srid(db: Session, table_name: str, geom_col: str = "geom") -> int:
     """Detect the SRID of a geometry column. Returns 4326 as fallback."""
     try:
