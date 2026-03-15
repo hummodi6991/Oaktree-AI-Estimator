@@ -1,0 +1,87 @@
+name: "Expansion Advisor Data — Delivery Marketplace"
+
+on:
+  schedule:
+    - cron: "0 5 * * 3"  # Weekly on Wednesday at 05:00 UTC
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Comma-separated platform list"
+        required: false
+        default: "hungerstation,jahez,keeta,talabat,mrsool"
+      allow_empty:
+        description: "Allow zero rows without failing"
+        required: false
+        default: "false"
+      refresh_after:
+        description: "Run post-ingestion refresh"
+        required: false
+        default: "true"
+
+jobs:
+  ingest-delivery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT || '5432' }}
+      PGSSLMODE: ${{ secrets.PGSSLMODE || 'require' }}
+      ALLOW_EMPTY_DELIVERY_INGEST: ${{ github.event.inputs.allow_empty || 'false' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python requirements
+        run: pip install -r requirements.txt
+
+      - name: Run alembic upgrade
+        run: python -m alembic upgrade head
+
+      - name: Run Delivery Marketplace ingest
+        run: |
+          python -m app.ingest.expansion_advisor_delivery \
+            --platforms "${{ github.event.inputs.platforms || 'hungerstation,jahez,keeta,talabat,mrsool' }}" \
+            --write-stats /tmp/delivery-stats.json \
+            ${{ github.event.inputs.allow_empty == 'true' && '--allow-empty' || '' }}
+
+      - name: Fail on zero useful ingest
+        run: |
+          ALLOW="${{ github.event.inputs.allow_empty || 'false' }}"
+          if [ "$ALLOW" != "true" ]; then
+            INSERTED=$(python -c "
+          import json
+          with open('/tmp/delivery-stats.json') as f:
+              d = json.load(f)
+              print(d.get('inserted', 0))
+          " 2>/dev/null || echo "0")
+            if [ "$INSERTED" = "0" ]; then
+              echo "ERROR: All requested platforms produced zero useful rows"
+              exit 1
+            fi
+          fi
+
+      - name: Run post-ingestion refresh
+        if: ${{ github.event.inputs.refresh_after != 'false' }}
+        run: |
+          python -m app.ingest.expansion_advisor_refresh \
+            --skip-alembic \
+            --write-stats /tmp/refresh-stats.json
+
+      - name: Upload structured JSON stats artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: expansion-advisor-delivery-stats
+          path: /tmp/*-stats.json
+          retention-days: 30

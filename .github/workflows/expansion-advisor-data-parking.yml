@@ -1,0 +1,75 @@
+name: "Expansion Advisor Data — Parking Context"
+
+on:
+  schedule:
+    - cron: "0 4 * * 2"  # Weekly on Tuesday at 04:00 UTC (offset from roads)
+  workflow_dispatch:
+    inputs:
+      replace_mode:
+        description: "Replace existing Riyadh rows"
+        required: false
+        default: "true"
+      refresh_after:
+        description: "Run post-ingestion refresh"
+        required: false
+        default: "true"
+
+jobs:
+  ingest-parking:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT || '5432' }}
+      PGSSLMODE: ${{ secrets.PGSSLMODE || 'require' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python requirements
+        run: pip install -r requirements.txt
+
+      - name: Run alembic upgrade
+        run: python -m alembic upgrade head
+
+      - name: Run Parking Context ingest
+        run: |
+          python -m app.ingest.expansion_advisor_parking \
+            --replace ${{ github.event.inputs.replace_mode || 'true' }} \
+            --write-stats /tmp/parking-stats.json
+
+      - name: Run post-ingestion refresh
+        if: ${{ github.event.inputs.refresh_after != 'false' }}
+        run: |
+          python -m app.ingest.expansion_advisor_refresh \
+            --skip-alembic \
+            --write-stats /tmp/refresh-stats.json
+
+      - name: Print row counts
+        run: |
+          python -c "
+          from app.db.session import engine
+          from sqlalchemy import text
+          with engine.connect() as c:
+              r = c.execute(text('SELECT COUNT(*) FROM expansion_parking_asset')).scalar()
+              print(f'expansion_parking_asset: {r} rows')
+          "
+
+      - name: Upload stats artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: expansion-advisor-parking-stats
+          path: /tmp/*-stats.json
+          retention-days: 30

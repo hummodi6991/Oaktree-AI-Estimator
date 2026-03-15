@@ -1,0 +1,108 @@
+name: "Expansion Advisor Data — Roads & Access"
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"  # Weekly on Monday at 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      pbf_url:
+        description: "PBF URL for OSM import"
+        required: false
+        default: "https://download.geofabrik.de/asia/saudi-arabia-latest.osm.pbf"
+      replace_mode:
+        description: "Replace existing Riyadh rows"
+        required: false
+        default: "true"
+      refresh_after:
+        description: "Run post-ingestion refresh"
+        required: false
+        default: "true"
+
+jobs:
+  ingest-roads:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT || '5432' }}
+      PGSSLMODE: ${{ secrets.PGSSLMODE || 'require' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osm2pgsql osmium-tool postgresql-client libgeos-dev
+
+      - name: Install Python requirements
+        run: pip install -r requirements.txt
+
+      - name: Configure DB with SSL
+        run: |
+          echo "DB connection configured via env vars"
+
+      - name: Run alembic upgrade
+        run: python -m alembic upgrade head
+
+      - name: Import OSM data if needed
+        run: |
+          PBF_URL="${{ github.event.inputs.pbf_url || 'https://download.geofabrik.de/asia/saudi-arabia-latest.osm.pbf' }}"
+          echo "PBF URL: $PBF_URL"
+          # Only import if planet_osm_line is empty or missing
+          ROW_COUNT=$(python -c "
+          from app.db.session import engine
+          from sqlalchemy import text
+          with engine.connect() as c:
+              try:
+                  r = c.execute(text('SELECT COUNT(*) FROM planet_osm_line LIMIT 1')).scalar()
+                  print(r)
+              except: print(0)
+          " 2>/dev/null || echo "0")
+          echo "Current planet_osm_line rows: $ROW_COUNT"
+          if [ "$ROW_COUNT" = "0" ]; then
+            echo "OSM data needs import — this should be handled by the osm-import workflow"
+            echo "Skipping OSM import in this workflow; using existing data"
+          fi
+
+      - name: Run Roads & Access ingest
+        run: |
+          python -m app.ingest.expansion_advisor_roads \
+            --replace ${{ github.event.inputs.replace_mode || 'true' }} \
+            --write-stats /tmp/roads-stats.json
+
+      - name: Run post-ingestion refresh
+        if: ${{ github.event.inputs.refresh_after != 'false' }}
+        run: |
+          python -m app.ingest.expansion_advisor_refresh \
+            --skip-alembic \
+            --write-stats /tmp/refresh-stats.json
+
+      - name: Print row counts
+        run: |
+          python -c "
+          from app.db.session import engine
+          from sqlalchemy import text
+          with engine.connect() as c:
+              r = c.execute(text('SELECT COUNT(*) FROM expansion_road_context')).scalar()
+              print(f'expansion_road_context: {r} rows')
+          "
+
+      - name: Upload stats artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: expansion-advisor-roads-stats
+          path: /tmp/*-stats.json
+          retention-days: 30

@@ -1,0 +1,117 @@
+name: "Expansion Advisor Data — Retail Rent & Lease Comps"
+
+on:
+  schedule:
+    - cron: "0 6 * * 4"  # Weekly on Thursday at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      kaggle_dataset:
+        description: "Kaggle dataset slug (optional)"
+        required: false
+        default: ""
+      csv_url:
+        description: "Direct CSV URL (optional)"
+        required: false
+        default: ""
+      local_path:
+        description: "Local CSV file path (optional)"
+        required: false
+        default: ""
+      replace_mode:
+        description: "Replace existing rows"
+        required: false
+        default: "true"
+      refresh_after:
+        description: "Run post-ingestion refresh"
+        required: false
+        default: "true"
+
+jobs:
+  ingest-rent-comps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT || '5432' }}
+      PGSSLMODE: ${{ secrets.PGSSLMODE || 'require' }}
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python requirements
+        run: pip install -r requirements.txt
+
+      - name: Install Kaggle CLI if needed
+        if: ${{ github.event.inputs.kaggle_dataset != '' || secrets.KAGGLE_USERNAME != '' }}
+        run: pip install kaggle
+
+      - name: Configure Kaggle credentials
+        if: ${{ secrets.KAGGLE_USERNAME != '' }}
+        run: |
+          mkdir -p ~/.kaggle
+          echo '{"username":"${{ secrets.KAGGLE_USERNAME }}","key":"${{ secrets.KAGGLE_KEY }}"}' > ~/.kaggle/kaggle.json
+          chmod 600 ~/.kaggle/kaggle.json
+
+      - name: Run alembic upgrade
+        run: python -m alembic upgrade head
+
+      - name: Run Rent Comps ingest
+        run: |
+          ARGS="--replace ${{ github.event.inputs.replace_mode || 'true' }} --write-stats /tmp/rent-stats.json"
+          KAGGLE="${{ github.event.inputs.kaggle_dataset }}"
+          CSV_URL="${{ github.event.inputs.csv_url }}"
+          LOCAL="${{ github.event.inputs.local_path }}"
+          if [ -n "$KAGGLE" ]; then
+            ARGS="$ARGS --kaggle-dataset $KAGGLE"
+          elif [ -n "$CSV_URL" ]; then
+            ARGS="$ARGS --csv-url $CSV_URL"
+          elif [ -n "$LOCAL" ]; then
+            ARGS="$ARGS --local-path $LOCAL"
+          fi
+          python -m app.ingest.expansion_advisor_rent_comps $ARGS
+
+      - name: Run post-ingestion refresh
+        if: ${{ github.event.inputs.refresh_after != 'false' }}
+        run: |
+          python -m app.ingest.expansion_advisor_refresh \
+            --skip-alembic \
+            --write-stats /tmp/refresh-stats.json
+
+      - name: Print district medians
+        run: |
+          python -c "
+          from app.db.session import engine
+          from sqlalchemy import text
+          with engine.connect() as c:
+              rows = c.execute(text('''
+                  SELECT district,
+                         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY rent_sar_m2_year) AS median
+                  FROM expansion_rent_comp
+                  WHERE city = '\''riyadh'\'' AND rent_sar_m2_year IS NOT NULL AND rent_sar_m2_year > 0
+                  GROUP BY district
+                  ORDER BY median DESC
+              ''')).fetchall()
+              for r in rows:
+                  print(f'{r[0] or \"(unknown)\"}: {r[1]:.2f} SAR/m²/year')
+          "
+
+      - name: Upload stats artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: expansion-advisor-rent-comps-stats
+          path: /tmp/*-stats.json
+          retention-days: 30
