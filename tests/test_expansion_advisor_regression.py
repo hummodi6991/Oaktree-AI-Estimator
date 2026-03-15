@@ -831,11 +831,17 @@ def test_candidate_sql_uses_safe_coord_regex():
     assert "pd.lon::float" not in main_sql, "Unsafe pd.lon::float cast still present"
     assert "pd.lat::float" not in main_sql, "Unsafe pd.lat::float cast still present"
 
-    # Must contain the safe regex pattern for coordinate validation
-    assert "BTRIM(dsr.lon)" in main_sql, "Missing BTRIM for dsr.lon"
-    assert "BTRIM(dsr.lat)" in main_sql, "Missing BTRIM for dsr.lat"
-    assert "BTRIM(pd.lon)" in main_sql, "Missing BTRIM for pd.lon"
-    assert "BTRIM(pd.lat)" in main_sql, "Missing BTRIM for pd.lat"
+    # Must contain the numeric-safe BTRIM(CAST(...)) pattern for coordinate validation
+    assert "BTRIM(CAST(dsr.lon AS text))" in main_sql, "Missing BTRIM(CAST()) for dsr.lon"
+    assert "BTRIM(CAST(dsr.lat AS text))" in main_sql, "Missing BTRIM(CAST()) for dsr.lat"
+    assert "BTRIM(CAST(pd.lon AS text))" in main_sql, "Missing BTRIM(CAST()) for pd.lon"
+    assert "BTRIM(CAST(pd.lat AS text))" in main_sql, "Missing BTRIM(CAST()) for pd.lat"
+
+    # Must NOT contain raw BTRIM on numeric columns (would crash with psycopg)
+    assert "BTRIM(pd.lon)" not in main_sql, "Raw BTRIM(pd.lon) still present — numeric column will crash"
+    assert "BTRIM(pd.lat)" not in main_sql, "Raw BTRIM(pd.lat) still present — numeric column will crash"
+    assert "BTRIM(dsr.lon)" not in main_sql, "Raw BTRIM(dsr.lon) still present — numeric column will crash"
+    assert "BTRIM(dsr.lat)" not in main_sql, "Raw BTRIM(dsr.lat) still present — numeric column will crash"
 
     # Must contain the numeric regex pattern
     assert re.search(r"\^\[-\+\]\?\[0-9\]", main_sql), (
@@ -1109,3 +1115,49 @@ def test_candidate_sql_landuse_ordering_semantics_unchanged():
     assert "p.landuse_code IS NULL" in main_sql
     # 1000 → rank 3 (residential deprioritised)
     assert "= 1000 THEN 3" in main_sql
+
+
+# ---------------------------------------------------------------------------
+# Numeric-backed coord columns: BTRIM must wrap CAST to text first
+# ---------------------------------------------------------------------------
+
+def test_candidate_sql_coord_btrim_wraps_cast_to_text():
+    """BTRIM on coordinate columns must use BTRIM(CAST(alias.col AS text))
+    to avoid 'function btrim(numeric) does not exist' on numeric-backed
+    lon/lat columns (population_density, delivery_source_record)."""
+    captured_sql = []
+
+    class _CapturingDB(_FakeDB):
+        def execute(self, stmt, params=None):
+            sql_text = stmt.text if hasattr(stmt, "text") else str(stmt)
+            captured_sql.append(sql_text)
+            return super().execute(stmt, params)
+
+    db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
+    run_expansion_search(
+        db,
+        search_id="test-coord-cast",
+        brand_name="TestBrand",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=500,
+        target_area_m2=200,
+        limit=10,
+    )
+
+    candidate_sqls = [s for s in captured_sql if "FROM candidate_base" in s]
+    assert candidate_sqls, "Expected at least one candidate SQL query"
+    main_sql = candidate_sqls[0]
+
+    # Raw BTRIM on coord columns must be absent (these crash on numeric cols)
+    for alias in ("pd", "dsr"):
+        for col in ("lon", "lat"):
+            raw_pattern = f"BTRIM({alias}.{col})"
+            safe_pattern = f"BTRIM(CAST({alias}.{col} AS text))"
+            assert raw_pattern not in main_sql, (
+                f"Raw {raw_pattern} still present — will crash on numeric column"
+            )
+            assert safe_pattern in main_sql, (
+                f"Missing numeric-safe {safe_pattern} in generated SQL"
+            )
