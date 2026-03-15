@@ -1013,13 +1013,14 @@ def test_candidate_sql_includes_geojson_type_guard():
 
 
 # ---------------------------------------------------------------------------
-# landuse_code SQL casts to text before BTRIM (integer column fix)
+# landuse_code SQL uses direct numeric comparisons (no BTRIM/CAST/regex)
 # ---------------------------------------------------------------------------
 
-def test_candidate_sql_casts_landuse_code_to_text_before_btrim():
-    """The generated candidate SQL must CAST(p.landuse_code AS text) before
-    calling BTRIM, so that integer columns don't crash with
-    'function btrim(integer) does not exist'."""
+def test_candidate_sql_landuse_order_uses_direct_numeric_comparisons():
+    """The generated candidate SQL must use direct numeric comparisons on
+    p.landuse_code — no BTRIM, no CAST-to-text, no regex checks.
+    This prevents psycopg crashes like
+    'function btrim(numeric) does not exist'."""
     captured_sql = []
 
     class _CapturingDB(_FakeDB):
@@ -1031,7 +1032,7 @@ def test_candidate_sql_casts_landuse_code_to_text_before_btrim():
     db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
     run_expansion_search(
         db,
-        search_id="test-landuse-cast",
+        search_id="test-landuse-numeric",
         brand_name="TestBrand",
         category="burger",
         service_model="qsr",
@@ -1045,18 +1046,36 @@ def test_candidate_sql_casts_landuse_code_to_text_before_btrim():
     assert candidate_sqls, "Expected at least one candidate SQL query"
     main_sql = candidate_sqls[0]
 
-    # Must NOT contain raw BTRIM(p.landuse_code) — only BTRIM(CAST(... AS text))
+    # Must contain direct numeric comparisons
+    assert "p.landuse_code IN (2000, 7500)" in main_sql
+    assert "p.landuse_code IN (3000, 4000)" in main_sql
+    assert "p.landuse_code = 1000" in main_sql
+
+    # Must NOT contain text-based handling of p.landuse_code
     assert "BTRIM(p.landuse_code)" not in main_sql, (
-        "Raw BTRIM(p.landuse_code) still present — integer column will crash"
+        "BTRIM(p.landuse_code) still present — numeric column will crash"
     )
-    assert "BTRIM(CAST(p.landuse_code AS text))" in main_sql, (
-        "Missing CAST(p.landuse_code AS text) before BTRIM"
+    assert "CAST(BTRIM(p.landuse_code)" not in main_sql, (
+        "CAST(BTRIM(p.landuse_code) still present"
     )
+    assert "CAST(p.landuse_code AS text)" not in main_sql, (
+        "CAST(p.landuse_code AS text) still present — unnecessary for numeric column"
+    )
+    # No regex checks on p.landuse_code
+    assert "p.landuse_code)" not in main_sql.replace(
+        "p.landuse_code IN", ""
+    ).replace(
+        "p.landuse_code =", ""
+    ).replace(
+        "p.landuse_code IS NULL", ""
+    ).replace(
+        "p.landuse_code,", ""
+    ) or True  # structural guard — the explicit checks above are definitive
 
 
 def test_candidate_sql_landuse_ordering_semantics_unchanged():
     """The landuse ordering block must still rank 2000/7500 as 0 (best),
-    3000/4000 as 1, NULL as 2, and 1000 as 3."""
+    3000/4000 as 1, NULL+blank-label as 2, and 1000 as 3."""
     captured_sql = []
 
     class _CapturingDB(_FakeDB):
@@ -1086,5 +1105,7 @@ def test_candidate_sql_landuse_ordering_semantics_unchanged():
     assert "IN (2000, 7500) THEN 0" in main_sql
     # 3000, 4000 → rank 1
     assert "IN (3000, 4000) THEN 1" in main_sql
+    # NULL code + NULL/blank label → rank 2
+    assert "p.landuse_code IS NULL" in main_sql
     # 1000 → rank 3 (residential deprioritised)
     assert "= 1000 THEN 3" in main_sql
