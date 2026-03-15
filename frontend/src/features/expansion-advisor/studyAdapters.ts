@@ -559,7 +559,7 @@ export function deriveDecisionChecklist(
       const estimatedSuffix = isEstimated ? " (estimated)" : "";
       items.push({
         category: "site_fit",
-        label: `${key.charAt(0).toUpperCase() + key.slice(1)} gate${estimatedSuffix}`,
+        label: `${humanGateLabel(gateKey)} gate${estimatedSuffix}`,
         status: gateVal === true ? "strong" : gateVal === null || gateVal === undefined || isEstimated ? "verify" : "risk",
       });
     } else if ((candidate as Record<string, unknown>)[scoreKey] != null) {
@@ -567,13 +567,13 @@ export function deriveDecisionChecklist(
       if (isEstimated) {
         items.push({
           category: "site_fit",
-          label: `${key.charAt(0).toUpperCase() + key.slice(1)} score: ${Math.round(val)} (estimated)`,
+          label: `${humanGateLabel(gateKey)} score: ${Math.round(val)} (estimated)`,
           status: "verify",
         });
       } else {
         items.push({
           category: "site_fit",
-          label: `${key.charAt(0).toUpperCase() + key.slice(1)} score: ${Math.round(val)}`,
+          label: `${humanGateLabel(gateKey)} score: ${Math.round(val)}`,
           status: val >= 70 ? "strong" : val >= 40 ? "caution" : "risk",
         });
       }
@@ -858,7 +858,7 @@ export function deriveValidationPlan(
   // Add unknown gate items as must-verify
   if (reasons?.unknown) {
     for (const u of reasons.unknown) {
-      const label = u.replace(/_/g, " ");
+      const label = humanGateLabel(u);
       if (!items.some((i) => i.label.toLowerCase().includes(label.toLowerCase()))) {
         items.push({ priority: "must_verify", label: `Verify: ${label}`, detail: "Data unavailable — field verification required" });
       }
@@ -868,7 +868,7 @@ export function deriveValidationPlan(
   // Add missing context sources as nice-to-confirm
   if (snapshot?.missing_context) {
     for (const m of snapshot.missing_context) {
-      const label = m.replace(/_/g, " ");
+      const label = humanGateLabel(m);
       if (!items.some((i) => i.label.toLowerCase().includes(label.toLowerCase()))) {
         items.push({ priority: "nice_to_confirm", label: `Verify: ${label}`, detail: "Not available from current data sources" });
       }
@@ -1119,7 +1119,7 @@ export function formatLandlordBriefingText(
   const parcelId = candidate.parcel_id || "—";
   const rank = candidate.rank_position || "?";
   const rentM2 = candidate.estimated_rent_sar_m2_year ? `${Math.round(candidate.estimated_rent_sar_m2_year)} SAR/m²/yr` : "TBD";
-  const annualRent = candidate.estimated_annual_rent_sar ? `${Math.round(candidate.estimated_annual_rent_sar).toLocaleString()} SAR/yr` : "TBD";
+  const annualRent = (candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar) ? `${Math.round(candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar!).toLocaleString()} SAR/yr` : "TBD";
   const format = report?.recommendation?.best_format || memo?.recommendation?.best_use_case || "F&B outlet";
   const gatePass = candidate.gate_status_json?.overall_pass;
   const gateLabel = gatePass === true ? "All gates passed" : gatePass === false ? "Some gates require review" : "Gates pending verification";

@@ -14,6 +14,7 @@ export function triggerReportCandidateSelect(candidateId: string | undefined, on
 export default function ExpansionReportPanel({
   report,
   loading,
+  error,
   leadCandidateId,
   leadCandidate,
   memo,
@@ -22,6 +23,7 @@ export default function ExpansionReportPanel({
 }: {
   report: RecommendationReportResponse | null;
   loading: boolean;
+  error?: string | null;
   leadCandidateId?: string | null;
   leadCandidate?: ExpansionCandidate | null;
   memo?: CandidateMemoResponse | null;
@@ -32,7 +34,7 @@ export default function ExpansionReportPanel({
   const [presentationMode, setPresentationMode] = useState(false);
 
   // Only hide when truly nothing — not for sparse payloads
-  if (!report && !loading) return null;
+  if (!report && !loading && !error) return null;
 
   return (
     <div className="ea-drawer-backdrop" onClick={() => onClose?.()}>
@@ -53,6 +55,7 @@ export default function ExpansionReportPanel({
         </div>
         <div className="ea-drawer__body">
           {loading && <div className="ea-state ea-state--loading">{t("expansionAdvisor.loadingReport")}</div>}
+          {error && !loading && <div className="ea-state ea-state--error">{error}</div>}
 
           {report && (() => {
             const rec = report.recommendation || {};

@@ -79,7 +79,7 @@ const DIMENSION_GROUPS: DimensionGroup[] = [
       { label: "Payback", key: "payback_band" },
       { label: "Payback months", key: "estimated_payback_months", fmt: "months" },
       { label: "Rent/m²/yr", key: "estimated_rent_sar_m2_year", fmt: "sar_m2_year" },
-      { label: "Annual rent", key: "estimated_annual_rent_sar", fmt: "sar" },
+      { label: "Annual rent", key: "display_annual_rent_sar", fmt: "sar" },
       { label: "Cannibalization", key: "cannibalization_score" },
     ],
   },
@@ -99,7 +99,7 @@ function findBestOnKey(items: Array<Record<string, unknown>>, key: string): stri
   if (!items.length) return null;
   if (key === "gate" || key === "confidence_grade" || key === "payback_band") return null;
   // For payback/cannibalization/rent, lower is better
-  const lowerIsBetter = key === "estimated_payback_months" || key === "cannibalization_score" || key === "estimated_rent_sar_m2_year" || key === "estimated_annual_rent_sar";
+  const lowerIsBetter = key === "estimated_payback_months" || key === "cannibalization_score" || key === "estimated_rent_sar_m2_year" || key === "estimated_annual_rent_sar" || key === "display_annual_rent_sar";
   let best: { id: string | null; val: number } = { id: null, val: lowerIsBetter ? Infinity : -Infinity };
   for (const item of items) {
     const raw = item[key];

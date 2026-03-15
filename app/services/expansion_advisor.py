@@ -495,6 +495,16 @@ def _normalize_candidate_payload(
     payload["demand_thesis"] = payload.get("demand_thesis") or ""
     payload["cost_thesis"] = payload.get("cost_thesis") or ""
 
+    # ── Display-consistent annual rent (presentation only) ──
+    # The UI rounds rent/m² to whole SAR for display.  Compute a matching
+    # annual figure so the user never sees e.g. "2,000 SAR/m² → SAR 384,008".
+    rent_per_m2 = _safe_float(payload.get("estimated_rent_sar_m2_year"))
+    area = _safe_float(payload.get("area_m2"))
+    if rent_per_m2 > 0 and area > 0:
+        payload["display_annual_rent_sar"] = round(round(rent_per_m2) * area, 2)
+    else:
+        payload["display_annual_rent_sar"] = payload.get("estimated_annual_rent_sar")
+
     # ── Canonical district fields (additive) ──
     # Only compute if not already present (avoids re-computing on double-normalize).
     if "district_display" not in payload:
@@ -1459,7 +1469,7 @@ def _confidence_grade(
     parking_context_available: bool = True,
     zoning_available: bool = True,
     delivery_observed: bool = True,
-    data_completeness_score: int | float = 100,
+    data_completeness_score: int | float = 0,
 ) -> str:
     adjusted = _safe_float(confidence_score)
     if district:
@@ -1483,8 +1493,9 @@ def _confidence_grade(
     if not parking_context_available:
         critical_missing += 1
 
-    # Also factor in data completeness
-    completeness = _safe_float(data_completeness_score, 100)
+    # Also factor in data completeness — default to 0 so missing
+    # completeness never inflates the grade.
+    completeness = _safe_float(data_completeness_score, 0)
 
     if adjusted >= 85.0 and critical_missing == 0 and completeness >= 85:
         return "A"
@@ -2805,6 +2816,8 @@ def run_expansion_search(
             exc_info=True,
         )
 
+    t_coarse_done = time.monotonic()
+
     prepared.sort(key=lambda item: item["preliminary_final_score"], reverse=True)
     shortlist_size = min(len(prepared), max(limit, 50))
     for prepared_item in prepared[:shortlist_size]:
@@ -3142,6 +3155,8 @@ def run_expansion_search(
             str(item.get("parcel_id", "")),
         )
 
+    t_enrich_done = time.monotonic()
+
     candidates.sort(key=_rank_sort_key)
     # Dedupe near-clone candidates before limiting
     candidates = _dedupe_candidates(candidates)
@@ -3320,12 +3335,14 @@ def run_expansion_search(
     t_persist_done = time.monotonic()
     t_end = time.monotonic()
     logger.info(
-        "expansion_search timing: total=%.2fs query=%.2fs scoring=%.2fs enrichment=%.2fs persist=%.2fs "
+        "expansion_search timing: total=%.2fs query=%.2fs coarse_score=%.2fs "
+        "enrichment=%.2fs persist=%.2fs normalize=%.2fs "
         "search_id=%s raw_rows=%d prepared=%d shortlisted=%d persisted=%d final=%d",
         t_end - t_start,
         t_query_done - t_start,
-        t_query_done - t_start,  # scoring happens during query phase
-        t_persist_done - t_query_done,
+        t_coarse_done - t_query_done,
+        t_enrich_done - t_coarse_done,
+        t_persist_done - t_enrich_done,
         t_end - t_persist_done,
         search_id,
         len(rows),

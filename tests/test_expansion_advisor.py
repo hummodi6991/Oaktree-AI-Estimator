@@ -5,6 +5,10 @@ from app.services.expansion_advisor import (
     _context_checked,
     _dedupe_candidates,
     _build_demand_thesis,
+    _gate_key_to_label,
+    _humanize_gate_list,
+    _normalize_candidate_payload,
+    _normalize_gate_reasons,
     _top_positives_and_risks,
     _nonnegative_int,
     _parking_evidence_band,
@@ -854,3 +858,208 @@ def test_clear_expansion_caches():
     """clear_expansion_caches should not raise and should clear state."""
     clear_expansion_caches()
     # Just verify it doesn't error — caches are module-internal
+
+
+# ---------------------------------------------------------------------------
+# Follow-up patch tests: gate label humanization
+# ---------------------------------------------------------------------------
+
+def test_gate_key_to_label_known_keys():
+    """Known gate keys map to human-readable labels."""
+    assert _gate_key_to_label("zoning_fit_pass") == "zoning fit"
+    assert _gate_key_to_label("economics_pass") == "economics"
+    assert _gate_key_to_label("delivery_market_pass") == "delivery market"
+    assert _gate_key_to_label("frontage_access_pass") == "frontage/access"
+
+
+def test_gate_key_to_label_unknown_key_fallback():
+    """Unknown gate keys strip _pass and underscores."""
+    result = _gate_key_to_label("some_new_gate_pass")
+    assert "_pass" not in result
+    assert "_" not in result
+
+
+def test_humanize_gate_list_deduplicates():
+    """Duplicate labels after humanization are removed."""
+    result = _humanize_gate_list(["zoning_fit_pass", "zoning_fit_pass", "economics_pass"])
+    assert result == ["zoning fit", "economics"]
+
+
+def test_humanize_gate_list_none_safe():
+    """None input returns empty list."""
+    assert _humanize_gate_list(None) == []
+
+
+def test_normalize_gate_reasons_humanizes_lists():
+    """_normalize_gate_reasons converts raw keys to human-readable labels."""
+    raw = {
+        "passed": ["zoning_fit_pass", "economics_pass"],
+        "failed": ["parking_pass"],
+        "unknown": ["delivery_market_pass"],
+        "thresholds": {},
+        "explanations": {},
+    }
+    result = _normalize_gate_reasons(raw)
+    assert result["passed"] == ["zoning fit", "economics"]
+    assert result["failed"] == ["parking"]
+    assert result["unknown"] == ["delivery market"]
+    # Verify no raw keys leaked through
+    for lst_name in ("passed", "failed", "unknown"):
+        for label in result[lst_name]:
+            assert "_pass" not in label, f"Raw key leaked in {lst_name}: {label}"
+
+
+def test_top_risks_never_show_raw_gate_keys():
+    """Risk text from _top_positives_and_risks should use human labels, not raw keys."""
+    candidate = {
+        "demand_score": 50.0,
+        "whitespace_score": 40.0,
+        "brand_fit_score": 50.0,
+        "economics_score": 40.0,
+        "delivery_competition_score": 0.0,
+        "cannibalization_score": 30.0,
+        "provider_density_score": 0.0,
+        "multi_platform_presence_score": 0.0,
+        "gate_status_json": {"overall_pass": False},
+    }
+    gate_reasons = {
+        "failed": ["zoning_fit_pass", "parking_pass"],
+        "unknown": ["frontage_access_pass"],
+        "passed": [],
+    }
+    _, risks = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+    for risk in risks:
+        assert "_pass" not in risk, f"Raw gate key leaked in risk text: {risk}"
+        assert "zoning_fit_pass" not in risk
+        assert "parking_pass" not in risk
+        assert "frontage_access_pass" not in risk
+
+
+# ---------------------------------------------------------------------------
+# Follow-up patch tests: completeness scoring
+# ---------------------------------------------------------------------------
+
+def test_completeness_below_100_when_zoning_unavailable():
+    """data_completeness_score < 100 when zoning context is unavailable."""
+    db = _FakeDB()
+    result = _candidate_feature_snapshot(
+        db,
+        **{**_SNAPSHOT_DEFAULTS, "landuse_label": "", "landuse_code": ""},
+    )
+    assert result["data_completeness_score"] < 100, \
+        f"Completeness should be < 100 with no zoning, got {result['data_completeness_score']}"
+    assert "zoning_context_unavailable" in result["missing_context"]
+
+
+def test_completeness_below_100_when_delivery_not_observed():
+    """data_completeness_score < 100 when no delivery listings observed."""
+    db = _FakeDB()
+    result = _candidate_feature_snapshot(
+        db,
+        **{**_SNAPSHOT_DEFAULTS, "provider_listing_count": 0, "provider_platform_count": 0},
+    )
+    assert result["data_completeness_score"] < 100, \
+        f"Completeness should be < 100 with no delivery, got {result['data_completeness_score']}"
+    assert "delivery_observation_unavailable" in result["missing_context"]
+
+
+def test_completeness_not_100_when_both_zoning_and_delivery_missing():
+    """Both zoning unavailable and delivery unobserved yields significantly less than 100."""
+    db = _FakeDB()
+    result = _candidate_feature_snapshot(
+        db,
+        **{
+            **_SNAPSHOT_DEFAULTS,
+            "landuse_label": "",
+            "landuse_code": "",
+            "provider_listing_count": 0,
+            "provider_platform_count": 0,
+        },
+    )
+    assert result["data_completeness_score"] < 80, \
+        f"Expected < 80% completeness, got {result['data_completeness_score']}"
+
+
+def test_confidence_grade_default_completeness_does_not_inflate():
+    """When data_completeness_score is not passed, grade should not inflate to A."""
+    # With the old default of 100, this would return A. With default 0, it should not.
+    grade = _confidence_grade(
+        confidence_score=90.0,
+        district="Al Olaya",
+        provider_platform_count=3,
+        multi_platform_presence_score=20.0,
+        rent_source="aqar",
+        road_context_available=True,
+        parking_context_available=True,
+        zoning_available=True,
+        delivery_observed=True,
+        # data_completeness_score omitted — should default to 0
+    )
+    assert grade != "A", "Grade should not be A when completeness defaults to 0"
+
+
+# ---------------------------------------------------------------------------
+# Follow-up patch tests: rent display consistency
+# ---------------------------------------------------------------------------
+
+def test_display_annual_rent_matches_rounded_rent_times_area():
+    """display_annual_rent_sar = round(rent/m²) × area for display consistency."""
+    candidate = {
+        "estimated_rent_sar_m2_year": 2000.04,
+        "area_m2": 192.0,
+        "estimated_annual_rent_sar": 2000.04 * 192.0,  # 384007.68
+    }
+    result = _normalize_candidate_payload(candidate)
+    # Displayed rent: round(2000.04) = 2000
+    # Display annual: 2000 × 192 = 384000
+    assert result["display_annual_rent_sar"] == 384000.0, \
+        f"Expected 384000, got {result['display_annual_rent_sar']}"
+    # Internal rent should be unchanged
+    assert result["estimated_annual_rent_sar"] == 2000.04 * 192.0
+
+
+def test_display_annual_rent_uses_exact_when_rent_is_whole():
+    """When rent is already a whole number, display and internal should match."""
+    candidate = {
+        "estimated_rent_sar_m2_year": 2000.0,
+        "area_m2": 200.0,
+        "estimated_annual_rent_sar": 400000.0,
+    }
+    result = _normalize_candidate_payload(candidate)
+    assert result["display_annual_rent_sar"] == 400000.0
+    assert result["estimated_annual_rent_sar"] == 400000.0
+
+
+def test_display_annual_rent_falls_back_when_missing():
+    """When rent/m² is zero or missing, display_annual_rent_sar falls back to internal."""
+    candidate = {
+        "estimated_rent_sar_m2_year": 0,
+        "area_m2": 200.0,
+        "estimated_annual_rent_sar": 0,
+    }
+    result = _normalize_candidate_payload(candidate)
+    assert result["display_annual_rent_sar"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Follow-up patch tests: bulk persistence with fallback
+# ---------------------------------------------------------------------------
+
+def test_chunked_helper():
+    """_chunked splits a list into fixed-size batches."""
+    from app.services.expansion_advisor import _chunked
+    data = list(range(10))
+    batches = list(_chunked(data, 3))
+    assert batches == [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
+
+
+def test_chunked_empty():
+    """_chunked on empty list returns empty iterator."""
+    from app.services.expansion_advisor import _chunked
+    assert list(_chunked([], 5)) == []
+
+
+def test_chunked_exact_fit():
+    """_chunked with exact multiple of size."""
+    from app.services.expansion_advisor import _chunked
+    assert list(_chunked([1, 2, 3, 4], 2)) == [[1, 2], [3, 4]]

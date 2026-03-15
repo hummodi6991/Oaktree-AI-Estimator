@@ -112,7 +112,7 @@ export default function ExpansionCandidateCard({
         </div>
         <div className="ea-candidate__metric">
           <span className="ea-candidate__metric-label">{t("expansionAdvisor.annualRent")}:</span>
-          <span>{fmtSAR(candidate.estimated_annual_rent_sar)}</span>
+          <span>{fmtSAR(candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar)}</span>
         </div>
         <div className="ea-candidate__metric">
           <span className="ea-candidate__metric-label">{t("expansionAdvisor.fitoutCost")}:</span>

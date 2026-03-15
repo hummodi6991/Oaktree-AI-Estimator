@@ -946,6 +946,7 @@ export default function ExpansionAdvisorPage({
         <ExpansionReportPanel
           report={report}
           loading={loadingReport}
+          error={reportError}
           leadCandidateId={leadCandidateId}
           leadCandidate={resolveCandidateById(candidates, leadCandidateId)}
           memo={leadCandidateId && selectedCandidate?.id === leadCandidateId ? memo : null}

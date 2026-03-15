@@ -118,6 +118,7 @@ export type ExpansionCandidate = {
   distance_to_nearest_branch_m?: number;
   estimated_rent_sar_m2_year?: number;
   estimated_annual_rent_sar?: number;
+  display_annual_rent_sar?: number;
   estimated_fitout_cost_sar?: number;
   estimated_revenue_index?: number;
   estimated_payback_months?: number;
@@ -294,6 +295,7 @@ export type RecommendationReportResponse = {
     lowest_cannibalization_candidate_id?: string;
     most_confident_candidate_id?: string;
     pass_count?: number;
+    validation_clear_count?: number;
     why_best?: string;
     main_risk?: string;
     best_format?: string;
@@ -424,6 +426,8 @@ export function normalizeReportResponse(data: RecommendationReportResponse): Rec
       runner_up_candidate_id: rec.runner_up_candidate_id ?? undefined,
       best_pass_candidate_id: rec.best_pass_candidate_id ?? undefined,
       best_confidence_candidate_id: rec.best_confidence_candidate_id ?? undefined,
+      pass_count: rec.pass_count ?? 0,
+      validation_clear_count: rec.validation_clear_count ?? 0,
       why_best: rec.why_best ?? "",
       main_risk: rec.main_risk ?? "",
       best_format: rec.best_format ?? "",

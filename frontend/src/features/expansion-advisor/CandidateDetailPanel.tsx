@@ -128,7 +128,7 @@ export default function CandidateDetailPanel({ candidate }: Props) {
           </div>
           <div className="ea-detail__kv">
             <span className="ea-detail__kv-label">{t("expansionAdvisor.annualRent")}</span>
-            <span className="ea-detail__kv-value">{fmtSAR(candidate.estimated_annual_rent_sar)}</span>
+            <span className="ea-detail__kv-value">{fmtSAR(candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar)}</span>
           </div>
           <div className="ea-detail__kv">
             <span className="ea-detail__kv-label">{t("expansionAdvisor.fitoutCost")}</span>

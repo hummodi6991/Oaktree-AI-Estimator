@@ -81,16 +81,28 @@ export function gateColor(pass: boolean | null | undefined): "green" | "red" | "
 const GATE_LABEL_MAP: Record<string, string> = {
   zoning_fit_pass: "Zoning fit",
   zoning_pass: "Zoning",
+  area_fit_pass: "Area fit",
   frontage_access_pass: "Frontage / access",
   frontage_pass: "Frontage",
   access_pass: "Access",
   parking_pass: "Parking",
+  district_pass: "District",
   visibility_pass: "Visibility",
   competition_pass: "Competition",
   brand_fit_pass: "Brand fit",
   economics_pass: "Economics",
   cannibalization_pass: "Cannibalization",
+  delivery_market_pass: "Delivery market",
   overall_pass: "Overall",
+  // Human-readable labels from backend (already humanized gate_reasons lists)
+  "zoning fit": "Zoning fit",
+  "area fit": "Area fit",
+  "frontage/access": "Frontage / access",
+  parking: "Parking",
+  district: "District",
+  cannibalization: "Cannibalization",
+  "delivery market": "Delivery market",
+  economics: "Economics",
 };
 
 /** Return a clean human-readable label for a gate key. */

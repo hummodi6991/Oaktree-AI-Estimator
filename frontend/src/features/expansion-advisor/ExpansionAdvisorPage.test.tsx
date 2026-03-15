@@ -4336,3 +4336,159 @@ describe("passCount only counts strict true pass", () => {
     expect(passCount).toBe(1);
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// Follow-up patch tests
+// ---------------------------------------------------------------------------
+
+describe("Gate labels: raw keys never appear in user-visible text", () => {
+  it("humanGateLabel converts raw keys to human-readable labels", () => {
+    expect(humanGateLabel("zoning_fit_pass")).toBe("Zoning fit");
+    expect(humanGateLabel("economics_pass")).toBe("Economics");
+    expect(humanGateLabel("delivery_market_pass")).toBe("Delivery market");
+    expect(humanGateLabel("frontage_access_pass")).toBe("Frontage / access");
+    expect(humanGateLabel("area_fit_pass")).toBe("Area fit");
+    expect(humanGateLabel("cannibalization_pass")).toBe("Cannibalization");
+  });
+
+  it("humanGateLabel handles already-humanized labels from backend", () => {
+    // Backend _humanize_gate_list now sends "zoning fit" instead of "zoning_fit_pass"
+    expect(humanGateLabel("zoning fit")).toBe("Zoning fit");
+    expect(humanGateLabel("delivery market")).toBe("Delivery market");
+    expect(humanGateLabel("frontage/access")).toBe("Frontage / access");
+    expect(humanGateLabel("economics")).toBe("Economics");
+  });
+
+  it("humanGateLabel fallback strips _pass and capitalizes", () => {
+    const result = humanGateLabel("some_new_gate_pass");
+    expect(result).not.toContain("_pass");
+    expect(result).not.toContain("_");
+    expect(result[0]).toBe(result[0].toUpperCase());
+  });
+
+  it("deriveDecisionChecklist uses humanGateLabel for gate entries", () => {
+    const candidate = makeCandidate({
+      gate_status_json: { zoning_fit_pass: true, parking_pass: false, frontage_access_pass: null } as Record<string, boolean | null | undefined>,
+      gate_reasons_json: { passed: ["zoning fit"], failed: ["parking"], unknown: ["frontage/access"], thresholds: {}, explanations: {} },
+    });
+    const items = deriveDecisionChecklist(candidate, null);
+    for (const item of items) {
+      expect(item.label).not.toContain("_pass");
+      expect(item.label).not.toMatch(/\b\w+_\w+_pass\b/);
+    }
+  });
+});
+
+describe("Completeness: UI reflects backend evidence completeness", () => {
+  it("parseFeatureSnapshot preserves data_completeness_score from backend", () => {
+    const snapshot = parseFeatureSnapshot({ context_sources: {}, missing_context: [], data_completeness_score: 42 } as unknown as Record<string, unknown>);
+    expect(snapshot.completeness).toBe(42);
+  });
+
+  it("parseFeatureSnapshot defaults to 0 when missing", () => {
+    const snapshot = parseFeatureSnapshot({} as unknown as Record<string, unknown>);
+    expect(snapshot.completeness).toBe(0);
+  });
+
+  it("normalizeCandidate defaults data_completeness_score to 0 (not 100)", () => {
+    const c = normalizeCandidate({ id: "c1", search_id: "s1", parcel_id: "p1", lat: 24.7, lon: 46.7 });
+    expect(c.feature_snapshot_json?.data_completeness_score).toBe(0);
+  });
+});
+
+describe("Rent display: display_annual_rent_sar preferred over estimated", () => {
+  it("CandidateDetailPanel renders display_annual_rent_sar when present", () => {
+    const candidate = makeCandidate({
+      estimated_rent_sar_m2_year: 2000,
+      estimated_annual_rent_sar: 384008,
+      display_annual_rent_sar: 384000,
+    });
+    const html = renderToStaticMarkup(
+      <CandidateDetailPanel candidate={candidate} onClose={() => {}} />,
+    );
+    // Should show the display value (384,000) not the internal value (384,008)
+    expect(html).toContain("384,000");
+    expect(html).not.toContain("384,008");
+  });
+
+  it("CandidateDetailPanel falls back to estimated when display is missing", () => {
+    const candidate = makeCandidate({
+      estimated_rent_sar_m2_year: 2000,
+      estimated_annual_rent_sar: 384008,
+    });
+    const html = renderToStaticMarkup(
+      <CandidateDetailPanel candidate={candidate} onClose={() => {}} />,
+    );
+    expect(html).toContain("384,008");
+  });
+});
+
+describe("Report panel: error displayed in drawer, not hidden", () => {
+  it("shows error message inside the drawer when error prop is set", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        report={null}
+        error="Unable to load report."
+      />,
+    );
+    expect(html).toContain("Unable to load report.");
+    expect(html).toContain("ea-drawer");
+  });
+
+  it("does not render when no report, no loading, and no error", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel loading={false} report={null} />,
+    );
+    expect(html).toBe("");
+  });
+
+  it("renders report content for zero-pass scenario without error", () => {
+    const report = normalizeReportResponse({
+      meta: {},
+      recommendation: {
+        best_candidate_id: "c1",
+        best_pass_candidate_id: null,
+        pass_count: 0,
+        validation_clear_count: 0,
+        why_best: "Top scorer",
+        summary: "No candidate passes all gates",
+      },
+      top_candidates: [],
+      assumptions: {},
+      brand_profile: {},
+    } as unknown as RecommendationReportResponse);
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel loading={false} report={report} />,
+    );
+    expect(html).not.toContain("Unable to load report");
+    expect(html).toContain("No candidate passes all gates");
+  });
+});
+
+describe("normalizeReportResponse handles validation_clear_count", () => {
+  it("defaults validation_clear_count to 0 when missing", () => {
+    const result = normalizeReportResponse({
+      meta: {},
+      recommendation: { best_candidate_id: "c1" },
+      top_candidates: [],
+      assumptions: {},
+      brand_profile: {},
+    } as unknown as RecommendationReportResponse);
+    expect(result.recommendation.validation_clear_count).toBe(0);
+    expect(result.recommendation.pass_count).toBe(0);
+  });
+
+  it("preserves validation_clear_count when present", () => {
+    const result = normalizeReportResponse({
+      meta: {},
+      recommendation: { best_candidate_id: "c1", validation_clear_count: 3, pass_count: 1 },
+      top_candidates: [],
+      assumptions: {},
+      brand_profile: {},
+    } as unknown as RecommendationReportResponse);
+    expect(result.recommendation.validation_clear_count).toBe(3);
+    expect(result.recommendation.pass_count).toBe(1);
+  });
+});
