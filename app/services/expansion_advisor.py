@@ -211,24 +211,36 @@ _EXPANSION_PARCEL_SOURCE = "arcgis_only"
 _EXPANSION_EXCLUDED_SOURCES = ["suhail", "inferred_parcels"]
 
 
-def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _dedupe_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    aggressive: bool = False,
+) -> list[dict[str, Any]]:
     """Post-ranking dedupe: collapse near-clone candidates.
 
     Uses a two-pass approach:
     1. Exact parcel_id match (primary key)
     2. Composite spatial+attribute key with tight grid:
-       - snapped centroid (0.0005 degree ≈ 55m grid)
+       - snapped centroid (0.001 degree ≈ 110m grid)
        - normalized district key
        - rounded area bucket (50m² steps)
        - rounded rent bucket (100 SAR steps)
        - nearest-branch distance bucket (500m steps)
 
+    Candidates with distinct non-empty parcel_ids are NEVER collapsed
+    by spatial/attribute keys — parcel_id is the strongest identity.
+
+    When *aggressive=True* (used for report shortlist), an additional
+    district+area+score composite key catches near-clones that differ
+    only in sub-110m position.
+
     Keeps the highest-ranked (first) candidate in each cluster.
     """
-    seen: set[str] = set()
+    seen_pid: set[str] = set()
+    seen_spatial: set[str] = set()
     result: list[dict[str, Any]] = []
     for c in candidates:
-        parcel_id = c.get("parcel_id") or ""
+        parcel_id = (c.get("parcel_id") or "").strip()
         lat = _safe_float(c.get("lat"))
         lon = _safe_float(c.get("lon"))
         district_key = c.get("district_key") or normalize_district_key(c.get("district"))
@@ -236,30 +248,34 @@ def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
         rent_bucket = int(round(_safe_float(c.get("estimated_rent_sar_m2_year")) / 100.0))
         branch_dist = c.get("distance_to_nearest_branch_m")
         branch_bucket = int(round(_safe_float(branch_dist) / 500.0)) if branch_dist is not None else -1
-        # Score bucket for high-similarity tiebreaker (2-point steps)
-        score_bucket = int(round(_safe_float(c.get("final_score")) / 2.0))
 
-        # Generate multiple dedupe keys — candidate is a duplicate if ANY match
-        keys: list[str] = []
-
-        # Primary: exact parcel_id match
+        # 1. Exact parcel_id dedupe
         if parcel_id:
-            keys.append(f"pid:{parcel_id}")
+            if parcel_id in seen_pid:
+                continue
+            seen_pid.add(parcel_id)
+            # Candidates with a real parcel_id skip spatial dedupe —
+            # different parcels at nearby locations are genuinely distinct.
+            result.append(c)
+            continue
 
-        # Tight spatial grid (0.0005° ≈ 55m) + district + area
-        keys.append(
-            f"{round(lat, 3)}|{round(lon, 3)}|{district_key}|{area_bucket}|{rent_bucket}|{branch_bucket}"
+        # 2. Spatial+attribute grid for parcels without a parcel_id
+        spatial_key = (
+            f"{round(lat, 3)}|{round(lon, 3)}|{district_key}"
+            f"|{area_bucket}|{rent_bucket}|{branch_bucket}"
         )
 
-        # Extra tight: same district + same area bucket + same score bucket
-        # catches near-clones that differ only in sub-55m position
-        if district_key:
+        keys: list[str] = [spatial_key]
+
+        # Aggressive mode: extra composite key for report shortlists
+        if aggressive and district_key:
+            score_bucket = int(round(_safe_float(c.get("final_score")) / 2.0))
             keys.append(f"dsa:{district_key}|{area_bucket}|{score_bucket}|{rent_bucket}")
 
-        if any(k in seen for k in keys):
+        if any(k in seen_spatial for k in keys):
             continue
         for k in keys:
-            seen.add(k)
+            seen_spatial.add(k)
         result.append(c)
     return result
 
@@ -1308,20 +1324,21 @@ def _top_positives_and_risks(
         risks.append("Economics score is below preferred threshold.")
     if _safe_float(candidate.get("delivery_competition_score")) >= 65:
         risks.append("Delivery competition intensity is high.")
-    # Flag when delivery scores are inferred (no observed listings)
-    delivery_observed = (
-        _safe_float(candidate.get("provider_density_score")) > 0
-        or _safe_float(candidate.get("multi_platform_presence_score")) > 0
-    )
-    if not delivery_observed:
-        risks.append("Delivery market data is inferred — no observed listings near site.")
     for gate in gate_reasons.get("failed") or []:
         label = _gate_key_to_label(gate)
         risks.append(f"{label.capitalize()} gate failed.")
     for gate in gate_reasons.get("unknown") or []:
         label = _gate_key_to_label(gate)
         risks.append(f"{label.capitalize()} could not be verified from current data.")
-    return positives[:5], risks[:5]
+    # Flag when delivery scores are inferred (no observed listings).
+    # Placed after gate risks so gate-specific mentions are not displaced.
+    delivery_observed = (
+        _safe_float(candidate.get("provider_density_score")) > 0
+        or _safe_float(candidate.get("multi_platform_presence_score")) > 0
+    )
+    if not delivery_observed:
+        risks.append("Delivery market data is inferred — no observed listings near site.")
+    return positives[:5], risks[:6]
 
 
 def _confidence_grade(
@@ -3913,7 +3930,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     normalized_candidates = raw_candidates
 
     # Dedupe top candidates to avoid near-clone rows in the report
-    normalized_candidates = _dedupe_candidates(normalized_candidates)
+    normalized_candidates = _dedupe_candidates(normalized_candidates, aggressive=True)
 
     def _sort_key(item: dict[str, Any]) -> tuple[int, float]:
         rank = item.get("rank_position")

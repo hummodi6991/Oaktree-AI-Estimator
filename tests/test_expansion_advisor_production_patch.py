@@ -180,8 +180,20 @@ class TestStrongerDedupe:
         result = _dedupe_candidates(candidates)
         assert len(result) == 2
 
-    def test_same_district_area_score_dedupe(self):
-        """Near-clones in same district with same area/score bucket should collapse."""
+    def test_same_district_area_score_dedupe_aggressive(self):
+        """Near-clones in same district with same area/score bucket should collapse in aggressive mode."""
+        candidates = [
+            {"parcel_id": "", "lat": 24.71, "lon": 46.71, "district": "العليا", "area_m2": 201,
+             "estimated_rent_sar_m2_year": 800, "final_score": 72.5, "distance_to_nearest_branch_m": None},
+            {"parcel_id": "", "lat": 24.72, "lon": 46.72, "district": "العليا", "area_m2": 202,
+             "estimated_rent_sar_m2_year": 810, "final_score": 73.0, "distance_to_nearest_branch_m": None},
+        ]
+        result = _dedupe_candidates(candidates, aggressive=True)
+        # These share the same district + area bucket (200/50=4) + score bucket (72.5/2=36, 73/2=36)
+        assert len(result) == 1
+
+    def test_same_district_area_score_not_collapsed_default(self):
+        """In default (non-aggressive) mode, near-clones at different positions survive."""
         candidates = [
             {"parcel_id": "", "lat": 24.71, "lon": 46.71, "district": "العليا", "area_m2": 201,
              "estimated_rent_sar_m2_year": 800, "final_score": 72.5, "distance_to_nearest_branch_m": None},
@@ -189,8 +201,7 @@ class TestStrongerDedupe:
              "estimated_rent_sar_m2_year": 810, "final_score": 73.0, "distance_to_nearest_branch_m": None},
         ]
         result = _dedupe_candidates(candidates)
-        # These share the same district + area bucket (200/50=4) + score bucket (72.5/2=36, 73/2=36)
-        assert len(result) == 1
+        assert len(result) == 2
 
 
 # ---------------------------------------------------------------------------
