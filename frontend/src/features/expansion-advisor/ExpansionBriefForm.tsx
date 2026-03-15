@@ -283,6 +283,7 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
           branches={branches}
           onChange={(next) => set("existing_branches", next)}
           disabled={loading}
+          districtOptions={districtOptions}
         />
         {touched && errors.branches && errors.branches.length > 0 && (
           <span className="ea-form__error">{t("expansionAdvisor.validationLatRange")}</span>
