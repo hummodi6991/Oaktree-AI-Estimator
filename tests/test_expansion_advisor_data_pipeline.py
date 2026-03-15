@@ -332,27 +332,44 @@ class TestParkingModule:
 # Migration
 # ---------------------------------------------------------------------------
 class TestMigration:
-    def test_migration_file_exists(self):
-        migration_path = os.path.join(
-            os.path.dirname(__file__), "..",
-            "alembic", "versions",
-            "a1b2c3d4e5f6_create_expansion_advisor_tables.py",
+    """Locate the Expansion Advisor migration by scanning alembic/versions/
+    for the file whose upgrade creates the expected normalized tables.
+    This avoids hard-coding a filename that changes with every revision."""
+
+    EXPECTED_TABLES = [
+        "expansion_road_context",
+        "expansion_parking_asset",
+        "expansion_delivery_market",
+        "expansion_rent_comp",
+        "expansion_competitor_quality",
+    ]
+
+    @staticmethod
+    def _find_migration():
+        """Return the path to the migration that creates expansion_road_context."""
+        versions_dir = os.path.join(
+            os.path.dirname(__file__), "..", "alembic", "versions",
         )
-        assert os.path.exists(migration_path)
+        for fname in os.listdir(versions_dir):
+            if not fname.endswith(".py"):
+                continue
+            fpath = os.path.join(versions_dir, fname)
+            with open(fpath) as f:
+                content = f.read()
+            if "expansion_road_context" in content:
+                return fpath, content
+        return None, None
+
+    def test_migration_file_exists(self):
+        path, _ = self._find_migration()
+        assert path is not None, "No migration creating expansion_road_context found"
+        assert os.path.exists(path)
 
     def test_migration_has_all_tables(self):
-        migration_path = os.path.join(
-            os.path.dirname(__file__), "..",
-            "alembic", "versions",
-            "a1b2c3d4e5f6_create_expansion_advisor_tables.py",
-        )
-        with open(migration_path) as f:
-            content = f.read()
-        assert "expansion_road_context" in content
-        assert "expansion_parking_asset" in content
-        assert "expansion_delivery_market" in content
-        assert "expansion_rent_comp" in content
-        assert "expansion_competitor_quality" in content
+        path, content = self._find_migration()
+        assert path is not None, "No migration creating expansion_road_context found"
+        for table in self.EXPECTED_TABLES:
+            assert table in content, f"Migration is missing table: {table}"
 
 
 # ---------------------------------------------------------------------------
