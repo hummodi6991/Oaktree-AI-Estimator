@@ -124,6 +124,8 @@ class ExpansionAdvisorMeta(StrictResponseModel):
     version: str = "expansion_advisor_v6.1"
     parcel_source: str | None = None
     excluded_sources: list[str] = Field(default_factory=list)
+    degraded: bool = False
+    error_class: str | None = None
 
 
 class ExpansionAdvisorBrandProfileResponse(StrictResponseModel):
@@ -279,6 +281,11 @@ class RecommendationTopCandidateResponse(StrictResponseModel):
     rank_position: int | None = None
     confidence_grade: str = "D"
     gate_verdict: str = "fail"
+    district: str | None = None
+    district_key: str | None = None
+    district_name_ar: str | None = None
+    district_name_en: str | None = None
+    district_display: str | None = None
     top_positives_json: list[Any] = Field(default_factory=list)
     top_risks_json: list[Any] = Field(default_factory=list)
     feature_snapshot_json: dict[str, Any] = Field(default_factory=dict)
@@ -291,6 +298,7 @@ class RecommendationSummaryResponse(StrictResponseModel):
     best_pass_candidate_id: str | None = None
     best_confidence_candidate_id: str | None = None
     pass_count: int = 0
+    validation_clear_count: int = 0
     why_best: str = ""
     main_risk: str = ""
     best_format: str = ""
