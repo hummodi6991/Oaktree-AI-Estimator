@@ -20,6 +20,7 @@ Operational safeguards:
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 import json
 import logging
 import re
@@ -276,6 +277,113 @@ def _target_candidate_pool(max_pages: int) -> int:
     return max(max_pages * 8, 1200)
 
 
+def _extract_hungerstation_listing_id(url: str) -> str | None:
+    """
+    Extract a stable numeric listing id from HungerStation URLs.
+
+    Handles both:
+    - /restaurant/<city>/<district>/<id>
+    - /qc/<brand_id>/<name>/branch/<city~district~id>
+    """
+    decoded = _decoded_url(url)
+    m = re.search(r"/(\d+)(?:[/?#]|$)", decoded)
+    if m:
+        return m.group(1)
+
+    # Fallback for branch URLs where the final path segment contains ~<id>
+    last = urlparse(decoded).path.rstrip("/").split("/")[-1]
+    m = re.search(r"(?:~|/)(\d+)$", last)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _extract_hungerstation_district_bucket(url: str) -> str:
+    """
+    Extract a district-ish bucket from the URL so we can interleave candidates
+    across different areas instead of scraping 200 pages from the same one.
+    """
+    decoded = _decoded_url(url)
+    path = urlparse(decoded).path.strip("/")
+    parts = [p for p in path.split("/") if p]
+
+    # /sa-ar/restaurant/<city>/<district>/<id>
+    if len(parts) >= 5 and parts[1] == "restaurant":
+        return parts[3].strip().lower()
+
+    # /sa-ar/qc/<brand_id>/<brand>/branch/<city~district~id>
+    if "branch" in parts:
+        branch_seg = parts[-1]
+        branch_parts = [p.strip().lower() for p in branch_seg.split("~") if p.strip()]
+        if len(branch_parts) >= 3:
+            return branch_parts[1]
+
+    # Fallback bucket
+    return "unknown"
+
+
+def _is_hungerstation_primary_restaurant_url(url: str) -> bool:
+    lower = _decoded_url(url).lower()
+    return "/restaurant/" in lower and "/qc/" not in lower
+
+
+def _prefer_hungerstation_candidate(current: str | None, candidate: str) -> str:
+    """
+    Prefer canonical /restaurant/ detail URLs over /qc/branch URLs when both
+    point to the same underlying listing id.
+    """
+    if current is None:
+        return candidate
+    if _is_hungerstation_primary_restaurant_url(candidate) and not _is_hungerstation_primary_restaurant_url(current):
+        return candidate
+    return current
+
+
+def _diversify_hungerstation_candidates(urls: list[str], max_pages: int) -> list[str]:
+    """
+    Reorder candidates so the first N fetched pages are spread across districts
+    instead of being dominated by a single district block from one shard.
+    """
+    by_listing_id: dict[str, str] = {}
+    passthrough: list[str] = []
+
+    for url in urls:
+        listing_id = _extract_hungerstation_listing_id(url)
+        if listing_id:
+            by_listing_id[listing_id] = _prefer_hungerstation_candidate(
+                by_listing_id.get(listing_id), url
+            )
+        else:
+            passthrough.append(url)
+
+    deduped = list(by_listing_id.values()) + passthrough
+
+    buckets: dict[str, deque[str]] = defaultdict(deque)
+    for url in deduped:
+        buckets[_extract_hungerstation_district_bucket(url)].append(url)
+
+    ordered: list[str] = []
+    bucket_names = sorted(buckets.keys(), key=lambda k: (-len(buckets[k]), k))
+    while bucket_names:
+        next_round: list[str] = []
+        for name in bucket_names:
+            q = buckets[name]
+            if q:
+                ordered.append(q.popleft())
+            if q:
+                next_round.append(name)
+        bucket_names = next_round
+
+    logger.info(
+        "HungerStation candidate diversification: %d raw -> %d deduped ordered URLs across %d district bucket(s)",
+        len(urls),
+        len(ordered),
+        len(buckets),
+    )
+
+    return ordered
+
+
 def _is_hungerstation_candidate_restaurant_url(url: str) -> bool:
     """
     Defensive filter for detail/listing URLs emitted from Riyadh restaurant shards.
@@ -288,6 +396,7 @@ def _is_hungerstation_candidate_restaurant_url(url: str) -> bool:
         "/vendors/riyadh-al-",
         "/vendors/ar-riyadh-",
         "/vendors/al-riyadh-",
+        "/modules/restaurants/vendors/",
         "/regions/",
         "/cuisines",
         "/flowers/",
@@ -610,6 +719,11 @@ def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]
         expanded_shards,
     )
 
+    restaurant_urls = _diversify_hungerstation_candidates(
+        restaurant_urls,
+        max_pages=max_pages,
+    )
+
     count = 0
     fetch_failed = 0
     no_parse = 0
@@ -626,7 +740,8 @@ def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]
             fetch_failed += 1
             continue
 
-        slug = urlparse(url).path.rstrip("/").split("/")[-1]
+        listing_id = _extract_hungerstation_listing_id(url)
+        slug = listing_id or urlparse(url).path.rstrip("/").split("/")[-1]
         page_data = _extract_page_data(resp.text, url, "hungerstation")
 
         name = page_data.get("name") or _slug_to_name(slug)
@@ -653,6 +768,9 @@ def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]
             "address_raw": page_data.get("address_raw"),
             "district_text": page_data.get("district_text"),
             "phone_raw": page_data.get("phone_raw"),
+            "raw_payload": {
+                "canonical_listing_id": listing_id,
+            },
             "_html_extracted": bool(page_data.get("name")),
         }
         count += 1
