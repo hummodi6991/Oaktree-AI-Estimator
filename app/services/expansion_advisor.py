@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import time
+import os
 import uuid
 from typing import Any
 
@@ -39,6 +40,18 @@ _GATE_HUMAN_LABELS: dict[str, str] = {
     "delivery_market_pass": "delivery market",
     "economics_pass": "economics",
 }
+
+
+def _humanize_gate_list(values: list[Any] | None) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for value in values or []:
+        label = _gate_key_to_label(str(value))
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+    return labels
 
 
 def _gate_key_to_label(gate_key: str) -> str:
@@ -245,6 +258,19 @@ _EXPANSION_DEFAULT_RENT_SAR_M2_YEAR = 900.0
 _EXPANSION_VERSION = "expansion_advisor_v6.1"
 _EXPANSION_PARCEL_SOURCE = "arcgis_only"
 _EXPANSION_EXCLUDED_SOURCES = ["suhail", "inferred_parcels"]
+_EXPANSION_ENRICHMENT_SHORTLIST_CAP = max(
+    25,
+    int(os.getenv("EXPANSION_ENRICHMENT_SHORTLIST_CAP", "35")),
+)
+_EXPANSION_BULK_PERSIST_CHUNK_SIZE = max(
+    10,
+    int(os.getenv("EXPANSION_BULK_PERSIST_CHUNK_SIZE", "100")),
+)
+
+
+def _chunked(seq: list[Any], size: int):
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
 
 
 def _dedupe_candidates(
@@ -291,10 +317,11 @@ def _dedupe_candidates(
             if parcel_id in seen_pid:
                 continue
             seen_pid.add(parcel_id)
-            # Candidates with a real parcel_id skip spatial dedupe —
-            # different parcels at nearby locations are genuinely distinct.
-            result.append(c)
-            continue
+            # Keep exact parcel-id dedupe always, but in aggressive mode
+            # still allow same-site cluster collapse across adjacent ArcGIS parcels.
+            if not aggressive:
+                result.append(c)
+                continue
 
         # 2. Tight spatial+attribute grid (55m snap vs old 110m)
         spatial_key = (
@@ -429,9 +456,9 @@ def _normalize_gate_reasons(value: Any) -> dict[str, Any]:
         "explanations": {},
     }
     if isinstance(value, dict):
-        base["passed"] = value.get("passed") or []
-        base["failed"] = value.get("failed") or []
-        base["unknown"] = value.get("unknown") or []
+        base["passed"] = _humanize_gate_list(value.get("passed") or [])
+        base["failed"] = _humanize_gate_list(value.get("failed") or [])
+        base["unknown"] = _humanize_gate_list(value.get("unknown") or [])
         base["thresholds"] = value.get("thresholds") or {}
         base["explanations"] = value.get("explanations") or {}
     return base
@@ -843,6 +870,11 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
         "data_completeness_score": 0,
     }
 
+    zoning_context_available = bool(str(landuse_label or "").strip() or str(landuse_code or "").strip())
+    delivery_observed = provider_listing_count > 0 or provider_platform_count > 0
+    base["context_sources"]["zoning_context_available"] = zoning_context_available
+    base["context_sources"]["delivery_observed"] = delivery_observed
+
     base["context_sources"]["roads_table_available"] = roads_table_available
     base["context_sources"]["parking_table_available"] = parking_table_available
 
@@ -1093,9 +1125,15 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
         missing_context.append("road_context_unavailable")
     if parking_table_available and not base["context_sources"].get("parking_context_available"):
         missing_context.append("parking_context_unavailable")
+    if not zoning_context_available:
+        missing_context.append("zoning_context_unavailable")
+    if not delivery_observed:
+        missing_context.append("delivery_observation_unavailable")
     base["missing_context"] = missing_context
 
     completeness_components = [100.0]
+    completeness_components.append(100.0 if zoning_context_available else 0.0)
+    completeness_components.append(100.0 if delivery_observed else 0.0)
     completeness_components.append(100.0 if roads_table_available else 0.0)
     completeness_components.append(100.0 if parking_table_available else 0.0)
     completeness_components.append(100.0 if base["context_sources"].get("road_context_available") else 0.0)
@@ -2660,7 +2698,10 @@ def run_expansion_search(
         if rent_cache_key not in rent_cache:
             rent_cache[rent_cache_key] = _estimate_rent_sar_m2_year(db, district)
         estimated_rent_sar_m2_year, rent_source = rent_cache[rent_cache_key]
-        estimated_annual_rent_sar = area_m2 * estimated_rent_sar_m2_year
+        # Snap rent to the same whole-SAR display granularity used in the UI
+        # so annual rent does not disagree with the visible rent number.
+        estimated_rent_sar_m2_year = float(round(_safe_float(estimated_rent_sar_m2_year)))
+        estimated_annual_rent_sar = round(area_m2 * estimated_rent_sar_m2_year, 2)
         estimated_fitout_cost_sar = _estimate_fitout_cost_sar(area_m2, service_model)
         estimated_revenue_index = _estimate_revenue_index(
             demand_score,
@@ -2773,7 +2814,7 @@ def run_expansion_search(
         )
 
     prepared.sort(key=lambda item: item["preliminary_final_score"], reverse=True)
-    shortlist_size = min(len(prepared), max(limit, 50))
+    shortlist_size = min(len(prepared), max(limit, _EXPANSION_ENRICHMENT_SHORTLIST_CAP))
     for prepared_item in prepared[:shortlist_size]:
       try:
         row = prepared_item["row"]
@@ -3111,7 +3152,7 @@ def run_expansion_search(
 
     candidates.sort(key=_rank_sort_key)
     # Dedupe near-clone candidates before limiting
-    candidates = _dedupe_candidates(candidates)
+    candidates = _dedupe_candidates(candidates, aggressive=True)
     candidates = candidates[:limit]
     for index, candidate in enumerate(candidates, start=1):
         candidate["compare_rank"] = index
@@ -3229,34 +3270,49 @@ def run_expansion_search(
         """
     )
 
+    def _candidate_insert_params(candidate: dict[str, Any]) -> dict[str, Any]:
+        safe_candidate = _sanitize_for_json(candidate)
+        return {
+            **safe_candidate,
+            "explanation": json.dumps(_sanitize_for_json(candidate["explanation"]), ensure_ascii=False),
+            "key_risks_json": json.dumps(_sanitize_for_json(candidate["key_risks_json"]), ensure_ascii=False),
+            "key_strengths_json": json.dumps(_sanitize_for_json(candidate["key_strengths_json"]), ensure_ascii=False),
+            "gate_status_json": json.dumps(_sanitize_for_json(candidate["gate_status_json"]), ensure_ascii=False),
+            "gate_reasons_json": json.dumps(_sanitize_for_json(candidate["gate_reasons_json"]), ensure_ascii=False),
+            "feature_snapshot_json": json.dumps(_sanitize_for_json(candidate["feature_snapshot_json"]), ensure_ascii=False),
+            "score_breakdown_json": json.dumps(_sanitize_for_json(candidate["score_breakdown_json"]), ensure_ascii=False),
+            "top_positives_json": json.dumps(_sanitize_for_json(candidate["top_positives_json"]), ensure_ascii=False),
+            "top_risks_json": json.dumps(_sanitize_for_json(candidate["top_risks_json"]), ensure_ascii=False),
+            "comparable_competitors_json": json.dumps(_sanitize_for_json(candidate["comparable_competitors_json"]), ensure_ascii=False),
+        }
+
     persisted_candidates: list[dict[str, Any]] = []
-    for candidate in candidates:
+    for batch in _chunked(candidates, _EXPANSION_BULK_PERSIST_CHUNK_SIZE):
+        batch_params = [_candidate_insert_params(candidate) for candidate in batch]
         try:
-            safe_candidate = _sanitize_for_json(candidate)
             with db.begin_nested():
-                db.execute(
-                    insert_sql,
-                    {
-                        **safe_candidate,
-                        "explanation": json.dumps(_sanitize_for_json(candidate["explanation"]), ensure_ascii=False),
-                        "key_risks_json": json.dumps(_sanitize_for_json(candidate["key_risks_json"]), ensure_ascii=False),
-                        "key_strengths_json": json.dumps(_sanitize_for_json(candidate["key_strengths_json"]), ensure_ascii=False),
-                        "gate_status_json": json.dumps(_sanitize_for_json(candidate["gate_status_json"]), ensure_ascii=False),
-                        "gate_reasons_json": json.dumps(_sanitize_for_json(candidate["gate_reasons_json"]), ensure_ascii=False),
-                        "feature_snapshot_json": json.dumps(_sanitize_for_json(candidate["feature_snapshot_json"]), ensure_ascii=False),
-                        "score_breakdown_json": json.dumps(_sanitize_for_json(candidate["score_breakdown_json"]), ensure_ascii=False),
-                        "top_positives_json": json.dumps(_sanitize_for_json(candidate["top_positives_json"]), ensure_ascii=False),
-                        "top_risks_json": json.dumps(_sanitize_for_json(candidate["top_risks_json"]), ensure_ascii=False),
-                        "comparable_competitors_json": json.dumps(_sanitize_for_json(candidate["comparable_competitors_json"]), ensure_ascii=False),
-                    },
-                )
-            persisted_candidates.append(candidate)
+                db.execute(insert_sql, batch_params)
+            persisted_candidates.extend(batch)
         except Exception:
             logger.warning(
-                "Failed to persist expansion candidate id=%s search_id=%s parcel_id=%s – skipping",
-                candidate.get("id"), search_id, candidate.get("parcel_id"),
+                "Bulk persist failed for expansion candidates search_id=%s batch_size=%d; falling back to row-wise inserts",
+                search_id,
+                len(batch),
                 exc_info=True,
             )
+            for candidate in batch:
+                try:
+                    with db.begin_nested():
+                        db.execute(insert_sql, _candidate_insert_params(candidate))
+                    persisted_candidates.append(candidate)
+                except Exception:
+                    logger.warning(
+                        "Failed to persist expansion candidate id=%s search_id=%s parcel_id=%s – skipping",
+                        candidate.get("id"),
+                        search_id,
+                        candidate.get("parcel_id"),
+                        exc_info=True,
+                    )
 
     result: list[dict[str, Any]] = []
     for candidate in persisted_candidates:
