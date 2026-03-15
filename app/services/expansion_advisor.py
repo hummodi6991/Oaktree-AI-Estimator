@@ -3948,7 +3948,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     else:
         why_best = (
             f"Top-ranked candidate scores {_safe_float(best.get('final_score')):.1f}/100 "
-            f"but has unresolved gate items that need validation."
+            f"but does not yet pass all gates — unresolved items need validation."
         )
         summary_text = (
             f"No candidate currently passes all required gates ({pass_count} of {len(normalized_candidates)} pass). "

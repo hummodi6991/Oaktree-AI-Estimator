@@ -19,8 +19,6 @@ ARABIC_VARIANTS = str.maketrans(
         "إ": "ا",
         "آ": "ا",
         "ى": "ي",
-        # Ta marbuta → ha (consistent normalization)
-        "ة": "ه",
     }
 )
 
@@ -85,10 +83,8 @@ def normalize_arabic_text(s: str | None) -> str:
     normalized = normalized.replace(_TATWEEL, "")
     # Remove bidi/control characters
     normalized = _BIDI_CONTROL_RE.sub("", normalized)
-    # Normalize Arabic character variants (alef, ya, ta marbuta)
+    # Normalize Arabic character variants (alef, ya)
     normalized = normalized.translate(ARABIC_VARIANTS)
-    # Collapse weird punctuation/separators
-    normalized = SEPARATOR_VARIANT_RE.sub(" ", normalized)
     normalized = WHITESPACE_RE.sub(" ", normalized).strip()
     return normalized
 
