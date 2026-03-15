@@ -56,7 +56,7 @@ import ValidationPlanPanel from "./ValidationPlanPanel";
 import AssumptionsCard from "./AssumptionsCard";
 import DecisionSnapshotCard from "./DecisionSnapshotCard";
 import CompareOutcomeBanner from "./CompareOutcomeBanner";
-import type { ExpansionCandidate, CandidateScoreBreakdown, SavedExpansionSearch } from "../../lib/api/expansionAdvisor";
+import type { ExpansionCandidate, CandidateScoreBreakdown, SavedExpansionSearch, RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
 import SavedSearchesPanel from "./SavedSearchesPanel";
 import GateSummary from "./GateSummary";
 import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
@@ -4171,5 +4171,168 @@ describe("UX correctness: estimated site-fit metrics labeled in checklist", () =
     for (const item of siteFitItems) {
       expect(item.label).not.toContain("estimated");
     }
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * Expansion Advisor report hardening – nullable/missing field resilience
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+describe("Report normalizer defaults all optional recommendation fields", () => {
+  it("fills missing recommendation subkeys with safe defaults", () => {
+    const sparse = normalizeReportResponse({
+      meta: {},
+      recommendation: {} as RecommendationReportResponse["recommendation"],
+      top_candidates: [],
+      assumptions: {},
+      brand_profile: {},
+    } as RecommendationReportResponse);
+    expect(sparse.recommendation.why_best).toBe("");
+    expect(sparse.recommendation.main_risk).toBe("");
+    expect(sparse.recommendation.best_format).toBe("");
+    expect(sparse.recommendation.summary).toBe("");
+    expect(sparse.recommendation.report_summary).toBe("");
+    expect(sparse.recommendation.best_pass_candidate_id).toBeUndefined();
+    expect(sparse.recommendation.best_candidate_id).toBeUndefined();
+    expect(sparse.recommendation.runner_up_candidate_id).toBeUndefined();
+    expect(sparse.recommendation.best_confidence_candidate_id).toBeUndefined();
+  });
+
+  it("handles null recommendation gracefully", () => {
+    const data = normalizeReportResponse({
+      meta: {},
+      recommendation: null,
+      top_candidates: null,
+      assumptions: null,
+      brand_profile: null,
+    } as unknown as RecommendationReportResponse);
+    expect(data.recommendation.why_best).toBe("");
+    expect(data.top_candidates).toEqual([]);
+    expect(data.assumptions).toEqual({});
+  });
+
+  it("preserves existing recommendation values", () => {
+    const data = normalizeReportResponse({
+      meta: {},
+      recommendation: { best_candidate_id: "abc", why_best: "Strong demand" },
+      top_candidates: [],
+      assumptions: {},
+      brand_profile: {},
+    } as RecommendationReportResponse);
+    expect(data.recommendation.best_candidate_id).toBe("abc");
+    expect(data.recommendation.why_best).toBe("Strong demand");
+    expect(data.recommendation.main_risk).toBe("");
+  });
+});
+
+describe("Report panel renders without error on sparse payloads", () => {
+  it("does not show error banner for 200 with partial recommendation", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel
+        loading={false}
+        report={{
+          meta: {},
+          recommendation: { best_candidate_id: "c1" },
+          top_candidates: [],
+          assumptions: {},
+          brand_profile: {},
+        } as RecommendationReportResponse}
+      />,
+    );
+    expect(html).not.toContain("Unable to load report");
+    // Should still render the drawer
+    expect(html).toContain("ea-drawer");
+  });
+
+  it("renders cleanly with empty top_candidates and null assumptions", () => {
+    const report = normalizeReportResponse({
+      meta: {},
+      recommendation: {},
+      top_candidates: [],
+      assumptions: null,
+      brand_profile: {},
+    } as unknown as RecommendationReportResponse);
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel loading={false} report={report} />,
+    );
+    expect(html).not.toContain("Unable to load report");
+    expect(html).toContain("ea-drawer");
+  });
+
+  it("renders with best_pass_candidate_id = null (zero-pass scenario)", () => {
+    const report = normalizeReportResponse({
+      meta: {},
+      recommendation: { best_candidate_id: "c1", best_pass_candidate_id: null, why_best: "Top scorer" },
+      top_candidates: [
+        { id: "c1", rank_position: 1, final_score: 85, confidence_grade: "B", gate_verdict: "unknown", top_positives_json: ["good location"], top_risks_json: ["high rent"], score_breakdown_json: { weights: {}, inputs: {}, weighted_components: {}, final_score: 85 }, feature_snapshot_json: {} },
+      ],
+      assumptions: {},
+      brand_profile: {},
+    } as unknown as RecommendationReportResponse);
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel loading={false} report={report} />,
+    );
+    expect(html).not.toContain("Unable to load report");
+    expect(html).toContain("Top scorer");
+    expect(html).toContain("good location");
+  });
+});
+
+describe("Gate verdict rendering: unknown displays as needs-validation, not fail", () => {
+  it("GateSummary renders unknown gates with unknown status class", () => {
+    const html = renderToStaticMarkup(
+      <GateSummary
+        gates={{ zoning_fit_pass: true, frontage_pass: null, parking_pass: undefined } as Record<string, boolean | null | undefined>}
+        unknownGates={[]}
+      />,
+    );
+    expect(html).toContain("ea-gate-item--pass");
+    expect(html).toContain("ea-gate-item--unknown");
+    // null/undefined should NOT be rendered as fail
+    expect(html).not.toContain("ea-gate-item--fail");
+  });
+
+  it("GateSummary treats gates in unknownGates list as unknown", () => {
+    const html = renderToStaticMarkup(
+      <GateSummary
+        gates={{ zoning_fit_pass: false, visibility_pass: false }}
+        unknownGates={["visibility_pass"]}
+      />,
+    );
+    // visibility_pass is in unknownGates → should be unknown, not fail
+    expect(html).toContain("ea-gate-item--unknown");
+    expect(html).toContain("ea-gate-item--fail");
+  });
+
+  it("report panel top candidate with unknown verdict shows amber badge", () => {
+    const report = normalizeReportResponse({
+      meta: {},
+      recommendation: { best_candidate_id: "c1" },
+      top_candidates: [
+        { id: "c1", rank_position: 1, final_score: 80, confidence_grade: "C", gate_verdict: "unknown", top_positives_json: [], top_risks_json: [], score_breakdown_json: { weights: {}, inputs: {}, weighted_components: {}, final_score: 80 }, feature_snapshot_json: {} },
+      ],
+      assumptions: {},
+      brand_profile: {},
+    } as unknown as RecommendationReportResponse);
+    const html = renderToStaticMarkup(
+      <ExpansionReportPanel loading={false} report={report} />,
+    );
+    expect(html).toContain("ea-badge--amber");
+    expect(html).toContain("Needs validation");
+    expect(html).not.toContain("ea-badge--red");
+  });
+});
+
+describe("passCount only counts strict true pass", () => {
+  it("truthy non-boolean gate values are not counted as pass", () => {
+    const candidates = [
+      makeCandidate({ id: "c1", gate_status_json: { overall_pass: true } }),
+      makeCandidate({ id: "c2", gate_status_json: { overall_pass: false } }),
+      makeCandidate({ id: "c3", gate_status_json: { overall_pass: null } as unknown as Record<string, boolean | null | undefined> }),
+      makeCandidate({ id: "c4", gate_status_json: { overall_pass: undefined } as unknown as Record<string, boolean | null | undefined> }),
+      makeCandidate({ id: "c5", gate_status_json: {} }),
+    ];
+    const passCount = candidates.filter((c) => c.gate_status_json?.overall_pass === true).length;
+    expect(passCount).toBe(1);
   });
 });

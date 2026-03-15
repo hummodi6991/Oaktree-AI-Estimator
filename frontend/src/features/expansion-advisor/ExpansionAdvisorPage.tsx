@@ -482,7 +482,7 @@ export default function ExpansionAdvisorPage({
 
   const title = useMemo(() => generateStudyTitle(brief), [brief]);
   const bestCandidate = candidates[0] || null;
-  const passCount = candidates.filter((c) => c.gate_status_json?.overall_pass).length;
+  const passCount = candidates.filter((c) => c.gate_status_json?.overall_pass === true).length;
   const hasResults = candidates.length > 0;
   const districts = useMemo(() => extractDistricts(candidates), [candidates]);
 
