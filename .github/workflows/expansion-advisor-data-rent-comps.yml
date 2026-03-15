@@ -55,15 +55,17 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Install Kaggle CLI if needed
-        if: ${{ github.event.inputs.kaggle_dataset != '' || secrets.KAGGLE_USERNAME != '' }}
         run: pip install kaggle
 
       - name: Configure Kaggle credentials
-        if: ${{ secrets.KAGGLE_USERNAME != '' }}
         run: |
-          mkdir -p ~/.kaggle
-          echo '{"username":"${{ secrets.KAGGLE_USERNAME }}","key":"${{ secrets.KAGGLE_KEY }}"}' > ~/.kaggle/kaggle.json
-          chmod 600 ~/.kaggle/kaggle.json
+          if [ -n "$KAGGLE_USERNAME" ] && [ -n "$KAGGLE_KEY" ]; then
+            mkdir -p ~/.kaggle
+            echo "{\"username\":\"$KAGGLE_USERNAME\",\"key\":\"$KAGGLE_KEY\"}" > ~/.kaggle/kaggle.json
+            chmod 600 ~/.kaggle/kaggle.json
+          else
+            echo "Kaggle credentials not configured — skipping"
+          fi
 
       - name: Run alembic upgrade
         run: python -m alembic upgrade head
