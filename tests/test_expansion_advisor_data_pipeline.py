@@ -332,21 +332,35 @@ class TestParkingModule:
 # Migration
 # ---------------------------------------------------------------------------
 class TestMigration:
-    def test_migration_file_exists(self):
-        migration_path = os.path.join(
-            os.path.dirname(__file__), "..",
-            "alembic", "versions",
-            "a1b2c3d4e5f6_create_expansion_advisor_tables.py",
+    """Locate the expansion-advisor migration by revision ID so the tests
+    survive future file renames."""
+
+    REVISION_ID = "d4e5f6a1b2c3"
+
+    @staticmethod
+    def _find_migration(revision_id: str) -> str | None:
+        """Return the path to the migration file whose filename starts with
+        *revision_id*, or ``None`` if not found."""
+        versions_dir = os.path.join(
+            os.path.dirname(__file__), "..", "alembic", "versions",
         )
-        assert os.path.exists(migration_path)
+        for name in os.listdir(versions_dir):
+            if name.startswith(revision_id) and name.endswith(".py"):
+                return os.path.join(versions_dir, name)
+        return None
+
+    def test_migration_file_exists(self):
+        path = self._find_migration(self.REVISION_ID)
+        assert path is not None, (
+            f"No migration file starting with revision {self.REVISION_ID!r} "
+            "found in alembic/versions/"
+        )
+        assert os.path.exists(path)
 
     def test_migration_has_all_tables(self):
-        migration_path = os.path.join(
-            os.path.dirname(__file__), "..",
-            "alembic", "versions",
-            "a1b2c3d4e5f6_create_expansion_advisor_tables.py",
-        )
-        with open(migration_path) as f:
+        path = self._find_migration(self.REVISION_ID)
+        assert path is not None, "migration file not found"
+        with open(path) as f:
             content = f.read()
         assert "expansion_road_context" in content
         assert "expansion_parking_asset" in content
