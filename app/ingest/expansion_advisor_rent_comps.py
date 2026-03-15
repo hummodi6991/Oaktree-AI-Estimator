@@ -230,21 +230,33 @@ def main() -> None:
 
     db = get_session()
     try:
-        csv_path: str | None = None
+        stats: dict | None = None
 
         # Priority: local path → CSV URL → Kaggle → existing rent_comp table
         if args.local_path:
-            csv_path = args.local_path
+            if os.path.exists(args.local_path):
+                stats = _normalize_from_csv(db, args.local_path, replace=args.replace)
+            else:
+                logger.error("Local path does not exist: %s", args.local_path)
+                sys.exit(1)
         elif args.csv_url:
             with tempfile.TemporaryDirectory() as tmpdir:
                 csv_path = _download_csv_url(args.csv_url, tmpdir)
+                if csv_path and os.path.exists(csv_path):
+                    stats = _normalize_from_csv(db, csv_path, replace=args.replace)
+                else:
+                    logger.error("CSV download failed from %s", args.csv_url)
+                    sys.exit(1)
         elif args.kaggle_dataset:
             with tempfile.TemporaryDirectory() as tmpdir:
                 csv_path = _download_kaggle(args.kaggle_dataset, tmpdir)
+                if csv_path and os.path.exists(csv_path):
+                    stats = _normalize_from_csv(db, csv_path, replace=args.replace)
+                else:
+                    logger.error("Kaggle download failed for %s", args.kaggle_dataset)
+                    sys.exit(1)
 
-        if csv_path and os.path.exists(csv_path):
-            stats = _normalize_from_csv(db, csv_path, replace=args.replace)
-        else:
+        if stats is None:
             logger.info("No CSV source provided, normalizing from existing rent_comp table")
             stats = _normalize_from_existing_rent_comp(db, replace=args.replace)
 

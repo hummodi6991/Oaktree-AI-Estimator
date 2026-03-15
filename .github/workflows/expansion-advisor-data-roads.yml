@@ -57,23 +57,32 @@ jobs:
         run: python -m alembic upgrade head
 
       - name: Import OSM data if needed
+        env:
+          PGHOST: ${{ secrets.POSTGRES_HOST }}
+          PGPORT: ${{ secrets.POSTGRES_PORT || '5432' }}
+          PGDATABASE: ${{ secrets.POSTGRES_DB }}
+          PGUSER: ${{ secrets.POSTGRES_USER }}
+          PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
           PBF_URL="${{ github.event.inputs.pbf_url || 'https://download.geofabrik.de/asia/saudi-arabia-latest.osm.pbf' }}"
           echo "PBF URL: $PBF_URL"
           # Only import if planet_osm_line is empty or missing
-          ROW_COUNT=$(python -c "
-          from app.db.session import engine
-          from sqlalchemy import text
-          with engine.connect() as c:
-              try:
-                  r = c.execute(text('SELECT COUNT(*) FROM planet_osm_line LIMIT 1')).scalar()
-                  print(r)
-              except: print(0)
-          " 2>/dev/null || echo "0")
+          ROW_COUNT=$(psql -tAc "SELECT COUNT(*) FROM planet_osm_line;" 2>/dev/null || echo "0")
           echo "Current planet_osm_line rows: $ROW_COUNT"
-          if [ "$ROW_COUNT" = "0" ]; then
-            echo "OSM data needs import — this should be handled by the osm-import workflow"
-            echo "Skipping OSM import in this workflow; using existing data"
+          if [ "$ROW_COUNT" = "0" ] || [ "$ROW_COUNT" = "" ]; then
+            echo "planet_osm_line is empty or missing — downloading and importing PBF"
+            psql -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+            curl -L "$PBF_URL" -o /tmp/osm-data.osm.pbf
+            STYLE_PATH="/usr/share/osm2pgsql/default.style"
+            osm2pgsql --create --slim --latlong --hstore --multi-geometry \
+              --style "${STYLE_PATH}" \
+              -d "${PGDATABASE}" \
+              /tmp/osm-data.osm.pbf
+            rm -f /tmp/osm-data.osm.pbf
+            echo "OSM import complete"
+            psql -c "SELECT COUNT(*) AS planet_osm_line_rows FROM planet_osm_line;"
+          else
+            echo "planet_osm_line already populated, skipping import"
           fi
 
       - name: Run Roads & Access ingest

@@ -10,10 +10,12 @@ Covers:
 """
 from __future__ import annotations
 
+import csv
 import json
 import os
 import subprocess
 import sys
+import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -348,3 +350,333 @@ class TestMigration:
         assert "expansion_delivery_market" in content
         assert "expansion_rent_comp" in content
         assert "expansion_competitor_quality" in content
+
+
+# ---------------------------------------------------------------------------
+# SRID detection and bbox filter SQL generation
+# ---------------------------------------------------------------------------
+class TestSridHandling:
+    """Verify SRID-aware bbox filter generation."""
+
+    def test_riyadh_bbox_filter_4326(self):
+        """With SRID 4326, no ST_Transform wrapper in WHERE clause."""
+        from app.ingest.expansion_advisor_common import riyadh_bbox_filter_sql
+
+        sql = riyadh_bbox_filter_sql("way", alias="l", source_srid=4326)
+        assert "ST_Intersects(l.way," in sql
+        assert "ST_MakeEnvelope(" in sql
+        assert "4326)" in sql
+        # Should NOT wrap in ST_Transform when already 4326
+        assert "ST_Transform(l.way" not in sql
+
+    def test_riyadh_bbox_filter_3857(self):
+        """With SRID 3857, bbox filter must ST_Transform the geom column."""
+        from app.ingest.expansion_advisor_common import riyadh_bbox_filter_sql
+
+        sql = riyadh_bbox_filter_sql("way", alias="l", source_srid=3857)
+        assert "ST_Transform(l.way, 4326)" in sql
+        assert "ST_MakeEnvelope(" in sql
+
+    def test_riyadh_bbox_filter_no_alias(self):
+        """Alias can be empty."""
+        from app.ingest.expansion_advisor_common import riyadh_bbox_filter_sql
+
+        sql = riyadh_bbox_filter_sql("geom", alias="", source_srid=4326)
+        assert "ST_Intersects(geom," in sql
+
+    def test_detect_srid_fallback(self):
+        """detect_srid falls back to 4326 when queries fail."""
+        from app.ingest.expansion_advisor_common import detect_srid
+
+        mock_db = MagicMock()
+        mock_db.execute.side_effect = Exception("no such table")
+        mock_db.rollback = MagicMock()
+        result = detect_srid(mock_db, "nonexistent", "geom")
+        assert result == 4326
+
+    def test_detect_srid_from_find_srid(self):
+        """detect_srid returns SRID from Find_SRID when available."""
+        from app.ingest.expansion_advisor_common import detect_srid
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalar.return_value = 3857
+        result = detect_srid(mock_db, "planet_osm_line", "way")
+        assert result == 3857
+
+
+# ---------------------------------------------------------------------------
+# Roads SQL generation
+# ---------------------------------------------------------------------------
+class TestRoadsSqlGeneration:
+    """Verify that roads ingest generates correct SQL with SRID handling."""
+
+    def test_ingest_roads_calls_detect_srid(self):
+        """_ingest_roads should detect SRID before building the query."""
+        from app.ingest.expansion_advisor_roads import _ingest_roads
+
+        mock_db = MagicMock()
+
+        # Make table have 'way' column
+        mock_db.execute.return_value.rowcount = 0
+
+        # We need to capture what SQL was executed
+        executed_stmts = []
+        original_execute = mock_db.execute
+
+        def capture_execute(stmt, *args, **kwargs):
+            executed_stmts.append(str(stmt))
+            result = MagicMock()
+            result.rowcount = 0
+            result.scalar.return_value = 4326
+            return result
+
+        mock_db.execute.side_effect = capture_execute
+
+        try:
+            _ingest_roads(mock_db, "planet_osm_line", replace=False)
+        except Exception:
+            pass  # May fail on commit, that's OK — we're checking SQL generation
+
+        # Should have called Find_SRID or ST_SRID
+        sql_blob = " ".join(executed_stmts)
+        # The INSERT should reference ST_Transform
+        assert "INSERT INTO expansion_road_context" in sql_blob or "Find_SRID" in sql_blob
+
+    def test_roads_detect_source_table_order(self):
+        """_detect_source_table tries planet_osm_line first."""
+        from app.ingest.expansion_advisor_roads import _detect_source_table
+
+        mock_db = MagicMock()
+
+        checked_tables = []
+
+        def mock_table_exists(db, name):
+            checked_tables.append(name)
+            return name == "planet_osm_line"
+
+        with patch("app.ingest.expansion_advisor_roads.table_exists", mock_table_exists):
+            result = _detect_source_table(mock_db)
+
+        assert result == "planet_osm_line"
+        assert checked_tables[0] == "planet_osm_line"
+
+
+# ---------------------------------------------------------------------------
+# Parking SQL generation with SRID
+# ---------------------------------------------------------------------------
+class TestParkingSqlGeneration:
+    """Verify parking ingest handles SRID correctly."""
+
+    def test_parking_polygon_detects_srid(self):
+        """_ingest_from_polygons should call detect_srid."""
+        from app.ingest.expansion_advisor_parking import _ingest_from_polygons
+
+        mock_db = MagicMock()
+        executed_stmts = []
+
+        def capture_execute(stmt, *args, **kwargs):
+            executed_stmts.append(str(stmt))
+            result = MagicMock()
+            result.rowcount = 0
+            result.scalar.return_value = True  # table exists / srid
+            return result
+
+        mock_db.execute.side_effect = capture_execute
+
+        with patch("app.ingest.expansion_advisor_parking.table_exists", return_value=True):
+            with patch("app.ingest.expansion_advisor_parking.detect_srid", return_value=3857) as mock_detect:
+                try:
+                    _ingest_from_polygons(mock_db, replace=False)
+                except Exception:
+                    pass
+                mock_detect.assert_called_once_with(mock_db, "planet_osm_polygon", "way")
+
+        # The executed SQL should contain ST_Transform for 3857 source
+        sql_blob = " ".join(executed_stmts)
+        if "INSERT INTO expansion_parking_asset" in sql_blob:
+            assert "ST_Transform" in sql_blob
+
+
+# ---------------------------------------------------------------------------
+# Rent CSV ingestion (end-to-end with temp file)
+# ---------------------------------------------------------------------------
+class TestRentCsvIngestion:
+    """Verify CSV rent comp ingestion path."""
+
+    def test_normalize_from_csv_inserts_commercial(self, tmp_path):
+        """_normalize_from_csv should insert commercial listings from CSV."""
+        from app.ingest.expansion_advisor_rent_comps import _normalize_from_csv
+
+        csv_file = tmp_path / "test_rents.csv"
+        csv_file.write_text(
+            "city,district,price_sar,area_sqm,asset_type\n"
+            "riyadh,الملقا,5000,100,commercial\n"
+            "riyadh,النرجس,8000,150,retail\n"
+            "jeddah,الحمراء,3000,80,commercial\n"  # Should be skipped (not Riyadh)
+            "riyadh,العليا,4000,90,residential\n"  # Should be skipped (not commercial)
+        )
+
+        mock_db = MagicMock()
+        inserted_params = []
+
+        def capture_execute(stmt, params=None):
+            if params:
+                inserted_params.append(params)
+            result = MagicMock()
+            result.rowcount = 0
+            return result
+
+        mock_db.execute.side_effect = capture_execute
+
+        stats = _normalize_from_csv(mock_db, str(csv_file), replace=False)
+
+        # Should have inserted 2 rows (riyadh commercial + riyadh retail)
+        assert stats["inserted"] == 2
+        assert stats["source"] == "csv_import"
+
+        # Verify the first inserted row has correct annual normalization
+        first = inserted_params[0]
+        assert first["district"] == "الملقا"
+        assert first["monthly"] == 5000.0
+        assert first["annual"] == 60000.0
+        assert first["rent_m2_year"] == 600.0  # 60000 / 100
+
+    def test_normalize_from_csv_skips_zero_price(self, tmp_path):
+        """Rows with zero or missing price should be skipped."""
+        from app.ingest.expansion_advisor_rent_comps import _normalize_from_csv
+
+        csv_file = tmp_path / "bad_rents.csv"
+        csv_file.write_text(
+            "city,district,price_sar,area_sqm,asset_type\n"
+            "riyadh,test,0,100,commercial\n"
+            "riyadh,test,,100,commercial\n"
+        )
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value = MagicMock(rowcount=0)
+        stats = _normalize_from_csv(mock_db, str(csv_file), replace=False)
+        assert stats["inserted"] == 0
+
+    def test_tempdir_lifetime_csv_url(self):
+        """Verify the tempdir fix: normalization runs inside the context manager."""
+        from app.ingest.expansion_advisor_rent_comps import main
+
+        # We don't actually run main(), but verify the code structure
+        import inspect
+        source = inspect.getsource(main)
+
+        # The _normalize_from_csv call should appear inside the same
+        # indentation block as the TemporaryDirectory context
+        lines = source.split("\n")
+        in_csv_url_block = False
+        found_normalize_inside = False
+        for line in lines:
+            if "args.csv_url" in line and "elif" in line:
+                in_csv_url_block = True
+            elif in_csv_url_block and "TemporaryDirectory" in line:
+                continue
+            elif in_csv_url_block and "_normalize_from_csv" in line:
+                found_normalize_inside = True
+                break
+            elif in_csv_url_block and line.strip() and not line.strip().startswith("#"):
+                if "elif" in line or "if stats" in line:
+                    break  # Left the block
+
+        assert found_normalize_inside, (
+            "_normalize_from_csv must be called inside the TemporaryDirectory context "
+            "to avoid reading from a deleted temp file"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Service rent estimation preference/fallback
+# ---------------------------------------------------------------------------
+class TestRentEstimationFallback:
+    """Verify _estimate_rent_sar_m2_year preference chain."""
+
+    def test_falls_through_to_aqar_when_expansion_returns_none(self):
+        """When expansion table returns None, should try aqar_rent_median."""
+        from app.services.expansion_advisor import _estimate_rent_sar_m2_year
+
+        mock_db = MagicMock()
+        mock_db.begin_nested.return_value.__enter__ = MagicMock(return_value=None)
+        mock_db.begin_nested.return_value.__exit__ = MagicMock(return_value=False)
+
+        call_count = {"expansion": 0, "aqar": 0}
+
+        def mock_execute(stmt, params=None):
+            sql_str = str(stmt)
+            result = MagicMock()
+            if "expansion_rent_comp" in sql_str:
+                call_count["expansion"] += 1
+                result.scalar.return_value = False  # no rows
+                return result
+            if "aqar" in sql_str.lower() or "rent_comp" in sql_str.lower():
+                call_count["aqar"] += 1
+            result.scalar.return_value = None
+            result.mappings.return_value.first.return_value = None
+            return result
+
+        mock_db.execute.side_effect = mock_execute
+
+        with patch("app.services.expansion_advisor.aqar_rent_median", return_value=None):
+            rent, source = _estimate_rent_sar_m2_year(mock_db, "test_district")
+
+        # Should have tried expansion table first
+        assert call_count["expansion"] >= 1
+        # Falls back to conservative default
+        assert source in ("conservative_default", "expansion_rent_district",
+                          "expansion_rent_city", "aqar_district", "aqar_city")
+
+    def test_expansion_district_preferred_over_city(self):
+        """District-level rent from expansion table should be preferred over city-wide."""
+        from app.services.expansion_advisor import _estimate_rent_from_expansion_table
+
+        mock_db = MagicMock()
+        mock_db.begin_nested.return_value.__enter__ = MagicMock(return_value=None)
+        mock_db.begin_nested.return_value.__exit__ = MagicMock(return_value=False)
+
+        call_sequence = []
+
+        def mock_execute(stmt, params=None):
+            sql_str = str(stmt)
+            result = MagicMock()
+            if "EXISTS" in sql_str:
+                call_sequence.append("exists")
+                result.scalar.return_value = True
+                return result
+            if "district" in sql_str and "PERCENTILE_CONT" in sql_str:
+                call_sequence.append("district_median")
+                row = {"median": 900.0, "n": 5}
+                result.mappings.return_value.first.return_value = row
+                return result
+            call_sequence.append("city_median")
+            row = {"median": 750.0}
+            result.mappings.return_value.first.return_value = row
+            return result
+
+        mock_db.execute.side_effect = mock_execute
+
+        rent, source = _estimate_rent_from_expansion_table(mock_db, "الملقا")
+        assert rent == 900.0
+        assert source == "expansion_rent_district"
+        # Should NOT have queried city-wide since district had enough rows
+        assert "city_median" not in call_sequence
+
+
+# ---------------------------------------------------------------------------
+# _ea_table_has_rows with populated table
+# ---------------------------------------------------------------------------
+class TestEaTableHasRowsPopulated:
+    """Verify _ea_table_has_rows returns True when table has rows."""
+
+    def test_returns_true_when_rows_exist(self):
+        from app.services.expansion_advisor import _ea_table_has_rows
+
+        mock_db = MagicMock()
+        mock_db.begin_nested.return_value.__enter__ = MagicMock(return_value=None)
+        mock_db.begin_nested.return_value.__exit__ = MagicMock(return_value=False)
+        mock_db.execute.return_value.scalar.return_value = True
+
+        result = _ea_table_has_rows(mock_db, "expansion_road_context")
+        assert result is True

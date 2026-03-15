@@ -18,8 +18,10 @@ from sqlalchemy import text
 
 from app.ingest.expansion_advisor_common import (
     RIYADH_BBOX,
+    detect_srid,
     get_session,
     log_table_counts,
+    riyadh_bbox_filter_sql,
     table_exists,
     validate_db_env,
     write_stats,
@@ -38,12 +40,10 @@ def _ingest_from_polygons(db, replace: bool) -> int:
         db.execute(text("DELETE FROM expansion_parking_asset WHERE city = 'riyadh' AND source = 'osm_polygon'"))
         db.commit()
 
-    bbox = RIYADH_BBOX
-    bbox_filter = (
-        f"ST_Intersects(op.way, "
-        f"ST_MakeEnvelope({bbox['min_lon']}, {bbox['min_lat']}, "
-        f"{bbox['max_lon']}, {bbox['max_lat']}, 4326))"
-    )
+    # Detect source SRID: osm2pgsql with --latlong stores in 4326, without in 3857
+    source_srid = detect_srid(db, "planet_osm_polygon", "way")
+    logger.info("Detected SRID %d for planet_osm_polygon.way", source_srid)
+    bbox_filter = riyadh_bbox_filter_sql("way", alias="op", source_srid=source_srid)
 
     insert_sql = text(f"""
         INSERT INTO expansion_parking_asset (
@@ -121,12 +121,10 @@ def _ingest_from_points(db, replace: bool) -> int:
         db.execute(text("DELETE FROM expansion_parking_asset WHERE city = 'riyadh' AND source = 'osm_point'"))
         db.commit()
 
-    bbox = RIYADH_BBOX
-    bbox_filter = (
-        f"ST_Intersects(pt.way, "
-        f"ST_MakeEnvelope({bbox['min_lon']}, {bbox['min_lat']}, "
-        f"{bbox['max_lon']}, {bbox['max_lat']}, 4326))"
-    )
+    # Detect source SRID for point table
+    source_srid = detect_srid(db, "planet_osm_point", "way")
+    logger.info("Detected SRID %d for planet_osm_point.way", source_srid)
+    bbox_filter = riyadh_bbox_filter_sql("way", alias="pt", source_srid=source_srid)
 
     insert_sql = text(f"""
         INSERT INTO expansion_parking_asset (

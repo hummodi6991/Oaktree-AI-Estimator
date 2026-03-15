@@ -18,9 +18,10 @@ from sqlalchemy import text
 
 from app.ingest.expansion_advisor_common import (
     RIYADH_BBOX,
+    detect_srid,
     get_session,
     log_table_counts,
-    riyadh_filter_sql,
+    riyadh_bbox_filter_sql,
     table_exists,
     validate_db_env,
     write_stats,
@@ -79,12 +80,10 @@ def _ingest_roads(db, source_table: str, replace: bool) -> dict:
         db.rollback()
         geom_col = "geom"
 
-    bbox = RIYADH_BBOX
-    bbox_filter = (
-        f"ST_Intersects({geom_col}, "
-        f"ST_MakeEnvelope({bbox['min_lon']}, {bbox['min_lat']}, "
-        f"{bbox['max_lon']}, {bbox['max_lat']}, 4326))"
-    )
+    # Detect source SRID: osm2pgsql with --latlong stores in 4326, without in 3857
+    source_srid = detect_srid(db, source_table, geom_col)
+    logger.info("Detected SRID %d for %s.%s", source_srid, source_table, geom_col)
+    bbox_filter = riyadh_bbox_filter_sql(geom_col, alias="l", source_srid=source_srid)
 
     # Insert normalized road segments
     # NOTE: frontage_length_m, corner_lot, intersection_distance_m,

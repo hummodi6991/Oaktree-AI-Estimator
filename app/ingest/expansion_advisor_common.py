@@ -68,8 +68,52 @@ def table_row_count(db: Session, table_name: str) -> int:
         return 0
 
 
+def detect_srid(db: Session, table_name: str, geom_col: str = "geom") -> int:
+    """Detect the SRID of a geometry column. Returns 4326 as fallback."""
+    try:
+        srid = db.execute(
+            text("""
+                SELECT Find_SRID('public', :table, :col)
+            """),
+            {"table": table_name, "col": geom_col},
+        ).scalar()
+        if srid and srid > 0:
+            return int(srid)
+    except Exception:
+        db.rollback()
+    # Fallback: sample a row
+    try:
+        srid = db.execute(
+            text(f"SELECT ST_SRID({geom_col}) FROM {table_name} WHERE {geom_col} IS NOT NULL LIMIT 1")
+        ).scalar()
+        if srid and srid > 0:
+            return int(srid)
+    except Exception:
+        db.rollback()
+    return 4326
+
+
+def riyadh_bbox_filter_sql(
+    geom_col: str, alias: str = "", source_srid: int = 4326
+) -> str:
+    """Return a SQL WHERE clause fragment bounding to Riyadh, handling SRID transforms.
+
+    If source_srid != 4326, wraps geom_col in ST_Transform(..., 4326) so the
+    comparison against the WGS-84 bounding box is valid.
+    """
+    prefix = f"{alias}." if alias else ""
+    col_expr = f"{prefix}{geom_col}"
+    if source_srid != 4326:
+        col_expr = f"ST_Transform({col_expr}, 4326)"
+    return (
+        f"ST_Intersects({col_expr}, "
+        f"ST_MakeEnvelope({RIYADH_BBOX['min_lon']}, {RIYADH_BBOX['min_lat']}, "
+        f"{RIYADH_BBOX['max_lon']}, {RIYADH_BBOX['max_lat']}, 4326))"
+    )
+
+
 def riyadh_filter_sql(geom_col: str = "geom", alias: str = "") -> str:
-    """Return a SQL WHERE clause fragment bounding to Riyadh."""
+    """Return a SQL WHERE clause fragment bounding to Riyadh (assumes SRID 4326)."""
     prefix = f"{alias}." if alias else ""
     return (
         f"ST_Intersects({prefix}{geom_col}, "
