@@ -66,24 +66,50 @@ jobs:
         run: |
           PBF_URL="${{ github.event.inputs.pbf_url || 'https://download.geofabrik.de/asia/saudi-arabia-latest.osm.pbf' }}"
           echo "PBF URL: $PBF_URL"
-          # Only import if planet_osm_line is empty or missing
-          ROW_COUNT=$(psql -tAc "SELECT COUNT(*) FROM planet_osm_line;" 2>/dev/null || echo "0")
-          echo "Current planet_osm_line rows: $ROW_COUNT"
-          if [ "$ROW_COUNT" = "0" ] || [ "$ROW_COUNT" = "" ]; then
-            echo "planet_osm_line is empty or missing — downloading and importing PBF"
-            psql -c "CREATE EXTENSION IF NOT EXISTS postgis;"
-            curl -L "$PBF_URL" -o /tmp/osm-data.osm.pbf
-            STYLE_PATH="/usr/share/osm2pgsql/default.style"
-            osm2pgsql --create --slim --latlong --hstore --multi-geometry \
-              --style "${STYLE_PATH}" \
-              -d "${PGDATABASE}" \
-              /tmp/osm-data.osm.pbf
-            rm -f /tmp/osm-data.osm.pbf
-            echo "OSM import complete"
-            psql -c "SELECT COUNT(*) AS planet_osm_line_rows FROM planet_osm_line;"
-          else
-            echo "planet_osm_line already populated, skipping import"
+
+          # Check both planet_osm_line and planet_osm_roads before importing
+          LINE_COUNT=$(psql -tAc "SELECT COUNT(*) FROM planet_osm_line;" 2>/dev/null || echo "0")
+          ROADS_COUNT=$(psql -tAc "SELECT COUNT(*) FROM planet_osm_roads;" 2>/dev/null || echo "0")
+          echo "Current planet_osm_line rows: $LINE_COUNT"
+          echo "Current planet_osm_roads rows: $ROADS_COUNT"
+
+          # Skip import if either table already has data
+          if [ "${LINE_COUNT:-0}" != "0" ] && [ "$LINE_COUNT" != "" ]; then
+            echo "planet_osm_line already populated ($LINE_COUNT rows), skipping import"
+            exit 0
           fi
+          if [ "${ROADS_COUNT:-0}" != "0" ] && [ "$ROADS_COUNT" != "" ]; then
+            echo "planet_osm_roads already populated ($ROADS_COUNT rows), skipping import"
+            exit 0
+          fi
+
+          echo "No OSM road data found — downloading and importing PBF"
+          psql -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+
+          # Download the full PBF
+          curl -L "$PBF_URL" -o /tmp/osm-full.osm.pbf
+
+          # Clip to Riyadh bounding box using osmium to reduce import size/time
+          # Bbox: min_lon=46.3, min_lat=24.4, max_lon=47.1, max_lat=25.0
+          echo "Clipping PBF to Riyadh bounding box with osmium..."
+          osmium extract \
+            --bbox 46.3,24.4,47.1,25.0 \
+            --strategy smart \
+            /tmp/osm-full.osm.pbf \
+            -o /tmp/osm-riyadh.osm.pbf \
+            --overwrite
+          rm -f /tmp/osm-full.osm.pbf
+
+          # Import clipped PBF with --latlong (stores in SRID 4326)
+          STYLE_PATH="/usr/share/osm2pgsql/default.style"
+          osm2pgsql --create --slim --latlong --hstore --multi-geometry \
+            --style "${STYLE_PATH}" \
+            -d "${PGDATABASE}" \
+            /tmp/osm-riyadh.osm.pbf
+          rm -f /tmp/osm-riyadh.osm.pbf
+
+          echo "OSM import complete (Riyadh clip)"
+          psql -c "SELECT 'planet_osm_line' AS tbl, COUNT(*) FROM planet_osm_line UNION ALL SELECT 'planet_osm_roads', COUNT(*) FROM planet_osm_roads;"
 
       - name: Run Roads & Access ingest
         run: |

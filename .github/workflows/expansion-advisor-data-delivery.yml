@@ -9,6 +9,10 @@ on:
         description: "Comma-separated platform list"
         required: false
         default: "hungerstation,jahez,keeta,talabat,mrsool"
+      max_pages:
+        description: "Max pages per platform during scrape"
+        required: false
+        default: "200"
       allow_empty:
         description: "Allow zero rows without failing"
         required: false
@@ -21,7 +25,7 @@ on:
 jobs:
   ingest-delivery:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -48,10 +52,11 @@ jobs:
       - name: Run alembic upgrade
         run: python -m alembic upgrade head
 
-      - name: Run Delivery Marketplace ingest
+      - name: Scrape and ingest Delivery Marketplace data
         run: |
           python -m app.ingest.expansion_advisor_delivery \
             --platforms "${{ github.event.inputs.platforms || 'hungerstation,jahez,keeta,talabat,mrsool' }}" \
+            --max-pages ${{ github.event.inputs.max_pages || '200' }} \
             --write-stats /tmp/delivery-stats.json \
             ${{ github.event.inputs.allow_empty == 'true' && '--allow-empty' || '' }}
 

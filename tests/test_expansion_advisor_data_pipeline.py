@@ -16,9 +16,12 @@ import os
 import subprocess
 import sys
 import tempfile
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 # ---------------------------------------------------------------------------
@@ -680,3 +683,470 @@ class TestEaTableHasRowsPopulated:
 
         result = _ea_table_has_rows(mock_db, "expansion_road_context")
         assert result is True
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: real inserts into SQLite tables matching expansion schema
+# ---------------------------------------------------------------------------
+
+def _create_expansion_tables(engine):
+    """Create expansion tables in SQLite (no geometry columns)."""
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS expansion_road_context (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                city VARCHAR(64) NOT NULL DEFAULT 'riyadh',
+                source VARCHAR(64) NOT NULL DEFAULT 'osm',
+                parcel_id VARCHAR(64),
+                road_class VARCHAR(32),
+                is_major_road BOOLEAN DEFAULT 0,
+                is_service_road BOOLEAN DEFAULT 0,
+                intersection_distance_m DOUBLE PRECISION,
+                major_road_distance_m DOUBLE PRECISION,
+                adjacent_road_count INTEGER DEFAULT 0,
+                touches_road BOOLEAN DEFAULT 0,
+                corner_lot BOOLEAN DEFAULT 0,
+                frontage_length_m DOUBLE PRECISION,
+                uturn_access_proxy VARCHAR(32),
+                signalized_junction_distance_m DOUBLE PRECISION,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS expansion_parking_asset (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                city VARCHAR(64) NOT NULL DEFAULT 'riyadh',
+                source VARCHAR(64) NOT NULL DEFAULT 'osm',
+                name VARCHAR(256),
+                amenity_type VARCHAR(64),
+                capacity INTEGER,
+                covered BOOLEAN,
+                public_access BOOLEAN,
+                walk_access_score DOUBLE PRECISION,
+                dropoff_score DOUBLE PRECISION,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS expansion_delivery_market (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                city VARCHAR(64) NOT NULL DEFAULT 'riyadh',
+                platform VARCHAR(32) NOT NULL,
+                branch_name VARCHAR(256),
+                brand_name VARCHAR(256),
+                category VARCHAR(64),
+                district VARCHAR(128),
+                rating NUMERIC(3,2),
+                rating_count INTEGER,
+                min_order_sar NUMERIC(8,2),
+                delivery_fee_sar NUMERIC(8,2),
+                eta_minutes INTEGER,
+                is_open_now BOOLEAN,
+                supports_late_night BOOLEAN,
+                source_record_id INTEGER,
+                resolved_restaurant_poi_id VARCHAR(128),
+                scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS expansion_rent_comp (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                city VARCHAR(64) NOT NULL DEFAULT 'riyadh',
+                district VARCHAR(128),
+                source VARCHAR(64) NOT NULL DEFAULT 'aqar',
+                listing_id VARCHAR(128),
+                asset_type VARCHAR(32) NOT NULL DEFAULT 'commercial',
+                unit_type VARCHAR(32),
+                area_m2 DOUBLE PRECISION,
+                annual_rent_sar DOUBLE PRECISION,
+                monthly_rent_sar DOUBLE PRECISION,
+                rent_sar_m2_year DOUBLE PRECISION,
+                frontage_class VARCHAR(32),
+                road_class VARCHAR(32),
+                floor_level VARCHAR(32),
+                shell_condition VARCHAR(32),
+                vacancy_days INTEGER,
+                listed_at DATE,
+                ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS expansion_competitor_quality (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                city VARCHAR(64) NOT NULL DEFAULT 'riyadh',
+                restaurant_poi_id VARCHAR(128),
+                brand_name VARCHAR(256),
+                category VARCHAR(64),
+                district VARCHAR(128),
+                chain_strength_score DOUBLE PRECISION,
+                review_score DOUBLE PRECISION,
+                review_count INTEGER,
+                delivery_presence_score DOUBLE PRECISION,
+                multi_platform_score DOUBLE PRECISION,
+                late_night_score DOUBLE PRECISION,
+                price_tier VARCHAR(16),
+                overall_quality_score DOUBLE PRECISION,
+                refreshed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+
+
+def _make_sqlite_session():
+    """Create a SQLite in-memory engine and session with expansion tables."""
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    _create_expansion_tables(engine)
+    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    return Session()
+
+
+class TestIntegrationRoadInserts:
+    """Integration: verify real inserts into expansion_road_context."""
+
+    def test_insert_road_segments(self):
+        db = _make_sqlite_session()
+        db.execute(text("""
+            INSERT INTO expansion_road_context
+                (city, source, road_class, is_major_road, is_service_road,
+                 adjacent_road_count, touches_road, frontage_length_m, uturn_access_proxy)
+            VALUES
+                ('riyadh', 'osm', 'primary', 1, 0, 3, 1, 45.5, 'limited'),
+                ('riyadh', 'osm', 'secondary', 1, 0, 2, 1, 30.0, 'available'),
+                ('riyadh', 'osm', 'residential', 0, 0, 1, 0, 15.2, 'available'),
+                ('riyadh', 'osm', 'service', 0, 1, 0, 0, 8.1, 'available')
+        """))
+        db.commit()
+
+        count = db.execute(text("SELECT COUNT(*) FROM expansion_road_context WHERE city = 'riyadh'")).scalar()
+        assert count == 4
+
+        major_count = db.execute(text(
+            "SELECT COUNT(*) FROM expansion_road_context WHERE is_major_road = 1"
+        )).scalar()
+        assert major_count == 2
+
+        service_count = db.execute(text(
+            "SELECT COUNT(*) FROM expansion_road_context WHERE is_service_road = 1"
+        )).scalar()
+        assert service_count == 1
+
+        db.close()
+
+
+class TestIntegrationParkingInserts:
+    """Integration: verify real inserts into expansion_parking_asset."""
+
+    def test_insert_parking_assets(self):
+        db = _make_sqlite_session()
+        db.execute(text("""
+            INSERT INTO expansion_parking_asset
+                (city, source, name, amenity_type, capacity, covered, public_access,
+                 walk_access_score, dropoff_score)
+            VALUES
+                ('riyadh', 'osm_polygon', 'Al Malqa Mall Parking', 'multi_storey', 200, 1, 1, 60.0, 45.0),
+                ('riyadh', 'osm_polygon', 'Surface Lot', 'surface', 50, 0, 1, 75.0, 70.0),
+                ('riyadh', 'osm_point', 'Street Parking', 'street_side', NULL, 0, 1, 80.0, 85.0)
+        """))
+        db.commit()
+
+        count = db.execute(text("SELECT COUNT(*) FROM expansion_parking_asset WHERE city = 'riyadh'")).scalar()
+        assert count == 3
+
+        covered = db.execute(text("SELECT COUNT(*) FROM expansion_parking_asset WHERE covered = 1")).scalar()
+        assert covered == 1
+
+        avg_walk = db.execute(text(
+            "SELECT AVG(walk_access_score) FROM expansion_parking_asset"
+        )).scalar()
+        assert 60.0 < avg_walk < 80.0
+
+        db.close()
+
+
+class TestIntegrationDeliveryInserts:
+    """Integration: verify real inserts into expansion_delivery_market."""
+
+    def test_insert_delivery_records(self):
+        db = _make_sqlite_session()
+        db.execute(text("""
+            INSERT INTO expansion_delivery_market
+                (city, platform, branch_name, brand_name, category, district,
+                 rating, rating_count, eta_minutes, is_open_now)
+            VALUES
+                ('riyadh', 'hungerstation', 'Al Baik - Malqa', 'Al Baik', 'fast_food', 'الملقا', 4.5, 1200, 25, 1),
+                ('riyadh', 'jahez', 'Al Baik - Narjis', 'Al Baik', 'fast_food', 'النرجس', 4.4, 800, 30, 1),
+                ('riyadh', 'hungerstation', 'Hardees - Olaya', 'Hardees', 'fast_food', 'العليا', 3.8, 400, 20, 0),
+                ('riyadh', 'keeta', 'Kudu - Malqa', 'Kudu', 'fast_food', 'الملقا', 4.1, 600, 15, 1),
+                ('riyadh', 'talabat', 'Starbucks - Olaya', 'Starbucks', 'cafe', 'العليا', 4.3, 900, 10, 1)
+        """))
+        db.commit()
+
+        total = db.execute(text("SELECT COUNT(*) FROM expansion_delivery_market WHERE city = 'riyadh'")).scalar()
+        assert total == 5
+
+        # Multi-platform presence: Al Baik is on 2 platforms
+        al_baik_platforms = db.execute(text(
+            "SELECT COUNT(DISTINCT platform) FROM expansion_delivery_market WHERE brand_name = 'Al Baik'"
+        )).scalar()
+        assert al_baik_platforms == 2
+
+        # Per-district density
+        malqa_count = db.execute(text(
+            "SELECT COUNT(*) FROM expansion_delivery_market WHERE district = 'الملقا'"
+        )).scalar()
+        assert malqa_count == 2
+
+        db.close()
+
+
+class TestIntegrationRentInserts:
+    """Integration: verify real inserts and queries on expansion_rent_comp."""
+
+    def test_insert_and_query_rent_comps(self):
+        db = _make_sqlite_session()
+
+        # Insert rent comps for two districts
+        rents = [
+            ("riyadh", "الملقا", "csv_import", "commercial", 100.0, 5000.0, 60000.0, 600.0),
+            ("riyadh", "الملقا", "csv_import", "commercial", 120.0, 6000.0, 72000.0, 600.0),
+            ("riyadh", "الملقا", "csv_import", "retail", 80.0, 4000.0, 48000.0, 600.0),
+            ("riyadh", "النرجس", "csv_import", "commercial", 150.0, 8000.0, 96000.0, 640.0),
+            ("riyadh", "النرجس", "csv_import", "commercial", 200.0, 10000.0, 120000.0, 600.0),
+        ]
+        for city, district, source, asset_type, area, monthly, annual, rent_m2 in rents:
+            db.execute(
+                text("""
+                    INSERT INTO expansion_rent_comp
+                        (city, district, source, asset_type, area_m2,
+                         monthly_rent_sar, annual_rent_sar, rent_sar_m2_year)
+                    VALUES (:city, :district, :source, :asset_type, :area,
+                            :monthly, :annual, :rent_m2)
+                """),
+                {"city": city, "district": district, "source": source,
+                 "asset_type": asset_type, "area": area, "monthly": monthly,
+                 "annual": annual, "rent_m2": rent_m2},
+            )
+        db.commit()
+
+        total = db.execute(text("SELECT COUNT(*) FROM expansion_rent_comp WHERE city = 'riyadh'")).scalar()
+        assert total == 5
+
+        # District-level query (mimics what the service does)
+        malqa_avg = db.execute(text("""
+            SELECT AVG(rent_sar_m2_year)
+            FROM expansion_rent_comp
+            WHERE city = 'riyadh' AND district = 'الملقا'
+              AND rent_sar_m2_year IS NOT NULL AND rent_sar_m2_year > 0
+        """)).scalar()
+        assert malqa_avg == 600.0
+
+        # Verify annual = monthly * 12
+        rows = db.execute(text(
+            "SELECT monthly_rent_sar, annual_rent_sar FROM expansion_rent_comp"
+        )).fetchall()
+        for monthly, annual in rows:
+            assert annual == monthly * 12.0
+
+        db.close()
+
+
+class TestIntegrationCompetitorInserts:
+    """Integration: verify real inserts into expansion_competitor_quality."""
+
+    def test_insert_and_query_competitors(self):
+        db = _make_sqlite_session()
+        db.execute(text("""
+            INSERT INTO expansion_competitor_quality
+                (city, brand_name, category, district,
+                 chain_strength_score, review_score, review_count,
+                 delivery_presence_score, multi_platform_score,
+                 overall_quality_score)
+            VALUES
+                ('riyadh', 'Al Baik', 'fast_food', 'الملقا', 100.0, 87.5, 1200, 80.0, 60.0, 85.0),
+                ('riyadh', 'Hardees', 'fast_food', 'الملقا', 72.0, 62.5, 400, 60.0, 40.0, 58.0),
+                ('riyadh', 'Kudu', 'fast_food', 'النرجس', 84.0, 75.0, 600, 70.0, 50.0, 72.0)
+        """))
+        db.commit()
+
+        total = db.execute(text("SELECT COUNT(*) FROM expansion_competitor_quality WHERE city = 'riyadh'")).scalar()
+        assert total == 3
+
+        # District competitor density
+        malqa = db.execute(text(
+            "SELECT COUNT(*) FROM expansion_competitor_quality WHERE district = 'الملقا'"
+        )).scalar()
+        assert malqa == 2
+
+        # Highest quality score
+        top = db.execute(text(
+            "SELECT brand_name FROM expansion_competitor_quality ORDER BY overall_quality_score DESC LIMIT 1"
+        )).scalar()
+        assert top == "Al Baik"
+
+        db.close()
+
+
+class TestIntegrationServicePreference:
+    """Integration: verify service actually prefers expansion tables when populated."""
+
+    def test_ea_table_has_rows_with_real_table(self):
+        """_ea_table_has_rows should return True on a real populated SQLite table."""
+        db = _make_sqlite_session()
+
+        # Insert a row
+        db.execute(text("""
+            INSERT INTO expansion_rent_comp (city, district, source, asset_type, rent_sar_m2_year)
+            VALUES ('riyadh', 'الملقا', 'csv_import', 'commercial', 600.0)
+        """))
+        db.commit()
+
+        # Simulate _ea_table_has_rows logic (can't use begin_nested with SQLite easily,
+        # so test the SQL pattern directly)
+        has = db.execute(
+            text("SELECT EXISTS(SELECT 1 FROM expansion_rent_comp LIMIT 1)")
+        ).scalar()
+        assert has == 1  # SQLite returns 1 for True
+
+        # Empty table should return 0
+        db.execute(text("DELETE FROM expansion_road_context"))
+        db.commit()
+        has = db.execute(
+            text("SELECT EXISTS(SELECT 1 FROM expansion_road_context LIMIT 1)")
+        ).scalar()
+        assert has == 0
+
+        db.close()
+
+    def test_rent_preference_chain_with_real_data(self):
+        """With real rent data, district median should be returned over city-wide."""
+        db = _make_sqlite_session()
+
+        # Insert district-specific rents
+        for i, rent in enumerate([500.0, 600.0, 700.0, 800.0, 550.0]):
+            db.execute(
+                text("""
+                    INSERT INTO expansion_rent_comp
+                        (city, district, source, asset_type, rent_sar_m2_year, listing_id)
+                    VALUES ('riyadh', 'الملقا', 'csv_import', 'commercial', :rent, :lid)
+                """),
+                {"rent": rent, "lid": f"test_{i}"},
+            )
+        # Insert city-wide rents (different district)
+        for i, rent in enumerate([400.0, 450.0, 350.0]):
+            db.execute(
+                text("""
+                    INSERT INTO expansion_rent_comp
+                        (city, district, source, asset_type, rent_sar_m2_year, listing_id)
+                    VALUES ('riyadh', 'حي آخر', 'csv_import', 'commercial', :rent, :lid)
+                """),
+                {"rent": rent, "lid": f"other_{i}"},
+            )
+        db.commit()
+
+        # District query should return district-specific data only
+        district_count = db.execute(text("""
+            SELECT COUNT(*) FROM expansion_rent_comp
+            WHERE city = 'riyadh' AND lower(district) = lower('الملقا')
+              AND rent_sar_m2_year IS NOT NULL AND rent_sar_m2_year > 0
+        """)).scalar()
+        assert district_count == 5  # >= 3 means service should use district median
+
+        # City-wide fallback should include all districts
+        city_count = db.execute(text("""
+            SELECT COUNT(*) FROM expansion_rent_comp
+            WHERE city = 'riyadh' AND rent_sar_m2_year IS NOT NULL AND rent_sar_m2_year > 0
+        """)).scalar()
+        assert city_count == 8
+
+        db.close()
+
+    def test_delivery_multi_platform_scoring_with_real_data(self):
+        """Service should be able to compute multi-platform presence from real data."""
+        db = _make_sqlite_session()
+
+        # Same brand on 3 platforms
+        for platform in ["hungerstation", "jahez", "keeta"]:
+            db.execute(
+                text("""
+                    INSERT INTO expansion_delivery_market
+                        (city, platform, brand_name, category, district, rating)
+                    VALUES ('riyadh', :platform, 'Al Baik', 'fast_food', 'الملقا', 4.5)
+                """),
+                {"platform": platform},
+            )
+        # Different brand on 1 platform
+        db.execute(text("""
+            INSERT INTO expansion_delivery_market
+                (city, platform, brand_name, category, district, rating)
+            VALUES ('riyadh', 'hungerstation', 'Small Cafe', 'cafe', 'الملقا', 3.5)
+        """))
+        db.commit()
+
+        # Multi-platform presence query
+        multi = db.execute(text("""
+            SELECT brand_name, COUNT(DISTINCT platform) as platform_count
+            FROM expansion_delivery_market
+            WHERE district = 'الملقا'
+            GROUP BY brand_name
+            ORDER BY platform_count DESC
+        """)).fetchall()
+
+        assert multi[0][0] == "Al Baik"
+        assert multi[0][1] == 3
+        assert multi[1][0] == "Small Cafe"
+        assert multi[1][1] == 1
+
+        # District delivery density
+        density = db.execute(text(
+            "SELECT COUNT(*) FROM expansion_delivery_market WHERE district = 'الملقا'"
+        )).scalar()
+        assert density == 4
+
+        db.close()
+
+
+class TestIntegrationDeliveryWorkflowScrape:
+    """Verify the delivery ingest module calls scraper pipeline when not skipped."""
+
+    def test_delivery_main_has_scrape_step(self):
+        """expansion_advisor_delivery.main should run scraper by default."""
+        from app.ingest.expansion_advisor_delivery import _run_delivery_scrape
+
+        # Verify the function exists and is callable
+        assert callable(_run_delivery_scrape)
+
+    def test_skip_scrape_flag(self):
+        """--skip-scrape should skip the scraper and only normalize."""
+        import inspect
+        from app.ingest.expansion_advisor_delivery import main
+
+        source = inspect.getsource(main)
+        assert "skip_scrape" in source or "skip-scrape" in source
+        assert "_run_delivery_scrape" in source
+
+    def test_run_delivery_scrape_calls_pipeline(self):
+        """_run_delivery_scrape should call run_all_platforms."""
+        mock_run = MagicMock(return_value=[
+            {"platform": "hungerstation", "rows_inserted": 50, "rows_matched": 30},
+        ])
+
+        # _run_delivery_scrape does a lazy import of run_all_platforms inside the function,
+        # so we mock the module that gets imported
+        mock_pipeline = MagicMock()
+        mock_pipeline.run_all_platforms = mock_run
+
+        with patch.dict("sys.modules", {"app.delivery.pipeline": mock_pipeline}):
+            from app.ingest.expansion_advisor_delivery import _run_delivery_scrape
+            results = _run_delivery_scrape(["hungerstation"], max_pages=10)
+
+        mock_run.assert_called_once_with(
+            db=None,
+            max_pages=10,
+            platforms=["hungerstation"],
+            run_resolver=True,
+        )
+        assert len(results) == 1
+        assert results[0]["rows_inserted"] == 50

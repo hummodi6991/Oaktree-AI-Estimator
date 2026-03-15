@@ -1,7 +1,8 @@
 """Expansion Advisor — Delivery Marketplace Ingestion.
 
-Orchestrates existing delivery pipeline data and normalizes resolved records
-into expansion_delivery_market for the Expansion Advisor service.
+End-to-end pipeline: scrapes fresh delivery data from configured platforms,
+runs entity resolution, then normalizes resolved records into
+expansion_delivery_market for the Expansion Advisor service.
 
 Only Riyadh rows are kept in the normalized output.
 Fails loudly if requested platforms produce zero useful rows
@@ -131,6 +132,36 @@ def _normalize_delivery_records(db, platforms: list[str], allow_empty: bool) -> 
     }
 
 
+def _run_delivery_scrape(platforms: list[str], max_pages: int) -> list[dict]:
+    """Run the delivery scrape pipeline to populate delivery_source_record.
+
+    Uses the existing app.delivery.pipeline.run_all_platforms() which handles
+    per-platform session isolation, scraping, parsing, and entity resolution.
+    """
+    from app.delivery.pipeline import run_all_platforms
+
+    logger.info("Running delivery scrape for platforms: %s (max_pages=%d)", platforms, max_pages)
+    results = run_all_platforms(
+        db=None,
+        max_pages=max_pages,
+        platforms=platforms,
+        run_resolver=True,
+    )
+
+    total_inserted = sum(r.get("rows_inserted", 0) for r in results)
+    total_matched = sum(r.get("rows_matched", 0) for r in results)
+    errors = [r["platform"] for r in results if "error" in r]
+
+    logger.info(
+        "Delivery scrape complete: %d inserted, %d matched, %d errors",
+        total_inserted, total_matched, len(errors),
+    )
+    if errors:
+        logger.warning("Platforms with errors: %s", errors)
+
+    return results
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Expansion Advisor — Delivery Marketplace ingest")
     parser.add_argument("--city", default="riyadh", help="City filter (default: riyadh)")
@@ -139,6 +170,10 @@ def main() -> None:
     parser.add_argument("--allow-empty", action="store_true",
                         default=os.getenv("ALLOW_EMPTY_DELIVERY_INGEST", "").lower() in ("true", "1", "yes"),
                         help="Allow zero rows without failing")
+    parser.add_argument("--skip-scrape", action="store_true",
+                        help="Skip scraping; only normalize existing delivery_source_record rows")
+    parser.add_argument("--max-pages", type=int, default=200,
+                        help="Max pages per platform during scrape (default: 200)")
     parser.add_argument("--write-stats", type=str, default=None, help="Write JSON stats to path")
     args = parser.parse_args()
 
@@ -146,9 +181,20 @@ def main() -> None:
     validate_db_env()
 
     platforms = [p.strip().lower() for p in args.platforms.split(",") if p.strip()]
+
+    # Step 1: Scrape fresh delivery data (unless --skip-scrape)
+    scrape_results = []
+    if not args.skip_scrape:
+        scrape_results = _run_delivery_scrape(platforms, args.max_pages)
+
+    # Step 2: Normalize into expansion_delivery_market
     db = get_session()
     try:
         stats = _normalize_delivery_records(db, platforms, args.allow_empty)
+        stats["scrape_results"] = [
+            {k: v for k, v in r.items() if k != "raw_results"}
+            for r in scrape_results
+        ]
         counts = log_table_counts(db, ["expansion_delivery_market"])
         stats["row_counts"] = counts
 
