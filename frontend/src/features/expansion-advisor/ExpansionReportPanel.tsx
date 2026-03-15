@@ -31,6 +31,7 @@ export default function ExpansionReportPanel({
   const { t } = useTranslation();
   const [presentationMode, setPresentationMode] = useState(false);
 
+  // Only hide when truly nothing — not for sparse payloads
   if (!report && !loading) return null;
 
   return (

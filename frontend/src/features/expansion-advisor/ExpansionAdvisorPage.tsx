@@ -269,7 +269,18 @@ export default function ExpansionAdvisorPage({
       const result = await getExpansionRecommendationReport(targetSearchId);
       reportCacheRef.current.set(cacheKey, result);
       setReport(result);
-    } catch { setReportError(t("expansionAdvisor.errorReport")); } finally { setLoadingReport(false); }
+      setReportError(null);
+    } catch (err) {
+      // Only show error for true fetch failures / non-2xx / backend exceptions.
+      // A 404 for a report that doesn't exist yet is not an error if search has results.
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.startsWith("404")) {
+        console.info("[expansion-report] report not found (404) for search", targetSearchId);
+        setReport(null);
+      } else {
+        setReportError(t("expansionAdvisor.errorReport"));
+      }
+    } finally { setLoadingReport(false); }
   }, [t]);
 
   const loadCompare = async (targetSearchId: string, targetCompareIds: string[]) => {
@@ -543,6 +554,7 @@ export default function ExpansionAdvisorPage({
           report={report}
           memo={leadCandidateId && selectedCandidate?.id === leadCandidateId ? memo : null}
           prominent={isFinalStudy}
+          searchPassCount={candidates.filter((c) => c.gate_status_json?.overall_pass === true).length}
         />
       )}
 

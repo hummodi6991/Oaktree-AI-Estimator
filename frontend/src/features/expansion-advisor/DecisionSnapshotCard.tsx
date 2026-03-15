@@ -9,11 +9,13 @@ type Props = {
   report?: RecommendationReportResponse | null;
   memo?: CandidateMemoResponse | null;
   prominent?: boolean;
+  /** Search-level pass count — prevents contradicting the search header */
+  searchPassCount?: number;
 };
 
-export default function DecisionSnapshotCard({ candidate, report, memo, prominent }: Props) {
+export default function DecisionSnapshotCard({ candidate, report, memo, prominent, searchPassCount: passCount }: Props) {
   const { t } = useTranslation();
-  const snap = buildDecisionSnapshot(candidate, report, memo);
+  const snap = buildDecisionSnapshot(candidate, report, memo, passCount);
 
   return (
     <div className={`ea-decision-snapshot${prominent ? " ea-decision-snapshot--prominent" : ""}`}>

@@ -19,11 +19,24 @@ ARABIC_VARIANTS = str.maketrans(
         "إ": "ا",
         "آ": "ا",
         "ى": "ي",
+        # Ta marbuta → ha (consistent normalization)
+        "ة": "ه",
     }
 )
 
 WHITESPACE_RE = re.compile(r"\s+")
 SEPARATOR_VARIANT_RE = re.compile(r"[-/]+")
+
+# Tatweel (kashida) character used for Arabic text stretching
+_TATWEEL = "\u0640"
+# Unicode bidi/control characters that can cause display corruption
+_BIDI_CONTROL_RE = re.compile(r"[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]")
+# Mojibake detection: Latin characters that appear when Arabic text is mis-encoded
+_MOJIBAKE_RE = re.compile(
+    r"(?:[\xC3][\x80-\xBF]|Ø[§-¿]Ù[\x80-\x8F„]|Ã[¢©¨±]){2,}"
+)
+# Garbled Unicode replacement characters
+_GARBLED_RE = re.compile(r"[\uFFFD\uFFFE\uFFF0-\uFFFF]{2,}")
 
 
 @dataclass(frozen=True)
@@ -67,13 +80,33 @@ _DISTRICT_CACHE = _DistrictLRUCache()
 def normalize_arabic_text(s: str | None) -> str:
     if s is None:
         return ""
-    normalized = s.replace("\u00A0", " ").replace("ـ", "")
+    normalized = s.replace("\u00A0", " ")
+    # Strip tatweel (kashida)
+    normalized = normalized.replace(_TATWEEL, "")
+    # Remove bidi/control characters
+    normalized = _BIDI_CONTROL_RE.sub("", normalized)
+    # Normalize Arabic character variants (alef, ya, ta marbuta)
     normalized = normalized.translate(ARABIC_VARIANTS)
+    # Collapse weird punctuation/separators
+    normalized = SEPARATOR_VARIANT_RE.sub(" ", normalized)
     normalized = WHITESPACE_RE.sub(" ", normalized).strip()
     return normalized
 
 
+def is_mojibake(s: str | None) -> bool:
+    """Return True if the string looks like garbled / mis-encoded text."""
+    if not s or not s.strip():
+        return True
+    if _GARBLED_RE.search(s):
+        return True
+    if _MOJIBAKE_RE.search(s):
+        return True
+    return False
+
+
 def normalize_district_key(s: str | None) -> str:
+    if s is not None and is_mojibake(s):
+        return ""
     base = normalize_arabic_text(s)
     if base.startswith("حي "):
         base = base[3:]
