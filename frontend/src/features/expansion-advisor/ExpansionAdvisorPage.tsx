@@ -274,6 +274,7 @@ export default function ExpansionAdvisorPage({
       // Only show error for true fetch failures / non-2xx / backend exceptions.
       // A 404 for a report that doesn't exist yet is not an error if search has results.
       const msg = err instanceof Error ? err.message : "";
+      console.warn("[expansion-report] report fetch failed", { searchId: targetSearchId, error: msg });
       if (msg.startsWith("404")) {
         console.info("[expansion-report] report not found (404) for search", targetSearchId);
         setReport(null);

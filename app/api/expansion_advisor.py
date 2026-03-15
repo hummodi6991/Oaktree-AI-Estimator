@@ -712,6 +712,17 @@ def create_expansion_search(
             f"search_id={search_id} has been logged for investigation.",
         )
 
+    pass_count = sum(
+        1 for item in items
+        if (item.get("gate_status_json") or {}).get("overall_pass") is True
+    )
+    logger.info(
+        "Search completed: search_id=%s candidate_count=%d pass_count=%d "
+        "brand=%s category=%s districts=%s",
+        search_id, len(items), pass_count,
+        req.brand_name, req.category, req_target_districts,
+    )
+
     return {
         "search_id": search_id,
         "brand_profile": {
@@ -752,18 +763,29 @@ def get_expansion_search_candidates(search_id: str, db: Session = Depends(get_db
 
 @router.get("/searches/{search_id}/report", response_model=RecommendationReportResponse)
 def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    import time as _time
+    t0 = _time.monotonic()
     try:
         report = get_recommendation_report(db, search_id)
     except Exception:
-        logger.exception("Report generation failed for search_id=%s", search_id)
+        logger.exception(
+            "Report generation failed: search_id=%s elapsed=%.2fs",
+            search_id, _time.monotonic() - t0,
+        )
         raise HTTPException(status_code=500, detail="Report generation failed")
     if not report:
+        logger.info("Report: search not found search_id=%s", search_id)
         raise HTTPException(status_code=404, detail="Expansion search not found")
+    rec = report.get("recommendation", {})
     logger.info(
-        "Report served: search_id=%s pass_count=%s top_candidates=%d",
+        "Report served: search_id=%s pass_count=%s top_candidates=%d "
+        "best_candidate=%s best_pass=%s elapsed=%.2fs",
         search_id,
-        report.get("recommendation", {}).get("pass_count"),
+        rec.get("pass_count"),
         len(report.get("top_candidates", [])),
+        (rec.get("best_candidate_id") or "none")[:8],
+        (rec.get("best_pass_candidate_id") or "none")[:8],
+        _time.monotonic() - t0,
     )
     return report
 

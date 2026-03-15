@@ -505,11 +505,26 @@ export async function getExpansionCandidates(searchId: string): Promise<Expansio
   return { ...data, items: normalizeCandidates(data.items || []), meta: data.meta || {} };
 }
 export async function compareExpansionCandidates(searchId: string, candidateIds: string[]): Promise<CompareCandidatesResponse> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/candidates/compare"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search_id: searchId, candidate_ids: candidateIds }) }); const data = await readJson<CompareCandidatesResponse>(res); return normalizeCompareResponse(data); }
-export async function getExpansionCandidateMemo(candidateId: string): Promise<CandidateMemoResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo`)); const data = await readJson<CandidateMemoResponse>(res); return normalizeMemoResponse(data); }
+export async function getExpansionCandidateMemo(candidateId: string): Promise<CandidateMemoResponse> {
+  const url = buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo`);
+  console.info("[expansion-memo] fetching memo", { url, candidateId });
+  const res = await fetchWithAuth(url);
+  const data = await readJson<CandidateMemoResponse>(res);
+  return normalizeMemoResponse(data);
+}
 export async function getExpansionRecommendationReport(searchId: string): Promise<RecommendationReportResponse> {
-  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`));
+  const url = buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`);
+  console.info("[expansion-report] fetching report", { url, searchId });
+  const res = await fetchWithAuth(url);
   const data = await readJson<RecommendationReportResponse>(res);
   const normalized = normalizeReportResponse(data);
+  console.info("[expansion-report] report loaded", {
+    searchId,
+    status: res.status,
+    passCount: normalized.recommendation?.pass_count,
+    topCandidates: normalized.top_candidates?.length ?? 0,
+    hasSummary: !!normalized.recommendation?.summary,
+  });
   // Log sparse payload normalization for observability
   if (!data.recommendation && normalized.recommendation) {
     console.info("[expansion-report] normalized sparse recommendation payload for search", searchId);
