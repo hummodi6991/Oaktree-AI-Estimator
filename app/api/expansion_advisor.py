@@ -770,12 +770,6 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
     import time as _time
     t0 = _time.monotonic()
 
-    # Verify the search exists first to distinguish 404 from 500.
-    search = get_search(db, search_id)
-    if not search:
-        logger.info("Report: search not found search_id=%s", search_id)
-        raise HTTPException(status_code=404, detail="Expansion search not found")
-
     try:
         report = get_recommendation_report(db, search_id)
     except (ValueError, KeyError, TypeError, AttributeError) as exc:
@@ -787,7 +781,7 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
         )
         report = {
             "search_id": search_id,
-            "brand_profile": search.get("brand_profile") or search.get("request_json") or {},
+            "brand_profile": {},
             "meta": {"version": "expansion_advisor_v6.1", "degraded": True, "error_class": type(exc).__name__},
             "top_candidates": [],
             "recommendation": {
@@ -814,27 +808,9 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
         raise
 
     if not report:
-        # get_recommendation_report returned None (search found but no candidates)
-        logger.info("Report: no candidates for search_id=%s", search_id)
-        report = {
-            "search_id": search_id,
-            "brand_profile": search.get("brand_profile") or {},
-            "meta": {"version": "expansion_advisor_v6.1"},
-            "top_candidates": [],
-            "recommendation": {
-                "best_candidate_id": None,
-                "runner_up_candidate_id": None,
-                "best_pass_candidate_id": None,
-                "best_confidence_candidate_id": None,
-                "pass_count": 0,
-                "why_best": "",
-                "main_risk": "",
-                "best_format": "",
-                "summary": "",
-                "report_summary": "",
-            },
-            "assumptions": {},
-        }
+        # get_recommendation_report returns None when search not found or no candidates
+        logger.info("Report: not found for search_id=%s", search_id)
+        raise HTTPException(status_code=404, detail="Expansion report not found")
 
     rec = report.get("recommendation", {})
     elapsed = _time.monotonic() - t0
