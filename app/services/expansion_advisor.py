@@ -258,10 +258,6 @@ _EXPANSION_DEFAULT_RENT_SAR_M2_YEAR = 900.0
 _EXPANSION_VERSION = "expansion_advisor_v6.1"
 _EXPANSION_PARCEL_SOURCE = "arcgis_only"
 _EXPANSION_EXCLUDED_SOURCES = ["suhail", "inferred_parcels"]
-_EXPANSION_ENRICHMENT_SHORTLIST_CAP = max(
-    25,
-    int(os.getenv("EXPANSION_ENRICHMENT_SHORTLIST_CAP", "35")),
-)
 _EXPANSION_BULK_PERSIST_CHUNK_SIZE = max(
     10,
     int(os.getenv("EXPANSION_BULK_PERSIST_CHUNK_SIZE", "100")),
@@ -317,11 +313,10 @@ def _dedupe_candidates(
             if parcel_id in seen_pid:
                 continue
             seen_pid.add(parcel_id)
-            # Keep exact parcel-id dedupe always, but in aggressive mode
-            # still allow same-site cluster collapse across adjacent ArcGIS parcels.
-            if not aggressive:
-                result.append(c)
-                continue
+            # Candidates with a real parcel_id skip spatial dedupe —
+            # different parcels at nearby locations are genuinely distinct.
+            result.append(c)
+            continue
 
         # 2. Tight spatial+attribute grid (55m snap vs old 110m)
         spatial_key = (
@@ -2698,10 +2693,7 @@ def run_expansion_search(
         if rent_cache_key not in rent_cache:
             rent_cache[rent_cache_key] = _estimate_rent_sar_m2_year(db, district)
         estimated_rent_sar_m2_year, rent_source = rent_cache[rent_cache_key]
-        # Snap rent to the same whole-SAR display granularity used in the UI
-        # so annual rent does not disagree with the visible rent number.
-        estimated_rent_sar_m2_year = float(round(_safe_float(estimated_rent_sar_m2_year)))
-        estimated_annual_rent_sar = round(area_m2 * estimated_rent_sar_m2_year, 2)
+        estimated_annual_rent_sar = area_m2 * estimated_rent_sar_m2_year
         estimated_fitout_cost_sar = _estimate_fitout_cost_sar(area_m2, service_model)
         estimated_revenue_index = _estimate_revenue_index(
             demand_score,
@@ -2814,7 +2806,7 @@ def run_expansion_search(
         )
 
     prepared.sort(key=lambda item: item["preliminary_final_score"], reverse=True)
-    shortlist_size = min(len(prepared), max(limit, _EXPANSION_ENRICHMENT_SHORTLIST_CAP))
+    shortlist_size = min(len(prepared), max(limit, 50))
     for prepared_item in prepared[:shortlist_size]:
       try:
         row = prepared_item["row"]
@@ -3152,7 +3144,7 @@ def run_expansion_search(
 
     candidates.sort(key=_rank_sort_key)
     # Dedupe near-clone candidates before limiting
-    candidates = _dedupe_candidates(candidates, aggressive=True)
+    candidates = _dedupe_candidates(candidates)
     candidates = candidates[:limit]
     for index, candidate in enumerate(candidates, start=1):
         candidate["compare_rank"] = index
