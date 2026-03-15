@@ -26,7 +26,7 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from typing import Any, Iterator
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, unquote
 
 import httpx
 
@@ -42,6 +42,20 @@ _BACKOFF_BASE = 2.0  # seconds; retry delays: 2, 4, 8, 16
 # Registry of all scrapers — used by the ingestion pipeline to iterate
 # over all available platforms without hard-coding function names.
 SCRAPER_REGISTRY: dict[str, dict[str, Any]] = {}
+
+_RIYADH_URL_TOKENS = (
+    "riyadh",
+    "ar-riyadh",
+    "al-riyadh",
+    "\u0627\u0644\u0631\u064a\u0627\u0636",
+)
+
+
+def _decoded_url(url: str) -> str:
+    try:
+        return unquote(url or "")
+    except Exception:
+        return url or ""
 
 
 def _register(source: str, *, label: str, url: str):
@@ -182,8 +196,44 @@ def _slug_to_name(slug: str) -> str:
 
 def _is_riyadh_url(url: str) -> bool:
     """Check if a URL is likely related to Riyadh."""
-    lower = url.lower()
-    return "riyadh" in lower or "\u0627\u0644\u0631\u064a\u0627\u0636" in lower
+    lower = _decoded_url(url).lower()
+    return any(token in lower for token in _RIYADH_URL_TOKENS)
+
+
+def _is_hungerstation_riyadh_restaurant_shard(url: str) -> bool:
+    """
+    Keep only HungerStation restaurant-vendor sitemap shards for Riyadh.
+
+    This is the critical fix:
+    - do not expand all cities
+    - do not expand flowers/pharmacies/supermarkets/pickup shards
+    - do not rely on page-level URL filtering after truncating to max_pages
+    """
+    lower = _decoded_url(url).lower()
+    if "hungerstation.com/sitemaps/" not in lower:
+        return False
+    if "/modules/restaurants/vendors/" not in lower:
+        return False
+    return any(token in lower for token in _RIYADH_URL_TOKENS)
+
+
+def _is_hungerstation_candidate_restaurant_url(url: str) -> bool:
+    """
+    Defensive filter for detail/listing URLs emitted from Riyadh restaurant shards.
+    Excludes obvious landing/index pages that pollute the first page window and
+    lead to rows with no usable geo.
+    """
+    lower = _decoded_url(url).lower()
+
+    blocked = (
+        "/regions/",
+        "/cuisines",
+        "/flowers/",
+        "/pharmacies/",
+        "/supermarkets/",
+        "/pickup/",
+    )
+    return not any(token in lower for token in blocked)
 
 
 def _extract_page_data(html: str, url: str, source: str) -> dict[str, Any]:
@@ -368,7 +418,8 @@ def _generic_sitemap_scrape(
     count = 0
     riyadh_filtered = 0
     fetch_failed = 0
-    for u in restaurant_urls[:max_pages]:
+    seen = 0
+    for u in restaurant_urls:
         if riyadh_filter and not _is_riyadh_url(u):
             riyadh_filtered += 1
             continue
@@ -377,6 +428,10 @@ def _generic_sitemap_scrape(
         if not resp:
             fetch_failed += 1
             continue
+
+        seen += 1
+        if seen > max_pages:
+            break
 
         slug = urlparse(u).path.rstrip("/").split("/")[-1]
         page_data = _extract_page_data(resp.text, u, source)
@@ -427,39 +482,56 @@ def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]
         sitemap_urls[:10],
     )
 
-    restaurant_urls: list[str] = []
-    # Broaden sitemap URL discovery: expand ALL nested sitemaps, not just
-    # those matching "restaurant" or "riyadh" — the Riyadh filter is
-    # applied later at the page-visit level.
-    for url in sitemap_urls:
-        if url.endswith(".xml") or url.endswith(".xml.gz"):
-            try:
-                expanded = _parse_sitemap(url)
-                logger.info(
-                    "HungerStation shard %s yielded %d URLs", url, len(expanded),
-                )
-                restaurant_urls.extend(expanded)
-            except Exception as exc:
-                logger.warning("HungerStation shard %s failed: %s", url, exc)
-        else:
-            restaurant_urls.append(url)
+    # FIX:
+    # Restrict expansion to Riyadh restaurant-vendor shards only.
+    # The old code expanded *all* city shards (2.4M+ URLs in the failing run),
+    # then sliced to max_pages before meaningful Riyadh selection.
+    riyadh_restaurant_shards = [
+        u for u in sitemap_urls if _is_hungerstation_riyadh_restaurant_shard(u)
+    ]
 
     logger.info(
-        "Found %d candidate URLs from HungerStation (pre-filter)", len(restaurant_urls),
+        "HungerStation Riyadh restaurant shards: %d",
+        len(riyadh_restaurant_shards),
+    )
+
+    restaurant_urls: list[str] = []
+    for url in riyadh_restaurant_shards:
+        try:
+            expanded = _parse_sitemap(url)
+            expanded = [
+                u for u in expanded
+                if _is_hungerstation_candidate_restaurant_url(u)
+            ]
+            logger.info(
+                "HungerStation Riyadh shard %s yielded %d candidate restaurant URLs",
+                url,
+                len(expanded),
+            )
+            restaurant_urls.extend(expanded)
+        except Exception as exc:
+            logger.warning("HungerStation shard %s failed: %s", url, exc)
+
+    # Deduplicate while preserving order.
+    restaurant_urls = list(dict.fromkeys(restaurant_urls))
+
+    logger.info(
+        "Found %d Riyadh restaurant candidate URLs from HungerStation",
+        len(restaurant_urls),
     )
 
     count = 0
-    riyadh_filtered = 0
     fetch_failed = 0
     no_parse = 0
     sample_rejected: list[str] = []
+    processed = 0
 
-    for url in restaurant_urls[:max_pages]:
-        if not _is_riyadh_url(url):
-            riyadh_filtered += 1
-            continue
+    for url in restaurant_urls:
+        processed += 1
+        if processed > max_pages:
+            break
 
-        resp = _safe_get(url, crawl_delay=10.0)
+        resp = _safe_get(url, crawl_delay=2.0)
         if not resp:
             fetch_failed += 1
             continue
@@ -502,8 +574,12 @@ def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]
         )
     logger.info(
         "Scraped %d restaurants from HungerStation "
-        "(riyadh_filtered=%d, fetch_failed=%d, no_parse=%d, candidate_urls=%d)",
-        count, riyadh_filtered, fetch_failed, no_parse, len(restaurant_urls),
+        "(fetch_failed=%d, no_parse=%d, candidate_urls=%d, processed=%d)",
+        count,
+        fetch_failed,
+        no_parse,
+        len(restaurant_urls),
+        min(processed, max_pages),
     )
 
 
