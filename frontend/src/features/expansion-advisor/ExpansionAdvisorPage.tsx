@@ -261,7 +261,7 @@ export default function ExpansionAdvisorPage({
     if (!targetSearchId) return;
     const cacheKey = reportCacheKey(targetSearchId);
     const cached = reportCacheRef.current.get(cacheKey);
-    if (cached) { setReport(cached); return; }
+    if (cached) { setReport(cached); setReportError(null); return; }
     setLoadingReport(true);
     setReportError(null);
     void trackEvent("ui_expansion_report_opened", { meta: { search_id: targetSearchId } });
@@ -277,6 +277,7 @@ export default function ExpansionAdvisorPage({
         // Search not found or validation error — soft-handle
         console.info("[expansion-report] report not available (soft)", targetSearchId, msg.slice(0, 3));
         setReport(null);
+        setReportError(null);
       } else {
         // 500 or network failure — surface to user so real bugs are visible
         setReportError(t("expansionAdvisor.errorReport"));
@@ -946,6 +947,7 @@ export default function ExpansionAdvisorPage({
         <ExpansionReportPanel
           report={report}
           loading={loadingReport}
+          error={reportError}
           leadCandidateId={leadCandidateId}
           leadCandidate={resolveCandidateById(candidates, leadCandidateId)}
           memo={leadCandidateId && selectedCandidate?.id === leadCandidateId ? memo : null}

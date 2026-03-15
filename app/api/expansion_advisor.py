@@ -174,6 +174,7 @@ class ExpansionCandidateResponse(FlexibleResponseModel):
     search_id: str | None = None
     rank_position: int | None = None
     confidence_grade: str = "D"
+    display_annual_rent_sar: float | None = None
     gate_status_json: dict[str, Any] = Field(default_factory=dict)
     gate_reasons_json: CandidateGateReasonsResponse = Field(default_factory=CandidateGateReasonsResponse)
     feature_snapshot_json: CandidateFeatureSnapshotResponse = Field(default_factory=CandidateFeatureSnapshotResponse)
@@ -780,8 +781,8 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
 
     try:
         report = get_recommendation_report(db, search_id)
-    except (ValueError, KeyError, TypeError, AttributeError) as exc:
-        # Recoverable data-shape errors: return sparse report with degraded flag.
+    except (ValueError, KeyError, TypeError, AttributeError, ProgrammingError) as exc:
+        # Recoverable data-shape / query errors: return sparse report with degraded flag.
         logger.warning(
             "Report generation failed (recoverable %s): search_id=%s elapsed=%.2fs detail=%s",
             type(exc).__name__, search_id, _time.monotonic() - t0, str(exc)[:200],
