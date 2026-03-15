@@ -56,7 +56,7 @@ import ValidationPlanPanel from "./ValidationPlanPanel";
 import AssumptionsCard from "./AssumptionsCard";
 import DecisionSnapshotCard from "./DecisionSnapshotCard";
 import CompareOutcomeBanner from "./CompareOutcomeBanner";
-import type { ExpansionCandidate, CandidateScoreBreakdown, SavedExpansionSearch, RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
+import type { ExpansionCandidate, CandidateScoreBreakdown, CandidateFeatureSnapshot, SavedExpansionSearch, RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
 import SavedSearchesPanel from "./SavedSearchesPanel";
 import GateSummary from "./GateSummary";
 import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
@@ -4382,12 +4382,12 @@ describe("Gate labels: raw keys never appear in user-visible text", () => {
 
 describe("Completeness: UI reflects backend evidence completeness", () => {
   it("parseFeatureSnapshot preserves data_completeness_score from backend", () => {
-    const snapshot = parseFeatureSnapshot({ context_sources: {}, missing_context: [], data_completeness_score: 42 } as unknown as Record<string, unknown>);
+    const snapshot = parseFeatureSnapshot({ context_sources: {}, missing_context: [], data_completeness_score: 42 } as CandidateFeatureSnapshot);
     expect(snapshot.completeness).toBe(42);
   });
 
   it("parseFeatureSnapshot defaults to 0 when missing", () => {
-    const snapshot = parseFeatureSnapshot({} as unknown as Record<string, unknown>);
+    const snapshot = parseFeatureSnapshot({} as unknown as CandidateFeatureSnapshot);
     expect(snapshot.completeness).toBe(0);
   });
 
@@ -4405,7 +4405,7 @@ describe("Rent display: display_annual_rent_sar preferred over estimated", () =>
       display_annual_rent_sar: 384000,
     });
     const html = renderToStaticMarkup(
-      <CandidateDetailPanel candidate={candidate} onClose={() => {}} />,
+      <CandidateDetailPanel candidate={candidate} />,
     );
     // Should show the display value (384,000) not the internal value (384,008)
     expect(html).toContain("384,000");
@@ -4418,7 +4418,7 @@ describe("Rent display: display_annual_rent_sar preferred over estimated", () =>
       estimated_annual_rent_sar: 384008,
     });
     const html = renderToStaticMarkup(
-      <CandidateDetailPanel candidate={candidate} onClose={() => {}} />,
+      <CandidateDetailPanel candidate={candidate} />,
     );
     expect(html).toContain("384,008");
   });
