@@ -247,7 +247,7 @@ def test_compare_candidates_includes_v5_fields_and_gate_summary_uses_actual_gate
     assert result["items"][0]["demand_thesis"] == "Demand is moderate"
     assert result["items"][0]["zoning_fit_score"] == 88
     assert result["items"][0]["frontage_score"] == 66
-    assert result["items"][0]["gate_reasons_json"]["failed"] == ["frontage_access_pass"]
+    assert result["items"][0]["gate_reasons_json"]["failed"] == ["frontage/access"]
     assert result["items"][0]["gate_reasons_json"]["unknown"] == []
     assert result["items"][0]["gate_reasons_json"]["thresholds"] == {}
     assert result["items"][0]["cost_thesis"] == "Cost is manageable"
@@ -312,7 +312,7 @@ def test_get_candidate_memo_returns_recommendation_shape():
     assert memo["candidate_id"] == "c1"
     assert memo["recommendation"]["verdict"] in {"go", "consider", "caution"}
     assert memo["candidate"]["key_strengths"]
-    assert memo["candidate"]["gate_reasons"]["passed"] == ["zoning_fit_pass"]
+    assert memo["candidate"]["gate_reasons"]["passed"] == ["zoning fit"]
     assert memo["candidate"]["gate_reasons"]["unknown"] == []
     assert memo["candidate"]["score_breakdown_json"]["weights"] == {}
     assert memo["candidate"]["feature_snapshot"]["touches_road"] is True
@@ -460,7 +460,7 @@ def test_gate_status_logic():
 
 
 def test_confidence_grade_bounds():
-    assert _confidence_grade(confidence_score=88, district="Olaya", provider_platform_count=2, multi_platform_presence_score=50, rent_source="aqar_city") == "A"
+    assert _confidence_grade(confidence_score=88, district="Olaya", provider_platform_count=2, multi_platform_presence_score=50, rent_source="aqar_city", data_completeness_score=90) == "A"
     assert _confidence_grade(confidence_score=70, district=None, provider_platform_count=None, multi_platform_presence_score=None, rent_source="conservative_default") in {"B", "C"}
     assert _confidence_grade(confidence_score=30, district=None, provider_platform_count=None, multi_platform_presence_score=None, rent_source="conservative_default") == "D"
 
@@ -541,7 +541,7 @@ def test_missing_road_context_uses_neutral_scores_and_unknown_gate(monkeypatch):
     item = items[0]
     assert item["frontage_score"] == 55.0
     assert item["access_score"] == 55.0
-    assert "frontage_access_pass" in item["gate_reasons_json"]["unknown"]
+    assert "frontage/access" in item["gate_reasons_json"]["unknown"]
     # With both road tables missing, frontage/parking gates are unknown (None),
     # so overall_pass is None (indeterminate), not True.
     assert item["gate_status_json"]["overall_pass"] is None
@@ -558,7 +558,7 @@ def test_missing_parking_context_uses_neutral_score_and_unknown_gate(monkeypatch
     items = run_expansion_search(db, search_id="s", brand_name="b", category="burger", service_model="qsr", min_area_m2=100, max_area_m2=300, target_area_m2=180, limit=3)
     item = items[0]
     assert 0.0 <= item["parking_score"] <= 100.0
-    assert "parking_pass" in item["gate_reasons_json"]["unknown"]
+    assert "parking" in item["gate_reasons_json"]["unknown"]
 
 
 def test_score_breakdown_matches_final_score():
@@ -1213,17 +1213,21 @@ def test_snapshot_db_failure_does_not_poison_session(monkeypatch):
 
 
 def test_candidate_insert_failure_skips_candidate_gracefully(monkeypatch):
-    """When one candidate INSERT fails, remaining candidates are still returned."""
-    insert_count = 0
+    """Bulk insert fails, row-wise fallback saves p2 but p1 fails individually."""
+    insert_call = 0
 
     class InsertFailDB(FakeDB):
         def execute(self, stmt, params=None):
-            nonlocal insert_count
+            nonlocal insert_call
             sql = stmt.text if hasattr(stmt, "text") else str(stmt)
             if "INSERT INTO expansion_candidate" in sql:
-                insert_count += 1
-                if insert_count == 1:
-                    raise RuntimeError("Simulated insert failure")
+                insert_call += 1
+                if insert_call == 1:
+                    # First call is the bulk batch — fail it to trigger fallback
+                    raise RuntimeError("Simulated bulk insert failure")
+                # Row-wise fallback: fail p1, succeed p2
+                if isinstance(params, dict) and params.get("parcel_id") == "p1":
+                    raise RuntimeError("Simulated row insert failure for p1")
                 self.inserted.append(params)
                 return _Result([])
             return super().execute(stmt, params)
@@ -1246,7 +1250,7 @@ def test_candidate_insert_failure_skips_candidate_gracefully(monkeypatch):
         service_model="qsr", min_area_m2=100, max_area_m2=300,
         target_area_m2=180, limit=5,
     )
-    # First candidate fails to INSERT but second succeeds
+    # Bulk insert fails → row-wise fallback: p1 fails individually, p2 succeeds
     assert len(items) == 1
     assert items[0]["parcel_id"] == "p2"
 
