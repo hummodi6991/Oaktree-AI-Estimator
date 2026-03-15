@@ -262,16 +262,13 @@ def _dedupe_candidates(
        - rounded area bucket (50m² steps)
        - rounded rent bucket (100 SAR steps)
        - nearest-branch distance bucket (500m steps)
-    3. Looser economics-similarity key that catches near-clones with
-       slightly different positions but identical economic profiles:
-       - district + area bucket + economics bucket + rent bucket
 
     Candidates with distinct non-empty parcel_ids are NEVER collapsed
     by spatial/attribute keys — parcel_id is the strongest identity.
 
-    When *aggressive=True* (used for report shortlist), an additional
-    district+area+score composite key catches near-clones that differ
-    only in sub-55m position.
+    When *aggressive=True* (used for report shortlist), additional keys:
+    - economics-similarity: district + area bucket + economics bucket + rent bucket
+    - district+area+score composite key for sub-55m position variants
 
     Keeps the highest-ranked (first) candidate in each cluster.
     """
@@ -307,13 +304,12 @@ def _dedupe_candidates(
 
         keys: list[str] = [spatial_key]
 
-        # 3. Economics-similarity key: catches near-clones at slightly different
-        #    positions but same economic profile within the same district.
-        if district_key:
+        # Aggressive mode: extra composite keys for report shortlists.
+        # Economics-similarity key only applied in aggressive mode to avoid
+        # over-collapsing spatially distinct candidates in the main ranked list.
+        if aggressive and district_key:
             econ_key = f"econ:{district_key}|{area_bucket}|{economics_bucket}|{rent_bucket}"
             keys.append(econ_key)
-
-        # Aggressive mode: extra composite key for report shortlists
         if aggressive and district_key:
             score_bucket = int(round(_safe_float(c.get("final_score")) / 2.0))
             keys.append(f"dsa:{district_key}|{area_bucket}|{score_bucket}|{rent_bucket}")
@@ -4064,19 +4060,17 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
         ),
     )
     pass_candidates = [c for c in normalized_candidates if (c.get("gate_status_json") or {}).get("overall_pass") is True]
-    # Candidates with no blocking failures but some unknown gates (overall_pass=None)
+    # Candidates with no blocking failures but some unknown/unresolved gates (overall_pass=None)
     unknown_candidates = [
         c for c in normalized_candidates
         if (c.get("gate_status_json") or {}).get("overall_pass") is None
         and not (c.get("gate_reasons_json") or {}).get("blocking_failures")
     ]
     best_pass = max(pass_candidates, key=lambda item: _safe_float(item.get("final_score"))) if pass_candidates else None
-    # pass_count includes both hard-pass AND unknown-no-blocking-failure candidates,
-    # because the UI renders both as "Pass" badges.  Using only strict True would
-    # cause the summary to say "no candidate passes" while the UI shows Pass badges.
-    effective_pass_count = len(pass_candidates) + len(unknown_candidates)
-    any_passing = effective_pass_count > 0
-    pass_count = effective_pass_count
+    # pass_count is strict: only truly passing candidates (overall_pass is True).
+    # validation_clear_count tracks candidates with no blocking failures but unresolved gates.
+    pass_count = len(pass_candidates)
+    validation_clear_count = len(unknown_candidates)
 
     top_payload: list[dict[str, Any]] = []
     for item in top:
@@ -4117,23 +4111,24 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
             }
         )
 
-    # Build recommendation language — consistent with pass_count.
-    # Three states: pass (gates clear), unknown (pending validation), fail (blocking failure).
+    # Build recommendation language — consistent with strict pass_count.
+    # Three states: pass (gates clear), validation-clear (no blocking failures but unresolved), fail.
     best_district = best.get("district_display") or best.get("district") or "the top district"
     runner_district = (runner_item.get("district_display") or runner_item.get("district")) if runner_item else "backup options"
-    if any_passing:
+    if pass_candidates:
+        # At least one candidate truly passes all gates
         why_best = f"Highest blended final score with brand fit {_safe_float(best.get('brand_fit_score')):.1f}/100 and economics {_safe_float(best.get('economics_score')):.1f}/100."
         summary_text = f"Recommend {best_district} first, then sequence {runner_district} as runner-up."
         report_summary_text = summary_text
     elif unknown_candidates:
-        # Candidates exist that have no blocking failures but need validation —
-        # do NOT say "no candidate passes" because that contradicts Pass badges shown in the UI.
+        # No strict passes, but some candidates have no blocking failures — needs field validation
         why_best = (
             f"Top-ranked candidate scores {_safe_float(best.get('final_score')):.1f}/100 "
-            f"with {len(unknown_candidates)} candidate(s) pending gate validation."
+            f"with {validation_clear_count} candidate(s) pending gate validation."
         )
         summary_text = (
-            f"{len(unknown_candidates)} candidate(s) have no blocking gate failures but need field validation. "
+            f"No candidate has fully passed all gates yet. "
+            f"{validation_clear_count} candidate(s) have no blocking failures but need field validation. "
             f"Consider {best_district} as the exploratory lead."
         )
         report_summary_text = summary_text
@@ -4151,12 +4146,12 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     t_report_done = time.monotonic()
     logger.info(
         "expansion_report timing: total=%.2fs lookup=%.2fs candidates=%.2fs build=%.2fs "
-        "search_id=%s candidates=%d pass_count=%d unknown_count=%d",
+        "search_id=%s candidates=%d pass_count=%d validation_clear=%d",
         t_report_done - t_start,
         t_lookup - t_start,
         t_candidates - t_lookup,
         t_report_done - t_candidates,
-        search_id, len(normalized_candidates), pass_count, len(unknown_candidates),
+        search_id, len(normalized_candidates), pass_count, validation_clear_count,
     )
 
     return {
@@ -4170,6 +4165,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
             "best_pass_candidate_id": best_pass.get("id") if best_pass else None,
             "best_confidence_candidate_id": best_confidence.get("id"),
             "pass_count": pass_count,
+            "validation_clear_count": validation_clear_count,
             "why_best": why_best,
             "main_risk": (best.get("key_risks_json") or ["Validate lease and execution assumptions"])[0],
             "best_format": _recommended_use_case(str(search.get("service_model") or "qsr"), _safe_float(best.get("area_m2"))),

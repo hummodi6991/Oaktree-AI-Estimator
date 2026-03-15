@@ -685,17 +685,21 @@ export function buildCopySummary(
   const gatePass = candidate?.gate_status_json?.overall_pass;
   const allGatesPass = gatePass === true;
 
-  // Use search-level pass count when provided, otherwise fall back to
-  // report.recommendation.pass_count, otherwise just the candidate's own gate.
-  const reportPassCount = (rec as Record<string, unknown>).pass_count;
-  const effectivePassCount = searchLevelPassCount ?? (typeof reportPassCount === "number" ? reportPassCount : (allGatesPass ? 1 : 0));
-  const anySearchPass = effectivePassCount > 0;
+  // pass_count is strict (only overall_pass === true).
+  // validation_clear_count tracks candidates with no blocking failures but unresolved gates.
+  const recAny = rec as Record<string, unknown>;
+  const reportPassCount = typeof recAny.pass_count === "number" ? recAny.pass_count : undefined;
+  const reportValidationClear = typeof recAny.validation_clear_count === "number" ? recAny.validation_clear_count : 0;
+  const effectivePassCount = searchLevelPassCount ?? reportPassCount ?? (allGatesPass ? 1 : 0);
+  const hasStrictPasses = effectivePassCount > 0;
+  // Suppress "no pass" notice when validation-clear candidates exist (no blocking failures)
+  const hasValidationClear = reportValidationClear > 0;
 
   const nextRaw = unknowns[0] || missing[0] || null;
   const nextValidation = nextRaw ? humanGateLabel(nextRaw) + " needs field verification." : "Site visit recommended";
 
   return {
-    siteLabel: allGatesPass ? "Lead site" : (anySearchPass ? "Top ranked candidate" : "Top ranked candidate"),
+    siteLabel: allGatesPass ? "Lead site" : "Top ranked candidate",
     bestCandidate: candidate
       ? `#${candidate.rank_position || "?"} ${candidateDistrictLabel(candidate, candidate.parcel_id || "—")}`
       : "—",
@@ -704,9 +708,9 @@ export function buildCopySummary(
     bestFormat: rec.best_format || memoRec.best_use_case || "—",
     nextValidation,
     allGatesPass,
-    // Only show the "no candidate passes" notice when truly no candidate in the search passes.
-    // If pass_count > 0 or best_pass_candidate_id exists in the report, suppress the notice.
-    noPassNotice: anySearchPass ? null : "No candidate currently passes all required gates.",
+    // Show "no pass" notice only when no strict passes AND no validation-clear candidates.
+    // When validation-clear candidates exist, the summary already explains the state.
+    noPassNotice: hasStrictPasses || hasValidationClear ? null : "No candidate currently passes all required gates.",
   };
 }
 
@@ -981,10 +985,13 @@ export function buildDecisionSnapshot(
   const gatePass = candidate.gate_status_json?.overall_pass;
   const allGatesPass = gatePass === true;
 
-  // Use search-level pass count when provided
-  const reportPassCount = (rec as Record<string, unknown>).pass_count;
-  const effectivePassCount = searchLevelPassCount ?? (typeof reportPassCount === "number" ? reportPassCount : (allGatesPass ? 1 : 0));
-  const anySearchPass = effectivePassCount > 0;
+  // pass_count is strict. validation_clear_count tracks no-blocking-failure candidates.
+  const recAny = rec as Record<string, unknown>;
+  const reportPassCount = typeof recAny.pass_count === "number" ? recAny.pass_count : undefined;
+  const reportValidationClear = typeof recAny.validation_clear_count === "number" ? recAny.validation_clear_count : 0;
+  const effectivePassCount = searchLevelPassCount ?? reportPassCount ?? (allGatesPass ? 1 : 0);
+  const hasStrictPasses = effectivePassCount > 0;
+  const hasValidationClear = reportValidationClear > 0;
 
   const nextRaw = unknowns[0] || missing[0] || null;
   const nextValidation = nextRaw ? humanGateLabel(nextRaw) + " needs field verification." : "Site visit recommended";
@@ -1001,8 +1008,8 @@ export function buildDecisionSnapshot(
     nextValidation,
     confidenceGrade: candidate.confidence_grade || "—",
     gateVerdict: gatePass === true ? "pass" : gatePass === false ? "fail" : "unknown",
-    // allGatesPass here means: show "no pass" notice at search level only when truly no candidate passes
-    allGatesPass: anySearchPass,
+    // Show "no pass" notice only when no strict passes AND no validation-clear candidates
+    allGatesPass: hasStrictPasses || hasValidationClear,
     finalScore: candidate.final_score ?? null,
     rankPosition: candidate.rank_position ?? null,
   };

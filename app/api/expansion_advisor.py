@@ -778,17 +778,17 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
 
     try:
         report = get_recommendation_report(db, search_id)
-    except Exception:
-        logger.exception(
-            "Report generation failed, returning sparse fallback: search_id=%s elapsed=%.2fs",
-            search_id, _time.monotonic() - t0,
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        # Recoverable data-shape errors: return sparse report with degraded flag.
+        logger.warning(
+            "Report generation failed (recoverable %s): search_id=%s elapsed=%.2fs detail=%s",
+            type(exc).__name__, search_id, _time.monotonic() - t0, str(exc)[:200],
+            exc_info=True,
         )
-        # Return a valid sparse report instead of 500 so the UI can show
-        # whatever data is available rather than "Unable to load report."
         report = {
             "search_id": search_id,
             "brand_profile": search.get("brand_profile") or search.get("request_json") or {},
-            "meta": {"version": "expansion_advisor_v6.1"},
+            "meta": {"version": "expansion_advisor_v6.1", "degraded": True, "error_class": type(exc).__name__},
             "top_candidates": [],
             "recommendation": {
                 "best_candidate_id": None,
@@ -796,6 +796,7 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
                 "best_pass_candidate_id": None,
                 "best_confidence_candidate_id": None,
                 "pass_count": 0,
+                "validation_clear_count": 0,
                 "why_best": "",
                 "main_risk": "Report generation encountered an error — results may be incomplete.",
                 "best_format": "",
@@ -804,6 +805,13 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
             },
             "assumptions": {"parcel_source": "arcgis_only", "city": "riyadh"},
         }
+    except Exception:
+        # Non-recoverable errors (DB connection, infrastructure): let them surface as 500.
+        logger.exception(
+            "Report generation failed (non-recoverable): search_id=%s elapsed=%.2fs",
+            search_id, _time.monotonic() - t0,
+        )
+        raise
 
     if not report:
         # get_recommendation_report returned None (search found but no candidates)

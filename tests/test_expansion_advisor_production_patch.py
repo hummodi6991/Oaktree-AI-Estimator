@@ -192,9 +192,9 @@ class TestStrongerDedupe:
         # These share the same district + area bucket (200/50=4) + score bucket (72.5/2=36, 73/2=36)
         assert len(result) == 1
 
-    def test_same_district_area_score_collapsed_default_when_economics_match(self):
-        """In default mode, near-clones with matching economics profile now collapse
-        via the economics-similarity key (strengthened dedupe)."""
+    def test_economics_similarity_only_in_aggressive_mode(self):
+        """In default mode, economics-similarity key is not applied — candidates
+        at different spatial grid cells survive even with matching economics."""
         candidates = [
             {"parcel_id": "", "lat": 24.71, "lon": 46.71, "district": "العليا", "area_m2": 201,
              "estimated_rent_sar_m2_year": 800, "final_score": 72.5, "distance_to_nearest_branch_m": None,
@@ -203,12 +203,15 @@ class TestStrongerDedupe:
              "estimated_rent_sar_m2_year": 810, "final_score": 73.0, "distance_to_nearest_branch_m": None,
              "economics_score": 66.0},
         ]
-        result = _dedupe_candidates(candidates)
-        # Same district + area bucket + economics bucket + rent bucket → collapsed
-        assert len(result) == 1
+        result_default = _dedupe_candidates(candidates)
+        # Default mode: different spatial grid cells → survive
+        assert len(result_default) == 2
+        # Aggressive mode: economics-similarity key collapses them
+        result_aggressive = _dedupe_candidates(candidates, aggressive=True)
+        assert len(result_aggressive) == 1
 
     def test_different_economics_survive_default(self):
-        """In default mode, candidates with genuinely different economics survive."""
+        """In default mode, candidates with different economics at different grid cells survive."""
         candidates = [
             {"parcel_id": "", "lat": 24.71, "lon": 46.71, "district": "العليا", "area_m2": 201,
              "estimated_rent_sar_m2_year": 800, "final_score": 72.5, "distance_to_nearest_branch_m": None,
@@ -218,7 +221,7 @@ class TestStrongerDedupe:
              "economics_score": 80.0},
         ]
         result = _dedupe_candidates(candidates)
-        # Different economics buckets (30/5=6 vs 80/5=16) → survive
+        # Different spatial grid cells + no economics key in default → both survive
         assert len(result) == 2
 
 

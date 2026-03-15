@@ -592,7 +592,6 @@ def test_smoke():
 
 def test_summary_no_pass_when_zero_pass_candidates():
     """When pass_count=0 and no unknowns, summary should say 'no candidate passes'."""
-    # Simulated: the get_recommendation_report logic
     candidates = [
         {"gate_status_json": {"overall_pass": False}, "gate_reasons_json": {"blocking_failures": ["zoning_fit_pass"]}, "final_score": 60.0},
         {"gate_status_json": {"overall_pass": False}, "gate_reasons_json": {"blocking_failures": ["area_fit_pass"]}, "final_score": 55.0},
@@ -603,10 +602,10 @@ def test_summary_no_pass_when_zero_pass_candidates():
         if (c.get("gate_status_json") or {}).get("overall_pass") is None
         and not (c.get("gate_reasons_json") or {}).get("blocking_failures")
     ]
-    effective_pass_count = len(pass_candidates) + len(unknown_candidates)
-    any_passing = effective_pass_count > 0
-    assert not any_passing
-    assert effective_pass_count == 0
+    pass_count = len(pass_candidates)
+    validation_clear_count = len(unknown_candidates)
+    assert pass_count == 0
+    assert validation_clear_count == 0
 
 
 def test_summary_pass_when_some_candidates_pass():
@@ -616,23 +615,13 @@ def test_summary_pass_when_some_candidates_pass():
         {"gate_status_json": {"overall_pass": False}, "gate_reasons_json": {"blocking_failures": ["zoning_fit_pass"]}, "final_score": 55.0},
     ]
     pass_candidates = [c for c in candidates if (c.get("gate_status_json") or {}).get("overall_pass") is True]
-    unknown_candidates = [
-        c for c in candidates
-        if (c.get("gate_status_json") or {}).get("overall_pass") is None
-        and not (c.get("gate_reasons_json") or {}).get("blocking_failures")
-    ]
-    effective_pass_count = len(pass_candidates) + len(unknown_candidates)
-    any_passing = effective_pass_count > 0
-    assert any_passing
-    assert effective_pass_count == 1
+    pass_count = len(pass_candidates)
+    assert pass_count == 1  # Strict: only overall_pass=True counts
 
 
-def test_summary_pass_when_unknown_no_blocking_failures():
-    """Unknown candidates (overall_pass=None, no blocking failures) should count as passing.
-
-    This is the key scenario: the UI shows these as 'Pass' badges because
-    they have no blocking gate failures. The summary must not say 'no candidate passes'.
-    """
+def test_summary_unknown_no_blocking_is_validation_clear_not_pass():
+    """Unknown candidates (overall_pass=None, no blocking failures) are validation-clear,
+    not strict passes. They suppress the 'no pass' notice but don't inflate pass_count."""
     candidates = [
         {"gate_status_json": {"overall_pass": None}, "gate_reasons_json": {"blocking_failures": []}, "final_score": 72.0},
         {"gate_status_json": {"overall_pass": False}, "gate_reasons_json": {"blocking_failures": ["zoning_fit_pass"]}, "final_score": 55.0},
@@ -643,11 +632,12 @@ def test_summary_pass_when_unknown_no_blocking_failures():
         if (c.get("gate_status_json") or {}).get("overall_pass") is None
         and not (c.get("gate_reasons_json") or {}).get("blocking_failures")
     ]
-    effective_pass_count = len(pass_candidates) + len(unknown_candidates)
-    any_passing = effective_pass_count > 0
-    # The unknown candidate with no blocking failures should make this pass
-    assert any_passing
-    assert effective_pass_count == 1
+    pass_count = len(pass_candidates)
+    validation_clear_count = len(unknown_candidates)
+    # pass_count is strict — unknown candidates don't count
+    assert pass_count == 0
+    # But validation_clear_count tracks them separately
+    assert validation_clear_count == 1
 
 
 def test_summary_selected_nonpass_does_not_override_search_level():
@@ -656,15 +646,9 @@ def test_summary_selected_nonpass_does_not_override_search_level():
         {"id": "c1", "gate_status_json": {"overall_pass": True}, "gate_reasons_json": {"blocking_failures": []}, "final_score": 78.0},
         {"id": "c2", "gate_status_json": {"overall_pass": False}, "gate_reasons_json": {"blocking_failures": ["zoning_fit_pass"]}, "final_score": 55.0},
     ]
-    # Even if selected candidate is c2 (failing), search-level pass_count should be 1
     pass_candidates = [c for c in candidates if (c.get("gate_status_json") or {}).get("overall_pass") is True]
-    unknown_candidates = [
-        c for c in candidates
-        if (c.get("gate_status_json") or {}).get("overall_pass") is None
-        and not (c.get("gate_reasons_json") or {}).get("blocking_failures")
-    ]
-    effective_pass_count = len(pass_candidates) + len(unknown_candidates)
-    assert effective_pass_count == 1  # c1 passes
+    pass_count = len(pass_candidates)
+    assert pass_count == 1  # c1 strictly passes
     # The summary should reflect this, not the selected candidate's gate status
 
 
@@ -673,18 +657,17 @@ def test_summary_selected_nonpass_does_not_override_search_level():
 # ---------------------------------------------------------------------------
 
 def test_dedupe_collapses_near_clones_in_ranked_output():
-    """Near-clone candidates (same district, area bucket, economics bucket, rent bucket)
-    should collapse even when at slightly different positions."""
+    """Near-clone candidates at the same spatial grid cell should collapse in default mode."""
     candidates = [
         {"parcel_id": "", "lat": 24.7001, "lon": 46.7001, "district": "Al Olaya",
          "area_m2": 200, "estimated_rent_sar_m2_year": 900, "economics_score": 65,
          "distance_to_nearest_branch_m": 2000, "final_score": 72},
-        {"parcel_id": "", "lat": 24.7010, "lon": 46.7010, "district": "Al Olaya",
+        {"parcel_id": "", "lat": 24.7002, "lon": 46.7002, "district": "Al Olaya",
          "area_m2": 200, "estimated_rent_sar_m2_year": 900, "economics_score": 65,
          "distance_to_nearest_branch_m": 2000, "final_score": 71},
     ]
     result = _dedupe_candidates(candidates)
-    # Same district + area bucket + economics bucket + rent bucket → collapse via econ key
+    # Same spatial grid cell + district + area + rent + branch → collapse
     assert len(result) == 1, f"Expected 1 after dedupe, got {len(result)}"
 
 
@@ -718,8 +701,8 @@ def test_dedupe_aggressive_mode_shortlist_cleaner():
     assert len(aggressive_result) <= len(normal_result)
 
 
-def test_dedupe_economics_similarity_catches_clones():
-    """Candidates in same district with identical economics profile collapse."""
+def test_dedupe_economics_similarity_only_aggressive():
+    """Economics-similarity key only collapses in aggressive mode, not default."""
     candidates = [
         {"parcel_id": "", "lat": 24.701, "lon": 46.701, "district": "Al Olaya",
          "area_m2": 200, "estimated_rent_sar_m2_year": 900, "economics_score": 65,
@@ -728,8 +711,12 @@ def test_dedupe_economics_similarity_catches_clones():
          "area_m2": 200, "estimated_rent_sar_m2_year": 900, "economics_score": 65,
          "distance_to_nearest_branch_m": 2500, "final_score": 71},
     ]
-    result = _dedupe_candidates(candidates)
-    assert len(result) == 1, "Same district+area+economics should collapse"
+    # Default mode: different spatial grid cells survive
+    result_default = _dedupe_candidates(candidates)
+    assert len(result_default) == 2, "Default mode should not collapse by economics alone"
+    # Aggressive mode: economics-similarity key catches these
+    result_aggressive = _dedupe_candidates(candidates, aggressive=True)
+    assert len(result_aggressive) == 1, "Aggressive mode should collapse by economics similarity"
 
 
 # ---------------------------------------------------------------------------
