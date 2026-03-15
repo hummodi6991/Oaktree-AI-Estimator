@@ -1767,18 +1767,20 @@ def run_expansion_search(
     _SAFE_DSR_COORD_WHERE = _safe_coord_where("dsr")
     _SAFE_PD_COORD_WHERE = _safe_coord_where("pd")
 
-    # SQL-safe landuse_code ordering: use regex to validate numeric before CAST.
-    # This prevents crashes from non-numeric ArcGIS landuse_code values like
-    # "N/A", "mixed", or whitespace-padded entries.
-    _SAFE_LANDUSE_ORDER = """
+    # SQL-safe landuse_code ordering: cast to text first (landuse_code may be
+    # an integer column in production), then BTRIM, then regex-validate before
+    # casting back to INTEGER.  This prevents psycopg crashes like
+    # "function btrim(integer) does not exist".
+    _LANDUSE_CODE_TEXT = "BTRIM(CAST(p.landuse_code AS text))"
+    _SAFE_LANDUSE_ORDER = f"""
                 CASE
-                    WHEN NULLIF(BTRIM(p.landuse_code), '') ~ '^[0-9]+$'
-                         AND CAST(BTRIM(p.landuse_code) AS INTEGER) IN (2000, 7500) THEN 0
-                    WHEN NULLIF(BTRIM(p.landuse_code), '') ~ '^[0-9]+$'
-                         AND CAST(BTRIM(p.landuse_code) AS INTEGER) IN (3000, 4000) THEN 1
+                    WHEN NULLIF({_LANDUSE_CODE_TEXT}, '') ~ '^[0-9]+$'
+                         AND CAST({_LANDUSE_CODE_TEXT} AS INTEGER) IN (2000, 7500) THEN 0
+                    WHEN NULLIF({_LANDUSE_CODE_TEXT}, '') ~ '^[0-9]+$'
+                         AND CAST({_LANDUSE_CODE_TEXT} AS INTEGER) IN (3000, 4000) THEN 1
                     WHEN p.landuse_code IS NULL AND p.landuse_label IS NULL THEN 2
-                    WHEN NULLIF(BTRIM(p.landuse_code), '') ~ '^[0-9]+$'
-                         AND CAST(BTRIM(p.landuse_code) AS INTEGER) = 1000 THEN 3
+                    WHEN NULLIF({_LANDUSE_CODE_TEXT}, '') ~ '^[0-9]+$'
+                         AND CAST({_LANDUSE_CODE_TEXT} AS INTEGER) = 1000 THEN 3
                     ELSE 1
                 END"""
 
