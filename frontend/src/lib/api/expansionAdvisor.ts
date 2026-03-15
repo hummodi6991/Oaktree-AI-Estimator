@@ -406,6 +406,7 @@ export function normalizeSavedSearch(saved: SavedExpansionSearch): SavedExpansio
 }
 
 export function normalizeReportResponse(data: RecommendationReportResponse): RecommendationReportResponse {
+  const rec = data.recommendation || {};
   return {
     ...data,
     top_candidates: (data.top_candidates || []).map((tc) => ({
@@ -415,9 +416,18 @@ export function normalizeReportResponse(data: RecommendationReportResponse): Rec
       score_breakdown_json: tc.score_breakdown_json || DEFAULT_SCORE_BREAKDOWN,
       feature_snapshot_json: tc.feature_snapshot_json || {},
     })),
-    assumptions: data.assumptions || {},
+    assumptions: data.assumptions ?? {},
     recommendation: {
-      ...(data.recommendation || {}),
+      ...rec,
+      best_candidate_id: rec.best_candidate_id ?? undefined,
+      runner_up_candidate_id: rec.runner_up_candidate_id ?? undefined,
+      best_pass_candidate_id: rec.best_pass_candidate_id ?? undefined,
+      best_confidence_candidate_id: rec.best_confidence_candidate_id ?? undefined,
+      why_best: rec.why_best ?? "",
+      main_risk: rec.main_risk ?? "",
+      best_format: rec.best_format ?? "",
+      summary: rec.summary ?? "",
+      report_summary: rec.report_summary ?? "",
     },
     brand_profile: data.brand_profile || {},
     meta: data.meta || {},
