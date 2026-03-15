@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { BranchSuggestion } from "../../lib/api/expansionAdvisor";
+import type { BranchSuggestion, DistrictOption } from "../../lib/api/expansionAdvisor";
 import { searchBranchSuggestions } from "../../lib/api/expansionAdvisor";
+import DistrictSingleSelect from "./DistrictSingleSelect";
 import { isGarbledText } from "./formatHelpers";
 
 export type BranchEntry = {
@@ -15,6 +16,7 @@ type Props = {
   branches: BranchEntry[];
   onChange: (branches: BranchEntry[]) => void;
   disabled?: boolean;
+  districtOptions?: DistrictOption[];
 };
 
 /** Debounce helper */
@@ -289,18 +291,30 @@ function BranchCard({
 function ManualCoordEntry({
   onAdd,
   disabled,
+  districtOptions,
 }: {
   onAdd: (branch: BranchEntry) => void;
   disabled?: boolean;
+  districtOptions?: DistrictOption[];
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const [name, setName] = useState("");
-  const [district, setDistrict] = useState("");
+  const [districtValue, setDistrictValue] = useState("");
   const [lat, setLat] = useState("");
   const [lon, setLon] = useState("");
 
   const canAdd = lat !== "" && lon !== "";
+
+  // Resolve label from district value for the branch payload
+  const resolveDistrictLabel = (val: string): string | undefined => {
+    if (!val) return undefined;
+    if (districtOptions) {
+      const opt = districtOptions.find((o) => o.value === val);
+      if (opt) return opt.label_ar;
+    }
+    return val;
+  };
 
   const handleAdd = () => {
     if (!canAdd) return;
@@ -308,10 +322,10 @@ function ManualCoordEntry({
       name: name.trim() || undefined,
       lat: Number(lat),
       lon: Number(lon),
-      district: district.trim() || undefined,
+      district: resolveDistrictLabel(districtValue),
     });
     setName("");
-    setDistrict("");
+    setDistrictValue("");
     setLat("");
     setLon("");
   };
@@ -337,13 +351,23 @@ function ManualCoordEntry({
               onChange={(e) => setName(e.target.value)}
               disabled={disabled}
             />
-            <input
-              className="ea-form__input"
-              placeholder={t("expansionAdvisor.branchDistrict")}
-              value={district}
-              onChange={(e) => setDistrict(e.target.value)}
-              disabled={disabled}
-            />
+            {districtOptions && districtOptions.length > 0 ? (
+              <DistrictSingleSelect
+                options={districtOptions}
+                value={districtValue}
+                onChange={setDistrictValue}
+                disabled={disabled}
+                placeholder={t("expansionAdvisor.branchDistrict")}
+              />
+            ) : (
+              <input
+                className="ea-form__input"
+                placeholder={t("expansionAdvisor.branchDistrict")}
+                value={districtValue}
+                onChange={(e) => setDistrictValue(e.target.value)}
+                disabled={disabled}
+              />
+            )}
           </div>
           <div className="ea-branch-manual__row">
             <input
@@ -380,7 +404,7 @@ function ManualCoordEntry({
 }
 
 /* ─── Main BranchLocationPicker ─── */
-export default function BranchLocationPicker({ branches, onChange, disabled }: Props) {
+export default function BranchLocationPicker({ branches, onChange, disabled, districtOptions }: Props) {
   const { t } = useTranslation();
 
   const handleSuggestionSelect = useCallback(
@@ -447,7 +471,7 @@ export default function BranchLocationPicker({ branches, onChange, disabled }: P
       )}
 
       {/* Manual fallback */}
-      <ManualCoordEntry onAdd={handleManualAdd} disabled={disabled} />
+      <ManualCoordEntry onAdd={handleManualAdd} disabled={disabled} districtOptions={districtOptions} />
     </div>
   );
 }
