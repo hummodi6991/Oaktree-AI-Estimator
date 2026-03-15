@@ -203,11 +203,15 @@ export default function ExpansionReportPanel({
                 {/* Lead candidate focus callouts */}
                 {leadCandidateId && (() => {
                   const leadPasses = leadCandidate?.gate_status_json?.overall_pass === true;
+                  // Use search-level pass count from report to avoid contradicting the header.
+                  // Only show "no pass" notice when truly no candidate in the search passes.
+                  const searchLevelPassCount = typeof rec.pass_count === "number" ? rec.pass_count : undefined;
+                  const anySearchPass = searchLevelPassCount != null ? searchLevelPassCount > 0 : leadPasses;
                   const sectionTitle = leadPasses ? t("expansionAdvisor.leadSiteAnalysis") : t("expansionAdvisor.topCandidateAnalysis");
                   return (
                     <div className="ea-report-section">
                       <h5 className="ea-detail__section-title">{sectionTitle}</h5>
-                      {!leadPasses && (
+                      {!anySearchPass && (
                         <div className="ea-memo-callout ea-memo-callout--risk">
                           <span className="ea-memo-callout__label">{t("expansionAdvisor.noPassNotice")}</span>
                         </div>

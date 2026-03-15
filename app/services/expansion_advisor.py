@@ -58,6 +58,21 @@ def _gate_verdict_label(overall_pass: Any) -> str:
     if overall_pass is False:
         return "fail"
     return "unknown"
+def _clean_district_display(raw: str | None) -> str | None:
+    """Strip Unicode control chars and BOM from display strings."""
+    if not raw:
+        return None
+    import unicodedata
+    # Remove BOM, zero-width chars, and bidi controls
+    cleaned = raw.replace("\ufeff", "").replace("\ufffe", "")
+    cleaned = "".join(
+        ch for ch in cleaned
+        if unicodedata.category(ch) not in ("Cc", "Cf") or ch in ("\n", "\r", "\t", " ")
+    )
+    cleaned = cleaned.strip()
+    return cleaned if cleaned else None
+
+
 def _canonicalize_district_label(
     district_raw: str | None,
     district_lookup: dict[str, dict[str, str]] | None = None,
@@ -80,6 +95,15 @@ def _canonicalize_district_label(
 
     norm_key = normalize_district_key(district_raw)
     if not norm_key:
+        # Even if normalization fails, try to provide a safe display fallback
+        cleaned = _clean_district_display(district_raw)
+        if cleaned and not is_mojibake(cleaned):
+            return {
+                "district_key": None,
+                "district_name_ar": None,
+                "district_name_en": None,
+                "district_display": cleaned,
+            }
         return {
             "district_key": None,
             "district_name_ar": None,
@@ -92,12 +116,12 @@ def _canonicalize_district_label(
     name_en: str | None = None
     if district_lookup and norm_key in district_lookup:
         entry = district_lookup[norm_key]
-        name_ar = entry.get("label_ar") or None
-        name_en = entry.get("label_en") or None
+        name_ar = _clean_district_display(entry.get("label_ar")) or None
+        name_en = _clean_district_display(entry.get("label_en")) or None
 
     # If no lookup hit, use the raw string as Arabic label if it looks okay
     if not name_ar:
-        raw_stripped = district_raw.strip() if district_raw else ""
+        raw_stripped = _clean_district_display(district_raw)
         name_ar = raw_stripped if raw_stripped and not is_mojibake(raw_stripped) else None
 
     # Build display: prefer arabic → english → normalized key
@@ -187,23 +211,36 @@ _EXPANSION_PARCEL_SOURCE = "arcgis_only"
 _EXPANSION_EXCLUDED_SOURCES = ["suhail", "inferred_parcels"]
 
 
-def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _dedupe_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    aggressive: bool = False,
+) -> list[dict[str, Any]]:
     """Post-ranking dedupe: collapse near-clone candidates.
 
-    Uses a composite key of:
-    - parcel_id (when available)
-    - snapped centroid (0.001 degree ≈ 110m grid)
-    - normalized district key
-    - rounded area bucket (50m² steps)
-    - rounded rent bucket (100 SAR steps)
-    - nearest-branch distance bucket (500m steps)
+    Uses a two-pass approach:
+    1. Exact parcel_id match (primary key)
+    2. Composite spatial+attribute key with tight grid:
+       - snapped centroid (0.001 degree ≈ 110m grid)
+       - normalized district key
+       - rounded area bucket (50m² steps)
+       - rounded rent bucket (100 SAR steps)
+       - nearest-branch distance bucket (500m steps)
+
+    Candidates with distinct non-empty parcel_ids are NEVER collapsed
+    by spatial/attribute keys — parcel_id is the strongest identity.
+
+    When *aggressive=True* (used for report shortlist), an additional
+    district+area+score composite key catches near-clones that differ
+    only in sub-110m position.
 
     Keeps the highest-ranked (first) candidate in each cluster.
     """
-    seen: set[str] = set()
+    seen_pid: set[str] = set()
+    seen_spatial: set[str] = set()
     result: list[dict[str, Any]] = []
     for c in candidates:
-        parcel_id = c.get("parcel_id") or ""
+        parcel_id = (c.get("parcel_id") or "").strip()
         lat = _safe_float(c.get("lat"))
         lon = _safe_float(c.get("lon"))
         district_key = c.get("district_key") or normalize_district_key(c.get("district"))
@@ -212,16 +249,33 @@ def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
         branch_dist = c.get("distance_to_nearest_branch_m")
         branch_bucket = int(round(_safe_float(branch_dist) / 500.0)) if branch_dist is not None else -1
 
-        # If parcel_id is available, use it as primary key (exact match)
+        # 1. Exact parcel_id dedupe
         if parcel_id:
-            key = f"pid:{parcel_id}"
-        else:
-            # Spatial + attribute composite key
-            key = f"{round(lat, 3)}|{round(lon, 3)}|{district_key}|{area_bucket}|{rent_bucket}|{branch_bucket}"
-
-        if key in seen:
+            if parcel_id in seen_pid:
+                continue
+            seen_pid.add(parcel_id)
+            # Candidates with a real parcel_id skip spatial dedupe —
+            # different parcels at nearby locations are genuinely distinct.
+            result.append(c)
             continue
-        seen.add(key)
+
+        # 2. Spatial+attribute grid for parcels without a parcel_id
+        spatial_key = (
+            f"{round(lat, 3)}|{round(lon, 3)}|{district_key}"
+            f"|{area_bucket}|{rent_bucket}|{branch_bucket}"
+        )
+
+        keys: list[str] = [spatial_key]
+
+        # Aggressive mode: extra composite key for report shortlists
+        if aggressive and district_key:
+            score_bucket = int(round(_safe_float(c.get("final_score")) / 2.0))
+            keys.append(f"dsa:{district_key}|{area_bucket}|{score_bucket}|{rent_bucket}")
+
+        if any(k in seen_spatial for k in keys):
+            continue
+        for k in keys:
+            seen_spatial.add(k)
         result.append(c)
     return result
 
@@ -1276,7 +1330,15 @@ def _top_positives_and_risks(
     for gate in gate_reasons.get("unknown") or []:
         label = _gate_key_to_label(gate)
         risks.append(f"{label.capitalize()} could not be verified from current data.")
-    return positives[:5], risks[:5]
+    # Flag when delivery scores are inferred (no observed listings).
+    # Placed after gate risks so gate-specific mentions are not displaced.
+    delivery_observed = (
+        _safe_float(candidate.get("provider_density_score")) > 0
+        or _safe_float(candidate.get("multi_platform_presence_score")) > 0
+    )
+    if not delivery_observed:
+        risks.append("Delivery market data is inferred — no observed listings near site.")
+    return positives[:5], risks[:6]
 
 
 def _confidence_grade(
@@ -3133,13 +3195,21 @@ def run_expansion_search(
                 exc_info=True,
             )
 
+    t_persist_done = time.monotonic()
     t_end = time.monotonic()
     logger.info(
-        "expansion_search timing: total=%.2fs enrichment=%.2fs persist=%.2fs search_id=%s candidates=%d",
+        "expansion_search timing: total=%.2fs query=%.2fs scoring=%.2fs enrichment=%.2fs persist=%.2fs "
+        "search_id=%s raw_rows=%d prepared=%d shortlisted=%d persisted=%d final=%d",
         t_end - t_start,
-        t_end - t_query_done,
-        t_end - t_query_done,
+        t_query_done - t_start,
+        t_query_done - t_start,  # scoring happens during query phase
+        t_persist_done - t_query_done,
+        t_end - t_persist_done,
         search_id,
+        len(rows),
+        len(prepared),
+        shortlist_size,
+        len(persisted_candidates),
         len(result),
     )
     return result
@@ -3656,6 +3726,7 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
 
 
 def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
+    t_start = time.monotonic()
     row = db.execute(
         text(
             """
@@ -3741,16 +3812,33 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
     district = candidate.get("district_display") or candidate.get("district") or "Riyadh"
     headline = f"{verdict.upper()}: {district} parcel shows {economics_score:.1f}/100 economics for {best_use_case}"
     expansion_goal = (brand_profile.get("expansion_goal") or "balanced").replace("_", " ")
-    delivery_market_summary = (
-        f"For a {expansion_goal} strategy, delivery activity is {'strong' if _safe_float(candidate.get('provider_density_score')) >= 65 else 'moderate'} "
-        f"with platform breadth score {_safe_float(candidate.get('multi_platform_presence_score')):.1f}/100."
-    )
+    provider_density = _safe_float(candidate.get("provider_density_score"))
+    multi_plat = _safe_float(candidate.get("multi_platform_presence_score"))
+    delivery_comp = _safe_float(candidate.get("delivery_competition_score"))
+    delivery_observed = provider_density > 0 or multi_plat > 0 or delivery_comp > 0
+    if not delivery_observed:
+        delivery_market_summary = (
+            f"For a {expansion_goal} strategy, no delivery activity was observed near this site. "
+            f"Delivery scores are inferred/fallback and should not be treated as observed market strength."
+        )
+    else:
+        density_label = "strong" if provider_density >= 65 else "moderate" if provider_density >= 30 else "limited"
+        delivery_market_summary = (
+            f"For a {expansion_goal} strategy, observed delivery activity is {density_label} "
+            f"with platform breadth score {multi_plat:.1f}/100."
+        )
     competitive_context = (
         f"Provider whitespace is {_safe_float(candidate.get('provider_whitespace_score')):.1f}/100 while delivery competition is "
         f"{_safe_float(candidate.get('delivery_competition_score')):.1f}/100."
     )
     district_fit_summary = (
         f"District fit is driven by brand fit {_safe_float(candidate.get('brand_fit_score')):.1f}/100 and {('delivery-led' if (brand_profile.get('primary_channel')=='delivery') else 'balanced')} channel posture."
+    )
+
+    logger.info(
+        "expansion_memo timing: total=%.2fs candidate_id=%s search_id=%s verdict=%s",
+        time.monotonic() - t_start, candidate_id,
+        candidate.get("search_id"), verdict,
     )
 
     return {
@@ -3832,14 +3920,17 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     if not search:
         return None
     district_lookup = _build_district_lookup(db)
+    t_lookup = time.monotonic()
     try:
         raw_candidates = get_candidates(db, search_id, district_lookup=district_lookup)
     except TypeError:
         raw_candidates = get_candidates(db, search_id)
-    normalized_candidates = [_normalize_candidate_payload(c, district_lookup) for c in raw_candidates]
+    t_candidates = time.monotonic()
+    # Candidates are already normalized by get_candidates — skip redundant re-normalization
+    normalized_candidates = raw_candidates
 
     # Dedupe top candidates to avoid near-clone rows in the report
-    normalized_candidates = _dedupe_candidates(normalized_candidates)
+    normalized_candidates = _dedupe_candidates(normalized_candidates, aggressive=True)
 
     def _sort_key(item: dict[str, Any]) -> tuple[int, float]:
         rank = item.get("rank_position")
@@ -3895,6 +3986,12 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
         ),
     )
     pass_candidates = [c for c in normalized_candidates if (c.get("gate_status_json") or {}).get("overall_pass") is True]
+    # Candidates with no blocking failures but some unknown gates (overall_pass=None)
+    unknown_candidates = [
+        c for c in normalized_candidates
+        if (c.get("gate_status_json") or {}).get("overall_pass") is None
+        and not (c.get("gate_reasons_json") or {}).get("blocking_failures")
+    ]
     best_pass = max(pass_candidates, key=lambda item: _safe_float(item.get("final_score"))) if pass_candidates else None
     any_passing = len(pass_candidates) > 0
     pass_count = len(pass_candidates)
@@ -3939,11 +4036,24 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
         )
 
     # Build recommendation language — consistent with pass_count.
+    # Three states: pass (gates clear), unknown (pending validation), fail (blocking failure).
     best_district = best.get("district_display") or best.get("district") or "the top district"
     runner_district = (runner_item.get("district_display") or runner_item.get("district")) if runner_item else "backup options"
     if any_passing:
         why_best = f"Highest blended final score with brand fit {_safe_float(best.get('brand_fit_score')):.1f}/100 and economics {_safe_float(best.get('economics_score')):.1f}/100."
         summary_text = f"Recommend {best_district} first, then sequence {runner_district} as runner-up."
+        report_summary_text = summary_text
+    elif unknown_candidates:
+        # Candidates exist that have no blocking failures but need validation —
+        # do NOT say "no candidate passes" because that contradicts Pass badges shown in the UI.
+        why_best = (
+            f"Top-ranked candidate scores {_safe_float(best.get('final_score')):.1f}/100 "
+            f"with {len(unknown_candidates)} candidate(s) pending gate validation."
+        )
+        summary_text = (
+            f"{len(unknown_candidates)} candidate(s) have no blocking gate failures but need field validation. "
+            f"Consider {best_district} as the exploratory lead."
+        )
         report_summary_text = summary_text
     else:
         why_best = (
@@ -3956,9 +4066,15 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
         )
         report_summary_text = summary_text
 
+    t_report_done = time.monotonic()
     logger.info(
-        "expansion_report timing: total=%.2fs search_id=%s candidates=%d pass_count=%d",
-        time.monotonic() - t_start, search_id, len(normalized_candidates), pass_count,
+        "expansion_report timing: total=%.2fs lookup=%.2fs candidates=%.2fs build=%.2fs "
+        "search_id=%s candidates=%d pass_count=%d unknown_count=%d",
+        t_report_done - t_start,
+        t_lookup - t_start,
+        t_candidates - t_lookup,
+        t_report_done - t_candidates,
+        search_id, len(normalized_candidates), pass_count, len(unknown_candidates),
     )
 
     return {

@@ -116,6 +116,8 @@ export function humanGateSentence(key: string, status: "pass" | "fail" | "unknow
 // Rough heuristic: if >40% of chars are replacement-character or within known
 // garbled Arabic byte ranges, consider the string broken.
 const GARBLED_RE = /[\uFFFD\uFFFE\uFFF0-\uFFFF]{2,}/;
+// Single replacement/BOM chars mixed into otherwise readable text
+const SINGLE_GARBLED_RE = /[\uFFFD\uFFFE]/;
 const EMPTY_RE = /^\s*$/;
 // Latin mojibake patterns common with mis-encoded Arabic text (e.g. Ø§Ù„, Ã, Â)
 const MOJIBAKE_RE = /(?:[Ã\xC3][\x80-\xBF]|Ø[§-¿]Ù[„\x80-\x8F]|Ã¢|Ã©|Ã¨|Ã±){2,}/;
@@ -125,8 +127,16 @@ export function isGarbledText(text: string | null | undefined): boolean {
   if (!text) return true;
   if (EMPTY_RE.test(text)) return true;
   if (GARBLED_RE.test(text)) return true;
+  if (SINGLE_GARBLED_RE.test(text)) return true;
   if (MOJIBAKE_RE.test(text)) return true;
   return false;
+}
+
+/** Strip replacement characters and BOM from display strings */
+export function cleanDisplayText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const cleaned = text.replace(/[\uFFFD\uFFFE\uFEFF]/g, "").trim();
+  return cleaned || null;
 }
 
 /**
