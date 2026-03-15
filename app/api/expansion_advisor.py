@@ -17,6 +17,7 @@ from app.db.deps import get_db
 
 logger = logging.getLogger(__name__)
 from app.services.expansion_advisor import (
+    clear_expansion_caches,
     compare_candidates,
     create_saved_search,
     delete_saved_search,
@@ -587,6 +588,9 @@ def create_expansion_search(
             status_code=400,
             detail="min_area_m2 must be less than or equal to max_area_m2",
         )
+    # Clear cached lookups at the start of each new search so they pick up
+    # any data changes since the last request.
+    clear_expansion_caches()
 
     target_area_m2 = req.target_area_m2 or ((req.min_area_m2 + req.max_area_m2) / 2.0)
     search_id = str(uuid.uuid4())
@@ -765,18 +769,51 @@ def get_expansion_search_candidates(search_id: str, db: Session = Depends(get_db
 def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
     import time as _time
     t0 = _time.monotonic()
+
     try:
         report = get_recommendation_report(db, search_id)
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        # Recoverable data-shape errors: return sparse report with degraded flag.
+        logger.warning(
+            "Report generation failed (recoverable %s): search_id=%s elapsed=%.2fs detail=%s",
+            type(exc).__name__, search_id, _time.monotonic() - t0, str(exc)[:200],
+            exc_info=True,
+        )
+        report = {
+            "search_id": search_id,
+            "brand_profile": {},
+            "meta": {"version": "expansion_advisor_v6.1", "degraded": True, "error_class": type(exc).__name__},
+            "top_candidates": [],
+            "recommendation": {
+                "best_candidate_id": None,
+                "runner_up_candidate_id": None,
+                "best_pass_candidate_id": None,
+                "best_confidence_candidate_id": None,
+                "pass_count": 0,
+                "validation_clear_count": 0,
+                "why_best": "",
+                "main_risk": "Report generation encountered an error — results may be incomplete.",
+                "best_format": "",
+                "summary": "Report could not be fully generated. The search results are still available.",
+                "report_summary": "",
+            },
+            "assumptions": {"parcel_source": "arcgis_only", "city": "riyadh"},
+        }
     except Exception:
+        # Non-recoverable errors (DB connection, infrastructure): let them surface as 500.
         logger.exception(
-            "Report generation failed: search_id=%s elapsed=%.2fs",
+            "Report generation failed (non-recoverable): search_id=%s elapsed=%.2fs",
             search_id, _time.monotonic() - t0,
         )
-        raise HTTPException(status_code=500, detail="Report generation failed")
+        raise
+
     if not report:
-        logger.info("Report: search not found search_id=%s", search_id)
-        raise HTTPException(status_code=404, detail="Expansion search not found")
+        # get_recommendation_report returns None when search not found or no candidates
+        logger.info("Report: not found for search_id=%s", search_id)
+        raise HTTPException(status_code=404, detail="Expansion report not found")
+
     rec = report.get("recommendation", {})
+    elapsed = _time.monotonic() - t0
     logger.info(
         "Report served: search_id=%s pass_count=%s top_candidates=%d "
         "best_candidate=%s best_pass=%s elapsed=%.2fs",
@@ -785,7 +822,7 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
         len(report.get("top_candidates", [])),
         (rec.get("best_candidate_id") or "none")[:8],
         (rec.get("best_pass_candidate_id") or "none")[:8],
-        _time.monotonic() - t0,
+        elapsed,
     )
     return report
 
