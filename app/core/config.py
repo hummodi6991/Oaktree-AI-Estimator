@@ -66,5 +66,14 @@ class Settings:
         os.getenv("PARCEL_SIMPLIFY_TOLERANCE_M", "1.0")
     )
 
+    # --- Expansion Advisor normalized tables ---
+    EXPANSION_ROADS_TABLE: str = os.getenv("EXPANSION_ROADS_TABLE", "expansion_road_context")
+    EXPANSION_PARKING_TABLE: str = os.getenv("EXPANSION_PARKING_TABLE", "expansion_parking_asset")
+    EXPANSION_DELIVERY_TABLE: str = os.getenv("EXPANSION_DELIVERY_TABLE", "expansion_delivery_market")
+    EXPANSION_RENT_TABLE: str = os.getenv("EXPANSION_RENT_TABLE", "expansion_rent_comp")
+    EXPANSION_COMPETITOR_TABLE: str = os.getenv(
+        "EXPANSION_COMPETITOR_TABLE", "expansion_competitor_quality"
+    )
+
 
 settings = Settings()

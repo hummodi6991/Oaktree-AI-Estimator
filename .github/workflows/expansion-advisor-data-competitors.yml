@@ -1,0 +1,74 @@
+name: "Expansion Advisor Data — Competitor Quality"
+
+on:
+  schedule:
+    - cron: "0 7 * * 5"  # Weekly on Friday at 07:00 UTC
+  workflow_dispatch:
+    inputs:
+      refresh_google_reviews:
+        description: "Run Google review enrichment first"
+        required: false
+        default: "false"
+      refresh_after:
+        description: "Run post-ingestion refresh"
+        required: false
+        default: "true"
+
+jobs:
+  ingest-competitors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT || '5432' }}
+      PGSSLMODE: ${{ secrets.PGSSLMODE || 'require' }}
+      GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python requirements
+        run: pip install -r requirements.txt
+
+      - name: Run alembic upgrade
+        run: python -m alembic upgrade head
+
+      - name: Run Google review enrichment (optional)
+        if: ${{ github.event.inputs.refresh_google_reviews == 'true' }}
+        run: |
+          python -m app.ingest.google_reviews_enrich \
+            --city riyadh \
+            --limit 500 \
+            || echo "Google review enrichment completed (or skipped due to missing API key)"
+
+      - name: Run Competitor Quality ingest
+        run: |
+          python -m app.ingest.expansion_advisor_competitors \
+            --replace true \
+            --write-stats /tmp/competitors-stats.json
+
+      - name: Run post-ingestion refresh
+        if: ${{ github.event.inputs.refresh_after != 'false' }}
+        run: |
+          python -m app.ingest.expansion_advisor_refresh \
+            --skip-alembic \
+            --write-stats /tmp/refresh-stats.json
+
+      - name: Upload stats artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: expansion-advisor-competitors-stats
+          path: /tmp/*-stats.json
+          retention-days: 30

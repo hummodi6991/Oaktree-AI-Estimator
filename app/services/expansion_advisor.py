@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.services.aqar_district_match import normalize_district_key
 from app.services.rent import aqar_rent_median
 
@@ -16,6 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 ARCGIS_PARCELS_TABLE = "public.riyadh_parcels_arcgis_proxy"
+
+# Expansion Advisor normalized table names (from config)
+_EA_ROADS_TABLE = settings.EXPANSION_ROADS_TABLE
+_EA_PARKING_TABLE = settings.EXPANSION_PARKING_TABLE
+_EA_DELIVERY_TABLE = settings.EXPANSION_DELIVERY_TABLE
+_EA_RENT_TABLE = settings.EXPANSION_RENT_TABLE
+_EA_COMPETITOR_TABLE = settings.EXPANSION_COMPETITOR_TABLE
 
 # ---------------------------------------------------------------------------
 # Gate-key to human-readable label mapping (change #4)
@@ -650,6 +658,18 @@ def _access_visibility_score(*, frontage_score: float, access_score: float, bran
     return _clamp(weighted * (0.75 + visibility_weight * 0.25))
 
 
+def _ea_table_has_rows(db: Session, table_name: str) -> bool:
+    """Check if an Expansion Advisor normalized table exists and has rows."""
+    try:
+        with db.begin_nested():
+            row = db.execute(
+                text(f"SELECT EXISTS(SELECT 1 FROM {table_name} LIMIT 1) AS has_rows")
+            ).scalar()
+            return bool(row)
+    except Exception:
+        return False
+
+
 def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon: float, area_m2: float, district: str | None,
     landuse_label: str | None, landuse_code: str | None, provider_listing_count: int, provider_platform_count: int,
     competitor_count: int, nearest_branch_distance_m: float | None, rent_source: str, estimated_rent_sar_m2_year: float,
@@ -684,6 +704,26 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
     base["context_sources"]["roads_table_available"] = roads_table_available
     base["context_sources"]["parking_table_available"] = parking_table_available
 
+    # Track data source provenance for observability
+    base["context_sources"]["road_source"] = "estimated"
+    base["context_sources"]["parking_source"] = "estimated"
+    base["context_sources"]["delivery_source"] = "legacy"
+    base["context_sources"]["rent_source"] = rent_source
+    base["context_sources"]["competitor_source"] = "legacy"
+
+    # Check if normalized Expansion Advisor tables have data
+    ea_roads_available = _ea_table_has_rows(db, _EA_ROADS_TABLE)
+    ea_parking_available = _ea_table_has_rows(db, _EA_PARKING_TABLE)
+
+    if ea_roads_available:
+        base["context_sources"]["road_source"] = "expansion_road_context"
+        roads_table_available = True
+        base["context_sources"]["roads_table_available"] = True
+    if ea_parking_available:
+        base["context_sources"]["parking_source"] = "expansion_parking_asset"
+        parking_table_available = True
+        base["context_sources"]["parking_table_available"] = True
+
     if not parcel_id:
         base["missing_context"] = ["missing_parcel_id"]
         base["data_completeness_score"] = 50
@@ -706,7 +746,59 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
     except Exception:
         logger.debug("perimeter query failed for parcel_id=%s", parcel_id, exc_info=True)
 
-    if roads_table_available:
+    # ── Road context: prefer expansion_road_context when populated ──
+    _road_data_resolved = False
+    if ea_roads_available and roads_table_available:
+        try:
+            with db.begin_nested():
+                ea_road_row = db.execute(
+                    text(f"""
+                        WITH p AS (
+                            SELECT geom
+                            FROM {ARCGIS_PARCELS_TABLE}
+                            WHERE id::text = :parcel_id
+                            LIMIT 1
+                        )
+                        SELECT
+                            COALESCE(
+                                (SELECT MIN(major_road_distance_m) FROM {_EA_ROADS_TABLE} erc
+                                 WHERE erc.is_major_road = TRUE
+                                   AND erc.geom IS NOT NULL
+                                   AND ST_DWithin(erc.geom::geography, p.geom::geography, 700)),
+                                (SELECT MIN(ST_Distance(erc.geom::geography, p.geom::geography))
+                                 FROM {_EA_ROADS_TABLE} erc
+                                 WHERE erc.is_major_road = TRUE
+                                   AND erc.geom IS NOT NULL
+                                   AND ST_DWithin(erc.geom::geography, p.geom::geography, 700)),
+                                5000
+                            ) AS nearest_major_road_distance_m,
+                            COALESCE((
+                                SELECT COUNT(*)
+                                FROM {_EA_ROADS_TABLE} erc
+                                WHERE erc.geom IS NOT NULL
+                                  AND ST_DWithin(erc.geom::geography, ST_Centroid(p.geom)::geography, 250)
+                            ), 0) AS nearby_road_segment_count,
+                            EXISTS(
+                                SELECT 1 FROM {_EA_ROADS_TABLE} erc
+                                WHERE erc.geom IS NOT NULL
+                                  AND ST_DWithin(erc.geom::geography, p.geom::geography, 18)
+                            ) AS touches_road
+                        FROM p
+                    """),
+                    {"parcel_id": str(parcel_id)},
+                ).mappings().first()
+                if ea_road_row:
+                    base.update({
+                        "nearest_major_road_distance_m": round(_safe_float(ea_road_row.get("nearest_major_road_distance_m")), 2),
+                        "nearby_road_segment_count": _safe_int(ea_road_row.get("nearby_road_segment_count")),
+                        "touches_road": bool(ea_road_row.get("touches_road")),
+                    })
+                    base["context_sources"]["road_context_available"] = True
+                    _road_data_resolved = True
+        except Exception:
+            logger.debug("expansion_road_context query failed for parcel_id=%s, falling back to OSM", parcel_id, exc_info=True)
+
+    if roads_table_available and not _road_data_resolved:
         try:
             with db.begin_nested():
                 road_row = db.execute(
@@ -771,7 +863,37 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
         except Exception:
             logger.debug("road context query failed for parcel_id=%s", parcel_id, exc_info=True)
 
-    if parking_table_available:
+    # ── Parking context: prefer expansion_parking_asset when populated ──
+    _parking_data_resolved = False
+    if ea_parking_available and parking_table_available:
+        try:
+            with db.begin_nested():
+                ea_parking_row = db.execute(
+                    text(f"""
+                        WITH p AS (
+                            SELECT geom
+                            FROM {ARCGIS_PARCELS_TABLE}
+                            WHERE id::text = :parcel_id
+                            LIMIT 1
+                        )
+                        SELECT COALESCE((
+                            SELECT COUNT(*)
+                            FROM {_EA_PARKING_TABLE} epa
+                            WHERE epa.geom IS NOT NULL
+                              AND ST_DWithin(epa.geom::geography, ST_Centroid(p.geom)::geography, 350)
+                        ), 0) AS nearby_parking_amenity_count
+                        FROM p
+                    """),
+                    {"parcel_id": str(parcel_id)},
+                ).mappings().first()
+                if ea_parking_row:
+                    base["nearby_parking_amenity_count"] = _safe_int(ea_parking_row.get("nearby_parking_amenity_count"))
+                    base["context_sources"]["parking_context_available"] = True
+                    _parking_data_resolved = True
+        except Exception:
+            logger.debug("expansion_parking_asset query failed for parcel_id=%s, falling back to OSM", parcel_id, exc_info=True)
+
+    if parking_table_available and not _parking_data_resolved:
         try:
             with db.begin_nested():
                 parking_row = db.execute(
@@ -1177,6 +1299,54 @@ def _comparable_competitors(
     if lat is None or lon is None:
         return []
 
+    # Prefer expansion_competitor_quality when populated
+    if _ea_table_has_rows(db, _EA_COMPETITOR_TABLE):
+        try:
+            with db.begin_nested():
+                rows = db.execute(
+                    text(f"""
+                        WITH candidate_point AS (
+                            SELECT ST_SetSRID(ST_MakePoint(:lon, :lat), 4326) AS geom
+                        )
+                        SELECT
+                            ecq.restaurant_poi_id AS id,
+                            ecq.brand_name AS name,
+                            ecq.category,
+                            ecq.district,
+                            ecq.review_score / 25.0 AS rating,
+                            ecq.review_count,
+                            'expansion_competitor_quality' AS source,
+                            ecq.overall_quality_score,
+                            ST_Distance(ecq.geom::geography, cp.geom::geography) AS distance_m
+                        FROM {_EA_COMPETITOR_TABLE} ecq
+                        CROSS JOIN candidate_point cp
+                        WHERE ecq.geom IS NOT NULL
+                          AND lower(COALESCE(ecq.category, '')) = lower(:category)
+                          AND ST_DWithin(ecq.geom::geography, cp.geom::geography, 1500)
+                        ORDER BY distance_m ASC
+                        LIMIT 5
+                    """),
+                    {"lat": lat, "lon": lon, "category": category},
+                ).mappings().all()
+            if rows:
+                return [
+                    {
+                        "id": row.get("id"),
+                        "name": row.get("name"),
+                        "category": row.get("category"),
+                        "district": row.get("district"),
+                        "rating": _safe_float(row.get("rating"), default=0.0) if row.get("rating") is not None else None,
+                        "review_count": _safe_int(row.get("review_count"), default=0) if row.get("review_count") is not None else None,
+                        "distance_m": round(_safe_float(row.get("distance_m"), default=0.0), 2),
+                        "source": row.get("source"),
+                        "overall_quality_score": _safe_float(row.get("overall_quality_score")),
+                    }
+                    for row in rows
+                ]
+        except Exception:
+            logger.debug("expansion_competitor_quality query failed, falling back to restaurant_poi", exc_info=True)
+
+    # Fallback: legacy restaurant_poi query
     try:
         with db.begin_nested():
             rows = db.execute(
@@ -1363,7 +1533,60 @@ def _build_explanation(
     }
 
 
+def _estimate_rent_from_expansion_table(db: Session, district: str | None) -> tuple[float, str] | None:
+    """Try to get rent estimate from the normalized expansion_rent_comp table.
+
+    Returns (rent_sar_m2_year, source) or None if table is empty/unavailable.
+    """
+    try:
+        with db.begin_nested():
+            # Check if table has data
+            has_rows = db.execute(
+                text(f"SELECT EXISTS(SELECT 1 FROM {_EA_RENT_TABLE} WHERE city = 'riyadh' LIMIT 1)")
+            ).scalar()
+            if not has_rows:
+                return None
+
+            # Try district median first
+            if district:
+                row = db.execute(
+                    text(f"""
+                        SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY rent_sar_m2_year) AS median,
+                               COUNT(*) AS n
+                        FROM {_EA_RENT_TABLE}
+                        WHERE city = 'riyadh'
+                          AND lower(district) = lower(:district)
+                          AND rent_sar_m2_year IS NOT NULL
+                          AND rent_sar_m2_year > 0
+                    """),
+                    {"district": district},
+                ).mappings().first()
+                if row and row["median"] is not None and int(row["n"]) >= 3:
+                    return float(row["median"]), "expansion_rent_district"
+
+            # City-wide median fallback
+            row = db.execute(
+                text(f"""
+                    SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY rent_sar_m2_year) AS median
+                    FROM {_EA_RENT_TABLE}
+                    WHERE city = 'riyadh'
+                      AND rent_sar_m2_year IS NOT NULL
+                      AND rent_sar_m2_year > 0
+                """),
+            ).mappings().first()
+            if row and row["median"] is not None:
+                return float(row["median"]), "expansion_rent_city"
+    except Exception:
+        logger.debug("expansion_rent_comp query failed for district=%s", district, exc_info=True)
+    return None
+
+
 def _estimate_rent_sar_m2_year(db: Session, district: str | None) -> tuple[float, str]:
+    # Prefer normalized Expansion Advisor rent comps when populated
+    ea_result = _estimate_rent_from_expansion_table(db, district)
+    if ea_result is not None:
+        return ea_result
+
     try:
         # Use a SAVEPOINT so that a failed ORM query inside aqar_rent_median
         # does not corrupt the outer transaction (which would cause every
@@ -2132,8 +2355,13 @@ def run_expansion_search(
     prepared: list[dict[str, Any]] = []
     rent_cache: dict[str | None, tuple[float, str]] = {}
     district_lookup = _build_district_lookup(db)
-    roads_table_available = _table_available(db, "public.planet_osm_line")
-    parking_table_available = _table_available(db, "public.planet_osm_polygon")
+    # Check normalized Expansion Advisor tables first, then legacy OSM tables
+    ea_roads_populated = _ea_table_has_rows(db, _EA_ROADS_TABLE)
+    ea_parking_populated = _ea_table_has_rows(db, _EA_PARKING_TABLE)
+    ea_delivery_populated = _ea_table_has_rows(db, _EA_DELIVERY_TABLE)
+    ea_competitor_populated = _ea_table_has_rows(db, _EA_COMPETITOR_TABLE)
+    roads_table_available = ea_roads_populated or _table_available(db, "public.planet_osm_line")
+    parking_table_available = ea_parking_populated or _table_available(db, "public.planet_osm_polygon")
     for row in rows:
       try:
         area_m2 = _safe_float(row.get("area_m2"))
@@ -2146,6 +2374,38 @@ def run_expansion_search(
         landuse_label = row.get("landuse_label")
         landuse_code = row.get("landuse_code")
         district = row.get("district")
+
+        # ── Enrich delivery scores from normalized table when available ──
+        if ea_delivery_populated:
+            try:
+                with db.begin_nested():
+                    ea_del = db.execute(
+                        text(f"""
+                            SELECT
+                                COUNT(*) AS listing_count,
+                                COUNT(DISTINCT platform) AS platform_count,
+                                COUNT(*) FILTER (WHERE lower(COALESCE(category, '')) LIKE :cat_like) AS cat_count
+                            FROM {_EA_DELIVERY_TABLE}
+                            WHERE geom IS NOT NULL
+                              AND ST_DWithin(
+                                  geom::geography,
+                                  ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+                                  1200
+                              )
+                        """),
+                        {
+                            "lat": _safe_float(row.get("lat")),
+                            "lon": _safe_float(row.get("lon")),
+                            "cat_like": f"%{category.lower()}%",
+                        },
+                    ).mappings().first()
+                    if ea_del:
+                        provider_listing_count = _safe_int(ea_del.get("listing_count"))
+                        provider_platform_count = _safe_int(ea_del.get("platform_count"))
+                        delivery_listing_count = _safe_int(ea_del.get("cat_count"))
+                        delivery_competition_count = delivery_listing_count
+            except Exception:
+                logger.debug("expansion_delivery_market enrichment failed, using legacy", exc_info=True)
 
         district_norm = normalize_district_key(district)
         if target_district_norm and (not district_norm or district_norm not in target_district_norm):
@@ -2348,6 +2608,10 @@ def run_expansion_search(
         )
         road_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("road_context_available"))
         parking_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("parking_context_available"))
+        # Add Expansion Advisor data provenance to context_sources
+        cs = feature_snapshot_json.setdefault("context_sources", {})
+        cs["delivery_source"] = "expansion_delivery_market" if ea_delivery_populated else "delivery_source_record"
+        cs["competitor_source"] = "expansion_competitor_quality" if ea_competitor_populated else "restaurant_poi"
         frontage_score = _frontage_score(
             parcel_perimeter_m=_safe_float(feature_snapshot_json.get("parcel_perimeter_m")),
             touches_road=bool(feature_snapshot_json.get("touches_road")),
