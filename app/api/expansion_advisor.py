@@ -289,6 +289,7 @@ class RecommendationSummaryResponse(StrictResponseModel):
     runner_up_candidate_id: str | None = None
     best_pass_candidate_id: str | None = None
     best_confidence_candidate_id: str | None = None
+    pass_count: int = 0
     why_best: str = ""
     main_risk: str = ""
     best_format: str = ""
@@ -751,9 +752,19 @@ def get_expansion_search_candidates(search_id: str, db: Session = Depends(get_db
 
 @router.get("/searches/{search_id}/report", response_model=RecommendationReportResponse)
 def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
-    report = get_recommendation_report(db, search_id)
+    try:
+        report = get_recommendation_report(db, search_id)
+    except Exception:
+        logger.exception("Report generation failed for search_id=%s", search_id)
+        raise HTTPException(status_code=500, detail="Report generation failed")
     if not report:
         raise HTTPException(status_code=404, detail="Expansion search not found")
+    logger.info(
+        "Report served: search_id=%s pass_count=%s top_candidates=%d",
+        search_id,
+        report.get("recommendation", {}).get("pass_count"),
+        len(report.get("top_candidates", [])),
+    )
     return report
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time
 import uuid
 from typing import Any
 
@@ -10,7 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.services.aqar_district_match import normalize_district_key
+from app.services.aqar_district_match import is_mojibake, normalize_district_key
 from app.services.rent import aqar_rent_median
 
 logger = logging.getLogger(__name__)
@@ -96,10 +97,15 @@ def _canonicalize_district_label(
 
     # If no lookup hit, use the raw string as Arabic label if it looks okay
     if not name_ar:
-        name_ar = district_raw.strip() if district_raw.strip() else None
+        raw_stripped = district_raw.strip() if district_raw else ""
+        name_ar = raw_stripped if raw_stripped and not is_mojibake(raw_stripped) else None
 
     # Build display: prefer arabic → english → normalized key
-    display = name_ar or name_en or norm_key.replace("_", " ")
+    # Fall back if arabic label looks garbled
+    if name_ar and is_mojibake(name_ar):
+        display = name_en or norm_key.replace("_", " ")
+    else:
+        display = name_ar or name_en or norm_key.replace("_", " ")
 
     return {
         "district_key": norm_key,
@@ -179,6 +185,45 @@ _EXPANSION_DEFAULT_RENT_SAR_M2_YEAR = 900.0
 _EXPANSION_VERSION = "expansion_advisor_v6.1"
 _EXPANSION_PARCEL_SOURCE = "arcgis_only"
 _EXPANSION_EXCLUDED_SOURCES = ["suhail", "inferred_parcels"]
+
+
+def _dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Post-ranking dedupe: collapse near-clone candidates.
+
+    Uses a composite key of:
+    - parcel_id (when available)
+    - snapped centroid (0.001 degree ≈ 110m grid)
+    - normalized district key
+    - rounded area bucket (50m² steps)
+    - rounded rent bucket (100 SAR steps)
+    - nearest-branch distance bucket (500m steps)
+
+    Keeps the highest-ranked (first) candidate in each cluster.
+    """
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for c in candidates:
+        parcel_id = c.get("parcel_id") or ""
+        lat = _safe_float(c.get("lat"))
+        lon = _safe_float(c.get("lon"))
+        district_key = c.get("district_key") or normalize_district_key(c.get("district"))
+        area_bucket = int(round(_safe_float(c.get("area_m2")) / 50.0))
+        rent_bucket = int(round(_safe_float(c.get("estimated_rent_sar_m2_year")) / 100.0))
+        branch_dist = c.get("distance_to_nearest_branch_m")
+        branch_bucket = int(round(_safe_float(branch_dist) / 500.0)) if branch_dist is not None else -1
+
+        # If parcel_id is available, use it as primary key (exact match)
+        if parcel_id:
+            key = f"pid:{parcel_id}"
+        else:
+            # Spatial + attribute composite key
+            key = f"{round(lat, 3)}|{round(lon, 3)}|{district_key}|{area_bucket}|{rent_bucket}|{branch_bucket}"
+
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(c)
+    return result
 
 
 def _safe_json_dumps(obj: Any, **kwargs: Any) -> str:
@@ -673,7 +718,8 @@ def _ea_table_has_rows(db: Session, table_name: str) -> bool:
 def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon: float, area_m2: float, district: str | None,
     landuse_label: str | None, landuse_code: str | None, provider_listing_count: int, provider_platform_count: int,
     competitor_count: int, nearest_branch_distance_m: float | None, rent_source: str, estimated_rent_sar_m2_year: float,
-    economics_score: float, roads_table_available: bool, parking_table_available: bool) -> dict[str, Any]:
+    economics_score: float, roads_table_available: bool, parking_table_available: bool,
+    ea_roads_available: bool | None = None, ea_parking_available: bool | None = None) -> dict[str, Any]:
     base = {
         "parcel_area_m2": round(_safe_float(area_m2), 2),
         "parcel_perimeter_m": None,
@@ -711,9 +757,11 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
     base["context_sources"]["rent_source"] = rent_source
     base["context_sources"]["competitor_source"] = "legacy"
 
-    # Check if normalized Expansion Advisor tables have data
-    ea_roads_available = _ea_table_has_rows(db, _EA_ROADS_TABLE)
-    ea_parking_available = _ea_table_has_rows(db, _EA_PARKING_TABLE)
+    # Use pre-computed values when available, otherwise check (fallback for backward compat)
+    if ea_roads_available is None:
+        ea_roads_available = _ea_table_has_rows(db, _EA_ROADS_TABLE)
+    if ea_parking_available is None:
+        ea_parking_available = _ea_table_has_rows(db, _EA_PARKING_TABLE)
 
     if ea_roads_available:
         base["context_sources"]["road_source"] = "expansion_road_context"
@@ -1238,6 +1286,11 @@ def _confidence_grade(
     provider_platform_count: int | None,
     multi_platform_presence_score: float | None,
     rent_source: str,
+    road_context_available: bool = True,
+    parking_context_available: bool = True,
+    zoning_available: bool = True,
+    delivery_observed: bool = True,
+    data_completeness_score: int | float = 100,
 ) -> str:
     adjusted = _safe_float(confidence_score)
     if district:
@@ -1248,11 +1301,27 @@ def _confidence_grade(
     if rent_source != "conservative_default":
         adjusted += 3.0
 
-    if adjusted >= 85.0:
+    # Cap grade when critical observed context is missing.
+    # Missing zoning, delivery observation, road or parking context
+    # should prevent inflated A/B grades.
+    critical_missing = 0
+    if not zoning_available:
+        critical_missing += 1
+    if not delivery_observed:
+        critical_missing += 1
+    if not road_context_available:
+        critical_missing += 1
+    if not parking_context_available:
+        critical_missing += 1
+
+    # Also factor in data completeness
+    completeness = _safe_float(data_completeness_score, 100)
+
+    if adjusted >= 85.0 and critical_missing == 0 and completeness >= 85:
         return "A"
-    if adjusted >= 70.0:
+    if adjusted >= 70.0 and critical_missing <= 1:
         return "B"
-    if adjusted >= 55.0:
+    if adjusted >= 50.0:
         return "C"
     return "D"
 
@@ -1264,11 +1333,18 @@ def _build_demand_thesis(
     provider_density_score: float,
     provider_whitespace_score: float,
     delivery_competition_score: float,
+    delivery_observed: bool = True,
 ) -> str:
     demand_label = "strong" if demand_score >= 70 else "moderate" if demand_score >= 50 else "limited"
-    provider_label = "dense" if provider_density_score >= 65 else "steady" if provider_density_score >= 45 else "thin"
-    whitespace_label = "attractive" if provider_whitespace_score >= 60 else "balanced" if provider_whitespace_score >= 40 else "tight"
-    competition_label = "intense" if delivery_competition_score >= 65 else "manageable"
+    if not delivery_observed:
+        # When no delivery rows are observed, qualify language carefully
+        provider_label = "not observed (inferred)"
+        whitespace_label = "inferred whitespace opportunity"
+        competition_label = "not directly observed"
+    else:
+        provider_label = "dense" if provider_density_score >= 65 else "steady" if provider_density_score >= 45 else "thin"
+        whitespace_label = "attractive" if provider_whitespace_score >= 60 else "balanced" if provider_whitespace_score >= 40 else "tight"
+        competition_label = "intense" if delivery_competition_score >= 65 else "manageable"
     return (
         f"Demand is {demand_label} (score {demand_score:.1f}) with population reach around {population_reach:.0f}; "
         f"provider activity is {provider_label}, whitespace is {whitespace_label}, and delivery competition is {competition_label}."
@@ -1295,12 +1371,15 @@ def _comparable_competitors(
     category: str,
     lat: float | None,
     lon: float | None,
+    ea_competitor_populated: bool | None = None,
 ) -> list[dict[str, Any]]:
     if lat is None or lon is None:
         return []
 
     # Prefer expansion_competitor_quality when populated
-    if _ea_table_has_rows(db, _EA_COMPETITOR_TABLE):
+    if ea_competitor_populated is None:
+        ea_competitor_populated = _ea_table_has_rows(db, _EA_COMPETITOR_TABLE)
+    if ea_competitor_populated:
         try:
             with db.begin_nested():
                 rows = db.execute(
@@ -1923,6 +2002,7 @@ def run_expansion_search(
     existing_branches: list[dict[str, Any]] | None = None,
     brand_profile: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
+    t_start = time.monotonic()
     bbox = bbox or {}
     min_lon = bbox.get("min_lon")
     min_lat = bbox.get("min_lat")
@@ -2351,6 +2431,12 @@ def run_expansion_search(
             search_id, _bad_landuse_sample,
         )
 
+    t_query_done = time.monotonic()
+    logger.info(
+        "expansion_search timing: candidate_query=%.2fs search_id=%s rows=%d",
+        t_query_done - t_start, search_id, len(rows),
+    )
+
     candidates: list[dict[str, Any]] = []
     prepared: list[dict[str, Any]] = []
     rent_cache: dict[str | None, tuple[float, str]] = {}
@@ -2605,6 +2691,8 @@ def run_expansion_search(
             economics_score=economics_score,
             roads_table_available=roads_table_available,
             parking_table_available=parking_table_available,
+            ea_roads_available=ea_roads_populated,
+            ea_parking_available=ea_parking_populated,
         )
         road_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("road_context_available"))
         parking_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("parking_context_available"))
@@ -2612,6 +2700,7 @@ def run_expansion_search(
         cs = feature_snapshot_json.setdefault("context_sources", {})
         cs["delivery_source"] = "expansion_delivery_market" if ea_delivery_populated else "delivery_source_record"
         cs["competitor_source"] = "expansion_competitor_quality" if ea_competitor_populated else "restaurant_poi"
+        cs["delivery_observed"] = provider_listing_count > 0
         frontage_score = _frontage_score(
             parcel_perimeter_m=_safe_float(feature_snapshot_json.get("parcel_perimeter_m")),
             touches_road=bool(feature_snapshot_json.get("touches_road")),
@@ -2703,6 +2792,11 @@ def run_expansion_search(
             provider_platform_count=provider_platform_count,
             multi_platform_presence_score=multi_platform_presence_score,
             rent_source=rent_source,
+            road_context_available=road_context_available,
+            parking_context_available=parking_context_available,
+            zoning_available=bool(landuse_label or landuse_code),
+            delivery_observed=provider_listing_count > 0,
+            data_completeness_score=feature_snapshot_json.get("data_completeness_score", 0),
         )
         demand_thesis = _build_demand_thesis(
             demand_score=demand_score,
@@ -2710,6 +2804,7 @@ def run_expansion_search(
             provider_density_score=provider_density_score,
             provider_whitespace_score=provider_whitespace_score,
             delivery_competition_score=delivery_competition_score,
+            delivery_observed=provider_listing_count > 0,
         )
         cost_thesis = _build_cost_thesis(
             estimated_rent_sar_m2_year=estimated_rent_sar_m2_year,
@@ -2723,6 +2818,7 @@ def run_expansion_search(
             category=category,
             lat=_safe_float(row.get("lat")),
             lon=_safe_float(row.get("lon")),
+            ea_competitor_populated=ea_competitor_populated,
         )
         explanation = _build_explanation(
             area_m2=area_m2,
@@ -2878,6 +2974,8 @@ def run_expansion_search(
         )
 
     candidates.sort(key=_rank_sort_key)
+    # Dedupe near-clone candidates before limiting
+    candidates = _dedupe_candidates(candidates)
     candidates = candidates[:limit]
     for index, candidate in enumerate(candidates, start=1):
         candidate["compare_rank"] = index
@@ -3034,6 +3132,16 @@ def run_expansion_search(
                 candidate.get("id"), search_id,
                 exc_info=True,
             )
+
+    t_end = time.monotonic()
+    logger.info(
+        "expansion_search timing: total=%.2fs enrichment=%.2fs persist=%.2fs search_id=%s candidates=%d",
+        t_end - t_start,
+        t_end - t_query_done,
+        t_end - t_query_done,
+        search_id,
+        len(result),
+    )
     return result
 
 
@@ -3719,6 +3827,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
 
 
 def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | None:
+    t_start = time.monotonic()
     search = get_search(db, search_id)
     if not search:
         return None
@@ -3729,6 +3838,9 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
         raw_candidates = get_candidates(db, search_id)
     normalized_candidates = [_normalize_candidate_payload(c, district_lookup) for c in raw_candidates]
 
+    # Dedupe top candidates to avoid near-clone rows in the report
+    normalized_candidates = _dedupe_candidates(normalized_candidates)
+
     def _sort_key(item: dict[str, Any]) -> tuple[int, float]:
         rank = item.get("rank_position")
         if rank is None:
@@ -3738,6 +3850,10 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     top = sorted(normalized_candidates, key=_sort_key)[:3]
 
     if not normalized_candidates:
+        logger.info(
+            "expansion_report timing: total=%.2fs search_id=%s candidates=0 (empty)",
+            time.monotonic() - t_start, search_id,
+        )
         return {
             "search_id": search_id,
             "brand_profile": search.get("brand_profile") or {},
@@ -3779,9 +3895,9 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
         ),
     )
     pass_candidates = [c for c in normalized_candidates if (c.get("gate_status_json") or {}).get("overall_pass") is True]
-    # best_pass_candidate_id is NULL when no candidates pass (change #3).
     best_pass = max(pass_candidates, key=lambda item: _safe_float(item.get("final_score"))) if pass_candidates else None
     any_passing = len(pass_candidates) > 0
+    pass_count = len(pass_candidates)
 
     top_payload: list[dict[str, Any]] = []
     for item in top:
@@ -3822,22 +3938,28 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
             }
         )
 
-    # Build recommendation language (change #3) – exploratory when nothing passes.
+    # Build recommendation language — consistent with pass_count.
+    best_district = best.get("district_display") or best.get("district") or "the top district"
+    runner_district = (runner_item.get("district_display") or runner_item.get("district")) if runner_item else "backup options"
     if any_passing:
         why_best = f"Highest blended final score with brand fit {_safe_float(best.get('brand_fit_score')):.1f}/100 and economics {_safe_float(best.get('economics_score')):.1f}/100."
-        summary_text = f"Recommend {best.get('district_display') or best.get('district') or 'the top district'} first, then sequence {runner_item.get('district_display') or runner_item.get('district') if runner_item else 'backup options'} as runner-up."
+        summary_text = f"Recommend {best_district} first, then sequence {runner_district} as runner-up."
         report_summary_text = summary_text
     else:
         why_best = (
-            f"No site currently passes all required gates. "
-            f"The top-ranked exploratory candidate scores {_safe_float(best.get('final_score')):.1f}/100 "
-            f"but has unresolved gate failures."
+            f"Top-ranked candidate scores {_safe_float(best.get('final_score')):.1f}/100 "
+            f"but does not yet pass all gates — unresolved items need validation."
         )
         summary_text = (
-            "No candidate currently meets all required gates. "
-            f"Consider {best.get('district_display') or best.get('district') or 'the top district'} as an exploratory lead pending further validation."
+            f"No candidate currently passes all required gates ({pass_count} of {len(normalized_candidates)} pass). "
+            f"Consider {best_district} as an exploratory lead pending further validation."
         )
         report_summary_text = summary_text
+
+    logger.info(
+        "expansion_report timing: total=%.2fs search_id=%s candidates=%d pass_count=%d",
+        time.monotonic() - t_start, search_id, len(normalized_candidates), pass_count,
+    )
 
     return {
         "search_id": search_id,
@@ -3849,6 +3971,7 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
             "runner_up_candidate_id": runner_item.get("id") if runner_item else None,
             "best_pass_candidate_id": best_pass.get("id") if best_pass else None,
             "best_confidence_candidate_id": best_confidence.get("id"),
+            "pass_count": pass_count,
             "why_best": why_best,
             "main_risk": (best.get("key_risks_json") or ["Validate lease and execution assumptions"])[0],
             "best_format": _recommended_use_case(str(search.get("service_model") or "qsr"), _safe_float(best.get("area_m2"))),

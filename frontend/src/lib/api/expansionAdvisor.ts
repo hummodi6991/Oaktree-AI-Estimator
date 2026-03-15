@@ -293,6 +293,7 @@ export type RecommendationReportResponse = {
     fastest_payback_candidate_id?: string;
     lowest_cannibalization_candidate_id?: string;
     most_confident_candidate_id?: string;
+    pass_count?: number;
     why_best?: string;
     main_risk?: string;
     best_format?: string;
@@ -505,7 +506,16 @@ export async function getExpansionCandidates(searchId: string): Promise<Expansio
 }
 export async function compareExpansionCandidates(searchId: string, candidateIds: string[]): Promise<CompareCandidatesResponse> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/candidates/compare"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search_id: searchId, candidate_ids: candidateIds }) }); const data = await readJson<CompareCandidatesResponse>(res); return normalizeCompareResponse(data); }
 export async function getExpansionCandidateMemo(candidateId: string): Promise<CandidateMemoResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo`)); const data = await readJson<CandidateMemoResponse>(res); return normalizeMemoResponse(data); }
-export async function getExpansionRecommendationReport(searchId: string): Promise<RecommendationReportResponse> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`)); const data = await readJson<RecommendationReportResponse>(res); return normalizeReportResponse(data); }
+export async function getExpansionRecommendationReport(searchId: string): Promise<RecommendationReportResponse> {
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`));
+  const data = await readJson<RecommendationReportResponse>(res);
+  const normalized = normalizeReportResponse(data);
+  // Log sparse payload normalization for observability
+  if (!data.recommendation && normalized.recommendation) {
+    console.info("[expansion-report] normalized sparse recommendation payload for search", searchId);
+  }
+  return normalized;
+}
 export async function createSavedExpansionSearch(payload: Omit<SavedExpansionSearch, "id">): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/saved-searches"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }
 export async function listSavedExpansionSearches(status?: "draft" | "final", limit = 20): Promise<SavedExpansionSearchListResponse> {
   const params = new URLSearchParams({ limit: String(limit) });

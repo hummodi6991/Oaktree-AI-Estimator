@@ -662,10 +662,19 @@ export type CopySummary = {
   noPassNotice: string | null;
 };
 
+/**
+ * Derive search-level pass count from candidates list for consistent summary.
+ */
+export function searchPassCount(candidates: ExpansionCandidate[]): number {
+  return candidates.filter((c) => c.gate_status_json?.overall_pass === true).length;
+}
+
 export function buildCopySummary(
   candidate: ExpansionCandidate | null,
   report: RecommendationReportResponse | null,
   memo: CandidateMemoResponse | null,
+  /** Pass count at search level — when > 0, suppress the "no pass" notice */
+  searchLevelPassCount?: number,
 ): CopySummary {
   const rec = report?.recommendation || {};
   const memoRec = memo?.recommendation || {};
@@ -676,11 +685,17 @@ export function buildCopySummary(
   const gatePass = candidate?.gate_status_json?.overall_pass;
   const allGatesPass = gatePass === true;
 
+  // Use search-level pass count when provided, otherwise fall back to
+  // report.recommendation.pass_count, otherwise just the candidate's own gate.
+  const reportPassCount = (rec as Record<string, unknown>).pass_count;
+  const effectivePassCount = searchLevelPassCount ?? (typeof reportPassCount === "number" ? reportPassCount : (allGatesPass ? 1 : 0));
+  const anySearchPass = effectivePassCount > 0;
+
   const nextRaw = unknowns[0] || missing[0] || null;
   const nextValidation = nextRaw ? humanGateLabel(nextRaw) + " needs field verification." : "Site visit recommended";
 
   return {
-    siteLabel: allGatesPass ? "Lead site" : "Top ranked candidate",
+    siteLabel: allGatesPass ? "Lead site" : (anySearchPass ? "Top ranked candidate" : "Top ranked candidate"),
     bestCandidate: candidate
       ? `#${candidate.rank_position || "?"} ${candidateDistrictLabel(candidate, candidate.parcel_id || "—")}`
       : "—",
@@ -689,7 +704,9 @@ export function buildCopySummary(
     bestFormat: rec.best_format || memoRec.best_use_case || "—",
     nextValidation,
     allGatesPass,
-    noPassNotice: allGatesPass ? null : "No candidate currently passes all required gates.",
+    // Only show the "no candidate passes" notice when truly no candidate in the search passes.
+    // If pass_count > 0 or best_pass_candidate_id exists in the report, suppress the notice.
+    noPassNotice: anySearchPass ? null : "No candidate currently passes all required gates.",
   };
 }
 
@@ -952,6 +969,8 @@ export function buildDecisionSnapshot(
   candidate: ExpansionCandidate,
   report?: RecommendationReportResponse | null,
   memo?: CandidateMemoResponse | null,
+  /** Search-level pass count — used to avoid contradicting search header */
+  searchLevelPassCount?: number,
 ): DecisionSnapshot {
   const rec = report?.recommendation || {};
   const memoRec = memo?.recommendation || {};
@@ -961,6 +980,11 @@ export function buildDecisionSnapshot(
   const missing = candidate.feature_snapshot_json?.missing_context || [];
   const gatePass = candidate.gate_status_json?.overall_pass;
   const allGatesPass = gatePass === true;
+
+  // Use search-level pass count when provided
+  const reportPassCount = (rec as Record<string, unknown>).pass_count;
+  const effectivePassCount = searchLevelPassCount ?? (typeof reportPassCount === "number" ? reportPassCount : (allGatesPass ? 1 : 0));
+  const anySearchPass = effectivePassCount > 0;
 
   const nextRaw = unknowns[0] || missing[0] || null;
   const nextValidation = nextRaw ? humanGateLabel(nextRaw) + " needs field verification." : "Site visit recommended";
@@ -977,7 +1001,8 @@ export function buildDecisionSnapshot(
     nextValidation,
     confidenceGrade: candidate.confidence_grade || "—",
     gateVerdict: gatePass === true ? "pass" : gatePass === false ? "fail" : "unknown",
-    allGatesPass,
+    // allGatesPass here means: show "no pass" notice at search level only when truly no candidate passes
+    allGatesPass: anySearchPass,
     finalScore: candidate.final_score ?? null,
     rankPosition: candidate.rank_position ?? null,
   };
