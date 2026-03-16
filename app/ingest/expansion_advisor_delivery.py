@@ -18,6 +18,7 @@ import sys
 
 from sqlalchemy import text
 
+from app.connectors.delivery_platforms import SCRAPER_REGISTRY
 from app.ingest.expansion_advisor_common import (
     RIYADH_BBOX,
     get_session,
@@ -29,7 +30,56 @@ from app.ingest.expansion_advisor_common import (
 
 logger = logging.getLogger("expansion_advisor.delivery")
 
-DEFAULT_PLATFORMS = "hungerstation,jahez,keeta,talabat,mrsool"
+# Legacy 5-platform preset kept for backwards compatibility.
+CORE_PLATFORMS = ("hungerstation", "jahez", "keeta", "talabat", "mrsool")
+
+# Named presets for --platforms argument.
+PLATFORM_PRESETS: dict[str, tuple[str, ...]] = {
+    "core": CORE_PLATFORMS,
+    # "all" is resolved dynamically from SCRAPER_REGISTRY at call time so
+    # newly-added connectors are picked up automatically.
+}
+
+
+def resolve_platforms(raw: str) -> list[str]:
+    """Resolve a --platforms value into a sorted, validated list of names.
+
+    Accepted forms:
+      * ``"all"``   — every key in SCRAPER_REGISTRY (sorted).
+      * ``"core"``  — the original 5 platforms.
+      * comma-separated list — validated against SCRAPER_REGISTRY.
+
+    Raises ``SystemExit`` with a clear message for unknown platform names.
+    """
+    token = raw.strip().lower()
+
+    if token == "all":
+        platforms = sorted(SCRAPER_REGISTRY.keys())
+    elif token in PLATFORM_PRESETS:
+        platforms = sorted(PLATFORM_PRESETS[token])
+    else:
+        platforms = sorted({p.strip().lower() for p in raw.split(",") if p.strip()})
+
+    if not platforms:
+        logger.error("No platforms resolved from --platforms=%r", raw)
+        sys.exit(1)
+
+    # Validate every name against the registry.
+    unknown = sorted(set(platforms) - set(SCRAPER_REGISTRY.keys()))
+    if unknown:
+        supported = ", ".join(sorted(SCRAPER_REGISTRY.keys()))
+        logger.error(
+            "Unknown platform(s): %s. Supported platforms: %s",
+            ", ".join(unknown),
+            supported,
+        )
+        sys.exit(1)
+
+    return platforms
+
+
+# Default is now "all" — use every implemented connector.
+DEFAULT_PLATFORMS = "all"
 
 
 def _normalize_delivery_records(db, platforms: list[str], allow_empty: bool) -> dict:
@@ -166,7 +216,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Expansion Advisor — Delivery Marketplace ingest")
     parser.add_argument("--city", default="riyadh", help="City filter (default: riyadh)")
     parser.add_argument("--platforms", default=DEFAULT_PLATFORMS,
-                        help=f"Comma-separated platform list (default: {DEFAULT_PLATFORMS})")
+                        help="Platform list: 'all', 'core', or comma-separated names "
+                             f"(default: {DEFAULT_PLATFORMS})")
     parser.add_argument("--allow-empty", action="store_true",
                         default=os.getenv("ALLOW_EMPTY_DELIVERY_INGEST", "").lower() in ("true", "1", "yes"),
                         help="Allow zero rows without failing")
@@ -180,7 +231,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     validate_db_env()
 
-    platforms = [p.strip().lower() for p in args.platforms.split(",") if p.strip()]
+    platforms = resolve_platforms(args.platforms)
+    logger.info("Resolved platforms (%d): %s", len(platforms), ", ".join(platforms))
 
     # Step 1: Scrape fresh delivery data (unless --skip-scrape)
     scrape_results = []
@@ -191,6 +243,8 @@ def main() -> None:
     db = get_session()
     try:
         stats = _normalize_delivery_records(db, platforms, args.allow_empty)
+        stats["resolved_platforms"] = platforms
+        stats["platform_preset"] = args.platforms
         stats["scrape_results"] = [
             {k: v for k, v in r.items() if k != "raw_results"}
             for r in scrape_results
