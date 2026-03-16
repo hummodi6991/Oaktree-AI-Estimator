@@ -195,6 +195,27 @@ def main() -> None:
             {k: v for k, v in r.items() if k != "raw_results"}
             for r in scrape_results
         ]
+
+        # Attach per-platform discovery stats when available
+        try:
+            from app.connectors.delivery_platforms import get_discovery_stats
+            discovery = get_discovery_stats()
+            if discovery:
+                stats["discovery_stats"] = discovery
+                for plat, ds in discovery.items():
+                    logger.info(
+                        "Discovery stats [%s]: path=%s, sitemap_urls=%d, "
+                        "candidates=%d, fetch_fail=%d, parse_fail=%d",
+                        plat,
+                        ds.get("discovery_success_path"),
+                        ds.get("sitemap_urls_found", 0),
+                        ds.get("candidate_urls_found", 0),
+                        ds.get("fetch_failures", 0),
+                        ds.get("parse_failures", 0),
+                    )
+        except ImportError:
+            pass
+
         counts = log_table_counts(db, ["expansion_delivery_market"])
         stats["row_counts"] = counts
 
