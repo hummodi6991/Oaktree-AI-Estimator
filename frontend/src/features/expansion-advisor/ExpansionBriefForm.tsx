@@ -15,7 +15,7 @@ export const defaultBrief: ExpansionBrief = {
   target_area_m2: 200,
   target_districts: [],
   existing_branches: [],
-  limit: 25,
+  limit: 15,
   brand_profile: {
     primary_channel: "balanced",
     parking_sensitivity: "medium",
@@ -181,7 +181,7 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
           </div>
           <div className="ea-form__field">
             <label className="ea-form__label">{t("expansionAdvisor.searchLimit")}</label>
-            <input className="ea-form__input" type="number" value={brief.limit} onChange={(e) => set("limit", Number(e.target.value) || 25)} disabled={loading} min={1} max={100} />
+            <input className="ea-form__input" type="number" value={brief.limit} onChange={(e) => set("limit", Number(e.target.value) || 15)} disabled={loading} min={1} max={100} />
           </div>
         </div>
       </div>

@@ -989,7 +989,7 @@ def test_run_expansion_search_empty_existing_branches():
         min_area_m2=100,
         max_area_m2=500,
         target_area_m2=200,
-        limit=25,
+        limit=15,
         existing_branches=[],
         brand_profile={
             "preferred_districts": ["Alolaya"],
@@ -1033,7 +1033,7 @@ def test_run_expansion_search_preferred_districts_typo_no_crash():
         min_area_m2=100,
         max_area_m2=500,
         target_area_m2=200,
-        limit=25,
+        limit=15,
         existing_branches=[{"name": "HQ", "lat": 24.71, "lon": 46.68}],
         brand_profile={
             "preferred_districts": ["Alolaya"],
@@ -1074,7 +1074,7 @@ def test_run_expansion_search_unmatched_target_districts_returns_empty():
         min_area_m2=100,
         max_area_m2=500,
         target_area_m2=200,
-        limit=25,
+        limit=15,
         target_districts=["Nonexistent District"],
         existing_branches=[],
     )
@@ -1114,7 +1114,7 @@ def test_run_expansion_search_exact_production_payload():
         min_area_m2=100,
         max_area_m2=500,
         target_area_m2=200,
-        limit=25,
+        limit=15,
         target_districts=["Al Olaya", "Al Malqa", "Al Nakheel"],
         existing_branches=[],
         brand_profile=brand_profile,
@@ -1327,7 +1327,7 @@ def test_production_payload_c3ace4a6_regression(monkeypatch):
         min_area_m2=100,
         max_area_m2=500,
         target_area_m2=200,
-        limit=25,
+        limit=15,
         bbox={"min_lon": 46.5, "min_lat": 24.5, "max_lon": 46.9, "max_lat": 24.9},
         target_districts=["العليا", "الملقا"],
         existing_branches=[
@@ -1390,7 +1390,7 @@ _BBOX_BASE_KWARGS = dict(
     min_area_m2=100,
     max_area_m2=500,
     target_area_m2=200,
-    limit=25,
+    limit=15,
     target_districts=["Al Olaya"],
     existing_branches=[],
 )
@@ -1452,7 +1452,7 @@ def test_run_expansion_search_production_payload():
         min_area_m2=100,
         max_area_m2=500,
         target_area_m2=200,
-        limit=25,
+        limit=15,
         bbox=None,
         target_districts=["Al Olaya", "Al Malqa", "Al Nakheel"],
         existing_branches=[],
