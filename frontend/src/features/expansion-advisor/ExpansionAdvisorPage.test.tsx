@@ -594,12 +594,12 @@ describe("Memo/report caching keys", () => {
 
 describe("Study title generation", () => {
   it("generates title from brand and category", () => {
-    expect(generateStudyTitle({ brand_name: "Al Baik", category: "QSR", service_model: "qsr", min_area_m2: 100, max_area_m2: 300, target_districts: [], existing_branches: [], limit: 25 }))
+    expect(generateStudyTitle({ brand_name: "Al Baik", category: "QSR", service_model: "qsr", min_area_m2: 100, max_area_m2: 300, target_districts: [], existing_branches: [], limit: 15 }))
       .toBe("Al Baik — QSR — Expansion Study");
   });
 
   it("falls back gracefully with empty brand", () => {
-    expect(generateStudyTitle({ brand_name: "", category: "", service_model: "qsr", min_area_m2: 100, max_area_m2: 300, target_districts: [], existing_branches: [], limit: 25 }))
+    expect(generateStudyTitle({ brand_name: "", category: "", service_model: "qsr", min_area_m2: 100, max_area_m2: 300, target_districts: [], existing_branches: [], limit: 15 }))
       .toBe("Expansion Study");
   });
 });
@@ -2596,7 +2596,7 @@ describe("validateBrief", () => {
       max_area_m2: 500,
       target_districts: [],
       existing_branches: [],
-      limit: 25,
+      limit: 15,
     });
     expect(errors.brand_name).toBe("validationRequired");
   });
@@ -2610,7 +2610,7 @@ describe("validateBrief", () => {
       max_area_m2: 500,
       target_districts: [],
       existing_branches: [],
-      limit: 25,
+      limit: 15,
     });
     expect(Object.keys(errors)).toHaveLength(0);
   });
@@ -2624,7 +2624,7 @@ describe("validateBrief", () => {
       max_area_m2: 200,
       target_districts: [],
       existing_branches: [],
-      limit: 25,
+      limit: 15,
     });
     expect(errors.area_range).toBe("validationAreaRange");
   });
@@ -2638,7 +2638,7 @@ describe("validateBrief", () => {
       max_area_m2: 500,
       target_districts: [],
       existing_branches: [{ lat: 100, lon: 46.7 }],
-      limit: 25,
+      limit: 15,
     });
     expect(errors.branches).toBeDefined();
     expect(errors.branches![0]).toBe("validationLatRange");
@@ -2653,7 +2653,7 @@ describe("validateBrief", () => {
       max_area_m2: 500,
       target_districts: [],
       existing_branches: [{ lat: 24.7, lon: 200 }],
-      limit: 25,
+      limit: 15,
     });
     expect(errors.branches).toBeDefined();
     expect(errors.branches![0]).toBe("validationLonRange");
@@ -2668,7 +2668,7 @@ describe("validateBrief", () => {
       max_area_m2: 500,
       target_districts: [],
       existing_branches: [{ lat: 0, lon: 0 }],
-      limit: 25,
+      limit: 15,
     });
     expect(errors.branches).toBeUndefined();
   });

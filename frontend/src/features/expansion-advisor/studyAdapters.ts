@@ -134,7 +134,7 @@ export function normalizeBriefPayload(raw: ExpansionBrief): ExpansionBrief {
     target_districts,
     existing_branches,
     brand_profile: profile,
-    limit: raw.limit || 25,
+    limit: raw.limit || 15,
   };
 }
 

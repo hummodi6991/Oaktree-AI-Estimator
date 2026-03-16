@@ -115,7 +115,7 @@ class ExpansionAdvisorSearchRequest(BaseModel):
     existing_branches: list[ExistingBranchInput] = Field(default_factory=list)
     comparison_candidate_ids: list[str] | None = None
     bbox: ExpansionAdvisorBBox | None = None
-    limit: int = Field(25, ge=1, le=100)
+    limit: int = Field(15, ge=1, le=100)
     brand_profile: ExpansionBrandProfileInput | None = None
 
 
