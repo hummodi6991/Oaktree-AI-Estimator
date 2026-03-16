@@ -138,7 +138,79 @@ class TestDeliveryZeroRowFailure:
 
         assert hasattr(mod, "main")
         assert hasattr(mod, "_normalize_delivery_records")
-        assert mod.DEFAULT_PLATFORMS == "hungerstation,jahez,keeta,talabat,mrsool"
+        assert mod.DEFAULT_PLATFORMS == "all"
+        assert mod.CORE_PLATFORMS == ("hungerstation", "jahez", "keeta", "talabat", "mrsool")
+
+
+# ---------------------------------------------------------------------------
+# Platform preset resolution
+# ---------------------------------------------------------------------------
+class TestPlatformPresetResolution:
+    """resolve_platforms() should handle presets, explicit lists, and errors."""
+
+    def test_all_preset_returns_every_registry_key(self):
+        from app.ingest.expansion_advisor_delivery import resolve_platforms
+        from app.connectors.delivery_platforms import SCRAPER_REGISTRY
+
+        result = resolve_platforms("all")
+        assert result == sorted(SCRAPER_REGISTRY.keys())
+        assert len(result) >= 5  # at least the core five
+
+    def test_core_preset_returns_legacy_five(self):
+        from app.ingest.expansion_advisor_delivery import resolve_platforms, CORE_PLATFORMS
+
+        result = resolve_platforms("core")
+        assert result == sorted(CORE_PLATFORMS)
+
+    def test_explicit_comma_list_preserved(self):
+        from app.ingest.expansion_advisor_delivery import resolve_platforms
+
+        result = resolve_platforms("talabat,hungerstation,jahez")
+        assert result == ["hungerstation", "jahez", "talabat"]
+
+    def test_explicit_list_deduplicates(self):
+        from app.ingest.expansion_advisor_delivery import resolve_platforms
+
+        result = resolve_platforms("jahez,jahez,talabat")
+        assert result == ["jahez", "talabat"]
+
+    def test_ordering_is_deterministic(self):
+        from app.ingest.expansion_advisor_delivery import resolve_platforms
+
+        a = resolve_platforms("all")
+        b = resolve_platforms("all")
+        assert a == b
+        assert a == sorted(a)
+
+    def test_unknown_platform_fails(self):
+        from app.ingest.expansion_advisor_delivery import resolve_platforms
+
+        with pytest.raises(SystemExit):
+            resolve_platforms("hungerstation,nonexistent_platform_xyz")
+
+    def test_empty_string_fails(self):
+        from app.ingest.expansion_advisor_delivery import resolve_platforms
+
+        with pytest.raises(SystemExit):
+            resolve_platforms("")
+
+    def test_preset_case_insensitive(self):
+        from app.ingest.expansion_advisor_delivery import resolve_platforms
+
+        assert resolve_platforms("ALL") == resolve_platforms("all")
+        assert resolve_platforms("Core") == resolve_platforms("core")
+
+    def test_all_includes_core_platforms(self):
+        from app.ingest.expansion_advisor_delivery import resolve_platforms, CORE_PLATFORMS
+
+        all_platforms = resolve_platforms("all")
+        for p in CORE_PLATFORMS:
+            assert p in all_platforms
+
+    def test_default_is_all(self):
+        from app.ingest.expansion_advisor_delivery import DEFAULT_PLATFORMS
+
+        assert DEFAULT_PLATFORMS == "all"
 
 
 # ---------------------------------------------------------------------------
