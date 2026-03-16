@@ -273,8 +273,37 @@ def _target_candidate_pool(max_pages: int) -> int:
     """
     Enough URLs to fill the requested batch after dedupe/rejections, but not so
     many that we expand hundreds of sitemap shards unnecessarily.
+
+    This is only one stop condition now. We also require minimum shard and
+    bucket coverage before early-stopping, so the first N fetched pages are not
+    trapped inside a tiny cluster of Riyadh districts.
     """
     return max(max_pages * 8, 1200)
+
+
+def _min_hungerstation_shards(max_pages: int) -> int:
+    """
+    Expand at least a sensible number of sitemap shards before stopping.
+    For max_pages=200 this yields 8.
+    """
+    return max(8, min(16, (max_pages + 24) // 25))
+
+
+def _min_hungerstation_district_buckets(max_pages: int) -> int:
+    """
+    Require a minimum number of district-ish buckets before early-stop.
+    For max_pages=200 this yields 25.
+    """
+    return max(18, min(40, max_pages // 8))
+
+
+def _max_hungerstation_candidate_pool(max_pages: int) -> int:
+    """
+    Hard ceiling to avoid reintroducing a huge candidate explosion if bucket
+    breadth remains low for too long.
+    For max_pages=200 this yields 6400.
+    """
+    return max(_target_candidate_pool(max_pages) * 4, 6000)
 
 
 def _extract_hungerstation_listing_id(url: str) -> str | None:
@@ -676,8 +705,14 @@ def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]
 
     restaurant_urls: list[str] = []
     seen_urls: set[str] = set()
+
     target_pool = _target_candidate_pool(max_pages)
+    min_shards = _min_hungerstation_shards(max_pages)
+    min_buckets = _min_hungerstation_district_buckets(max_pages)
+    max_pool = _max_hungerstation_candidate_pool(max_pages)
+
     expanded_shards = 0
+    bucket_counts: dict[str, int] = defaultdict(int)
 
     for url in riyadh_restaurant_shards:
         try:
@@ -692,31 +727,62 @@ def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]
                     continue
                 seen_urls.add(candidate)
                 restaurant_urls.append(candidate)
+                bucket = _extract_hungerstation_district_bucket(candidate)
+                if bucket and bucket != "unknown":
+                    bucket_counts[bucket] += 1
                 added += 1
             expanded_shards += 1
+
+            discovered_buckets = len(bucket_counts)
             logger.info(
-                "HungerStation Riyadh shard %s yielded %d candidate restaurant URLs (%d new, pool=%d/%d)",
+                "HungerStation Riyadh shard %s yielded %d candidate restaurant URLs "
+                "(%d new, pool=%d/%d, buckets=%d/%d, shards=%d/%d)",
                 url,
                 len(expanded),
                 added,
                 len(restaurant_urls),
                 target_pool,
+                discovered_buckets,
+                min_buckets,
+                expanded_shards,
+                min_shards,
             )
-            if len(restaurant_urls) >= target_pool:
+
+            if (
+                len(restaurant_urls) >= target_pool
+                and expanded_shards >= min_shards
+                and discovered_buckets >= min_buckets
+            ):
                 logger.info(
-                    "HungerStation early-stop after %d shard(s): gathered %d unique candidate URLs for max_pages=%d",
+                    "HungerStation early-stop after %d shard(s): gathered %d unique candidate URLs "
+                    "for max_pages=%d with %d bucket(s)",
                     expanded_shards,
                     len(restaurant_urls),
                     max_pages,
+                    discovered_buckets,
+                )
+                break
+
+            if len(restaurant_urls) >= max_pool and expanded_shards >= min_shards:
+                logger.info(
+                    "HungerStation hard-stop after %d shard(s): gathered %d unique candidate URLs "
+                    "(bucket coverage=%d/%d, max_pool=%d)",
+                    expanded_shards,
+                    len(restaurant_urls),
+                    discovered_buckets,
+                    min_buckets,
+                    max_pool,
                 )
                 break
         except Exception as exc:
             logger.warning("HungerStation shard %s failed: %s", url, exc)
 
     logger.info(
-        "Found %d Riyadh restaurant candidate URLs from HungerStation after expanding %d shard(s)",
+        "Found %d Riyadh restaurant candidate URLs from HungerStation after expanding %d shard(s) "
+        "across %d discovered district bucket(s)",
         len(restaurant_urls),
         expanded_shards,
+        len(bucket_counts),
     )
 
     restaurant_urls = _diversify_hungerstation_candidates(
