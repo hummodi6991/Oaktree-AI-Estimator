@@ -427,6 +427,7 @@ def _batch_feature_snapshots(
                     features[pid]["touches_road"] = bool(r.get("touches_road"))
                     features[pid]["_road_resolved"] = True
                     features[pid]["_road_context_available"] = True
+                    features[pid]["_road_source"] = "expansion_road_context"
         except Exception:
             logger.debug("batch EA road context query failed, will fall back per-candidate", exc_info=True)
 
@@ -487,6 +488,7 @@ def _batch_feature_snapshots(
                             or _context_checked(r.get("touches_road"))
                             or _context_checked(r.get("nearest_major_road_distance_m"))
                         )
+                        features[pid]["_road_source"] = "planet_osm_line"
             except Exception:
                 logger.debug("batch OSM road context query failed", exc_info=True)
 
@@ -519,6 +521,7 @@ def _batch_feature_snapshots(
                     features[pid]["nearby_parking_amenity_count"] = _safe_int(r.get("nearby_parking_amenity_count"))
                     features[pid]["_parking_resolved"] = True
                     features[pid]["_parking_context_available"] = True
+                    features[pid]["_parking_source"] = "expansion_parking_asset"
         except Exception:
             logger.debug("batch EA parking context query failed, will fall back per-candidate", exc_info=True)
 
@@ -558,6 +561,7 @@ def _batch_feature_snapshots(
                         features[pid]["_parking_context_available"] = _context_checked(
                             r.get("nearby_parking_amenity_count")
                         )
+                        features[pid]["_parking_source"] = "planet_osm_polygon"
             except Exception:
                 logger.debug("batch OSM parking context query failed", exc_info=True)
 
@@ -1302,7 +1306,21 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
     landuse_label: str | None, landuse_code: str | None, provider_listing_count: int, provider_platform_count: int,
     competitor_count: int, nearest_branch_distance_m: float | None, rent_source: str, estimated_rent_sar_m2_year: float,
     economics_score: float, roads_table_available: bool, parking_table_available: bool,
-    ea_roads_available: bool | None = None, ea_parking_available: bool | None = None) -> dict[str, Any]:
+    ea_roads_available: bool | None = None, ea_parking_available: bool | None = None,
+    # ── Optional pre-fetched batch inputs: when supplied, skip the
+    #    corresponding per-candidate DB query but keep all downstream
+    #    semantics (missing_context, data_completeness_score, evidence
+    #    bands, provenance) identical. ──
+    prefetched_parcel_perimeter_m: float | None = None,
+    prefetched_nearest_major_road_distance_m: float | None = None,
+    prefetched_nearby_road_segment_count: int | None = None,
+    prefetched_touches_road: bool | None = None,
+    prefetched_nearby_parking_amenity_count: int | None = None,
+    prefetched_road_context_available: bool | None = None,
+    prefetched_parking_context_available: bool | None = None,
+    prefetched_road_source: str | None = None,
+    prefetched_parking_source: str | None = None,
+) -> dict[str, Any]:
     base = {
         "parcel_area_m2": round(_safe_float(area_m2), 2),
         "parcel_perimeter_m": None,
@@ -1364,27 +1382,44 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
         base["missing_context"] = ["missing_parcel_id"]
         base["data_completeness_score"] = 50
         return base
-    try:
-        with db.begin_nested():
-            perimeter_row = db.execute(
-                text(
-                    f"""
-                    SELECT COALESCE(ST_Perimeter(p.geom::geography), 0) AS parcel_perimeter_m
-                    FROM {ARCGIS_PARCELS_TABLE} p
-                    WHERE p.id::text = :parcel_id
-                    LIMIT 1
-                    """
-                ),
-                {"parcel_id": str(parcel_id)},
-            ).mappings().first()
-            if perimeter_row:
-                base["parcel_perimeter_m"] = round(_safe_float(perimeter_row.get("parcel_perimeter_m")), 2)
-    except Exception:
-        logger.debug("perimeter query failed for parcel_id=%s", parcel_id, exc_info=True)
 
-    # ── Road context: prefer expansion_road_context when populated ──
+    # ── Perimeter: use prefetched value or query ──
+    if prefetched_parcel_perimeter_m is not None:
+        base["parcel_perimeter_m"] = round(_safe_float(prefetched_parcel_perimeter_m), 2)
+    else:
+        try:
+            with db.begin_nested():
+                perimeter_row = db.execute(
+                    text(
+                        f"""
+                        SELECT COALESCE(ST_Perimeter(p.geom::geography), 0) AS parcel_perimeter_m
+                        FROM {ARCGIS_PARCELS_TABLE} p
+                        WHERE p.id::text = :parcel_id
+                        LIMIT 1
+                        """
+                    ),
+                    {"parcel_id": str(parcel_id)},
+                ).mappings().first()
+                if perimeter_row:
+                    base["parcel_perimeter_m"] = round(_safe_float(perimeter_row.get("parcel_perimeter_m")), 2)
+        except Exception:
+            logger.debug("perimeter query failed for parcel_id=%s", parcel_id, exc_info=True)
+
+    # ── Road context: use prefetched batch data or query per-candidate ──
     _road_data_resolved = False
-    if ea_roads_available and roads_table_available:
+    if prefetched_road_context_available is not None:
+        # Batch path supplied pre-fetched road data — apply it directly.
+        if prefetched_nearest_major_road_distance_m is not None:
+            base["nearest_major_road_distance_m"] = round(_safe_float(prefetched_nearest_major_road_distance_m), 2)
+        if prefetched_nearby_road_segment_count is not None:
+            base["nearby_road_segment_count"] = _safe_int(prefetched_nearby_road_segment_count)
+        if prefetched_touches_road is not None:
+            base["touches_road"] = bool(prefetched_touches_road)
+        base["context_sources"]["road_context_available"] = bool(prefetched_road_context_available)
+        if prefetched_road_source:
+            base["context_sources"]["road_source"] = prefetched_road_source
+        _road_data_resolved = True
+    elif ea_roads_available and roads_table_available:
         try:
             with db.begin_nested():
                 ea_road_row = db.execute(
@@ -1499,9 +1534,17 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
         except Exception:
             logger.debug("road context query failed for parcel_id=%s", parcel_id, exc_info=True)
 
-    # ── Parking context: prefer expansion_parking_asset when populated ──
+    # ── Parking context: use prefetched batch data or query per-candidate ──
     _parking_data_resolved = False
-    if ea_parking_available and parking_table_available:
+    if prefetched_parking_context_available is not None:
+        # Batch path supplied pre-fetched parking data — apply it directly.
+        if prefetched_nearby_parking_amenity_count is not None:
+            base["nearby_parking_amenity_count"] = _safe_int(prefetched_nearby_parking_amenity_count)
+        base["context_sources"]["parking_context_available"] = bool(prefetched_parking_context_available)
+        if prefetched_parking_source:
+            base["context_sources"]["parking_source"] = prefetched_parking_source
+        _parking_data_resolved = True
+    elif ea_parking_available and parking_table_available:
         try:
             with db.begin_nested():
                 ea_parking_row = db.execute(
@@ -3372,84 +3415,44 @@ def run_expansion_search(
         _parcel_id_str = str(row.get("parcel_id") or "")
         _batch_feat = _batch_features.get(_parcel_id_str, {})
 
-        # Build feature_snapshot_json from batch results when available,
-        # otherwise fall back to the original per-candidate function.
-        if _batch_feat and (_batch_feat.get("_road_resolved") or _batch_feat.get("_parking_resolved")):
-            # Construct feature_snapshot_json inline from batch data
-            zoning_context_available = bool(str(landuse_label or "").strip() or str(landuse_code or "").strip())
-            delivery_observed = provider_listing_count > 0 or provider_platform_count > 0
-            feature_snapshot_json = {
-                "parcel_area_m2": round(_safe_float(area_m2), 2),
-                "parcel_perimeter_m": _batch_feat.get("parcel_perimeter_m"),
-                "district": district,
-                "landuse_label": landuse_label,
-                "landuse_code": landuse_code,
-                "nearest_major_road_distance_m": _batch_feat.get("nearest_major_road_distance_m"),
-                "nearby_road_segment_count": _batch_feat.get("nearby_road_segment_count", 0),
-                "touches_road": _batch_feat.get("touches_road", False),
-                "nearby_parking_amenity_count": _batch_feat.get("nearby_parking_amenity_count", 0),
-                "provider_listing_count": provider_listing_count,
-                "provider_platform_count": provider_platform_count,
-                "competitor_count": competitor_count,
-                "nearest_branch_distance_m": round(_safe_float(distance_to_nearest_branch_m), 2) if distance_to_nearest_branch_m is not None else None,
-                "rent_source": rent_source,
-                "estimated_rent_sar_m2_year": round(_safe_float(estimated_rent_sar_m2_year), 2),
-                "economics_score": round(_safe_float(economics_score), 2),
-                "context_sources": {
-                    "roads_table_available": roads_table_available,
-                    "parking_table_available": parking_table_available,
-                    "road_context_available": bool(_batch_feat.get("_road_context_available")),
-                    "parking_context_available": bool(_batch_feat.get("_parking_context_available")),
-                    "zoning_context_available": zoning_context_available,
-                    "delivery_observed": delivery_observed,
-                    "road_source": "expansion_road_context" if ea_roads_populated else ("planet_osm_line" if roads_table_available else "estimated"),
-                    "parking_source": "expansion_parking_asset" if ea_parking_populated else ("planet_osm_polygon" if parking_table_available else "estimated"),
-                    "delivery_source": "legacy",
-                    "rent_source": rent_source,
-                    "competitor_source": "legacy",
-                },
-                "missing_context": [],
-                "data_completeness_score": 0,
-            }
-            # Compute data_completeness_score
-            _dc_signals = [
-                zoning_context_available,
-                bool(_batch_feat.get("_road_context_available")),
-                bool(_batch_feat.get("_parking_context_available")),
-                delivery_observed,
-                rent_source != "conservative_default",
-            ]
-            feature_snapshot_json["data_completeness_score"] = round(sum(20 for s in _dc_signals if s), 2)
-            # Add evidence bands
-            feature_snapshot_json["context_sources"]["road_evidence_band"] = _road_evidence_band(
-                _batch_feat.get("nearby_road_segment_count") if _batch_feat.get("_road_context_available") else None,
-                _batch_feat.get("touches_road") if _batch_feat.get("_road_context_available") else None,
-            )
-            feature_snapshot_json["context_sources"]["parking_evidence_band"] = _parking_evidence_band(
-                _batch_feat.get("nearby_parking_amenity_count") if _batch_feat.get("_parking_context_available") else None,
-            )
-        else:
-            feature_snapshot_json = _candidate_feature_snapshot(
-                db,
-                parcel_id=_parcel_id_str,
-                lat=_safe_float(row.get("lat")),
-                lon=_safe_float(row.get("lon")),
-                area_m2=area_m2,
-                district=district,
-                landuse_label=landuse_label,
-                landuse_code=landuse_code,
-                provider_listing_count=provider_listing_count,
-                provider_platform_count=provider_platform_count,
-                competitor_count=competitor_count,
-                nearest_branch_distance_m=distance_to_nearest_branch_m,
-                rent_source=rent_source,
-                estimated_rent_sar_m2_year=estimated_rent_sar_m2_year,
-                economics_score=economics_score,
-                roads_table_available=roads_table_available,
-                parking_table_available=parking_table_available,
-                ea_roads_available=ea_roads_populated,
-                ea_parking_available=ea_parking_populated,
-            )
+        # Build prefetched kwargs from batch results (empty dict → no
+        # prefetch → _candidate_feature_snapshot queries per-candidate).
+        _prefetch_kwargs: dict[str, Any] = {}
+        if _batch_feat.get("_road_resolved"):
+            _prefetch_kwargs["prefetched_nearest_major_road_distance_m"] = _batch_feat.get("nearest_major_road_distance_m")
+            _prefetch_kwargs["prefetched_nearby_road_segment_count"] = _batch_feat.get("nearby_road_segment_count")
+            _prefetch_kwargs["prefetched_touches_road"] = _batch_feat.get("touches_road")
+            _prefetch_kwargs["prefetched_road_context_available"] = _batch_feat.get("_road_context_available", False)
+            _prefetch_kwargs["prefetched_road_source"] = _batch_feat.get("_road_source")
+        if _batch_feat.get("_parking_resolved"):
+            _prefetch_kwargs["prefetched_nearby_parking_amenity_count"] = _batch_feat.get("nearby_parking_amenity_count")
+            _prefetch_kwargs["prefetched_parking_context_available"] = _batch_feat.get("_parking_context_available", False)
+            _prefetch_kwargs["prefetched_parking_source"] = _batch_feat.get("_parking_source")
+        if "parcel_perimeter_m" in _batch_feat:
+            _prefetch_kwargs["prefetched_parcel_perimeter_m"] = _batch_feat["parcel_perimeter_m"]
+
+        feature_snapshot_json = _candidate_feature_snapshot(
+            db,
+            parcel_id=_parcel_id_str,
+            lat=_safe_float(row.get("lat")),
+            lon=_safe_float(row.get("lon")),
+            area_m2=area_m2,
+            district=district,
+            landuse_label=landuse_label,
+            landuse_code=landuse_code,
+            provider_listing_count=provider_listing_count,
+            provider_platform_count=provider_platform_count,
+            competitor_count=competitor_count,
+            nearest_branch_distance_m=distance_to_nearest_branch_m,
+            rent_source=rent_source,
+            estimated_rent_sar_m2_year=estimated_rent_sar_m2_year,
+            economics_score=economics_score,
+            roads_table_available=roads_table_available,
+            parking_table_available=parking_table_available,
+            ea_roads_available=ea_roads_populated,
+            ea_parking_available=ea_parking_populated,
+            **_prefetch_kwargs,
+        )
         road_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("road_context_available"))
         parking_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("parking_context_available"))
         # Add Expansion Advisor data provenance to context_sources
