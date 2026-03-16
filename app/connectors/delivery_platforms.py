@@ -21,6 +21,7 @@ Operational safeguards:
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from dataclasses import dataclass, field, asdict
 import json
 import logging
 import re
@@ -170,6 +171,147 @@ def _parse_sitemap(url: str) -> list[str]:
     except ET.ParseError as exc:
         logger.warning("Failed to parse sitemap XML %s: %s", url, exc)
     return urls
+
+
+# ---------------------------------------------------------------------------
+# Multi-strategy sitemap discovery
+# ---------------------------------------------------------------------------
+
+# Common alternate sitemap paths that delivery platforms may use.
+_COMMON_SITEMAP_PATHS = (
+    "/sitemap.xml",
+    "/sitemap_index.xml",
+    "/sitemaps/sitemap.xml",
+    "/sitemap/sitemap.xml",
+    "/sitemaps/index.xml",
+    "/sitemap1.xml",
+)
+
+
+@dataclass
+class DiscoveryStats:
+    """Structured stats for a single platform's sitemap discovery run."""
+    platform: str = ""
+    discovery_attempts: list[dict[str, Any]] = field(default_factory=list)
+    discovery_success_path: str | None = None
+    sitemap_urls_found: int = 0
+    candidate_urls_found: int = 0
+    fetch_failures: int = 0
+    parse_failures: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _extract_sitemap_hints_from_robots(base_url: str) -> list[str]:
+    """Parse robots.txt for ``Sitemap:`` directives.
+
+    Returns sitemap URLs advertised in the robots.txt of *base_url*.
+    Respects the existing timeout and retry behaviour via _fetch_with_retries.
+    """
+    parsed = urlparse(base_url)
+    robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    resp = _fetch_with_retries(robots_url, timeout=10)
+    if resp is None:
+        return []
+    hints: list[str] = []
+    for line in resp.text.splitlines():
+        line = line.strip()
+        if line.lower().startswith("sitemap:"):
+            value = line.split(":", 1)[1].strip()
+            if value:
+                hints.append(value)
+    return hints
+
+
+def _discover_sitemaps(
+    base_url: str,
+    configured_sitemap: str,
+    alternate_paths: tuple[str, ...] = _COMMON_SITEMAP_PATHS,
+) -> tuple[list[str], DiscoveryStats]:
+    """Multi-strategy sitemap discovery.
+
+    Tries sources in order, stopping at the first that yields URLs:
+    1. The *configured_sitemap* URL
+    2. ``Sitemap:`` hints from robots.txt
+    3. A small curated list of common alternate sitemap paths
+    4. If a sitemap index is found (entries ending in .xml), expand it
+
+    Returns ``(sitemap_entry_urls, stats)``.
+    """
+    stats = DiscoveryStats()
+    all_urls: list[str] = []
+
+    def _try_url(url: str, label: str) -> list[str]:
+        stats.discovery_attempts.append({"url": url, "strategy": label})
+        urls = _parse_sitemap(url)
+        if urls:
+            logger.info("Discovery [%s]: %s yielded %d entries", label, url, len(urls))
+        else:
+            logger.debug("Discovery [%s]: %s yielded 0 entries", label, url)
+        return urls
+
+    # Strategy 1 — configured sitemap
+    all_urls = _try_url(configured_sitemap, "configured")
+    if all_urls:
+        stats.discovery_success_path = "configured"
+        return _expand_sitemap_index(all_urls, stats), stats
+
+    # Strategy 2 — robots.txt Sitemap: hints
+    hints = _extract_sitemap_hints_from_robots(base_url)
+    for hint in hints:
+        found = _try_url(hint, "robots_hint")
+        if found:
+            all_urls.extend(found)
+    if all_urls:
+        stats.discovery_success_path = "robots_hint"
+        return _expand_sitemap_index(all_urls, stats), stats
+
+    # Strategy 3 — common alternate paths
+    parsed = urlparse(base_url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    for path in alternate_paths:
+        candidate = origin + path
+        # Skip if we already tried this exact URL
+        if candidate == configured_sitemap:
+            continue
+        if any(a["url"] == candidate for a in stats.discovery_attempts):
+            continue
+        found = _try_url(candidate, "common_path")
+        if found:
+            all_urls.extend(found)
+            stats.discovery_success_path = f"common_path:{path}"
+            return _expand_sitemap_index(all_urls, stats), stats
+
+    # Nothing found
+    stats.discovery_success_path = None
+    return [], stats
+
+
+def _expand_sitemap_index(urls: list[str], stats: DiscoveryStats) -> list[str]:
+    """If *urls* look like a sitemap index (entries ending in .xml), expand them.
+
+    Non-XML entries are passed through unchanged.
+    """
+    expanded: list[str] = []
+    index_entries = [u for u in urls if u.endswith(".xml") or u.endswith(".xml.gz")]
+    plain_entries = [u for u in urls if u not in set(index_entries)]
+
+    if not index_entries:
+        stats.sitemap_urls_found = len(urls)
+        return urls
+
+    for idx_url in index_entries:
+        try:
+            child_urls = _parse_sitemap(idx_url)
+            expanded.extend(child_urls)
+        except Exception as exc:
+            stats.parse_failures += 1
+            logger.warning("Sitemap index expansion failed for %s: %s", idx_url, exc)
+
+    expanded.extend(plain_entries)
+    stats.sitemap_urls_found = len(index_entries)
+    return expanded
 
 
 def _safe_get(url: str, crawl_delay: float = 2.0) -> httpx.Response | None:
@@ -568,6 +710,17 @@ def _extract_from_nested_json(
             _extract_from_nested_json(item, out, depth + 1)
 
 
+
+# Module-level storage for the most recent discovery stats per platform.
+# Populated by _generic_sitemap_scrape; read by the ingestion pipeline.
+_LAST_DISCOVERY_STATS: dict[str, DiscoveryStats] = {}
+
+
+def get_discovery_stats() -> dict[str, dict[str, Any]]:
+    """Return a copy of per-platform discovery stats from the last run."""
+    return {k: v.to_dict() for k, v in _LAST_DISCOVERY_STATS.items()}
+
+
 def _generic_sitemap_scrape(
     *,
     source: str,
@@ -576,14 +729,31 @@ def _generic_sitemap_scrape(
     riyadh_filter: bool = True,
     crawl_delay: float = 2.0,
     max_pages: int = 200,
+    multi_strategy: bool = False,
+    base_url: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Generic sitemap-based scraper used by multiple platforms.
 
     Partial sitemap shard failures are logged and skipped — they do not
     collapse the entire platform run.
+
+    When *multi_strategy* is True the scraper uses :func:`_discover_sitemaps`
+    to try multiple sitemap sources before giving up.  *base_url* must be
+    provided in that case (e.g. ``https://www.jahez.net``).
     """
-    logger.info("Fetching %s sitemap: %s", source, sitemap_url)
-    sitemap_urls = _parse_sitemap(sitemap_url)
+    stats = DiscoveryStats(platform=source)
+
+    if multi_strategy:
+        assert base_url, "base_url is required when multi_strategy=True"
+        logger.info("Running multi-strategy discovery for %s", source)
+        sitemap_urls, stats = _discover_sitemaps(base_url, sitemap_url)
+        stats.platform = source
+    else:
+        logger.info("Fetching %s sitemap: %s", source, sitemap_url)
+        sitemap_urls = _parse_sitemap(sitemap_url)
+        stats.discovery_attempts.append({"url": sitemap_url, "strategy": "configured"})
+        if sitemap_urls:
+            stats.discovery_success_path = "configured"
 
     # Expand nested sitemaps (tolerate individual shard failures)
     restaurant_urls: list[str] = []
@@ -596,6 +766,7 @@ def _generic_sitemap_scrape(
                 restaurant_urls.extend(_parse_sitemap(u))
             except Exception as exc:
                 shard_failures += 1
+                stats.parse_failures += 1
                 logger.warning(
                     "Sitemap shard %s failed for %s: %s", u, source, exc
                 )
@@ -613,6 +784,8 @@ def _generic_sitemap_scrape(
             "%s: %d sitemap shard(s) failed, continuing with %d URLs",
             source, shard_failures, len(restaurant_urls),
         )
+
+    stats.candidate_urls_found = len(restaurant_urls)
     logger.info("Found %d candidate URLs from %s", len(restaurant_urls), source)
 
     count = 0
@@ -654,11 +827,17 @@ def _generic_sitemap_scrape(
         }
         count += 1
 
+    stats.fetch_failures = fetch_failed
     logger.info(
         "Scraped %d restaurants from %s "
-        "(riyadh_filtered=%d, fetch_failed=%d, candidate_urls=%d)",
+        "(riyadh_filtered=%d, fetch_failed=%d, candidate_urls=%d, "
+        "discovery_path=%s)",
         count, source, riyadh_filtered, fetch_failed, len(restaurant_urls),
+        stats.discovery_success_path,
     )
+
+    # Persist stats for the ingestion pipeline to pick up
+    _LAST_DISCOVERY_STATS[source] = stats
 
 
 # ---------------------------------------------------------------------------
@@ -968,7 +1147,7 @@ def scrape_jahez_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Jahez for Riyadh.
     Jahez is one of the largest Saudi food delivery platforms.
-    Uses sitemap-based discovery of public restaurant listing pages.
+    Uses multi-strategy sitemap discovery to maximize breadth.
     """
     yield from _generic_sitemap_scrape(
         source="jahez",
@@ -977,6 +1156,8 @@ def scrape_jahez_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
         riyadh_filter=True,
         crawl_delay=3.0,
         max_pages=max_pages,
+        multi_strategy=True,
+        base_url="https://www.jahez.net",
     )
 
 
@@ -1009,6 +1190,7 @@ def scrape_keeta_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Keeta (Meituan's Saudi brand).
     Keeta launched in Riyadh in 2024 and is expanding rapidly.
+    Uses multi-strategy sitemap discovery to maximize breadth.
     """
     yield from _generic_sitemap_scrape(
         source="keeta",
@@ -1017,6 +1199,8 @@ def scrape_keeta_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
         riyadh_filter=True,
         crawl_delay=2.0,
         max_pages=max_pages,
+        multi_strategy=True,
+        base_url="https://www.keeta.com",
     )
 
 
