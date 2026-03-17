@@ -1,75 +1,267 @@
 # CLAUDE.md
 
-## Project Overview
+This file tells Claude Code how to work effectively in this repo.
 
-Oaktree Estimator — a full-stack geospatial real estate analysis platform for computing land costs, financing, revenues, and investment metrics for development projects (primarily Riyadh, Saudi Arabia). Two main applications:
+## Mission
 
-1. **Cost/Revenue Estimator**: Draw site polygons on a map, input parameters, generate proforma analysis with PDF export.
-2. **Expansion Advisor**: Restaurant/retail location intelligence — search for optimal sites, rank candidates, generate decision memos.
+Optimize for:
 
-## Tech Stack
+1. **Accuracy of app behavior in production**
+2. **Riyadh-specific correctness**
+3. **Safe, minimal, targeted diffs**
+4. **High signal patches that are easy to review and merge**
 
-- **Backend**: Python 3.11, FastAPI, SQLAlchemy 2.0+, Alembic, PostGIS
+Prefer grounded fixes over speculative refactors.
+
+## Product context
+
+Oaktree Estimator / Oaktree Atlas is a full-stack geospatial real-estate platform focused on **Riyadh, Saudi Arabia**.
+
+Two major product surfaces:
+
+1. **Development Feasibility / Estimator**
+   - Draw or identify a site / parcel
+   - Compute land costs, financing, revenues, parking, FAR-related outcomes, and feasibility metrics
+   - Export PDF-style outputs
+
+2. **Expansion Advisor**
+   - Restaurant / retail location intelligence
+   - Search for optimal sites
+   - Rank candidates
+   - Compare branches / cannibalization
+   - Generate decision-oriented outputs and memos
+
+When making product decisions in code, prioritize what improves **decision quality**, **explainability**, and **internal consistency** of outputs.
+
+## Non-negotiable repo truths
+
+- This project is **Riyadh-first and Riyadh-only for now**.
+- Do not generalize behavior to other cities unless the code already supports it and the task explicitly requires it.
+- Prefer the **production parcel source defaults** unless the task is explicitly about alternative parcel sources:
+  - `PARCEL_TILE_TABLE=public.riyadh_parcels_arcgis_proxy`
+  - `PARCEL_IDENTIFY_TABLE=public.riyadh_parcels_arcgis_proxy`
+- Spatial data is primarily handled in **EPSG:4326**, with metric computations commonly done through **EPSG:32638** transforms.
+- Backend endpoints live under `/v1/*`.
+- JSON list endpoints should use `{ "items": [...] }`.
+
+## Working style for Claude Code
+
+### Default approach
+
+- Make the **smallest patch** that fully solves the problem.
+- Preserve existing architecture unless there is a strong reason not to.
+- Do not introduce broad abstractions for one local fix.
+- Do not silently change business logic unless the task explicitly calls for it.
+- Keep behavior deterministic and easy to validate from the UI and API.
+
+### Be careful about
+
+- Geospatial coordinate-system mistakes
+- Riyadh vs non-Riyadh data leakage
+- Search / ranking regressions caused by over-aggressive dedupe or filtering
+- Performance regressions inside candidate scoring loops
+- Changes that alter output semantics without updating tests / docs
+- Frontend/backend contract drift
+
+### When proposing a patch
+
+Always try to include:
+
+1. What is wrong now
+2. Why it happens
+3. Smallest safe fix
+4. Validation steps
+5. Any risk or tradeoff
+
+## Tech stack
+
+- **Backend**: Python 3.11, FastAPI, SQLAlchemy, Alembic, PostGIS
 - **Frontend**: React 18, TypeScript, Vite, MapLibre GL
-- **Database**: PostgreSQL 15 with PostGIS 3.3
-- **Testing**: pytest (backend), Vitest (frontend)
-- **Formatting/Linting**: black, flake8
-- **Deployment**: Docker, Kubernetes (Alibaba Cloud ACK), GitHub Actions
+- **Database**: PostgreSQL 15 + PostGIS
+- **Testing**: pytest, Vitest
+- **Formatting / linting**: black, flake8
+- **Deployment**: Docker, Kubernetes on Alibaba Cloud ACK via GitHub Actions
 
-## Common Commands
+## Repo map
+
+- `app/api/` — FastAPI routers
+- `app/services/` — business logic
+- `app/models/tables.py` — SQLAlchemy models
+- `app/db/` — DB engine/session wiring
+- `app/core/config.py` — runtime settings
+- `app/security/` — auth modes and request guards
+- `app/ingest/` — ingestion / refresh / pipeline jobs
+- `app/ml/` — model training / feature utilities
+- `frontend/src/` — React application
+- `alembic/versions/` — schema history
+- `.github/workflows/` — CI, deploy, ingest, training automation
+- `docs/` — focused technical docs
+
+## Highest-value areas to understand before editing
+
+### If the task touches Expansion Advisor
+
+Read / inspect first:
+
+- `app/api/expansion_advisor.py`
+- `app/services/expansion_advisor.py`
+- related migrations under `alembic/versions/20260310_*` through `20260314_*`
+- relevant ingestion jobs under `app/ingest/expansion_advisor_*`
+- any affected frontend feature files under `frontend/src/features/`
+
+Focus on:
+
+- candidate generation
+- ranking / score breakdowns
+- gate logic
+- feature snapshot completeness
+- decision-summary consistency
+- shortlist diversity
+- cannibalization / provider density / delivery-market logic
+
+### If the task touches Estimator / Feasibility
+
+Read / inspect first:
+
+- `app/api/estimates.py`
+- `app/services/` modules for costs, revenue, parking, FAR, financing, tax, residual, proforma
+- parcel identify / tiles code if the issue is map driven
+
+Focus on:
+
+- internal consistency of calculations
+- Riyadh parking/FAR assumptions
+- evidence / assumptions surfaced to the user
+
+### If the task touches parcel search / map behavior
+
+Read / inspect first:
+
+- `app/api/search.py`
+- `app/api/tiles.py`
+- `app/api/geo_portal.py`
+- `app/core/config.py`
+- parcel proxy/materialized-view migrations
+
+Focus on:
+
+- active parcel table
+- identify behavior
+- tile output correctness
+- Arabic/English search quality
+- query performance
+
+## Commands
 
 ```bash
 # Backend
-make test          # Run pytest -q
-make fmt           # Format with black (app tests)
-make lint          # Lint with flake8 (app tests)
-make api           # Start dev server (uvicorn, port 8000)
-make db-up         # Start PostgreSQL via Docker Compose
-make db-init       # Run Alembic migrations
+make test
+make fmt
+make lint
+make api
+make db-up
+make db-init
 
 # Frontend
-cd frontend
-npm run dev        # Vite dev server (proxies to localhost:8000)
-npm run build      # TypeScript check + production build
-npm run test       # Vitest
+cd frontend && npm run dev
+cd frontend && npm run build
+cd frontend && npm run test
 ```
 
-## Project Structure
+## Validation playbook
 
-- `app/` — Backend Python package
-  - `api/` — FastAPI routers (all endpoints under `/v1/`)
-  - `services/` — Business logic
-  - `models/tables.py` — SQLAlchemy ORM models
-  - `db/` — Database session and dependency injection
-  - `ingest/` — Data pipeline scripts
-  - `ml/` — ML utilities
-  - `core/config.py` — Settings
-  - `security/` — API key auth
-- `frontend/src/` — React SPA
-  - `components/`, `features/`, `types/`, `i18n/`, `map/`, `styles/`
-- `alembic/` — Database migrations
-- `tests/` — pytest test suite (100+ tests)
-- `k8s/` — Kubernetes manifests
-- `data/` — Data files (shapefiles, buildings)
+### For backend-only patches
 
-## Coding Conventions
+- Run the narrowest relevant pytest targets first
+- Then run `make test` if the change is broad or risky
+- If schema changed, verify Alembic upgrade path is valid
+- If API response shape changed, update docs / README accordingly
 
-- JSON list responses use `{ "items": [...] }` wrapper.
-- All API endpoints are prefixed with `/v1/`.
+### For frontend-only patches
+
+- Run `cd frontend && npm run build`
+- Run relevant Vitest tests if present
+- Check for nullability / API contract mismatches
+- If UI text changes, update i18n keys in both locales
+
+### For backend + frontend contract changes
+
+- Validate both sides in the same patch
+- Keep naming aligned
+- Prefer additive response changes over breaking removals
+- Update tests on both sides when needed
+
+### For geospatial / ranking / scoring changes
+
+Validate with real-world sanity checks:
+
+- Are results still in Riyadh?
+- Do scores remain internally consistent?
+- Are top candidates overly repetitive?
+- Did dedupe become too aggressive?
+- Are distances / areas / reach metrics plausible?
+- Did performance get materially worse?
+
+## Database and migrations
+
+- Schema changes require Alembic migrations.
+- Keep Alembic revisions focused and reviewable.
+- Prefer additive migrations over destructive ones.
+- PostGIS-heavy queries should be checked for index usage and avoid unnecessary repeated transforms.
+- Materialized views / proxy views are part of the app contract; change them carefully.
+
+## Auth and deploy reality
+
+- Do **not** assume OIDC is fully live everywhere.
+- Current repo state supports:
+  - `AUTH_MODE=disabled`
+  - `AUTH_MODE=api_key`
+  - `AUTH_MODE=oidc` exists but is still a placeholder in app auth unless explicitly wired further
+- Current deploy workflow for Alibaba ACK uses GitHub Actions and currently authenticates with **Alibaba access key / secret** in the workflow.
+- Pushes to `main` trigger deployment.
+
+When editing docs or automation, prefer describing the **current implemented behavior**, not the aspirational end state.
+
+## Frontend conventions
+
+- Use i18next for user-facing strings.
+- Add new translation keys to both locale files.
+- Keep Arabic support intact.
+- Avoid UI-only patches that break backend assumptions.
+- Prefer explaining score/output changes in the UI when the underlying model behavior changes.
+
+## Coding conventions
+
 - Use Pydantic models for request/response validation.
-- Coordinate system: WGS84 (EPSG:4326).
-- Update README when changing API behavior.
-- Frontend uses i18next for English/Arabic translations.
-- Frontend uses CSS modules.
+- Keep endpoint families under `/v1/`.
+- Keep patches readable rather than clever.
+- Follow existing naming patterns in the touched module.
+- Update README/docs when behavior meaningfully changes.
 
-## Testing
+## What not to do
 
-- Backend tests live in `tests/` and use pytest with transaction-based isolation.
-- Always run `make test` before committing backend changes.
-- Frontend tests use Vitest: `cd frontend && npm run test`.
+- Do not hardcode non-Riyadh assumptions into shared logic.
+- Do not commit secrets or invent secret names not already used by the repo.
+- Do not claim OIDC is fully live if the code path is still placeholder-based.
+- Do not make broad refactors when the user asked for a targeted fix.
+- Do not weaken ranking quality just to make results look more diverse.
+- Do not optimize performance by dropping evidence, provenance, or explainability fields unless explicitly requested.
 
-## Database
+## Preferred patch shape
 
-- Schema changes require an Alembic migration (`alembic revision --autogenerate`).
-- PostGIS spatial queries use GiST indexes.
-- Parcel data source is configurable via `PARCEL_TILE_TABLE` and `PARCEL_IDENTIFY_TABLE` env vars.
+When possible, produce:
+
+1. A concise diagnosis
+2. A unified diff
+3. Exact validation commands
+4. Merge recommendation with risk level
+
+## Definition of done
+
+A patch is "done" when:
+
+- it solves the reported problem,
+- it is consistent with Riyadh production behavior,
+- it keeps frontend/backend/schema contracts aligned,
+- it includes or implies a concrete validation path,
+- and it does not introduce obvious regressions in accuracy, explainability, or deployability.
