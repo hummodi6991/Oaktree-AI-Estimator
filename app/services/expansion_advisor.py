@@ -3092,7 +3092,7 @@ def run_expansion_search(
 
                 if ea_competitor_populated:
                     _comp_union_parts.append(f"""
-                        SELECT :pid_{_ci} AS candidate_pid,
+                        (SELECT :pid_{_ci} AS candidate_pid,
                                ecq.restaurant_poi_id AS id, ecq.brand_name AS name,
                                ecq.category, ecq.district,
                                ecq.review_score / 20.0 AS rating, ecq.review_count,
@@ -3104,11 +3104,11 @@ def run_expansion_search(
                           AND lower(COALESCE(ecq.category, '')) = lower(:category)
                           AND ST_DWithin(ecq.geom::geography,
                                 ST_SetSRID(ST_MakePoint(:lon_{_ci}, :lat_{_ci}), 4326)::geography, 1500)
-                        ORDER BY distance_m ASC LIMIT 5
+                        ORDER BY distance_m ASC LIMIT 5)
                     """)
                 else:
                     _comp_union_parts.append(f"""
-                        SELECT :pid_{_ci} AS candidate_pid,
+                        (SELECT :pid_{_ci} AS candidate_pid,
                                rp.id, rp.name, rp.category, rp.district,
                                rp.rating, rp.review_count, rp.source,
                                NULL::double precision AS overall_quality_score,
@@ -3125,7 +3125,7 @@ def run_expansion_search(
                           AND ST_DWithin(
                               COALESCE(rp.geom, ST_SetSRID(ST_MakePoint(rp.lon, rp.lat), 4326))::geography,
                               ST_SetSRID(ST_MakePoint(:lon_{_ci}, :lat_{_ci}), 4326)::geography, 1500)
-                        ORDER BY distance_m ASC LIMIT 5
+                        ORDER BY distance_m ASC LIMIT 5)
                     """)
 
             if _comp_union_parts:
