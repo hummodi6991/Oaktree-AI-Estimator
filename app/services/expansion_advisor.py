@@ -847,7 +847,9 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
     landuse_label: str | None, landuse_code: str | None, provider_listing_count: int, provider_platform_count: int,
     competitor_count: int, nearest_branch_distance_m: float | None, rent_source: str, estimated_rent_sar_m2_year: float,
     economics_score: float, roads_table_available: bool, parking_table_available: bool,
-    ea_roads_available: bool | None = None, ea_parking_available: bool | None = None) -> dict[str, Any]:
+    ea_roads_available: bool | None = None, ea_parking_available: bool | None = None,
+    bulk_perimeter: float | None = None, bulk_roads: dict[str, Any] | None = None,
+    bulk_parking: int | None = None) -> dict[str, Any]:
     base = {
         "parcel_area_m2": round(_safe_float(area_m2), 2),
         "parcel_perimeter_m": None,
@@ -909,27 +911,42 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
         base["missing_context"] = ["missing_parcel_id"]
         base["data_completeness_score"] = 50
         return base
-    try:
-        with db.begin_nested():
-            perimeter_row = db.execute(
-                text(
-                    f"""
-                    SELECT COALESCE(ST_Perimeter(p.geom::geography), 0) AS parcel_perimeter_m
-                    FROM {ARCGIS_PARCELS_TABLE} p
-                    WHERE p.id::text = :parcel_id
-                    LIMIT 1
-                    """
-                ),
-                {"parcel_id": str(parcel_id)},
-            ).mappings().first()
-            if perimeter_row:
-                base["parcel_perimeter_m"] = round(_safe_float(perimeter_row.get("parcel_perimeter_m")), 2)
-    except Exception:
-        logger.debug("perimeter query failed for parcel_id=%s", parcel_id, exc_info=True)
+    if bulk_perimeter is not None:
+        base["parcel_perimeter_m"] = bulk_perimeter
+    else:
+        try:
+            with db.begin_nested():
+                perimeter_row = db.execute(
+                    text(
+                        f"""
+                        SELECT COALESCE(ST_Perimeter(p.geom::geography), 0) AS parcel_perimeter_m
+                        FROM {ARCGIS_PARCELS_TABLE} p
+                        WHERE p.id::text = :parcel_id
+                        LIMIT 1
+                        """
+                    ),
+                    {"parcel_id": str(parcel_id)},
+                ).mappings().first()
+                if perimeter_row:
+                    base["parcel_perimeter_m"] = round(_safe_float(perimeter_row.get("parcel_perimeter_m")), 2)
+        except Exception:
+            logger.debug("perimeter query failed for parcel_id=%s", parcel_id, exc_info=True)
 
     # ── Road context: prefer expansion_road_context when populated ──
     _road_data_resolved = False
-    if ea_roads_available and roads_table_available:
+    if bulk_roads is not None:
+        base.update({
+            "nearest_major_road_distance_m": bulk_roads["nearest_major_road_distance_m"],
+            "nearby_road_segment_count": bulk_roads["nearby_road_segment_count"],
+            "touches_road": bulk_roads["touches_road"],
+        })
+        base["context_sources"]["road_context_available"] = True
+        base["context_sources"]["road_source"] = bulk_roads.get("source", "estimated")
+        if bulk_roads.get("source") == "expansion_road_context":
+            base["context_sources"]["roads_table_available"] = True
+        _road_data_resolved = True
+
+    if ea_roads_available and roads_table_available and not _road_data_resolved:
         try:
             with db.begin_nested():
                 ea_road_row = db.execute(
@@ -1046,7 +1063,14 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
 
     # ── Parking context: prefer expansion_parking_asset when populated ──
     _parking_data_resolved = False
-    if ea_parking_available and parking_table_available:
+    if bulk_parking is not None:
+        base["nearby_parking_amenity_count"] = bulk_parking
+        base["context_sources"]["parking_context_available"] = True
+        if ea_parking_available:
+            base["context_sources"]["parking_source"] = "expansion_parking_asset"
+        _parking_data_resolved = True
+
+    if ea_parking_available and parking_table_available and not _parking_data_resolved:
         try:
             with db.begin_nested():
                 ea_parking_row = db.execute(
@@ -2749,7 +2773,13 @@ def run_expansion_search(
         )
         if _delivery_observed:
             provider_density_score = _clamp((provider_listing_count / 45.0) * 100.0)
-            provider_whitespace_score = _clamp(100.0 - max(0.0, (delivery_competition_count - 6) * 6.0) - min(35.0, provider_density_score * 0.2))
+            _raw_whitespace = _clamp(100.0 - max(0.0, (delivery_competition_count - 6) * 6.0) - min(35.0, provider_density_score * 0.2))
+            # Dampen whitespace when delivery data is thin: fewer than 10 total
+            # listings means we lack confidence that whitespace is genuinely
+            # uncontested vs simply under-observed.  Confidence scales linearly
+            # from 0.5 (1 listing) to 1.0 (10+ listings).
+            _data_confidence = min(1.0, max(0.5, provider_listing_count / 10.0))
+            provider_whitespace_score = 50.0 + (_raw_whitespace - 50.0) * _data_confidence
             multi_platform_presence_score = _clamp((provider_platform_count / 5.0) * 100.0)
             delivery_competition_score = _clamp((delivery_competition_count / 35.0) * 100.0)
         else:
@@ -2886,6 +2916,250 @@ def run_expansion_search(
 
     prepared.sort(key=lambda item: item["preliminary_final_score"], reverse=True)
     shortlist_size = min(len(prepared), max(limit, 50))
+
+    # ── Bulk spatial queries for feature snapshot (replaces per-candidate N+1) ──
+    _shortlist_parcel_ids = [
+        str(p["row"].get("parcel_id") or "")
+        for p in prepared[:shortlist_size]
+        if p["row"].get("parcel_id")
+    ]
+    _bulk_perimeter: dict[str, float] = {}
+    _bulk_roads: dict[str, dict[str, Any]] = {}
+    _bulk_parking: dict[str, int] = {}
+
+    if _shortlist_parcel_ids:
+        # ── Bulk perimeter ──
+        try:
+            _perim_values = ", ".join(f"(:pid_{i})" for i in range(len(_shortlist_parcel_ids)))
+            _perim_params = {f"pid_{i}": pid for i, pid in enumerate(_shortlist_parcel_ids)}
+            with db.begin_nested():
+                _perim_rows = db.execute(
+                    text(f"""
+                        WITH pids(parcel_id) AS (VALUES {_perim_values})
+                        SELECT p.id::text AS parcel_id,
+                               COALESCE(ST_Perimeter(p.geom::geography), 0) AS parcel_perimeter_m
+                        FROM pids
+                        JOIN {ARCGIS_PARCELS_TABLE} p ON p.id::text = pids.parcel_id
+                    """),
+                    _perim_params,
+                ).mappings().all()
+            for r in _perim_rows:
+                _bulk_perimeter[str(r["parcel_id"])] = round(_safe_float(r.get("parcel_perimeter_m")), 2)
+            logger.info("expansion_search bulk perimeter: enriched=%d/%d search_id=%s",
+                        len(_bulk_perimeter), len(_shortlist_parcel_ids), search_id)
+        except Exception:
+            logger.debug("expansion_search bulk perimeter failed, falling back to per-candidate", exc_info=True)
+
+        # ── Bulk roads ──
+        _roads_source_table = None
+        _roads_query = None
+        if ea_roads_populated:
+            _roads_source_table = "expansion_road_context"
+            _roads_query = f"""
+                WITH pids(parcel_id) AS (VALUES {{values}})
+                SELECT p.id::text AS parcel_id,
+                    COALESCE(
+                        (SELECT MIN(erc.major_road_distance_m)
+                         FROM {_EA_ROADS_TABLE} erc
+                         WHERE erc.is_major_road = TRUE AND erc.geom IS NOT NULL
+                           AND ST_DWithin(erc.geom::geography, p.geom::geography, 700)),
+                        (SELECT MIN(ST_Distance(erc.geom::geography, p.geom::geography))
+                         FROM {_EA_ROADS_TABLE} erc
+                         WHERE erc.is_major_road = TRUE AND erc.geom IS NOT NULL
+                           AND ST_DWithin(erc.geom::geography, p.geom::geography, 700)),
+                        5000
+                    ) AS nearest_major_road_distance_m,
+                    COALESCE((
+                        SELECT COUNT(*) FROM {_EA_ROADS_TABLE} erc
+                        WHERE erc.geom IS NOT NULL
+                          AND ST_DWithin(erc.geom::geography, ST_Centroid(p.geom)::geography, 250)
+                    ), 0) AS nearby_road_segment_count,
+                    EXISTS(
+                        SELECT 1 FROM {_EA_ROADS_TABLE} erc
+                        WHERE erc.geom IS NOT NULL
+                          AND ST_DWithin(erc.geom::geography, p.geom::geography, 18)
+                    ) AS touches_road
+                FROM pids
+                JOIN {ARCGIS_PARCELS_TABLE} p ON p.id::text = pids.parcel_id
+            """
+        elif roads_table_available:
+            _roads_source_table = "planet_osm_line"
+            _roads_query = f"""
+                WITH pids(parcel_id) AS (VALUES {{values}})
+                SELECT p.id::text AS parcel_id,
+                    COALESCE((
+                        SELECT MIN(ST_Distance(l.way::geography, p.geom::geography))
+                        FROM planet_osm_line l
+                        WHERE l.way IS NOT NULL
+                          AND (l.highway IS NOT NULL OR NULLIF(l.name, '') IS NOT NULL)
+                          AND ST_DWithin(l.way::geography, p.geom::geography, 700)
+                          AND (l.highway IN ('motorway','trunk','primary','secondary')
+                               OR NULLIF(l.name, '') IS NOT NULL)
+                    ), 5000) AS nearest_major_road_distance_m,
+                    COALESCE((
+                        SELECT COUNT(*) FROM planet_osm_line l
+                        WHERE l.way IS NOT NULL AND l.highway IS NOT NULL
+                          AND ST_DWithin(l.way::geography, ST_Centroid(p.geom)::geography, 250)
+                    ), 0) AS nearby_road_segment_count,
+                    EXISTS(
+                        SELECT 1 FROM planet_osm_line l
+                        WHERE l.way IS NOT NULL AND l.highway IS NOT NULL
+                          AND ST_DWithin(l.way::geography, p.geom::geography, 18)
+                    ) AS touches_road
+                FROM pids
+                JOIN {ARCGIS_PARCELS_TABLE} p ON p.id::text = pids.parcel_id
+            """
+        if _roads_query:
+            try:
+                _road_values = ", ".join(f"(:pid_{i})" for i in range(len(_shortlist_parcel_ids)))
+                _road_params = {f"pid_{i}": pid for i, pid in enumerate(_shortlist_parcel_ids)}
+                with db.begin_nested():
+                    _road_rows = db.execute(
+                        text(_roads_query.format(values=_road_values)),
+                        _road_params,
+                    ).mappings().all()
+                for r in _road_rows:
+                    _bulk_roads[str(r["parcel_id"])] = {
+                        "nearest_major_road_distance_m": round(_safe_float(r.get("nearest_major_road_distance_m")), 2),
+                        "nearby_road_segment_count": _safe_int(r.get("nearby_road_segment_count")),
+                        "touches_road": bool(r.get("touches_road")),
+                        "source": _roads_source_table,
+                    }
+                logger.info("expansion_search bulk roads: enriched=%d/%d search_id=%s",
+                            len(_bulk_roads), len(_shortlist_parcel_ids), search_id)
+            except Exception:
+                logger.debug("expansion_search bulk roads failed, falling back to per-candidate", exc_info=True)
+
+        # ── Bulk parking ──
+        _parking_query = None
+        if ea_parking_populated:
+            _parking_query = f"""
+                WITH pids(parcel_id) AS (VALUES {{values}})
+                SELECT p.id::text AS parcel_id,
+                    COALESCE((
+                        SELECT COUNT(*) FROM {_EA_PARKING_TABLE} epa
+                        WHERE epa.geom IS NOT NULL
+                          AND ST_DWithin(epa.geom::geography, ST_Centroid(p.geom)::geography, 350)
+                    ), 0) AS nearby_parking_amenity_count
+                FROM pids
+                JOIN {ARCGIS_PARCELS_TABLE} p ON p.id::text = pids.parcel_id
+            """
+        elif parking_table_available:
+            _parking_query = f"""
+                WITH pids(parcel_id) AS (VALUES {{values}})
+                SELECT p.id::text AS parcel_id,
+                    COALESCE((
+                        SELECT COUNT(*) FROM planet_osm_polygon op
+                        WHERE op.way IS NOT NULL
+                          AND (lower(COALESCE(op.amenity, '')) = 'parking'
+                               OR lower(COALESCE(op.parking, '')) IN ('surface','multi-storey','underground'))
+                          AND ST_DWithin(op.way::geography, ST_Centroid(p.geom)::geography, 350)
+                    ), 0) AS nearby_parking_amenity_count
+                FROM pids
+                JOIN {ARCGIS_PARCELS_TABLE} p ON p.id::text = pids.parcel_id
+            """
+        if _parking_query:
+            try:
+                _park_values = ", ".join(f"(:pid_{i})" for i in range(len(_shortlist_parcel_ids)))
+                _park_params = {f"pid_{i}": pid for i, pid in enumerate(_shortlist_parcel_ids)}
+                with db.begin_nested():
+                    _park_rows = db.execute(
+                        text(_parking_query.format(values=_park_values)),
+                        _park_params,
+                    ).mappings().all()
+                for r in _park_rows:
+                    _bulk_parking[str(r["parcel_id"])] = _safe_int(r.get("nearby_parking_amenity_count"))
+                logger.info("expansion_search bulk parking: enriched=%d/%d search_id=%s",
+                            len(_bulk_parking), len(_shortlist_parcel_ids), search_id)
+            except Exception:
+                logger.debug("expansion_search bulk parking failed, falling back to per-candidate", exc_info=True)
+
+    _bulk_competitors: dict[str, list[dict[str, Any]]] = {}
+    if _shortlist_parcel_ids:
+        _comp_source = "expansion_competitor_quality" if ea_competitor_populated else "restaurant_poi"
+        try:
+            _comp_params: dict[str, Any] = {"category": category}
+            _comp_union_parts: list[str] = []
+            for _ci, _cp in enumerate(prepared[:shortlist_size]):
+                _clat = _safe_float(_cp["row"].get("lat"))
+                _clon = _safe_float(_cp["row"].get("lon"))
+                _cpid = str(_cp["row"].get("parcel_id") or "")
+                if not (_clat and _clon and _cpid):
+                    continue
+                _comp_params[f"lat_{_ci}"] = _clat
+                _comp_params[f"lon_{_ci}"] = _clon
+                _comp_params[f"pid_{_ci}"] = _cpid
+
+                if ea_competitor_populated:
+                    _comp_union_parts.append(f"""
+                        (SELECT :pid_{_ci} AS candidate_pid,
+                               ecq.restaurant_poi_id AS id, ecq.brand_name AS name,
+                               ecq.category, ecq.district,
+                               ecq.review_score / 20.0 AS rating, ecq.review_count,
+                               '{_comp_source}' AS source, ecq.overall_quality_score,
+                               ST_Distance(ecq.geom::geography,
+                                 ST_SetSRID(ST_MakePoint(:lon_{_ci}, :lat_{_ci}), 4326)::geography) AS distance_m
+                        FROM {_EA_COMPETITOR_TABLE} ecq
+                        WHERE ecq.geom IS NOT NULL
+                          AND lower(COALESCE(ecq.category, '')) = lower(:category)
+                          AND ST_DWithin(ecq.geom::geography,
+                                ST_SetSRID(ST_MakePoint(:lon_{_ci}, :lat_{_ci}), 4326)::geography, 1500)
+                        ORDER BY distance_m ASC LIMIT 5)
+                    """)
+                else:
+                    _comp_union_parts.append(f"""
+                        (SELECT :pid_{_ci} AS candidate_pid,
+                               rp.id, rp.name, rp.category, rp.district,
+                               rp.rating, rp.review_count, rp.source,
+                               NULL::double precision AS overall_quality_score,
+                               ST_Distance(
+                                   COALESCE(rp.geom, CASE WHEN rp.lon IS NOT NULL AND rp.lat IS NOT NULL
+                                       THEN ST_SetSRID(ST_MakePoint(rp.lon, rp.lat), 4326) ELSE NULL END
+                                   )::geography,
+                                   ST_SetSRID(ST_MakePoint(:lon_{_ci}, :lat_{_ci}), 4326)::geography
+                               ) AS distance_m
+                        FROM restaurant_poi rp
+                        WHERE lower(COALESCE(rp.category, '')) = lower(:category)
+                          AND COALESCE(rp.geom, CASE WHEN rp.lon IS NOT NULL AND rp.lat IS NOT NULL
+                              THEN ST_SetSRID(ST_MakePoint(rp.lon, rp.lat), 4326) ELSE NULL END) IS NOT NULL
+                          AND ST_DWithin(
+                              COALESCE(rp.geom, ST_SetSRID(ST_MakePoint(rp.lon, rp.lat), 4326))::geography,
+                              ST_SetSRID(ST_MakePoint(:lon_{_ci}, :lat_{_ci}), 4326)::geography, 1500)
+                        ORDER BY distance_m ASC LIMIT 5)
+                    """)
+
+            if _comp_union_parts:
+                with db.begin_nested():
+                    _comp_rows = db.execute(
+                        text(" UNION ALL ".join(_comp_union_parts)),
+                        _comp_params,
+                    ).mappings().all()
+                for r in _comp_rows:
+                    _cpid_key = str(r["candidate_pid"])
+                    if _cpid_key not in _bulk_competitors:
+                        _bulk_competitors[_cpid_key] = []
+                    _bulk_competitors[_cpid_key].append({
+                        "id": r.get("id"),
+                        "name": r.get("name"),
+                        "category": r.get("category"),
+                        "district": r.get("district"),
+                        "rating": _safe_float(r.get("rating"), default=0.0) if r.get("rating") is not None else None,
+                        "review_count": _safe_int(r.get("review_count"), default=0) if r.get("review_count") is not None else None,
+                        "distance_m": round(_safe_float(r.get("distance_m"), default=0.0), 2),
+                        "source": r.get("source"),
+                        "overall_quality_score": _safe_float(r.get("overall_quality_score")) if r.get("overall_quality_score") is not None else None,
+                    })
+                logger.info("expansion_search bulk competitors: enriched=%d/%d search_id=%s",
+                            len(_bulk_competitors), len(_shortlist_parcel_ids), search_id)
+        except Exception:
+            logger.warning("expansion_search bulk competitors failed, falling back to per-candidate", exc_info=True)
+
+    t_bulk_enrich_done = time.monotonic()
+    logger.info(
+        "expansion_search timing: bulk_enrichment=%.2fs search_id=%s",
+        t_bulk_enrich_done - t_coarse_done, search_id,
+    )
+
     for prepared_item in prepared[:shortlist_size]:
       try:
         row = prepared_item["row"]
@@ -2921,9 +3195,10 @@ def run_expansion_search(
         payback_band = prepared_item["payback_band"]
         provider_intelligence_composite = prepared_item["provider_intelligence_composite"]
 
+        _pid_str = str(row.get("parcel_id") or "")
         feature_snapshot_json = _candidate_feature_snapshot(
             db,
-            parcel_id=str(row.get("parcel_id") or ""),
+            parcel_id=_pid_str,
             lat=_safe_float(row.get("lat")),
             lon=_safe_float(row.get("lon")),
             area_m2=area_m2,
@@ -2941,6 +3216,9 @@ def run_expansion_search(
             parking_table_available=parking_table_available,
             ea_roads_available=ea_roads_populated,
             ea_parking_available=ea_parking_populated,
+            bulk_perimeter=_bulk_perimeter.get(_pid_str),
+            bulk_roads=_bulk_roads.get(_pid_str),
+            bulk_parking=_bulk_parking.get(_pid_str),
         )
         road_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("road_context_available"))
         parking_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("parking_context_available"))
@@ -3061,13 +3339,16 @@ def run_expansion_search(
             estimated_payback_months=estimated_payback_months,
             payback_band=payback_band,
         )
-        comparable_competitors_json = _comparable_competitors(
-            db,
-            category=category,
-            lat=_safe_float(row.get("lat")),
-            lon=_safe_float(row.get("lon")),
-            ea_competitor_populated=ea_competitor_populated,
-        )
+        if _pid_str and _pid_str in _bulk_competitors:
+            comparable_competitors_json = _bulk_competitors[_pid_str]
+        else:
+            comparable_competitors_json = _comparable_competitors(
+                db,
+                category=category,
+                lat=_safe_float(row.get("lat")),
+                lon=_safe_float(row.get("lon")),
+                ea_competitor_populated=ea_competitor_populated,
+            )
         explanation = _build_explanation(
             area_m2=area_m2,
             population_reach=population_reach,
@@ -3404,12 +3685,13 @@ def run_expansion_search(
     t_end = time.monotonic()
     logger.info(
         "expansion_search timing: total=%.2fs query=%.2fs coarse_score=%.2fs "
-        "enrichment=%.2fs persist=%.2fs normalize=%.2fs "
+        "bulk_enrich=%.2fs enrichment=%.2fs persist=%.2fs normalize=%.2fs "
         "search_id=%s raw_rows=%d prepared=%d shortlisted=%d persisted=%d final=%d",
         t_end - t_start,
         t_query_done - t_start,
         t_coarse_done - t_query_done,
-        t_enrich_done - t_coarse_done,
+        t_bulk_enrich_done - t_coarse_done,
+        t_enrich_done - t_bulk_enrich_done,
         t_persist_done - t_enrich_done,
         t_end - t_persist_done,
         search_id,
