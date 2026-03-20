@@ -999,7 +999,7 @@ def test_run_expansion_search_empty_existing_branches():
     assert len(items) == 1
     item = items[0]
     assert item["distance_to_nearest_branch_m"] is None
-    assert item["cannibalization_score"] == 25.0
+    assert item["cannibalization_score"] == 15.0
     assert 0.0 <= item["final_score"] <= 100.0
     assert item["economics_score"] is not None
     assert item["estimated_payback_months"] is not None
@@ -1124,7 +1124,7 @@ def test_run_expansion_search_exact_production_payload():
     assert len(items) == 1
     item = items[0]
     assert item["distance_to_nearest_branch_m"] is None
-    assert item["cannibalization_score"] == 25.0
+    assert item["cannibalization_score"] == 15.0
     assert 0.0 <= item["final_score"] <= 100.0
     assert item["payback_band"] in {"strong", "promising", "borderline", "weak"}
     assert "gate_status_json" in item
