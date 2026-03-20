@@ -2736,7 +2736,17 @@ def run_expansion_search(
         # Guard: when no delivery data is observed, scores must reflect
         # *uncertainty* (neutral 50), not opportunity (100).  Without this,
         # the whitespace formula yields 100 for zero-data candidates.
-        _delivery_observed = (provider_listing_count > 0 or provider_platform_count > 0 or delivery_competition_count > 0)
+        # Require a minimum signal threshold before treating delivery data as
+        # meaningful.  A single incidental listing (e.g. one non-category
+        # restaurant) is noise, not a market signal — it would otherwise drive
+        # provider_whitespace_score to ~100, indistinguishable from a genuinely
+        # uncontested area.  Thresholds: ≥3 total listings OR ≥2 platforms OR
+        # ≥1 same-category competitor in the delivery radius.
+        _delivery_observed = (
+            provider_listing_count >= 3
+            or provider_platform_count >= 2
+            or delivery_competition_count >= 1
+        )
         if _delivery_observed:
             provider_density_score = _clamp((provider_listing_count / 45.0) * 100.0)
             provider_whitespace_score = _clamp(100.0 - max(0.0, (delivery_competition_count - 6) * 6.0) - min(35.0, provider_density_score * 0.2))
@@ -3085,6 +3095,8 @@ def run_expansion_search(
             "delivery_competition_score": delivery_competition_score,
             "cannibalization_score": cannibalization_score,
             "gate_status_json": gate_status_json,
+            "provider_density_score": provider_density_score,
+            "multi_platform_presence_score": multi_platform_presence_score,
         }
         top_positives_json, top_risks_json = _top_positives_and_risks(candidate=seed_candidate, gate_reasons=gate_reasons_json)
         district_canon = _canonicalize_district_label(district, district_lookup)
