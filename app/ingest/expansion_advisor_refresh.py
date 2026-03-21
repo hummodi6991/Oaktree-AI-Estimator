@@ -29,6 +29,7 @@ EXPANSION_TABLES = [
     "expansion_delivery_market",
     "expansion_rent_comp",
     "expansion_competitor_quality",
+    "riyadh_parcels_arcgis_raw",
 ]
 
 

@@ -1,0 +1,43 @@
+name: "Expansion Advisor: District Labels"
+
+on:
+  workflow_dispatch: {}
+  # Also run after the ArcGIS parcels ingest completes
+  workflow_run:
+    workflows: ["Ingest ArcGIS Riyadh Parcels"]
+    types: [completed]
+
+jobs:
+  district-labels:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    env:
+      PGHOST: ${{ secrets.POSTGRES_HOST }}
+      PGPORT: ${{ secrets.POSTGRES_PORT }}
+      PGDATABASE: ${{ secrets.POSTGRES_DB }}
+      PGUSER: ${{ secrets.POSTGRES_USER }}
+      PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      PGSSLMODE: ${{ secrets.PGSSLMODE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Run alembic migrations
+        run: python -m alembic upgrade head
+
+      - name: Populate district labels
+        run: |
+          python -m app.ingest.expansion_advisor_district_labels \
+            --batch-size 5000 \
+            --write-stats /tmp/district-labels-stats.json
+
+      - name: Upload stats
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: district-labels-stats
+          path: /tmp/district-labels-stats.json
+          retention-days: 30
