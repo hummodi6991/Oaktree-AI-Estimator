@@ -12,11 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     env:
-      PGHOST: ${{ secrets.POSTGRES_HOST }}
-      PGPORT: ${{ secrets.POSTGRES_PORT }}
-      PGDATABASE: ${{ secrets.POSTGRES_DB }}
-      PGUSER: ${{ secrets.POSTGRES_USER }}
-      PGPASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       PGSSLMODE: ${{ secrets.PGSSLMODE }}
     steps:
       - uses: actions/checkout@v4
