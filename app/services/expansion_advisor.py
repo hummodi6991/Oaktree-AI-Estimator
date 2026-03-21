@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import time
 import os
 import uuid
@@ -76,6 +77,90 @@ def _gate_verdict_label(overall_pass: Any) -> str:
     if overall_pass is False:
         return "fail"
     return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Category alias expansion for delivery & competitor matching
+# ---------------------------------------------------------------------------
+_CATEGORY_ALIAS_MAP: dict[str, dict] = {
+    "fast food": {
+        "keys": ["burger", "pizza", "chicken", "fast_food"],
+        "raw_patterns": [
+            "fast.food", "fast_food", "qsr", "burger", "hamburger",
+            "chicken", "broasted", "fried.chicken", "pizza", "pizzeria",
+            "وجبات سريعة", "برجر", "دجاج", "بيتزا", "فاست فود",
+        ],
+    },
+    "burger": {
+        "keys": ["burger"],
+        "raw_patterns": ["burger", "hamburger", "برجر"],
+    },
+    "pizza": {
+        "keys": ["pizza"],
+        "raw_patterns": ["pizza", "pizzeria", "بيتزا"],
+    },
+    "chicken": {
+        "keys": ["chicken"],
+        "raw_patterns": ["chicken", "broasted", "fried.chicken", "wings", "دجاج"],
+    },
+    "cafe": {
+        "keys": ["coffee_bakery"],
+        "raw_patterns": [
+            "cafe", "coffee", "bakery", "dessert", "pastry",
+            "قهوة", "مقهى", "كافيه", "مخبز", "حلويات",
+        ],
+    },
+    "coffee": {
+        "keys": ["coffee_bakery"],
+        "raw_patterns": [
+            "coffee", "cafe", "قهوة", "مقهى", "كافيه",
+        ],
+    },
+    "traditional": {
+        "keys": ["traditional"],
+        "raw_patterns": [
+            "arabic", "middle.eastern", "saudi", "lebanese", "syrian",
+            "shawarma", "falafel", "kabsa", "mandi",
+            "شعبي", "عربي", "كبسة", "مندي", "شاورما",
+        ],
+    },
+    "asian": {
+        "keys": ["asian"],
+        "raw_patterns": [
+            "chinese", "japanese", "sushi", "korean", "thai",
+            "indian", "asian", "ramen", "noodle",
+        ],
+    },
+    "seafood": {
+        "keys": ["seafood"],
+        "raw_patterns": ["seafood", "fish", "shrimp", "سمك", "بحري", "مأكولات بحرية"],
+    },
+    "healthy": {
+        "keys": ["healthy"],
+        "raw_patterns": ["salad", "healthy", "vegan", "vegetarian", "poke", "bowl"],
+    },
+}
+
+
+def _expand_category(category: str) -> dict:
+    """Expand a search category into matching keys and regex patterns."""
+    cat_lower = category.lower().strip()
+    aliases = _CATEGORY_ALIAS_MAP.get(cat_lower)
+
+    if aliases:
+        keys = aliases["keys"]
+        regex = "|".join(re.escape(p).replace(r"\.", ".") for p in aliases["raw_patterns"])
+    else:
+        keys = [cat_lower.replace(" ", "_")]
+        regex = re.escape(cat_lower).replace(r"\ ", ".").replace(r"\.", ".")
+
+    return {
+        "keys": keys,
+        "regex": regex,
+        "like": f"%{cat_lower}%",
+    }
+
+
 def _clean_district_display(raw: str | None) -> str | None:
     """Strip Unicode control chars and BOM from display strings."""
     if not raw:
@@ -1188,12 +1273,22 @@ def _area_fit(area_m2: float, target_area_m2: float, min_area_m2: float, max_are
 
 
 def _population_score(population_reach: float) -> float:
-    # Tuned as a first deterministic heuristic; we will recalibrate later.
-    return _clamp((population_reach / 18000.0) * 100.0)
+    """Square-root scaled population score tuned for Riyadh metro density.
+
+    Linear scaling saturated at 18,000 — nearly all urban parcels hit 100/100.
+    Square-root with 80,000 reference gives meaningful spread:
+      5,000 → 25,  15,000 → 43,  30,000 → 61,  50,000 → 79,  80,000+ → 100
+    """
+    if population_reach <= 0:
+        return 0.0
+    return _clamp((population_reach / 80000.0) ** 0.5 * 100.0)
 
 
 def _delivery_score(delivery_listing_count: int) -> float:
-    return _clamp((delivery_listing_count / 40.0) * 100.0)
+    """Square-root scaled delivery score for wider dynamic range."""
+    if delivery_listing_count <= 0:
+        return 0.0
+    return _clamp((delivery_listing_count / 40.0) ** 0.5 * 100.0)
 
 
 def _competition_whitespace_score(competitor_count: int) -> float:
@@ -1932,8 +2027,9 @@ def _estimate_revenue_index(
     population_reach: float,
     whitespace_score: float,
 ) -> float:
-    delivery_signal = _clamp((delivery_listing_count / 35.0) * 100.0)
-    population_signal = _clamp((population_reach / 16000.0) * 100.0)
+    """Composite revenue potential index using consistent sqrt scaling."""
+    delivery_signal = _clamp((delivery_listing_count / 35.0) ** 0.5 * 100.0) if delivery_listing_count > 0 else 0.0
+    population_signal = _clamp((population_reach / 80000.0) ** 0.5 * 100.0) if population_reach > 0 else 0.0
     return _clamp(demand_score * 0.45 + whitespace_score * 0.20 + delivery_signal * 0.20 + population_signal * 0.15)
 
 
@@ -2406,7 +2502,7 @@ def run_expansion_search(
             COALESCE((
                 SELECT COUNT(*)
                 FROM restaurant_poi rp
-                WHERE lower(rp.category) = lower(:category)
+                WHERE lower(rp.category) = ANY(:category_keys)
                   AND ST_DWithin(
                       rp.geom::geography,
                       ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
@@ -2418,8 +2514,8 @@ def run_expansion_search(
                 FROM delivery_source_record dsr
                 WHERE {_SAFE_DSR_COORD_WHERE}
                   AND (
-                    lower(COALESCE(dsr.category_raw, '')) LIKE :category_like
-                    OR lower(COALESCE(dsr.cuisine_raw, '')) LIKE :category_like
+                    lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
+                    OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
                   )
                   AND ST_DWithin(
                       {_SAFE_DSR_GEO},
@@ -2452,8 +2548,8 @@ def run_expansion_search(
                 FROM delivery_source_record dsr
                 WHERE {_SAFE_DSR_COORD_WHERE}
                   AND (
-                    lower(COALESCE(dsr.category_raw, '')) LIKE :category_like
-                    OR lower(COALESCE(dsr.cuisine_raw, '')) LIKE :category_like
+                    lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
+                    OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
                   )
                   AND ST_DWithin(
                       {_SAFE_DSR_GEO},
@@ -2518,7 +2614,7 @@ def run_expansion_search(
             COALESCE((
                 SELECT COUNT(*)
                 FROM restaurant_poi rp
-                WHERE lower(rp.category) = lower(:category)
+                WHERE lower(rp.category) = ANY(:category_keys)
                   AND ST_DWithin(
                       rp.geom::geography,
                       ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
@@ -2530,8 +2626,8 @@ def run_expansion_search(
                 FROM delivery_source_record dsr
                 WHERE {_SAFE_DSR_COORD_WHERE}
                   AND (
-                    lower(COALESCE(dsr.category_raw, '')) LIKE :category_like
-                    OR lower(COALESCE(dsr.cuisine_raw, '')) LIKE :category_like
+                    lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
+                    OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
                   )
                   AND ST_DWithin(
                       {_SAFE_DSR_GEO},
@@ -2564,8 +2660,8 @@ def run_expansion_search(
                 FROM delivery_source_record dsr
                 WHERE {_SAFE_DSR_COORD_WHERE}
                   AND (
-                    lower(COALESCE(dsr.category_raw, '')) LIKE :category_like
-                    OR lower(COALESCE(dsr.cuisine_raw, '')) LIKE :category_like
+                    lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
+                    OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
                   )
                   AND ST_DWithin(
                       {_SAFE_DSR_GEO},
@@ -2603,6 +2699,7 @@ def run_expansion_search(
         except Exception:
             logger.warning("expansion_search: could not count districts for cap, using default=%d", per_district_cap, exc_info=True)
 
+    _cat_expanded = _expand_category(category)
     sql_params: dict[str, Any] = {
         "min_area_m2": min_area_m2,
         "max_area_m2": max_area_m2,
@@ -2611,13 +2708,18 @@ def run_expansion_search(
         "min_lat": min_lat,
         "max_lon": max_lon,
         "max_lat": max_lat,
-        "category": category,
-        "category_like": f"%{category.lower()}%",
+        "category_keys": _cat_expanded["keys"],
+        "category_regex": _cat_expanded["regex"],
+        "category_like": _cat_expanded["like"],
         "demand_radius_m": 1200,
         "competition_radius_m": 1000,
         "provider_radius_m": 1200,
         "per_district_cap": per_district_cap,
     }
+    logger.info(
+        "expansion_search category expansion: input=%r keys=%s regex_len=%d search_id=%s",
+        category, _cat_expanded["keys"], len(_cat_expanded["regex"]), search_id,
+    )
     # Bind target-district values when district SQL filter is active.
     for i, td_val in enumerate(sorted(target_district_norm)):
         sql_params[f"td_{i}"] = td_val.lower()
@@ -2721,7 +2823,7 @@ def run_expansion_search(
         try:
             # Build a VALUES list of (parcel_id, lon, lat) for all candidates
             _del_values_parts: list[str] = []
-            _del_params: dict[str, Any] = {"cat_like": f"%{category.lower()}%"}
+            _del_params: dict[str, Any] = {"cat_regex": _cat_expanded["regex"]}
             for _idx, _r in enumerate(rows):
                 _pid = str(_r.get("parcel_id") or "")
                 _lon = _safe_float(_r.get("lon"))
@@ -2744,7 +2846,7 @@ def run_expansion_search(
                                 COUNT(d.*) AS listing_count,
                                 COUNT(DISTINCT d.platform) AS platform_count,
                                 COUNT(d.*) FILTER (
-                                    WHERE lower(COALESCE(d.category, '')) LIKE :cat_like
+                                    WHERE lower(COALESCE(d.category, '')) ~* :cat_regex
                                 ) AS cat_count
                             FROM candidates c
                             LEFT JOIN {_EA_DELIVERY_TABLE} d
