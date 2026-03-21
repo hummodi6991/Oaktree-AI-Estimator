@@ -22,7 +22,6 @@ ARCGIS_PARCELS_TABLE = "public.riyadh_parcels_arcgis_proxy"
 
 # Candidate pool limits
 _CANDIDATE_POOL_LIMIT = 600          # max total candidates from SQL
-_STRATIFIED_RAW_LIMIT = 3000         # scan pool before stratification (5x final limit)
 _PER_DISTRICT_MIN_CAP = 5            # minimum parcels per district in stratified mode
 _PER_DISTRICT_MAX_CAP = 40           # upper bound per district to prevent one district hoarding slots
 
@@ -2242,26 +2241,8 @@ def run_expansion_search(
             f"(:td_{i})" for i in range(len(td_norm))
         )
         return f"""
-            AND EXISTS (
-                SELECT 1
-                FROM external_feature ef
-                CROSS JOIN (VALUES {_district_values}) AS td(val)
-                WHERE ef.layer_name IN ('osm_districts', 'aqar_district_hulls', 'rydpolygons')
-                  AND ef.geometry IS NOT NULL
-                  AND ef.geometry ? 'type'
-                  AND ef.geometry ? 'coordinates'
-                  AND ef.geometry->>'type' IN ('Polygon', 'MultiPolygon')
-                  AND ST_Contains(
-                      ST_SetSRID(ST_GeomFromGeoJSON(ef.geometry::text), 4326),
-                      ST_Centroid(p.geom)
-                  )
-                  AND LOWER(COALESCE(
-                      NULLIF(ef.properties->>'district', ''),
-                      NULLIF(ef.properties->>'district_raw', ''),
-                      NULLIF(ef.properties->>'name', ''),
-                      NULLIF(ef.properties->>'district_en', ''),
-                      ''
-                  )) = td.val
+            AND LOWER(COALESCE(p.district_label, '')) IN (
+                SELECT td.val FROM (VALUES {_district_values}) AS td(val)
             )
         """
 
@@ -2336,31 +2317,7 @@ def run_expansion_search(
                 ST_Y(ST_Centroid(p.geom)) AS lat,
                 ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) AS area_distance,
                 {_LANDUSE_PRIORITY_EXPR} AS landuse_priority,
-                (
-                    SELECT
-                        COALESCE(
-                            NULLIF(ef.properties->>'district', ''),
-                            NULLIF(ef.properties->>'district_raw', ''),
-                            NULLIF(ef.properties->>'name', ''),
-                            NULLIF(ef.properties->>'district_en', '')
-                        )
-                    FROM external_feature ef
-                    WHERE ef.layer_name IN ('osm_districts', 'aqar_district_hulls', 'rydpolygons')
-                      AND ef.geometry IS NOT NULL
-                      AND ef.geometry ? 'type'
-                      AND ef.geometry ? 'coordinates'
-                      AND ef.geometry->>'type' IN ('Polygon', 'MultiPolygon')
-                      AND ST_Contains(
-                          ST_SetSRID(ST_GeomFromGeoJSON(ef.geometry::text), 4326),
-                          ST_Centroid(p.geom)
-                      )
-                    ORDER BY CASE ef.layer_name
-                        WHEN 'osm_districts' THEN 1
-                        WHEN 'aqar_district_hulls' THEN 2
-                        ELSE 3
-                    END
-                    LIMIT 1
-                ) AS district
+                p.district_label AS district
             FROM {ARCGIS_PARCELS_TABLE} p
             WHERE p.geom IS NOT NULL
               AND p.area_m2 BETWEEN :min_area_m2 AND :max_area_m2
@@ -2379,12 +2336,6 @@ def run_expansion_search(
             _CANDIDATE_CTE = f"""
             WITH candidate_raw AS (
                 {_BASE_CTE}
-                ORDER BY
-                    {_LANDUSE_PRIORITY_EXPR} ASC,
-                    ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) ASC,
-                    CASE WHEN p.landuse_label IS NOT NULL THEN 0 ELSE 1 END,
-                    p.id ASC
-                LIMIT {_STRATIFIED_RAW_LIMIT}
             ),
             candidate_base AS (
                 SELECT
@@ -2531,7 +2482,7 @@ def run_expansion_search(
                 ST_X(ST_Centroid(p.geom)) AS lon,
                 ST_Y(ST_Centroid(p.geom)) AS lat,
                 ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) AS area_distance,
-                NULL AS district
+                p.district_label AS district
             FROM {ARCGIS_PARCELS_TABLE} p
             WHERE p.geom IS NOT NULL
               AND p.area_m2 BETWEEN :min_area_m2 AND :max_area_m2
@@ -2637,13 +2588,9 @@ def run_expansion_search(
     if is_city_wide:
         try:
             district_count_row = db.execute(text(
-                "SELECT COUNT(DISTINCT COALESCE("
-                "  NULLIF(properties->>'district', ''),"
-                "  NULLIF(properties->>'district_raw', ''),"
-                "  NULLIF(properties->>'name', '')"
-                ")) AS cnt "
-                "FROM external_feature "
-                "WHERE layer_name IN ('osm_districts', 'aqar_district_hulls', 'rydpolygons')"
+                "SELECT COUNT(DISTINCT district_label) "
+                "FROM public.riyadh_parcels_arcgis_raw "
+                "WHERE geom IS NOT NULL AND district_label IS NOT NULL"
             )).scalar() or 1
             per_district_cap = max(
                 _PER_DISTRICT_MIN_CAP,

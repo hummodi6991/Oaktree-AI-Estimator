@@ -933,8 +933,9 @@ def test_last_resort_fallback_returns_results():
     # Python post-filter won't match target districts (all NULL), so
     # empty list when target_districts is set.
     assert isinstance(items, list)
-    # Verify all three query attempts were made
-    assert db._query_attempt == 3
+    # Simplified district filter (column read) no longer triggers spatial-join
+    # failure path — only one query attempt is needed.
+    assert db._query_attempt == 1
 
 
 def test_last_resort_fallback_no_districts_returns_candidates():
@@ -981,9 +982,9 @@ class _FailOnSpecificParcelDB(_FakeDB):
         return super().execute(stmt, params)
 
 
-def test_candidate_sql_includes_geojson_type_guard():
-    """The generated candidate SQL must include geometry type validation
-    guards to prevent ST_GeomFromGeoJSON from failing on non-polygon data."""
+def test_candidate_sql_uses_district_label_column():
+    """The generated candidate SQL must read district from the pre-materialized
+    district_label column instead of a correlated spatial subquery."""
     captured_sql = []
 
     class _CapturingDB(_FakeDB):
@@ -995,7 +996,7 @@ def test_candidate_sql_includes_geojson_type_guard():
     db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
     run_expansion_search(
         db,
-        search_id="test-geojson-guard",
+        search_id="test-district-label",
         brand_name="TestBrand",
         category="burger",
         service_model="qsr",
@@ -1009,13 +1010,12 @@ def test_candidate_sql_includes_geojson_type_guard():
     assert candidate_sqls, "Expected at least one candidate SQL query"
     main_sql = candidate_sqls[0]
 
-    # Must contain GeoJSON type validation before ST_GeomFromGeoJSON
-    assert "geometry ? 'type'" in main_sql or "geometry?'type'" in main_sql, \
-        "Missing geometry type key check"
-    assert "geometry ? 'coordinates'" in main_sql or "geometry?'coordinates'" in main_sql, \
-        "Missing geometry coordinates key check"
-    assert "'Polygon', 'MultiPolygon'" in main_sql, \
-        "Missing Polygon/MultiPolygon type filter"
+    # Must read from the pre-materialized column, not a correlated subquery
+    assert "district_label" in main_sql, \
+        "Candidate SQL should read from district_label column"
+    # The old correlated ST_GeomFromGeoJSON subquery should be gone
+    assert "ST_GeomFromGeoJSON" not in main_sql, \
+        "Candidate SQL should not contain ST_GeomFromGeoJSON (correlated subquery removed)"
 
 
 # ---------------------------------------------------------------------------
