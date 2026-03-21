@@ -22,6 +22,7 @@ ARCGIS_PARCELS_TABLE = "public.riyadh_parcels_arcgis_proxy"
 
 # Candidate pool limits
 _CANDIDATE_POOL_LIMIT = 600          # max total candidates from SQL
+_STRATIFIED_RAW_LIMIT = 3000         # scan pool before stratification (5x final limit)
 _PER_DISTRICT_MIN_CAP = 5            # minimum parcels per district in stratified mode
 _PER_DISTRICT_MAX_CAP = 40           # upper bound per district to prevent one district hoarding slots
 
@@ -2378,6 +2379,12 @@ def run_expansion_search(
             _CANDIDATE_CTE = f"""
             WITH candidate_raw AS (
                 {_BASE_CTE}
+                ORDER BY
+                    {_LANDUSE_PRIORITY_EXPR} ASC,
+                    ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) ASC,
+                    CASE WHEN p.landuse_label IS NOT NULL THEN 0 ELSE 1 END,
+                    p.id ASC
+                LIMIT {_STRATIFIED_RAW_LIMIT}
             ),
             candidate_base AS (
                 SELECT
