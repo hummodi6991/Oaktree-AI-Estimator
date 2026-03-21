@@ -361,7 +361,7 @@ class TestRefreshModule:
         assert hasattr(mod, "run_alembic_upgrade")
         assert hasattr(mod, "refresh_materialized_views")
         assert hasattr(mod, "EXPANSION_TABLES")
-        assert len(mod.EXPANSION_TABLES) == 5
+        assert len(mod.EXPANSION_TABLES) == 6
 
     def test_expansion_tables_list(self):
         from app.ingest.expansion_advisor_refresh import EXPANSION_TABLES
@@ -372,6 +372,7 @@ class TestRefreshModule:
             "expansion_delivery_market",
             "expansion_rent_comp",
             "expansion_competitor_quality",
+            "riyadh_parcels_arcgis_raw",
         ]
         assert EXPANSION_TABLES == expected
 
