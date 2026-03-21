@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 ARCGIS_PARCELS_TABLE = "public.riyadh_parcels_arcgis_proxy"
 
+# Candidate pool limits
+_CANDIDATE_POOL_LIMIT = 600          # max total candidates from SQL
+_PER_DISTRICT_MIN_CAP = 5            # minimum parcels per district in stratified mode
+_PER_DISTRICT_MAX_CAP = 40           # upper bound per district to prevent one district hoarding slots
+
 # Expansion Advisor normalized table names (from config)
 _EA_ROADS_TABLE = settings.EXPANSION_ROADS_TABLE
 _EA_PARKING_TABLE = settings.EXPANSION_PARKING_TABLE
@@ -2306,10 +2311,20 @@ def run_expansion_search(
         " ELSE 1 END"
     )
 
-    def _build_candidate_sql(district_filter_sql: str) -> text:
-        return text(
-            f"""
-        WITH candidate_base AS (
+    def _build_candidate_sql(district_filter_sql: str, *, stratified: bool = False) -> text:
+        # Compute a landuse_priority integer in the base CTE so the
+        # stratified window and final ORDER BY can reference it without
+        # repeating the CASE on the raw column with p. alias.
+        _LANDUSE_PRIORITY_EXPR = (
+            "CASE"
+            " WHEN p.landuse_code IN (2000, 7500) THEN 0"
+            " WHEN p.landuse_code IN (3000, 4000) THEN 1"
+            " WHEN p.landuse_code IS NULL AND NULLIF(BTRIM(COALESCE(p.landuse_label, '')), '') IS NULL THEN 2"
+            " WHEN p.landuse_code = 1000 THEN 3"
+            " ELSE 1 END"
+        )
+
+        _BASE_CTE = f"""
             SELECT
                 p.id AS parcel_id,
                 p.landuse_label,
@@ -2319,6 +2334,7 @@ def run_expansion_search(
                 ST_X(ST_Centroid(p.geom)) AS lon,
                 ST_Y(ST_Centroid(p.geom)) AS lat,
                 ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) AS area_distance,
+                {_LANDUSE_PRIORITY_EXPR} AS landuse_priority,
                 (
                     SELECT
                         COALESCE(
@@ -2352,13 +2368,65 @@ def run_expansion_search(
               AND (CAST(:min_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) >= CAST(:min_lat AS double precision))
               AND (CAST(:max_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) <= CAST(:max_lat AS double precision))
               {district_filter_sql}
-            ORDER BY
-                {_SAFE_LANDUSE_ORDER},
-                ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) ASC,
-                CASE WHEN p.landuse_label IS NOT NULL THEN 0 ELSE 1 END,
-                p.id ASC
-            LIMIT 600
-        )
+        """
+
+        if stratified:
+            # City-wide mode: allocate slots per district to ensure geographic spread.
+            # 1. Rank parcels within each district by quality.
+            # 2. Keep up to :per_district_cap per district.
+            # 3. Apply global limit on the combined result.
+            _CANDIDATE_CTE = f"""
+            WITH candidate_raw AS (
+                {_BASE_CTE}
+            ),
+            candidate_base AS (
+                SELECT
+                    parcel_id, landuse_label, landuse_code, area_m2, geom,
+                    lon, lat, area_distance, landuse_priority, district
+                FROM (
+                    SELECT
+                        cr.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY cr.district
+                            ORDER BY
+                                cr.landuse_priority ASC,
+                                cr.area_distance ASC,
+                                CASE WHEN cr.landuse_label IS NOT NULL THEN 0 ELSE 1 END,
+                                cr.parcel_id ASC
+                        ) AS district_rank
+                    FROM candidate_raw cr
+                ) ranked
+                WHERE district_rank <= CAST(:per_district_cap AS integer)
+                ORDER BY
+                    landuse_priority ASC,
+                    area_distance ASC,
+                    CASE WHEN landuse_label IS NOT NULL THEN 0 ELSE 1 END,
+                    parcel_id ASC
+                LIMIT {_CANDIDATE_POOL_LIMIT}
+            )
+            """
+        else:
+            # Targeted mode (districts specified or fallback): original behavior.
+            _CANDIDATE_CTE = f"""
+            WITH candidate_base AS (
+                SELECT
+                    parcel_id, landuse_label, landuse_code, area_m2, geom,
+                    lon, lat, area_distance, landuse_priority, district
+                FROM (
+                    {_BASE_CTE}
+                ) _inner
+                ORDER BY
+                    landuse_priority ASC,
+                    area_distance ASC,
+                    CASE WHEN landuse_label IS NOT NULL THEN 0 ELSE 1 END,
+                    parcel_id ASC
+                LIMIT {_CANDIDATE_POOL_LIMIT}
+            )
+            """
+
+        return text(
+            f"""
+        {_CANDIDATE_CTE}
         SELECT
             b.parcel_id,
             b.landuse_label,
@@ -2469,7 +2537,7 @@ def run_expansion_search(
                 ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) ASC,
                 CASE WHEN p.landuse_label IS NOT NULL THEN 0 ELSE 1 END,
                 p.id ASC
-            LIMIT 600
+            LIMIT {_CANDIDATE_POOL_LIMIT}
         )
         SELECT
             b.parcel_id,
@@ -2551,6 +2619,36 @@ def run_expansion_search(
         """
         )
 
+    # City-wide mode: no target districts → use stratified sampling
+    is_city_wide = not target_district_norm
+
+    # Compute per-district cap dynamically.
+    # Goal: spread _CANDIDATE_POOL_LIMIT slots across districts.
+    # We estimate the district count from external_feature to set the cap,
+    # bounded by _PER_DISTRICT_MIN_CAP and _PER_DISTRICT_MAX_CAP.
+    per_district_cap = _PER_DISTRICT_MAX_CAP
+    if is_city_wide:
+        try:
+            district_count_row = db.execute(text(
+                "SELECT COUNT(DISTINCT COALESCE("
+                "  NULLIF(properties->>'district', ''),"
+                "  NULLIF(properties->>'district_raw', ''),"
+                "  NULLIF(properties->>'name', '')"
+                ")) AS cnt "
+                "FROM external_feature "
+                "WHERE layer_name IN ('osm_districts', 'aqar_district_hulls', 'rydpolygons')"
+            )).scalar() or 1
+            per_district_cap = max(
+                _PER_DISTRICT_MIN_CAP,
+                min(_PER_DISTRICT_MAX_CAP, _CANDIDATE_POOL_LIMIT // max(district_count_row, 1)),
+            )
+            logger.info(
+                "expansion_search stratified mode: district_count=%d per_district_cap=%d search_id=%s",
+                district_count_row, per_district_cap, search_id,
+            )
+        except Exception:
+            logger.warning("expansion_search: could not count districts for cap, using default=%d", per_district_cap, exc_info=True)
+
     sql_params: dict[str, Any] = {
         "min_area_m2": min_area_m2,
         "max_area_m2": max_area_m2,
@@ -2564,6 +2662,7 @@ def run_expansion_search(
         "demand_radius_m": 1200,
         "competition_radius_m": 1000,
         "provider_radius_m": 1200,
+        "per_district_cap": per_district_cap,
     }
     # Bind target-district values when district SQL filter is active.
     for i, td_val in enumerate(sorted(target_district_norm)):
@@ -2579,7 +2678,7 @@ def run_expansion_search(
     if district_sql_used:
         try:
             with db.begin_nested():
-                sql = _build_candidate_sql(_build_district_filter_sql(target_district_norm))
+                sql = _build_candidate_sql(_build_district_filter_sql(target_district_norm), stratified=False)
                 rows = db.execute(sql, sql_params).mappings().all()
         except Exception as exc:
             logger.warning(
@@ -2597,7 +2696,7 @@ def run_expansion_search(
     if rows is None:
         try:
             with db.begin_nested():
-                sql = _build_candidate_sql("")
+                sql = _build_candidate_sql("", stratified=is_city_wide)
                 rows = db.execute(sql, sql_params).mappings().all()
         except Exception:
             logger.warning(
@@ -3680,6 +3779,36 @@ def run_expansion_search(
                 candidate.get("id"), search_id,
                 exc_info=True,
             )
+
+    # ── Coverage metadata: update search notes with district stats ──
+    try:
+        districts_in_result = set()
+        for c in persisted_candidates:
+            d = c.get("district") or c.get("district_display")
+            if d:
+                districts_in_result.add(d)
+        coverage_meta = {
+            "candidate_selection": "stratified" if is_city_wide else "targeted",
+            "per_district_cap": per_district_cap,
+            "candidates_evaluated": len(rows),
+            "candidates_scored": len(prepared),
+            "candidates_persisted": len(persisted_candidates),
+            "districts_represented": len(districts_in_result),
+            "districts_list": sorted(districts_in_result),
+        }
+        db.execute(
+            text(
+                "UPDATE expansion_search "
+                "SET notes = COALESCE(notes, '{}'::jsonb) || CAST(:coverage AS jsonb) "
+                "WHERE id = :search_id"
+            ),
+            {
+                "search_id": search_id,
+                "coverage": json.dumps({"coverage": coverage_meta}, ensure_ascii=False),
+            },
+        )
+    except Exception:
+        logger.warning("expansion_search: failed to persist coverage metadata search_id=%s", search_id, exc_info=True)
 
     t_persist_done = time.monotonic()
     t_end = time.monotonic()
