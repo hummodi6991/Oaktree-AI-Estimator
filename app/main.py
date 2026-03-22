@@ -29,6 +29,11 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.telemetry_usage import add_usage_event_middleware
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s %(name)s: %(message)s",
+)
+
 app = FastAPI(title="Oaktree Estimator API", version="0.1.0")
 setup_otel_if_configured(app)
 logger = logging.getLogger(__name__)
