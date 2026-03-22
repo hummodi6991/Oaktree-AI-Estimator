@@ -1,6 +1,11 @@
 """Add pre-computed geom column + GiST index to delivery_source_record
 and population_density for indexed spatial lookups.
 
+NOTE: CREATE INDEX runs inside the Alembic transaction (not CONCURRENTLY).
+For tables with millions of rows this will hold a table lock for several
+seconds.  If that is a concern, run the CREATE INDEX statements outside
+Alembic with CONCURRENTLY instead.
+
 Revision ID: 20260322_geom_indexes_dsr_pop
 Revises: 20260321_parcels_district_label
 Create Date: 2026-03-22

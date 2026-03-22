@@ -2960,15 +2960,20 @@ def run_expansion_search(
     )
 
     # ── Pre-warm rent cache for all districts (avoids N serial DB calls in scoring loop) ──
-    _unique_districts: set[str | None] = set()
+    # Map normalized key → first raw district string seen, so _estimate_rent_sar_m2_year
+    # receives the raw value (matching the scoring loop contract — the aqar fallback
+    # inside that function matches on the raw/display district string, not the
+    # normalized key).
+    _norm_to_raw: dict[str | None, str | None] = {}
     for _r in rows:
         _d = _r.get("district")
         _dn = normalize_district_key(_d) if _d else None
-        _unique_districts.add(_dn)
+        if _dn not in _norm_to_raw:
+            _norm_to_raw[_dn] = _d
     rent_cache: dict[str | None, tuple[float, str]] = {}
-    for _dk in _unique_districts:
+    for _dk, _raw_d in _norm_to_raw.items():
         try:
-            rent_cache[_dk] = _estimate_rent_sar_m2_year(db, _dk)
+            rent_cache[_dk] = _estimate_rent_sar_m2_year(db, _raw_d)
         except Exception:
             logger.debug("rent pre-warm failed for district=%s", _dk, exc_info=True)
     t_rent_prewarm_done = time.monotonic()
