@@ -335,6 +335,24 @@ def _cached_ea_table_has_rows(db: Session, table_name: str) -> bool:
     return _table_avail_cache[cache_key]
 
 
+def _cached_column_exists(db: Session, table_name: str, column_name: str) -> bool:
+    """Check whether *column_name* exists on *table_name*, cached per process."""
+    cache_key = f"col:{table_name}.{column_name}"
+    if cache_key not in _table_avail_cache:
+        try:
+            result = db.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = :tbl AND column_name = :col LIMIT 1"
+                ),
+                {"tbl": table_name, "col": column_name},
+            ).scalar()
+            _table_avail_cache[cache_key] = result is not None
+        except Exception:
+            _table_avail_cache[cache_key] = False
+    return _table_avail_cache[cache_key]
+
+
 def clear_expansion_caches() -> None:
     """Clear all in-process caches. Call between requests or in tests."""
     _district_lookup_cache.clear()
@@ -2363,9 +2381,6 @@ def run_expansion_search(
             f" END"
         )
 
-    _SAFE_DSR_GEO = _safe_geo("dsr")
-    _SAFE_PD_GEO = _safe_geo("pd")
-
     # Predicate fragment: only rows with valid numeric coords participate.
     def _safe_coord_where(alias: str) -> str:
         lon_text = _coord_text(alias, "lon")
@@ -2375,8 +2390,25 @@ def run_expansion_search(
             f" AND NULLIF({lat_text}, '') ~ {_COORD_REGEX}"
         )
 
-    _SAFE_DSR_COORD_WHERE = _safe_coord_where("dsr")
-    _SAFE_PD_COORD_WHERE = _safe_coord_where("pd")
+    # When the Patch-5 migration has been applied, delivery_source_record and
+    # population_density have a pre-computed + indexed `geom` column.  Use it
+    # directly instead of the expensive regex-validate-cast-construct pattern.
+    _dsr_has_geom = _cached_column_exists(db, "delivery_source_record", "geom")
+    _pd_has_geom = _cached_column_exists(db, "population_density", "geom")
+
+    if _dsr_has_geom:
+        _SAFE_DSR_GEO = "dsr.geom::geography"
+        _SAFE_DSR_COORD_WHERE = "dsr.geom IS NOT NULL"
+    else:
+        _SAFE_DSR_GEO = _safe_geo("dsr")
+        _SAFE_DSR_COORD_WHERE = _safe_coord_where("dsr")
+
+    if _pd_has_geom:
+        _SAFE_PD_GEO = "pd.geom::geography"
+        _SAFE_PD_COORD_WHERE = "pd.geom IS NOT NULL"
+    else:
+        _SAFE_PD_GEO = _safe_geo("pd")
+        _SAFE_PD_COORD_WHERE = _safe_coord_where("pd")
 
     # SQL-safe landuse_code ordering: landuse_code is numeric in production,
     # so compare directly — no BTRIM/CAST/regex on landuse_code.
@@ -2389,7 +2421,18 @@ def run_expansion_search(
         " ELSE 1 END"
     )
 
-    def _build_candidate_sql(district_filter_sql: str, *, stratified: bool = False) -> text:
+    def _build_candidate_sql(
+        district_filter_sql: str,
+        *,
+        stratified: bool = False,
+        skip_delivery: bool = False,
+    ) -> text:
+        """Build candidate query using LATERAL JOINs for enrichment.
+
+        When *skip_delivery* is True the 4 delivery columns return constant 0
+        — the caller will fill real values via bulk EA delivery enrichment,
+        avoiding ~2 400 full seq-scans of delivery_source_record.
+        """
         # Compute a landuse_priority integer in the base CTE so the
         # stratified window and final ORDER BY can reference it without
         # repeating the CASE on the raw column with p. alias.
@@ -2478,6 +2521,79 @@ def run_expansion_search(
             )
             """
 
+        # ── Enrichment via LATERAL JOINs (replaces 6 correlated subqueries) ──
+
+        # Population: single LATERAL join
+        _POP_LATERAL = f"""
+        LEFT JOIN LATERAL (
+            SELECT COALESCE(SUM(pd.population), 0) AS population_reach
+            FROM population_density pd
+            WHERE {_SAFE_PD_COORD_WHERE}
+              AND ST_DWithin(
+                  ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                  {_SAFE_PD_GEO},
+                  :demand_radius_m
+              )
+        ) pop ON TRUE
+        """
+
+        # Competitor: single LATERAL join
+        _COMP_LATERAL = f"""
+        LEFT JOIN LATERAL (
+            SELECT COALESCE(COUNT(*), 0) AS competitor_count
+            FROM restaurant_poi rp
+            WHERE lower(rp.category) = ANY(:category_keys)
+              AND ST_DWithin(
+                  rp.geom::geography,
+                  ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                  :competition_radius_m
+              )
+        ) comp ON TRUE
+        """
+
+        # Delivery: skip (return 0s) or single merged LATERAL (replaces 4 subqueries)
+        if skip_delivery:
+            _DEL_LATERAL = ""
+            _DEL_COLUMNS = (
+                "0 AS delivery_listing_count,\n"
+                "            0 AS provider_listing_count,\n"
+                "            0 AS provider_platform_count,\n"
+                "            0 AS delivery_competition_count"
+            )
+        else:
+            _DEL_LATERAL = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE (lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
+                               OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex)
+                          AND ST_DWithin(
+                              {_SAFE_DSR_GEO},
+                              ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                              :demand_radius_m)
+                    ) AS delivery_listing_count,
+                    COUNT(*) AS provider_listing_count,
+                    COUNT(DISTINCT lower(COALESCE(dsr.platform, 'unknown'))) AS provider_platform_count,
+                    COUNT(*) FILTER (
+                        WHERE lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
+                           OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
+                    ) AS delivery_competition_count
+                FROM delivery_source_record dsr
+                WHERE {_SAFE_DSR_COORD_WHERE}
+                  AND ST_DWithin(
+                      {_SAFE_DSR_GEO},
+                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                      :provider_radius_m
+                  )
+            ) del ON TRUE
+            """
+            _DEL_COLUMNS = (
+                "COALESCE(del.delivery_listing_count, 0) AS delivery_listing_count,\n"
+                "            COALESCE(del.provider_listing_count, 0) AS provider_listing_count,\n"
+                "            COALESCE(del.provider_platform_count, 0) AS provider_platform_count,\n"
+                "            COALESCE(del.delivery_competition_count, 0) AS delivery_competition_count"
+            )
+
         return text(
             f"""
         {_CANDIDATE_CTE}
@@ -2489,83 +2605,97 @@ def run_expansion_search(
             b.lon,
             b.lat,
             b.district,
-            COALESCE((
-                SELECT SUM(pd.population)
-                FROM population_density pd
-                WHERE {_SAFE_PD_COORD_WHERE}
-                  AND ST_DWithin(
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      {_SAFE_PD_GEO},
-                      :demand_radius_m
-                  )
-            ), 0) AS population_reach,
-            COALESCE((
-                SELECT COUNT(*)
-                FROM restaurant_poi rp
-                WHERE lower(rp.category) = ANY(:category_keys)
-                  AND ST_DWithin(
-                      rp.geom::geography,
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      :competition_radius_m
-                  )
-            ), 0) AS competitor_count,
-            COALESCE((
-                SELECT COUNT(*)
-                FROM delivery_source_record dsr
-                WHERE {_SAFE_DSR_COORD_WHERE}
-                  AND (
-                    lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
-                    OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
-                  )
-                  AND ST_DWithin(
-                      {_SAFE_DSR_GEO},
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      :demand_radius_m
-                  )
-            ), 0) AS delivery_listing_count,
-            COALESCE((
-                SELECT COUNT(*)
-                FROM delivery_source_record dsr
-                WHERE {_SAFE_DSR_COORD_WHERE}
-                  AND ST_DWithin(
-                      {_SAFE_DSR_GEO},
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      :provider_radius_m
-                  )
-            ), 0) AS provider_listing_count,
-            COALESCE((
-                SELECT COUNT(DISTINCT lower(COALESCE(dsr.platform, 'unknown')))
-                FROM delivery_source_record dsr
-                WHERE {_SAFE_DSR_COORD_WHERE}
-                  AND ST_DWithin(
-                      {_SAFE_DSR_GEO},
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      :provider_radius_m
-                  )
-            ), 0) AS provider_platform_count,
-            COALESCE((
-                SELECT COUNT(*)
-                FROM delivery_source_record dsr
-                WHERE {_SAFE_DSR_COORD_WHERE}
-                  AND (
-                    lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
-                    OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
-                  )
-                  AND ST_DWithin(
-                      {_SAFE_DSR_GEO},
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      :provider_radius_m
-                  )
-            ), 0) AS delivery_competition_count
+            COALESCE(pop.population_reach, 0) AS population_reach,
+            COALESCE(comp.competitor_count, 0) AS competitor_count,
+            {_DEL_COLUMNS}
         FROM candidate_base b
+        {_POP_LATERAL}
+        {_COMP_LATERAL}
+        {_DEL_LATERAL}
         """
         )
 
-    def _build_candidate_sql_no_district() -> text:
+    def _build_candidate_sql_no_district(*, skip_delivery: bool = False) -> text:
         """Last-resort candidate query that skips the external_feature district
         subselect entirely.  Used when ST_GeomFromGeoJSON fails on corrupt
         geometry data so the search can still return results (without district
-        labels)."""
+        labels).
+
+        Uses LATERAL JOINs for enrichment and supports *skip_delivery* to
+        avoid expensive delivery_source_record scans when bulk EA delivery
+        enrichment is available.
+        """
+        # ── Population LATERAL ──
+        _POP_LATERAL = f"""
+        LEFT JOIN LATERAL (
+            SELECT COALESCE(SUM(pd.population), 0) AS population_reach
+            FROM population_density pd
+            WHERE {_SAFE_PD_COORD_WHERE}
+              AND ST_DWithin(
+                  ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                  {_SAFE_PD_GEO},
+                  :demand_radius_m
+              )
+        ) pop ON TRUE
+        """
+
+        # ── Competitor LATERAL ──
+        _COMP_LATERAL = f"""
+        LEFT JOIN LATERAL (
+            SELECT COALESCE(COUNT(*), 0) AS competitor_count
+            FROM restaurant_poi rp
+            WHERE lower(rp.category) = ANY(:category_keys)
+              AND ST_DWithin(
+                  rp.geom::geography,
+                  ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                  :competition_radius_m
+              )
+        ) comp ON TRUE
+        """
+
+        # ── Delivery: skip or merged LATERAL ──
+        if skip_delivery:
+            _DEL_LATERAL = ""
+            _DEL_COLUMNS = (
+                "0 AS delivery_listing_count,\n"
+                "            0 AS provider_listing_count,\n"
+                "            0 AS provider_platform_count,\n"
+                "            0 AS delivery_competition_count"
+            )
+        else:
+            _DEL_LATERAL = f"""
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE (lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
+                               OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex)
+                          AND ST_DWithin(
+                              {_SAFE_DSR_GEO},
+                              ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                              :demand_radius_m)
+                    ) AS delivery_listing_count,
+                    COUNT(*) AS provider_listing_count,
+                    COUNT(DISTINCT lower(COALESCE(dsr.platform, 'unknown'))) AS provider_platform_count,
+                    COUNT(*) FILTER (
+                        WHERE lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
+                           OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
+                    ) AS delivery_competition_count
+                FROM delivery_source_record dsr
+                WHERE {_SAFE_DSR_COORD_WHERE}
+                  AND ST_DWithin(
+                      {_SAFE_DSR_GEO},
+                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
+                      :provider_radius_m
+                  )
+            ) del ON TRUE
+            """
+            _DEL_COLUMNS = (
+                "COALESCE(del.delivery_listing_count, 0) AS delivery_listing_count,\n"
+                "            COALESCE(del.provider_listing_count, 0) AS provider_listing_count,\n"
+                "            COALESCE(del.provider_platform_count, 0) AS provider_platform_count,\n"
+                "            COALESCE(del.delivery_competition_count, 0) AS delivery_competition_count"
+            )
+
         return text(
             f"""
         WITH candidate_base AS (
@@ -2601,75 +2731,13 @@ def run_expansion_search(
             b.lon,
             b.lat,
             b.district,
-            COALESCE((
-                SELECT SUM(pd.population)
-                FROM population_density pd
-                WHERE {_SAFE_PD_COORD_WHERE}
-                  AND ST_DWithin(
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      {_SAFE_PD_GEO},
-                      :demand_radius_m
-                  )
-            ), 0) AS population_reach,
-            COALESCE((
-                SELECT COUNT(*)
-                FROM restaurant_poi rp
-                WHERE lower(rp.category) = ANY(:category_keys)
-                  AND ST_DWithin(
-                      rp.geom::geography,
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      :competition_radius_m
-                  )
-            ), 0) AS competitor_count,
-            COALESCE((
-                SELECT COUNT(*)
-                FROM delivery_source_record dsr
-                WHERE {_SAFE_DSR_COORD_WHERE}
-                  AND (
-                    lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
-                    OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
-                  )
-                  AND ST_DWithin(
-                      {_SAFE_DSR_GEO},
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      :demand_radius_m
-                  )
-            ), 0) AS delivery_listing_count,
-            COALESCE((
-                SELECT COUNT(*)
-                FROM delivery_source_record dsr
-                WHERE {_SAFE_DSR_COORD_WHERE}
-                  AND ST_DWithin(
-                      {_SAFE_DSR_GEO},
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      :provider_radius_m
-                  )
-            ), 0) AS provider_listing_count,
-            COALESCE((
-                SELECT COUNT(DISTINCT lower(COALESCE(dsr.platform, 'unknown')))
-                FROM delivery_source_record dsr
-                WHERE {_SAFE_DSR_COORD_WHERE}
-                  AND ST_DWithin(
-                      {_SAFE_DSR_GEO},
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      :provider_radius_m
-                  )
-            ), 0) AS provider_platform_count,
-            COALESCE((
-                SELECT COUNT(*)
-                FROM delivery_source_record dsr
-                WHERE {_SAFE_DSR_COORD_WHERE}
-                  AND (
-                    lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
-                    OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
-                  )
-                  AND ST_DWithin(
-                      {_SAFE_DSR_GEO},
-                      ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
-                      :provider_radius_m
-                  )
-            ), 0) AS delivery_competition_count
+            COALESCE(pop.population_reach, 0) AS population_reach,
+            COALESCE(comp.competitor_count, 0) AS competitor_count,
+            {_DEL_COLUMNS}
         FROM candidate_base b
+        {_POP_LATERAL}
+        {_COMP_LATERAL}
+        {_DEL_LATERAL}
         """
         )
 
@@ -2724,6 +2792,10 @@ def run_expansion_search(
     for i, td_val in enumerate(sorted(target_district_norm)):
         sql_params[f"td_{i}"] = td_val.lower()
 
+    # Pre-check EA delivery table so we can skip expensive delivery subqueries
+    # when bulk enrichment will overwrite them anyway (Patch 1 optimisation).
+    ea_delivery_populated = _cached_ea_table_has_rows(db, _EA_DELIVERY_TABLE)
+
     # Execute candidate query with district SQL filter fallback.
     # If district filter is active and the query fails (e.g. malformed
     # external_feature GeoJSON), retry once without the SQL pushdown.
@@ -2734,7 +2806,11 @@ def run_expansion_search(
     if district_sql_used:
         try:
             with db.begin_nested():
-                sql = _build_candidate_sql(_build_district_filter_sql(target_district_norm), stratified=False)
+                sql = _build_candidate_sql(
+                    _build_district_filter_sql(target_district_norm),
+                    stratified=False,
+                    skip_delivery=ea_delivery_populated,
+                )
                 rows = db.execute(sql, sql_params).mappings().all()
         except Exception as exc:
             logger.warning(
@@ -2752,7 +2828,11 @@ def run_expansion_search(
     if rows is None:
         try:
             with db.begin_nested():
-                sql = _build_candidate_sql("", stratified=is_city_wide)
+                sql = _build_candidate_sql(
+                    "",
+                    stratified=is_city_wide,
+                    skip_delivery=ea_delivery_populated,
+                )
                 rows = db.execute(sql, sql_params).mappings().all()
         except Exception:
             logger.warning(
@@ -2769,7 +2849,9 @@ def run_expansion_search(
     if rows is None:
         try:
             with db.begin_nested():
-                sql = _build_candidate_sql_no_district()
+                sql = _build_candidate_sql_no_district(
+                    skip_delivery=ea_delivery_populated,
+                )
                 rows = db.execute(sql, sql_params).mappings().all()
             logger.info(
                 "Expansion search used last-resort query (no district labeling): "
@@ -2808,12 +2890,11 @@ def run_expansion_search(
 
     candidates: list[dict[str, Any]] = []
     prepared: list[dict[str, Any]] = []
-    rent_cache: dict[str | None, tuple[float, str]] = {}
     district_lookup = _cached_district_lookup(db)
     # Check normalized Expansion Advisor tables first, then legacy OSM tables
     ea_roads_populated = _cached_ea_table_has_rows(db, _EA_ROADS_TABLE)
     ea_parking_populated = _cached_ea_table_has_rows(db, _EA_PARKING_TABLE)
-    ea_delivery_populated = _cached_ea_table_has_rows(db, _EA_DELIVERY_TABLE)
+    # ea_delivery_populated already resolved before candidate query (Patch 1).
     ea_competitor_populated = _cached_ea_table_has_rows(db, _EA_COMPETITOR_TABLE)
     roads_table_available = ea_roads_populated or _cached_table_available(db, "public.planet_osm_line")
     parking_table_available = ea_parking_populated or _cached_table_available(db, "public.planet_osm_polygon")
@@ -2877,6 +2958,25 @@ def run_expansion_search(
         "expansion_search timing: delivery_enrichment=%.2fs search_id=%s",
         t_delivery_enrich_done - t_query_done, search_id,
     )
+
+    # ── Pre-warm rent cache for all districts (avoids N serial DB calls in scoring loop) ──
+    _unique_districts: set[str | None] = set()
+    for _r in rows:
+        _d = _r.get("district")
+        _dn = normalize_district_key(_d) if _d else None
+        _unique_districts.add(_dn)
+    rent_cache: dict[str | None, tuple[float, str]] = {}
+    for _dk in _unique_districts:
+        try:
+            rent_cache[_dk] = _estimate_rent_sar_m2_year(db, _dk)
+        except Exception:
+            logger.debug("rent pre-warm failed for district=%s", _dk, exc_info=True)
+    t_rent_prewarm_done = time.monotonic()
+    logger.info(
+        "expansion_search timing: rent_prewarm=%.2fs districts=%d search_id=%s",
+        t_rent_prewarm_done - t_delivery_enrich_done, len(_unique_districts), search_id,
+    )
+
     for row in rows:
       try:
         area_m2 = _safe_float(row.get("area_m2"))
