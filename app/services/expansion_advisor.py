@@ -3175,7 +3175,7 @@ def run_expansion_search(
     t_coarse_done = time.monotonic()
 
     prepared.sort(key=lambda item: item["preliminary_final_score"], reverse=True)
-    shortlist_size = min(len(prepared), max(limit, 50))
+    shortlist_size = min(len(prepared), max(limit, 25))
 
     # ── Bulk spatial queries for feature snapshot (replaces per-candidate N+1) ──
     _shortlist_parcel_ids = [
@@ -3189,6 +3189,7 @@ def run_expansion_search(
 
     if _shortlist_parcel_ids:
         # ── Bulk perimeter ──
+        t_perim_start = time.monotonic()
         try:
             _perim_values = ", ".join(f"(:pid_{i})" for i in range(len(_shortlist_parcel_ids)))
             _perim_params = {f"pid_{i}": pid for i, pid in enumerate(_shortlist_parcel_ids)}
@@ -3209,8 +3210,12 @@ def run_expansion_search(
                         len(_bulk_perimeter), len(_shortlist_parcel_ids), search_id)
         except Exception:
             logger.debug("expansion_search bulk perimeter failed, falling back to per-candidate", exc_info=True)
+        t_perim_done = time.monotonic()
+        logger.info("expansion_search timing: bulk_perimeter=%.2fs search_id=%s",
+                     t_perim_done - t_perim_start, search_id)
 
         # ── Bulk roads ──
+        t_roads_start = time.monotonic()
         _roads_source_table = None
         _roads_query = None
         if ea_roads_populated:
@@ -3289,8 +3294,12 @@ def run_expansion_search(
                             len(_bulk_roads), len(_shortlist_parcel_ids), search_id)
             except Exception:
                 logger.debug("expansion_search bulk roads failed, falling back to per-candidate", exc_info=True)
+        t_roads_done = time.monotonic()
+        logger.info("expansion_search timing: bulk_roads=%.2fs search_id=%s",
+                     t_roads_done - t_roads_start, search_id)
 
         # ── Bulk parking ──
+        t_parking_start = time.monotonic()
         _parking_query = None
         if ea_parking_populated:
             _parking_query = f"""
@@ -3333,8 +3342,12 @@ def run_expansion_search(
                             len(_bulk_parking), len(_shortlist_parcel_ids), search_id)
             except Exception:
                 logger.debug("expansion_search bulk parking failed, falling back to per-candidate", exc_info=True)
+        t_parking_done = time.monotonic()
+        logger.info("expansion_search timing: bulk_parking=%.2fs search_id=%s",
+                     t_parking_done - t_parking_start, search_id)
 
     _bulk_competitors: dict[str, list[dict[str, Any]]] = {}
+    t_comp_start = time.monotonic()
     if _shortlist_parcel_ids:
         _comp_source = "expansion_competitor_quality" if ea_competitor_populated else "restaurant_poi"
         try:
@@ -3413,12 +3426,11 @@ def run_expansion_search(
                             len(_bulk_competitors), len(_shortlist_parcel_ids), search_id)
         except Exception:
             logger.warning("expansion_search bulk competitors failed, falling back to per-candidate", exc_info=True)
+    t_comp_done = time.monotonic()
+    logger.info("expansion_search timing: bulk_competitors=%.2fs search_id=%s",
+                 t_comp_done - t_comp_start, search_id)
 
     t_bulk_enrich_done = time.monotonic()
-    logger.info(
-        "expansion_search timing: bulk_enrichment=%.2fs search_id=%s",
-        t_bulk_enrich_done - t_coarse_done, search_id,
-    )
 
     for prepared_item in prepared[:shortlist_size]:
       try:
