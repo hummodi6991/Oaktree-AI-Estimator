@@ -10,14 +10,14 @@ in production you may prefer to run the CONCURRENTLY variant outside of
 Alembic to avoid holding an ACCESS EXCLUSIVE lock.
 
 Revision ID: 20260322_ea_geog_gist
-Revises: merge_exp_adv_heads_20260315
+Revises: 20260322_geom_indexes_dsr_pop
 Create Date: 2026-03-22
 """
 
 from alembic import op
 
 revision = "20260322_ea_geog_gist"
-down_revision = "merge_exp_adv_heads_20260315"
+down_revision = "20260322_geom_indexes_dsr_pop"
 branch_labels = None
 depends_on = None
 
