@@ -696,7 +696,7 @@ def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch
 
     assert len(items) == 10
     assert table_calls == ["public.planet_osm_line", "public.planet_osm_polygon"]
-    assert snapshot_calls == 50
+    assert snapshot_calls == 25
 
 
 def test_feature_snapshot_queries_road_and_parking_independently():
