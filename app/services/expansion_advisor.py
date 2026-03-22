@@ -2979,7 +2979,7 @@ def run_expansion_search(
     t_rent_prewarm_done = time.monotonic()
     logger.info(
         "expansion_search timing: rent_prewarm=%.2fs districts=%d search_id=%s",
-        t_rent_prewarm_done - t_delivery_enrich_done, len(_unique_districts), search_id,
+        t_rent_prewarm_done - t_delivery_enrich_done, len(_norm_to_raw), search_id,
     )
 
     for row in rows:
