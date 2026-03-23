@@ -164,7 +164,7 @@ def run_platform_scrape(
     db: Session,
     platform: str,
     *,
-    max_pages: int = 1000,
+    max_pages: int = 5000,
     run_resolver: bool = True,
 ) -> dict[str, Any]:
     """
@@ -379,7 +379,7 @@ def _log_platform_summary(
 def run_all_platforms(
     db: Session | None = None,
     *,
-    max_pages: int = 1000,
+    max_pages: int = 5000,
     platforms: list[str] | None = None,
     run_resolver: bool = True,
 ) -> list[dict[str, Any]]:
