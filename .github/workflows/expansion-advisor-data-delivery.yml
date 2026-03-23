@@ -12,7 +12,7 @@ on:
       max_pages:
         description: "Max pages per platform during scrape"
         required: false
-        default: "1000"
+        default: "5000"
       allow_empty:
         description: "Allow zero rows without failing"
         required: false
@@ -25,7 +25,7 @@ on:
 jobs:
   ingest-delivery:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -56,7 +56,7 @@ jobs:
         run: |
           python -m app.ingest.expansion_advisor_delivery \
             --platforms "${{ github.event.inputs.platforms || 'hungerstation,jahez,keeta,talabat,mrsool' }}" \
-            --max-pages ${{ github.event.inputs.max_pages || '1000' }} \
+            --max-pages ${{ github.event.inputs.max_pages || '5000' }} \
             --write-stats /tmp/delivery-stats.json \
             ${{ github.event.inputs.allow_empty == 'true' && '--allow-empty' || '' }}
 
