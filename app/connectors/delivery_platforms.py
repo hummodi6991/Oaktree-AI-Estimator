@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass, field, asdict
+import gzip
 import json
 import logging
 import re
@@ -163,13 +164,33 @@ def _parse_sitemap(url: str) -> list[str]:
 
     urls: list[str] = []
     try:
-        root = ET.fromstring(resp.text)
+        # Handle gzipped sitemaps (.xml.gz files served as raw gzip)
+        if url.endswith(".gz"):
+            try:
+                xml_bytes = gzip.decompress(resp.content)
+                xml_text = xml_bytes.decode("utf-8", errors="replace")
+            except Exception as exc:
+                logger.warning("Failed to decompress gzipped sitemap %s: %s", url, exc)
+                # Fall back to resp.text in case the server already decompressed it
+                xml_text = resp.text
+        else:
+            xml_text = resp.text
+
+        root = ET.fromstring(xml_text)
         ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
         for loc in root.findall(".//sm:loc", ns):
             if loc.text:
                 urls.append(loc.text.strip())
     except ET.ParseError as exc:
         logger.warning("Failed to parse sitemap XML %s: %s", url, exc)
+
+    # Diagnostic: log sample URLs to help debug URL pattern issues
+    if urls:
+        sample = urls[:3]
+        logger.info("Sitemap %s returned %d URLs, samples: %s", url, len(urls), sample)
+    else:
+        logger.info("Sitemap %s returned 0 URLs", url)
+
     return urls
 
 
@@ -1044,47 +1065,20 @@ def scrape_hungerstation_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any
 def scrape_talabat_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Talabat for Riyadh.
-    Talabat robots.txt has no restrictions.
+    Talabat operates across MENA — uses riyadh_filter to select
+    only Riyadh-area restaurants from the KSA portion of the sitemap.
+    Uses multi-strategy discovery to handle sitemap index expansion.
     """
-    sitemap_url = "https://www.talabat.com/sitemap/sitemap.xml.gz"
-    logger.info("Fetching Talabat sitemap: %s", sitemap_url)
-
-    sitemap_urls = _parse_sitemap(sitemap_url)
-    restaurant_urls = [
-        u for u in sitemap_urls
-        if "/saudi-arabia/" in u.lower() or "/sa/" in u.lower()
-    ]
-
-    logger.info("Found %d Saudi restaurant URLs from Talabat", len(restaurant_urls))
-
-    count = 0
-    for url in restaurant_urls[:max_pages]:
-        resp = _safe_get(url, crawl_delay=2.0)
-        if not resp:
-            continue
-
-        slug = urlparse(url).path.rstrip("/").split("/")[-1]
-        page_data = _extract_page_data(resp.text, url, "talabat")
-        name = page_data.get("name") or _slug_to_name(slug)
-
-        yield {
-            "id": f"talabat:{slug}",
-            "name": name,
-            "source": "talabat",
-            "source_url": url,
-            "lat": page_data.get("lat"),
-            "lon": page_data.get("lon"),
-            "category_raw": page_data.get("category_raw"),
-            "rating": page_data.get("rating"),
-            "rating_count": page_data.get("rating_count"),
-            "address_raw": page_data.get("address_raw"),
-            "district_text": page_data.get("district_text"),
-            "phone_raw": page_data.get("phone_raw"),
-            "_html_extracted": bool(page_data.get("name")),
-        }
-        count += 1
-
-    logger.info("Scraped %d restaurants from Talabat", count)
+    yield from _generic_sitemap_scrape(
+        source="talabat",
+        sitemap_url="https://www.talabat.com/sitemap/sitemap.xml.gz",
+        url_filter=None,  # Don't filter by URL pattern — let riyadh_filter handle geo
+        riyadh_filter=False,  # Talabat URLs may not contain "riyadh" — filter by coordinates downstream
+        crawl_delay=2.0,
+        max_pages=max_pages,
+        multi_strategy=True,
+        base_url="https://www.talabat.com",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1095,47 +1089,20 @@ def scrape_talabat_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
 def scrape_mrsool_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Mrsool for Riyadh.
-    Mrsool robots.txt only blocks /wp-admin/.
+    Mrsool is Saudi-only so riyadh_filter is disabled — all restaurants
+    are Saudi. Coordinate-based filtering happens during delivery enrichment.
+    Uses multi-strategy discovery to handle sitemap index expansion.
     """
-    sitemap_url = "https://mrsool.co/sitemap.xml"
-    logger.info("Fetching Mrsool sitemap: %s", sitemap_url)
-
-    sitemap_urls = _parse_sitemap(sitemap_url)
-    restaurant_urls = [
-        u for u in sitemap_urls
-        if "restaurant" in u.lower() or "riyadh" in u.lower()
-    ]
-
-    logger.info("Found %d restaurant URLs from Mrsool", len(restaurant_urls))
-
-    count = 0
-    for url in restaurant_urls[:max_pages]:
-        resp = _safe_get(url, crawl_delay=2.0)
-        if not resp:
-            continue
-
-        slug = urlparse(url).path.rstrip("/").split("/")[-1]
-        page_data = _extract_page_data(resp.text, url, "mrsool")
-        name = page_data.get("name") or _slug_to_name(slug)
-
-        yield {
-            "id": f"mrsool:{slug}",
-            "name": name,
-            "source": "mrsool",
-            "source_url": url,
-            "lat": page_data.get("lat"),
-            "lon": page_data.get("lon"),
-            "category_raw": page_data.get("category_raw"),
-            "rating": page_data.get("rating"),
-            "rating_count": page_data.get("rating_count"),
-            "address_raw": page_data.get("address_raw"),
-            "district_text": page_data.get("district_text"),
-            "phone_raw": page_data.get("phone_raw"),
-            "_html_extracted": bool(page_data.get("name")),
-        }
-        count += 1
-
-    logger.info("Scraped %d restaurants from Mrsool", count)
+    yield from _generic_sitemap_scrape(
+        source="mrsool",
+        sitemap_url="https://mrsool.co/sitemap.xml",
+        url_filter=None,  # Mrsool URLs don't contain "restaurant" — be permissive
+        riyadh_filter=False,  # Saudi-only platform, no city in URL — filter by coordinates downstream
+        crawl_delay=2.0,
+        max_pages=max_pages,
+        multi_strategy=True,
+        base_url="https://mrsool.co",
+    )
 
 
 # ---------------------------------------------------------------------------
