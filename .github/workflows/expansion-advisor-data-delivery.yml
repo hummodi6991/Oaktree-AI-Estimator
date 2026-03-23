@@ -12,7 +12,7 @@ on:
       max_pages:
         description: "Max pages per platform during scrape"
         required: false
-        default: "200"
+        default: "1000"
       allow_empty:
         description: "Allow zero rows without failing"
         required: false
@@ -56,7 +56,7 @@ jobs:
         run: |
           python -m app.ingest.expansion_advisor_delivery \
             --platforms "${{ github.event.inputs.platforms || 'hungerstation,jahez,keeta,talabat,mrsool' }}" \
-            --max-pages ${{ github.event.inputs.max_pages || '200' }} \
+            --max-pages ${{ github.event.inputs.max_pages || '1000' }} \
             --write-stats /tmp/delivery-stats.json \
             ${{ github.event.inputs.allow_empty == 'true' && '--allow-empty' || '' }}
 
