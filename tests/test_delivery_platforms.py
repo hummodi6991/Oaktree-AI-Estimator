@@ -135,7 +135,7 @@ class TestDiscoverSitemaps:
         # Configured and robots both fail; common path succeeds
         call_count = 0
 
-        def side_effect(url):
+        def side_effect(url, **kwargs):
             nonlocal call_count
             call_count += 1
             if "sitemap_index.xml" in url:
