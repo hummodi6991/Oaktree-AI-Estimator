@@ -39,6 +39,11 @@ from app.connectors.open_data import robots_allows
 logger = logging.getLogger(__name__)
 
 _UA = "oaktree-estimator/1.0 (+https://github.com/hummodi6991/Oaktree-AI-Estimator)"
+_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
 _DEFAULT_TIMEOUT = 45
 _MAX_RETRIES = 4
 _BACKOFF_BASE = 2.0  # seconds; retry delays: 2, 4, 8, 16
@@ -101,6 +106,7 @@ def _fetch_with_retries(
     url: str,
     *,
     timeout: float = _DEFAULT_TIMEOUT,
+    user_agent: str = _UA,
 ) -> httpx.Response | None:
     """GET with exponential-backoff retries.  Does NOT check robots.txt.
 
@@ -114,7 +120,7 @@ def _fetch_with_retries(
             r = httpx.get(
                 url,
                 timeout=timeout,
-                headers={"User-Agent": _UA},
+                headers={"User-Agent": user_agent},
                 follow_redirects=True,
             )
             r.raise_for_status()
@@ -156,9 +162,9 @@ def _requires_js(resp: httpx.Response) -> bool:
     return any(tag in body for tag in js_only_markers)
 
 
-def _parse_sitemap(url: str) -> list[str]:
+def _parse_sitemap(url: str, user_agent: str = _UA) -> list[str]:
     """Fetch and parse a sitemap XML, returning all <loc> URLs."""
-    resp = _fetch_with_retries(url)
+    resp = _fetch_with_retries(url, user_agent=user_agent)
     if resp is None:
         return []
 
@@ -224,7 +230,7 @@ class DiscoveryStats:
         return asdict(self)
 
 
-def _extract_sitemap_hints_from_robots(base_url: str) -> list[str]:
+def _extract_sitemap_hints_from_robots(base_url: str, user_agent: str = _UA) -> list[str]:
     """Parse robots.txt for ``Sitemap:`` directives.
 
     Returns sitemap URLs advertised in the robots.txt of *base_url*.
@@ -232,7 +238,7 @@ def _extract_sitemap_hints_from_robots(base_url: str) -> list[str]:
     """
     parsed = urlparse(base_url)
     robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
-    resp = _fetch_with_retries(robots_url, timeout=10)
+    resp = _fetch_with_retries(robots_url, timeout=10, user_agent=user_agent)
     if resp is None:
         return []
     hints: list[str] = []
@@ -249,6 +255,7 @@ def _discover_sitemaps(
     base_url: str,
     configured_sitemap: str,
     alternate_paths: tuple[str, ...] = _COMMON_SITEMAP_PATHS,
+    user_agent: str = _UA,
 ) -> tuple[list[str], DiscoveryStats]:
     """Multi-strategy sitemap discovery.
 
@@ -265,7 +272,7 @@ def _discover_sitemaps(
 
     def _try_url(url: str, label: str) -> list[str]:
         stats.discovery_attempts.append({"url": url, "strategy": label})
-        urls = _parse_sitemap(url)
+        urls = _parse_sitemap(url, user_agent=user_agent)
         if urls:
             logger.info("Discovery [%s]: %s yielded %d entries", label, url, len(urls))
         else:
@@ -276,17 +283,17 @@ def _discover_sitemaps(
     all_urls = _try_url(configured_sitemap, "configured")
     if all_urls:
         stats.discovery_success_path = "configured"
-        return _expand_sitemap_index(all_urls, stats), stats
+        return _expand_sitemap_index(all_urls, stats, user_agent=user_agent), stats
 
     # Strategy 2 — robots.txt Sitemap: hints
-    hints = _extract_sitemap_hints_from_robots(base_url)
+    hints = _extract_sitemap_hints_from_robots(base_url, user_agent=user_agent)
     for hint in hints:
         found = _try_url(hint, "robots_hint")
         if found:
             all_urls.extend(found)
     if all_urls:
         stats.discovery_success_path = "robots_hint"
-        return _expand_sitemap_index(all_urls, stats), stats
+        return _expand_sitemap_index(all_urls, stats, user_agent=user_agent), stats
 
     # Strategy 3 — common alternate paths
     parsed = urlparse(base_url)
@@ -302,14 +309,14 @@ def _discover_sitemaps(
         if found:
             all_urls.extend(found)
             stats.discovery_success_path = f"common_path:{path}"
-            return _expand_sitemap_index(all_urls, stats), stats
+            return _expand_sitemap_index(all_urls, stats, user_agent=user_agent), stats
 
     # Nothing found
     stats.discovery_success_path = None
     return [], stats
 
 
-def _expand_sitemap_index(urls: list[str], stats: DiscoveryStats) -> list[str]:
+def _expand_sitemap_index(urls: list[str], stats: DiscoveryStats, user_agent: str = _UA) -> list[str]:
     """If *urls* look like a sitemap index (entries ending in .xml), expand them.
 
     Non-XML entries are passed through unchanged.
@@ -324,7 +331,7 @@ def _expand_sitemap_index(urls: list[str], stats: DiscoveryStats) -> list[str]:
 
     for idx_url in index_entries:
         try:
-            child_urls = _parse_sitemap(idx_url)
+            child_urls = _parse_sitemap(idx_url, user_agent=user_agent)
             expanded.extend(child_urls)
         except Exception as exc:
             stats.parse_failures += 1
@@ -335,13 +342,13 @@ def _expand_sitemap_index(urls: list[str], stats: DiscoveryStats) -> list[str]:
     return expanded
 
 
-def _safe_get(url: str, crawl_delay: float = 2.0) -> httpx.Response | None:
+def _safe_get(url: str, crawl_delay: float = 2.0, user_agent: str = _UA) -> httpx.Response | None:
     """GET a URL after checking robots.txt and respecting crawl delay."""
-    if not _robots_allows_cached(url, _UA):
+    if not _robots_allows_cached(url, user_agent):
         logger.debug("robots.txt disallows: %s", url)
         return None
     time.sleep(crawl_delay)
-    resp = _fetch_with_retries(url)
+    resp = _fetch_with_retries(url, user_agent=user_agent)
     if resp is None:
         return None
     if _requires_js(resp):
@@ -752,6 +759,7 @@ def _generic_sitemap_scrape(
     max_pages: int = 1000,
     multi_strategy: bool = False,
     base_url: str | None = None,
+    user_agent: str = _UA,
 ) -> Iterator[dict[str, Any]]:
     """Generic sitemap-based scraper used by multiple platforms.
 
@@ -767,11 +775,11 @@ def _generic_sitemap_scrape(
     if multi_strategy:
         assert base_url, "base_url is required when multi_strategy=True"
         logger.info("Running multi-strategy discovery for %s", source)
-        sitemap_urls, stats = _discover_sitemaps(base_url, sitemap_url)
+        sitemap_urls, stats = _discover_sitemaps(base_url, sitemap_url, user_agent=user_agent)
         stats.platform = source
     else:
         logger.info("Fetching %s sitemap: %s", source, sitemap_url)
-        sitemap_urls = _parse_sitemap(sitemap_url)
+        sitemap_urls = _parse_sitemap(sitemap_url, user_agent=user_agent)
         stats.discovery_attempts.append({"url": sitemap_url, "strategy": "configured"})
         if sitemap_urls:
             stats.discovery_success_path = "configured"
@@ -784,7 +792,7 @@ def _generic_sitemap_scrape(
             continue
         if u.endswith(".xml") or u.endswith(".xml.gz"):
             try:
-                restaurant_urls.extend(_parse_sitemap(u))
+                restaurant_urls.extend(_parse_sitemap(u, user_agent=user_agent))
             except Exception as exc:
                 shard_failures += 1
                 stats.parse_failures += 1
@@ -818,7 +826,7 @@ def _generic_sitemap_scrape(
             riyadh_filtered += 1
             continue
 
-        resp = _safe_get(u, crawl_delay=crawl_delay)
+        resp = _safe_get(u, crawl_delay=crawl_delay, user_agent=user_agent)
         if not resp:
             fetch_failed += 1
             continue
@@ -1125,6 +1133,7 @@ def scrape_jahez_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
         max_pages=max_pages,
         multi_strategy=True,
         base_url="https://www.jahez.net",
+        user_agent=_BROWSER_UA,
     )
 
 
@@ -1168,6 +1177,7 @@ def scrape_keeta_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
         max_pages=max_pages,
         multi_strategy=True,
         base_url="https://www.keeta.com",
+        user_agent=_BROWSER_UA,
     )
 
 
