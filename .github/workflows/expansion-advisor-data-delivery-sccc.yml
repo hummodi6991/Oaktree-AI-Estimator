@@ -1,0 +1,189 @@
+name: "Expansion Advisor Data — Delivery (SCCC)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Comma-separated platform list (blocked platforms that need Saudi IPs)"
+        required: false
+        default: "jahez,keeta"
+      max_pages:
+        description: "Max pages per platform during scrape"
+        required: false
+        default: "1000"
+      allow_empty:
+        description: "Allow zero rows without failing"
+        required: false
+        default: "true"
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  ALIBABA_REGION: ${{ vars.ALIBABA_REGION }}
+  ACK_CLUSTER_ID: ${{ vars.ACK_CLUSTER_ID }}
+
+jobs:
+  scrape-from-sccc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CLI tooling (aliyun, kubectl, jq)
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          curl -fsSL https://aliyuncli.alicdn.com/aliyun-cli-linux-latest-amd64.tgz -o aliyun.tgz
+          tar -xzf aliyun.tgz && sudo mv aliyun /usr/local/bin/aliyun
+          curl -L -o kubectl https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
+
+      - name: Configure Alibaba Cloud credentials
+        run: |
+          aliyun configure set \
+            --mode AK \
+            --access-key-id "${{ secrets.ALIBABA_ACCESS_KEY_ID }}" \
+            --access-key-secret "${{ secrets.ALIBABA_ACCESS_KEY_SECRET }}" \
+            --region "${{ env.ALIBABA_REGION }}"
+
+      - name: Get kubeconfig for ACK
+        run: |
+          aliyun cs DescribeClusterUserKubeconfig --RegionId "$ALIBABA_REGION" --ClusterId "$ACK_CLUSTER_ID" | jq -r '.config' > kubeconfig
+          echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
+
+      - name: Get current deployed image
+        id: img
+        run: |
+          IMAGE=$(kubectl get deployment oaktree-estimator -n default -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+          if [ -z "$IMAGE" ]; then
+            echo "::error::Could not determine deployed image. Is the app deployed?"
+            exit 1
+          fi
+          echo "Using image: $IMAGE"
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+      - name: Run delivery scraper as K8s Job
+        run: |
+          set -euo pipefail
+
+          PLATFORMS="${{ github.event.inputs.platforms || 'jahez,keeta' }}"
+          MAX_PAGES="${{ github.event.inputs.max_pages || '1000' }}"
+          ALLOW_EMPTY="${{ github.event.inputs.allow_empty || 'true' }}"
+
+          ALLOW_FLAG=""
+          if [ "$ALLOW_EMPTY" = "true" ]; then
+            ALLOW_FLAG="--allow-empty"
+          fi
+
+          JOB_NAME="delivery-scrape-sccc-$(date +%s)"
+
+          kubectl delete job -l app=delivery-scrape-sccc --ignore-not-found=true
+
+          cat > delivery-sccc-job.yml <<EOF
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB_NAME}
+            labels:
+              app: delivery-scrape-sccc
+          spec:
+            backoffLimit: 0
+            ttlSecondsAfterFinished: 7200
+            activeDeadlineSeconds: 5400
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: scraper
+                    image: ${{ steps.img.outputs.image }}
+                    command:
+                      - python
+                      - -m
+                      - app.ingest.expansion_advisor_delivery
+                      - --platforms
+                      - "${PLATFORMS}"
+                      - --max-pages
+                      - "${MAX_PAGES}"
+                      - --write-stats
+                      - /tmp/delivery-stats.json
+                      - ${ALLOW_FLAG}
+                    envFrom:
+                      - secretRef:
+                          name: oaktree-db-env
+                      - secretRef:
+                          name: oaktree-app-env
+                    resources:
+                      requests:
+                        memory: "512Mi"
+                        cpu: "250m"
+                      limits:
+                        memory: "1Gi"
+                        cpu: "500m"
+          EOF
+
+          kubectl apply -f delivery-sccc-job.yml
+
+          echo "Waiting for Job ${JOB_NAME} to complete (timeout 90m)..."
+          kubectl wait --for=condition=complete --timeout=5400s "job/${JOB_NAME}" || true
+
+          echo "=== Job Status ==="
+          kubectl describe "job/${JOB_NAME}" || true
+
+          echo "=== Pod Logs ==="
+          PODS=$(kubectl get pods -l "job-name=${JOB_NAME}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
+          for POD in $PODS; do
+            echo "--- Logs for pod: $POD ---"
+            kubectl logs "$POD" --tail=500 || true
+          done
+
+          JOB_COMPLETE=$(kubectl get "job/${JOB_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)
+          if [ "$JOB_COMPLETE" != "True" ]; then
+            echo "::warning::Delivery scrape job did not complete successfully"
+            exit 1
+          fi
+
+      - name: Run post-ingestion refresh from SCCC
+        run: |
+          JOB_NAME="delivery-refresh-sccc-$(date +%s)"
+
+          kubectl delete job -l app=delivery-refresh-sccc --ignore-not-found=true
+
+          cat > refresh-sccc-job.yml <<EOF
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: ${JOB_NAME}
+            labels:
+              app: delivery-refresh-sccc
+          spec:
+            backoffLimit: 0
+            ttlSecondsAfterFinished: 3600
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: refresh
+                    image: ${{ steps.img.outputs.image }}
+                    command:
+                      - python
+                      - -m
+                      - app.ingest.expansion_advisor_refresh
+                      - --skip-alembic
+                      - --write-stats
+                      - /tmp/refresh-stats.json
+                    envFrom:
+                      - secretRef:
+                          name: oaktree-db-env
+                      - secretRef:
+                          name: oaktree-app-env
+          EOF
+
+          kubectl apply -f refresh-sccc-job.yml
+          kubectl wait --for=condition=complete --timeout=600s "job/${JOB_NAME}" || true
+
+          PODS=$(kubectl get pods -l "job-name=${JOB_NAME}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
+          for POD in $PODS; do
+            kubectl logs "$POD" --tail=200 || true
+          done
