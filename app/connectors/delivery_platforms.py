@@ -426,7 +426,7 @@ def _target_candidate_pool(max_pages: int) -> int:
 def _min_hungerstation_shards(max_pages: int) -> int:
     """
     Expand at least a sensible number of sitemap shards before stopping.
-    For max_pages=200 this yields 8.
+    For max_pages=1000 this yields 16.
     """
     return max(8, min(16, (max_pages + 24) // 25))
 
@@ -434,7 +434,7 @@ def _min_hungerstation_shards(max_pages: int) -> int:
 def _min_hungerstation_district_buckets(max_pages: int) -> int:
     """
     Require a minimum number of district-ish buckets before early-stop.
-    For max_pages=200 this yields 25.
+    For max_pages=1000 this yields 40.
     """
     return max(18, min(40, max_pages // 8))
 
@@ -443,7 +443,7 @@ def _max_hungerstation_candidate_pool(max_pages: int) -> int:
     """
     Hard ceiling to avoid reintroducing a huge candidate explosion if bucket
     breadth remains low for too long.
-    For max_pages=200 this yields 6400.
+    For max_pages=1000 this yields 32000.
     """
     return max(_target_candidate_pool(max_pages) * 4, 6000)
 
@@ -728,7 +728,7 @@ def _generic_sitemap_scrape(
     url_filter: str | None = None,
     riyadh_filter: bool = True,
     crawl_delay: float = 2.0,
-    max_pages: int = 200,
+    max_pages: int = 1000,
     multi_strategy: bool = False,
     base_url: str | None = None,
 ) -> Iterator[dict[str, Any]]:
@@ -845,7 +845,7 @@ def _generic_sitemap_scrape(
 # ---------------------------------------------------------------------------
 
 @_register("hungerstation", label="HungerStation", url="https://hungerstation.com")
-def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_hungerstation_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from HungerStation for Riyadh.
     Uses sitemap to discover restaurant pages, then extracts JSON-LD,
@@ -1041,7 +1041,7 @@ def scrape_hungerstation_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]
 # ---------------------------------------------------------------------------
 
 @_register("talabat", label="Talabat", url="https://www.talabat.com")
-def scrape_talabat_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_talabat_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Talabat for Riyadh.
     Talabat robots.txt has no restrictions.
@@ -1092,7 +1092,7 @@ def scrape_talabat_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("mrsool", label="Mrsool", url="https://mrsool.co")
-def scrape_mrsool_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_mrsool_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Mrsool for Riyadh.
     Mrsool robots.txt only blocks /wp-admin/.
@@ -1143,7 +1143,7 @@ def scrape_mrsool_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("jahez", label="Jahez", url="https://www.jahez.net")
-def scrape_jahez_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_jahez_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Jahez for Riyadh.
     Jahez is one of the largest Saudi food delivery platforms.
@@ -1166,7 +1166,7 @@ def scrape_jahez_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("toyou", label="ToYou", url="https://toyou.io")
-def scrape_toyou_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_toyou_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from ToYou delivery platform.
     ToYou is a Saudi last-mile delivery service with restaurant listings.
@@ -1186,7 +1186,7 @@ def scrape_toyou_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("keeta", label="Keeta", url="https://www.keeta.com")
-def scrape_keeta_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_keeta_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Keeta (Meituan's Saudi brand).
     Keeta launched in Riyadh in 2024 and is expanding rapidly.
@@ -1209,7 +1209,7 @@ def scrape_keeta_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("thechefz", label="The Chefz", url="https://www.thechefz.com")
-def scrape_thechefz_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_thechefz_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from The Chefz.
     Premium food delivery platform in Saudi Arabia focusing on
@@ -1230,7 +1230,7 @@ def scrape_thechefz_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("lugmety", label="Lugmety", url="https://lugmety.com")
-def scrape_lugmety_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_lugmety_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Lugmety.
     Saudi food delivery platform with strong local restaurant coverage.
@@ -1250,7 +1250,7 @@ def scrape_lugmety_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("shgardi", label="Shgardi", url="https://shgardi.com")
-def scrape_shgardi_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_shgardi_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Shgardi.
     Saudi delivery app with strong presence in Riyadh.
@@ -1270,7 +1270,7 @@ def scrape_shgardi_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("ninja", label="Ninja", url="https://ninjasa.com")
-def scrape_ninja_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_ninja_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Ninja delivery.
     Saudi food delivery platform.
@@ -1290,7 +1290,7 @@ def scrape_ninja_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("nana", label="Nana", url="https://www.nana.sa")
-def scrape_nana_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_nana_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape grocery/restaurant listings from Nana.
     Nana is a Saudi grocery and food delivery platform — its restaurant
@@ -1311,7 +1311,7 @@ def scrape_nana_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("dailymealz", label="Dailymealz", url="https://www.dailymealz.com")
-def scrape_dailymealz_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_dailymealz_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Dailymealz.
     Saudi meal subscription / delivery platform — restaurants listed here
@@ -1332,7 +1332,7 @@ def scrape_dailymealz_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("careemfood", label="Careem Food", url="https://www.careem.com")
-def scrape_careem_food_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_careem_food_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Careem Food.
     Careem (Uber subsidiary) operates a food delivery service in Saudi Arabia.
@@ -1352,7 +1352,7 @@ def scrape_careem_food_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 @_register("deliveroo", label="Deliveroo", url="https://deliveroo.sa")
-def scrape_deliveroo_riyadh(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_deliveroo_riyadh(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """
     Scrape restaurant listings from Deliveroo Saudi Arabia.
     Deliveroo operates in major Saudi cities including Riyadh.
@@ -1379,7 +1379,7 @@ def list_all_scrapers() -> list[dict[str, str]]:
     ]
 
 
-def scrape_all_platforms(max_pages: int = 200) -> Iterator[dict[str, Any]]:
+def scrape_all_platforms(max_pages: int = 1000) -> Iterator[dict[str, Any]]:
     """Run all registered scrapers and yield their combined results."""
     for source, entry in SCRAPER_REGISTRY.items():
         logger.info("Running scraper: %s", source)
