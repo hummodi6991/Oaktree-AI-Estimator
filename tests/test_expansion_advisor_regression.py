@@ -546,7 +546,8 @@ def _make_candidate_row(parcel_id, landuse_code, landuse_label=None, district=No
 def test_non_numeric_landuse_codes_do_not_crash():
     """Blank, whitespace, non-numeric, and mixed landuse_code values must not crash."""
     bad_codes = ["", " 2000 ", "N/A", "mixed", None]
-    rows = [_make_candidate_row(f"p{i}", code) for i, code in enumerate(bad_codes)]
+    district_names = ["District_A", "District_B", "District_C", "District_D", "District_E"]
+    rows = [_make_candidate_row(f"p{i}", code, district=district_names[i]) for i, code in enumerate(bad_codes)]
     db = _FakeDB(candidate_rows=rows)
 
     items = run_expansion_search(
@@ -567,9 +568,9 @@ def test_non_numeric_landuse_codes_do_not_crash():
 def test_normal_numeric_landuse_codes_still_rank_correctly():
     """Normal numeric ArcGIS codes (1000, 2000, 7500) still produce correct scoring."""
     rows = [
-        _make_candidate_row("commercial", "2000"),
-        _make_candidate_row("mixed", "7500"),
-        _make_candidate_row("residential", "1000"),
+        _make_candidate_row("commercial", "2000", district="Commercial_District"),
+        _make_candidate_row("mixed", "7500", district="Mixed_District"),
+        _make_candidate_row("residential", "1000", district="Residential_District"),
     ]
     db = _FakeDB(candidate_rows=rows)
 
@@ -733,8 +734,8 @@ def test_dirty_dsr_coords_do_not_crash_search():
     The FakeDB bypasses real SQL execution but the function still exercises
     all post-query scoring & ranking logic that reads these column values."""
     rows = [
-        _make_candidate_row("p1", "2000"),
-        _make_candidate_row("p2", "7500"),
+        _make_candidate_row("p1", "2000", district="District_A"),
+        _make_candidate_row("p2", "7500", district="District_B"),
     ]
     db = _FakeDB(candidate_rows=rows)
     items = run_expansion_search(
@@ -774,8 +775,8 @@ def test_dirty_pd_coords_do_not_crash_search():
 def test_valid_numeric_coords_still_work():
     """Valid numeric coordinates still produce normal results."""
     rows = [
-        _make_candidate_row("p1", "2000"),
-        _make_candidate_row("p2", "2000"),
+        _make_candidate_row("p1", "2000", district="District_A"),
+        _make_candidate_row("p2", "2000", district="District_B"),
     ]
     db = _FakeDB(candidate_rows=rows)
     items = run_expansion_search(
@@ -855,7 +856,7 @@ def test_search_returns_results_not_error_with_dirty_rows():
     dirty_values = ["", " ", "N/A", "24,713", "abc", None]
     rows = []
     for i, val in enumerate(dirty_values):
-        row = _make_candidate_row(f"p{i}", "2000")
+        row = _make_candidate_row(f"p{i}", "2000", district=f"District_{i}")
         # Simulate what dirty DB rows look like after the SQL safely filters
         # them: the correlated subqueries return 0 counts.
         row["delivery_listing_count"] = 0

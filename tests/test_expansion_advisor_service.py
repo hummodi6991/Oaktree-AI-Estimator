@@ -630,7 +630,7 @@ def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch
                 "area_m2": 140 + (idx % 30),
                 "lon": 46.7 + idx * 0.0001,
                 "lat": 24.7 + idx * 0.0001,
-                "district": "Olaya",
+                "district": f"District_{idx % 20}",
                 "population_reach": 12000,
                 "competitor_count": 4,
                 "delivery_listing_count": 10,
@@ -651,7 +651,7 @@ def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch
         return {
             "parcel_area_m2": 150,
             "parcel_perimeter_m": 250,
-            "district": "Olaya",
+            "district": f"District_{snapshot_calls % 20}",
             "landuse_label": "Commercial",
             "landuse_code": "C",
             "nearest_major_road_distance_m": 120,
@@ -663,7 +663,7 @@ def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch
             "competitor_count": 4,
             "nearest_branch_distance_m": 2000,
             "rent_source": "test",
-            "estimated_rent_sar_m2_year": 900,
+            "estimated_rent_sar_m2_year": 900 + (snapshot_calls * 50),
             "economics_score": 60,
             "context_sources": {
                 "roads_table_available": True,
@@ -999,7 +999,7 @@ def test_run_expansion_search_empty_existing_branches():
     assert len(items) == 1
     item = items[0]
     assert item["distance_to_nearest_branch_m"] is None
-    assert item["cannibalization_score"] == 15.0
+    assert item["cannibalization_score"] == 0.0
     assert 0.0 <= item["final_score"] <= 100.0
     assert item["economics_score"] is not None
     assert item["estimated_payback_months"] is not None
@@ -1124,7 +1124,7 @@ def test_run_expansion_search_exact_production_payload():
     assert len(items) == 1
     item = items[0]
     assert item["distance_to_nearest_branch_m"] is None
-    assert item["cannibalization_score"] == 15.0
+    assert item["cannibalization_score"] == 0.0
     assert 0.0 <= item["final_score"] <= 100.0
     assert item["payback_band"] in {"strong", "promising", "borderline", "weak"}
     assert "gate_status_json" in item

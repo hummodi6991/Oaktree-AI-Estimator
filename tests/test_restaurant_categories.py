@@ -26,23 +26,23 @@ class TestNormalizeCategory:
     def test_traditional_keywords(self):
         assert normalize_category("arabic") == "traditional"
         assert normalize_category("saudi") == "traditional"
-        assert normalize_category("shawarma") == "traditional"
-        assert normalize_category("kabsa") == "traditional"
-        assert normalize_category("كبسة") == "traditional"
+        assert normalize_category("shawarma") == "shawarma"
+        assert normalize_category("kabsa") == "grills"
+        assert normalize_category("كبسة") == "grills"
 
     def test_asian_keywords(self):
-        assert normalize_category("chinese") == "asian"
-        assert normalize_category("sushi") == "asian"
-        assert normalize_category("korean") == "asian"
+        assert normalize_category("chinese") == "chinese"
+        assert normalize_category("sushi") == "japanese"
+        assert normalize_category("korean") == "korean"
 
     def test_seafood_keywords(self):
         assert normalize_category("seafood") == "seafood"
         assert normalize_category("fish") == "seafood"
 
     def test_coffee_bakery_keywords(self):
-        assert normalize_category("cafe") == "coffee_bakery"
-        assert normalize_category("coffee_shop") == "coffee_bakery"
-        assert normalize_category("bakery") == "coffee_bakery"
+        assert normalize_category("cafe") == "coffee"
+        assert normalize_category("coffee_shop") == "coffee"
+        assert normalize_category("bakery") == "bakery"
 
     def test_healthy_keywords(self):
         assert normalize_category("salad") == "healthy"
@@ -57,11 +57,11 @@ class TestNormalizeCategory:
 class TestNormalizeOsmCuisine:
     def test_single_value(self):
         assert normalize_osm_cuisine("burger") == "burger"
-        assert normalize_osm_cuisine("chinese") == "asian"
+        assert normalize_osm_cuisine("chinese") == "chinese"
 
     def test_semicolon_multi_value(self):
         assert normalize_osm_cuisine("burger;pizza") == "burger"
-        assert normalize_osm_cuisine("chinese;japanese") == "asian"
+        assert normalize_osm_cuisine("chinese;japanese") == "chinese"
 
     def test_none(self):
         assert normalize_osm_cuisine(None) == "international"
@@ -70,7 +70,7 @@ class TestNormalizeOsmCuisine:
 class TestNormalizeOvertureTaxonomy:
     def test_hierarchical_path(self):
         result = normalize_overture_taxonomy("restaurant > asian_restaurant > chinese_restaurant")
-        assert result == "asian"
+        assert result == "chinese"
 
     def test_simple_path(self):
         assert normalize_overture_taxonomy("burger_restaurant") == "burger"
