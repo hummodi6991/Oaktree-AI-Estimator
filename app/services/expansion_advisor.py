@@ -2880,15 +2880,31 @@ def run_expansion_search(
         """
         )
 
-    # City-wide mode: no target districts → use stratified sampling
+    # City-wide mode: no target districts → use stratified sampling.
+    # Also stratify when 2+ target districts to guarantee each district gets
+    # representation instead of one district hoarding all slots via the
+    # global LIMIT (e.g. العليا's commercial parcels exhausting the pool
+    # before حطين/النخيل get any slots).
     is_city_wide = not target_district_norm
+    use_stratified = is_city_wide or len(target_district_norm) >= 2
 
     # Compute per-district cap dynamically.
     # Goal: spread _CANDIDATE_POOL_LIMIT slots across districts.
     # We estimate the district count from external_feature to set the cap,
     # bounded by _PER_DISTRICT_MIN_CAP and _PER_DISTRICT_MAX_CAP.
     per_district_cap = _PER_DISTRICT_MAX_CAP
-    if is_city_wide:
+    if use_stratified and target_district_norm:
+        # Multi-district targeted: allocate slots proportionally across
+        # the requested districts.
+        per_district_cap = max(
+            _PER_DISTRICT_MIN_CAP,
+            min(_PER_DISTRICT_MAX_CAP, _CANDIDATE_POOL_LIMIT // max(len(target_district_norm), 1)),
+        )
+        logger.info(
+            "expansion_search stratified multi-district mode: target_count=%d per_district_cap=%d search_id=%s",
+            len(target_district_norm), per_district_cap, search_id,
+        )
+    elif is_city_wide:
         try:
             district_count_row = db.execute(text(
                 "SELECT COUNT(DISTINCT district_label) "
@@ -2957,7 +2973,7 @@ def run_expansion_search(
             with db.begin_nested():
                 sql = _build_candidate_sql(
                     _build_district_filter_sql(target_district_norm),
-                    stratified=False,
+                    stratified=use_stratified,
                     skip_delivery=ea_delivery_populated,
                 )
                 rows = db.execute(sql, sql_params).mappings().all()
@@ -2979,7 +2995,7 @@ def run_expansion_search(
             with db.begin_nested():
                 sql = _build_candidate_sql(
                     "",
-                    stratified=is_city_wide,
+                    stratified=use_stratified,
                     skip_delivery=ea_delivery_populated,
                 )
                 rows = db.execute(sql, sql_params).mappings().all()
@@ -4170,7 +4186,7 @@ def run_expansion_search(
             if d:
                 districts_in_result.add(d)
         coverage_meta = {
-            "candidate_selection": "stratified" if is_city_wide else "targeted",
+            "candidate_selection": "stratified" if use_stratified else "targeted",
             "per_district_cap": per_district_cap,
             "candidates_evaluated": len(rows),
             "candidates_scored": len(prepared),
