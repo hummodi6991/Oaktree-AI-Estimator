@@ -74,7 +74,7 @@ Source provenance is tracked in `feature_snapshot_json.context_sources`:
 - `road_source`: `"expansion_road_context"` or `"estimated"`
 - `parking_source`: `"expansion_parking_asset"` or `"estimated"`
 - `delivery_source`: `"expansion_delivery_market"` or `"delivery_source_record"`
-- `rent_source`: `"expansion_rent_district"`, `"expansion_rent_city"`, `"aqar_district"`, etc.
+- `rent_source`: `"expansion_rent_district_retail"`, `"expansion_rent_district_commercial"`, `"expansion_rent_city_retail"`, `"expansion_rent_city_commercial"`, `"aqar_district"`, etc.
 - `competitor_source`: `"expansion_competitor_quality"` or `"restaurant_poi"`
 
 ## Verifying Row Counts After a Run

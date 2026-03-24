@@ -99,7 +99,7 @@ class TestServicePrefersNormalizedTables:
         assert result is not None
         rent, source = result
         assert rent == 1200.0
-        assert source == "expansion_rent_district"
+        assert source in ("expansion_rent_district_retail", "expansion_rent_district_commercial")
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +282,7 @@ class TestContextSourcesMetadata:
                 "parking_source": "expansion_parking_asset",
                 "delivery_source": "expansion_delivery_market",
                 "competitor_source": "expansion_competitor_quality",
-                "rent_source": "expansion_rent_district",
+                "rent_source": "expansion_rent_district_retail",
                 "road_context_available": True,
                 "parking_context_available": True,
             }
@@ -293,7 +293,7 @@ class TestContextSourcesMetadata:
         assert cs["parking_source"] == "expansion_parking_asset"
         assert cs["delivery_source"] == "expansion_delivery_market"
         assert cs["competitor_source"] == "expansion_competitor_quality"
-        assert cs["rent_source"] == "expansion_rent_district"
+        assert cs["rent_source"] == "expansion_rent_district_retail"
 
     def test_fallback_sources_when_tables_empty(self):
         """When normalized tables are empty, sources should reflect legacy."""
@@ -718,8 +718,10 @@ class TestRentEstimationFallback:
         # Should have tried expansion table first
         assert call_count["expansion"] >= 1
         # Falls back to conservative default
-        assert source in ("conservative_default", "expansion_rent_district",
-                          "expansion_rent_city", "aqar_district", "aqar_city")
+        assert source in ("conservative_default", "expansion_rent_district_retail",
+                          "expansion_rent_district_commercial",
+                          "expansion_rent_city_retail", "expansion_rent_city_commercial",
+                          "aqar_district", "aqar_city")
 
     def test_expansion_district_preferred_over_city(self):
         """District-level rent from expansion table should be preferred over city-wide."""
@@ -752,7 +754,7 @@ class TestRentEstimationFallback:
 
         rent, source = _estimate_rent_from_expansion_table(mock_db, "الملقا")
         assert rent == 900.0
-        assert source == "expansion_rent_district"
+        assert source in ("expansion_rent_district_retail", "expansion_rent_district_commercial")
         # Should NOT have queried city-wide since district had enough rows
         assert "city_median" not in call_sequence
 
