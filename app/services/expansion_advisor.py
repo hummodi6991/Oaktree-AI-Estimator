@@ -168,15 +168,65 @@ _CATEGORY_ALIASES: dict[str, list[str]] = {
 }
 
 
+# Map user-facing search categories to the broad delivery-table buckets.
+# The expansion_delivery_market table normalizes all categories into:
+#   international, traditional, coffee_bakery, seafood
+_CATEGORY_TO_DELIVERY_BUCKETS: dict[str, list[str]] = {
+    "burger": ["international"],
+    "fast food": ["international", "traditional"],
+    "pizza": ["international"],
+    "chicken": ["international", "traditional"],
+    "shawarma": ["traditional"],
+    "coffee": ["coffee_bakery"],
+    "cafe": ["coffee_bakery"],
+    "fine dining": ["international"],
+    "seafood": ["seafood"],
+    "sandwich": ["international", "traditional"],
+    "bakery": ["coffee_bakery"],
+    "dessert": ["coffee_bakery"],
+    "juice": ["coffee_bakery"],
+    "healthy": ["international"],
+    "asian": ["international"],
+    "indian": ["international"],
+    "italian": ["international"],
+    "breakfast": ["coffee_bakery", "traditional"],
+    "grills": ["traditional"],
+    "biryani": ["traditional"],
+    "broasted": ["traditional"],
+    "international": ["international"],
+    "traditional": ["traditional"],
+    "coffee_bakery": ["coffee_bakery"],
+}
+
+
 def _expand_category_terms(category: str) -> list[str]:
-    """Return all known Arabic/English aliases for a category, including the original."""
+    """Return delivery-table bucket names that match a user search category.
+
+    The expansion_delivery_market table stores only broad buckets
+    (international, traditional, coffee_bakery, seafood), not specific
+    cuisines. This maps user search terms to the relevant buckets,
+    plus keeps the original term and any Arabic aliases for future-proofing.
+    """
     cat_lower = category.strip().lower()
     terms = {cat_lower}
-    for _key, aliases in _CATEGORY_ALIASES.items():
-        normalized_aliases = [a.lower() for a in aliases]
-        # If the input matches any alias in this group, add all aliases
-        if cat_lower in normalized_aliases or _key == cat_lower:
-            terms.update(normalized_aliases)
+
+    # Add delivery table bucket names
+    buckets = _CATEGORY_TO_DELIVERY_BUCKETS.get(cat_lower)
+    if buckets:
+        terms.update(buckets)
+    else:
+        # Unknown category — try matching against Arabic aliases
+        for _key, aliases in _CATEGORY_ALIASES.items():
+            if cat_lower in [a.lower() for a in aliases]:
+                bucket_match = _CATEGORY_TO_DELIVERY_BUCKETS.get(_key)
+                if bucket_match:
+                    terms.update(bucket_match)
+                break
+
+    # If still no bucket match, default to international (broadest)
+    if not terms.intersection({"international", "traditional", "coffee_bakery", "seafood"}):
+        terms.add("international")
+
     return sorted(terms)
 
 
