@@ -142,6 +142,44 @@ _CATEGORY_ALIAS_MAP: dict[str, dict] = {
 }
 
 
+# Arabic ↔ English category aliases for delivery marketplace matching.
+# Each entry maps a canonical key to all known variants (Arabic + English).
+_CATEGORY_ALIASES: dict[str, list[str]] = {
+    "burger": ["burger", "برجر", "burgers", "hamburger", "هامبرغر"],
+    "fast food": ["fast food", "وجبات سريعة", "فاست فود", "fast_food", "fastfood"],
+    "pizza": ["pizza", "بيتزا", "بيتسا"],
+    "chicken": ["chicken", "دجاج", "فراخ"],
+    "shawarma": ["shawarma", "شاورما", "شاورمة"],
+    "coffee": ["coffee", "قهوة", "كافيه", "cafe", "café"],
+    "fine dining": ["fine dining", "مطعم فاخر", "فاين داينينق"],
+    "seafood": ["seafood", "مأكولات بحرية", "أسماك", "سي فود"],
+    "sandwich": ["sandwich", "سندويش", "سندوتش", "سندويتش"],
+    "bakery": ["bakery", "مخبز", "مخابز", "معجنات"],
+    "dessert": ["dessert", "حلويات", "حلى"],
+    "juice": ["juice", "عصير", "عصائر"],
+    "healthy": ["healthy", "صحي", "سلطات", "salad"],
+    "asian": ["asian", "آسيوي", "صيني", "chinese", "sushi", "سوشي", "ياباني", "japanese"],
+    "indian": ["indian", "هندي"],
+    "italian": ["italian", "إيطالي", "pasta", "باستا"],
+    "breakfast": ["breakfast", "فطور", "إفطار"],
+    "grills": ["grills", "مشويات", "مشاوي", "kebab", "كباب"],
+    "biryani": ["biryani", "برياني"],
+    "broasted": ["broasted", "بروستد", "بروست"],
+}
+
+
+def _expand_category_terms(category: str) -> list[str]:
+    """Return all known Arabic/English aliases for a category, including the original."""
+    cat_lower = category.strip().lower()
+    terms = {cat_lower}
+    for _key, aliases in _CATEGORY_ALIASES.items():
+        normalized_aliases = [a.lower() for a in aliases]
+        # If the input matches any alias in this group, add all aliases
+        if cat_lower in normalized_aliases or _key == cat_lower:
+            terms.update(normalized_aliases)
+    return sorted(terms)
+
+
 def _expand_category(category: str) -> dict:
     """Expand a search category into matching keys and regex patterns."""
     cat_lower = category.lower().strip()
@@ -2909,7 +2947,15 @@ def run_expansion_search(
         try:
             # Build a VALUES list of (parcel_id, lon, lat) for all candidates
             _del_values_parts: list[str] = []
-            _del_params: dict[str, Any] = {"cat_regex": _cat_expanded["regex"]}
+            _cat_terms = _expand_category_terms(category)
+            _cat_conditions = " OR ".join(
+                f"lower(COALESCE(d.category, '')) LIKE :cat_{i}"
+                for i in range(len(_cat_terms))
+            )
+            _del_params: dict[str, Any] = {
+                f"cat_{i}": f"%{term}%"
+                for i, term in enumerate(_cat_terms)
+            }
             for _idx, _r in enumerate(rows):
                 _pid = str(_r.get("parcel_id") or "")
                 _lon = _safe_float(_r.get("lon"))
@@ -2932,7 +2978,7 @@ def run_expansion_search(
                                 COUNT(d.*) AS listing_count,
                                 COUNT(DISTINCT d.platform) AS platform_count,
                                 COUNT(d.*) FILTER (
-                                    WHERE lower(COALESCE(d.category, '')) ~* :cat_regex
+                                    WHERE ({_cat_conditions})
                                 ) AS cat_count
                             FROM candidates c
                             LEFT JOIN {_EA_DELIVERY_TABLE} d
@@ -2955,6 +3001,13 @@ def run_expansion_search(
                 logger.info(
                     "expansion_search bulk delivery enrichment: search_id=%s enriched=%d/%d",
                     search_id, len(_bulk_delivery), len(rows),
+                )
+                _cat_match_count = sum(1 for v in _bulk_delivery.values() if v.get("cat_count", 0) > 0)
+                logger.info(
+                    "expansion_search delivery category match: search_id=%s category=%s "
+                    "terms=%s parcels_with_cat_match=%d/%d",
+                    search_id, category, _cat_terms,
+                    _cat_match_count, len(_bulk_delivery),
                 )
         except Exception:
             logger.warning("expansion_search bulk delivery enrichment failed, using legacy counts", exc_info=True)
@@ -3786,6 +3839,40 @@ def run_expansion_search(
     candidates.sort(key=_rank_sort_key)
     # Dedupe near-clone candidates before limiting
     candidates = _dedupe_candidates(candidates)
+
+    # ── District balancing: ensure multi-district searches get representation ──
+    # When target_districts has 2+ districts, guarantee at least min_per_district
+    # candidates from each district that has qualifying parcels, before filling
+    # remaining slots by rank.
+    if len(target_districts) >= 2 and len(candidates) > limit:
+        _min_per_district = max(2, limit // len(target_districts))
+        _by_district: dict[str, list[dict]] = {}
+        for c in candidates:
+            _dk = normalize_district_key(c.get("district")) or "_unknown"
+            _by_district.setdefault(_dk, []).append(c)
+
+        _balanced: list[dict] = []
+        _seen_ids: set[str] = set()
+
+        # First pass: take min_per_district from each district
+        for _dk in _by_district:
+            for c in _by_district[_dk][:_min_per_district]:
+                cid = c.get("parcel_id") or c.get("id") or id(c)
+                if cid not in _seen_ids:
+                    _balanced.append(c)
+                    _seen_ids.add(cid)
+
+        # Second pass: fill remaining slots from the global ranked list
+        for c in candidates:
+            if len(_balanced) >= limit:
+                break
+            cid = c.get("parcel_id") or c.get("id") or id(c)
+            if cid not in _seen_ids:
+                _balanced.append(c)
+                _seen_ids.add(cid)
+
+        candidates = _balanced
+
     candidates = candidates[:limit]
     for index, candidate in enumerate(candidates, start=1):
         candidate["compare_rank"] = index
