@@ -2796,6 +2796,16 @@ def run_expansion_search(
     # when bulk enrichment will overwrite them anyway (Patch 1 optimisation).
     ea_delivery_populated = _cached_ea_table_has_rows(db, _EA_DELIVERY_TABLE)
 
+    # Count active delivery platforms for scoring denominator
+    _active_platform_count = 5  # fallback
+    if ea_delivery_populated:
+        try:
+            _apc_row = db.execute(text(f"SELECT COUNT(DISTINCT platform) FROM {_EA_DELIVERY_TABLE} WHERE city = 'riyadh'")).scalar()
+            if _apc_row and int(_apc_row) > 0:
+                _active_platform_count = int(_apc_row)
+        except Exception:
+            pass
+
     # Execute candidate query with district SQL filter fallback.
     # If district filter is active and the query fails (e.g. malformed
     # external_feature GeoJSON), retry once without the SQL pushdown.
@@ -3040,7 +3050,7 @@ def run_expansion_search(
             # from 0.5 (1 listing) to 1.0 (10+ listings).
             _data_confidence = min(1.0, max(0.5, provider_listing_count / 10.0))
             provider_whitespace_score = 50.0 + (_raw_whitespace - 50.0) * _data_confidence
-            multi_platform_presence_score = _clamp((provider_platform_count / 5.0) * 100.0)
+            multi_platform_presence_score = _clamp((provider_platform_count / float(_active_platform_count)) * 100.0)
             delivery_competition_score = _clamp((delivery_competition_count / 35.0) * 100.0)
         else:
             provider_density_score = 0.0
