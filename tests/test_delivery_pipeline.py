@@ -193,7 +193,7 @@ class TestCategoryExtraction:
         assert normalize_category("burger") == "burger"
         assert normalize_category("pizza") == "pizza"
         assert normalize_category("shawarma") == "shawarma"
-        assert normalize_category("sushi") == "asian"
+        assert normalize_category("sushi") == "japanese"
         assert normalize_category("coffee") == "coffee"
         assert normalize_category(None) == "international"
         assert normalize_category("unknown_type") == "international"
