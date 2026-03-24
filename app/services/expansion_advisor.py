@@ -544,7 +544,7 @@ def _dedupe_score_clones(candidates: list[dict[str, Any]], max_results: int) -> 
     """Remove near-duplicate candidates that appear identical to users.
 
     Two candidates are near-duplicates if they share the same district,
-    area within 10%, final score within 1.0 points, and same rent rate.
+    area within 5%, final score within 0.3 points, and same rent rate.
     Keeps the highest-scored candidate in each cluster.
     """
     if not candidates:
@@ -561,10 +561,10 @@ def _dedupe_score_clones(candidates: list[dict[str, Any]], max_results: int) -> 
             ex_area = ex.get("area_m2", 0) or 0
             if (
                 ex.get("district", "") == c_dist
-                and abs(c_score - (ex.get("final_score", 0) or 0)) <= 1.0
+                and abs(c_score - (ex.get("final_score", 0) or 0)) <= 0.3
                 and (ex.get("estimated_rent_sar_m2_year", 0) or 0) == c_rent
                 and ex_area > 0
-                and abs(c_area - ex_area) / ex_area <= 0.10
+                and abs(c_area - ex_area) / ex_area <= 0.05
             ):
                 is_dup = True
                 break
