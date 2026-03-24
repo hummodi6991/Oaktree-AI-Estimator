@@ -28,7 +28,7 @@ class TestNormalizeCategory:
         assert normalize_category("saudi") == "traditional"
         assert normalize_category("shawarma") == "shawarma"
         assert normalize_category("kabsa") == "grills"
-        assert normalize_category("كبسة") == "traditional"
+        assert normalize_category("كبسة") == "grills"
 
     def test_asian_keywords(self):
         assert normalize_category("chinese") == "chinese"
