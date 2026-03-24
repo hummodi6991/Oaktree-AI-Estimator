@@ -27,6 +27,7 @@ from app.ingest.expansion_advisor_common import (
     validate_db_env,
     write_stats,
 )
+from app.services.restaurant_categories import normalize_category
 
 logger = logging.getLogger("expansion_advisor.delivery")
 
@@ -156,6 +157,28 @@ def _normalize_delivery_records(db, platforms: list[str], allow_empty: bool) -> 
     db.commit()
     inserted = result.rowcount
     logger.info("Inserted %d delivery market records", inserted)
+
+    # Post-insert: re-normalize category using the improved normalize_category()
+    # so that rich Arabic cuisine_raw values resolve to specific categories
+    # (burger, shawarma, dessert, etc.) instead of broad buckets.
+    _renorm_rows = db.execute(
+        text(
+            "SELECT id, category FROM expansion_delivery_market "
+            "WHERE city = 'riyadh' AND category IS NOT NULL"
+        )
+    ).fetchall()
+    _renorm_count = 0
+    for _row in _renorm_rows:
+        _new_cat = normalize_category(_row[1])
+        if _new_cat != _row[1]:
+            db.execute(
+                text("UPDATE expansion_delivery_market SET category = :cat WHERE id = :id"),
+                {"cat": _new_cat, "id": _row[0]},
+            )
+            _renorm_count += 1
+    if _renorm_count:
+        db.commit()
+        logger.info("Re-normalized %d/%d delivery market categories", _renorm_count, len(_renorm_rows))
 
     # Per-platform counts
     platform_stats = {}
