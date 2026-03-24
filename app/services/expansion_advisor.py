@@ -1946,46 +1946,41 @@ def _build_explanation(
 def _estimate_rent_from_expansion_table(db: Session, district: str | None) -> tuple[float, str] | None:
     """Try to get rent estimate from the normalized expansion_rent_comp table.
 
-    Returns (rent_sar_m2_year, source) or None if table is empty/unavailable.
+    Uses commercial/retail rents for F&B location scoring.
+    Fallback chain: retail district → commercial district → retail city → commercial city.
     """
     try:
         with db.begin_nested():
-            # Check if table has data
             has_rows = db.execute(
                 text(f"SELECT EXISTS(SELECT 1 FROM {_EA_RENT_TABLE} WHERE city = 'riyadh' LIMIT 1)")
             ).scalar()
             if not has_rows:
                 return None
 
-            # Try district median first
+            # Filters to try in priority order: narrowest (retail + district) to broadest (commercial + city)
+            filters = []
             if district:
+                filters.append(("AND lower(district) = lower(:district) AND asset_type = 'commercial' AND unit_type = 'retail'", {"district": district}, 3, "expansion_rent_district_retail"))
+                filters.append(("AND lower(district) = lower(:district) AND asset_type = 'commercial'", {"district": district}, 3, "expansion_rent_district_commercial"))
+            filters.append(("AND asset_type = 'commercial' AND unit_type = 'retail'", {}, 0, "expansion_rent_city_retail"))
+            filters.append(("AND asset_type = 'commercial'", {}, 0, "expansion_rent_city_commercial"))
+
+            for where_clause, params, min_n, source_label in filters:
                 row = db.execute(
                     text(f"""
                         SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY rent_sar_m2_year) AS median,
                                COUNT(*) AS n
                         FROM {_EA_RENT_TABLE}
                         WHERE city = 'riyadh'
-                          AND lower(district) = lower(:district)
                           AND rent_sar_m2_year IS NOT NULL
                           AND rent_sar_m2_year > 0
+                          {where_clause}
                     """),
-                    {"district": district},
+                    params,
                 ).mappings().first()
-                if row and row["median"] is not None and int(row["n"]) >= 3:
-                    return float(row["median"]), "expansion_rent_district"
+                if row and row["median"] is not None and int(row["n"]) >= max(min_n, 1):
+                    return float(row["median"]), source_label
 
-            # City-wide median fallback
-            row = db.execute(
-                text(f"""
-                    SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY rent_sar_m2_year) AS median
-                    FROM {_EA_RENT_TABLE}
-                    WHERE city = 'riyadh'
-                      AND rent_sar_m2_year IS NOT NULL
-                      AND rent_sar_m2_year > 0
-                """),
-            ).mappings().first()
-            if row and row["median"] is not None:
-                return float(row["median"]), "expansion_rent_city"
     except Exception:
         logger.debug("expansion_rent_comp query failed for district=%s", district, exc_info=True)
     return None
