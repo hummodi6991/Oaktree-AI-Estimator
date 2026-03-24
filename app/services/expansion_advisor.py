@@ -3977,7 +3977,7 @@ def run_expansion_search(
     # When target_districts has 2+ districts, guarantee at least min_per_district
     # candidates from each district that has qualifying parcels, before filling
     # remaining slots by rank.
-    if len(target_districts) >= 2 and len(candidates) > limit:
+    if len(target_districts) >= 2 and len(candidates) > 0:
         _min_per_district = max(2, limit // len(target_districts))
         _by_district: dict[str, list[dict]] = {}
         for c in candidates:
