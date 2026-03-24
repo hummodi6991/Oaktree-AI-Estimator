@@ -540,6 +540,41 @@ def _dedupe_candidates(
     return result
 
 
+def _dedupe_score_clones(candidates: list[dict[str, Any]], max_results: int) -> list[dict[str, Any]]:
+    """Remove near-duplicate candidates that appear identical to users.
+
+    Two candidates are near-duplicates if they share the same district,
+    area within 10%, final score within 1.0 points, and same rent rate.
+    Keeps the highest-scored candidate in each cluster.
+    """
+    if not candidates:
+        return candidates
+    # Assumes candidates are already sorted by final_score descending.
+    kept: list[dict[str, Any]] = []
+    for cand in candidates:
+        c_dist = cand.get("district", "")
+        c_area = cand.get("area_m2", 0) or 0
+        c_score = cand.get("final_score", 0) or 0
+        c_rent = cand.get("estimated_rent_sar_m2_year", 0) or 0
+        is_dup = False
+        for ex in kept:
+            ex_area = ex.get("area_m2", 0) or 0
+            if (
+                ex.get("district", "") == c_dist
+                and abs(c_score - (ex.get("final_score", 0) or 0)) <= 1.0
+                and (ex.get("estimated_rent_sar_m2_year", 0) or 0) == c_rent
+                and ex_area > 0
+                and abs(c_area - ex_area) / ex_area <= 0.10
+            ):
+                is_dup = True
+                break
+        if not is_dup:
+            kept.append(cand)
+        if len(kept) >= max_results:
+            break
+    return kept
+
+
 def _safe_json_dumps(obj: Any, **kwargs: Any) -> str:
     """json.dumps that replaces NaN/Infinity with None to avoid serialization errors."""
     kwargs.setdefault("ensure_ascii", False)
@@ -1656,9 +1691,9 @@ def _top_positives_and_risks(
     if _safe_float(candidate.get("demand_score")) >= 70:
         positives.append("Demand potential is strong for this district.")
     if _safe_float(candidate.get("whitespace_score")) >= 65:
-        if delivery_observed:
+        if delivery_observed and _safe_float(candidate.get("provider_whitespace_score")) >= 25:
             positives.append("Competitive whitespace remains favorable.")
-        else:
+        elif not delivery_observed:
             # Whitespace is high only because no delivery activity was observed —
             # phrase as inferred opportunity, not observed strength.
             positives.append("Inferred whitespace opportunity — low observed delivery activity nearby.")
@@ -1676,6 +1711,8 @@ def _top_positives_and_risks(
         risks.append("Economics score is below preferred threshold.")
     if delivery_observed and _safe_float(candidate.get("delivery_competition_score")) >= 65:
         risks.append("Delivery competition intensity is high.")
+    if delivery_observed and _safe_float(candidate.get("provider_whitespace_score")) < 25 and _safe_float(candidate.get("delivery_competition_score")) >= 80:
+        risks.append("Delivery market is saturated — whitespace opportunity is limited.")
     for gate in gate_reasons.get("failed") or []:
         label = _gate_key_to_label(gate)
         risks.append(f"{label.capitalize()} gate failed.")
@@ -1926,8 +1963,8 @@ def _cannibalization_score(distance_m: float | None, service_model: str) -> floa
     enabling meaningful ranking differentiation.
     """
     if distance_m is None:
-        # No existing branches — low but non-zero baseline risk.
-        return 15.0
+        # No existing branches — zero cannibalization risk.
+        return 0.0
     # Service-model-specific parameters:
     #   half_life_m  — distance at which risk drops to 50% of maximum
     #   ceiling      — maximum risk score at distance=0
@@ -1998,7 +2035,7 @@ def _build_explanation(
         risks.append("Parcel may be oversized for lean branch formats")
 
     if distance_to_nearest_branch_m is None:
-        positives.append("No existing branches provided; cannibalization assumed neutral-low")
+        positives.append("No existing branches — cannibalization risk is zero")
     elif distance_to_nearest_branch_m < 1000:
         risks.append("Very close to an existing branch (high cannibalization risk)")
     elif distance_to_nearest_branch_m <= 2500:
@@ -2432,13 +2469,32 @@ def run_expansion_search(
     # ArcGIS-only candidate generation.
     # Build optional target-district SQL filter when districts are specified.
     def _build_district_filter_sql(td_norm: set[str]) -> str:
+        """Build SQL filter that matches district_label against target districts.
+
+        Applies the same Arabic normalization in SQL (via TRANSLATE) that
+        normalize_district_key() does in Python: Alef variants → bare Alef,
+        Alef-Maksura → Ya, strip "حي " prefix.  This ensures districts like
+        حطين and النخيل match even when stored with variant characters.
+        """
         if not td_norm:
             return ""
         _district_values = ", ".join(
             f"(:td_{i})" for i in range(len(td_norm))
         )
+        # TRANSLATE maps: أ→ا, إ→ا, آ→ا, ى→ي (same as ARABIC_VARIANTS)
+        # Then strip leading "حي " prefix and trim whitespace.
+        _NORM_SQL = (
+            "TRIM(REGEXP_REPLACE("
+            "TRANSLATE("
+            "COALESCE(p.district_label, ''), "
+            "E'\\u0623\\u0625\\u0622\\u0649\\u0640', "
+            "E'\\u0627\\u0627\\u0627\\u064A'"
+            "), "
+            "E'^\\u062D\\u064A\\\\s+', '', 'g'"
+            "))"
+        )
         return f"""
-            AND LOWER(COALESCE(p.district_label, '')) IN (
+            AND {_NORM_SQL} IN (
                 SELECT td.val FROM (VALUES {_district_values}) AS td(val)
             )
         """
@@ -3140,7 +3196,8 @@ def run_expansion_search(
             or delivery_competition_count >= 1
         )
         if _delivery_observed:
-            provider_density_score = _clamp((provider_listing_count / 45.0) * 100.0)
+            # Log-scale provider density to avoid saturation in dense districts
+            provider_density_score = _clamp((math.log1p(provider_listing_count) / math.log1p(150)) * 100.0)
             _raw_whitespace = _clamp(100.0 - max(0.0, (delivery_competition_count - 6) * 6.0) - min(35.0, provider_density_score * 0.2))
             # Dampen whitespace when delivery data is thin: fewer than 10 total
             # listings means we lack confidence that whitespace is genuinely
@@ -3148,8 +3205,10 @@ def run_expansion_search(
             # from 0.5 (1 listing) to 1.0 (10+ listings).
             _data_confidence = min(1.0, max(0.5, provider_listing_count / 10.0))
             provider_whitespace_score = 50.0 + (_raw_whitespace - 50.0) * _data_confidence
-            multi_platform_presence_score = _clamp((provider_platform_count / float(_active_platform_count)) * 100.0)
-            delivery_competition_score = _clamp((delivery_competition_count / 35.0) * 100.0)
+            # Platform presence: denominator raised to 6 to reduce saturation
+            multi_platform_presence_score = _clamp((provider_platform_count / max(float(_active_platform_count), 6.0)) * 100.0)
+            # Log-scale delivery competition to avoid saturation in dense districts
+            delivery_competition_score = _clamp((math.log1p(delivery_competition_count) / math.log1p(80)) * 100.0)
         else:
             provider_density_score = 0.0
             provider_whitespace_score = 50.0   # unknown ≠ excellent
@@ -3889,6 +3948,14 @@ def run_expansion_search(
     candidates.sort(key=_rank_sort_key)
     # Dedupe near-clone candidates before limiting
     candidates = _dedupe_candidates(candidates)
+    # Score-aware dedup: collapse candidates that look identical to users
+    _pre_score_dedup = len(candidates)
+    candidates = _dedupe_score_clones(candidates, max_results=max(limit * 3, len(candidates)))
+    if len(candidates) < _pre_score_dedup:
+        logger.info(
+            "expansion_search score-dedup: search_id=%s before=%d after=%d",
+            search_id, _pre_score_dedup, len(candidates),
+        )
 
     # ── District balancing: ensure multi-district searches get representation ──
     # When target_districts has 2+ districts, guarantee at least min_per_district
