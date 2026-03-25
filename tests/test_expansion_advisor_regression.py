@@ -289,10 +289,15 @@ def test_arcgis_3000_neutral():
     assert sem["verdict_hint"] == "unknown"
 
 
-def test_arcgis_4000_neutral():
+def test_arcgis_4000_industrial_fail():
+    """ArcGIS code 4000 (industrial) should now be classified as fail.
+    Patch 3 intentionally changed this from 'unknown' to 'fail' to prevent
+    industrial parcels from surfacing as cafe/dine_in candidates.
+    """
     sem = _arcgis_classification_semantics(4000, None)
     assert sem["normalized_class"] == "industrial"
-    assert sem["verdict_hint"] == "unknown"
+    assert sem["verdict_hint"] == "fail"
+    assert sem["score"] == 30
 
 
 def test_arcgis_unknown_code_with_commercial_label():
