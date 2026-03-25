@@ -1516,7 +1516,13 @@ def _candidate_gate_status(
 
     primary_channel = (brand_profile.get("primary_channel") or "balanced").lower()
     if primary_channel == "delivery":
-        delivery_market_pass = provider_density_score >= thresholds["delivery_provider_density_min"] and multi_platform_presence_score >= thresholds["delivery_platform_presence_min"]
+        _delivery_composite = (
+            provider_density_score * 0.6
+            + multi_platform_presence_score * 0.4
+        )
+        delivery_market_pass = (
+            _delivery_composite >= thresholds["delivery_provider_density_min"]
+        )
     else:
         delivery_market_pass = True
 
@@ -1722,6 +1728,55 @@ def _top_positives_and_risks(
     # Flag when delivery scores are inferred (no observed listings).
     if not delivery_observed:
         risks.append("Delivery market data is inferred — no observed listings near site.")
+
+    # ── Area utilization signal ──
+    area_m2 = _safe_float(candidate.get("area_m2"))
+    min_area = _safe_float(candidate.get("min_area_m2"), 80)
+    max_area = _safe_float(candidate.get("max_area_m2"), 500)
+    if area_m2 > 0 and max_area > min_area:
+        mid_area = (min_area + max_area) / 2.0
+        if abs(area_m2 - mid_area) / max(mid_area, 1.0) < 0.15:
+            positives.append("Site area is well-aligned with target range.")
+        elif area_m2 < min_area * 1.1:
+            risks.append(
+                f"Area ({area_m2:.0f} m\u00b2) is near the minimum of the requested range."
+            )
+        elif area_m2 > max_area * 0.9:
+            risks.append(
+                f"Area ({area_m2:.0f} m\u00b2) is near the maximum \u2014 may increase fit-out cost."
+            )
+
+    # ── Rent economics signal ──
+    economics = _safe_float(candidate.get("economics_score"))
+    if economics >= 70:
+        positives.append("Strong economics with favorable rent-to-revenue ratio.")
+    elif economics < 55:
+        risks.append(
+            "Economics are marginal \u2014 rent burden may be high relative to revenue potential."
+        )
+
+    # ── Cannibalization proximity signal ──
+    nearest_m = _safe_float(candidate.get("distance_to_nearest_branch_m"))
+    if nearest_m is not None and nearest_m > 0:
+        nearest_km = nearest_m / 1000.0
+        if nearest_km < 1.5:
+            risks.append(
+                f"Nearest own branch is only {nearest_km:.1f} km away \u2014 high overlap risk."
+            )
+        elif nearest_km > 5.0:
+            positives.append(
+                f"Well-separated from nearest branch ({nearest_km:.1f} km) \u2014 low overlap."
+            )
+
+    # ── Competitor density signal ──
+    competitor_count = _safe_int(candidate.get("competitor_count"))
+    if competitor_count >= 8:
+        risks.append(
+            f"High competitor density ({competitor_count} nearby) \u2014 market may be saturated."
+        )
+    elif competitor_count <= 2 and competitor_count >= 0:
+        positives.append("Low competitor density \u2014 potential first-mover advantage.")
+
     return positives[:5], risks[:6]
 
 
@@ -2270,7 +2325,20 @@ def _decision_summary(
 ) -> str:
     area_label = "compact" if area_m2 < 180 else "standard"
     district_label = district or "the target district"
-    risk_text = key_risks[0] if key_risks else "execution risk should be managed during leasing and design"
+    if key_risks:
+        risk_text = key_risks[0]
+    elif economics_score < 55:
+        risk_text = (
+            "rent economics are tight and should be validated with actual lease terms"
+        )
+    elif payback_band == "borderline":
+        risk_text = (
+            "payback timeline is borderline \u2014 validate revenue assumptions before commitment"
+        )
+    else:
+        risk_text = (
+            "execution risk should be managed during leasing and design"
+        )
     return (
         f"This {area_label} candidate in {district_label} scores {final_score:.1f}/100 overall with an economics score of {economics_score:.1f}/100. "
         f"The payback profile is {payback_band}, making it a practical first-pass option for {_recommended_use_case(service_model, area_m2)}. "
@@ -3221,8 +3289,8 @@ def run_expansion_search(
             # from 0.5 (1 listing) to 1.0 (10+ listings).
             _data_confidence = min(1.0, max(0.5, provider_listing_count / 10.0))
             provider_whitespace_score = 50.0 + (_raw_whitespace - 50.0) * _data_confidence
-            # Platform presence: denominator raised to 6 to reduce saturation
-            multi_platform_presence_score = _clamp((provider_platform_count / max(float(_active_platform_count), 6.0)) * 100.0)
+            # Platform presence: floor of 2 — minimum meaningful denominator
+            multi_platform_presence_score = _clamp((provider_platform_count / max(float(_active_platform_count), 2.0)) * 100.0)
             # Log-scale delivery competition to avoid saturation in dense districts
             delivery_competition_score = _clamp((math.log1p(delivery_competition_count) / math.log1p(80)) * 100.0)
         else:
@@ -3833,6 +3901,12 @@ def run_expansion_search(
             "gate_status_json": gate_status_json,
             "provider_density_score": provider_density_score,
             "multi_platform_presence_score": multi_platform_presence_score,
+            "area_m2": area_m2,
+            "min_area_m2": min_area_m2,
+            "max_area_m2": max_area_m2,
+            "distance_to_nearest_branch_m": distance_to_nearest_branch_m,
+            "competitor_count": competitor_count,
+            "provider_whitespace_score": provider_whitespace_score,
         }
         top_positives_json, top_risks_json = _top_positives_and_risks(candidate=seed_candidate, gate_reasons=gate_reasons_json)
         district_canon = _canonicalize_district_label(district, district_lookup)
@@ -4011,6 +4085,28 @@ def run_expansion_search(
         candidate["compare_rank"] = index
         candidate["rank_position"] = index
 
+    # ── Rank-based display score stretching ──
+    # Preserves ranking order; spreads scores for visual differentiation.
+    # final_score stays unchanged for data integrity.
+    if len(candidates) >= 2:
+        _top = candidates[0]["final_score"]
+        _bot = candidates[-1]["final_score"]
+        _raw_span = max(_top - _bot, 0.01)
+        _display_ceil = min(_top, 95.0)
+        _display_floor = max(_display_ceil - 15.0, 50.0)
+        _display_span = _display_ceil - _display_floor
+        for _c in candidates:
+            _frac = (_c["final_score"] - _bot) / _raw_span
+            _c["display_score"] = round(_display_floor + _frac * _display_span, 1)
+    else:
+        for _c in candidates:
+            _c["display_score"] = round(_c["final_score"], 1)
+
+    # Store display_score inside score_breakdown_json for frontend access
+    for _c in candidates:
+        if isinstance(_c.get("score_breakdown_json"), dict):
+            _c["score_breakdown_json"]["display_score"] = _c["display_score"]
+
     insert_sql = text(
         """
         INSERT INTO expansion_candidate (
@@ -4178,6 +4274,36 @@ def run_expansion_search(
                 exc_info=True,
             )
 
+    # ── Surface districts with no matching parcels ──
+    _districts_with_no_candidates: list[str] = []
+    if target_district_norm:
+        _districts_found = set()
+        for _c in persisted_candidates:
+            _cd = normalize_district_key(_c.get("district"))
+            if _cd:
+                _districts_found.add(_cd)
+        _districts_missing_norm = [
+            d for d in target_district_norm if d not in _districts_found
+        ]
+        if _districts_missing_norm:
+            # Map back to original user-supplied display names
+            _td_original = target_districts  # the raw list from the request
+            for _mn in _districts_missing_norm:
+                _matched = False
+                for _orig in _td_original:
+                    if normalize_district_key(_orig) == _mn:
+                        _districts_with_no_candidates.append(_orig)
+                        _matched = True
+                        break
+                if not _matched:
+                    _districts_with_no_candidates.append(_mn)
+            logger.warning(
+                "expansion_search: districts with no candidates: "
+                "search_id=%s missing=%s",
+                search_id,
+                _districts_with_no_candidates,
+            )
+
     # ── Coverage metadata: update search notes with district stats ──
     try:
         districts_in_result = set()
@@ -4194,15 +4320,21 @@ def run_expansion_search(
             "districts_represented": len(districts_in_result),
             "districts_list": sorted(districts_in_result),
         }
+        search_notes: dict[str, Any] = {"coverage": coverage_meta}
+        if _districts_with_no_candidates:
+            search_notes["districts_with_no_candidates"] = _districts_with_no_candidates
+            search_notes["districts_no_candidates_reason"] = (
+                "No parcels matching area and category criteria found in these districts"
+            )
         db.execute(
             text(
                 "UPDATE expansion_search "
-                "SET notes = COALESCE(notes, '{}'::jsonb) || CAST(:coverage AS jsonb) "
+                "SET notes = COALESCE(notes, '{}'::jsonb) || CAST(:notes_patch AS jsonb) "
                 "WHERE id = :search_id"
             ),
             {
                 "search_id": search_id,
-                "coverage": json.dumps({"coverage": coverage_meta}, ensure_ascii=False),
+                "notes_patch": json.dumps(search_notes, ensure_ascii=False),
             },
         )
     except Exception:
