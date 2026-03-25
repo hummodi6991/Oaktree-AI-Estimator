@@ -910,6 +910,7 @@
     "validationLatRange": "Latitude must be between -90 and 90",
     "validationLonRange": "Longitude must be between -180 and 180",
     "compareLimitWarning": "You can compare up to 6 candidates",
-    "compareMinWarning": "Select at least 2 candidates to compare"
+    "compareMinWarning": "Select at least 2 candidates to compare",
+    "noMatchingParcelsInDistricts": "No matching parcels found in {{districts}} for your area and category criteria."
   }
 }

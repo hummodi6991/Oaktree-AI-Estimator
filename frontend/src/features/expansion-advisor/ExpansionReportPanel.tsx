@@ -170,7 +170,7 @@ export default function ExpansionReportPanel({
                               {item.rank_position ? t("expansionAdvisor.reportRankLabel", { rank: item.rank_position }) : `#${index + 1}`}
                             </span>
                             <div className="ea-report-top-card__badges">
-                              <ScorePill value={item.final_score} />
+                              <ScorePill value={item.score_breakdown_json?.display_score ?? item.final_score} />
                               <ConfidenceBadge grade={item.confidence_grade} />
                               {item.gate_verdict && (
                                 <span className={`ea-badge ea-badge--${item.gate_verdict === "pass" ? "green" : item.gate_verdict === "fail" ? "red" : "amber"}`}>
@@ -181,16 +181,16 @@ export default function ExpansionReportPanel({
                           </div>
                           {/* Positives and risks */}
                           <div className="ea-candidate__insights">
-                            {(item.top_positives_json || []).slice(0, 2).map((text, i) => (
+                            {(item.top_positives_json || []).slice(0, 2).filter((text) => text && text !== "—").map((text, i) => (
                               <div key={`p-${i}`} className="ea-candidate__insight">
                                 <span className="ea-candidate__insight-icon ea-candidate__insight-icon--positive">+</span>
-                                <span>{text}</span>
+                                <span className="ea-candidate__insight-text">{text}</span>
                               </div>
                             ))}
-                            {(item.top_risks_json || []).slice(0, 2).map((text, i) => (
+                            {(item.top_risks_json || []).slice(0, 2).filter((text) => text && text !== "—").map((text, i) => (
                               <div key={`r-${i}`} className="ea-candidate__insight">
                                 <span className="ea-candidate__insight-icon ea-candidate__insight-icon--risk">!</span>
-                                <span>{text}</span>
+                                <span className="ea-candidate__insight-text">{text}</span>
                               </div>
                             ))}
                           </div>

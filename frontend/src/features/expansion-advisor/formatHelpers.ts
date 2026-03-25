@@ -43,12 +43,23 @@ export function fmtSarPerM2Year(value: number | null | undefined): string {
   return `${formatInteger(Math.round(value), FALLBACK)} SAR/m²/yr`;
 }
 
-/** Color semantic: >=70 green, >=40 amber, <40 red */
+/** Color semantic: >=80 dark green, >=70 green, >=60 amber, <60 red */
 export function scoreColor(value: number | null | undefined): "green" | "amber" | "red" | "neutral" {
   if (value == null || !Number.isFinite(value)) return "neutral";
   if (value >= 70) return "green";
-  if (value >= 40) return "amber";
+  if (value >= 60) return "amber";
   return "red";
+}
+
+/**
+ * Extract the display_score from a candidate's score_breakdown_json.
+ * Falls back to final_score if display_score is not available.
+ */
+export function getDisplayScore(candidate: {
+  score_breakdown_json?: { display_score?: number } | null;
+  final_score?: number | null;
+}): number | null | undefined {
+  return candidate.score_breakdown_json?.display_score ?? candidate.final_score;
 }
 
 /** Confidence grade color: A/B green, C amber, D/F red */

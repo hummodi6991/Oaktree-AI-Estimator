@@ -11,8 +11,14 @@ from app.services.expansion_advisor import (
     get_candidate_memo,
     get_recommendation_report,
     get_search,
-    run_expansion_search,
+    run_expansion_search as _run_expansion_search_raw,
 )
+
+
+def run_expansion_search(*args, **kwargs):
+    """Wrapper that unwraps the new dict return format to a plain list."""
+    result = _run_expansion_search_raw(*args, **kwargs)
+    return result["items"] if isinstance(result, dict) else result
 
 
 class _Result:

@@ -211,6 +211,7 @@ class ExpansionSearchResponse(StrictResponseModel):
     search_id: str | None = None
     brand_profile: ExpansionAdvisorBrandProfileResponse
     items: list[ExpansionCandidateResponse]
+    notes: dict[str, Any] = {}
     meta: ExpansionAdvisorMeta
 
 
@@ -685,7 +686,7 @@ def create_expansion_search(
         if brand_profile_payload:
             persist_brand_profile(db, search_id, brand_profile_payload)
 
-        items = run_expansion_search(
+        _search_result = run_expansion_search(
             db=db,
             search_id=search_id,
             brand_name=req.brand_name,
@@ -700,6 +701,13 @@ def create_expansion_search(
             existing_branches=existing_branches_payload,
             brand_profile=brand_profile_payload,
         )
+        # Handle both dict (new format) and list (legacy/test mocks)
+        if isinstance(_search_result, dict):
+            items = _search_result["items"]
+            search_notes = _search_result.get("notes", {})
+        else:
+            items = _search_result
+            search_notes = {}
         db.commit()
     except Exception as exc:
         logger.exception(
@@ -751,6 +759,7 @@ def create_expansion_search(
             "brand_profile": brand_profile_payload,
         },
         "items": items,
+        "notes": search_notes,
         "meta": {
             "version": "expansion_advisor_v6.1",
             "parcel_source": "arcgis_only",

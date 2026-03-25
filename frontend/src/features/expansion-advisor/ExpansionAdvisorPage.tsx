@@ -187,6 +187,7 @@ export default function ExpansionAdvisorPage({
   const [saving, setSaving] = useState(false);
   const [activeDrawer, setActiveDrawer] = useState<DrawerKey>("none");
   const [searchMeta, setSearchMeta] = useState<Record<string, unknown>>({});
+  const [searchNotes, setSearchNotes] = useState<Record<string, unknown>>({});
   const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
   const [activeSavedStatus, setActiveSavedStatus] = useState<"draft" | "final">("draft");
   const [mapViewState, setMapViewState] = useState<MapViewState>({});
@@ -354,6 +355,7 @@ export default function ExpansionAdvisorPage({
     setSavedLoadError(null);
     setSearchId("");
     setSearchMeta({});
+    setSearchNotes({});
     setActiveDrawer("none");
     setActiveSavedId(null);
     setActiveSavedStatus("draft");
@@ -369,6 +371,7 @@ export default function ExpansionAdvisorPage({
       setSearchId(result.search_id);
       setCandidates(normalizeCandidates(result.items || []));
       setSearchMeta(result.meta || {});
+      setSearchNotes(result.notes || {});
       void loadReport(result.search_id);
       void trackEvent("ui_expansion_search_completed", { meta: { search_id: result.search_id, count: (result.items || []).length } });
     } catch (err) {
@@ -771,6 +774,21 @@ export default function ExpansionAdvisorPage({
               <button className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => setActiveDrawer("save")} disabled={!searchId}>
                 {activeSavedId ? t("expansionAdvisor.updateStudy") : t("expansionAdvisor.saveStudy")}
               </button>
+            </div>
+          )}
+
+          {/* Missing districts banner */}
+          {hasResults && Array.isArray(searchNotes.districts_with_no_candidates) && (searchNotes.districts_with_no_candidates as string[]).length > 0 && (
+            <div className="ea-missing-districts-banner">
+              <span className="ea-missing-districts-banner__icon">ℹ️</span>
+              <span>
+                {t("expansionAdvisor.noMatchingParcelsInDistricts", {
+                  districts: (searchNotes.districts_with_no_candidates as string[]).join(", "),
+                })}
+                {searchNotes.districts_no_candidates_reason && (
+                  <> — {String(searchNotes.districts_no_candidates_reason)}</>
+                )}
+              </span>
             </div>
           )}
 

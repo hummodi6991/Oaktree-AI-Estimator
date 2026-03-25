@@ -497,7 +497,7 @@ export function buildFinalistTiles(
         revenueIndex: candidate.estimated_revenue_index ?? null,
         bestStrength: positives[0] || "—",
         mainRisk: risks[0] || "—",
-        finalScore: candidate.final_score ?? null,
+        finalScore: candidate.score_breakdown_json?.display_score ?? candidate.final_score ?? null,
         confidenceGrade: candidate.confidence_grade || "—",
         isLead: candidate.id === leadCandidateId,
       };
@@ -1010,7 +1010,7 @@ export function buildDecisionSnapshot(
     gateVerdict: gatePass === true ? "pass" : gatePass === false ? "fail" : "unknown",
     // Show "no pass" notice only when no strict passes AND no validation-clear candidates
     allGatesPass: hasStrictPasses || hasValidationClear,
-    finalScore: candidate.final_score ?? null,
+    finalScore: candidate.score_breakdown_json?.display_score ?? candidate.final_score ?? null,
     rankPosition: candidate.rank_position ?? null,
   };
 }
