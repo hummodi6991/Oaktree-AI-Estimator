@@ -166,6 +166,7 @@ class CandidateScoreBreakdownResponse(StrictResponseModel):
     weighted_components: dict[str, Any] = Field(default_factory=dict)
     display: dict[str, Any] = Field(default_factory=dict)
     final_score: float = 0.0
+    display_score: float | None = None
 
 
 class ExpansionCandidateResponse(FlexibleResponseModel):
