@@ -419,7 +419,12 @@ class TestMigration:
 
     @staticmethod
     def _find_migration():
-        """Return the path to the migration that creates expansion_road_context."""
+        """Return the path to the migration that *creates* the EA tables.
+
+        We look for a file that contains both ``CREATE TABLE`` and
+        ``expansion_road_context`` so we don't accidentally match an
+        index-only migration that merely references the table name.
+        """
         versions_dir = os.path.join(
             os.path.dirname(__file__), "..", "alembic", "versions",
         )
@@ -429,7 +434,7 @@ class TestMigration:
             fpath = os.path.join(versions_dir, fname)
             with open(fpath) as f:
                 content = f.read()
-            if "expansion_road_context" in content:
+            if "expansion_road_context" in content and "CREATE TABLE" in content:
                 return fpath, content
         return None, None
 
