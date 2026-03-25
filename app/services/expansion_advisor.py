@@ -906,7 +906,7 @@ def _arcgis_classification_semantics(
         7500: ("mixed_use", 100, "pass"),
         1000: ("residential", 40, "unknown"),   # weak signal, NOT hard fail
         3000: ("public_service", 55, "unknown"),
-        4000: ("industrial", 55, "unknown"),
+        4000: ("industrial", 30, "fail"),   # industrial zones are not viable F&B retail locations
     }
 
     if code_int is not None and code_int in _CODE_MAP:
@@ -921,6 +921,8 @@ def _arcgis_classification_semantics(
     # ── 2. Label-token fallback ──
     raw = (landuse_label or "").strip().lower()
     if raw:
+        if any(tok in raw for tok in ["industrial", "warehouse", "صناعي", "مستودع"]):
+            return {"normalized_class": "industrial", "score": 30, "verdict_hint": "fail", "source": "label_tokens"}
         if any(tok in raw for tok in ["commercial", "retail", "تجاري"]):
             return {"normalized_class": "commercial", "score": 100, "verdict_hint": "pass", "source": "label_tokens"}
         if any(tok in raw for tok in ["mixed", "مختلط"]):
@@ -2214,16 +2216,51 @@ def _estimate_fitout_cost_sar(area_m2: float, service_model: str) -> float:
     return max(0.0, area_m2 * cost_per_m2)
 
 
+# Category throughput multipliers — high-frequency F&B categories have
+# higher average transaction velocity than their demand score implies.
+_CATEGORY_THROUGHPUT: dict[str, float] = {
+    "burger": 1.10,
+    "shawarma": 1.12,
+    "fried chicken": 1.10,
+    "coffee": 1.08,
+    "cafe": 1.05,
+    "pizza": 1.07,
+    "sandwich": 1.06,
+    "healthy": 0.95,   # lower average ticket velocity
+    "grills": 0.92,    # slower table turns / dine-in focused
+}
+
+
+def _category_throughput_factor(category: str | None) -> float:
+    if not category:
+        return 1.0
+    cat_lower = (category or "").lower().strip()
+    for key, factor in _CATEGORY_THROUGHPUT.items():
+        if key in cat_lower:
+            return factor
+    return 1.0
+
+
 def _estimate_revenue_index(
     demand_score: float,
     delivery_listing_count: int,
     population_reach: float,
     whitespace_score: float,
+    category: str | None = None,
 ) -> float:
-    """Composite revenue potential index using consistent sqrt scaling."""
+    """Composite revenue potential index using consistent sqrt scaling.
+
+    Category throughput factor adjusts for inherent demand velocity
+    of high-frequency F&B categories (burger, shawarma, coffee) vs
+    slower-turn formats (grills, fine dining).
+    """
     delivery_signal = _clamp((delivery_listing_count / 35.0) ** 0.5 * 100.0) if delivery_listing_count > 0 else 0.0
     population_signal = _clamp((population_reach / 80000.0) ** 0.5 * 100.0) if population_reach > 0 else 0.0
-    return _clamp(demand_score * 0.45 + whitespace_score * 0.20 + delivery_signal * 0.20 + population_signal * 0.15)
+    base = _clamp(demand_score * 0.45 + whitespace_score * 0.20 + delivery_signal * 0.20 + population_signal * 0.15)
+    # Apply category throughput factor, clamped to [0.88, 1.12] to avoid
+    # extreme distortion.  This is a soft signal, not a gate.
+    factor = max(0.88, min(1.12, _category_throughput_factor(category)))
+    return _clamp(base * factor)
 
 
 def _economics_score(
@@ -3265,6 +3302,12 @@ def run_expansion_search(
         zoning_fit_score = _zoning_fit_score(landuse_label, landuse_code)
         fit_score = _clamp(area_fit * 0.55 + zoning_fit_score * 0.45)
 
+        # Hard exclusion: industrial parcels are never suitable for
+        # customer-facing F&B formats (cafe, dine_in).
+        _zoning_class = _zoning_signal_class(landuse_label, landuse_code)
+        if _zoning_class == "industrial" and service_model in ("cafe", "dine_in"):
+            continue  # skip this parcel entirely
+
         # Guard: when no delivery data is observed, scores must reflect
         # *uncertainty* (neutral 50), not opportunity (100).  Without this,
         # the whitespace formula yields 100 for zero-data candidates.
@@ -3281,18 +3324,38 @@ def run_expansion_search(
         )
         if _delivery_observed:
             # Log-scale provider density to avoid saturation in dense districts
-            provider_density_score = _clamp((math.log1p(provider_listing_count) / math.log1p(150)) * 100.0)
-            _raw_whitespace = _clamp(100.0 - max(0.0, (delivery_competition_count - 6) * 6.0) - min(35.0, provider_density_score * 0.2))
-            # Dampen whitespace when delivery data is thin: fewer than 10 total
-            # listings means we lack confidence that whitespace is genuinely
-            # uncontested vs simply under-observed.  Confidence scales linearly
-            # from 0.5 (1 listing) to 1.0 (10+ listings).
+            provider_density_score = _clamp(
+                (math.log1p(provider_listing_count) / math.log1p(150)) * 100.0
+            )
+            _raw_whitespace = _clamp(
+                100.0
+                - max(0.0, (delivery_competition_count - 6) * 6.0)
+                - min(35.0, provider_density_score * 0.2)
+            )
+            # Dampen whitespace when delivery data is thin (confidence scaling).
             _data_confidence = min(1.0, max(0.5, provider_listing_count / 10.0))
-            provider_whitespace_score = 50.0 + (_raw_whitespace - 50.0) * _data_confidence
-            # Platform presence: floor of 2 — minimum meaningful denominator
-            multi_platform_presence_score = _clamp((provider_platform_count / max(float(_active_platform_count), 2.0)) * 100.0)
+            _absolute_whitespace = 50.0 + (_raw_whitespace - 50.0) * _data_confidence
+
+            # Relative whitespace: preserve intra-district differentiation even
+            # in fully-saturated zones.  Floor at 10 so competitors at different
+            # competition densities are still distinguishable.  The gate check
+            # uses delivery_competition_score (below) to flag saturation.
+            provider_whitespace_score = max(10.0, _absolute_whitespace)
+
+            # Platform presence: score relative to platforms that *actually have
+            # data*.  Do not floor at 2 — that produces a systematic 50 for
+            # single-platform environments.
+            if _active_platform_count >= 1:
+                multi_platform_presence_score = _clamp(
+                    (provider_platform_count / float(_active_platform_count)) * 100.0
+                )
+            else:
+                multi_platform_presence_score = 50.0  # unknown, not zero, not 100
+
             # Log-scale delivery competition to avoid saturation in dense districts
-            delivery_competition_score = _clamp((math.log1p(delivery_competition_count) / math.log1p(80)) * 100.0)
+            delivery_competition_score = _clamp(
+                (math.log1p(delivery_competition_count) / math.log1p(80)) * 100.0
+            )
         else:
             provider_density_score = 0.0
             provider_whitespace_score = 50.0   # unknown ≠ excellent
@@ -3318,6 +3381,7 @@ def run_expansion_search(
             delivery_listing_count,
             population_reach,
             whitespace_score,
+            category=category,
         )
         economics_score = _economics_score(
             estimated_revenue_index=estimated_revenue_index,
@@ -4324,13 +4388,18 @@ def run_expansion_search(
             "candidates_persisted": len(persisted_candidates),
             "districts_represented": len(districts_in_result),
             "districts_list": sorted(districts_in_result),
+            # Surface data gaps explicitly for frontend consumption
+            "districts_with_no_candidates": _districts_with_no_candidates,
+            "districts_with_no_candidates_count": len(_districts_with_no_candidates),
+            "data_gap": len(_districts_with_no_candidates) > 0,
+            "data_gap_message": (
+                f"No commercial parcels found in: "
+                f"{', '.join(_districts_with_no_candidates)}. "
+                "These districts may lack parcel data in the current dataset. "
+                "Try a broader area search or remove these districts."
+            ) if _districts_with_no_candidates else None,
         }
         search_notes: dict[str, Any] = {"coverage": coverage_meta}
-        if _districts_with_no_candidates:
-            search_notes["districts_with_no_candidates"] = _districts_with_no_candidates
-            search_notes["districts_no_candidates_reason"] = (
-                "No parcels matching area and category criteria found in these districts"
-            )
         db.execute(
             text(
                 "UPDATE expansion_search "
