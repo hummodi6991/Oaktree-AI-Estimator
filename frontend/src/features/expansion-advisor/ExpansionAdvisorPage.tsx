@@ -785,9 +785,9 @@ export default function ExpansionAdvisorPage({
                 {t("expansionAdvisor.noMatchingParcelsInDistricts", {
                   districts: (searchNotes.districts_with_no_candidates as string[]).join(", "),
                 })}
-                {searchNotes.districts_no_candidates_reason && (
+                {searchNotes.districts_no_candidates_reason ? (
                   <> — {String(searchNotes.districts_no_candidates_reason)}</>
-                )}
+                ) : null}
               </span>
             </div>
           )}
