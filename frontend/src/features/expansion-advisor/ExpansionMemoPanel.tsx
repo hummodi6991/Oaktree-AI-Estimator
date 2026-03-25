@@ -6,7 +6,7 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
 import CopySummaryBlock from "./CopySummaryBlock";
-import { fmtScore, fmtMeters, fmtSAR, humanGateLabel, safeDistrictLabel } from "./formatHelpers";
+import { fmtScore, fmtMeters, fmtSAR, humanGateLabel, safeDistrictLabel, getDisplayScore } from "./formatHelpers";
 
 function toList(input: unknown): string[] {
   return Array.isArray(input) ? input.map(String) : [];
@@ -123,7 +123,7 @@ export default function ExpansionMemoPanel({
                   <div className="ea-detail__grid">
                     <div className="ea-detail__kv">
                       <span className="ea-detail__kv-label">{t("expansionAdvisor.finalScore")}</span>
-                      <ScorePill value={cand.final_score as number | undefined} large />
+                      <ScorePill value={(breakdown?.display_score as number | undefined) ?? (cand.final_score as number | undefined)} large />
                     </div>
                     <div className="ea-detail__kv">
                       <span className="ea-detail__kv-label">{t("expansionAdvisor.rank")}</span>

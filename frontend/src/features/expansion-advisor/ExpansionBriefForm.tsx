@@ -90,7 +90,12 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
     const cleanedBranches = (brief.existing_branches || []).filter(
       (b) => (b.lat !== 0 || b.lon !== 0) || (b.name && b.name.trim()),
     );
-    onSubmit({ ...brief, existing_branches: cleanedBranches });
+    onSubmit({
+      ...brief,
+      min_area_m2: brief.min_area_m2 || 100,
+      max_area_m2: brief.max_area_m2 || 500,
+      existing_branches: cleanedBranches,
+    });
   };
 
   return (
@@ -223,17 +228,33 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
         <div className="ea-form__row">
           <div className="ea-form__field">
             <label className="ea-form__label">{t("expansionAdvisor.minArea")}</label>
-            <input className={`ea-form__input${touched && errors.area_range ? " ea-form__input--error" : ""}`} type="number" value={brief.min_area_m2} onChange={(e) => set("min_area_m2", Number(e.target.value))} disabled={loading} min={0} />
+            <input
+              className={`ea-form__input${touched && errors.area_range ? " ea-form__input--error" : ""}`}
+              type="number"
+              value={brief.min_area_m2 || ""}
+              onChange={(e) => set("min_area_m2", e.target.value === "" ? 0 : Number(e.target.value))}
+              disabled={loading}
+              min={0}
+              placeholder="e.g. 80"
+            />
           </div>
           <div className="ea-form__field">
             <label className="ea-form__label">{t("expansionAdvisor.maxArea")}</label>
-            <input className={`ea-form__input${touched && errors.area_range ? " ea-form__input--error" : ""}`} type="number" value={brief.max_area_m2} onChange={(e) => set("max_area_m2", Number(e.target.value))} disabled={loading} min={0} />
+            <input
+              className={`ea-form__input${touched && errors.area_range ? " ea-form__input--error" : ""}`}
+              type="number"
+              value={brief.max_area_m2 || ""}
+              onChange={(e) => set("max_area_m2", e.target.value === "" ? 0 : Number(e.target.value))}
+              disabled={loading}
+              min={0}
+              placeholder="e.g. 500"
+            />
           </div>
         </div>
         {touched && errors.area_range && <span className="ea-form__error">{t(`expansionAdvisor.${errors.area_range}`)}</span>}
         <div className="ea-form__field">
           <label className="ea-form__label">{t("expansionAdvisor.targetArea")}</label>
-          <input className="ea-form__input" type="number" value={brief.target_area_m2 ?? ""} onChange={(e) => set("target_area_m2", Number(e.target.value) || null)} disabled={loading} min={0} />
+          <input className="ea-form__input" type="number" value={brief.target_area_m2 ?? ""} onChange={(e) => set("target_area_m2", e.target.value === "" ? null : Number(e.target.value) || null)} disabled={loading} min={0} placeholder="e.g. 200" />
         </div>
       </div>
 

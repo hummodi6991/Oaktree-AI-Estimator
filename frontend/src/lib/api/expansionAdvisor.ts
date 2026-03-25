@@ -64,6 +64,7 @@ export type CandidateScoreBreakdown = {
   inputs: Record<string, unknown>;
   weighted_components: Record<string, unknown>;
   final_score: number;
+  display_score?: number;
 };
 
 export type ComparableCompetitor = {
@@ -141,6 +142,7 @@ export type ExpansionSearchResponse = {
   search_id: string;
   brand_profile: ExpansionAdvisorBrandProfileResponse;
   items: ExpansionCandidate[];
+  notes?: Record<string, unknown>;
   meta: ExpansionAdvisorMeta;
 };
 
@@ -489,7 +491,7 @@ async function readJson<T>(res: Response): Promise<T> {
 export async function createExpansionSearch(payload: ExpansionBrief): Promise<ExpansionSearchResponse> {
   const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/searches"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
   const data = await readJson<ExpansionSearchResponse>(res);
-  return { ...data, items: normalizeCandidates(data.items || []) };
+  return { ...data, items: normalizeCandidates(data.items || []), notes: data.notes || {} };
 }
 export async function getExpansionSearch(searchId: string): Promise<ExpansionSearchDetailResponse> {
   const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}`));

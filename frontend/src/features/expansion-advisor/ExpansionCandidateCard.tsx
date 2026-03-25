@@ -4,7 +4,7 @@ import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import WhyThisRank from "./WhyThisRank";
-import { fmtSAR, fmtMeters, fmtScore, fmtM2, fmtSarPerM2, fmtMonths, candidateDistrictLabel } from "./formatHelpers";
+import { fmtSAR, fmtMeters, fmtScore, fmtM2, fmtSarPerM2, fmtMonths, candidateDistrictLabel, getDisplayScore } from "./formatHelpers";
 
 type Props = {
   candidate: ExpansionCandidate;
@@ -80,7 +80,7 @@ export default function ExpansionCandidateCard({
           )}
         </div>
         <div className="ea-candidate__badges">
-          <ScorePill value={candidate.final_score} />
+          <ScorePill value={getDisplayScore(candidate)} />
           {/* Verdict badge — separate from confidence */}
           <span className={`ea-badge ea-badge--${gateVerdict === "pass" ? "green" : gateVerdict === "fail" ? "red" : "amber"}`}>
             {gateVerdict === "pass" ? t("expansionAdvisor.gatePass") : gateVerdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateNeedsValidation")}
@@ -155,16 +155,16 @@ export default function ExpansionCandidateCard({
       {/* Insights */}
       {(positives.length > 0 || risks.length > 0) && (
         <div className="ea-candidate__insights">
-          {positives.map((text, i) => (
+          {positives.filter((text) => text && text !== "—").map((text, i) => (
             <div key={`p-${i}`} className="ea-candidate__insight">
               <span className="ea-candidate__insight-icon ea-candidate__insight-icon--positive">+</span>
-              <span>{text}</span>
+              <span className="ea-candidate__insight-text">{text}</span>
             </div>
           ))}
-          {risks.map((text, i) => (
+          {risks.filter((text) => text && text !== "—").map((text, i) => (
             <div key={`r-${i}`} className="ea-candidate__insight">
               <span className="ea-candidate__insight-icon ea-candidate__insight-icon--risk">!</span>
-              <span>{text}</span>
+              <span className="ea-candidate__insight-text">{text}</span>
             </div>
           ))}
         </div>

@@ -855,6 +855,7 @@
     "estimatedLabel": "(تقديري)",
     "noPassNotice": "لا يوجد مرشح يجتاز جميع البوابات المطلوبة حالياً.",
     "leadCandidate": "المرشح الرئيسي",
-    "gateNeedsValidation": "يحتاج تحقق"
+    "gateNeedsValidation": "يحتاج تحقق",
+    "noMatchingParcelsInDistricts": "لا توجد قطع أرض مطابقة في {{districts}} لمعايير المساحة والفئة المحددة."
   }
 }

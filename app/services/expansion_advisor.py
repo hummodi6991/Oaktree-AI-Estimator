@@ -4085,19 +4085,23 @@ def run_expansion_search(
         candidate["compare_rank"] = index
         candidate["rank_position"] = index
 
-    # ── Rank-based display score stretching ──
-    # Preserves ranking order; spreads scores for visual differentiation.
-    # final_score stays unchanged for data integrity.
+    # ── Rank-percentile display score ──
+    # Maps rank position to a consistent visual spread.
+    # #1 gets the raw top score (capped at 95).
+    # Last place gets top - 15 (floored at 50).
+    # Middle candidates are evenly distributed between.
     if len(candidates) >= 2:
-        _top = candidates[0]["final_score"]
-        _bot = candidates[-1]["final_score"]
-        _raw_span = max(_top - _bot, 0.01)
-        _display_ceil = min(_top, 95.0)
-        _display_floor = max(_display_ceil - 15.0, 50.0)
-        _display_span = _display_ceil - _display_floor
-        for _c in candidates:
-            _frac = (_c["final_score"] - _bot) / _raw_span
-            _c["display_score"] = round(_display_floor + _frac * _display_span, 1)
+        _top_raw = candidates[0]["final_score"]
+        _display_ceil = min(round(_top_raw), 95)
+        _display_floor = max(_display_ceil - 15, 50)
+        _n = len(candidates)
+        for _i, _c in enumerate(candidates):
+            # rank 0 → 1.0, rank n-1 → 0.0
+            _pct = 1.0 - (_i / (_n - 1))
+            _c["display_score"] = round(
+                _display_floor + _pct * (_display_ceil - _display_floor),
+                1,
+            )
     else:
         for _c in candidates:
             _c["display_score"] = round(_c["final_score"], 1)
@@ -4305,6 +4309,7 @@ def run_expansion_search(
             )
 
     # ── Coverage metadata: update search notes with district stats ──
+    search_notes: dict[str, Any] = {}
     try:
         districts_in_result = set()
         for c in persisted_candidates:
@@ -4360,7 +4365,7 @@ def run_expansion_search(
         len(persisted_candidates),
         len(result),
     )
-    return result
+    return {"items": result, "notes": search_notes}
 
 
 def get_search(db: Session, search_id: str) -> dict[str, Any] | None:

@@ -88,14 +88,18 @@ function TileCard({
       </div>
 
       <div className="ea-finalist-tile__insights">
-        <div className="ea-candidate__insight">
-          <span className="ea-candidate__insight-icon ea-candidate__insight-icon--positive">+</span>
-          <span>{tile.bestStrength}</span>
-        </div>
-        <div className="ea-candidate__insight">
-          <span className="ea-candidate__insight-icon ea-candidate__insight-icon--risk">!</span>
-          <span>{tile.mainRisk}</span>
-        </div>
+        {tile.bestStrength && tile.bestStrength !== "—" && (
+          <div className="ea-candidate__insight">
+            <span className="ea-candidate__insight-icon ea-candidate__insight-icon--positive">+</span>
+            <span className="ea-candidate__insight-text">{tile.bestStrength}</span>
+          </div>
+        )}
+        {tile.mainRisk && tile.mainRisk !== "—" && (
+          <div className="ea-candidate__insight">
+            <span className="ea-candidate__insight-icon ea-candidate__insight-icon--risk">!</span>
+            <span className="ea-candidate__insight-text">{tile.mainRisk}</span>
+          </div>
+        )}
       </div>
 
       <div className="ea-finalist-tile__actions" onClick={(e) => e.stopPropagation()}>
