@@ -3318,9 +3318,9 @@ def run_expansion_search(
         # uncontested area.  Thresholds: ≥3 total listings OR ≥2 platforms OR
         # ≥1 same-category competitor in the delivery radius.
         _delivery_observed = (
-            provider_listing_count >= 3
+            provider_listing_count >= 5
             or provider_platform_count >= 2
-            or delivery_competition_count >= 1
+            or delivery_competition_count >= 2
         )
         if _delivery_observed:
             # Log-scale provider density to avoid saturation in dense districts
@@ -3333,7 +3333,7 @@ def run_expansion_search(
                 - min(35.0, provider_density_score * 0.2)
             )
             # Dampen whitespace when delivery data is thin (confidence scaling).
-            _data_confidence = min(1.0, max(0.5, provider_listing_count / 10.0))
+            _data_confidence = min(1.0, max(0.3, provider_listing_count / 20.0))
             _absolute_whitespace = 50.0 + (_raw_whitespace - 50.0) * _data_confidence
 
             # Relative whitespace: preserve intra-district differentiation even
