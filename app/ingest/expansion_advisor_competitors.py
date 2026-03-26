@@ -152,10 +152,14 @@ def _build_competitor_quality(db, replace: bool) -> dict:
                 THEN LEAST(100.0, ds.listing_count * 15.0)
                 ELSE 0.0
             END,
-            -- multi_platform_score (0-100): platforms / 5 * 100
+            -- multi_platform_score (0-100): scaled to active platforms
             CASE
-                WHEN ds.platform_count IS NOT NULL
-                THEN LEAST(100.0, ds.platform_count * 20.0)
+                WHEN ds.platform_count IS NOT NULL AND ds.platform_count > 0
+                THEN LEAST(100.0, ds.platform_count * (100.0 / GREATEST(1, (
+                    SELECT COUNT(DISTINCT dsr2.platform)
+                    FROM delivery_source_record dsr2
+                    WHERE dsr2.lat IS NOT NULL AND dsr2.lon IS NOT NULL
+                ))))
                 ELSE 0.0
             END,
             -- late_night_score (0 or 100)
@@ -182,8 +186,12 @@ def _build_competitor_quality(db, replace: bool) -> dict:
                          ELSE 0.0
                     END, 0.0) * 0.25
                 + COALESCE(
-                    CASE WHEN ds.platform_count IS NOT NULL
-                         THEN LEAST(100.0, ds.platform_count * 20.0)
+                    CASE WHEN ds.platform_count IS NOT NULL AND ds.platform_count > 0
+                         THEN LEAST(100.0, ds.platform_count * (100.0 / GREATEST(1, (
+                             SELECT COUNT(DISTINCT dsr2.platform)
+                             FROM delivery_source_record dsr2
+                             WHERE dsr2.lat IS NOT NULL AND dsr2.lon IS NOT NULL
+                         ))))
                          ELSE 0.0
                     END, 0.0) * 0.15
                 + COALESCE(

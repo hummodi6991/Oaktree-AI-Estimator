@@ -8,11 +8,11 @@ on:
       platforms:
         description: "Comma-separated platform list"
         required: false
-        default: "hungerstation,jahez,mrsool,talabat"
+        default: "hungerstation"
       max_pages:
         description: "Max pages per platform during scrape"
         required: false
-        default: "5000"
+        default: "12000"
       allow_empty:
         description: "Allow zero rows without failing"
         required: false
@@ -25,7 +25,7 @@ on:
 jobs:
   ingest-delivery:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 720
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -55,8 +55,8 @@ jobs:
       - name: Scrape and ingest Delivery Marketplace data
         run: |
           python -m app.ingest.expansion_advisor_delivery \
-            --platforms "${{ github.event.inputs.platforms || 'hungerstation,jahez,mrsool,talabat' }}" \
-            --max-pages ${{ github.event.inputs.max_pages || '5000' }} \
+            --platforms "${{ github.event.inputs.platforms || 'hungerstation' }}" \
+            --max-pages ${{ github.event.inputs.max_pages || '12000' }} \
             --write-stats /tmp/delivery-stats.json \
             ${{ github.event.inputs.allow_empty == 'true' && '--allow-empty' || '' }}
 
