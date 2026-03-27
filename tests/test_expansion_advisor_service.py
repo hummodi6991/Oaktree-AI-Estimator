@@ -1297,7 +1297,9 @@ def test_rent_lookup_failure_falls_back_to_default(monkeypatch):
         target_area_m2=180, limit=5,
     )
     assert len(items) == 1
-    assert items[0]["estimated_rent_sar_m2_year"] == 900.0
+    # Base fallback rent is 900.0; micro-location multiplier adjusts it
+    # within [0.70, 1.35] range based on local commercial signals.
+    assert 900.0 * 0.70 <= items[0]["estimated_rent_sar_m2_year"] <= 900.0 * 1.35
 
 
 def test_production_payload_c3ace4a6_regression(monkeypatch):
