@@ -2230,6 +2230,96 @@ def _build_explanation(
     }
 
 
+def _rent_micro_location_multiplier(
+    *,
+    provider_listing_count: int,
+    delivery_competition_count: int,
+    population_reach: float,
+    competitor_count: int,
+    district_delivery_stats: dict | None = None,
+    city_benchmarks: dict | None = None,
+) -> tuple[float, dict]:
+    """Compute a per-parcel rent multiplier based on local commercial activity.
+
+    Uses delivery density, population, and competition as proxies for
+    micro-location rent variation within a district. Returns a multiplier
+    in [0.70, 1.35] and a metadata dict for observability.
+
+    Signals:
+    - Delivery density (provider_listing_count): more nearby restaurants
+      = higher commercial activity = rent premium
+    - Population reach: higher population = more foot traffic = premium
+    - Competition count: more same-category competitors = commercial
+      corridor = premium
+    - District delivery stats: parcel's local density vs district average
+      provides relative positioning within the district
+
+    All signals are normalized to [0, 1] and blended into a composite
+    that maps to the multiplier range.
+    """
+    meta: dict = {}
+
+    # Normalize each signal to [0, 1]
+    # Delivery density: 0 listings → 0.0, 30+ listings → 1.0
+    density_signal = min(1.0, provider_listing_count / 30.0)
+
+    # Population: 0 → 0.0, 50K+ → 1.0
+    pop_signal = min(1.0, population_reach / 50000.0)
+
+    # Competition: 0 → 0.0, 8+ same-category → 1.0
+    comp_signal = min(1.0, competitor_count / 8.0)
+
+    # Category competition from delivery: 0 → 0.0, 15+ → 1.0
+    cat_comp_signal = min(1.0, delivery_competition_count / 15.0)
+
+    # District-relative signal: if we know the district's average delivery
+    # density, measure how this parcel compares. Above average → premium,
+    # below average → discount.
+    district_relative = 0.5  # neutral default
+    if district_delivery_stats and district_delivery_stats.get("total", 0) > 0:
+        district_avg_per_parcel = district_delivery_stats["total"] / max(1, district_delivery_stats.get("total", 1))
+        # Compare parcel's listing count to district average
+        # (district total is all restaurants; parcel count is within 1.2km)
+        # Typical district has 50-300 restaurants, parcel radius sees 5-50
+        district_density_proxy = district_delivery_stats["total"]
+        if city_benchmarks and city_benchmarks.get("median_total", 0) > 0:
+            # How dense is this district relative to city median?
+            district_vs_city = district_density_proxy / city_benchmarks["median_total"]
+            # Parcel's local density vs district: above-average parcel in
+            # above-average district = double premium signal
+            parcel_vs_district = provider_listing_count / max(1, district_density_proxy * 0.05)
+            district_relative = min(1.0, max(0.0,
+                (district_vs_city * 0.4 + min(2.0, parcel_vs_district) * 0.3) / 1.4
+            ))
+
+    # Blend signals into composite score [0, 1]
+    composite = (
+        density_signal * 0.35
+        + pop_signal * 0.20
+        + comp_signal * 0.15
+        + cat_comp_signal * 0.15
+        + district_relative * 0.15
+    )
+
+    # Map composite [0, 1] → multiplier [0.70, 1.35]
+    # 0.0 → 0.70 (quiet residential side street)
+    # 0.5 → 1.025 (roughly district average)
+    # 1.0 → 1.35 (prime commercial corridor)
+    multiplier = 0.70 + composite * 0.65
+
+    meta = {
+        "density_signal": round(density_signal, 3),
+        "pop_signal": round(pop_signal, 3),
+        "comp_signal": round(comp_signal, 3),
+        "cat_comp_signal": round(cat_comp_signal, 3),
+        "district_relative": round(district_relative, 3),
+        "composite": round(composite, 3),
+        "multiplier": round(multiplier, 3),
+    }
+
+    return round(multiplier, 4), meta
+
+
 def _estimate_rent_from_expansion_table(db: Session, district: str | None) -> tuple[float, str] | None:
     """Try to get rent estimate from the normalized expansion_rent_comp table.
 
@@ -3535,7 +3625,22 @@ def run_expansion_search(
         rent_cache_key = district_norm or None
         if rent_cache_key not in rent_cache:
             rent_cache[rent_cache_key] = _estimate_rent_sar_m2_year(db, district)
-        estimated_rent_sar_m2_year, rent_source = rent_cache[rent_cache_key]
+        _base_rent_sar_m2_year, rent_source = rent_cache[rent_cache_key]
+
+        # Micro-location rent adjustment: vary district median by local
+        # commercial activity signals (delivery density, population,
+        # competition) to differentiate parcels within the same district.
+        _rent_multiplier, _rent_micro_meta = _rent_micro_location_multiplier(
+            provider_listing_count=provider_listing_count,
+            delivery_competition_count=delivery_competition_count,
+            population_reach=population_reach,
+            competitor_count=competitor_count,
+            district_delivery_stats=_district_delivery_stats.get(district_norm) if district_norm else None,
+            city_benchmarks=_city_delivery_benchmarks,
+        )
+        estimated_rent_sar_m2_year = round(_base_rent_sar_m2_year * _rent_multiplier, 2)
+        if abs(_rent_multiplier - 1.0) > 0.01:
+            rent_source = f"{rent_source}+micro"
         estimated_annual_rent_sar = round(area_m2 * estimated_rent_sar_m2_year)
         estimated_fitout_cost_sar = round(_estimate_fitout_cost_sar(area_m2, service_model))
         estimated_revenue_index = _estimate_revenue_index(
@@ -3632,6 +3737,8 @@ def run_expansion_search(
                 "cannibalization_score": cannibalization_score,
                 "estimated_rent_sar_m2_year": estimated_rent_sar_m2_year,
                 "rent_source": rent_source,
+                "rent_micro_meta": _rent_micro_meta,
+                "rent_base_sar_m2_year": _base_rent_sar_m2_year,
                 "estimated_annual_rent_sar": estimated_annual_rent_sar,
                 "estimated_fitout_cost_sar": estimated_fitout_cost_sar,
                 "estimated_revenue_index": estimated_revenue_index,
@@ -3986,6 +4093,8 @@ def run_expansion_search(
         )
         cs["competitor_source"] = "expansion_competitor_quality" if ea_competitor_populated else "restaurant_poi"
         cs["delivery_observed"] = provider_listing_count > 0
+        cs["rent_micro_adjustment"] = prepared_item.get("rent_micro_meta")
+        cs["rent_base_sar_m2_year"] = prepared_item.get("rent_base_sar_m2_year")
         frontage_score = _frontage_score(
             parcel_perimeter_m=_safe_float(feature_snapshot_json.get("parcel_perimeter_m")),
             touches_road=bool(feature_snapshot_json.get("touches_road")),
