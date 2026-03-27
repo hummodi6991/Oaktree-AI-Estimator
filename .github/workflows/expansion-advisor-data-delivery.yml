@@ -1,8 +1,9 @@
 name: "Expansion Advisor Data — Delivery Marketplace"
 
 on:
-  schedule:
-    - cron: "0 5 * * 3"  # Weekly on Wednesday at 05:00 UTC
+  # Primary weekly scrape runs via SCCC workflow (K8s on Alibaba Cloud).
+  # This workflow is a lightweight fallback for quick manual runs
+  # that fit within GitHub's 6-hour job time limit.
   workflow_dispatch:
     inputs:
       platforms:
@@ -10,9 +11,9 @@ on:
         required: false
         default: "hungerstation"
       max_pages:
-        description: "Max pages per platform during scrape"
+        description: "Max pages per platform during scrape (keep ≤8000 for GitHub 6h limit)"
         required: false
-        default: "12000"
+        default: "5000"
       allow_empty:
         description: "Allow zero rows without failing"
         required: false
@@ -25,7 +26,7 @@ on:
 jobs:
   ingest-delivery:
     runs-on: ubuntu-latest
-    timeout-minutes: 720
+    timeout-minutes: 300
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -56,7 +57,7 @@ jobs:
         run: |
           python -m app.ingest.expansion_advisor_delivery \
             --platforms "${{ github.event.inputs.platforms || 'hungerstation' }}" \
-            --max-pages ${{ github.event.inputs.max_pages || '12000' }} \
+            --max-pages ${{ github.event.inputs.max_pages || '5000' }} \
             --write-stats /tmp/delivery-stats.json \
             ${{ github.event.inputs.allow_empty == 'true' && '--allow-empty' || '' }}
 

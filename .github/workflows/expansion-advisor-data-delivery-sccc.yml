@@ -1,18 +1,24 @@
 name: "Expansion Advisor Data — Delivery (SCCC)"
 
 on:
+  schedule:
+    - cron: "0 5 * * 3"  # Weekly on Wednesday at 05:00 UTC
   workflow_dispatch:
     inputs:
       platforms:
-        description: "Comma-separated platform list (blocked platforms that need Saudi IPs)"
+        description: "Comma-separated platform list"
         required: false
-        default: "jahez,keeta"
+        default: "hungerstation"
       max_pages:
         description: "Max pages per platform during scrape"
         required: false
-        default: "1000"
+        default: "12000"
       allow_empty:
         description: "Allow zero rows without failing"
+        required: false
+        default: "false"
+      refresh_after:
+        description: "Run post-ingestion refresh after scrape"
         required: false
         default: "true"
 
@@ -27,7 +33,7 @@ env:
 jobs:
   scrape-from-sccc:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 350  # Under GitHub's 6h hard cap; K8s job runs independently
 
     steps:
       - uses: actions/checkout@v4
@@ -65,19 +71,29 @@ jobs:
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
       - name: Run delivery scraper as K8s Job
+        id: scrape
         run: |
           set -euo pipefail
 
-          PLATFORMS="${{ github.event.inputs.platforms || 'jahez,keeta' }}"
-          MAX_PAGES="${{ github.event.inputs.max_pages || '1000' }}"
-          ALLOW_EMPTY="${{ github.event.inputs.allow_empty || 'true' }}"
+          PLATFORMS="${{ github.event.inputs.platforms || 'hungerstation' }}"
+          MAX_PAGES="${{ github.event.inputs.max_pages || '12000' }}"
+          ALLOW_EMPTY="${{ github.event.inputs.allow_empty || 'false' }}"
+          REFRESH="${{ github.event.inputs.refresh_after || 'true' }}"
 
           ALLOW_FLAG=""
           if [ "$ALLOW_EMPTY" = "true" ]; then
             ALLOW_FLAG="--allow-empty"
           fi
 
+          # Chain refresh into the same K8s job if requested, so it runs
+          # even if the GHA runner times out waiting.
+          REFRESH_CMD=""
+          if [ "$REFRESH" = "true" ]; then
+            REFRESH_CMD=" && python -m app.ingest.expansion_advisor_refresh --skip-alembic --write-stats /tmp/refresh-stats.json"
+          fi
+
           JOB_NAME="delivery-scrape-sccc-$(date +%s)"
+          echo "job_name=${JOB_NAME}" >> $GITHUB_OUTPUT
 
           kubectl delete job -l app=delivery-scrape-sccc --ignore-not-found=true
 
@@ -90,8 +106,8 @@ jobs:
               app: delivery-scrape-sccc
           spec:
             backoffLimit: 0
-            ttlSecondsAfterFinished: 7200
-            activeDeadlineSeconds: 5400
+            ttlSecondsAfterFinished: 14400
+            activeDeadlineSeconds: 43200
             template:
               spec:
                 restartPolicy: Never
@@ -99,16 +115,14 @@ jobs:
                   - name: scraper
                     image: ${{ steps.img.outputs.image }}
                     command:
-                      - python
-                      - -m
-                      - app.ingest.expansion_advisor_delivery
-                      - --platforms
-                      - "${PLATFORMS}"
-                      - --max-pages
-                      - "${MAX_PAGES}"
-                      - --write-stats
-                      - /tmp/delivery-stats.json
-                      - ${ALLOW_FLAG}
+                      - bash
+                      - -c
+                      - |
+                        python -m app.ingest.expansion_advisor_delivery \
+                          --platforms "${PLATFORMS}" \
+                          --max-pages ${MAX_PAGES} \
+                          --write-stats /tmp/delivery-stats.json \
+                          ${ALLOW_FLAG}${REFRESH_CMD}
                     envFrom:
                       - secretRef:
                           name: oaktree-db-env
@@ -119,71 +133,61 @@ jobs:
                         memory: "512Mi"
                         cpu: "250m"
                       limits:
-                        memory: "1Gi"
-                        cpu: "500m"
+                        memory: "2Gi"
+                        cpu: "1000m"
           EOF
 
           kubectl apply -f delivery-sccc-job.yml
+          echo "Submitted K8s Job: ${JOB_NAME}"
 
-          echo "Waiting for Job ${JOB_NAME} to complete (timeout 90m)..."
-          kubectl wait --for=condition=complete --timeout=5400s "job/${JOB_NAME}" || true
+          # Poll for completion. If the GHA runner hits its time limit,
+          # the K8s job continues running independently on SCCC.
+          # Poll every 2 minutes for up to 5 hours (150 iterations).
+          echo "Polling job status (K8s job will continue even if this runner times out)..."
+          for i in $(seq 1 150); do
+            sleep 120
+
+            STATUS=$(kubectl get "job/${JOB_NAME}" -o jsonpath='{.status.conditions[0].type}' 2>/dev/null || echo "Unknown")
+            ACTIVE=$(kubectl get "job/${JOB_NAME}" -o jsonpath='{.status.active}' 2>/dev/null || echo "0")
+
+            if [ "$STATUS" = "Complete" ]; then
+              echo "Job completed successfully after ~$((i * 2)) minutes"
+              echo "completed=true" >> $GITHUB_OUTPUT
+              break
+            elif [ "$STATUS" = "Failed" ]; then
+              echo "::error::Job failed after ~$((i * 2)) minutes"
+              echo "completed=failed" >> $GITHUB_OUTPUT
+              break
+            fi
+
+            # Progress log every 10 iterations (~20 min)
+            if [ $((i % 10)) -eq 0 ]; then
+              echo "Still running after ~$((i * 2)) minutes (active pods: ${ACTIVE})..."
+            fi
+          done
+
+          # If loop exhausted without completion, the job is still running on K8s
+          if [ "$STATUS" != "Complete" ] && [ "$STATUS" != "Failed" ]; then
+            echo "::notice::Job still running on SCCC after 5h polling window. It will continue independently."
+            echo "::notice::Check status with: kubectl get job/${JOB_NAME}"
+            echo "completed=running" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Print job logs
+        if: always()
+        run: |
+          JOB_NAME="${{ steps.scrape.outputs.job_name }}"
+          if [ -z "$JOB_NAME" ]; then
+            echo "No job name found"
+            exit 0
+          fi
 
           echo "=== Job Status ==="
-          kubectl describe "job/${JOB_NAME}" || true
+          kubectl describe "job/${JOB_NAME}" 2>/dev/null | tail -20 || true
 
-          echo "=== Pod Logs ==="
+          echo "=== Pod Logs (last 200 lines) ==="
           PODS=$(kubectl get pods -l "job-name=${JOB_NAME}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
           for POD in $PODS; do
             echo "--- Logs for pod: $POD ---"
-            kubectl logs "$POD" --tail=500 || true
-          done
-
-          JOB_COMPLETE=$(kubectl get "job/${JOB_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)
-          if [ "$JOB_COMPLETE" != "True" ]; then
-            echo "::warning::Delivery scrape job did not complete successfully"
-            exit 1
-          fi
-
-      - name: Run post-ingestion refresh from SCCC
-        run: |
-          JOB_NAME="delivery-refresh-sccc-$(date +%s)"
-
-          kubectl delete job -l app=delivery-refresh-sccc --ignore-not-found=true
-
-          cat > refresh-sccc-job.yml <<EOF
-          apiVersion: batch/v1
-          kind: Job
-          metadata:
-            name: ${JOB_NAME}
-            labels:
-              app: delivery-refresh-sccc
-          spec:
-            backoffLimit: 0
-            ttlSecondsAfterFinished: 3600
-            template:
-              spec:
-                restartPolicy: Never
-                containers:
-                  - name: refresh
-                    image: ${{ steps.img.outputs.image }}
-                    command:
-                      - python
-                      - -m
-                      - app.ingest.expansion_advisor_refresh
-                      - --skip-alembic
-                      - --write-stats
-                      - /tmp/refresh-stats.json
-                    envFrom:
-                      - secretRef:
-                          name: oaktree-db-env
-                      - secretRef:
-                          name: oaktree-app-env
-          EOF
-
-          kubectl apply -f refresh-sccc-job.yml
-          kubectl wait --for=condition=complete --timeout=600s "job/${JOB_NAME}" || true
-
-          PODS=$(kubectl get pods -l "job-name=${JOB_NAME}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
-          for POD in $PODS; do
             kubectl logs "$POD" --tail=200 || true
           done
