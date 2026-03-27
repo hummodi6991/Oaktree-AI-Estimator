@@ -444,7 +444,23 @@ def test_demand_thesis_observed_delivery_uses_concrete_labels():
 
 
 def test_demand_thesis_not_observed_uses_inferred_language():
-    """When delivery is NOT observed, the thesis uses qualified 'inferred' language."""
+    """When delivery is NOT observed and no district data, the thesis uses qualified 'inferred' language."""
+    thesis = _build_demand_thesis(
+        demand_score=75.0,
+        population_reach=50000,
+        provider_density_score=0.0,
+        provider_whitespace_score=65.0,
+        delivery_competition_score=70.0,
+        delivery_observed=False,
+    )
+    assert "not observed (inferred)" in thesis
+    assert "inferred whitespace opportunity" in thesis
+    assert "not directly observed" in thesis
+
+
+def test_demand_thesis_district_fallback_uses_district_language():
+    """When delivery is NOT observed but district data exists (provider_density_score > 0),
+    the thesis uses 'district-level estimate' language."""
     thesis = _build_demand_thesis(
         demand_score=75.0,
         population_reach=50000,
@@ -453,9 +469,8 @@ def test_demand_thesis_not_observed_uses_inferred_language():
         delivery_competition_score=70.0,
         delivery_observed=False,
     )
-    assert "not observed (inferred)" in thesis
-    assert "inferred whitespace opportunity" in thesis
-    assert "not directly observed" in thesis
+    assert "district-level estimate" in thesis
+    assert "district-inferred" in thesis
 
 
 def test_demand_thesis_zero_density_observed_shows_thin():
