@@ -199,6 +199,103 @@ _CATEGORY_TO_DELIVERY_BUCKETS: dict[str, list[str]] = {
 }
 
 
+def _precompute_district_delivery_stats(
+    db: Session,
+    delivery_table: str,
+    category: str,
+) -> tuple[dict[str, dict], dict[str, float]]:
+    """Pre-compute district-level delivery stats for fallback scoring.
+
+    Returns:
+        district_stats: {normalized_district_key: {total, cat_count, platforms,
+                         avg_rating, avg_eta, late_night}}
+        city_benchmarks: {median_total, median_cat, city_avg_rating, city_avg_eta}
+    """
+    district_stats: dict[str, dict] = {}
+    city_benchmarks: dict[str, float] = {}
+
+    try:
+        # 1. Per-district totals
+        _rows = db.execute(
+            text(f"""
+                SELECT
+                    lower(COALESCE(district, '')) AS dist,
+                    COUNT(*) AS total,
+                    COUNT(DISTINCT platform) AS platforms,
+                    AVG(rating) FILTER (WHERE rating IS NOT NULL) AS avg_rating,
+                    AVG(eta_minutes) FILTER (WHERE eta_minutes IS NOT NULL) AS avg_eta,
+                    COUNT(*) FILTER (WHERE supports_late_night IS TRUE) AS late_night
+                FROM {delivery_table}
+                WHERE city = 'riyadh'
+                GROUP BY lower(COALESCE(district, ''))
+                HAVING COUNT(*) >= 3
+            """)
+        ).mappings().all()
+
+        for r in _rows:
+            key = normalize_district_key(str(r["dist"]))
+            if not key:
+                continue
+            district_stats[key] = {
+                "total": int(r["total"]),
+                "cat_count": 0,  # populated below
+                "platforms": int(r["platforms"]),
+                "avg_rating": float(r["avg_rating"]) if r["avg_rating"] else None,
+                "avg_eta": float(r["avg_eta"]) if r["avg_eta"] else None,
+                "late_night": int(r["late_night"]),
+            }
+
+        # 2. Per-district category counts for the search category
+        _cat_terms = _expand_category_terms(category)
+        _cat_params = {f"ct_{i}": f"%{t}%" for i, t in enumerate(_cat_terms)}
+        _cat_or = " OR ".join(
+            f"lower(COALESCE(category, '')) LIKE :ct_{i}"
+            for i in range(len(_cat_terms))
+        )
+        _cat_rows = db.execute(
+            text(f"""
+                SELECT
+                    lower(COALESCE(district, '')) AS dist,
+                    COUNT(*) AS cat_count
+                FROM {delivery_table}
+                WHERE city = 'riyadh' AND ({_cat_or})
+                GROUP BY lower(COALESCE(district, ''))
+            """),
+            _cat_params,
+        ).mappings().all()
+
+        for r in _cat_rows:
+            key = normalize_district_key(str(r["dist"]))
+            if key in district_stats:
+                district_stats[key]["cat_count"] = int(r["cat_count"])
+
+        # 3. City-wide benchmarks
+        all_totals = [v["total"] for v in district_stats.values()]
+        all_cats = [v["cat_count"] for v in district_stats.values()]
+        if all_totals:
+            _sorted_totals = sorted(all_totals)
+            city_benchmarks["median_total"] = float(_sorted_totals[len(_sorted_totals) // 2])
+            _sorted_cats = sorted(all_cats)
+            city_benchmarks["median_cat"] = float(max(1, _sorted_cats[len(_sorted_cats) // 2]))
+            _ratings = [v["avg_rating"] for v in district_stats.values() if v["avg_rating"]]
+            if _ratings:
+                city_benchmarks["city_avg_rating"] = sum(_ratings) / len(_ratings)
+            _etas = [v["avg_eta"] for v in district_stats.values() if v["avg_eta"]]
+            if _etas:
+                city_benchmarks["city_avg_eta"] = sum(_etas) / len(_etas)
+
+        logger.info(
+            "District delivery stats: %d districts, median_total=%.0f, median_cat=%.0f",
+            len(district_stats),
+            city_benchmarks.get("median_total", 0),
+            city_benchmarks.get("median_cat", 0),
+        )
+    except Exception:
+        logger.exception("_precompute_district_delivery_stats failed")
+
+    return district_stats, city_benchmarks
+
+
 def _expand_category_terms(category: str) -> list[str]:
     """Return delivery-table bucket names that match a user search category.
 
@@ -1729,7 +1826,10 @@ def _top_positives_and_risks(
         risks.append(f"{label.capitalize()} could not be verified from current data.")
     # Flag when delivery scores are inferred (no observed listings).
     if not delivery_observed:
-        risks.append("Delivery market data is inferred — no observed listings near site.")
+        if _safe_float(candidate.get("provider_density_score")) > 0:
+            risks.append("Delivery data is based on district-level estimates — no listings observed within 1.2 km.")
+        else:
+            risks.append("Delivery market data is inferred — no observed listings near site.")
 
     # ── Area utilization signal ──
     area_m2 = _safe_float(candidate.get("area_m2"))
@@ -1840,8 +1940,13 @@ def _build_demand_thesis(
     delivery_observed: bool = True,
 ) -> str:
     demand_label = "strong" if demand_score >= 70 else "moderate" if demand_score >= 50 else "limited"
-    if not delivery_observed:
-        # When no delivery rows are observed, qualify language carefully
+    if not delivery_observed and provider_density_score > 0:
+        # District-level fallback: real district data but no spatial-radius data
+        provider_label = "district-level estimate" if provider_density_score >= 30 else "limited district data"
+        whitespace_label = "district-inferred" if provider_whitespace_score >= 50 else "potentially tight (district-level)"
+        competition_label = "district-level estimate"
+    elif not delivery_observed:
+        # No delivery data at all — fully inferred
         provider_label = "not observed (inferred)"
         whitespace_label = "inferred whitespace opportunity"
         competition_label = "not directly observed"
@@ -3244,6 +3349,21 @@ def run_expansion_search(
         t_delivery_enrich_done - t_query_done, search_id,
     )
 
+    # ── Pre-compute district-level delivery stats for fallback scoring ──
+    _district_delivery_stats: dict[str, dict] = {}
+    _city_delivery_benchmarks: dict[str, float] = {}
+    if ea_delivery_populated:
+        _district_delivery_stats, _city_delivery_benchmarks = _precompute_district_delivery_stats(
+            db, _EA_DELIVERY_TABLE, category,
+        )
+    t_district_stats_done = time.monotonic()
+    logger.info(
+        "expansion_search timing: district_delivery_stats=%.2fs districts=%d search_id=%s",
+        t_district_stats_done - t_delivery_enrich_done,
+        len(_district_delivery_stats),
+        search_id,
+    )
+
     # ── Pre-warm rent cache for all districts (avoids N serial DB calls in scoring loop) ──
     # Map normalized key → first raw district string seen, so _estimate_rent_sar_m2_year
     # receives the raw value (matching the scoring loop contract — the aqar fallback
@@ -3264,7 +3384,7 @@ def run_expansion_search(
     t_rent_prewarm_done = time.monotonic()
     logger.info(
         "expansion_search timing: rent_prewarm=%.2fs districts=%d search_id=%s",
-        t_rent_prewarm_done - t_delivery_enrich_done, len(_norm_to_raw), search_id,
+        t_rent_prewarm_done - t_district_stats_done, len(_norm_to_raw), search_id,
     )
 
     for row in rows:
@@ -3357,10 +3477,52 @@ def run_expansion_search(
                 (math.log1p(delivery_competition_count) / math.log1p(80)) * 100.0
             )
         else:
-            provider_density_score = 0.0
-            provider_whitespace_score = 50.0   # unknown ≠ excellent
-            multi_platform_presence_score = 0.0
-            delivery_competition_score = 0.0
+            # Spatial radius returned insufficient data. Try district-level
+            # fallback before defaulting to neutral/zero scores.
+            _dd = _district_delivery_stats.get(district_norm) if district_norm else None
+            if _dd and _dd["total"] >= 5:
+                # District has real delivery data — use it with a confidence
+                # penalty (max 0.65) reflecting the coarser resolution.
+                _dd_conf = min(0.65, _dd["total"] / 200.0)
+
+                provider_density_score = _clamp(
+                    (math.log1p(_dd["total"]) / math.log1p(500)) * 100.0
+                ) * _dd_conf
+
+                # Category saturation: fewer same-category restaurants relative
+                # to city median = more whitespace opportunity.
+                _dd_cat = _dd.get("cat_count", 0)
+                _city_med_cat = _city_delivery_benchmarks.get("median_cat", 10)
+                _cat_ratio = min(2.0, _dd_cat / max(1, _city_med_cat))
+                provider_whitespace_score = _clamp(
+                    50.0 + (1.0 - _cat_ratio) * 30.0
+                )
+
+                if _active_platform_count >= 1:
+                    multi_platform_presence_score = _clamp(
+                        (_dd["platforms"] / float(_active_platform_count)) * 100.0
+                    )
+                else:
+                    multi_platform_presence_score = 50.0
+
+                delivery_competition_score = _clamp(
+                    (math.log1p(_dd_cat) / math.log1p(80)) * 100.0
+                ) * _dd_conf
+
+                # Feed district signal into delivery_listing_count for demand_score.
+                # Scale down to reflect that this is district-wide, not 1.2km radius.
+                if delivery_listing_count == 0 and _dd_cat > 0:
+                    delivery_listing_count = max(1, int(_dd_cat * 0.15))
+            else:
+                # No spatial data AND no district data — truly unknown.
+                provider_density_score = 0.0
+                provider_whitespace_score = 50.0   # unknown ≠ excellent
+                multi_platform_presence_score = 0.0
+                delivery_competition_score = 0.0
+
+        # Recompute demand_score if district fallback modified delivery_listing_count
+        delivery_score = _delivery_score(delivery_listing_count)
+        demand_score = _clamp(pop_score * 0.65 + delivery_score * 0.35)
 
         confidence_score = _confidence_score(landuse_label, population_reach, delivery_listing_count)
         distance_to_nearest_branch_m = _nearest_branch_distance_m(
@@ -3811,7 +3973,17 @@ def run_expansion_search(
         parking_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("parking_context_available"))
         # Add Expansion Advisor data provenance to context_sources
         cs = feature_snapshot_json.setdefault("context_sources", {})
-        cs["delivery_source"] = "expansion_delivery_market" if ea_delivery_populated else "delivery_source_record"
+        _dd_used = (
+            not _delivery_observed
+            and district_norm
+            and district_norm in _district_delivery_stats
+            and _district_delivery_stats[district_norm].get("total", 0) >= 5
+        )
+        cs["delivery_source"] = (
+            "district_fallback" if _dd_used
+            else "expansion_delivery_market" if ea_delivery_populated
+            else "delivery_source_record"
+        )
         cs["competitor_source"] = "expansion_competitor_quality" if ea_competitor_populated else "restaurant_poi"
         cs["delivery_observed"] = provider_listing_count > 0
         frontage_score = _frontage_score(
