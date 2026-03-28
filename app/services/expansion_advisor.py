@@ -1531,39 +1531,9 @@ def _delivery_score(delivery_listing_count: int) -> float:
     return _clamp((delivery_listing_count / 40.0) ** 0.5 * 100.0)
 
 
-def _demand_blend_weights(service_model: str) -> tuple[float, float]:
-    """Return (population_weight, delivery_weight) tuned by service model.
-
-    - delivery_first: delivery density is the primary demand signal (0.40 / 0.60)
-    - dine_in: population/foot-traffic dominates (0.75 / 0.25)
-    - cafe: moderate population bias (0.70 / 0.30)
-    - qsr (default): balanced with slight population lean (0.60 / 0.40)
-    """
-    _BLENDS: dict[str, tuple[float, float]] = {
-        "delivery_first": (0.40, 0.60),
-        "qsr":            (0.60, 0.40),
-        "cafe":           (0.70, 0.30),
-        "dine_in":        (0.75, 0.25),
-    }
-    return _BLENDS.get(service_model, (0.60, 0.40))
-
-
-def _competition_whitespace_score(
-    competitor_count: int,
-    effective_competitor_count: float | None = None,
-) -> float:
-    """Competition whitespace score with optional quality weighting.
-
-    When effective_competitor_count is provided (from expansion_competitor_quality),
-    it represents a quality-weighted count where strong competitors (high chain
-    strength, high ratings, multi-platform presence) count as >1.0 and weak
-    competitors count as <1.0. This produces more accurate whitespace scores
-    that reflect actual competitive pressure, not just headcount.
-
-    Fallback: when effective_competitor_count is None, uses raw competitor_count.
-    """
-    count = effective_competitor_count if effective_competitor_count is not None else float(competitor_count)
-    return _clamp(100.0 - count * 6.0)
+def _competition_whitespace_score(competitor_count: int) -> float:
+    # Less brittle decay in dense Riyadh districts; avoids too many sites collapsing to zero.
+    return _clamp(100.0 - competitor_count * 6.0)
 
 
 def _confidence_score(landuse_label: str | None, population_reach: float, delivery_listing_count: int) -> float:
@@ -2890,21 +2860,6 @@ def run_expansion_search(
         " ELSE 1 END"
     )
 
-    # Population density pre-filter expressions used by both candidate SQL builders.
-    _PD_GEO_EXPR_PRE = "pd_pre.geom::geography" if _pd_has_geom else (
-        "ST_SetSRID(ST_MakePoint("
-        "CAST(NULLIF(BTRIM(COALESCE(pd_pre.lon::text,'')),'')"
-        " AS double precision),"
-        "CAST(NULLIF(BTRIM(COALESCE(pd_pre.lat::text,'')),'')"
-        " AS double precision)), 4326)::geography"
-    )
-    _PD_PRE_WHERE_EXPR = "pd_pre.geom IS NOT NULL" if _pd_has_geom else (
-        "NULLIF(BTRIM(COALESCE(pd_pre.lon::text,'')),'')"
-        " ~ '^-?[0-9]+(\\.[0-9]+)?$'"
-        " AND NULLIF(BTRIM(COALESCE(pd_pre.lat::text,'')),'')"
-        " ~ '^-?[0-9]+(\\.[0-9]+)?$'"
-    )
-
     def _build_candidate_sql(
         district_filter_sql: str,
         *,
@@ -2929,9 +2884,6 @@ def run_expansion_search(
             " ELSE 1 END"
         )
 
-        _PD_GEO_EXPR = _PD_GEO_EXPR_PRE
-        _PD_PRE_WHERE = _PD_PRE_WHERE_EXPR
-
         _BASE_CTE = f"""
             SELECT
                 p.id AS parcel_id,
@@ -2943,19 +2895,8 @@ def run_expansion_search(
                 ST_Y(ST_Centroid(p.geom)) AS lat,
                 ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) AS area_distance,
                 {_LANDUSE_PRIORITY_EXPR} AS landuse_priority,
-                p.district_label AS district,
-                COALESCE(pop_pre.pop_proxy, 0) AS pop_proxy
+                p.district_label AS district
             FROM {ARCGIS_PARCELS_TABLE} p
-            LEFT JOIN LATERAL (
-                SELECT COALESCE(SUM(pd_pre.population), 0) AS pop_proxy
-                FROM population_density pd_pre
-                WHERE {_PD_PRE_WHERE}
-                  AND ST_DWithin(
-                      ST_Centroid(p.geom)::geography,
-                      {_PD_GEO_EXPR},
-                      800
-                  )
-            ) pop_pre ON TRUE
             WHERE p.geom IS NOT NULL
               AND p.area_m2 BETWEEN :min_area_m2 AND :max_area_m2
               AND (CAST(:min_lon AS double precision) IS NULL OR ST_X(ST_Centroid(p.geom)) >= CAST(:min_lon AS double precision))
@@ -2977,7 +2918,7 @@ def run_expansion_search(
             candidate_base AS (
                 SELECT
                     parcel_id, landuse_label, landuse_code, area_m2, geom,
-                    lon, lat, area_distance, landuse_priority, district, pop_proxy
+                    lon, lat, area_distance, landuse_priority, district
                 FROM (
                     SELECT
                         cr.*,
@@ -2985,7 +2926,6 @@ def run_expansion_search(
                             PARTITION BY cr.district
                             ORDER BY
                                 cr.landuse_priority ASC,
-                                cr.pop_proxy DESC,
                                 cr.area_distance ASC,
                                 CASE WHEN cr.landuse_label IS NOT NULL THEN 0 ELSE 1 END,
                                 cr.parcel_id ASC
@@ -2995,7 +2935,6 @@ def run_expansion_search(
                 WHERE district_rank <= CAST(:per_district_cap AS integer)
                 ORDER BY
                     landuse_priority ASC,
-                    pop_proxy DESC,
                     area_distance ASC,
                     CASE WHEN landuse_label IS NOT NULL THEN 0 ELSE 1 END,
                     parcel_id ASC
@@ -3008,13 +2947,12 @@ def run_expansion_search(
             WITH candidate_base AS (
                 SELECT
                     parcel_id, landuse_label, landuse_code, area_m2, geom,
-                    lon, lat, area_distance, landuse_priority, district, pop_proxy
+                    lon, lat, area_distance, landuse_priority, district
                 FROM (
                     {_BASE_CTE}
                 ) _inner
                 ORDER BY
                     landuse_priority ASC,
-                    pop_proxy DESC,
                     area_distance ASC,
                     CASE WHEN landuse_label IS NOT NULL THEN 0 ELSE 1 END,
                     parcel_id ASC
@@ -3209,19 +3147,8 @@ def run_expansion_search(
                 ST_X(ST_Centroid(p.geom)) AS lon,
                 ST_Y(ST_Centroid(p.geom)) AS lat,
                 ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) AS area_distance,
-                p.district_label AS district,
-                COALESCE(pop_pre2.pop_proxy, 0) AS pop_proxy
+                p.district_label AS district
             FROM {ARCGIS_PARCELS_TABLE} p
-            LEFT JOIN LATERAL (
-                SELECT COALESCE(SUM(pd_pre2.population), 0) AS pop_proxy
-                FROM population_density pd_pre2
-                WHERE {_PD_PRE_WHERE_EXPR.replace('pd_pre', 'pd_pre2')}
-                  AND ST_DWithin(
-                      ST_Centroid(p.geom)::geography,
-                      {_PD_GEO_EXPR_PRE.replace('pd_pre', 'pd_pre2')},
-                      800
-                  )
-            ) pop_pre2 ON TRUE
             WHERE p.geom IS NOT NULL
               AND p.area_m2 BETWEEN :min_area_m2 AND :max_area_m2
               AND (CAST(:min_lon AS double precision) IS NULL OR ST_X(ST_Centroid(p.geom)) >= CAST(:min_lon AS double precision))
@@ -3230,7 +3157,6 @@ def run_expansion_search(
               AND (CAST(:max_lat AS double precision) IS NULL OR ST_Y(ST_Centroid(p.geom)) <= CAST(:max_lat AS double precision))
             ORDER BY
                 {_SAFE_LANDUSE_ORDER},
-                COALESCE(pop_pre2.pop_proxy, 0) DESC,
                 ABS(p.area_m2 - CAST(:target_area_m2 AS double precision)) ASC,
                 CASE WHEN p.landuse_label IS NOT NULL THEN 0 ELSE 1 END,
                 p.id ASC
@@ -3528,74 +3454,6 @@ def run_expansion_search(
         search_id,
     )
 
-    # ── Pre-compute quality-weighted competitor counts for all prepared candidates ──
-    _quality_competitor_counts: dict[str, float] = {}
-    _ecq_populated = False
-    try:
-        _ecq_count = db.execute(text(
-            "SELECT COUNT(*) FROM expansion_competitor_quality WHERE city = 'riyadh'"
-        )).scalar() or 0
-        _ecq_populated = _ecq_count > 10
-    except Exception:
-        logger.debug("expansion_search: expansion_competitor_quality check failed", exc_info=True)
-
-    if _ecq_populated and rows:
-        try:
-            _qwc_parcel_ids = [str(r.get("parcel_id") or "") for r in rows if r.get("parcel_id")]
-            if _qwc_parcel_ids:
-                _qwc_rows = db.execute(text(f"""
-                    WITH parcel_centroids AS (
-                        SELECT id AS parcel_id,
-                               ST_Centroid(geom) AS centroid
-                        FROM {ARCGIS_PARCELS_TABLE}
-                        WHERE id = ANY(:parcel_ids)
-                          AND geom IS NOT NULL
-                    )
-                    SELECT
-                        pc.parcel_id,
-                        COALESCE(SUM(
-                            CASE
-                                WHEN ecq.overall_quality_score IS NULL THEN 1.0
-                                WHEN ecq.overall_quality_score >= 75 THEN 1.5
-                                WHEN ecq.overall_quality_score >= 50 THEN 1.0
-                                WHEN ecq.overall_quality_score >= 25 THEN 0.6
-                                ELSE 0.3
-                            END
-                        ), 0) AS effective_count
-                    FROM parcel_centroids pc
-                    LEFT JOIN LATERAL (
-                        SELECT ecq2.overall_quality_score
-                        FROM expansion_competitor_quality ecq2
-                        WHERE ecq2.city = 'riyadh'
-                          AND lower(ecq2.category) = ANY(:category_keys)
-                          AND ecq2.geom IS NOT NULL
-                          AND ST_DWithin(
-                              ecq2.geom::geography,
-                              pc.centroid::geography,
-                              :competition_radius_m
-                          )
-                    ) ecq ON TRUE
-                    GROUP BY pc.parcel_id
-                """), {
-                    "parcel_ids": _qwc_parcel_ids,
-                    "category_keys": _cat_expanded["keys"],
-                    "competition_radius_m": 1000,
-                }).fetchall()
-                for _qr in _qwc_rows:
-                    _quality_competitor_counts[str(_qr[0])] = float(_qr[1])
-                logger.info(
-                    "expansion_search quality-weighted competitors: enriched=%d/%d search_id=%s",
-                    len(_quality_competitor_counts), len(_qwc_parcel_ids), search_id,
-                )
-        except Exception:
-            logger.warning("expansion_search quality-weighted competitor pre-fetch failed, using raw counts",
-                           exc_info=True)
-    t_qwc_done = time.monotonic()
-    logger.info(
-        "expansion_search timing: quality_weighted_competitors=%.2fs search_id=%s",
-        t_qwc_done - t_district_stats_done, search_id,
-    )
-
     # ── Pre-warm rent cache for all districts (avoids N serial DB calls in scoring loop) ──
     # Map normalized key → first raw district string seen, so _estimate_rent_sar_m2_year
     # receives the raw value (matching the scoring loop contract — the aqar fallback
@@ -3616,7 +3474,7 @@ def run_expansion_search(
     t_rent_prewarm_done = time.monotonic()
     logger.info(
         "expansion_search timing: rent_prewarm=%.2fs districts=%d search_id=%s",
-        t_rent_prewarm_done - t_qwc_done, len(_norm_to_raw), search_id,
+        t_rent_prewarm_done - t_district_stats_done, len(_norm_to_raw), search_id,
     )
 
     for row in rows:
@@ -3646,11 +3504,9 @@ def run_expansion_search(
 
         pop_score = _population_score(population_reach)
         delivery_score = _delivery_score(delivery_listing_count)
-        _pop_w, _del_w = _demand_blend_weights(service_model)
-        demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
+        demand_score = _clamp(pop_score * 0.65 + delivery_score * 0.35)
 
-        _eff_comp = _quality_competitor_counts.get(str(row.get("parcel_id") or ""))
-        whitespace_score = _competition_whitespace_score(competitor_count, effective_competitor_count=_eff_comp)
+        whitespace_score = _competition_whitespace_score(competitor_count)
 
         area_fit = _area_fit(area_m2, target_area_m2, min_area_m2, max_area_m2)
         zoning_fit_score = _zoning_fit_score(landuse_label, landuse_code)
@@ -3756,7 +3612,7 @@ def run_expansion_search(
 
         # Recompute demand_score if district fallback modified delivery_listing_count
         delivery_score = _delivery_score(delivery_listing_count)
-        demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
+        demand_score = _clamp(pop_score * 0.65 + delivery_score * 0.35)
 
         confidence_score = _confidence_score(landuse_label, population_reach, delivery_listing_count)
         distance_to_nearest_branch_m = _nearest_branch_distance_m(
