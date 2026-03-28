@@ -569,6 +569,7 @@
     "assumptions": "Assumptions",
     "loadingReport": "Loading report…",
     "loadingSaved": "Loading saved studies…",
+    "searchCompletedIn": "Completed in {{seconds}}s",
     "errorSearch": "Unable to run search.",
     "errorMemo": "Unable to load memo.",
     "errorCompare": "Unable to compare candidates.",

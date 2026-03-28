@@ -569,6 +569,7 @@
     "assumptions": "الافتراضات",
     "loadingReport": "جاري تحميل التقرير…",
     "loadingSaved": "جاري تحميل الدراسات المحفوظة…",
+    "searchCompletedIn": "اكتمل في {{seconds}} ثانية",
     "errorSearch": "تعذر تنفيذ البحث.",
     "errorMemo": "تعذر تحميل المذكرة.",
     "errorCompare": "تعذر مقارنة المواقع.",

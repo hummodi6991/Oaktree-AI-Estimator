@@ -174,6 +174,9 @@ export default function ExpansionAdvisorPage({
   const [compareResult, setCompareResult] = useState<CompareCandidatesResponse | null>(null);
   const [report, setReport] = useState<RecommendationReportResponse | null>(null);
   const [loadingSearch, setLoadingSearch] = useState(false);
+  const [searchStartTime, setSearchStartTime] = useState<number | null>(null);
+  const [searchElapsedMs, setSearchElapsedMs] = useState<number | null>(null);
+  const [liveElapsed, setLiveElapsed] = useState<number>(0);
   const [loadingMemo, setLoadingMemo] = useState(false);
   const [loadingCompare, setLoadingCompare] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
@@ -244,6 +247,15 @@ export default function ExpansionAdvisorPage({
   useEffect(() => {
     if (searchId && candidates.length > 0) setBriefMode("summary");
   }, [searchId, candidates.length]);
+
+  // Live ticking timer while search is in progress
+  useEffect(() => {
+    if (!searchStartTime || searchElapsedMs !== null) return;
+    const interval = setInterval(() => {
+      setLiveElapsed(Date.now() - searchStartTime);
+    }, 100);
+    return () => clearInterval(interval);
+  }, [searchStartTime, searchElapsedMs]);
 
   // When lead candidate changes, sync map focus and scroll finalist tile into view
   useEffect(() => {
@@ -336,6 +348,10 @@ export default function ExpansionAdvisorPage({
 
   const onSubmitBrief = async (nextBrief: ExpansionBrief) => {
     const normalized = normalizeBriefPayload(nextBrief);
+    const t0 = Date.now();
+    setSearchStartTime(t0);
+    setSearchElapsedMs(null);
+    setLiveElapsed(0);
     setBrief(normalized);
     setLoadingSearch(true);
     setSaveError(null);
@@ -374,10 +390,12 @@ export default function ExpansionAdvisorPage({
       setSearchNotes(result.notes || {});
       void loadReport(result.search_id);
       void trackEvent("ui_expansion_search_completed", { meta: { search_id: result.search_id, count: (result.items || []).length } });
+      setSearchElapsedMs(Date.now() - t0);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       console.error("[ExpansionAdvisor] search failed:", detail);
       setSearchError(`${t("expansionAdvisor.errorSearch")} — ${detail}`);
+      setSearchElapsedMs(Date.now() - t0);
     } finally { setLoadingSearch(false); }
   };
 
@@ -738,6 +756,13 @@ export default function ExpansionAdvisorPage({
             />
           )}
 
+          {/* Search elapsed time */}
+          {hasResults && searchElapsedMs !== null && (
+            <div style={{ textAlign: "end", fontSize: "0.8rem", color: "#059669", fontWeight: 500, padding: "0.25rem 0" }}>
+              {t("expansionAdvisor.searchCompletedIn", { seconds: (searchElapsedMs / 1000).toFixed(1) })}
+            </div>
+          )}
+
           {/* Sort & filter bar */}
           {hasResults && (
             <SortFilterBar
@@ -811,7 +836,14 @@ export default function ExpansionAdvisorPage({
               }}
             />
           ) : loadingSearch ? (
-            <CandidateListSkeleton count={5} />
+            <>
+              {searchStartTime && searchElapsedMs === null && (
+                <div className="ea-search-timer" style={{ textAlign: "center", padding: "0.5rem 0", fontSize: "0.85rem", color: "#6b7280", fontVariantNumeric: "tabular-nums" }}>
+                  {t("expansionAdvisor.searchingCta")} {(liveElapsed / 1000).toFixed(1)}s
+                </div>
+              )}
+              <CandidateListSkeleton count={5} />
+            </>
           ) : (
             <div className="ea-first-run">
               <div className="ea-first-run__hero">
