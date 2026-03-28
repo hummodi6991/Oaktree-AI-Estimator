@@ -1531,6 +1531,23 @@ def _delivery_score(delivery_listing_count: int) -> float:
     return _clamp((delivery_listing_count / 40.0) ** 0.5 * 100.0)
 
 
+def _demand_blend_weights(service_model: str) -> tuple[float, float]:
+    """Return (population_weight, delivery_weight) tuned by service model.
+
+    - delivery_first: delivery density is the primary demand signal (0.40 / 0.60)
+    - dine_in: population/foot-traffic dominates (0.75 / 0.25)
+    - cafe: moderate population bias (0.70 / 0.30)
+    - qsr (default): balanced with slight population lean (0.60 / 0.40)
+    """
+    _BLENDS: dict[str, tuple[float, float]] = {
+        "delivery_first": (0.40, 0.60),
+        "qsr":            (0.60, 0.40),
+        "cafe":           (0.70, 0.30),
+        "dine_in":        (0.75, 0.25),
+    }
+    return _BLENDS.get(service_model, (0.60, 0.40))
+
+
 def _competition_whitespace_score(competitor_count: int) -> float:
     # Less brittle decay in dense Riyadh districts; avoids too many sites collapsing to zero.
     return _clamp(100.0 - competitor_count * 6.0)
@@ -3504,7 +3521,8 @@ def run_expansion_search(
 
         pop_score = _population_score(population_reach)
         delivery_score = _delivery_score(delivery_listing_count)
-        demand_score = _clamp(pop_score * 0.65 + delivery_score * 0.35)
+        _pop_w, _del_w = _demand_blend_weights(service_model)
+        demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
 
         whitespace_score = _competition_whitespace_score(competitor_count)
 
@@ -3612,7 +3630,7 @@ def run_expansion_search(
 
         # Recompute demand_score if district fallback modified delivery_listing_count
         delivery_score = _delivery_score(delivery_listing_count)
-        demand_score = _clamp(pop_score * 0.65 + delivery_score * 0.35)
+        demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
 
         confidence_score = _confidence_score(landuse_label, population_reach, delivery_listing_count)
         distance_to_nearest_branch_m = _nearest_branch_distance_m(
