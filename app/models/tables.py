@@ -366,7 +366,7 @@ class GeocodeCache(Base):
     query = Column(String(512), primary_key=True)
     lat = Column(Numeric(10, 7))
     lon = Column(Numeric(10, 7))
-    formatted_address = Column(String(512))
+    formatted_address = Column(Text)
     raw = Column(JSONB)
     created_at = Column(DateTime, server_default=text("now()"))
 
