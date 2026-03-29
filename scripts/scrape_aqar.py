@@ -3,9 +3,11 @@
 
 import argparse
 import json
+import os
 import random
 import re
 import time
+from decimal import Decimal
 
 import requests
 from bs4 import BeautifulSoup
@@ -456,6 +458,123 @@ def fetch_listing_detail(listing: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Phase 4: geocode neighborhoods via Google Maps + DB cache
+# ---------------------------------------------------------------------------
+
+# Riyadh bounding box for validation
+_RIYADH_LAT_MIN, _RIYADH_LAT_MAX = 24.4, 25.1
+_RIYADH_LON_MIN, _RIYADH_LON_MAX = 46.4, 47.0
+
+GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+
+
+def _get_db_session():
+    """Create a DB session using the app's connection pattern."""
+    from app.db.session import SessionLocal
+
+    return SessionLocal()
+
+
+def _check_geocode_cache(db, query: str) -> dict | None:
+    """Look up a geocode query in the cache table. Returns dict or None."""
+    from sqlalchemy import text as sa_text
+
+    row = db.execute(
+        sa_text("SELECT lat, lon, formatted_address, raw FROM geocode_cache WHERE query = :q"),
+        {"q": query},
+    ).mappings().first()
+    if row:
+        return {
+            "lat": float(row["lat"]) if row["lat"] is not None else None,
+            "lon": float(row["lon"]) if row["lon"] is not None else None,
+            "formatted_address": row["formatted_address"],
+            "source": "cache",
+        }
+    return None
+
+
+def _store_geocode_cache(db, query: str, lat: float | None, lon: float | None,
+                         formatted_address: str | None, raw: dict) -> None:
+    """Insert or update a geocode result in the cache table."""
+    from sqlalchemy import text as sa_text
+
+    db.execute(
+        sa_text(
+            "INSERT INTO geocode_cache (query, lat, lon, formatted_address, raw) "
+            "VALUES (:q, :lat, :lon, :addr, :raw) "
+            "ON CONFLICT (query) DO UPDATE SET lat=:lat, lon=:lon, "
+            "formatted_address=:addr, raw=:raw"
+        ),
+        {
+            "q": query,
+            "lat": Decimal(str(lat)) if lat is not None else None,
+            "lon": Decimal(str(lon)) if lon is not None else None,
+            "addr": formatted_address,
+            "raw": json.dumps(raw),
+        },
+    )
+    db.commit()
+
+
+def _validate_riyadh_coords(lat: float, lon: float) -> bool:
+    """Check that coordinates fall within the Riyadh bounding box."""
+    return (_RIYADH_LAT_MIN <= lat <= _RIYADH_LAT_MAX
+            and _RIYADH_LON_MIN <= lon <= _RIYADH_LON_MAX)
+
+
+def geocode_neighborhood(neighborhood_name: str, api_key: str, db=None) -> dict | None:
+    """Geocode a neighborhood name. Uses DB cache, falls back to Google Maps API.
+
+    Returns dict with lat, lon, formatted_address, source or None if invalid/failed.
+    """
+    query = f"{neighborhood_name}, Riyadh, Saudi Arabia"
+
+    # Check cache first
+    if db is not None:
+        cached = _check_geocode_cache(db, query)
+        if cached:
+            print(f"      geocode (cache): {neighborhood_name} → {cached['lat']}, {cached['lon']}")
+            return cached
+
+    # Call Google Maps Geocoding API
+    try:
+        resp = requests.get(
+            GEOCODE_URL,
+            params={"address": query, "key": api_key},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.RequestException as e:
+        print(f"      WARN: geocode API error for '{query}': {e}")
+        return None
+
+    if data.get("status") != "OK" or not data.get("results"):
+        print(f"      WARN: geocode no results for '{query}' (status={data.get('status')})")
+        # Cache the miss to avoid re-querying
+        if db is not None:
+            _store_geocode_cache(db, query, None, None, None, data)
+        return None
+
+    result = data["results"][0]
+    loc = result["geometry"]["location"]
+    lat, lon = loc["lat"], loc["lng"]
+    formatted_address = result.get("formatted_address", "")
+
+    # Cache regardless of validation (the raw data is still useful)
+    if db is not None:
+        _store_geocode_cache(db, query, lat, lon, formatted_address, data)
+
+    # Validate within Riyadh bounds
+    if not _validate_riyadh_coords(lat, lon):
+        print(f"      WARN: geocode out of Riyadh bounds: {neighborhood_name} → {lat}, {lon}")
+        return None
+
+    print(f"      geocode (API): {neighborhood_name} → {lat}, {lon}")
+    return {"lat": lat, "lon": lon, "formatted_address": formatted_address, "source": "api"}
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -467,41 +586,72 @@ def main():
     parser.add_argument("--max-pages", type=int, default=10, help="Max pages per neighborhood (default: 10)")
     parser.add_argument("--list-only", action="store_true", help="Only list neighborhoods, don't crawl listings")
     parser.add_argument("--no-detail", action="store_true", help="Skip fetching individual listing detail pages")
+    parser.add_argument("--skip-geocode", action="store_true", help="Skip geocoding neighborhoods")
     args = parser.parse_args()
+
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    do_geocode = not args.skip_geocode and bool(api_key)
+    if not args.skip_geocode and not api_key:
+        print("WARN: GOOGLE_MAPS_API_KEY not set, skipping geocoding")
+
+    db = None
+    if do_geocode:
+        try:
+            db = _get_db_session()
+        except Exception as e:
+            print(f"WARN: could not connect to DB for geocode cache: {e}")
 
     areas = [args.area] if args.area else AREAS
 
-    for i, area in enumerate(areas):
-        if i > 0:
-            time.sleep(2)
-        print(f"\n=== {area} ===")
-        neighborhoods = fetch_area(area)
+    try:
+        for i, area in enumerate(areas):
+            if i > 0:
+                time.sleep(2)
+            print(f"\n=== {area} ===")
+            neighborhoods = fetch_area(area)
 
-        if args.neighborhood:
-            neighborhoods = [n for n in neighborhoods if n["slug"] == args.neighborhood]
-            if not neighborhoods:
-                print(f"  Neighborhood '{args.neighborhood}' not found in {area}")
+            if args.neighborhood:
+                neighborhoods = [n for n in neighborhoods if n["slug"] == args.neighborhood]
+                if not neighborhoods:
+                    print(f"  Neighborhood '{args.neighborhood}' not found in {area}")
+                    continue
+
+            for row in neighborhoods:
+                print(f"  {row['neighborhood']:30s}  {row['count']:>5d}  {row['url']}")
+
+            if args.list_only:
                 continue
 
-        for row in neighborhoods:
-            print(f"  {row['neighborhood']:30s}  {row['count']:>5d}  {row['url']}")
+            # Geocode each neighborhood (once per neighborhood, not per listing)
+            geo_cache: dict[str, dict | None] = {}
+            if do_geocode:
+                for nbr in neighborhoods:
+                    name = nbr["neighborhood"]
+                    if name not in geo_cache:
+                        geo_cache[name] = geocode_neighborhood(name, api_key, db)
 
-        if args.list_only:
-            continue
+            for j, nbr in enumerate(neighborhoods):
+                if j > 0 or i > 0:
+                    time.sleep(2)
+                print(f"\n  --- Crawling: {nbr['neighborhood']} ---")
+                listings = fetch_neighborhood_listings(nbr["url"], nbr["neighborhood"], max_pages=args.max_pages)
+                print(f"  Found {len(listings)} listings")
 
-        for j, nbr in enumerate(neighborhoods):
-            if j > 0 or i > 0:
-                time.sleep(2)
-            print(f"\n  --- Crawling: {nbr['neighborhood']} ---")
-            listings = fetch_neighborhood_listings(nbr["url"], nbr["neighborhood"], max_pages=args.max_pages)
-            print(f"  Found {len(listings)} listings")
+                geo = geo_cache.get(nbr["neighborhood"])
 
-            for k, listing in enumerate(listings):
-                if not args.no_detail:
-                    time.sleep(random.uniform(2, 3))
-                    print(f"    [{k + 1}/{len(listings)}] fetching detail: {listing['listing_url']}")
-                    fetch_listing_detail(listing)
-                print(f"    {listing}")
+                for k, listing in enumerate(listings):
+                    if not args.no_detail:
+                        time.sleep(random.uniform(2, 3))
+                        print(f"    [{k + 1}/{len(listings)}] fetching detail: {listing['listing_url']}")
+                        fetch_listing_detail(listing)
+                    # Attach geocode to each listing
+                    if geo:
+                        listing["lat"] = geo["lat"]
+                        listing["lon"] = geo["lon"]
+                    print(f"    {listing}")
+    finally:
+        if db is not None:
+            db.close()
 
 
 if __name__ == "__main__":

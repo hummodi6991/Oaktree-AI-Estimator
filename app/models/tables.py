@@ -358,6 +358,19 @@ class RestaurantHeatmapCache(Base):
     payload = Column(JSONB, nullable=False)
 
 
+class GeocodeCache(Base):
+    """Cached Google Maps geocoding results keyed by query string."""
+
+    __tablename__ = "geocode_cache"
+
+    query = Column(String(512), primary_key=True)
+    lat = Column(Numeric(10, 7))
+    lon = Column(Numeric(10, 7))
+    formatted_address = Column(String(512))
+    raw = Column(JSONB)
+    created_at = Column(DateTime, server_default=text("now()"))
+
+
 class LocationScore(Base):
     """Pre-computed restaurant location demand-potential score per H3 cell and category."""
 
