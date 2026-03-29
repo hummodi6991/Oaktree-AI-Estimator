@@ -292,6 +292,170 @@ def fetch_neighborhood_listings(neighborhood_url: str, neighborhood_name: str, m
 
 
 # ---------------------------------------------------------------------------
+# Phase 3: listing detail page → extra fields
+# ---------------------------------------------------------------------------
+
+_MEZZANINE_RE = re.compile(r"mezzanine|ميزانين|ميزنين|طابق علوي|دور علوي", re.I)
+_DRIVE_THRU_RE = re.compile(r"drive.?thr(?:u|ough)|درايف ثرو|طلبات سيارات|خدمة سيارات", re.I)
+_FACADE_RE = re.compile(
+    r"(?:fac(?:ing|ade)|direction|واجهة|اتجاه)[:\s]*(north|south|east|west|شمال|جنوب|شرق|غرب)",
+    re.I,
+)
+_FLOORS_RE = re.compile(r"(?:floors?|stories|طوابق|أدوار|ادوار|طابق)[:\s]*(\d+)", re.I)
+_FLOORS_RE2 = re.compile(r"(\d+)\s*(?:floors?|stories|طوابق|أدوار|ادوار)", re.I)
+_PHONE_RE = re.compile(r"(?:\+966|05|5)\d[\d\s\-]{7,10}")
+
+
+def _search_text_bool(pattern: re.Pattern, *texts: str) -> bool:
+    return any(pattern.search(t) for t in texts if t)
+
+
+def _search_text_match(pattern: re.Pattern, *texts: str) -> re.Match | None:
+    for t in texts:
+        if t:
+            m = pattern.search(t)
+            if m:
+                return m
+    return None
+
+
+def _extract_detail_from_next_data(data: dict) -> dict:
+    """Extract detail fields from a detail page's __NEXT_DATA__."""
+    props = data.get("props", {}).get("pageProps", {})
+    # The listing object may be under various keys
+    item = {}
+    for key in ("listing", "ad", "post", "data"):
+        if isinstance(props.get(key), dict):
+            item = props[key]
+            break
+    if not item:
+        item = props
+
+    desc = item.get("description") or item.get("content") or item.get("body") or ""
+    title = item.get("title") or ""
+    combined = f"{title} {desc}"
+
+    # Phone: may be in a dedicated field or in description
+    phone = item.get("phone") or item.get("contact_phone") or item.get("mobile")
+    if not phone:
+        pm = _PHONE_RE.search(combined)
+        phone = pm.group(0).strip() if pm else None
+
+    # Facade: check attributes first, then text
+    facade = None
+    for attr in item.get("attributes", []):
+        slug = attr.get("slug", "")
+        if slug in ("facade", "direction", "facing", "facade_direction"):
+            facade = str(attr.get("value") or attr.get("formatted_value") or "")
+            break
+    if not facade:
+        fm = _FACADE_RE.search(combined)
+        facade = fm.group(1) if fm else None
+
+    # Floors: check attributes then text
+    num_floors = None
+    for attr in item.get("attributes", []):
+        slug = attr.get("slug", "")
+        if slug in ("floors", "num_floors", "stories", "number_of_floors"):
+            try:
+                num_floors = int(attr.get("value") or attr.get("formatted_value") or 0)
+            except (ValueError, TypeError):
+                pass
+            break
+    if num_floors is None:
+        flm = _search_text_match(_FLOORS_RE, combined) or _search_text_match(_FLOORS_RE2, combined)
+        if flm:
+            num_floors = int(flm.group(1))
+
+    return {
+        "full_description": desc,
+        "has_mezzanine": _search_text_bool(_MEZZANINE_RE, combined),
+        "has_drive_thru": _search_text_bool(_DRIVE_THRU_RE, combined),
+        "facade_direction": facade,
+        "contact_phone": phone,
+        "num_floors": num_floors,
+    }
+
+
+def _extract_detail_from_html(html: str) -> dict:
+    """Extract detail fields by parsing the detail page HTML."""
+    soup = BeautifulSoup(html, "html.parser")
+    page_text = soup.get_text(" ", strip=True)
+
+    phone = None
+    # Look for tel: links first
+    tel_link = soup.find("a", href=re.compile(r"^tel:"))
+    if tel_link:
+        phone = tel_link["href"].replace("tel:", "").strip()
+    if not phone:
+        pm = _PHONE_RE.search(page_text)
+        phone = pm.group(0).strip() if pm else None
+
+    # Full description: look for description container
+    desc = ""
+    for sel in ("div[class*='desc']", "div[class*='content']", "div[class*='body']", "p[class*='desc']"):
+        el = soup.select_one(sel)
+        if el:
+            desc = el.get_text(" ", strip=True)
+            if len(desc) > 50:
+                break
+    if not desc:
+        # Fallback: longest <p> on the page
+        longest = ""
+        for p in soup.find_all("p"):
+            t = p.get_text(" ", strip=True)
+            if len(t) > len(longest):
+                longest = t
+        desc = longest
+
+    facade = None
+    fm = _FACADE_RE.search(page_text)
+    if fm:
+        facade = fm.group(1)
+
+    num_floors = None
+    flm = _FLOORS_RE.search(page_text) or _FLOORS_RE2.search(page_text)
+    if flm:
+        num_floors = int(flm.group(1))
+
+    return {
+        "full_description": desc,
+        "has_mezzanine": _search_text_bool(_MEZZANINE_RE, page_text),
+        "has_drive_thru": _search_text_bool(_DRIVE_THRU_RE, page_text),
+        "facade_direction": facade,
+        "contact_phone": phone,
+        "num_floors": num_floors,
+    }
+
+
+def fetch_listing_detail(listing: dict) -> dict:
+    """Fetch a listing's detail page and merge extra fields into the listing dict."""
+    url = listing["listing_url"]
+    try:
+        resp = _get(url)
+    except requests.RequestException as e:
+        print(f"      WARN: failed to fetch detail {url}: {e}")
+        return listing
+
+    html = resp.text
+    ndata = _extract_next_data(html)
+    if ndata:
+        detail = _extract_detail_from_next_data(ndata)
+    else:
+        detail = _extract_detail_from_html(html)
+
+    # Upgrade the truncated description to full
+    if detail["full_description"]:
+        listing["description"] = detail["full_description"]
+    listing["has_mezzanine"] = detail["has_mezzanine"]
+    listing["has_drive_thru"] = detail["has_drive_thru"]
+    listing["facade_direction"] = detail["facade_direction"]
+    listing["contact_phone"] = detail["contact_phone"]
+    listing["num_floors"] = detail["num_floors"]
+    return listing
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -302,6 +466,7 @@ def main():
     parser.add_argument("--neighborhood", help="Limit to a single neighborhood slug (e.g. al-olaya)")
     parser.add_argument("--max-pages", type=int, default=10, help="Max pages per neighborhood (default: 10)")
     parser.add_argument("--list-only", action="store_true", help="Only list neighborhoods, don't crawl listings")
+    parser.add_argument("--no-detail", action="store_true", help="Skip fetching individual listing detail pages")
     args = parser.parse_args()
 
     areas = [args.area] if args.area else AREAS
@@ -330,7 +495,12 @@ def main():
             print(f"\n  --- Crawling: {nbr['neighborhood']} ---")
             listings = fetch_neighborhood_listings(nbr["url"], nbr["neighborhood"], max_pages=args.max_pages)
             print(f"  Found {len(listings)} listings")
-            for listing in listings:
+
+            for k, listing in enumerate(listings):
+                if not args.no_detail:
+                    time.sleep(random.uniform(2, 3))
+                    print(f"    [{k + 1}/{len(listings)}] fetching detail: {listing['listing_url']}")
+                    fetch_listing_detail(listing)
                 print(f"    {listing}")
 
 
