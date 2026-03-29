@@ -575,6 +575,86 @@ def geocode_neighborhood(neighborhood_name: str, api_key: str, db=None) -> dict 
 
 
 # ---------------------------------------------------------------------------
+# Phase 5: restaurant suitability classification
+# ---------------------------------------------------------------------------
+
+_STRONG_POSITIVE_KW = [
+    "مطعم", "restaurant", "كافيه", "café", "cafe", "drive-thru", "drive thru",
+    "درايف ثرو", "مطبخ", "kitchen",
+]
+_MODERATE_POSITIVE_KW = [
+    "محل تجاري", "معرض", "أرضي", "ground floor", "واجهة", "facade", "frontage",
+]
+_NEGATIVE_KW = [
+    "مستودع", "warehouse", "مكتب إداري", "administrative office", "عيادة", "clinic",
+]
+
+_STRONG_POS_RE = re.compile("|".join(re.escape(k) for k in _STRONG_POSITIVE_KW), re.I)
+_MOD_POS_RE = re.compile("|".join(re.escape(k) for k in _MODERATE_POSITIVE_KW), re.I)
+_NEG_RE = re.compile("|".join(re.escape(k) for k in _NEGATIVE_KW), re.I)
+
+_SUITABILITY_THRESHOLD = 40
+
+
+def classify_restaurant_suitability(listing: dict) -> dict:
+    """Score a listing for restaurant suitability based on keywords and physical traits.
+
+    Mutates listing in-place, adding restaurant_score, restaurant_suitable, and
+    restaurant_signals fields. Returns the listing.
+    """
+    score = 0
+    signals: list[str] = []
+
+    title = listing.get("title", "") or ""
+    desc = listing.get("description", "") or ""
+    combined = f"{title} {desc}"
+
+    # --- Keyword scoring ---
+    strong_hits = _STRONG_POS_RE.findall(combined)
+    if strong_hits:
+        score += 30
+        signals.append(f"+30 strong_kw({','.join(set(strong_hits))})")
+
+    mod_hits = _MOD_POS_RE.findall(combined)
+    if mod_hits:
+        score += 15
+        signals.append(f"+15 moderate_kw({','.join(set(mod_hits))})")
+
+    neg_hits = _NEG_RE.findall(combined)
+    if neg_hits:
+        score -= 20
+        signals.append(f"-20 negative_kw({','.join(set(neg_hits))})")
+
+    # --- Physical characteristic scoring ---
+    area = listing.get("area_sqm")
+    if area is not None:
+        if 40 <= area <= 500:
+            score += 10
+            signals.append(f"+10 area_ok({area}sqm)")
+        if area < 15 or area > 2000:
+            score -= 20
+            signals.append(f"-20 area_extreme({area}sqm)")
+
+    street_w = listing.get("street_width_m")
+    if street_w is not None and street_w >= 20:
+        score += 5
+        signals.append(f"+5 wide_street({street_w}m)")
+
+    if listing.get("has_drive_thru"):
+        score += 20
+        signals.append("+20 has_drive_thru")
+
+    if listing.get("has_mezzanine"):
+        score += 5
+        signals.append("+5 has_mezzanine")
+
+    listing["restaurant_score"] = score
+    listing["restaurant_suitable"] = score >= _SUITABILITY_THRESHOLD
+    listing["restaurant_signals"] = signals
+    return listing
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -648,6 +728,8 @@ def main():
                     if geo:
                         listing["lat"] = geo["lat"]
                         listing["lon"] = geo["lon"]
+                    # Classify restaurant suitability
+                    classify_restaurant_suitability(listing)
                     print(f"    {listing}")
     finally:
         if db is not None:
