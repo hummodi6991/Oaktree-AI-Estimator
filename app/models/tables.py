@@ -371,6 +371,42 @@ class GeocodeCache(Base):
     created_at = Column(DateTime, server_default=text("now()"))
 
 
+class CommercialUnit(Base):
+    """Commercial unit listing scraped from Aqar.fm."""
+
+    __tablename__ = "commercial_unit"
+
+    aqar_id = Column(String(64), primary_key=True)
+    title = Column(String(512))
+    description = Column(Text)
+    neighborhood = Column(String(256))
+    listing_url = Column(String(512))
+    image_url = Column(String(512))
+    price_sar_annual = Column(Numeric(14, 2))
+    price_per_sqm = Column(Numeric(12, 2))
+    area_sqm = Column(Numeric(10, 2))
+    street_width_m = Column(Numeric(8, 2))
+    num_floors = Column(Integer)
+    has_mezzanine = Column(Boolean)
+    has_drive_thru = Column(Boolean)
+    facade_direction = Column(String(32))
+    contact_phone = Column(String(64))
+    lat = Column(Numeric(10, 7))
+    lon = Column(Numeric(10, 7))
+    restaurant_score = Column(Integer)
+    restaurant_suitable = Column(Boolean)
+    restaurant_signals = Column(JSONB)
+    status = Column(String(16), nullable=False, server_default=text("'active'"))
+    first_seen_at = Column(DateTime, server_default=text("now()"))
+    last_seen_at = Column(DateTime, server_default=text("now()"))
+
+    __table_args__ = (
+        Index("ix_commercial_unit_neighborhood", "neighborhood"),
+        Index("ix_commercial_unit_status", "status"),
+        Index("ix_commercial_unit_restaurant_suitable", "restaurant_suitable"),
+    )
+
+
 class LocationScore(Base):
     """Pre-computed restaurant location demand-potential score per H3 cell and category."""
 

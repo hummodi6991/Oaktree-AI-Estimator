@@ -655,6 +655,118 @@ def classify_restaurant_suitability(listing: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Phase 6: upsert listings into commercial_unit table
+# ---------------------------------------------------------------------------
+
+_STALE_DAYS = 28
+
+
+def _compute_price_per_sqm(listing: dict) -> float | None:
+    """Derive price per sqm from annual price and area."""
+    price = listing.get("price_sar_annual")
+    area = listing.get("area_sqm")
+    if price and area and area > 0:
+        return round(float(price) / float(area), 2)
+    return None
+
+
+def upsert_listing(db, listing: dict) -> str:
+    """Insert or update a single listing in commercial_unit. Returns 'insert' or 'update'."""
+    from sqlalchemy import text as sa_text
+
+    aqar_id = listing["aqar_id"]
+    listing["price_per_sqm"] = _compute_price_per_sqm(listing)
+
+    existing = db.execute(
+        sa_text("SELECT aqar_id FROM commercial_unit WHERE aqar_id = :id"),
+        {"id": aqar_id},
+    ).first()
+
+    if existing:
+        db.execute(
+            sa_text(
+                "UPDATE commercial_unit SET "
+                "title = :title, description = :description, "
+                "price_sar_annual = :price_sar_annual, price_per_sqm = :price_per_sqm, "
+                "area_sqm = :area_sqm, street_width_m = :street_width_m, "
+                "num_floors = :num_floors, has_mezzanine = :has_mezzanine, "
+                "has_drive_thru = :has_drive_thru, facade_direction = :facade_direction, "
+                "contact_phone = :contact_phone, "
+                "lat = :lat, lon = :lon, "
+                "image_url = :image_url, listing_url = :listing_url, "
+                "restaurant_score = :restaurant_score, "
+                "restaurant_suitable = :restaurant_suitable, "
+                "restaurant_signals = :restaurant_signals, "
+                "status = 'active', last_seen_at = now() "
+                "WHERE aqar_id = :aqar_id"
+            ),
+            _listing_params(listing),
+        )
+        return "update"
+    else:
+        db.execute(
+            sa_text(
+                "INSERT INTO commercial_unit "
+                "(aqar_id, title, description, neighborhood, listing_url, image_url, "
+                "price_sar_annual, price_per_sqm, area_sqm, street_width_m, "
+                "num_floors, has_mezzanine, has_drive_thru, facade_direction, "
+                "contact_phone, lat, lon, "
+                "restaurant_score, restaurant_suitable, restaurant_signals, "
+                "status, first_seen_at, last_seen_at) "
+                "VALUES (:aqar_id, :title, :description, :neighborhood, :listing_url, :image_url, "
+                ":price_sar_annual, :price_per_sqm, :area_sqm, :street_width_m, "
+                ":num_floors, :has_mezzanine, :has_drive_thru, :facade_direction, "
+                ":contact_phone, :lat, :lon, "
+                ":restaurant_score, :restaurant_suitable, :restaurant_signals, "
+                "'active', now(), now())"
+            ),
+            _listing_params(listing),
+        )
+        return "insert"
+
+
+def _listing_params(listing: dict) -> dict:
+    """Build parameter dict for SQL statements from a listing dict."""
+    return {
+        "aqar_id": listing.get("aqar_id"),
+        "title": listing.get("title"),
+        "description": listing.get("description"),
+        "neighborhood": listing.get("neighborhood"),
+        "listing_url": listing.get("listing_url"),
+        "image_url": listing.get("image_url"),
+        "price_sar_annual": Decimal(str(listing["price_sar_annual"])) if listing.get("price_sar_annual") else None,
+        "price_per_sqm": Decimal(str(listing["price_per_sqm"])) if listing.get("price_per_sqm") else None,
+        "area_sqm": Decimal(str(listing["area_sqm"])) if listing.get("area_sqm") else None,
+        "street_width_m": Decimal(str(listing["street_width_m"])) if listing.get("street_width_m") else None,
+        "num_floors": listing.get("num_floors"),
+        "has_mezzanine": listing.get("has_mezzanine"),
+        "has_drive_thru": listing.get("has_drive_thru"),
+        "facade_direction": listing.get("facade_direction"),
+        "contact_phone": listing.get("contact_phone"),
+        "lat": Decimal(str(listing["lat"])) if listing.get("lat") else None,
+        "lon": Decimal(str(listing["lon"])) if listing.get("lon") else None,
+        "restaurant_score": listing.get("restaurant_score"),
+        "restaurant_suitable": listing.get("restaurant_suitable"),
+        "restaurant_signals": json.dumps(listing.get("restaurant_signals", [])),
+    }
+
+
+def mark_stale_listings(db) -> int:
+    """Mark listings not seen in 28+ days as stale. Returns count of rows updated."""
+    from sqlalchemy import text as sa_text
+
+    result = db.execute(
+        sa_text(
+            "UPDATE commercial_unit SET status = 'stale' "
+            "WHERE status = 'active' "
+            "AND last_seen_at < now() - make_interval(days => :days)"
+        ),
+        {"days": _STALE_DAYS},
+    )
+    return result.rowcount
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -667,6 +779,7 @@ def main():
     parser.add_argument("--list-only", action="store_true", help="Only list neighborhoods, don't crawl listings")
     parser.add_argument("--no-detail", action="store_true", help="Skip fetching individual listing detail pages")
     parser.add_argument("--skip-geocode", action="store_true", help="Skip geocoding neighborhoods")
+    parser.add_argument("--dry-run", action="store_true", help="Print results without writing to DB")
     args = parser.parse_args()
 
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
@@ -675,13 +788,18 @@ def main():
         print("WARN: GOOGLE_MAPS_API_KEY not set, skipping geocoding")
 
     db = None
-    if do_geocode:
+    need_db = do_geocode or not args.dry_run
+    if need_db:
         try:
             db = _get_db_session()
         except Exception as e:
-            print(f"WARN: could not connect to DB for geocode cache: {e}")
+            print(f"WARN: could not connect to DB: {e}")
+            if not args.dry_run:
+                print("ERROR: DB required for persistence. Use --dry-run to skip DB writes.")
+                return
 
     areas = [args.area] if args.area else AREAS
+    stats = {"insert": 0, "update": 0, "total": 0}
 
     try:
         for i, area in enumerate(areas):
@@ -730,7 +848,33 @@ def main():
                         listing["lon"] = geo["lon"]
                     # Classify restaurant suitability
                     classify_restaurant_suitability(listing)
-                    print(f"    {listing}")
+                    # Compute price_per_sqm
+                    listing["price_per_sqm"] = _compute_price_per_sqm(listing)
+
+                    stats["total"] += 1
+
+                    if args.dry_run:
+                        print(f"    [DRY-RUN] {listing}")
+                    else:
+                        action = upsert_listing(db, listing)
+                        stats[action] += 1
+                        print(f"    [{action}] {listing['aqar_id']}  score={listing.get('restaurant_score')}"
+                              f"  suitable={listing.get('restaurant_suitable')}"
+                              f"  price_per_sqm={listing.get('price_per_sqm')}")
+
+                # Commit after each neighborhood batch
+                if db and not args.dry_run:
+                    db.commit()
+
+        # Mark stale listings after full scrape
+        if db and not args.dry_run:
+            stale_count = mark_stale_listings(db)
+            db.commit()
+            if stale_count:
+                print(f"\nMarked {stale_count} listings as stale (not seen in {_STALE_DAYS}+ days)")
+
+        print(f"\n=== Summary: {stats['total']} processed, "
+              f"{stats['insert']} inserted, {stats['update']} updated ===")
     finally:
         if db is not None:
             db.close()
