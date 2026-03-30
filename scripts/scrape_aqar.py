@@ -50,9 +50,15 @@ def fetch_area(area: str) -> list[dict]:
         href = link.get("href", "")
         if "/en/store-for-rent/riyadh/" not in href or href.endswith(f"/{area}"):
             continue
+        # Skip listing card links — they contain description text, not neighborhood names
+        if _CARD_HREF_RE.search(href):
+            continue
         text = link.get_text(strip=True)
         # Skip filter links like "#more than 5m", "#more than 10m"
         if text.startswith("#"):
+            continue
+        # Skip links whose text is suspiciously long (likely card/description text)
+        if len(text) > 120:
             continue
         count = 0
         if "(" in text and text.endswith(")"):
@@ -123,6 +129,24 @@ def _parse_listing_from_card(card_link, neighborhood: str) -> dict | None:
             if sm:
                 street_width = float(sm.group(1).replace(",", ""))
 
+    # Neighborhood: extract from a dedicated location element in the card
+    # rather than relying solely on the page-level neighborhood parameter,
+    # which can pick up description text from card links on the area page.
+    card_neighborhood = None
+    for loc_img in card_link.find_all("img", src=True):
+        if "location" in loc_img.get("src", ""):
+            loc_span = loc_img.find_next("span")
+            if loc_span:
+                loc_text = loc_span.get_text(strip=True)
+                if loc_text:
+                    card_neighborhood = loc_text
+            break
+    # Fall back to page-level neighborhood, but guard against description
+    # text that was accidentally captured as a neighborhood name.
+    resolved_neighborhood = card_neighborhood or neighborhood
+    if resolved_neighborhood and len(resolved_neighborhood) > 120:
+        resolved_neighborhood = neighborhood if card_neighborhood else None
+
     # Description: hidden lg:block div
     desc = ""
     desc_el = card_link.find("div", class_=re.compile(r"hidden\s+lg:block|lg:block\s+hidden"))
@@ -146,7 +170,7 @@ def _parse_listing_from_card(card_link, neighborhood: str) -> dict | None:
         "area_sqm": area_sqm,
         "street_width_m": street_width,
         "description": desc,
-        "neighborhood": neighborhood,
+        "neighborhood": resolved_neighborhood,
         "image_url": img,
         "listing_url": full_url,
     }
