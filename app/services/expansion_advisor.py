@@ -3367,8 +3367,8 @@ def run_expansion_search(
             "SELECT COUNT(*) FROM commercial_unit "
             "WHERE status = 'active' AND restaurant_suitable = TRUE AND lat IS NOT NULL"
         )).scalar() or 0)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("commercial unit count query failed: %s", exc)
 
     use_commercial_units = _cu_count >= 50  # Only use if we have meaningful coverage
 
