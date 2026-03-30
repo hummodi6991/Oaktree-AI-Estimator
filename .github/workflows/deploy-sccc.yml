@@ -209,7 +209,7 @@ jobs:
                 containers:
                   - name: migrate
                     image: ${{ steps.img.outputs.image }}
-                    command: ["alembic", "upgrade", "head"]
+                    command: ["alembic", "upgrade", "heads"]
                     envFrom:
                       - secretRef:
                           name: oaktree-db-env
