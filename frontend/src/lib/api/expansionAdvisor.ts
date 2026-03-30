@@ -136,6 +136,15 @@ export type ExpansionCandidate = {
   comparable_competitors_json?: ComparableCompetitor[];
   compare_rank?: number;
   site_fit_context?: SiteFitContext;
+  // Commercial unit fields
+  source_type?: "parcel" | "commercial_unit";
+  commercial_unit_id?: string;
+  listing_url?: string;
+  image_url?: string;
+  unit_price_sar_annual?: number;
+  unit_area_sqm?: number;
+  unit_street_width_m?: number;
+  unit_neighborhood?: string;
 };
 
 export type ExpansionSearchResponse = {

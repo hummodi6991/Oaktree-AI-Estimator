@@ -23,6 +23,7 @@ export function buildExpansionOverlayData(
         district: item.district ?? null,
         final_score: item.score_breakdown_json?.display_score ?? item.final_score ?? null,
         gate_pass: item.gate_status_json?.overall_pass ?? null,
+        source_type: item.source_type ?? "parcel",
       },
     }));
 

@@ -48,6 +48,7 @@ export default function ExpansionCandidateCard({
   const risks = (candidate.top_risks_json || []).slice(0, 2);
 
   const isTop3 = (candidate.rank_position ?? 999) <= 3;
+  const isCommercialUnit = candidate.source_type === "commercial_unit";
 
   const cls = [
     "ea-candidate",
@@ -56,6 +57,7 @@ export default function ExpansionCandidateCard({
     compared && "ea-candidate--compared",
     isLead && "ea-candidate--lead",
     isTop3 && "ea-candidate--top3",
+    isCommercialUnit && "ea-candidate--commercial-unit",
   ]
     .filter(Boolean)
     .join(" ");
@@ -93,9 +95,63 @@ export default function ExpansionCandidateCard({
         </div>
       </div>
 
+      {/* Commercial unit header image */}
+      {isCommercialUnit && candidate.image_url && (
+        <div className="ea-candidate__unit-image">
+          <img
+            src={candidate.image_url}
+            alt={candidate.unit_neighborhood || t("expansionAdvisor.commercialUnit")}
+            loading="lazy"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+          />
+        </div>
+      )}
+
+      {/* Commercial unit badge */}
+      {isCommercialUnit && (
+        <div className="ea-candidate__unit-badge">
+          <span className="ea-badge ea-badge--blue">{t("expansionAdvisor.commercialUnit")}</span>
+        </div>
+      )}
+
       {/* Decision summary */}
       {candidate.decision_summary && (
         <p className="ea-candidate__summary">{candidate.decision_summary}</p>
+      )}
+
+      {/* Commercial unit details */}
+      {isCommercialUnit && (
+        <div className="ea-candidate__unit-details">
+          {candidate.unit_price_sar_annual != null && (
+            <div className="ea-candidate__metric">
+              <span className="ea-candidate__metric-label">{t("expansionAdvisor.annualRentActual")}:</span>
+              <span className="ea-candidate__metric-value--actual">{fmtSAR(candidate.unit_price_sar_annual)}</span>
+            </div>
+          )}
+          {candidate.unit_area_sqm != null && (
+            <div className="ea-candidate__metric">
+              <span className="ea-candidate__metric-label">{t("expansionAdvisor.areaSqm")}:</span>
+              <span>{fmtM2(candidate.unit_area_sqm)}</span>
+            </div>
+          )}
+          {candidate.unit_street_width_m != null && (
+            <div className="ea-candidate__metric">
+              <span className="ea-candidate__metric-label">{t("expansionAdvisor.streetWidth")}:</span>
+              <span>{fmtMeters(candidate.unit_street_width_m)}</span>
+            </div>
+          )}
+          {candidate.listing_url && (
+            <a
+              href={candidate.listing_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ea-candidate__aqar-link"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {t("expansionAdvisor.viewOnAqar")} &#8599;
+            </a>
+          )}
+        </div>
       )}
 
       {/* Metrics grid */}
