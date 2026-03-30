@@ -74,7 +74,7 @@ jobs:
       - name: Migrate schema
         env:
           PYTHONPATH: ${{ github.workspace }}
-        run: alembic upgrade head
+        run: alembic upgrade heads
 
       - name: Run Suhail parcel ingest (resumable)
         env:

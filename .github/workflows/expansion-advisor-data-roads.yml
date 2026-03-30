@@ -54,7 +54,7 @@ jobs:
           echo "DB connection configured via env vars"
 
       - name: Run alembic upgrade
-        run: python -m alembic upgrade head
+        run: python -m alembic upgrade heads
 
       - name: Import OSM data if needed
         env:

@@ -60,7 +60,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run Alembic migrations
-        run: alembic upgrade head
+        run: alembic upgrade heads
 
       - name: Resolve inputs
         id: inputs

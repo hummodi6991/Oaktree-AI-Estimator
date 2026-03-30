@@ -4,7 +4,7 @@
 
 ```bash
 # From a fresh DB or existing production-like DB:
-alembic upgrade head
+alembic upgrade heads
 
 # Verify the migration applied cleanly:
 alembic current

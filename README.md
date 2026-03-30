@@ -16,7 +16,7 @@ cp .env.example .env
 docker compose up -d db
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-alembic upgrade head
+alembic upgrade heads
 uvicorn app.main:app --reload --port 8000
 # open http://127.0.0.1:8000/docs
 pytest -q
@@ -54,7 +54,7 @@ Only `district` and `far_max` are required. When an estimate runs, the API first
 ### ArcGIS parcels (default outlines + identify)
 ArcGIS parcels (`public.riyadh_parcels_arcgis_raw`) are the default geometry source via the proxy view
 `public.riyadh_parcels_arcgis_proxy`. Ensure the migration that creates the view and GiST index has run, or run:
-`alembic upgrade head` before using the endpoints.
+`alembic upgrade heads` before using the endpoints.
 
 Default settings (override via env vars as needed):
 - `PARCEL_TILE_TABLE=public.riyadh_parcels_arcgis_proxy`

@@ -67,7 +67,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          alembic upgrade head
+          alembic upgrade heads
           python -m app.ingest.seed
           python -m app.ingest.seed_boq
           python -m app.ingest.seed_indicators

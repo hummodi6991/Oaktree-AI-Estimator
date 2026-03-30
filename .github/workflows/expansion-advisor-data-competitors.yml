@@ -42,7 +42,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run alembic upgrade
-        run: python -m alembic upgrade head
+        run: python -m alembic upgrade heads
 
       - name: Run Google review enrichment (optional)
         if: ${{ github.event.inputs.refresh_google_reviews == 'true' }}

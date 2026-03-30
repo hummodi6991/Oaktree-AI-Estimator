@@ -51,7 +51,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run alembic upgrade
-        run: python -m alembic upgrade head
+        run: python -m alembic upgrade heads
 
       - name: Scrape and ingest Delivery Marketplace data
         run: |

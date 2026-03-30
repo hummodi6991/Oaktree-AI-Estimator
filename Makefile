@@ -12,7 +12,7 @@ db-down:
 	docker compose down
 
 db-init:
-	alembic upgrade head
+	alembic upgrade heads
 
 test:
 	pytest -q

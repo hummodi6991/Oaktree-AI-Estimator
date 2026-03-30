@@ -36,7 +36,7 @@ SELECT count(*) FROM public.riyadh_parcels_arcgis_raw;
 
 ## Proxy view + app defaults
 The app consumes ArcGIS parcels via `public.riyadh_parcels_arcgis_proxy`, which is created by the migration that also
-adds a GiST index on `public.riyadh_parcels_arcgis_raw.geom`. Run `alembic upgrade head` (or the specific migration)
+adds a GiST index on `public.riyadh_parcels_arcgis_raw.geom`. Run `alembic upgrade heads` (or the specific migration)
 after ingesting raw data to ensure the proxy exists.
 
 Default parcel geometry settings (override via env vars if needed):
