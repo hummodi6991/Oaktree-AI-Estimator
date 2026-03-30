@@ -29,3 +29,4 @@ opentelemetry-exporter-otlp>=1.25.0
 opentelemetry-instrumentation-fastapi>=0.46b0
 opentelemetry-instrumentation-httpx>=0.46b0
 python-multipart>=0.0.9  # enables FastAPI file-upload routes
+beautifulsoup4>=4.12.3   # required by Aqar scraper workflow
