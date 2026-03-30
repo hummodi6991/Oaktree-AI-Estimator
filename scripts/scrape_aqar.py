@@ -363,9 +363,9 @@ def _store_geocode_cache(db, query: str, lat: float | None, lon: float | None,
     db.execute(
         sa_text(
             "INSERT INTO geocode_cache (query, lat, lon, formatted_address, raw) "
-            "VALUES (:q, :lat, :lon, :addr, :raw) "
+            "VALUES (:q, :lat, :lon, :addr, CAST(:raw AS jsonb)) "
             "ON CONFLICT (query) DO UPDATE SET lat=:lat, lon=:lon, "
-            "formatted_address=:addr, raw=:raw"
+            "formatted_address=:addr, raw=CAST(:raw AS jsonb)"
         ),
         {
             "q": query,
