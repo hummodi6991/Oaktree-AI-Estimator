@@ -1,0 +1,61 @@
+name: Aqar Scraper (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: "Maximum pages to scrape"
+        required: false
+        default: "50"
+      no_detail:
+        description: "Skip detail page scraping (--no-detail)"
+        type: boolean
+        default: false
+      skip_geocode:
+        description: "Skip geocoding step (--skip-geocode)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: aqar-scraper
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 300  # 5 hours
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Aqar scraper
+        env:
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_SSLMODE: ${{ secrets.POSTGRES_SSLMODE }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          FLAGS="--max-pages ${{ github.event.inputs.max_pages }}"
+          if [ "${{ github.event.inputs.no_detail }}" = "true" ]; then
+            FLAGS="${FLAGS} --no-detail"
+          fi
+          if [ "${{ github.event.inputs.skip_geocode }}" = "true" ]; then
+            FLAGS="${FLAGS} --skip-geocode"
+          fi
+          echo "Running: python scripts/scrape_aqar.py ${FLAGS}"
+          python scripts/scrape_aqar.py ${FLAGS}
