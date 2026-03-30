@@ -936,8 +936,20 @@ export default function Map({
             type: "circle",
             source: EXP_CANDIDATE_SOURCE_ID,
             paint: {
-              "circle-color": ["case", ["get", "selected"], "#006dff", ["get", "shortlisted"], "#1a9c6c", "#3d5a80"],
+              "circle-color": [
+                "case",
+                ["get", "selected"], "#006dff",
+                ["get", "shortlisted"], "#1a9c6c",
+                ["==", ["get", "source_type"], "commercial_unit"], "#7c3aed",
+                "#3d5a80",
+              ],
               "circle-radius": ["case", ["get", "selected"], 8, 5],
+              "circle-stroke-width": [
+                "case",
+                ["==", ["get", "source_type"], "commercial_unit"], 2,
+                0,
+              ],
+              "circle-stroke-color": "#7c3aed",
             },
           });
         }

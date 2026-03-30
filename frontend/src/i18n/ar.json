@@ -857,6 +857,12 @@
     "noPassNotice": "لا يوجد مرشح يجتاز جميع البوابات المطلوبة حالياً.",
     "leadCandidate": "المرشح الرئيسي",
     "gateNeedsValidation": "يحتاج تحقق",
-    "noMatchingParcelsInDistricts": "لا توجد قطع أرض مطابقة في {{districts}} لمعايير المساحة والفئة المحددة."
+    "noMatchingParcelsInDistricts": "لا توجد قطع أرض مطابقة في {{districts}} لمعايير المساحة والفئة المحددة.",
+    "commercialUnit": "وحدة تجارية",
+    "annualRentActual": "الإيجار السنوي (فعلي)",
+    "areaSqm": "المساحة",
+    "streetWidth": "عرض الشارع",
+    "viewOnAqar": "عرض في عقار",
+    "unitDetails": "تفاصيل الوحدة"
   }
 }
