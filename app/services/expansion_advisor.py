@@ -2777,58 +2777,119 @@ def _query_commercial_unit_candidates(
     Returns rows with the same key fields the scoring loop expects:
     parcel_id (mapped from aqar_id), lat, lon, area_m2, district,
     landuse_label, landuse_code, plus commercial-unit-specific fields.
+
+    District filtering uses spatial proximity instead of name matching,
+    because commercial units store English neighborhood names (from Aqar)
+    while searches pass Arabic district names.  We look up the district
+    centroid from riyadh_parcels_arcgis_raw and filter units within ~3 km.
     """
     from sqlalchemy import text as sa_text
 
     filters = [
-        "status = 'active'",
-        "restaurant_suitable = TRUE",
-        "lat IS NOT NULL",
-        "lon IS NOT NULL",
+        "cu.status = 'active'",
+        "cu.restaurant_suitable = TRUE",
+        "cu.lat IS NOT NULL",
+        "cu.lon IS NOT NULL",
     ]
     params: dict[str, Any] = {}
+    district_filter_mode = "none"
 
+    # ── Spatial district filtering ──────────────────────────────────
+    # Look up approximate centroid of the target district(s) from the
+    # parcel table (which stores Arabic district_label) and filter
+    # commercial units within a 3 km radius.
     if target_district_norm:
-        district_clauses = []
-        for i, td in enumerate(sorted(target_district_norm)):
-            key = f"cu_td_{i}"
-            district_clauses.append(f"LOWER(neighborhood) LIKE :{key}")
-            params[key] = f"%{td.lower()}%"
-        filters.append(f"({' OR '.join(district_clauses)})")
+        try:
+            district_values = ", ".join(
+                f"(:td_{i})" for i in range(len(target_district_norm))
+            )
+            for i, td in enumerate(sorted(target_district_norm)):
+                params[f"td_{i}"] = td
+
+            # TRANSLATE mirrors normalize_district_key(): أ→ا إ→ا آ→ا ى→ي
+            _NORM_SQL = (
+                "TRIM(REGEXP_REPLACE("
+                "TRANSLATE("
+                "COALESCE(p.district_label, ''), "
+                "E'\\u0623\\u0625\\u0622\\u0649\\u0640', "
+                "E'\\u0627\\u0627\\u0627\\u064A'"
+                "), "
+                "E'^\\u062D\\u064A\\\\s+', '', 'g'"
+                "))"
+            )
+
+            centroid_sql = sa_text(f"""
+                SELECT
+                    AVG(ST_X(ST_Centroid(p.geom))) AS clon,
+                    AVG(ST_Y(ST_Centroid(p.geom))) AS clat
+                FROM public.riyadh_parcels_arcgis_raw p
+                WHERE p.geom IS NOT NULL
+                  AND {_NORM_SQL} IN (
+                      SELECT td.val FROM (VALUES {district_values}) AS td(val)
+                  )
+            """)
+            with db.begin_nested():
+                centroid_row = db.execute(centroid_sql, params).mappings().first()
+
+            if centroid_row and centroid_row["clon"] is not None and centroid_row["clat"] is not None:
+                params["district_clon"] = float(centroid_row["clon"])
+                params["district_clat"] = float(centroid_row["clat"])
+                filters.append(
+                    "ST_DWithin("
+                    "  ST_SetSRID(ST_MakePoint(cu.lon::float, cu.lat::float), 4326)::geography,"
+                    "  ST_SetSRID(ST_MakePoint(:district_clon, :district_clat), 4326)::geography,"
+                    "  3000"  # 3 km radius
+                    ")"
+                )
+                district_filter_mode = "spatial"
+            else:
+                # Centroid lookup returned no rows – skip district filtering;
+                # the scoring layer will still prefer the target district.
+                district_filter_mode = "fallback_no_centroid"
+        except Exception as exc:
+            logger.warning(
+                "commercial_unit spatial district lookup failed, skipping district filter: %s", exc,
+            )
+            district_filter_mode = "fallback_error"
+
+    logger.info(
+        "commercial_unit district filter: mode=%s, target_districts=%s",
+        district_filter_mode, sorted(target_district_norm) if target_district_norm else [],
+    )
 
     if min_area_m2 and min_area_m2 > 0:
-        filters.append("area_sqm >= :min_area")
+        filters.append("cu.area_sqm >= :min_area")
         params["min_area"] = min_area_m2
 
     if max_area_m2 and max_area_m2 < 999999:
-        filters.append("area_sqm <= :max_area")
+        filters.append("cu.area_sqm <= :max_area")
         params["max_area"] = max_area_m2
 
     where_clause = " AND ".join(filters)
 
     sql = sa_text(f"""
         SELECT
-            aqar_id AS parcel_id,
-            lat::float AS lat,
-            lon::float AS lon,
-            COALESCE(area_sqm, 100)::float AS area_m2,
-            neighborhood AS district,
+            cu.aqar_id AS parcel_id,
+            cu.lat::float AS lat,
+            cu.lon::float AS lon,
+            COALESCE(cu.area_sqm, 100)::float AS area_m2,
+            cu.neighborhood AS district,
             'commercial' AS landuse_label,
             2000 AS landuse_code,
-            price_sar_annual::float AS unit_price_sar_annual,
-            area_sqm::float AS unit_area_sqm,
-            street_width_m::float AS unit_street_width_m,
-            listing_url,
-            image_url,
-            aqar_id AS commercial_unit_id,
-            restaurant_score,
+            cu.price_sar_annual::float AS unit_price_sar_annual,
+            cu.area_sqm::float AS unit_area_sqm,
+            cu.street_width_m::float AS unit_street_width_m,
+            cu.listing_url,
+            cu.image_url,
+            cu.aqar_id AS commercial_unit_id,
+            cu.restaurant_score,
             0 AS delivery_listing_count,
             0 AS delivery_cat_count,
             0 AS delivery_platform_count,
             0 AS pop_proxy
-        FROM commercial_unit
+        FROM commercial_unit cu
         WHERE {where_clause}
-        ORDER BY restaurant_score DESC NULLS LAST, price_sar_annual ASC NULLS LAST
+        ORDER BY cu.restaurant_score DESC NULLS LAST, cu.price_sar_annual ASC NULLS LAST
         LIMIT :limit
     """)
     params["limit"] = limit
