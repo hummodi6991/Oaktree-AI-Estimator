@@ -479,7 +479,7 @@ _STRONG_POS_RE = re.compile("|".join(re.escape(k) for k in _STRONG_POSITIVE_KW),
 _MOD_POS_RE = re.compile("|".join(re.escape(k) for k in _MODERATE_POSITIVE_KW), re.I)
 _NEG_RE = re.compile("|".join(re.escape(k) for k in _NEGATIVE_KW), re.I)
 
-_SUITABILITY_THRESHOLD = 40
+_SUITABILITY_THRESHOLD = 25
 
 
 def classify_restaurant_suitability(listing: dict) -> dict:
@@ -490,6 +490,11 @@ def classify_restaurant_suitability(listing: dict) -> dict:
     """
     score = 0
     signals: list[str] = []
+
+    # All listings from the scraper are store-for-rent (commercial shops),
+    # so they get a base score reflecting inherent restaurant potential.
+    score += 15
+    signals.append("+15 store_for_rent_base")
 
     title = listing.get("title", "") or ""
     desc = listing.get("description", "") or ""
