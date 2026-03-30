@@ -361,6 +361,21 @@ def _get_db_session():
     return SessionLocal()
 
 
+def _purge_null_geocode_cache(db) -> int:
+    """Delete geocode_cache rows where lat IS NULL (poisoned entries from failed queries).
+
+    Returns the number of rows deleted.
+    """
+    from sqlalchemy import text as sa_text
+
+    result = db.execute(sa_text("DELETE FROM geocode_cache WHERE lat IS NULL"))
+    db.commit()
+    deleted = result.rowcount
+    if deleted:
+        print(f"  Purged {deleted} poisoned geocode_cache rows (lat IS NULL)")
+    return deleted
+
+
 def _check_geocode_cache(db, query: str) -> dict | None:
     """Look up a geocode query in the cache table. Returns dict or None."""
     from sqlalchemy import text as sa_text
@@ -426,7 +441,12 @@ def geocode_neighborhood(neighborhood_name: str, api_key: str, db=None) -> dict 
     try:
         resp = requests.get(
             GEOCODE_URL,
-            params={"address": query, "key": api_key},
+            params={
+                "address": query,
+                "key": api_key,
+                "components": "country:SA",
+                "bounds": "24.5,46.2|25.1,47.3",
+            },
             timeout=10,
         )
         resp.raise_for_status()
@@ -714,6 +734,7 @@ def main():
             # Geocode each neighborhood (once per neighborhood, not per listing)
             geo_cache: dict[str, dict | None] = {}
             if do_geocode:
+                _purge_null_geocode_cache(db)
                 for nbr in neighborhoods:
                     name = nbr["neighborhood"]
                     if name not in geo_cache:
