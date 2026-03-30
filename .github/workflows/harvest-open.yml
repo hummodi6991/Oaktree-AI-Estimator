@@ -70,7 +70,7 @@ jobs:
           echo "REGA_CSV_URLS=${{ vars.REGA_CSV_URLS }}" >> $GITHUB_ENV
 
       - name: Migrate schema
-        run: alembic upgrade head
+        run: alembic upgrade heads
 
       - name: Run harvest
         env:

@@ -52,7 +52,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run Alembic migrations
-        run: alembic upgrade head
+        run: alembic upgrade heads
 
       - name: Download and extract population GeoTIFF
         run: |

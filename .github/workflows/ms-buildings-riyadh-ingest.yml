@@ -58,7 +58,7 @@ jobs:
           DATABASE_URL: postgresql+psycopg://${{ secrets.POSTGRES_USER }}:${{ secrets.POSTGRES_PASSWORD }}@${{ secrets.POSTGRES_HOST }}:${{ secrets.POSTGRES_PORT }}/${{ secrets.POSTGRES_DB }}?sslmode=require
         run: |
           set -euo pipefail
-          PYTHONPATH=. python -m alembic upgrade head
+          PYTHONPATH=. python -m alembic upgrade heads
 
       - name: Ingest into production
         env:

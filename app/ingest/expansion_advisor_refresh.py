@@ -1,7 +1,7 @@
 """Post-ingestion refresh for Expansion Advisor normalized tables.
 
 Responsibilities:
-- Run alembic upgrade head (idempotent)
+- Run alembic upgrade heads (idempotent)
 - Refresh any materialized views
 - Log row counts for each Expansion Advisor table
 - Callable from workflows as a final step
@@ -34,10 +34,10 @@ EXPANSION_TABLES = [
 
 
 def run_alembic_upgrade() -> None:
-    """Run alembic upgrade head. Idempotent."""
-    logger.info("Running alembic upgrade head ...")
+    """Run alembic upgrade heads. Idempotent."""
+    logger.info("Running alembic upgrade heads ...")
     result = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        [sys.executable, "-m", "alembic", "upgrade", "heads"],
         capture_output=True,
         text=True,
     )

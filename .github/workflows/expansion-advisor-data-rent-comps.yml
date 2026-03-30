@@ -68,7 +68,7 @@ jobs:
           fi
 
       - name: Run alembic upgrade
-        run: python -m alembic upgrade head
+        run: python -m alembic upgrade heads
 
       - name: Run Rent Comps ingest
         run: |
