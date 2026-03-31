@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aqar.fm crawler: fetch Riyadh store-for-rent listings by area/neighborhood."""
+"""Aqar.fm crawler: fetch Riyadh store-for-rent and showroom-for-rent listings by area/neighborhood."""
 
 import argparse
 import json
@@ -20,7 +20,12 @@ AREAS = [
     "center-of-riyadh",
 ]
 
-BASE = "https://sa.aqar.fm/en/store-for-rent/riyadh"
+LISTING_TYPES = {
+    "store": "store-for-rent",
+    "showroom": "showroom-for-rent",
+}
+
+_BASE_TMPL = "https://sa.aqar.fm/en/{listing_type}/riyadh"
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
@@ -41,14 +46,15 @@ def _get(url: str) -> requests.Response:
 # ---------------------------------------------------------------------------
 
 
-def fetch_area(area: str) -> list[dict]:
-    url = f"{BASE}/{area}"
+def fetch_area(area: str, listing_type: str = "store-for-rent") -> list[dict]:
+    base = _BASE_TMPL.format(listing_type=listing_type)
+    url = f"{base}/{area}"
     resp = _get(url)
     soup = BeautifulSoup(resp.text, "html.parser")
     results = []
     for link in soup.select("a[href]"):
         href = link.get("href", "")
-        if "/en/store-for-rent/riyadh/" not in href or href.endswith(f"/{area}"):
+        if f"/en/{listing_type}/riyadh/" not in href or href.endswith(f"/{area}"):
             continue
         # Skip listing card links — they contain description text, not neighborhood names
         if _CARD_HREF_RE.search(href):
@@ -76,7 +82,7 @@ def fetch_area(area: str) -> list[dict]:
 # Phase 2: neighborhood page → listing cards
 # ---------------------------------------------------------------------------
 
-_CARD_HREF_RE = re.compile(r"store-for-rent-(\d+)")
+_CARD_HREF_RE = re.compile(r"(?:store|showroom)-for-rent-(\d+)")
 _AREA_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*m²")
 _STREET_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*m\b")
 
@@ -511,10 +517,11 @@ def classify_restaurant_suitability(listing: dict) -> dict:
     score = 0
     signals: list[str] = []
 
-    # All listings from the scraper are store-for-rent (commercial shops),
-    # so they get a base score reflecting inherent restaurant potential.
+    # All listings from the scraper are commercial retail spaces
+    # (store-for-rent or showroom-for-rent), so they get a base score
+    # reflecting inherent restaurant potential.
     score += 15
-    signals.append("+15 store_for_rent_base")
+    signals.append("+15 commercial_retail_base")
 
     title = listing.get("title", "") or ""
     desc = listing.get("description", "") or ""
@@ -684,7 +691,7 @@ def mark_stale_listings(db) -> int:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Crawl Aqar.fm Riyadh store-for-rent listings")
+    parser = argparse.ArgumentParser(description="Crawl Aqar.fm Riyadh commercial-for-rent listings")
     parser.add_argument("--area", choices=AREAS, help="Limit to a single area")
     parser.add_argument("--neighborhood", help="Limit to a single neighborhood slug (e.g. al-olaya)")
     parser.add_argument("--max-pages", type=int, default=10, help="Max pages per neighborhood (default: 10)")
@@ -692,6 +699,12 @@ def main():
     parser.add_argument("--no-detail", action="store_true", help="Skip fetching individual listing detail pages")
     parser.add_argument("--skip-geocode", action="store_true", help="Skip geocoding neighborhoods")
     parser.add_argument("--dry-run", action="store_true", help="Print results without writing to DB")
+    parser.add_argument(
+        "--listing-type",
+        choices=["all", "store", "showroom"],
+        default="all",
+        help="Which listing types to crawl (default: all)",
+    )
     args = parser.parse_args()
 
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
@@ -713,71 +726,82 @@ def main():
     areas = [args.area] if args.area else AREAS
     stats = {"insert": 0, "update": 0, "total": 0}
 
-    try:
-        for i, area in enumerate(areas):
-            if i > 0:
-                time.sleep(2)
-            print(f"\n=== {area} ===")
-            neighborhoods = fetch_area(area)
+    if args.listing_type == "all":
+        type_keys = list(LISTING_TYPES.keys())
+    else:
+        type_keys = [args.listing_type]
 
-            if args.neighborhood:
-                neighborhoods = [n for n in neighborhoods if n["slug"] == args.neighborhood]
-                if not neighborhoods:
-                    print(f"  Neighborhood '{args.neighborhood}' not found in {area}")
+    try:
+        for type_key in type_keys:
+            listing_type = LISTING_TYPES[type_key]
+            print(f"\n{'=' * 60}")
+            print(f"  Listing type: {listing_type}")
+            print(f"{'=' * 60}")
+
+            for i, area in enumerate(areas):
+                if i > 0:
+                    time.sleep(2)
+                print(f"\n=== {area} ({listing_type}) ===")
+                neighborhoods = fetch_area(area, listing_type=listing_type)
+
+                if args.neighborhood:
+                    neighborhoods = [n for n in neighborhoods if n["slug"] == args.neighborhood]
+                    if not neighborhoods:
+                        print(f"  Neighborhood '{args.neighborhood}' not found in {area}")
+                        continue
+
+                for row in neighborhoods:
+                    print(f"  {row['neighborhood']:30s}  {row['count']:>5d}  {row['url']}")
+
+                if args.list_only:
                     continue
 
-            for row in neighborhoods:
-                print(f"  {row['neighborhood']:30s}  {row['count']:>5d}  {row['url']}")
+                # Geocode each neighborhood (once per neighborhood, not per listing)
+                geo_cache: dict[str, dict | None] = {}
+                if do_geocode:
+                    _purge_null_geocode_cache(db)
+                    for nbr in neighborhoods:
+                        name = nbr["neighborhood"]
+                        if name not in geo_cache:
+                            geo_cache[name] = geocode_neighborhood(name, api_key, db)
 
-            if args.list_only:
-                continue
+                for j, nbr in enumerate(neighborhoods):
+                    if j > 0 or i > 0:
+                        time.sleep(2)
+                    print(f"\n  --- Crawling: {nbr['neighborhood']} ---")
+                    listings = fetch_neighborhood_listings(nbr["url"], nbr["neighborhood"], max_pages=args.max_pages)
+                    print(f"  Found {len(listings)} listings")
 
-            # Geocode each neighborhood (once per neighborhood, not per listing)
-            geo_cache: dict[str, dict | None] = {}
-            if do_geocode:
-                _purge_null_geocode_cache(db)
-                for nbr in neighborhoods:
-                    name = nbr["neighborhood"]
-                    if name not in geo_cache:
-                        geo_cache[name] = geocode_neighborhood(name, api_key, db)
+                    geo = geo_cache.get(nbr["neighborhood"])
 
-            for j, nbr in enumerate(neighborhoods):
-                if j > 0 or i > 0:
-                    time.sleep(2)
-                print(f"\n  --- Crawling: {nbr['neighborhood']} ---")
-                listings = fetch_neighborhood_listings(nbr["url"], nbr["neighborhood"], max_pages=args.max_pages)
-                print(f"  Found {len(listings)} listings")
+                    for k, listing in enumerate(listings):
+                        if not args.no_detail:
+                            time.sleep(random.uniform(2, 3))
+                            print(f"    [{k + 1}/{len(listings)}] fetching detail: {listing['listing_url']}")
+                            fetch_listing_detail(listing)
+                        # Attach geocode to each listing
+                        if geo:
+                            listing["lat"] = geo["lat"]
+                            listing["lon"] = geo["lon"]
+                        # Classify restaurant suitability
+                        classify_restaurant_suitability(listing)
+                        # Compute price_per_sqm
+                        listing["price_per_sqm"] = _compute_price_per_sqm(listing)
 
-                geo = geo_cache.get(nbr["neighborhood"])
+                        stats["total"] += 1
 
-                for k, listing in enumerate(listings):
-                    if not args.no_detail:
-                        time.sleep(random.uniform(2, 3))
-                        print(f"    [{k + 1}/{len(listings)}] fetching detail: {listing['listing_url']}")
-                        fetch_listing_detail(listing)
-                    # Attach geocode to each listing
-                    if geo:
-                        listing["lat"] = geo["lat"]
-                        listing["lon"] = geo["lon"]
-                    # Classify restaurant suitability
-                    classify_restaurant_suitability(listing)
-                    # Compute price_per_sqm
-                    listing["price_per_sqm"] = _compute_price_per_sqm(listing)
+                        if args.dry_run:
+                            print(f"    [DRY-RUN] {listing}")
+                        else:
+                            action = upsert_listing(db, listing)
+                            stats[action] += 1
+                            print(f"    [{action}] {listing['aqar_id']}  score={listing.get('restaurant_score')}"
+                                  f"  suitable={listing.get('restaurant_suitable')}"
+                                  f"  price_per_sqm={listing.get('price_per_sqm')}")
 
-                    stats["total"] += 1
-
-                    if args.dry_run:
-                        print(f"    [DRY-RUN] {listing}")
-                    else:
-                        action = upsert_listing(db, listing)
-                        stats[action] += 1
-                        print(f"    [{action}] {listing['aqar_id']}  score={listing.get('restaurant_score')}"
-                              f"  suitable={listing.get('restaurant_suitable')}"
-                              f"  price_per_sqm={listing.get('price_per_sqm')}")
-
-                # Commit after each neighborhood batch
-                if db and not args.dry_run:
-                    db.commit()
+                    # Commit after each neighborhood batch
+                    if db and not args.dry_run:
+                        db.commit()
 
         # Mark stale listings after full scrape
         if db and not args.dry_run:
