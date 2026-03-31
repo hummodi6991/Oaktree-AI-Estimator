@@ -194,7 +194,7 @@ def _step4_rent_city_default(db: Session) -> int:
         SET rent_sar_m2_month = :rent_month,
             rent_sar_annual = CASE
                 WHEN area_sqm IS NOT NULL AND area_sqm > 0
-                THEN ROUND(:rent_month * area_sqm * 12, 2)
+                THEN ROUND((:rent_month * area_sqm * 12)::numeric, 2)
                 ELSE NULL
             END,
             rent_confidence = 'city_default'
