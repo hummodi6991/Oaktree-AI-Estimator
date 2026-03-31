@@ -610,6 +610,7 @@ def upsert_listing(db, listing: dict) -> str:
                 "num_floors = :num_floors, has_mezzanine = :has_mezzanine, "
                 "has_drive_thru = :has_drive_thru, facade_direction = :facade_direction, "
                 "contact_phone = :contact_phone, "
+                "listing_type = :listing_type, "
                 "lat = COALESCE(:lat, commercial_unit.lat), "
                 "lon = COALESCE(:lon, commercial_unit.lon), "
                 "image_url = :image_url, listing_url = :listing_url, "
@@ -629,13 +630,13 @@ def upsert_listing(db, listing: dict) -> str:
                 "(aqar_id, title, description, neighborhood, listing_url, image_url, "
                 "price_sar_annual, price_per_sqm, area_sqm, street_width_m, "
                 "num_floors, has_mezzanine, has_drive_thru, facade_direction, "
-                "contact_phone, lat, lon, "
+                "contact_phone, listing_type, lat, lon, "
                 "restaurant_score, restaurant_suitable, restaurant_signals, "
                 "status, first_seen_at, last_seen_at) "
                 "VALUES (:aqar_id, :title, :description, :neighborhood, :listing_url, :image_url, "
                 ":price_sar_annual, :price_per_sqm, :area_sqm, :street_width_m, "
                 ":num_floors, :has_mezzanine, :has_drive_thru, :facade_direction, "
-                ":contact_phone, :lat, :lon, "
+                ":contact_phone, :listing_type, :lat, :lon, "
                 ":restaurant_score, :restaurant_suitable, :restaurant_signals, "
                 "'active', now(), now())"
             ),
@@ -662,6 +663,7 @@ def _listing_params(listing: dict) -> dict:
         "has_drive_thru": listing.get("has_drive_thru"),
         "facade_direction": listing.get("facade_direction"),
         "contact_phone": listing.get("contact_phone"),
+        "listing_type": listing.get("listing_type"),
         "lat": Decimal(str(listing["lat"])) if listing.get("lat") else None,
         "lon": Decimal(str(listing["lon"])) if listing.get("lon") else None,
         "restaurant_score": listing.get("restaurant_score"),
@@ -670,17 +672,33 @@ def _listing_params(listing: dict) -> dict:
     }
 
 
-def mark_stale_listings(db) -> int:
-    """Mark listings not seen in 28+ days as stale. Returns count of rows updated."""
+def mark_stale_listings(db, listing_types: list[str] | None = None) -> int:
+    """Mark listings not seen in 28+ days as stale. Returns count of rows updated.
+
+    When ``listing_types`` is given (e.g. ``["store-for-rent"]``), only listings
+    whose ``listing_url`` contains one of the crawled type slugs are eligible for
+    stale-marking.  This prevents marking store listings as stale when only
+    showroom pages were crawled (and vice-versa).
+    """
     from sqlalchemy import text as sa_text
 
+    where = (
+        "status = 'active' "
+        "AND last_seen_at < now() - make_interval(days => :days)"
+    )
+    params: dict = {"days": _STALE_DAYS}
+
+    if listing_types:
+        like_clauses = []
+        for i, lt in enumerate(listing_types):
+            key = f"lt_{i}"
+            params[key] = f"%{lt}%"
+            like_clauses.append(f"listing_url LIKE :{key}")
+        where += " AND (" + " OR ".join(like_clauses) + ")"
+
     result = db.execute(
-        sa_text(
-            "UPDATE commercial_unit SET status = 'stale' "
-            "WHERE status = 'active' "
-            "AND last_seen_at < now() - make_interval(days => :days)"
-        ),
-        {"days": _STALE_DAYS},
+        sa_text(f"UPDATE commercial_unit SET status = 'stale' WHERE {where}"),
+        params,
     )
     return result.rowcount
 
@@ -785,6 +803,8 @@ def main():
                             listing["lon"] = geo["lon"]
                         # Classify restaurant suitability
                         classify_restaurant_suitability(listing)
+                        # Tag listing type from crawl config
+                        listing["listing_type"] = type_key  # 'store' or 'showroom'
                         # Compute price_per_sqm
                         listing["price_per_sqm"] = _compute_price_per_sqm(listing)
 
@@ -805,7 +825,8 @@ def main():
 
         # Mark stale listings after full scrape
         if db and not args.dry_run:
-            stale_count = mark_stale_listings(db)
+            crawled_slugs = [LISTING_TYPES[k] for k in type_keys]
+            stale_count = mark_stale_listings(db, listing_types=crawled_slugs)
             db.commit()
             if stale_count:
                 print(f"\nMarked {stale_count} listings as stale (not seen in {_STALE_DAYS}+ days)")

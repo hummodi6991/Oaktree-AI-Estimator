@@ -865,6 +865,8 @@
     "gateNeedsValidation": "يحتاج تحقق",
     "noMatchingParcelsInDistricts": "لا توجد قطع أرض مطابقة في {{districts}} لمعايير المساحة والفئة المحددة.",
     "commercialUnit": "وحدة تجارية",
+    "unitTypeStore": "محل",
+    "unitTypeShowroom": "معرض",
     "annualRentActual": "الإيجار السنوي (فعلي)",
     "areaSqm": "المساحة",
     "streetWidth": "عرض الشارع",

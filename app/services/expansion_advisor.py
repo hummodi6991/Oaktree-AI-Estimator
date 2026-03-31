@@ -832,6 +832,7 @@ def _normalize_candidate_payload(
     payload["unit_area_sqm"] = _safe_float(payload.get("unit_area_sqm")) if payload.get("unit_area_sqm") is not None else None
     payload["unit_street_width_m"] = _safe_float(payload.get("unit_street_width_m")) if payload.get("unit_street_width_m") is not None else None
     payload["unit_neighborhood"] = payload.get("unit_neighborhood")
+    payload["unit_listing_type"] = payload.get("unit_listing_type")
 
     # ── Display-consistent annual rent (presentation only) ──
     # The UI rounds rent/m² to whole SAR for display.  Compute a matching
@@ -2882,6 +2883,7 @@ def _query_commercial_unit_candidates(
             cu.listing_url,
             cu.image_url,
             cu.aqar_id AS commercial_unit_id,
+            cu.listing_type AS unit_listing_type,
             cu.restaurant_score,
             0 AS delivery_listing_count,
             0 AS delivery_cat_count,
@@ -4596,6 +4598,7 @@ def run_expansion_search(
                 "unit_area_sqm": _safe_float(row.get("unit_area_sqm")) if row.get("unit_area_sqm") is not None else None,
                 "unit_street_width_m": _safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") is not None else None,
                 "unit_neighborhood": row.get("district"),
+                "unit_listing_type": row.get("unit_listing_type"),
             }
         )
       except Exception:
@@ -4781,7 +4784,8 @@ def run_expansion_search(
             unit_price_sar_annual,
             unit_area_sqm,
             unit_street_width_m,
-            unit_neighborhood
+            unit_neighborhood,
+            unit_listing_type
         ) VALUES (
             :id,
             :search_id,
@@ -4842,7 +4846,8 @@ def run_expansion_search(
             :unit_price_sar_annual,
             :unit_area_sqm,
             :unit_street_width_m,
-            :unit_neighborhood
+            :unit_neighborhood,
+            :unit_listing_type
         )
         """
     )
@@ -5114,7 +5119,8 @@ def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[
                 unit_price_sar_annual,
                 unit_area_sqm,
                 unit_street_width_m,
-                unit_neighborhood
+                unit_neighborhood,
+                unit_listing_type
             FROM expansion_candidate
             WHERE search_id = :search_id
             ORDER BY rank_position ASC NULLS LAST, compare_rank ASC NULLS LAST, final_score DESC, computed_at DESC
@@ -5403,7 +5409,8 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 unit_price_sar_annual,
                 unit_area_sqm,
                 unit_street_width_m,
-                unit_neighborhood
+                unit_neighborhood,
+                unit_listing_type
             FROM expansion_candidate
             WHERE search_id = :search_id
               AND id = ANY(:candidate_ids)
@@ -5478,6 +5485,15 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "population_reach": row.get("population_reach"),
             "landuse_label": row.get("landuse_label"),
             "rank_position": row.get("rank_position"),
+            "source_type": row.get("source_type"),
+            "commercial_unit_id": row.get("commercial_unit_id"),
+            "listing_url": row.get("listing_url"),
+            "image_url": row.get("image_url"),
+            "unit_price_sar_annual": row.get("unit_price_sar_annual"),
+            "unit_area_sqm": row.get("unit_area_sqm"),
+            "unit_street_width_m": row.get("unit_street_width_m"),
+            "unit_neighborhood": row.get("unit_neighborhood"),
+            "unit_listing_type": row.get("unit_listing_type"),
         }, district_lookup)
         item["pros"] = pros
         item["cons"] = cons
@@ -5584,7 +5600,8 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
                 c.unit_price_sar_annual,
                 c.unit_area_sqm,
                 c.unit_street_width_m,
-                c.unit_neighborhood
+                c.unit_neighborhood,
+                c.unit_listing_type
             FROM expansion_candidate c
             JOIN expansion_search s ON s.id = c.search_id
             WHERE c.id = :candidate_id
