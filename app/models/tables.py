@@ -8,6 +8,7 @@ from sqlalchemy import (
     Integer,
     JSON,
     Numeric,
+    SmallInteger,
     String,
     Text,
     text,
@@ -405,6 +406,84 @@ class CommercialUnit(Base):
         Index("ix_commercial_unit_neighborhood", "neighborhood"),
         Index("ix_commercial_unit_status", "status"),
         Index("ix_commercial_unit_restaurant_suitable", "restaurant_suitable"),
+    )
+
+
+class CandidateLocation(Base):
+    """Unified candidate location for expansion advisor.
+
+    Merges three tiers:
+      Tier 1 (Aqar): Vacant commercial listings with actual rent/area
+      Tier 2 (Delivery/POI): Proven restaurant locations (occupied)
+      Tier 3 (ArcGIS): Commercial/mixed-use parcels (spatial fallback)
+    """
+
+    __tablename__ = "candidate_location"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Source tracking
+    source_tier = Column(SmallInteger, nullable=False)
+    source_type = Column(String(32), nullable=False)
+    source_id = Column(String(256))
+
+    # Location
+    lat = Column(Numeric(10, 7), nullable=False)
+    lon = Column(Numeric(10, 7), nullable=False)
+    # geom is auto-populated by trigger
+
+    # District
+    district_ar = Column(String(256))
+    district_en = Column(String(256))
+    neighborhood_raw = Column(String(256))
+
+    # Unit attributes
+    area_sqm = Column(Numeric(10, 2))
+    rent_sar_annual = Column(Numeric(14, 2))
+    rent_sar_m2_month = Column(Numeric(12, 2))
+    rent_confidence = Column(String(24))
+    area_confidence = Column(String(24))
+
+    # Listing info
+    listing_url = Column(Text)
+    listing_type = Column(String(32))
+    image_url = Column(Text)
+
+    # Occupancy
+    is_vacant = Column(Boolean)
+    current_tenant = Column(String(512))
+    current_category = Column(String(64))
+
+    # Quality signals
+    street_width_m = Column(Numeric(8, 2))
+    has_drive_thru = Column(Boolean)
+    road_class = Column(String(32))
+    landuse_code = Column(Integer)
+    landuse_label = Column(String(64))
+
+    # Delivery context
+    platform_count = Column(SmallInteger)
+    avg_rating = Column(Numeric(3, 2))
+    total_rating_count = Column(Integer)
+    supports_late_night = Column(Boolean)
+
+    # Clustering
+    cluster_id = Column(Integer)
+    is_cluster_primary = Column(Boolean, server_default=text("TRUE"))
+
+    # Metadata
+    created_at = Column(DateTime(timezone=True), server_default=text("now()"))
+    updated_at = Column(DateTime(timezone=True), server_default=text("now()"))
+    population_run_id = Column(String(64))
+
+    __table_args__ = (
+        Index("ix_cl_source_tier", "source_tier"),
+        Index("ix_cl_source_type_id", "source_type", "source_id"),
+        Index("ix_cl_district_ar", "district_ar"),
+        Index("ix_cl_is_vacant", "is_vacant"),
+        Index("ix_cl_cluster_primary", "is_cluster_primary"),
+        Index("ix_cl_current_category", "current_category"),
+        Index("ix_cl_rent_confidence", "rent_confidence"),
     )
 
 
