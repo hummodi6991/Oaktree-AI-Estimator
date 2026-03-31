@@ -3445,6 +3445,63 @@ def run_expansion_search(
             "expansion_search using commercial units: %d candidates from %d total units, search_id=%s",
             len(rows), _cu_count, search_id,
         )
+
+        # ── Resolve commercial unit districts to Arabic names ──────────
+        # Commercial units store English neighborhood names from Aqar,
+        # but the scoring loop expects Arabic district names matching
+        # district_lookup built from riyadh_parcels_arcgis_raw.
+        if rows:
+            try:
+                from sqlalchemy import text as _sa_text
+
+                # Build VALUES list of (index, lon, lat) for all candidates
+                values_parts = []
+                resolve_params: dict[str, Any] = {}
+                for idx, r in enumerate(rows):
+                    if r.get("lat") is not None and r.get("lon") is not None:
+                        values_parts.append(f"(:_ri_{idx}, :_rlon_{idx}, :_rlat_{idx})")
+                        resolve_params[f"_ri_{idx}"] = idx
+                        resolve_params[f"_rlon_{idx}"] = float(r["lon"])
+                        resolve_params[f"_rlat_{idx}"] = float(r["lat"])
+
+                if values_parts:
+                    values_sql = ", ".join(values_parts)
+                    resolve_sql = _sa_text(f"""
+                        SELECT v.idx, lat_res.district_label
+                        FROM (VALUES {values_sql}) AS v(idx, lon, lat)
+                        LEFT JOIN LATERAL (
+                            SELECT DISTINCT district_label
+                            FROM riyadh_parcels_arcgis_raw
+                            WHERE geom IS NOT NULL
+                              AND ST_DWithin(
+                                  geom::geography,
+                                  ST_SetSRID(ST_MakePoint(v.lon, v.lat), 4326)::geography,
+                                  500
+                              )
+                            LIMIT 1
+                        ) lat_res ON true
+                    """)
+                    with db.begin_nested():
+                        resolved_rows = db.execute(resolve_sql, resolve_params).mappings().all()
+
+                    resolved_count = 0
+                    for rr in resolved_rows:
+                        idx = int(rr["idx"])
+                        if rr["district_label"]:
+                            rows[idx]["district"] = rr["district_label"]
+                            resolved_count += 1
+
+                    unresolved_count = len(rows) - resolved_count
+                    logger.info(
+                        "commercial_unit district resolution: resolved=%d, unresolved=%d",
+                        resolved_count, unresolved_count,
+                    )
+            except Exception:
+                logger.warning(
+                    "commercial_unit district resolution failed, keeping English names",
+                    exc_info=True,
+                )
+
     else:
         # ── Fall back to existing parcel-based query ──
         # Execute candidate query with district SQL filter fallback.
