@@ -2766,6 +2766,134 @@ def _log_dirty_coord_samples(db: Session, search_id: str) -> None:
             )
 
 
+def _query_candidate_location_pool(
+    db: Session,
+    *,
+    target_district_norm: set[str],
+    min_area_m2: float,
+    max_area_m2: float,
+    target_area_m2: float,
+    per_district_cap: int = 40,
+    limit: int = 600,
+) -> list[dict]:
+    """Query candidate_location table for the expansion advisor candidate pool.
+
+    Returns rows with the same column names the scoring loop expects:
+    parcel_id, lat, lon, area_m2, district, landuse_label, landuse_code,
+    plus commercial-unit fields for Tier 1 candidates.
+
+    Uses stratified sampling: ROW_NUMBER per district, capped at per_district_cap,
+    with global limit. Prioritizes Tier 1 > Tier 2 > Tier 3.
+    """
+    from sqlalchemy import text as sa_text
+
+    # Build district filter
+    district_filter = ""
+    params: dict[str, Any] = {
+        "min_area": min_area_m2,
+        "max_area": max_area_m2,
+        "target_area": target_area_m2,
+        "per_district_cap": per_district_cap,
+        "limit": limit,
+    }
+
+    if target_district_norm:
+        district_clauses = []
+        for i, td in enumerate(sorted(target_district_norm)):
+            pname = f"td_{i}"
+            district_clauses.append(f"lower(cl.district_ar) = :{pname}")
+            params[pname] = td.lower()
+        district_filter = "AND (" + " OR ".join(district_clauses) + ")"
+
+    sql = sa_text(f"""
+        WITH ranked AS (
+            SELECT
+                cl.id,
+                cl.source_tier,
+                cl.source_type,
+                cl.source_id,
+                cl.lat::float AS lat,
+                cl.lon::float AS lon,
+                COALESCE(cl.area_sqm, 120)::float AS area_m2,
+                cl.district_ar AS district,
+                COALESCE(cl.landuse_label, 'commercial') AS landuse_label,
+                COALESCE(cl.landuse_code, 2000) AS landuse_code,
+                -- Commercial unit fields (Tier 1)
+                CASE WHEN cl.source_tier = 1 THEN cl.source_id ELSE NULL END AS commercial_unit_id,
+                CASE WHEN cl.source_tier = 1 THEN cl.rent_sar_annual::float ELSE NULL END AS unit_price_sar_annual,
+                cl.area_sqm::float AS unit_area_sqm,
+                cl.street_width_m::float AS unit_street_width_m,
+                cl.listing_url,
+                cl.image_url,
+                cl.listing_type AS unit_listing_type,
+                -- Candidate metadata (passed through to response)
+                cl.is_vacant,
+                cl.current_tenant,
+                cl.current_category,
+                cl.rent_confidence,
+                cl.rent_sar_m2_month::float AS cl_rent_m2_month,
+                cl.rent_sar_annual::float AS cl_rent_annual,
+                cl.avg_rating::float AS cl_avg_rating,
+                cl.total_rating_count,
+                cl.platform_count AS cl_platform_count,
+                -- Scoring helpers
+                ABS(COALESCE(cl.area_sqm, 120) - :target_area) AS area_distance,
+                0 AS delivery_listing_count,
+                0 AS delivery_cat_count,
+                0 AS delivery_platform_count,
+                0 AS pop_proxy,
+                ROW_NUMBER() OVER (
+                    PARTITION BY cl.district_ar
+                    ORDER BY
+                        cl.source_tier ASC,
+                        ABS(COALESCE(cl.area_sqm, 120) - :target_area) ASC,
+                        cl.id ASC
+                ) AS district_rank
+            FROM candidate_location cl
+            WHERE cl.is_cluster_primary = TRUE
+              AND cl.geom IS NOT NULL
+              AND COALESCE(cl.area_sqm, 120) BETWEEN :min_area AND :max_area
+              {district_filter}
+        )
+        SELECT
+            COALESCE(source_id, id::text) AS parcel_id,
+            source_tier,
+            source_type,
+            lat, lon, area_m2,
+            district,
+            landuse_label, landuse_code,
+            commercial_unit_id,
+            unit_price_sar_annual,
+            unit_area_sqm,
+            unit_street_width_m,
+            listing_url, image_url,
+            unit_listing_type,
+            is_vacant,
+            current_tenant,
+            current_category,
+            rent_confidence,
+            cl_rent_m2_month,
+            cl_rent_annual,
+            cl_avg_rating,
+            total_rating_count,
+            cl_platform_count,
+            delivery_listing_count,
+            delivery_cat_count,
+            delivery_platform_count,
+            pop_proxy
+        FROM ranked
+        WHERE district_rank <= CAST(:per_district_cap AS integer)
+        ORDER BY
+            source_tier ASC,
+            area_distance ASC,
+            id ASC
+        LIMIT :limit
+    """)
+
+    rows = db.execute(sql, params).mappings().all()
+    return [dict(r) for r in rows]
+
+
 def _query_commercial_unit_candidates(
     db: Session,
     target_district_norm: set[str],
@@ -3423,158 +3551,191 @@ def run_expansion_search(
         except Exception:
             pass
 
-    # ── Check if commercial units are available (units replace parcels) ──
-    _cu_count = 0
+    # ── Check if candidate_location table is available (preferred path) ──
+    _cl_count = 0
     try:
-        _cu_count = int(db.execute(text(
-            "SELECT COUNT(*) FROM commercial_unit "
-            "WHERE status = 'active' AND restaurant_suitable = TRUE AND lat IS NOT NULL"
+        _cl_count = int(db.execute(text(
+            "SELECT COUNT(*) FROM candidate_location "
+            "WHERE is_cluster_primary = TRUE AND geom IS NOT NULL"
         )).scalar() or 0)
     except Exception as exc:
-        logger.warning("commercial unit count query failed: %s", exc)
+        logger.warning("candidate_location count query failed, falling back to legacy: %s", exc)
 
-    use_commercial_units = _cu_count >= 50  # Only use if we have meaningful coverage
+    use_candidate_location = _cl_count >= 100
 
-    if use_commercial_units:
-        rows = _query_commercial_unit_candidates(
+    if use_candidate_location:
+        rows = _query_candidate_location_pool(
             db,
             target_district_norm=target_district_norm,
             min_area_m2=min_area_m2,
             max_area_m2=max_area_m2,
-            limit=600,
+            target_area_m2=target_area_m2,
+            per_district_cap=per_district_cap,
+            limit=_CANDIDATE_POOL_LIMIT,
         )
         logger.info(
-            "expansion_search using commercial units: %d candidates from %d total units, search_id=%s",
-            len(rows), _cu_count, search_id,
+            "expansion_search using candidate_location: %d candidates from %d primaries, search_id=%s",
+            len(rows), _cl_count, search_id,
+        )
+    else:
+        logger.info(
+            "expansion_search: candidate_location has %d primaries (< 100), using legacy parcel query, search_id=%s",
+            _cl_count, search_id,
         )
 
-        # ── Resolve commercial unit districts to Arabic names ──────────
-        # Commercial units store English neighborhood names from Aqar,
-        # but the scoring loop expects Arabic district names matching
-        # district_lookup built from riyadh_parcels_arcgis_raw.
-        if rows:
-            try:
-                from sqlalchemy import text as _sa_text
+    if not use_candidate_location:
+        # ── Check if commercial units are available (units replace parcels) ──
+        _cu_count = 0
+        try:
+            _cu_count = int(db.execute(text(
+                "SELECT COUNT(*) FROM commercial_unit "
+                "WHERE status = 'active' AND restaurant_suitable = TRUE AND lat IS NOT NULL"
+            )).scalar() or 0)
+        except Exception as exc:
+            logger.warning("commercial unit count query failed: %s", exc)
 
-                # Build VALUES list of (index, lon, lat) for all candidates
-                values_parts = []
-                resolve_params: dict[str, Any] = {}
-                for idx, r in enumerate(rows):
-                    if r.get("lat") is not None and r.get("lon") is not None:
-                        values_parts.append(f"(:_ri_{idx}, :_rlon_{idx}, :_rlat_{idx})")
-                        resolve_params[f"_ri_{idx}"] = idx
-                        resolve_params[f"_rlon_{idx}"] = float(r["lon"])
-                        resolve_params[f"_rlat_{idx}"] = float(r["lat"])
+        use_commercial_units = _cu_count >= 50  # Only use if we have meaningful coverage
 
-                if values_parts:
-                    values_sql = ", ".join(values_parts)
-                    resolve_sql = _sa_text(f"""
-                        SELECT v.idx, lat_res.district_label
-                        FROM (VALUES {values_sql}) AS v(idx, lon, lat)
-                        LEFT JOIN LATERAL (
-                            SELECT DISTINCT district_label
-                            FROM riyadh_parcels_arcgis_raw
-                            WHERE geom IS NOT NULL
-                              AND ST_DWithin(
-                                  geom::geography,
-                                  ST_SetSRID(ST_MakePoint(v.lon, v.lat), 4326)::geography,
-                                  500
-                              )
-                            LIMIT 1
-                        ) lat_res ON true
-                    """)
+        if use_commercial_units:
+            rows = _query_commercial_unit_candidates(
+                db,
+                target_district_norm=target_district_norm,
+                min_area_m2=min_area_m2,
+                max_area_m2=max_area_m2,
+                limit=600,
+            )
+            logger.info(
+                "expansion_search using commercial units: %d candidates from %d total units, search_id=%s",
+                len(rows), _cu_count, search_id,
+            )
+
+            # ── Resolve commercial unit districts to Arabic names ──────────
+            # Commercial units store English neighborhood names from Aqar,
+            # but the scoring loop expects Arabic district names matching
+            # district_lookup built from riyadh_parcels_arcgis_raw.
+            if rows:
+                try:
+                    from sqlalchemy import text as _sa_text
+
+                    # Build VALUES list of (index, lon, lat) for all candidates
+                    values_parts = []
+                    resolve_params: dict[str, Any] = {}
+                    for idx, r in enumerate(rows):
+                        if r.get("lat") is not None and r.get("lon") is not None:
+                            values_parts.append(f"(:_ri_{idx}, :_rlon_{idx}, :_rlat_{idx})")
+                            resolve_params[f"_ri_{idx}"] = idx
+                            resolve_params[f"_rlon_{idx}"] = float(r["lon"])
+                            resolve_params[f"_rlat_{idx}"] = float(r["lat"])
+
+                    if values_parts:
+                        values_sql = ", ".join(values_parts)
+                        resolve_sql = _sa_text(f"""
+                            SELECT v.idx, lat_res.district_label
+                            FROM (VALUES {values_sql}) AS v(idx, lon, lat)
+                            LEFT JOIN LATERAL (
+                                SELECT DISTINCT district_label
+                                FROM riyadh_parcels_arcgis_raw
+                                WHERE geom IS NOT NULL
+                                  AND ST_DWithin(
+                                      geom::geography,
+                                      ST_SetSRID(ST_MakePoint(v.lon, v.lat), 4326)::geography,
+                                      500
+                                  )
+                                LIMIT 1
+                            ) lat_res ON true
+                        """)
+                        with db.begin_nested():
+                            resolved_rows = db.execute(resolve_sql, resolve_params).mappings().all()
+
+                        resolved_count = 0
+                        for rr in resolved_rows:
+                            idx = int(rr["idx"])
+                            if rr["district_label"]:
+                                rows[idx]["district"] = rr["district_label"]
+                                resolved_count += 1
+
+                        unresolved_count = len(rows) - resolved_count
+                        logger.info(
+                            "commercial_unit district resolution: resolved=%d, unresolved=%d",
+                            resolved_count, unresolved_count,
+                        )
+                except Exception:
+                    logger.warning(
+                        "commercial_unit district resolution failed, keeping English names",
+                        exc_info=True,
+                    )
+
+        else:
+            # ── Fall back to existing parcel-based query ──
+            # Execute candidate query with district SQL filter fallback.
+            # If district filter is active and the query fails (e.g. malformed
+            # external_feature GeoJSON), retry once without the SQL pushdown.
+            # The Python post-filter still enforces district correctness.
+            district_sql_used = bool(target_district_norm)
+            rows = None
+
+            if district_sql_used:
+                try:
                     with db.begin_nested():
-                        resolved_rows = db.execute(resolve_sql, resolve_params).mappings().all()
+                        sql = _build_candidate_sql(
+                            _build_district_filter_sql(target_district_norm),
+                            stratified=use_stratified,
+                            skip_delivery=ea_delivery_populated,
+                        )
+                        rows = db.execute(sql, sql_params).mappings().all()
+                except Exception as exc:
+                    logger.warning(
+                        "Expansion search district-filtered query failed, retrying without SQL district filter: "
+                        "search_id=%s category=%s area=[%s-%s] target_districts=%s "
+                        "district_sql_enabled=True exc_class=%s exc_msg=%s",
+                        search_id, category, min_area_m2, max_area_m2, target_districts,
+                        type(exc).__name__,
+                        str(exc)[:300],
+                        exc_info=True,
+                    )
+                    district_sql_used = False
+                    rows = None
 
-                    resolved_count = 0
-                    for rr in resolved_rows:
-                        idx = int(rr["idx"])
-                        if rr["district_label"]:
-                            rows[idx]["district"] = rr["district_label"]
-                            resolved_count += 1
+            if rows is None:
+                try:
+                    with db.begin_nested():
+                        sql = _build_candidate_sql(
+                            "",
+                            stratified=use_stratified,
+                            skip_delivery=ea_delivery_populated,
+                        )
+                        rows = db.execute(sql, sql_params).mappings().all()
+                except Exception:
+                    logger.warning(
+                        "Expansion search main query failed, retrying without district labeling: "
+                        "search_id=%s category=%s area=[%s-%s] target_districts=%s "
+                        "district_sql_enabled=False",
+                        search_id, category, min_area_m2, max_area_m2, target_districts,
+                        exc_info=True,
+                    )
+                    # Log sample dirty coordinate values to aid diagnosis.
+                    _log_dirty_coord_samples(db, search_id)
+                    rows = None
 
-                    unresolved_count = len(rows) - resolved_count
+            if rows is None:
+                try:
+                    with db.begin_nested():
+                        sql = _build_candidate_sql_no_district(
+                            skip_delivery=ea_delivery_populated,
+                        )
+                        rows = db.execute(sql, sql_params).mappings().all()
                     logger.info(
-                        "commercial_unit district resolution: resolved=%d, unresolved=%d",
-                        resolved_count, unresolved_count,
+                        "Expansion search used last-resort query (no district labeling): "
+                        "search_id=%s returned %d rows",
+                        search_id, len(rows),
                     )
-            except Exception:
-                logger.warning(
-                    "commercial_unit district resolution failed, keeping English names",
-                    exc_info=True,
-                )
-
-    else:
-        # ── Fall back to existing parcel-based query ──
-        # Execute candidate query with district SQL filter fallback.
-        # If district filter is active and the query fails (e.g. malformed
-        # external_feature GeoJSON), retry once without the SQL pushdown.
-        # The Python post-filter still enforces district correctness.
-        district_sql_used = bool(target_district_norm)
-        rows = None
-
-        if district_sql_used:
-            try:
-                with db.begin_nested():
-                    sql = _build_candidate_sql(
-                        _build_district_filter_sql(target_district_norm),
-                        stratified=use_stratified,
-                        skip_delivery=ea_delivery_populated,
+                except Exception:
+                    logger.exception(
+                        "Expansion search last-resort query failed: search_id=%s category=%s "
+                        "area=[%s-%s]",
+                        search_id, category, min_area_m2, max_area_m2,
                     )
-                    rows = db.execute(sql, sql_params).mappings().all()
-            except Exception as exc:
-                logger.warning(
-                    "Expansion search district-filtered query failed, retrying without SQL district filter: "
-                    "search_id=%s category=%s area=[%s-%s] target_districts=%s "
-                    "district_sql_enabled=True exc_class=%s exc_msg=%s",
-                    search_id, category, min_area_m2, max_area_m2, target_districts,
-                    type(exc).__name__,
-                    str(exc)[:300],
-                    exc_info=True,
-                )
-                district_sql_used = False
-                rows = None
-
-        if rows is None:
-            try:
-                with db.begin_nested():
-                    sql = _build_candidate_sql(
-                        "",
-                        stratified=use_stratified,
-                        skip_delivery=ea_delivery_populated,
-                    )
-                    rows = db.execute(sql, sql_params).mappings().all()
-            except Exception:
-                logger.warning(
-                    "Expansion search main query failed, retrying without district labeling: "
-                    "search_id=%s category=%s area=[%s-%s] target_districts=%s "
-                    "district_sql_enabled=False",
-                    search_id, category, min_area_m2, max_area_m2, target_districts,
-                    exc_info=True,
-                )
-                # Log sample dirty coordinate values to aid diagnosis.
-                _log_dirty_coord_samples(db, search_id)
-                rows = None
-
-        if rows is None:
-            try:
-                with db.begin_nested():
-                    sql = _build_candidate_sql_no_district(
-                        skip_delivery=ea_delivery_populated,
-                    )
-                    rows = db.execute(sql, sql_params).mappings().all()
-                logger.info(
-                    "Expansion search used last-resort query (no district labeling): "
-                    "search_id=%s returned %d rows",
-                    search_id, len(rows),
-                )
-            except Exception:
-                logger.exception(
-                    "Expansion search last-resort query failed: search_id=%s category=%s "
-                    "area=[%s-%s]",
-                    search_id, category, min_area_m2, max_area_m2,
-                )
-                raise
+                    raise
 
     # Debug: log sample non-numeric landuse_code values for diagnosis
     _bad_landuse_sample: list[str] = []
@@ -4332,6 +4493,19 @@ def run_expansion_search(
             bulk_roads=_bulk_roads.get(_pid_str),
             bulk_parking=_bulk_parking.get(_pid_str),
         )
+        # Enrich feature snapshot with candidate_location metadata
+        if row.get("source_tier") is not None:
+            feature_snapshot_json["candidate_location"] = {
+                "source_tier": row.get("source_tier"),
+                "source_type": row.get("source_type"),
+                "is_vacant": row.get("is_vacant"),
+                "current_tenant": row.get("current_tenant"),
+                "current_category": row.get("current_category"),
+                "rent_confidence": row.get("rent_confidence"),
+                "cl_rent_m2_month": row.get("cl_rent_m2_month"),
+                "cl_platform_count": row.get("cl_platform_count"),
+                "cl_avg_rating": row.get("cl_avg_rating"),
+            }
         road_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("road_context_available"))
         parking_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("parking_context_available"))
         # Add Expansion Advisor data provenance to context_sources
@@ -4590,7 +4764,17 @@ def run_expansion_search(
                     "parking_score_mode": "observed" if parking_context_available else "estimated",
                 },
                 # ── Commercial unit metadata ──
-                "source_type": "commercial_unit" if row.get("commercial_unit_id") else "parcel",
+                "source_type": (
+                    "commercial_unit" if row.get("commercial_unit_id")
+                    else {"1": "aqar", "2": "delivery_poi", "3": "arcgis_parcel"}.get(
+                        str(row.get("source_tier", "")), "parcel"
+                    )
+                ),
+                "source_tier": row.get("source_tier"),
+                "is_vacant": row.get("is_vacant"),
+                "current_tenant": row.get("current_tenant"),
+                "current_category": row.get("current_category"),
+                "rent_confidence": row.get("rent_confidence"),
                 "commercial_unit_id": row.get("commercial_unit_id"),
                 "listing_url": row.get("listing_url"),
                 "image_url": row.get("image_url"),
