@@ -127,6 +127,9 @@ jobs:
           echo "If this is the first push, ensure the GHCR package is set to Public in the GitHub UI."
 
       # 4) Build & push Docker image to GHCR
+      - name: Validate alembic revision chain
+        run: python scripts/validate_alembic_chain.py
+
       - name: Free disk space on runner
         run: |
           df -h
