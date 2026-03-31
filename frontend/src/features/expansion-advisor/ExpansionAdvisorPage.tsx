@@ -710,30 +710,12 @@ export default function ExpansionAdvisorPage({
           {/* Summary strip */}
           {hasResults && (
             <div className="ea-summary-strip">
-              <div className="ea-summary-strip__item">
-                <span className="ea-summary-strip__label">{t("expansionAdvisor.branchCandidates")}:</span>
-                <span className="ea-summary-strip__value">{candidates.length}</span>
-              </div>
-              <div className="ea-summary-strip__item">
-                <span className="ea-summary-strip__label">{t("expansionAdvisor.passGates")}:</span>
-                <span className="ea-summary-strip__value">{passCount}</span>
-              </div>
-              {bestCandidate && (
-                <div className="ea-summary-strip__item">
-                  <span className="ea-summary-strip__label">{t("expansionAdvisor.bestScore")}:</span>
-                  <span className="ea-summary-strip__value">{bestCandidate.final_score ?? "—"}</span>
-                </div>
-              )}
-              <div className="ea-summary-strip__item">
-                <span className="ea-summary-strip__label">{t("expansionAdvisor.topDistrict")}:</span>
-                <span className="ea-summary-strip__value">{candidateDistrictLabel(candidates.find((c) => c.district), "—")}</span>
-              </div>
-              {searchMeta.parcel_source ? (
-                <div className="ea-summary-strip__item">
-                  <span className="ea-summary-strip__label">{t("expansionAdvisor.parcelSource")}:</span>
-                  <span className="ea-summary-strip__value">{String(searchMeta.parcel_source)}</span>
-                </div>
-              ) : null}
+              <span className="ea-summary-strip__value">
+                {t("expansionAdvisor.summaryLocationsFound", { count: candidates.length })}
+                {bestCandidate && bestCandidate.final_score != null
+                  ? ` · ${t("expansionAdvisor.summaryTopScore", { score: Math.round(bestCandidate.final_score) })}`
+                  : ""}
+              </span>
             </div>
           )}
 
@@ -756,9 +738,9 @@ export default function ExpansionAdvisorPage({
             />
           )}
 
-          {/* Search elapsed time */}
+          {/* Search elapsed time — footnote style */}
           {hasResults && searchElapsedMs !== null && (
-            <div style={{ textAlign: "end", fontSize: "0.8rem", color: "#059669", fontWeight: 500, padding: "0.25rem 0" }}>
+            <div style={{ textAlign: "end", fontSize: "0.7rem", color: "var(--oak-text-light, #9ca3af)", padding: "0.1rem 0" }}>
               {t("expansionAdvisor.searchCompletedIn", { seconds: (searchElapsedMs / 1000).toFixed(1) })}
             </div>
           )}

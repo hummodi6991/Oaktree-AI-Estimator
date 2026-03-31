@@ -87,6 +87,93 @@ export function gateColor(pass: boolean | null | undefined): "green" | "red" | "
   return "neutral";
 }
 
+/* ─── Business-friendly score bucketing ─── */
+
+/** Bucket a 0-100 whitespace score into market gap labels */
+export function marketGapLabel(score: number | null | undefined): "saturated" | "moderate" | "open" | null {
+  if (score == null || !Number.isFinite(score)) return null;
+  if (score <= 33) return "saturated";
+  if (score <= 66) return "moderate";
+  return "open";
+}
+
+/** Bucket a 0-100 revenue index into demand level labels */
+export function demandLevelLabel(score: number | null | undefined): "low" | "moderate" | "high" | null {
+  if (score == null || !Number.isFinite(score)) return null;
+  if (score <= 40) return "low";
+  if (score <= 70) return "moderate";
+  return "high";
+}
+
+/** Bucket a 0-100 brand fit score into location match labels */
+export function locationMatchLabel(score: number | null | undefined): "weak" | "good" | "strong" | null {
+  if (score == null || !Number.isFinite(score)) return null;
+  if (score <= 50) return "weak";
+  if (score <= 70) return "good";
+  return "strong";
+}
+
+/** Bucket a 0-100 economics score into strength labels */
+export function economicsStrengthLabel(score: number | null | undefined): "weak" | "good" | "strong" | null {
+  if (score == null || !Number.isFinite(score)) return null;
+  if (score <= 50) return "weak";
+  if (score <= 70) return "good";
+  return "strong";
+}
+
+/** Map confidence grade letter to data coverage label */
+export function dataCoverageLabel(grade: string | null | undefined): "comprehensive" | "good" | "limited" | "minimal" | null {
+  if (!grade) return null;
+  const g = grade.toUpperCase();
+  if (g === "A") return "comprehensive";
+  if (g === "B") return "good";
+  if (g === "C") return "limited";
+  return "minimal";
+}
+
+/** Bucket a 0-100 cannibalization score into branch overlap labels */
+export function branchOverlapLabel(score: number | null | undefined): "none" | "low" | "moderate" | "high" | null {
+  if (score == null || !Number.isFinite(score)) return null;
+  if (score === 0) return "none";
+  if (score <= 30) return "low";
+  if (score <= 60) return "moderate";
+  return "high";
+}
+
+/* ─── Business-friendly gate labels ─── */
+
+const BUSINESS_GATE_LABEL_MAP: Record<string, string> = {
+  zoning_fit_pass: "Commercial zone",
+  zoning_pass: "Commercial zone",
+  area_fit_pass: "Right size",
+  frontage_access_pass: "Street access",
+  frontage_pass: "Street access",
+  access_pass: "Accessibility",
+  parking_pass: "Parking",
+  district_pass: "District",
+  visibility_pass: "Visibility",
+  competition_pass: "Competition",
+  brand_fit_pass: "Brand fit",
+  economics_pass: "Economics",
+  cannibalization_pass: "Branch overlap",
+  delivery_market_pass: "Delivery demand",
+  overall_pass: "Overall",
+  "zoning fit": "Commercial zone",
+  "area fit": "Right size",
+  "frontage/access": "Street access",
+  parking: "Parking",
+  district: "District",
+  cannibalization: "Branch overlap",
+  "delivery market": "Delivery demand",
+  economics: "Economics",
+};
+
+/** Return a business-friendly label for a gate key. */
+export function businessGateLabel(key: string): string {
+  if (BUSINESS_GATE_LABEL_MAP[key]) return BUSINESS_GATE_LABEL_MAP[key];
+  return humanGateLabel(key);
+}
+
 /* ─── Human-readable gate labels ─── */
 
 const GATE_LABEL_MAP: Record<string, string> = {

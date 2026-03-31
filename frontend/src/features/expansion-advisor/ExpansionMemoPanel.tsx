@@ -6,7 +6,7 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
 import CopySummaryBlock from "./CopySummaryBlock";
-import { fmtScore, fmtMeters, fmtSAR, humanGateLabel, safeDistrictLabel, getDisplayScore } from "./formatHelpers";
+import { fmtScore, fmtMeters, fmtSAR, businessGateLabel, safeDistrictLabel, getDisplayScore } from "./formatHelpers";
 
 function toList(input: unknown): string[] {
   return Array.isArray(input) ? input.map(String) : [];
@@ -167,16 +167,16 @@ export default function ExpansionMemoPanel({
                   </div>
                 )}
 
-                {/* Gate audit */}
+                {/* Site requirements */}
                 <div className="ea-report-section">
-                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoGateAudit")}</h5>
+                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.siteRequirements")}</h5>
                   {rec.gate_verdict && <p className="ea-detail__text" style={{ fontStyle: "italic" }}>{rec.gate_verdict}</p>}
                   <GateSummary gates={gates} unknownGates={toList(gateReasons?.unknown)} />
                   {gateReasons && (
                     <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 6, display: "grid", gap: 4 }}>
-                      {toList(gateReasons.passed).length > 0 && <div><span className="ea-badge ea-badge--green">{t("expansionAdvisor.gatesPassed")}</span> {toList(gateReasons.passed).map(humanGateLabel).join(", ")}</div>}
-                      {toList(gateReasons.failed).length > 0 && <div><span className="ea-badge ea-badge--red">{t("expansionAdvisor.gatesFailed")}</span> {toList(gateReasons.failed).map(humanGateLabel).join(", ")}</div>}
-                      {toList(gateReasons.unknown).length > 0 && <div><span className="ea-badge ea-badge--amber">{t("expansionAdvisor.gatesNeedVerification")}</span> {toList(gateReasons.unknown).map(humanGateLabel).join(", ")}</div>}
+                      {toList(gateReasons.passed).length > 0 && <div><span className="ea-badge ea-badge--green">{t("expansionAdvisor.gatesPassed")}</span> {toList(gateReasons.passed).map(businessGateLabel).join(", ")}</div>}
+                      {toList(gateReasons.failed).length > 0 && <div><span className="ea-badge ea-badge--red">{t("expansionAdvisor.gatesFailed")}</span> {toList(gateReasons.failed).map(businessGateLabel).join(", ")}</div>}
+                      {toList(gateReasons.unknown).length > 0 && <div><span className="ea-badge ea-badge--amber">{t("expansionAdvisor.gatesNeedVerification")}</span> {toList(gateReasons.unknown).map(businessGateLabel).join(", ")}</div>}
                     </div>
                   )}
                 </div>
@@ -240,27 +240,30 @@ export default function ExpansionMemoPanel({
                   </div>
                 )}
 
-                {/* Feature snapshot — data quality */}
+                {/* Technical details — collapsed by default */}
                 {snapshot && (
-                  <div className="ea-report-section">
-                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoFeatureSnapshot")}</h5>
-                    <div className="ea-detail__grid">
-                      <div className="ea-detail__kv">
-                        <span className="ea-detail__kv-label">{t("expansionAdvisor.dataCompleteness")}</span>
-                        <span className="ea-detail__kv-value">{snapshot.data_completeness_score != null ? `${Math.round(Number(snapshot.data_completeness_score))}%` : "—"}</span>
+                  <details className="ea-debug">
+                    <summary>{t("expansionAdvisor.technicalDetails")}</summary>
+                    <div className="ea-report-section">
+                      <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoFeatureSnapshot")}</h5>
+                      <div className="ea-detail__grid">
+                        <div className="ea-detail__kv">
+                          <span className="ea-detail__kv-label">{t("expansionAdvisor.dataCompleteness")}</span>
+                          <span className="ea-detail__kv-value">{snapshot.data_completeness_score != null ? `${Math.round(Number(snapshot.data_completeness_score))}%` : "—"}</span>
+                        </div>
                       </div>
+                      {Object.keys(snapshot.context_sources || {}).length > 0 && (
+                        <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 4, color: "var(--oak-text-light)" }}>
+                          {t("expansionAdvisor.contextSources")}: {Object.keys(snapshot.context_sources).join(", ")}
+                        </div>
+                      )}
+                      {(snapshot.missing_context || []).length > 0 && (
+                        <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 4, color: "var(--oak-error, #d4183d)" }}>
+                          {t("expansionAdvisor.missingData")}: {snapshot.missing_context.join(", ")}
+                        </div>
+                      )}
                     </div>
-                    {Object.keys(snapshot.context_sources || {}).length > 0 && (
-                      <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 4, color: "var(--oak-text-light)" }}>
-                        {t("expansionAdvisor.contextSources")}: {Object.keys(snapshot.context_sources).join(", ")}
-                      </div>
-                    )}
-                    {(snapshot.missing_context || []).length > 0 && (
-                      <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 4, color: "var(--oak-error, #d4183d)" }}>
-                        {t("expansionAdvisor.missingData")}: {snapshot.missing_context.join(", ")}
-                      </div>
-                    )}
-                  </div>
+                  </details>
                 )}
 
                 {/* Copy-ready summary block */}
