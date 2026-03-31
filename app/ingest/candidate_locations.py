@@ -234,15 +234,7 @@ def _ingest_tier3_arcgis(db: Session, run_id: str) -> int:
         WHERE p.geom IS NOT NULL
           AND p.landuse_code IN (2000, 7500)  -- commercial, mixed_use
           AND p.area_m2 BETWEEN 30 AND 2000   -- reasonable restaurant sizes
-          AND NOT EXISTS (
-              SELECT 1 FROM candidate_location cl
-              WHERE cl.population_run_id = :run_id_filter
-                AND ST_DWithin(
-                    cl.geom::geography,
-                    ST_Centroid(p.geom)::geography,
-                    50
-                )
-          )
+
     """)
     result = db.execute(sql, {"run_id": run_id, "run_id_filter": run_id, **RIYADH_BBOX})
     count = result.rowcount
