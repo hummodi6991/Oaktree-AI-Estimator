@@ -410,6 +410,11 @@ def populate_candidate_locations(
     # Platform count enrichment
     stats["platform_counts_enriched"] = _enrich_platform_counts(db, run_id)
 
+    # Rent & area interpolation
+    from app.ingest.candidate_rent_interpolation import interpolate_rents
+    rent_stats = interpolate_rents(db)
+    stats["rent_interpolation"] = rent_stats
+
     stats["elapsed_s"] = round(time.time() - t_start, 1)
 
     logger.info(
