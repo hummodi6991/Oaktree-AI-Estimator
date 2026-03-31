@@ -324,7 +324,7 @@ def _resolve_districts(db: Session, run_id: str) -> int:
               AND ef.layer_name = :layer
               AND cl.geom IS NOT NULL
               AND ef.geometry IS NOT NULL
-              AND ST_Within(cl.geom, ef.geometry)
+              AND ST_Within(cl.geom, ST_GeomFromGeoJSON(ef.geometry::text))
         """)
         result = db.execute(sql, {"run_id": run_id, "layer": layer})
         count = result.rowcount
