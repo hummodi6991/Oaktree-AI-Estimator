@@ -145,6 +145,7 @@ export type ExpansionCandidate = {
   unit_area_sqm?: number;
   unit_street_width_m?: number;
   unit_neighborhood?: string;
+  unit_listing_type?: string;
 };
 
 export type ExpansionSearchResponse = {

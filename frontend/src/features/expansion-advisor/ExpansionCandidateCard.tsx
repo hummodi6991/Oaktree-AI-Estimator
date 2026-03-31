@@ -112,6 +112,15 @@ export default function ExpansionCandidateCard({
       {isCommercialUnit && (
         <div className="ea-candidate__unit-badge">
           <span className="ea-badge ea-badge--blue">{t("expansionAdvisor.commercialUnit")}</span>
+          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+            candidate.unit_listing_type === 'showroom'
+              ? 'bg-amber-100 text-amber-800'
+              : 'bg-teal-100 text-teal-800'
+          }`}>
+            {candidate.unit_listing_type === 'showroom'
+              ? t('expansionAdvisor.unitTypeShowroom')
+              : t('expansionAdvisor.unitTypeStore')}
+          </span>
         </div>
       )}
 

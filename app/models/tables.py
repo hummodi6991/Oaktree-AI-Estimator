@@ -391,6 +391,7 @@ class CommercialUnit(Base):
     has_drive_thru = Column(Boolean)
     facade_direction = Column(String(32))
     contact_phone = Column(Text)
+    listing_type = Column(String(32))  # 'store' or 'showroom'
     lat = Column(Numeric(10, 7))
     lon = Column(Numeric(10, 7))
     restaurant_score = Column(Integer)
