@@ -2836,6 +2836,7 @@ def _query_candidate_location_pool(
                 cl.avg_rating::float AS cl_avg_rating,
                 cl.total_rating_count,
                 cl.platform_count AS cl_platform_count,
+                cl.profitability_score::float AS profitability_score,
                 -- Scoring helpers
                 ABS(COALESCE(cl.area_sqm, 120) - :target_area) AS area_distance,
                 0 AS delivery_listing_count,
@@ -2846,6 +2847,7 @@ def _query_candidate_location_pool(
                     PARTITION BY cl.district_ar
                     ORDER BY
                         cl.source_tier ASC,
+                        cl.profitability_score DESC NULLS LAST,
                         ABS(COALESCE(cl.area_sqm, 120) - :target_area) ASC,
                         cl.id ASC
                 ) AS district_rank
@@ -2877,6 +2879,7 @@ def _query_candidate_location_pool(
             cl_avg_rating,
             total_rating_count,
             cl_platform_count,
+            profitability_score,
             delivery_listing_count,
             delivery_cat_count,
             delivery_platform_count,
@@ -2885,6 +2888,7 @@ def _query_candidate_location_pool(
         WHERE district_rank <= CAST(:per_district_cap AS integer)
         ORDER BY
             source_tier ASC,
+            profitability_score DESC NULLS LAST,
             area_distance ASC,
             id ASC
         LIMIT :limit
@@ -4505,6 +4509,7 @@ def run_expansion_search(
                 "cl_rent_m2_month": row.get("cl_rent_m2_month"),
                 "cl_platform_count": row.get("cl_platform_count"),
                 "cl_avg_rating": row.get("cl_avg_rating"),
+                "profitability_score": row.get("profitability_score"),
             }
         road_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("road_context_available"))
         parking_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("parking_context_available"))
