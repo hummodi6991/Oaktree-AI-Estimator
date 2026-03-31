@@ -1,0 +1,63 @@
+name: Refresh Candidate Locations
+
+on:
+  workflow_dispatch:
+    inputs:
+      tiers:
+        description: "Tiers to ingest (comma-separated: 1,2,3)"
+        required: false
+        default: "1,2,3"
+      replace:
+        description: "Truncate and rebuild"
+        type: boolean
+        default: true
+
+concurrency:
+  group: candidate-locations
+  cancel-in-progress: false
+
+jobs:
+  populate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run migration
+        env:
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_SSLMODE: ${{ secrets.POSTGRES_SSLMODE }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m alembic upgrade heads
+
+      - name: Populate candidate_locations
+        env:
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_SSLMODE: ${{ secrets.POSTGRES_SSLMODE }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          FLAGS="--tiers ${{ github.event.inputs.tiers }}"
+          if [ "${{ github.event.inputs.replace }}" = "true" ]; then
+            FLAGS="$FLAGS --replace"
+          else
+            FLAGS="$FLAGS --no-replace"
+          fi
+          python -m app.ingest.candidate_locations $FLAGS
