@@ -319,7 +319,7 @@ def _resolve_districts(db: Session, run_id: str) -> int:
             SET district_ar = COALESCE(cl.district_ar, ef.properties->>'{name_field_ar}'),
                 district_en = COALESCE(cl.district_en, ef.properties->>'{name_field_en}')
             FROM external_feature ef
-            WHERE cl.population_run_id = :run_id_filter
+            WHERE cl.population_run_id = :run_id
               AND cl.district_ar IS NULL
               AND ef.layer_name = :layer
               AND cl.geom IS NOT NULL
