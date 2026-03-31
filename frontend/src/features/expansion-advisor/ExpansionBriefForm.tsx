@@ -60,6 +60,7 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
   const [brief, setBrief] = useState<ExpansionBrief>(initialValue);
   const [touched, setTouched] = useState(false);
   const [districtOptions, setDistrictOptions] = useState<DistrictOption[]>([]);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => setBrief(initialValue), [initialValue]);
 
@@ -100,7 +101,7 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
 
   return (
     <form className="ea-form" onSubmit={handleSubmit}>
-      {/* Brand basics */}
+      {/* ── Essential fields (always visible) ── */}
       <div className="ea-form__section">
         <h4 className="ea-form__section-title">{t("expansionAdvisor.brandBasics")}</h4>
         <div className="ea-form__row">
@@ -125,104 +126,18 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
             />
           </div>
         </div>
-        <div className="ea-form__row">
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.serviceModel")}</label>
-            <select className="ea-form__select" value={brief.service_model} onChange={(e) => set("service_model", e.target.value as ExpansionBrief["service_model"])} disabled={loading}>
-              <option value="qsr">{t("expansionAdvisor.qsr")}</option>
-              <option value="dine_in">{t("expansionAdvisor.dineIn")}</option>
-              <option value="delivery_first">{t("expansionAdvisor.deliveryFirst")}</option>
-              <option value="cafe">{t("expansionAdvisor.cafe")}</option>
-            </select>
-          </div>
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.priceTier")}</label>
-            <select className="ea-form__select" value={brief.brand_profile?.price_tier || ""} onChange={(e) => setProfile("price_tier", e.target.value || null)} disabled={loading}>
-              <option value="">{t("common.notAvailable")}</option>
-              <option value="value">{t("expansionAdvisor.value")}</option>
-              <option value="mid">{t("expansionAdvisor.mid")}</option>
-              <option value="premium">{t("expansionAdvisor.premium")}</option>
-            </select>
-          </div>
-        </div>
-        <div className="ea-form__row">
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.averageCheck")}</label>
-            <input className="ea-form__input" type="number" value={brief.brand_profile?.average_check_sar ?? ""} onChange={(e) => setProfile("average_check_sar", Number(e.target.value) || null)} disabled={loading} />
-          </div>
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.targetCustomer")}</label>
-            <input className="ea-form__input" value={brief.brand_profile?.target_customer ?? ""} onChange={(e) => setProfile("target_customer", e.target.value || null)} disabled={loading} placeholder="e.g. Families, Young professionals" />
-          </div>
-        </div>
-      </div>
-
-      {/* Operating strategy */}
-      <div className="ea-form__section">
-        <h4 className="ea-form__section-title">{t("expansionAdvisor.operatingStrategy")}</h4>
-        <div className="ea-form__row">
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.primaryChannel")}</label>
-            <select className="ea-form__select" value={brief.brand_profile?.primary_channel || "balanced"} onChange={(e) => setProfile("primary_channel", e.target.value)} disabled={loading}>
-              <option value="balanced">{t("expansionAdvisor.balanced")}</option>
-              <option value="dine_in">{t("expansionAdvisor.dineIn")}</option>
-              <option value="delivery">{t("expansionAdvisor.delivery")}</option>
-            </select>
-          </div>
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.expansionGoal")}</label>
-            <select className="ea-form__select" value={brief.brand_profile?.expansion_goal || "balanced"} onChange={(e) => setProfile("expansion_goal", e.target.value)} disabled={loading}>
-              <option value="balanced">{t("expansionAdvisor.balanced")}</option>
-              <option value="flagship">{t("expansionAdvisor.flagship")}</option>
-              <option value="neighborhood">{t("expansionAdvisor.neighborhood")}</option>
-              <option value="delivery_led">{t("expansionAdvisor.deliveryLed")}</option>
-            </select>
-          </div>
-        </div>
-        <div className="ea-form__row">
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.cannibalizationTolerance")}</label>
-            <input className="ea-form__input" type="number" value={brief.brand_profile?.cannibalization_tolerance_m ?? ""} onChange={(e) => setProfile("cannibalization_tolerance_m", Number(e.target.value) || null)} disabled={loading} />
-          </div>
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.searchLimit")}</label>
-            <input className="ea-form__input" type="number" value={brief.limit} onChange={(e) => set("limit", Number(e.target.value) || 15)} disabled={loading} min={1} max={100} />
-          </div>
-        </div>
-      </div>
-
-      {/* Market preferences */}
-      <div className="ea-form__section">
-        <h4 className="ea-form__section-title">{t("expansionAdvisor.marketPreferences")}</h4>
-        <div className="ea-form__row">
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.parkingSensitivity")}</label>
-            <select className="ea-form__select" value={brief.brand_profile?.parking_sensitivity || "medium"} onChange={(e) => setProfile("parking_sensitivity", e.target.value)} disabled={loading}>
-              <option value="low">{t("expansionAdvisor.low")}</option>
-              <option value="medium">{t("expansionAdvisor.medium")}</option>
-              <option value="high">{t("expansionAdvisor.high")}</option>
-            </select>
-          </div>
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.frontageSensitivity")}</label>
-            <select className="ea-form__select" value={brief.brand_profile?.frontage_sensitivity || "medium"} onChange={(e) => setProfile("frontage_sensitivity", e.target.value)} disabled={loading}>
-              <option value="low">{t("expansionAdvisor.low")}</option>
-              <option value="medium">{t("expansionAdvisor.medium")}</option>
-              <option value="high">{t("expansionAdvisor.high")}</option>
-            </select>
-          </div>
-        </div>
         <div className="ea-form__field">
-          <label className="ea-form__label">{t("expansionAdvisor.visibilitySensitivity")}</label>
-          <select className="ea-form__select" value={brief.brand_profile?.visibility_sensitivity || "medium"} onChange={(e) => setProfile("visibility_sensitivity", e.target.value)} disabled={loading}>
-            <option value="low">{t("expansionAdvisor.low")}</option>
-            <option value="medium">{t("expansionAdvisor.medium")}</option>
-            <option value="high">{t("expansionAdvisor.high")}</option>
+          <label className="ea-form__label">{t("expansionAdvisor.serviceModel")}</label>
+          <select className="ea-form__select" value={brief.service_model} onChange={(e) => set("service_model", e.target.value as ExpansionBrief["service_model"])} disabled={loading}>
+            <option value="qsr">{t("expansionAdvisor.serviceModelQuickService")}</option>
+            <option value="dine_in">{t("expansionAdvisor.serviceModelDineIn")}</option>
+            <option value="delivery_first">{t("expansionAdvisor.serviceModelDelivery")}</option>
+            <option value="cafe">{t("expansionAdvisor.serviceModelCafe")}</option>
           </select>
         </div>
       </div>
 
-      {/* Unit sizing */}
+      {/* Size */}
       <div className="ea-form__section">
         <h4 className="ea-form__section-title">{t("expansionAdvisor.unitSizing")}</h4>
         <div className="ea-form__row">
@@ -252,15 +167,10 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
           </div>
         </div>
         {touched && errors.area_range && <span className="ea-form__error">{t(`expansionAdvisor.${errors.area_range}`)}</span>}
-        <div className="ea-form__field">
-          <label className="ea-form__label">{t("expansionAdvisor.targetArea")}</label>
-          <input className="ea-form__input" type="number" value={brief.target_area_m2 ?? ""} onChange={(e) => set("target_area_m2", e.target.value === "" ? null : Number(e.target.value) || null)} disabled={loading} min={0} placeholder="e.g. 200" />
-        </div>
       </div>
 
-      {/* Geography */}
+      {/* Target districts */}
       <div className="ea-form__section">
-        <h4 className="ea-form__section-title">{t("expansionAdvisor.geography")}</h4>
         <div className="ea-form__field">
           <label className="ea-form__label">{t("expansionAdvisor.targetDistricts")}</label>
           <DistrictMultiSelect
@@ -270,30 +180,6 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
             disabled={loading}
             placeholder="e.g. العليا، الملقا، النخيل"
           />
-        </div>
-        <div className="ea-form__row">
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.preferredDistricts")}</label>
-            <DistrictMultiSelect
-              options={districtOptions}
-              selected={brief.brand_profile?.preferred_districts || []}
-              onChange={(vals) => setProfile("preferred_districts", vals)}
-              disabled={loading}
-              placeholder={t("expansionAdvisor.preferredDistricts")}
-              conflictValues={brief.brand_profile?.excluded_districts || []}
-            />
-          </div>
-          <div className="ea-form__field">
-            <label className="ea-form__label">{t("expansionAdvisor.excludedDistricts")}</label>
-            <DistrictMultiSelect
-              options={districtOptions}
-              selected={brief.brand_profile?.excluded_districts || []}
-              onChange={(vals) => setProfile("excluded_districts", vals)}
-              disabled={loading}
-              placeholder={t("expansionAdvisor.excludedDistricts")}
-              conflictValues={brief.brand_profile?.preferred_districts || []}
-            />
-          </div>
         </div>
       </div>
 
@@ -310,6 +196,149 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
           <span className="ea-form__error">{t("expansionAdvisor.validationLatRange")}</span>
         )}
       </div>
+
+      {/* ── Advanced Options (collapsed by default) ── */}
+      <div className="ea-form__advanced-toggle">
+        <button
+          type="button"
+          className="oak-btn oak-btn--sm oak-btn--tertiary"
+          onClick={() => setShowAdvanced((v) => !v)}
+        >
+          {showAdvanced ? t("expansionAdvisor.hideAdvancedOptions") : t("expansionAdvisor.showAdvancedOptions")}
+        </button>
+      </div>
+
+      {showAdvanced && (
+        <>
+          {/* Price & customer */}
+          <div className="ea-form__section">
+            <h4 className="ea-form__section-title">{t("expansionAdvisor.brandBasics")}</h4>
+            <div className="ea-form__row">
+              <div className="ea-form__field">
+                <label className="ea-form__label">{t("expansionAdvisor.priceTier")}</label>
+                <select className="ea-form__select" value={brief.brand_profile?.price_tier || ""} onChange={(e) => setProfile("price_tier", e.target.value || null)} disabled={loading}>
+                  <option value="">{t("common.notAvailable")}</option>
+                  <option value="value">{t("expansionAdvisor.value")}</option>
+                  <option value="mid">{t("expansionAdvisor.mid")}</option>
+                  <option value="premium">{t("expansionAdvisor.premium")}</option>
+                </select>
+              </div>
+              <div className="ea-form__field">
+                <label className="ea-form__label">{t("expansionAdvisor.averageCheck")}</label>
+                <input className="ea-form__input" type="number" value={brief.brand_profile?.average_check_sar ?? ""} onChange={(e) => setProfile("average_check_sar", Number(e.target.value) || null)} disabled={loading} />
+              </div>
+            </div>
+            <div className="ea-form__row">
+              <div className="ea-form__field">
+                <label className="ea-form__label">{t("expansionAdvisor.targetCustomer")}</label>
+                <input className="ea-form__input" value={brief.brand_profile?.target_customer ?? ""} onChange={(e) => setProfile("target_customer", e.target.value || null)} disabled={loading} placeholder="e.g. Families, Young professionals" />
+              </div>
+            </div>
+          </div>
+
+          {/* Operating strategy */}
+          <div className="ea-form__section">
+            <h4 className="ea-form__section-title">{t("expansionAdvisor.operatingStrategy")}</h4>
+            <div className="ea-form__row">
+              <div className="ea-form__field">
+                <label className="ea-form__label">{t("expansionAdvisor.primaryChannel")}</label>
+                <select className="ea-form__select" value={brief.brand_profile?.primary_channel || "balanced"} onChange={(e) => setProfile("primary_channel", e.target.value)} disabled={loading}>
+                  <option value="balanced">{t("expansionAdvisor.balanced")}</option>
+                  <option value="dine_in">{t("expansionAdvisor.dineIn")}</option>
+                  <option value="delivery">{t("expansionAdvisor.delivery")}</option>
+                </select>
+              </div>
+              <div className="ea-form__field">
+                <label className="ea-form__label">{t("expansionAdvisor.expansionGoal")}</label>
+                <select className="ea-form__select" value={brief.brand_profile?.expansion_goal || "balanced"} onChange={(e) => setProfile("expansion_goal", e.target.value)} disabled={loading}>
+                  <option value="balanced">{t("expansionAdvisor.balanced")}</option>
+                  <option value="flagship">{t("expansionAdvisor.flagship")}</option>
+                  <option value="neighborhood">{t("expansionAdvisor.neighborhood")}</option>
+                  <option value="delivery_led">{t("expansionAdvisor.deliveryLed")}</option>
+                </select>
+              </div>
+            </div>
+            <div className="ea-form__row">
+              <div className="ea-form__field">
+                <label className="ea-form__label">{t("expansionAdvisor.cannibalizationTolerance")}</label>
+                <input className="ea-form__input" type="number" value={brief.brand_profile?.cannibalization_tolerance_m ?? ""} onChange={(e) => setProfile("cannibalization_tolerance_m", Number(e.target.value) || null)} disabled={loading} />
+              </div>
+              <div className="ea-form__field">
+                <label className="ea-form__label">{t("expansionAdvisor.searchLimit")}</label>
+                <input className="ea-form__input" type="number" value={brief.limit} onChange={(e) => set("limit", Number(e.target.value) || 15)} disabled={loading} min={1} max={100} />
+              </div>
+            </div>
+          </div>
+
+          {/* Market preferences */}
+          <div className="ea-form__section">
+            <h4 className="ea-form__section-title">{t("expansionAdvisor.marketPreferences")}</h4>
+            <div className="ea-form__row">
+              <div className="ea-form__field">
+                <label className="ea-form__label">{t("expansionAdvisor.parkingSensitivity")}</label>
+                <select className="ea-form__select" value={brief.brand_profile?.parking_sensitivity || "medium"} onChange={(e) => setProfile("parking_sensitivity", e.target.value)} disabled={loading}>
+                  <option value="low">{t("expansionAdvisor.low")}</option>
+                  <option value="medium">{t("expansionAdvisor.medium")}</option>
+                  <option value="high">{t("expansionAdvisor.high")}</option>
+                </select>
+              </div>
+              <div className="ea-form__field">
+                <label className="ea-form__label">{t("expansionAdvisor.frontageSensitivity")}</label>
+                <select className="ea-form__select" value={brief.brand_profile?.frontage_sensitivity || "medium"} onChange={(e) => setProfile("frontage_sensitivity", e.target.value)} disabled={loading}>
+                  <option value="low">{t("expansionAdvisor.low")}</option>
+                  <option value="medium">{t("expansionAdvisor.medium")}</option>
+                  <option value="high">{t("expansionAdvisor.high")}</option>
+                </select>
+              </div>
+            </div>
+            <div className="ea-form__field">
+              <label className="ea-form__label">{t("expansionAdvisor.visibilitySensitivity")}</label>
+              <select className="ea-form__select" value={brief.brand_profile?.visibility_sensitivity || "medium"} onChange={(e) => setProfile("visibility_sensitivity", e.target.value)} disabled={loading}>
+                <option value="low">{t("expansionAdvisor.low")}</option>
+                <option value="medium">{t("expansionAdvisor.medium")}</option>
+                <option value="high">{t("expansionAdvisor.high")}</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Preferred / excluded districts */}
+          <div className="ea-form__section">
+            <h4 className="ea-form__section-title">{t("expansionAdvisor.geography")}</h4>
+            <div className="ea-form__row">
+              <div className="ea-form__field">
+                <label className="ea-form__label">{t("expansionAdvisor.preferredDistricts")}</label>
+                <DistrictMultiSelect
+                  options={districtOptions}
+                  selected={brief.brand_profile?.preferred_districts || []}
+                  onChange={(vals) => setProfile("preferred_districts", vals)}
+                  disabled={loading}
+                  placeholder={t("expansionAdvisor.preferredDistricts")}
+                  conflictValues={brief.brand_profile?.excluded_districts || []}
+                />
+              </div>
+              <div className="ea-form__field">
+                <label className="ea-form__label">{t("expansionAdvisor.excludedDistricts")}</label>
+                <DistrictMultiSelect
+                  options={districtOptions}
+                  selected={brief.brand_profile?.excluded_districts || []}
+                  onChange={(vals) => setProfile("excluded_districts", vals)}
+                  disabled={loading}
+                  placeholder={t("expansionAdvisor.excludedDistricts")}
+                  conflictValues={brief.brand_profile?.preferred_districts || []}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Target area */}
+          <div className="ea-form__section">
+            <div className="ea-form__field">
+              <label className="ea-form__label">{t("expansionAdvisor.targetArea")}</label>
+              <input className="ea-form__input" type="number" value={brief.target_area_m2 ?? ""} onChange={(e) => set("target_area_m2", e.target.value === "" ? null : Number(e.target.value) || null)} disabled={loading} min={0} placeholder="e.g. 200" />
+            </div>
+          </div>
+        </>
+      )}
 
       {showErrors && <div className="ea-form__validation-summary">{t("expansionAdvisor.validationRequired")}</div>}
       <button type="submit" className="oak-btn oak-btn--primary" disabled={loading || !brief.brand_name.trim()}>{loading ? t("expansionAdvisor.searchingCta") : t("expansionAdvisor.runSearchCta")}</button>

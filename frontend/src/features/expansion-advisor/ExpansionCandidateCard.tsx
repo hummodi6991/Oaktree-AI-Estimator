@@ -4,7 +4,7 @@ import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import WhyThisRank from "./WhyThisRank";
-import { fmtSAR, fmtMeters, fmtScore, fmtM2, fmtSarPerM2, fmtMonths, candidateDistrictLabel, getDisplayScore } from "./formatHelpers";
+import { fmtSAR, fmtMeters, fmtScore, fmtM2, fmtSarPerM2, fmtMonths, candidateDistrictLabel, getDisplayScore, marketGapLabel, demandLevelLabel, locationMatchLabel, economicsStrengthLabel, dataCoverageLabel, branchOverlapLabel } from "./formatHelpers";
 
 type Props = {
   candidate: ExpansionCandidate;
@@ -95,15 +95,16 @@ export default function ExpansionCandidateCard({
         </div>
       </div>
 
-      {/* Commercial unit header image */}
+      {/* Commercial unit hero image — larger and prominent */}
       {isCommercialUnit && candidate.image_url && (
-        <div className="ea-candidate__unit-image">
+        <div className="ea-candidate__unit-image ea-candidate__unit-image--hero">
           <img
             src={candidate.image_url}
             alt={candidate.unit_neighborhood || t("expansionAdvisor.commercialUnit")}
             loading="lazy"
             onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
           />
+          <span className="ea-candidate__aqar-trust">{t("expansionAdvisor.realListingFromAqar")}</span>
         </div>
       )}
 
@@ -119,23 +120,23 @@ export default function ExpansionCandidateCard({
         <p className="ea-candidate__summary">{candidate.decision_summary}</p>
       )}
 
-      {/* Commercial unit details */}
+      {/* Commercial unit key facts — prominent display */}
       {isCommercialUnit && (
-        <div className="ea-candidate__unit-details">
+        <div className="ea-candidate__unit-details ea-candidate__unit-details--prominent">
           {candidate.unit_price_sar_annual != null && (
-            <div className="ea-candidate__metric">
+            <div className="ea-candidate__metric ea-candidate__metric--featured">
               <span className="ea-candidate__metric-label">{t("expansionAdvisor.annualRentActual")}:</span>
               <span className="ea-candidate__metric-value--actual">{fmtSAR(candidate.unit_price_sar_annual)}</span>
             </div>
           )}
           {candidate.unit_area_sqm != null && (
-            <div className="ea-candidate__metric">
+            <div className="ea-candidate__metric ea-candidate__metric--featured">
               <span className="ea-candidate__metric-label">{t("expansionAdvisor.areaSqm")}:</span>
               <span>{fmtM2(candidate.unit_area_sqm)}</span>
             </div>
           )}
           {candidate.unit_street_width_m != null && (
-            <div className="ea-candidate__metric">
+            <div className="ea-candidate__metric ea-candidate__metric--featured">
               <span className="ea-candidate__metric-label">{t("expansionAdvisor.streetWidth")}:</span>
               <span>{fmtMeters(candidate.unit_street_width_m)}</span>
             </div>
@@ -145,7 +146,7 @@ export default function ExpansionCandidateCard({
               href={candidate.listing_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="ea-candidate__aqar-link"
+              className="oak-btn oak-btn--sm oak-btn--primary ea-candidate__aqar-btn"
               onClick={(e) => e.stopPropagation()}
             >
               {t("expansionAdvisor.viewOnAqar")} &#8599;
@@ -154,7 +155,7 @@ export default function ExpansionCandidateCard({
         </div>
       )}
 
-      {/* Metrics grid */}
+      {/* Metrics grid — business-friendly labels with raw values as tooltips */}
       <div className="ea-candidate__metrics">
         {candidate.area_m2 != null && (
           <div className="ea-candidate__metric">
@@ -163,49 +164,50 @@ export default function ExpansionCandidateCard({
           </div>
         )}
         <div className="ea-candidate__metric">
-          <span className="ea-candidate__metric-label">{t("expansionAdvisor.rent")}:</span>
-          <span>{fmtSarPerM2(candidate.estimated_rent_sar_m2_year)}</span>
-        </div>
-        <div className="ea-candidate__metric">
           <span className="ea-candidate__metric-label">{t("expansionAdvisor.annualRent")}:</span>
           <span>{fmtSAR(candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar)}</span>
-        </div>
-        <div className="ea-candidate__metric">
-          <span className="ea-candidate__metric-label">{t("expansionAdvisor.fitoutCost")}:</span>
-          <span>{fmtSAR(candidate.estimated_fitout_cost_sar)}</span>
-        </div>
-        <div className="ea-candidate__metric">
-          <span className="ea-candidate__metric-label">{t("expansionAdvisor.revenueIndex")}:</span>
-          <span>{fmtScore(candidate.estimated_revenue_index, 1)}</span>
         </div>
         <div className="ea-candidate__metric">
           <span className="ea-candidate__metric-label">{t("expansionAdvisor.payback")}:</span>
           <span>{fmtMonths(candidate.estimated_payback_months)}</span>
         </div>
-        <div className="ea-candidate__metric">
+        {candidate.provider_whitespace_score != null && (
+          <div className="ea-candidate__metric" title={`${fmtScore(candidate.provider_whitespace_score)}/100`}>
+            <span className="ea-candidate__metric-label">{t("expansionAdvisor.marketGap")}:</span>
+            <span>{t(`expansionAdvisor.marketGap_${marketGapLabel(candidate.provider_whitespace_score)}`)}</span>
+            <span className="ea-candidate__metric-raw">{fmtScore(candidate.provider_whitespace_score)}</span>
+          </div>
+        )}
+        <div className="ea-candidate__metric" title={`${fmtScore(candidate.estimated_revenue_index, 1)}/100`}>
+          <span className="ea-candidate__metric-label">{t("expansionAdvisor.demandLevel")}:</span>
+          <span>{t(`expansionAdvisor.demandLevel_${demandLevelLabel(candidate.estimated_revenue_index)}`)}</span>
+          <span className="ea-candidate__metric-raw">{fmtScore(candidate.estimated_revenue_index, 1)}</span>
+        </div>
+        <div className="ea-candidate__metric" title={`${fmtScore(candidate.brand_fit_score)}/100`}>
+          <span className="ea-candidate__metric-label">{t("expansionAdvisor.locationMatch")}:</span>
+          <span>{t(`expansionAdvisor.locationMatch_${locationMatchLabel(candidate.brand_fit_score)}`)}</span>
+          <span className="ea-candidate__metric-raw">{fmtScore(candidate.brand_fit_score)}</span>
+        </div>
+        <div className="ea-candidate__metric" title={`${fmtScore(candidate.economics_score)}/100`}>
           <span className="ea-candidate__metric-label">{t("expansionAdvisor.economicsLabel")}:</span>
-          <span>{fmtScore(candidate.economics_score)}</span>
+          <span>{t(`expansionAdvisor.economics_${economicsStrengthLabel(candidate.economics_score)}`)}</span>
+          <span className="ea-candidate__metric-raw">{fmtScore(candidate.economics_score)}</span>
         </div>
-        <div className="ea-candidate__metric">
-          <span className="ea-candidate__metric-label">{t("expansionAdvisor.brandFitLabel")}:</span>
-          <span>{fmtScore(candidate.brand_fit_score)}</span>
+        <div className="ea-candidate__metric" title={candidate.confidence_grade || undefined}>
+          <span className="ea-candidate__metric-label">{t("expansionAdvisor.dataCoverage")}:</span>
+          <span>{t(`expansionAdvisor.dataCoverage_${dataCoverageLabel(candidate.confidence_grade)}`)}</span>
         </div>
+        {candidate.cannibalization_score != null && (
+          <div className="ea-candidate__metric" title={`${fmtScore(candidate.cannibalization_score)}/100`}>
+            <span className="ea-candidate__metric-label">{t("expansionAdvisor.branchOverlap")}:</span>
+            <span>{t(`expansionAdvisor.branchOverlap_${branchOverlapLabel(candidate.cannibalization_score)}`)}</span>
+            <span className="ea-candidate__metric-raw">{fmtScore(candidate.cannibalization_score)}</span>
+          </div>
+        )}
         <div className="ea-candidate__metric">
           <span className="ea-candidate__metric-label">{t("expansionAdvisor.nearestBranch")}:</span>
           <span>{fmtMeters(candidate.distance_to_nearest_branch_m)}</span>
         </div>
-        {candidate.cannibalization_score != null && (
-          <div className="ea-candidate__metric">
-            <span className="ea-candidate__metric-label">{t("expansionAdvisor.cannibalization")}:</span>
-            <ScorePill value={candidate.cannibalization_score} />
-          </div>
-        )}
-        {candidate.provider_whitespace_score != null && (
-          <div className="ea-candidate__metric">
-            <span className="ea-candidate__metric-label">{t("expansionAdvisor.providerWhitespace")}:</span>
-            <span>{fmtScore(candidate.provider_whitespace_score)}</span>
-          </div>
-        )}
       </div>
 
       {/* Insights */}

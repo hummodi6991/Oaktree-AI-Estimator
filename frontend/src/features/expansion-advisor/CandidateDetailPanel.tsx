@@ -5,7 +5,7 @@ import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
 import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
-import { fmtSAR, fmtMeters, fmtScore, fmtPct, fmtSarPerM2, fmtM2, fmtMonths, humanGateLabel } from "./formatHelpers";
+import { fmtSAR, fmtMeters, fmtScore, fmtPct, fmtSarPerM2, fmtM2, fmtMonths, businessGateLabel } from "./formatHelpers";
 
 function EstimatedTag({ mode, t }: { mode?: "observed" | "estimated"; t: (k: string) => string }) {
   if (mode !== "estimated") return null;
@@ -156,20 +156,20 @@ export default function CandidateDetailPanel({ candidate }: Props) {
         <ScoreBreakdownCompact breakdown={breakdown} />
       </div>
 
-      {/* Gate summary */}
+      {/* Site requirements */}
       <div className="ea-detail__section">
-        <h5 className="ea-detail__section-title">{t("expansionAdvisor.gateChecklist")}</h5>
+        <h5 className="ea-detail__section-title">{t("expansionAdvisor.siteRequirements")}</h5>
         <GateSummary gates={gates} unknownGates={gateReasons?.unknown} />
         {gateReasons && (
           <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 6 }}>
             {gateReasons.passed.length > 0 && (
-              <div><span className="ea-badge ea-badge--green">{t("expansionAdvisor.gatesPassed")}</span> {gateReasons.passed.map(humanGateLabel).join(", ")}</div>
+              <div><span className="ea-badge ea-badge--green">{t("expansionAdvisor.gatesPassed")}</span> {gateReasons.passed.map(businessGateLabel).join(", ")}</div>
             )}
             {gateReasons.failed.length > 0 && (
-              <div><span className="ea-badge ea-badge--red">{t("expansionAdvisor.gatesFailed")}</span> {gateReasons.failed.map(humanGateLabel).join(", ")}</div>
+              <div><span className="ea-badge ea-badge--red">{t("expansionAdvisor.gatesFailed")}</span> {gateReasons.failed.map(businessGateLabel).join(", ")}</div>
             )}
             {gateReasons.unknown.length > 0 && (
-              <div><span className="ea-badge ea-badge--amber">{t("expansionAdvisor.gatesNeedVerification")}</span> {gateReasons.unknown.map(humanGateLabel).join(", ")}</div>
+              <div><span className="ea-badge ea-badge--amber">{t("expansionAdvisor.gatesNeedVerification")}</span> {gateReasons.unknown.map(businessGateLabel).join(", ")}</div>
             )}
           </div>
         )}
@@ -192,25 +192,6 @@ export default function CandidateDetailPanel({ candidate }: Props) {
           </ul>
         ) : <p className="ea-detail__text">—</p>}
       </div>
-
-      {/* Feature snapshot */}
-      {snapshot && (
-        <div className="ea-detail__section">
-          <h5 className="ea-detail__section-title">{t("expansionAdvisor.featureSnapshot")}</h5>
-          <div className="ea-detail__grid">
-            <div className="ea-detail__kv">
-              <span className="ea-detail__kv-label">{t("expansionAdvisor.dataCompleteness")}</span>
-              <span className="ea-detail__kv-value">{fmtPct(snapshot.data_completeness_score)}</span>
-            </div>
-          </div>
-          {snapshot.missing_context.length > 0 && (
-            <div>
-              <span className="ea-detail__kv-label">{t("expansionAdvisor.missingData")}:</span>{" "}
-              <span className="ea-detail__text">{snapshot.missing_context.join(", ")}</span>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Comparable competitors */}
       {comps.length > 0 && (
@@ -239,11 +220,30 @@ export default function CandidateDetailPanel({ candidate }: Props) {
         </div>
       )}
 
-      {/* Debug details (collapsed) */}
-      {breakdown && (
+      {/* Technical details (collapsed) — feature snapshot + assumptions + debug */}
+      {(snapshot || breakdown) && (
         <details className="ea-debug">
-          <summary>{t("expansionAdvisor.debugDetails")}</summary>
-          <pre>{JSON.stringify({ score_breakdown: breakdown, feature_snapshot: snapshot }, null, 2)}</pre>
+          <summary>{t("expansionAdvisor.technicalDetails")}</summary>
+          {snapshot && (
+            <div style={{ marginBottom: 12 }}>
+              <h5 className="ea-detail__section-title">{t("expansionAdvisor.featureSnapshot")}</h5>
+              <div className="ea-detail__grid">
+                <div className="ea-detail__kv">
+                  <span className="ea-detail__kv-label">{t("expansionAdvisor.dataCompleteness")}</span>
+                  <span className="ea-detail__kv-value">{fmtPct(snapshot.data_completeness_score)}</span>
+                </div>
+              </div>
+              {snapshot.missing_context.length > 0 && (
+                <div>
+                  <span className="ea-detail__kv-label">{t("expansionAdvisor.missingData")}:</span>{" "}
+                  <span className="ea-detail__text">{snapshot.missing_context.join(", ")}</span>
+                </div>
+              )}
+            </div>
+          )}
+          {breakdown && (
+            <pre>{JSON.stringify({ score_breakdown: breakdown, feature_snapshot: snapshot }, null, 2)}</pre>
+          )}
         </details>
       )}
     </div>
