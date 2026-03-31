@@ -29,8 +29,8 @@ def validate():
             continue
         content = f.read_text()
 
-        # Extract revision = "..."
-        rev_match = re.search(r'^revision\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
+        # Extract revision = "..." or revision: str = "..."
+        rev_match = re.search(r'^revision(?:\s*:[^=]*)?\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
         if not rev_match:
             continue
 
@@ -41,7 +41,7 @@ def validate():
         file_revisions[rev_id] = f.name
 
         # Extract down_revision (string, tuple, or None)
-        down_match = re.search(r'^down_revision\s*=\s*(.+)$', content, re.MULTILINE)
+        down_match = re.search(r'^down_revision(?:\s*:[^=]*)?\s*=\s*(.+)$', content, re.MULTILINE)
         if not down_match:
             continue
         val = down_match.group(1).strip()
