@@ -98,7 +98,7 @@ def _step2_rent_from_comps(db: Session) -> int:
         FROM (
             SELECT
                 cl2.id,
-                ROUND(
+                ROUND((
                     SUM(
                         (cu.price_sar_annual / cu.area_sqm / 12.0)
                         * (1.0 / GREATEST(
@@ -119,7 +119,7 @@ def _step2_rent_from_comps(db: Session) -> int:
                             10.0
                         )
                     )
-                , 2) AS rent_m2_month
+                )::numeric, 2) AS rent_m2_month
             FROM candidate_location cl2
             JOIN commercial_unit cu
                 ON ST_DWithin(
@@ -165,9 +165,8 @@ def _step3_rent_from_district_median(db: Session) -> int:
         FROM (
             SELECT
                 erc.district,
-                ROUND(
-                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY erc.rent_sar_m2_year) / 12.0
-                , 2) AS median_rent_month
+                ROUND((
+                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY erc.rent_sar_m2_year) / 12.0)::numeric, 2) AS median_rent_month
             FROM expansion_rent_comp erc
             WHERE erc.city = 'riyadh'
               AND erc.rent_sar_m2_year IS NOT NULL
