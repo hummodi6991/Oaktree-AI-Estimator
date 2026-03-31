@@ -471,6 +471,13 @@ class CandidateLocation(Base):
     cluster_id = Column(Integer)
     is_cluster_primary = Column(Boolean, server_default=text("TRUE"))
 
+    # Profitability model
+    profitability_score = Column(Numeric(5, 2))
+    success_proxy = Column(Numeric(5, 2))
+    model_features = Column(JSONB)
+    model_version = Column(String(32))
+    model_scored_at = Column(DateTime(timezone=True))
+
     # Metadata
     created_at = Column(DateTime(timezone=True), server_default=text("now()"))
     updated_at = Column(DateTime(timezone=True), server_default=text("now()"))
@@ -484,6 +491,7 @@ class CandidateLocation(Base):
         Index("ix_cl_cluster_primary", "is_cluster_primary"),
         Index("ix_cl_current_category", "current_category"),
         Index("ix_cl_rent_confidence", "rent_confidence"),
+        Index("ix_cl_profitability", "profitability_score"),
     )
 
 
