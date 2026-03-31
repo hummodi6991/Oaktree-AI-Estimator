@@ -5,6 +5,13 @@ on:
   push:
 
 jobs:
+  validate-alembic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate alembic revision chain
+        run: python scripts/validate_alembic_chain.py
+
   build-test:
     runs-on: ubuntu-latest
     steps:
