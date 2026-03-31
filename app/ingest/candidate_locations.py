@@ -3,7 +3,7 @@ Populate the candidate_location table from three source tiers.
 
 Tier 1: commercial_unit (Aqar) — vacant, with real rent/area
 Tier 2: delivery_source_record + restaurant_poi — occupied, proven locations
-Tier 3: riyadh_parcels_arcgis_raw — commercial/mixed-use parcels
+Tier 3: riyadh_parcels_arcgis_proxy — commercial/mixed-use parcels
 
 After inserting all tiers, run spatial deduplication using
 ST_ClusterDBSCAN (eps=50m) and mark cluster primaries.
@@ -81,7 +81,7 @@ def _ingest_tier1_aqar(db: Session, run_id: str) -> int:
           AND cu.lat BETWEEN :min_lat AND :max_lat
           AND cu.lon BETWEEN :min_lon AND :max_lon
     """)
-    result = db.execute(sql, {"run_id": run_id, **RIYADH_BBOX})
+    result = db.execute(sql, {"run_id": run_id, "run_id_filter": run_id, **RIYADH_BBOX})
     count = result.rowcount
     db.commit()
     logger.info("Tier 1 (Aqar): inserted %d candidates", count)
@@ -145,7 +145,7 @@ def _ingest_tier2_delivery(db: Session, run_id: str) -> int:
                 scraped_at DESC
         ) agg
     """)
-    result = db.execute(sql, {"run_id": run_id, **RIYADH_BBOX})
+    result = db.execute(sql, {"run_id": run_id, "run_id_filter": run_id, **RIYADH_BBOX})
     count = result.rowcount
     db.commit()
     logger.info("Tier 2 (Delivery): inserted %d candidates", count)
@@ -188,7 +188,7 @@ def _ingest_tier2_poi(db: Session, run_id: str) -> int:
           AND rp.lon BETWEEN :min_lon AND :max_lon
           AND NOT EXISTS (
               SELECT 1 FROM candidate_location cl
-              WHERE cl.population_run_id = :run_id
+              WHERE cl.population_run_id = :run_id_filter
                 AND ST_DWithin(
                     cl.geom::geography,
                     ST_SetSRID(ST_MakePoint(rp.lon, rp.lat), 4326)::geography,
@@ -196,7 +196,7 @@ def _ingest_tier2_poi(db: Session, run_id: str) -> int:
                 )
           )
     """)
-    result = db.execute(sql, {"run_id": run_id, **RIYADH_BBOX})
+    result = db.execute(sql, {"run_id": run_id, "run_id_filter": run_id, **RIYADH_BBOX})
     count = result.rowcount
     db.commit()
     logger.info("Tier 2 (POI): inserted %d candidates", count)
@@ -230,13 +230,13 @@ def _ingest_tier3_arcgis(db: Session, run_id: str) -> int:
             'default',
             p.landuse_code, p.landuse_label,
             :run_id
-        FROM riyadh_parcels_arcgis_raw p
+        FROM riyadh_parcels_arcgis_proxy p
         WHERE p.geom IS NOT NULL
           AND p.landuse_code IN (2000, 7500)  -- commercial, mixed_use
           AND p.area_m2 BETWEEN 30 AND 2000   -- reasonable restaurant sizes
           AND NOT EXISTS (
               SELECT 1 FROM candidate_location cl
-              WHERE cl.population_run_id = :run_id
+              WHERE cl.population_run_id = :run_id_filter
                 AND ST_DWithin(
                     cl.geom::geography,
                     ST_Centroid(p.geom)::geography,
@@ -244,7 +244,7 @@ def _ingest_tier3_arcgis(db: Session, run_id: str) -> int:
                 )
           )
     """)
-    result = db.execute(sql, {"run_id": run_id, **RIYADH_BBOX})
+    result = db.execute(sql, {"run_id": run_id, "run_id_filter": run_id, **RIYADH_BBOX})
     count = result.rowcount
     db.commit()
     logger.info("Tier 3 (ArcGIS): inserted %d candidates", count)
@@ -327,7 +327,7 @@ def _resolve_districts(db: Session, run_id: str) -> int:
             SET district_ar = COALESCE(cl.district_ar, ef.properties->>'{name_field_ar}'),
                 district_en = COALESCE(cl.district_en, ef.properties->>'{name_field_en}')
             FROM external_feature ef
-            WHERE cl.population_run_id = :run_id
+            WHERE cl.population_run_id = :run_id_filter
               AND cl.district_ar IS NULL
               AND ef.layer_name = :layer
               AND cl.geom IS NOT NULL
