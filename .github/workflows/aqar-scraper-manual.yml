@@ -15,6 +15,15 @@ on:
         description: "Skip geocoding step (--skip-geocode)"
         type: boolean
         default: false
+      listing_type:
+        description: "Listing types to crawl: all, store, or showroom"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - store
+          - showroom
 
 concurrency:
   group: aqar-scraper
@@ -51,6 +60,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           FLAGS="--max-pages ${{ github.event.inputs.max_pages }}"
+          FLAGS="${FLAGS} --listing-type ${{ github.event.inputs.listing_type }}"
           if [ "${{ github.event.inputs.no_detail }}" = "true" ]; then
             FLAGS="${FLAGS} --no-detail"
           fi
