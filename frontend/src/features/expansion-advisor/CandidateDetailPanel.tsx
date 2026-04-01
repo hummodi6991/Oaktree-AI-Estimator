@@ -136,11 +136,17 @@ export default function CandidateDetailPanel({ candidate }: Props) {
           </div>
           <div className="ea-detail__kv">
             <span className="ea-detail__kv-label">{t("expansionAdvisor.revenueIndex")}</span>
-            <span className="ea-detail__kv-value">{fmtScore(candidate.estimated_revenue_index, 1)}</span>
+            <span className="ea-detail__kv-value">
+              {fmtScore(candidate.estimated_revenue_index, 1)}
+              <span className="ea-memo-disclaimer-icon" title={t("expansionAdvisor.revenueDisclaimer")}>&#9432;</span>
+            </span>
           </div>
           <div className="ea-detail__kv">
             <span className="ea-detail__kv-label">{t("expansionAdvisor.payback")}</span>
-            <span className="ea-detail__kv-value"><PaybackBadge band={candidate.payback_band} months={candidate.estimated_payback_months} /></span>
+            <span className="ea-detail__kv-value">
+              <PaybackBadge band={candidate.payback_band} months={candidate.estimated_payback_months} />
+              <span className="ea-memo-disclaimer-icon" title={t("expansionAdvisor.paybackDisclaimer")}>&#9432;</span>
+            </span>
           </div>
           <div className="ea-detail__kv">
             <span className="ea-detail__kv-label">{t("expansionAdvisor.nearestBranch")}</span>

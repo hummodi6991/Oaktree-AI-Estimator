@@ -1,11 +1,8 @@
 import { useTranslation } from "react-i18next";
 import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
-// ConfidenceBadge removed from card — technical detail, available in memo
 import PaybackBadge from "./PaybackBadge";
-import WhyThisRank from "./WhyThisRank";
-import TierBadge from "./TierBadge";
-import { fmtSAR, fmtMeters, fmtM2, fmtMonths, candidateDistrictLabel, getDisplayScore, fmtEstimated } from "./formatHelpers";
+import { fmtSARCompact, fmtM2, fmtMonths, fmtMeters, candidateDistrictLabel, getDisplayScore } from "./formatHelpers";
 
 type Props = {
   candidate: ExpansionCandidate;
@@ -36,17 +33,17 @@ export default function ExpansionCandidateCard({
 }: Props) {
   const { t } = useTranslation();
   const gateOverall = candidate.gate_status_json?.overall_pass;
-  // Distinguish true pass, explicit fail, and unknown (null/undefined = some
-  // gates lacked data so verdict is indeterminate, not a hard fail).
   const gateVerdict: "pass" | "fail" | "unknown" =
     gateOverall === true ? "pass" : gateOverall === false ? "fail" : "unknown";
   const allGatesPass = gateVerdict === "pass";
-  // Only show "Lead Site" tag when the candidate actually passes all gates.
-  // Otherwise use exploratory framing.
   const showLeadTag = isLead && allGatesPass;
   const showExploratoryTag = isLead && !allGatesPass;
-  const positives = (candidate.top_positives_json || []).slice(0, 2);
-  const risks = (candidate.top_risks_json || []).slice(0, 2);
+  const positives = (candidate.top_positives_json || []).slice(0, 1);
+  const risks = (candidate.top_risks_json || []).slice(0, 1);
+
+  // Check if positives/risks are identical boilerplate — skip if so
+  const hasUniquePositive = positives.length > 0 && positives[0] && positives[0] !== "—";
+  const hasUniqueRisk = risks.length > 0 && risks[0] && risks[0] !== "—";
 
   const isTop3 = (candidate.rank_position ?? 999) <= 3;
   const isCommercialUnit = candidate.source_type === "commercial_unit" || candidate.source_type === "aqar";
@@ -55,17 +52,12 @@ export default function ExpansionCandidateCard({
   const cl = candidate.feature_snapshot_json?.candidate_location as
     | Record<string, unknown>
     | undefined;
-  const sourceTier =
-    candidate.source_tier ??
-    (cl?.source_tier as number | undefined) ??
-    (isCommercialUnit ? 1 : null);
-  const clSourceType =
-    candidate.source_type ?? (cl?.source_type as string | undefined) ?? null;
-  const clCurrentCategory =
-    candidate.current_category ?? (cl?.current_category as string | undefined) ?? null;
-  const clAvgRating = (cl?.cl_avg_rating as number | undefined) ?? null;
   const clRentConfidence =
     candidate.rent_confidence ?? (cl?.rent_confidence as string | undefined) ?? null;
+
+  // Nearest branch — only show as pill when < 5km
+  const nearestBranchM = candidate.distance_to_nearest_branch_m;
+  const showNearestBranch = nearestBranchM != null && nearestBranchM < 5000;
 
   const cls = [
     "ea-candidate",
@@ -83,45 +75,30 @@ export default function ExpansionCandidateCard({
     <div className={cls} onClick={onSelect} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(); }} data-candidate-id={candidate.id}>
       {/* Top row: rank + district + badges */}
       <div className="ea-candidate__top">
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {showLeadTag && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
-          {showExploratoryTag && <span className="ea-lead-tag ea-lead-tag--exploratory">{t("expansionAdvisor.topExploratoryCandidate")}</span>}
+        <div className="ea-candidate__identity">
+          {showLeadTag && <span className="ea-lead-tag ea-lead-tag--sm">{t("expansionAdvisor.leadSite")}</span>}
+          {showExploratoryTag && <span className="ea-lead-tag ea-lead-tag--sm ea-lead-tag--exploratory">{t("expansionAdvisor.topExploratoryCandidate")}</span>}
           {candidate.rank_position ? (
             <span className="ea-candidate__rank" title={localSortActive ? t("expansionAdvisor.backendRank") : undefined}>
               #{candidate.rank_position}
             </span>
           ) : null}
           <span className="ea-candidate__district">{candidateDistrictLabel(candidate, t("common.notAvailable"))}</span>
-          {localSortActive && (
-            <span className="ea-badge ea-badge--neutral ea-candidate__rank-note">
-              {t("expansionAdvisor.backendRankLabel", { rank: candidate.rank_position })}
-            </span>
-          )}
         </div>
         <div className="ea-candidate__badges">
           <ScorePill value={getDisplayScore(candidate)} />
-          {/* Verdict badge — separate from confidence */}
-          <span className={`ea-badge ea-badge--${gateVerdict === "pass" ? "green" : gateVerdict === "fail" ? "red" : "amber"}`}>
-            {gateVerdict === "pass" ? t("expansionAdvisor.gatePass") : gateVerdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateNeedsValidation")}
-          </span>
           {candidate.payback_band && (
             <PaybackBadge band={candidate.payback_band} months={candidate.estimated_payback_months} />
+          )}
+          {showNearestBranch && (
+            <span className="ea-badge ea-badge--neutral ea-candidate__nearest-pill">
+              {fmtMeters(nearestBranchM)}
+            </span>
           )}
         </div>
       </div>
 
-      {/* Tier badge — unified source tier indicator */}
-      <TierBadge
-        sourceTier={sourceTier}
-        sourceType={clSourceType}
-        isVacant={candidate.is_vacant ?? (cl?.is_vacant as boolean | undefined) ?? null}
-        currentCategory={clCurrentCategory}
-        clAvgRating={clAvgRating}
-        listingUrl={candidate.listing_url}
-        rentConfidence={clRentConfidence}
-      />
-
-      {/* Commercial unit hero image — larger and prominent */}
+      {/* Commercial unit hero image */}
       {isCommercialUnit && candidate.image_url && (
         <div className="ea-candidate__unit-image ea-candidate__unit-image--hero">
           <img
@@ -133,13 +110,13 @@ export default function ExpansionCandidateCard({
         </div>
       )}
 
-      {/* Commercial unit key facts — prominent display */}
+      {/* Commercial unit key facts */}
       {isCommercialUnit && (
         <div className="ea-candidate__unit-details ea-candidate__unit-details--prominent">
           {candidate.unit_price_sar_annual != null && (
             <div className="ea-candidate__metric ea-candidate__metric--featured">
               <span className="ea-candidate__metric-label">{t("expansionAdvisor.annualRentActual")}:</span>
-              <span className="ea-candidate__metric-value--actual">{fmtSAR(candidate.unit_price_sar_annual)}</span>
+              <span className="ea-candidate__metric-value--actual">{fmtSARCompact(candidate.unit_price_sar_annual)}</span>
             </div>
           )}
           {candidate.unit_area_sqm != null && (
@@ -157,85 +134,72 @@ export default function ExpansionCandidateCard({
         </div>
       )}
 
-      {/* Key metrics — clean, estimated values clearly labeled */}
+      {/* Key metrics — clean horizontal row, no "Est. ~" prefix */}
       <div className="ea-candidate__metrics">
         {candidate.area_m2 != null && (
-          <div className="ea-candidate__metric">
-            <span className="ea-candidate__metric-label">{t("expansionAdvisor.areaLabel")}:</span>
-            <span>{fmtEstimated(fmtM2(candidate.area_m2), clRentConfidence !== "actual")}</span>
-          </div>
+          <span className="ea-candidate__metric-compact">{fmtM2(candidate.area_m2)}</span>
         )}
-        <div className="ea-candidate__metric">
-          <span className="ea-candidate__metric-label">{t("expansionAdvisor.annualRent")}:</span>
-          <span>{fmtEstimated(fmtSAR(candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar), clRentConfidence !== "actual")}</span>
-        </div>
-        <div className="ea-candidate__metric">
-          <span className="ea-candidate__metric-label">{t("expansionAdvisor.payback")}:</span>
-          <span>{fmtMonths(candidate.estimated_payback_months)}</span>
-        </div>
+        <span className="ea-candidate__metric-compact">{fmtSARCompact(candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar)}/yr</span>
+        <span className="ea-candidate__metric-compact">{fmtMonths(candidate.estimated_payback_months)}</span>
         {candidate.estimated_fitout_cost_sar != null && (
-          <div className="ea-candidate__metric">
-            <span className="ea-candidate__metric-label">{t("expansionAdvisor.fitoutCostLabel")}:</span>
-            <span>{fmtEstimated(fmtSAR(candidate.estimated_fitout_cost_sar), true)}</span>
-          </div>
-        )}
-        {candidate.distance_to_nearest_branch_m != null && (
-          <div className="ea-candidate__metric">
-            <span className="ea-candidate__metric-label">{t("expansionAdvisor.nearestBranch")}:</span>
-            <span>{fmtMeters(candidate.distance_to_nearest_branch_m)}</span>
-          </div>
+          <span className="ea-candidate__metric-compact">{fmtSARCompact(candidate.estimated_fitout_cost_sar)}</span>
         )}
       </div>
 
-      {/* Insights */}
-      {(positives.length > 0 || risks.length > 0) && (
+      {/* Insights — top 1 positive + top 1 risk only */}
+      {(hasUniquePositive || hasUniqueRisk) && (
         <div className="ea-candidate__insights">
-          {positives.filter((text) => text && text !== "—").map((text, i) => (
-            <div key={`p-${i}`} className="ea-candidate__insight">
+          {hasUniquePositive && (
+            <div className="ea-candidate__insight">
               <span className="ea-candidate__insight-icon ea-candidate__insight-icon--positive">+</span>
-              <span className="ea-candidate__insight-text">{text}</span>
+              <span className="ea-candidate__insight-text">{positives[0]}</span>
             </div>
-          ))}
-          {risks.filter((text) => text && text !== "—").map((text, i) => (
-            <div key={`r-${i}`} className="ea-candidate__insight">
+          )}
+          {hasUniqueRisk && (
+            <div className="ea-candidate__insight">
               <span className="ea-candidate__insight-icon ea-candidate__insight-icon--risk">!</span>
-              <span className="ea-candidate__insight-text">{text}</span>
+              <span className="ea-candidate__insight-text">{risks[0]}</span>
             </div>
-          ))}
+          )}
         </div>
       )}
 
-      {/* Why this rank? - expandable drill-down */}
-      <WhyThisRank candidate={candidate} />
-
-      {/* Actions */}
+      {/* Actions — icon buttons on hover, memo stays as text */}
       <div className="ea-candidate__actions" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="oak-btn oak-btn--sm oak-btn--primary" onClick={onOpenMemo || onSelect}>
           {t("expansionAdvisor.viewDecisionMemo")}
         </button>
-        <button
-          type="button"
-          className={`oak-btn oak-btn--sm ${shortlisted ? "oak-btn--secondary" : "oak-btn--tertiary"}`}
-          onClick={onToggleShortlist}
-        >
-          {shortlisted ? t("expansionAdvisor.removeShortlist") : t("expansionAdvisor.shortlist")}
-        </button>
-        <button
-          type="button"
-          className={`oak-btn oak-btn--sm ${compared ? "oak-btn--secondary" : "oak-btn--tertiary"}`}
-          onClick={onCompareToggle}
-        >
-          {compared ? t("expansionAdvisor.removeCompare") : t("expansionAdvisor.addToCompare")}
-        </button>
-        {onShowOnMap && (
+        <div className="ea-candidate__icon-actions">
+          {onShowOnMap && (
+            <button
+              type="button"
+              className={`ea-candidate__icon-btn${selected ? " ea-candidate__icon-btn--active" : ""}`}
+              onClick={onShowOnMap}
+              title={t("expansionAdvisor.showOnMap")}
+              aria-label={t("expansionAdvisor.showOnMap")}
+            >
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"/></svg>
+            </button>
+          )}
           <button
             type="button"
-            className="oak-btn oak-btn--sm oak-btn--tertiary"
-            onClick={onShowOnMap}
+            className={`ea-candidate__icon-btn${compared ? " ea-candidate__icon-btn--active" : ""}`}
+            onClick={onCompareToggle}
+            title={compared ? t("expansionAdvisor.removeCompare") : t("expansionAdvisor.addToCompare")}
+            aria-label={compared ? t("expansionAdvisor.removeCompare") : t("expansionAdvisor.addToCompare")}
           >
-            {t("expansionAdvisor.showOnMap")}
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M5 4a1 1 0 00-2 0v7.268a2 2 0 000 3.464V16a1 1 0 102 0v-1.268a2 2 0 000-3.464V4zM11 4a1 1 0 10-2 0v1.268a2 2 0 000 3.464V16a1 1 0 102 0V8.732a2 2 0 000-3.464V4zM17 4a1 1 0 10-2 0v7.268a2 2 0 000 3.464V16a1 1 0 102 0v-1.268a2 2 0 000-3.464V4z"/></svg>
           </button>
-        )}
+          <button
+            type="button"
+            className={`ea-candidate__icon-btn${shortlisted ? " ea-candidate__icon-btn--active" : ""}`}
+            onClick={onToggleShortlist}
+            title={shortlisted ? t("expansionAdvisor.removeShortlist") : t("expansionAdvisor.shortlist")}
+            aria-label={shortlisted ? t("expansionAdvisor.removeShortlist") : t("expansionAdvisor.shortlist")}
+          >
+            <svg width="16" height="16" viewBox="0 0 20 20" fill={shortlisted ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.5"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z"/></svg>
+          </button>
+        </div>
       </div>
     </div>
   );

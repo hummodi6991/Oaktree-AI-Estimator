@@ -392,7 +392,9 @@ export default function Map({
   const onRestaurantClickRef = useRef(onRestaurantClick);
   const restaurantHeatmapDataRef = useRef(restaurantHeatmapData);
 
-  const [showMultiHint, setShowMultiHint] = useState(true);
+  const [showMultiHint, setShowMultiHint] = useState(() => {
+    try { return !localStorage.getItem("oak_multi_hint_dismissed"); } catch { return true; }
+  });
 
   const isMultiSelectModifier = (evt: unknown): boolean => {
     if (!evt || typeof evt !== "object") return false;
@@ -940,8 +942,9 @@ export default function Map({
                 "case",
                 ["get", "selected"], "#006dff",
                 ["get", "shortlisted"], "#1a9c6c",
-                ["==", ["get", "source_type"], "commercial_unit"], "#7c3aed",
-                "#3d5a80",
+                ["==", ["get", "gate_pass"], true], "#16a34a",
+                ["==", ["get", "gate_pass"], false], "#dc2626",
+                "#f59e0b",
               ],
               "circle-radius": ["case", ["get", "selected"], 8, 5],
               "circle-stroke-width": [
@@ -1112,6 +1115,7 @@ export default function Map({
               className="v2-map-hint__dismiss"
               onClick={() => {
                 setShowMultiHint(false);
+                try { localStorage.setItem("oak_multi_hint_dismissed", "1"); } catch { /* noop */ }
               }}
               aria-label={t("map.controls.dismissHint", { defaultValue: "Dismiss hint" })}
               title={t("map.controls.dismissHint", { defaultValue: "Dismiss" })}

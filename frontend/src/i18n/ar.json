@@ -912,6 +912,21 @@
     "tierCurrently": "حالياً",
     "tierActiveRestaurants": "مطاعم نشطة هنا",
     "tierAvgSuffix": "متوسط",
-    "tierViewAqar": "عرض على عقار"
+    "tierViewAqar": "عرض على عقار",
+    "branchCountSummary": "{{count}} فروع مضافة",
+    "editBranches": "تعديل",
+    "hideBranches": "إخفاء",
+    "memoTab_economics": "الاقتصاد",
+    "memoTab_market": "السوق",
+    "memoTab_site": "الموقع",
+    "memoTab_risks": "المخاطر والتحقق",
+    "revenueDisclaimer": "تقدير بناءً على الطلب المُنمذج وإيجارات مماثلة. ليس توقعًا للإيرادات. تحقق من شروط الإيجار الفعلية.",
+    "paybackDisclaimer": "تقدير بناءً على الطلب المُنمذج وإيجارات مماثلة. ليس توقعًا للإيرادات. تحقق من شروط الإيجار الفعلية.",
+    "execReportTitle": "التقرير التنفيذي",
+    "execReportTopCandidates": "أفضل المرشحين",
+    "execReportRecommendation": "التوصية",
+    "execReportKeyRisks": "المخاطر الرئيسية",
+    "execReportNextSteps": "الخطوات التالية",
+    "execCopySuccess": "تم النسخ"
   }
 }

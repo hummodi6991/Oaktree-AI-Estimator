@@ -37,23 +37,23 @@ export default function ExpansionReportPanel({
   if (!report && !loading && !error) return null;
 
   return (
-    <div className="ea-drawer-backdrop" onClick={() => onClose?.()}>
-      <div className={`ea-drawer ea-drawer--wide${presentationMode ? " ea-drawer--presentation" : ""}`} onClick={(e) => e.stopPropagation()}>
-        <div className="ea-drawer__header">
-          <h3 className="ea-drawer__title">{t("expansionAdvisor.executiveReport")}</h3>
+    <div className="ea-exec-modal-backdrop" onClick={() => onClose?.()}>
+      <div className={`ea-exec-modal${presentationMode ? " ea-drawer--presentation" : ""}`} onClick={(e) => e.stopPropagation()}>
+        <div className="ea-exec-modal__header">
+          <h3 className="ea-exec-modal__title">{t("expansionAdvisor.executiveReport")}</h3>
           {report?.meta?.version && (
             <span style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", marginInlineEnd: "auto", marginInlineStart: 12 }}>
               v{report.meta.version}
             </span>
           )}
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <div className="ea-exec-modal__header-actions">
             <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={() => setPresentationMode((m) => !m)}>
               {presentationMode ? t("expansionAdvisor.exitPresentation") : t("expansionAdvisor.presentationMode")}
             </button>
             <button className="ea-drawer__close" onClick={() => onClose?.()}>{t("expansionAdvisor.close")}</button>
           </div>
         </div>
-        <div className="ea-drawer__body">
+        <div className="ea-exec-modal__body">
           {loading && <div className="ea-state ea-state--loading">{t("expansionAdvisor.loadingReport")}</div>}
           {error && !loading && <div className="ea-state ea-state--error">{error}</div>}
 

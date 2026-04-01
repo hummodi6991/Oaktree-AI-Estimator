@@ -2,20 +2,6 @@ import { useTranslation } from "react-i18next";
 import type { ExpansionCandidate, CandidateMemoResponse, RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
 import { deriveValidationPlan, type ValidationPriority, type ValidationPlanItem } from "./studyAdapters";
 
-const PRIORITY_ORDER: ValidationPriority[] = ["must_verify", "nice_to_confirm", "already_strong"];
-
-const PRIORITY_ICON: Record<ValidationPriority, string> = {
-  must_verify: "\u25CF",
-  nice_to_confirm: "\u25CB",
-  already_strong: "\u2713",
-};
-
-const PRIORITY_CLASS: Record<ValidationPriority, string> = {
-  must_verify: "ea-vplan-item--must",
-  nice_to_confirm: "ea-vplan-item--nice",
-  already_strong: "ea-vplan-item--strong",
-};
-
 type Props = {
   candidate: ExpansionCandidate;
   memo?: CandidateMemoResponse | null;
@@ -28,42 +14,51 @@ export default function ValidationPlanPanel({ candidate, memo, report }: Props) 
 
   if (items.length === 0) return null;
 
-  const grouped = new Map<ValidationPriority, ValidationPlanItem[]>();
-  for (const item of items) {
-    const list = grouped.get(item.priority) || [];
-    list.push(item);
-    grouped.set(item.priority, list);
-  }
-
-  const priorityLabel: Record<ValidationPriority, string> = {
-    must_verify: t("expansionAdvisor.vpMustVerify"),
-    nice_to_confirm: t("expansionAdvisor.vpNiceToConfirm"),
-    already_strong: t("expansionAdvisor.vpAlreadyStrong"),
-  };
+  const mustVerify = items.filter((i) => i.priority === "must_verify" || i.priority === "nice_to_confirm");
+  const confirmed = items.filter((i) => i.priority === "already_strong");
 
   return (
     <div className="ea-validation-plan">
       <h4 className="ea-validation-plan__title">{t("expansionAdvisor.validationPlan")}</h4>
-      {PRIORITY_ORDER.map((priority) => {
-        const group = grouped.get(priority);
-        if (!group || group.length === 0) return null;
-        return (
-          <div key={priority} className="ea-validation-plan__group">
-            <h5 className="ea-validation-plan__group-title">{priorityLabel[priority]}</h5>
-            <div className="ea-validation-plan__items">
-              {group.map((item, i) => (
-                <div key={i} className={`ea-vplan-item ${PRIORITY_CLASS[priority]}`}>
-                  <span className="ea-vplan-item__icon">{PRIORITY_ICON[priority]}</span>
-                  <div className="ea-vplan-item__content">
-                    <span className="ea-vplan-item__label">{item.label}</span>
-                    <span className="ea-vplan-item__detail">{item.detail}</span>
-                  </div>
+      <div className="ea-memo-validation-grid">
+        {/* Left: Must verify */}
+        <div className="ea-memo-validation-col">
+          <h5 className="ea-memo-validation-col__title ea-memo-validation-col__title--must">
+            {t("expansionAdvisor.vpMustVerify")}
+          </h5>
+          <div className="ea-validation-plan__items">
+            {mustVerify.map((item, i) => (
+              <div key={i} className="ea-memo-validation-item ea-memo-validation-item--must">
+                <span className={`ea-memo-validation-dot ea-memo-validation-dot--${item.priority === "must_verify" ? "must" : "nice"}`} />
+                <div className="ea-vplan-item__content">
+                  <span className="ea-vplan-item__label">{item.label}</span>
+                  <span className="ea-vplan-item__detail">{item.detail}</span>
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
+            {mustVerify.length === 0 && <span className="ea-detail__text">—</span>}
           </div>
-        );
-      })}
+        </div>
+
+        {/* Right: Already confirmed */}
+        <div className="ea-memo-validation-col">
+          <h5 className="ea-memo-validation-col__title ea-memo-validation-col__title--confirmed">
+            {t("expansionAdvisor.vpAlreadyStrong")}
+          </h5>
+          <div className="ea-validation-plan__items">
+            {confirmed.map((item, i) => (
+              <div key={i} className="ea-memo-validation-item ea-memo-validation-item--confirmed">
+                <span className="ea-memo-validation-check">&#10003;</span>
+                <div className="ea-vplan-item__content">
+                  <span className="ea-vplan-item__label">{item.label}</span>
+                  <span className="ea-vplan-item__detail">{item.detail}</span>
+                </div>
+              </div>
+            ))}
+            {confirmed.length === 0 && <span className="ea-detail__text">—</span>}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
