@@ -2,6 +2,12 @@ import { formatCurrencySAR, formatNumber, formatInteger } from "../../i18n/forma
 
 const FALLBACK = "—";
 
+/** Prefix a formatted value with "Est. ~" when it is estimated, not actual. */
+export function fmtEstimated(value: string, isEstimated: boolean): string {
+  if (value === FALLBACK) return value;
+  return isEstimated ? `Est. ~${value}` : value;
+}
+
 export function fmtSAR(value: number | null | undefined): string {
   return formatCurrencySAR(value, FALLBACK);
 }

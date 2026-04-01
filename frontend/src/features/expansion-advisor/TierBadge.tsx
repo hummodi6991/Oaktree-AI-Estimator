@@ -96,12 +96,11 @@ export default function TierBadge({
         </span>
       )}
 
-      {/* Tier 2: Current category + rating */}
-      {sourceTier === 2 && currentCategory && (
+      {/* Tier 2: Active restaurants + avg rating — no internal source names */}
+      {sourceTier === 2 && (
         <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-          {t("expansionAdvisor.tierCurrently")}: {currentCategory}
-          {clAvgRating ? ` · ${clAvgRating.toFixed(1)}★` : ""}
-          {sourceType ? ` · ${sourceType}` : ""}
+          {t("expansionAdvisor.tierActiveRestaurants")}
+          {clAvgRating ? ` · ${clAvgRating.toFixed(1)}★ ${t("expansionAdvisor.tierAvgSuffix")}` : ""}
         </div>
       )}
 

@@ -875,6 +875,7 @@
     "realListingFromAqar": "إعلان حقيقي من عقار.كوم",
     "summaryLocationsFound": "{{count}} موقع تم العثور عليه",
     "summaryTopScore": "أعلى تقييم: {{score}}/100",
+    "memoAnalysisDetails": "تفاصيل التحليل",
     "siteRequirements": "متطلبات الموقع",
     "technicalDetails": "تفاصيل فنية",
     "marketGap": "فجوة السوق",
@@ -907,6 +908,8 @@
     "tierHighPotential": "إمكانات عالية",
     "tierActualRent": "إيجار فعلي",
     "tierCurrently": "حالياً",
+    "tierActiveRestaurants": "مطاعم نشطة هنا",
+    "tierAvgSuffix": "متوسط",
     "tierViewAqar": "عرض على عقار"
   }
 }
