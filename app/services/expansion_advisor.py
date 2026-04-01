@@ -4547,6 +4547,14 @@ def run_expansion_search(
         for p in prepared[:shortlist_size]
         if p["row"].get("parcel_id")
     ]
+    # Coordinate lookup for spatial enrichment (works for all candidate sources)
+    _shortlist_coords: dict[str, tuple[float, float]] = {}
+    for p in prepared[:shortlist_size]:
+        _pid = str(p["row"].get("parcel_id") or "")
+        _slon = _safe_float(p["row"].get("lon"))
+        _slat = _safe_float(p["row"].get("lat"))
+        if _pid and _slon != 0.0 and _slat != 0.0:
+            _shortlist_coords[_pid] = (_slon, _slat)
     _bulk_perimeter: dict[str, float] = {}
     _bulk_roads: dict[str, dict[str, Any]] = {}
     _bulk_parking: dict[str, int] = {}
@@ -4555,6 +4563,7 @@ def run_expansion_search(
         # ── Bulk perimeter ──
         t_perim_start = time.monotonic()
         try:
+            # Try ArcGIS parcel join first (works for legacy parcel candidates)
             _perim_values = ", ".join(f"(:pid_{i})" for i in range(len(_shortlist_parcel_ids)))
             _perim_params = {f"pid_{i}": pid for i, pid in enumerate(_shortlist_parcel_ids)}
             with db.begin_nested():
@@ -4570,10 +4579,21 @@ def run_expansion_search(
                 ).mappings().all()
             for r in _perim_rows:
                 _bulk_perimeter[str(r["parcel_id"])] = round(_safe_float(r.get("parcel_perimeter_m")), 2)
-            logger.info("expansion_search bulk perimeter: enriched=%d/%d search_id=%s",
-                        len(_bulk_perimeter), len(_shortlist_parcel_ids), search_id)
         except Exception:
-            logger.debug("expansion_search bulk perimeter failed, falling back to per-candidate", exc_info=True)
+            logger.debug("expansion_search bulk perimeter (arcgis) failed", exc_info=True)
+        # Estimate perimeter for candidates not matched via ArcGIS (CU/CL sources)
+        for _pid in _shortlist_parcel_ids:
+            if _pid not in _bulk_perimeter:
+                # Square approximation: perimeter ≈ 4 * sqrt(area)
+                _area = 0.0
+                for p in prepared[:shortlist_size]:
+                    if str(p["row"].get("parcel_id") or "") == _pid:
+                        _area = _safe_float(p.get("area_m2"))
+                        break
+                if _area > 0:
+                    _bulk_perimeter[_pid] = round(4.0 * (_area ** 0.5), 2)
+        logger.info("expansion_search bulk perimeter: enriched=%d/%d search_id=%s",
+                    len(_bulk_perimeter), len(_shortlist_parcel_ids), search_id)
         t_perim_done = time.monotonic()
         logger.info("expansion_search timing: bulk_perimeter=%.2fs search_id=%s",
                      t_perim_done - t_perim_start, search_id)
@@ -4581,131 +4601,157 @@ def run_expansion_search(
         # ── Bulk roads ──
         t_roads_start = time.monotonic()
         _roads_source_table = None
-        _roads_query = None
-        if ea_roads_populated:
-            _roads_source_table = "expansion_road_context"
-            _roads_query = f"""
-                WITH pids(parcel_id) AS (VALUES {{values}})
-                SELECT p.id::text AS parcel_id,
-                    COALESCE(
-                        (SELECT MIN(erc.major_road_distance_m)
-                         FROM {_EA_ROADS_TABLE} erc
-                         WHERE erc.is_major_road = TRUE AND erc.geom IS NOT NULL
-                           AND ST_DWithin(erc.geom::geography, p.geom::geography, 700)),
-                        (SELECT MIN(ST_Distance(erc.geom::geography, p.geom::geography))
-                         FROM {_EA_ROADS_TABLE} erc
-                         WHERE erc.is_major_road = TRUE AND erc.geom IS NOT NULL
-                           AND ST_DWithin(erc.geom::geography, p.geom::geography, 700)),
-                        5000
-                    ) AS nearest_major_road_distance_m,
-                    COALESCE((
-                        SELECT COUNT(*) FROM {_EA_ROADS_TABLE} erc
-                        WHERE erc.geom IS NOT NULL
-                          AND ST_DWithin(erc.geom::geography, ST_Centroid(p.geom)::geography, 250)
-                    ), 0) AS nearby_road_segment_count,
-                    EXISTS(
-                        SELECT 1 FROM {_EA_ROADS_TABLE} erc
-                        WHERE erc.geom IS NOT NULL
-                          AND ST_DWithin(erc.geom::geography, p.geom::geography, 18)
-                    ) AS touches_road
-                FROM pids
-                JOIN {ARCGIS_PARCELS_TABLE} p ON p.id::text = pids.parcel_id
-            """
-        elif roads_table_available:
-            _roads_source_table = "planet_osm_line"
-            _roads_query = f"""
-                WITH pids(parcel_id) AS (VALUES {{values}})
-                SELECT p.id::text AS parcel_id,
-                    COALESCE((
-                        SELECT MIN(ST_Distance(l.way::geography, p.geom::geography))
-                        FROM planet_osm_line l
-                        WHERE l.way IS NOT NULL
-                          AND (l.highway IS NOT NULL OR NULLIF(l.name, '') IS NOT NULL)
-                          AND ST_DWithin(l.way::geography, p.geom::geography, 700)
-                          AND (l.highway IN ('motorway','trunk','primary','secondary')
-                               OR NULLIF(l.name, '') IS NOT NULL)
-                    ), 5000) AS nearest_major_road_distance_m,
-                    COALESCE((
-                        SELECT COUNT(*) FROM planet_osm_line l
-                        WHERE l.way IS NOT NULL AND l.highway IS NOT NULL
-                          AND ST_DWithin(l.way::geography, ST_Centroid(p.geom)::geography, 250)
-                    ), 0) AS nearby_road_segment_count,
-                    EXISTS(
-                        SELECT 1 FROM planet_osm_line l
-                        WHERE l.way IS NOT NULL AND l.highway IS NOT NULL
-                          AND ST_DWithin(l.way::geography, p.geom::geography, 18)
-                    ) AS touches_road
-                FROM pids
-                JOIN {ARCGIS_PARCELS_TABLE} p ON p.id::text = pids.parcel_id
-            """
-        if _roads_query:
-            try:
-                _road_values = ", ".join(f"(:pid_{i})" for i in range(len(_shortlist_parcel_ids)))
-                _road_params = {f"pid_{i}": pid for i, pid in enumerate(_shortlist_parcel_ids)}
-                with db.begin_nested():
-                    _road_rows = db.execute(
-                        text(_roads_query.format(values=_road_values)),
-                        _road_params,
-                    ).mappings().all()
-                for r in _road_rows:
-                    _bulk_roads[str(r["parcel_id"])] = {
-                        "nearest_major_road_distance_m": round(_safe_float(r.get("nearest_major_road_distance_m")), 2),
-                        "nearby_road_segment_count": _safe_int(r.get("nearby_road_segment_count")),
-                        "touches_road": bool(r.get("touches_road")),
-                        "source": _roads_source_table,
-                    }
-                logger.info("expansion_search bulk roads: enriched=%d/%d search_id=%s",
-                            len(_bulk_roads), len(_shortlist_parcel_ids), search_id)
-            except Exception:
-                logger.debug("expansion_search bulk roads failed, falling back to per-candidate", exc_info=True)
+        if ea_roads_populated or roads_table_available:
+            # Build VALUES with coordinates for spatial queries
+            _road_value_parts: list[str] = []
+            _road_params: dict[str, Any] = {}
+            for i, pid in enumerate(_shortlist_parcel_ids):
+                coords = _shortlist_coords.get(pid)
+                if coords:
+                    _road_value_parts.append(f"(:rpid_{i}, :rlon_{i}::double precision, :rlat_{i}::double precision)")
+                    _road_params[f"rpid_{i}"] = pid
+                    _road_params[f"rlon_{i}"] = coords[0]
+                    _road_params[f"rlat_{i}"] = coords[1]
+
+            if _road_value_parts:
+                _road_values_sql = ", ".join(_road_value_parts)
+
+                if ea_roads_populated:
+                    _roads_source_table = "expansion_road_context"
+                    _roads_query = f"""
+                        WITH pids(parcel_id, lon, lat) AS (VALUES {_road_values_sql})
+                        SELECT
+                            pids.parcel_id,
+                            COALESCE(
+                                (SELECT MIN(ST_Distance(erc.geom::geography,
+                                    ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography))
+                                 FROM {_EA_ROADS_TABLE} erc
+                                 WHERE erc.is_major_road = TRUE AND erc.geom IS NOT NULL
+                                   AND ST_DWithin(erc.geom::geography,
+                                       ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography, 700)),
+                                5000
+                            ) AS nearest_major_road_distance_m,
+                            COALESCE((
+                                SELECT COUNT(*) FROM {_EA_ROADS_TABLE} erc
+                                WHERE erc.geom IS NOT NULL
+                                  AND ST_DWithin(erc.geom::geography,
+                                      ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography, 250)
+                            ), 0) AS nearby_road_segment_count,
+                            EXISTS(
+                                SELECT 1 FROM {_EA_ROADS_TABLE} erc
+                                WHERE erc.geom IS NOT NULL
+                                  AND ST_DWithin(erc.geom::geography,
+                                      ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography, 18)
+                            ) AS touches_road
+                        FROM pids
+                    """
+                else:
+                    _roads_source_table = "planet_osm_line"
+                    _roads_query = f"""
+                        WITH pids(parcel_id, lon, lat) AS (VALUES {_road_values_sql})
+                        SELECT
+                            pids.parcel_id,
+                            COALESCE((
+                                SELECT MIN(ST_Distance(l.way::geography,
+                                    ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography))
+                                FROM planet_osm_line l
+                                WHERE l.way IS NOT NULL
+                                  AND (l.highway IN ('motorway','trunk','primary','secondary')
+                                       OR NULLIF(l.name, '') IS NOT NULL)
+                                  AND ST_DWithin(l.way::geography,
+                                      ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography, 700)
+                            ), 5000) AS nearest_major_road_distance_m,
+                            COALESCE((
+                                SELECT COUNT(*) FROM planet_osm_line l
+                                WHERE l.way IS NOT NULL AND l.highway IS NOT NULL
+                                  AND ST_DWithin(l.way::geography,
+                                      ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography, 250)
+                            ), 0) AS nearby_road_segment_count,
+                            EXISTS(
+                                SELECT 1 FROM planet_osm_line l
+                                WHERE l.way IS NOT NULL AND l.highway IS NOT NULL
+                                  AND ST_DWithin(l.way::geography,
+                                      ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography, 18)
+                            ) AS touches_road
+                        FROM pids
+                    """
+
+                try:
+                    with db.begin_nested():
+                        _road_rows = db.execute(
+                            text(_roads_query),
+                            _road_params,
+                        ).mappings().all()
+                    for r in _road_rows:
+                        _bulk_roads[str(r["parcel_id"])] = {
+                            "nearest_major_road_distance_m": round(_safe_float(r.get("nearest_major_road_distance_m")), 2),
+                            "nearby_road_segment_count": _safe_int(r.get("nearby_road_segment_count")),
+                            "touches_road": bool(r.get("touches_road")),
+                            "source": _roads_source_table,
+                        }
+                    logger.info("expansion_search bulk roads: enriched=%d/%d search_id=%s",
+                                len(_bulk_roads), len(_shortlist_parcel_ids), search_id)
+                except Exception:
+                    logger.debug("expansion_search bulk roads failed", exc_info=True)
         t_roads_done = time.monotonic()
         logger.info("expansion_search timing: bulk_roads=%.2fs search_id=%s",
                      t_roads_done - t_roads_start, search_id)
 
         # ── Bulk parking ──
         t_parking_start = time.monotonic()
-        _parking_query = None
-        if ea_parking_populated:
-            _parking_query = f"""
-                WITH pids(parcel_id) AS (VALUES {{values}})
-                SELECT p.id::text AS parcel_id,
-                    COALESCE((
-                        SELECT COUNT(*) FROM {_EA_PARKING_TABLE} epa
-                        WHERE epa.geom IS NOT NULL
-                          AND ST_DWithin(epa.geom::geography, ST_Centroid(p.geom)::geography, 350)
-                    ), 0) AS nearby_parking_amenity_count
-                FROM pids
-                JOIN {ARCGIS_PARCELS_TABLE} p ON p.id::text = pids.parcel_id
-            """
-        elif parking_table_available:
-            _parking_query = f"""
-                WITH pids(parcel_id) AS (VALUES {{values}})
-                SELECT p.id::text AS parcel_id,
-                    COALESCE((
-                        SELECT COUNT(*) FROM planet_osm_polygon op
-                        WHERE op.way IS NOT NULL
-                          AND (lower(COALESCE(op.amenity, '')) = 'parking'
-                               OR lower(COALESCE(op.parking, '')) IN ('surface','multi-storey','underground'))
-                          AND ST_DWithin(op.way::geography, ST_Centroid(p.geom)::geography, 350)
-                    ), 0) AS nearby_parking_amenity_count
-                FROM pids
-                JOIN {ARCGIS_PARCELS_TABLE} p ON p.id::text = pids.parcel_id
-            """
-        if _parking_query:
-            try:
-                _park_values = ", ".join(f"(:pid_{i})" for i in range(len(_shortlist_parcel_ids)))
-                _park_params = {f"pid_{i}": pid for i, pid in enumerate(_shortlist_parcel_ids)}
-                with db.begin_nested():
-                    _park_rows = db.execute(
-                        text(_parking_query.format(values=_park_values)),
-                        _park_params,
-                    ).mappings().all()
-                for r in _park_rows:
-                    _bulk_parking[str(r["parcel_id"])] = _safe_int(r.get("nearby_parking_amenity_count"))
-                logger.info("expansion_search bulk parking: enriched=%d/%d search_id=%s",
-                            len(_bulk_parking), len(_shortlist_parcel_ids), search_id)
-            except Exception:
-                logger.debug("expansion_search bulk parking failed, falling back to per-candidate", exc_info=True)
+        if ea_parking_populated or parking_table_available:
+            _park_value_parts: list[str] = []
+            _park_params: dict[str, Any] = {}
+            for i, pid in enumerate(_shortlist_parcel_ids):
+                coords = _shortlist_coords.get(pid)
+                if coords:
+                    _park_value_parts.append(f"(:ppid_{i}, :plon_{i}::double precision, :plat_{i}::double precision)")
+                    _park_params[f"ppid_{i}"] = pid
+                    _park_params[f"plon_{i}"] = coords[0]
+                    _park_params[f"plat_{i}"] = coords[1]
+
+            if _park_value_parts:
+                _park_values_sql = ", ".join(_park_value_parts)
+
+                if ea_parking_populated:
+                    _parking_query = f"""
+                        WITH pids(parcel_id, lon, lat) AS (VALUES {_park_values_sql})
+                        SELECT pids.parcel_id,
+                            COALESCE((
+                                SELECT COUNT(*) FROM {_EA_PARKING_TABLE} epa
+                                WHERE epa.geom IS NOT NULL
+                                  AND ST_DWithin(epa.geom::geography,
+                                      ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography, 350)
+                            ), 0) AS nearby_parking_amenity_count
+                        FROM pids
+                    """
+                else:
+                    _parking_query = f"""
+                        WITH pids(parcel_id, lon, lat) AS (VALUES {_park_values_sql})
+                        SELECT pids.parcel_id,
+                            COALESCE((
+                                SELECT COUNT(*) FROM planet_osm_polygon op
+                                WHERE op.way IS NOT NULL
+                                  AND (lower(COALESCE(op.amenity, '')) = 'parking'
+                                       OR lower(COALESCE(op.parking, '')) IN ('surface','multi-storey','underground'))
+                                  AND ST_DWithin(op.way::geography,
+                                      ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography, 350)
+                            ), 0) AS nearby_parking_amenity_count
+                        FROM pids
+                    """
+
+                try:
+                    with db.begin_nested():
+                        _park_rows = db.execute(
+                            text(_parking_query),
+                            _park_params,
+                        ).mappings().all()
+                    for r in _park_rows:
+                        _bulk_parking[str(r["parcel_id"])] = _safe_int(r.get("nearby_parking_amenity_count"))
+                    logger.info("expansion_search bulk parking: enriched=%d/%d search_id=%s",
+                                len(_bulk_parking), len(_shortlist_parcel_ids), search_id)
+                except Exception:
+                    logger.debug("expansion_search bulk parking failed", exc_info=True)
         t_parking_done = time.monotonic()
         logger.info("expansion_search timing: bulk_parking=%.2fs search_id=%s",
                      t_parking_done - t_parking_start, search_id)
@@ -4744,20 +4790,28 @@ def run_expansion_search(
             if _ft_parts:
                 _ft_union = " UNION ALL ".join(_ft_parts)
                 _ft_query = f"""
-                    WITH pids(parcel_id) AS (VALUES {{values}}),
+                    WITH pids(parcel_id, lon, lat) AS (VALUES {{values}}),
                          foot_traffic_pois AS ({_ft_union})
-                    SELECT p.id::text AS parcel_id,
+                    SELECT pids.parcel_id,
                         COALESCE((
                             SELECT COUNT(*) FROM foot_traffic_pois fp
-                            WHERE ST_DWithin(fp.geom::geography, ST_Centroid(p.geom)::geography, 500)
+                            WHERE ST_DWithin(fp.geom::geography,
+                                ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography, 500)
                         ), 0) AS nearby_foot_traffic_count
                     FROM pids
-                    JOIN {ARCGIS_PARCELS_TABLE} p ON p.id::text = pids.parcel_id
                 """
         if _ft_query:
             try:
-                _ft_values = ", ".join(f"(:pid_{i})" for i in range(len(_shortlist_parcel_ids)))
-                _ft_params = {f"pid_{i}": pid for i, pid in enumerate(_shortlist_parcel_ids)}
+                _ft_value_parts: list[str] = []
+                _ft_params: dict[str, Any] = {}
+                for i, pid in enumerate(_shortlist_parcel_ids):
+                    coords = _shortlist_coords.get(pid)
+                    if coords:
+                        _ft_value_parts.append(f"(:fpid_{i}, :flon_{i}::double precision, :flat_{i}::double precision)")
+                        _ft_params[f"fpid_{i}"] = pid
+                        _ft_params[f"flon_{i}"] = coords[0]
+                        _ft_params[f"flat_{i}"] = coords[1]
+                _ft_values = ", ".join(_ft_value_parts)
                 with db.begin_nested():
                     _ft_rows = db.execute(
                         text(_ft_query.format(values=_ft_values)),
