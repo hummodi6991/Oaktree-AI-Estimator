@@ -698,6 +698,8 @@
     "serviceModel": "Service model",
     "qsr": "QSR",
     "cafe": "Cafe",
+    "dine_in": "Dine in",
+    "delivery_first": "Delivery first",
     "deliveryFirst": "Delivery first",
     "serviceModelQuickService": "Quick Service",
     "serviceModelDineIn": "Dine-in",

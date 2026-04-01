@@ -656,6 +656,8 @@
     "serviceModel": "نموذج الخدمة",
     "qsr": "مطعم سريع",
     "cafe": "مقهى",
+    "dine_in": "مطعم جلسات",
+    "delivery_first": "توصيل أولاً",
     "deliveryFirst": "أولوية التوصيل",
     "serviceModelQuickService": "خدمة سريعة",
     "serviceModelDineIn": "داخل المطعم",
