@@ -17,6 +17,7 @@ from app.db.deps import get_db
 
 logger = logging.getLogger(__name__)
 from app.services.expansion_advisor import (
+    _cached_district_lookup,
     clear_expansion_caches,
     compare_candidates,
     create_saved_search,
@@ -622,7 +623,28 @@ def create_expansion_search(
             # so we don't silently drop user input.
             seen_td.add(td_raw.strip())
             canonical_target_districts.append(td_raw.strip())
-    req_target_districts = canonical_target_districts
+    # ── Resolve English district names to Arabic keys ──
+    # The candidate_location table stores district_ar in Arabic.  When the
+    # user (or frontend) sends English names like "Al Yasmin", we need to
+    # map them to the Arabic keys ("الياسمين") so the SQL filter matches.
+    district_lookup = _cached_district_lookup(db)
+    # Build reverse map: lowercased English label → Arabic norm_key
+    _en_to_ar: dict[str, str] = {}
+    for _nk, _entry in district_lookup.items():
+        _en = (_entry.get("label_en") or "").strip()
+        if _en:
+            _en_to_ar[_en.lower()] = _nk
+    resolved_target_districts: list[str] = []
+    for td in canonical_target_districts:
+        if td in district_lookup:
+            # Already an Arabic norm_key
+            resolved_target_districts.append(td)
+        elif td.lower() in _en_to_ar:
+            resolved_target_districts.append(_en_to_ar[td.lower()])
+        else:
+            # Keep as-is (fallback)
+            resolved_target_districts.append(td)
+    req_target_districts = resolved_target_districts
 
     request_json = req.model_dump()
     bbox_json = req.bbox.model_dump() if req.bbox else None
