@@ -1560,8 +1560,29 @@ def _demand_blend_weights(service_model: str) -> tuple[float, float]:
 
 
 def _competition_whitespace_score(competitor_count: int) -> float:
-    # Less brittle decay in dense Riyadh districts; avoids too many sites collapsing to zero.
-    return _clamp(100.0 - competitor_count * 6.0)
+    """Whitespace score with tighter calibration for Riyadh F&B density.
+
+    Riyadh districts typically have 0-8 same-category competitors within
+    the scoring radius.  The curve must produce meaningful spread across
+    this range, not just penalize counts > 15.
+
+    Targets:
+      0 competitors -> 100  (wide open)
+      1              -> 88
+      2              -> 78
+      3              -> 69
+      5              -> 55
+      8              -> 40
+      12             -> 28
+      20+            -> 15  (floor)
+    """
+    if competitor_count <= 0:
+        return 100.0
+    # Log-scaled decay: steeper at low counts, gentler at high counts.
+    raw = 100.0 * (1.0 - (math.log1p(competitor_count) / math.log1p(25)))
+    # Floor at 15 — even saturated areas get some score so rankings remain
+    # distinguishable.
+    return _clamp(max(15.0, raw))
 
 
 def _confidence_score(landuse_label: str | None, population_reach: float, delivery_listing_count: int) -> float:
@@ -1825,11 +1846,11 @@ def _top_positives_and_risks(
         positives.append("Demand potential is strong for this district.")
     if _safe_float(candidate.get("whitespace_score")) >= 65:
         if delivery_observed and _safe_float(candidate.get("provider_whitespace_score")) >= 25:
-            positives.append("Competitive whitespace remains favorable.")
+            positives.append("Brick-and-mortar competitor whitespace remains favorable.")
         elif not delivery_observed:
             # Whitespace is high only because no delivery activity was observed —
             # phrase as inferred opportunity, not observed strength.
-            positives.append("Inferred whitespace opportunity — low observed delivery activity nearby.")
+            positives.append("Inferred competitor whitespace opportunity — low observed delivery activity nearby.")
     if _safe_float(candidate.get("brand_fit_score")) >= 70:
         positives.append("Brand-fit profile aligns with site characteristics.")
     if _safe_float(candidate.get("economics_score")) >= 65:
@@ -1845,7 +1866,7 @@ def _top_positives_and_risks(
     if delivery_observed and _safe_float(candidate.get("delivery_competition_score")) >= 65:
         risks.append("Delivery competition intensity is high.")
     if delivery_observed and _safe_float(candidate.get("provider_whitespace_score")) < 25 and _safe_float(candidate.get("delivery_competition_score")) >= 80:
-        risks.append("Delivery market is saturated — whitespace opportunity is limited.")
+        risks.append("Delivery platform competition is dense — limited delivery-channel whitespace.")
     for gate in gate_reasons.get("failed") or []:
         label = _gate_key_to_label(gate)
         risks.append(f"{label.capitalize()} gate failed.")
@@ -1905,7 +1926,7 @@ def _top_positives_and_risks(
             f"High competitor density ({competitor_count} nearby) \u2014 market may be saturated."
         )
     elif competitor_count <= 2 and competitor_count >= 0:
-        positives.append("Low competitor density \u2014 potential first-mover advantage.")
+        positives.append("Low same-category competitor density \u2014 potential first-mover advantage.")
 
     return positives[:5], risks[:6]
 
@@ -2842,7 +2863,7 @@ def _query_candidate_location_pool(
                 0 AS delivery_listing_count,
                 0 AS delivery_cat_count,
                 0 AS delivery_platform_count,
-                0 AS pop_proxy,
+                0 AS population_reach,
                 ROW_NUMBER() OVER (
                     PARTITION BY cl.district_ar
                     ORDER BY
@@ -2883,13 +2904,14 @@ def _query_candidate_location_pool(
             delivery_listing_count,
             delivery_cat_count,
             delivery_platform_count,
-            pop_proxy
+            population_reach
         FROM ranked
         WHERE district_rank <= CAST(:per_district_cap AS integer)
         ORDER BY
+            district_rank ASC,
             source_tier ASC,
             profitability_score DESC NULLS LAST,
-            area_distance ASC,
+            ABS(COALESCE(area_m2, 120) - :target_area) ASC,
             id ASC
         LIMIT :limit
     """)
@@ -3020,7 +3042,7 @@ def _query_commercial_unit_candidates(
             0 AS delivery_listing_count,
             0 AS delivery_cat_count,
             0 AS delivery_platform_count,
-            0 AS pop_proxy
+            0 AS population_reach
         FROM commercial_unit cu
         WHERE {where_clause}
         ORDER BY cu.restaurant_score DESC NULLS LAST, cu.price_sar_annual ASC NULLS LAST
@@ -3030,6 +3052,85 @@ def _query_commercial_unit_candidates(
 
     rows = db.execute(sql, params).mappings().all()
     return [dict(r) for r in rows]
+
+
+def _bulk_enrich_population(
+    db: Session,
+    rows: list[dict],
+    demand_radius_m: float = 1200.0,
+) -> dict[str, float]:
+    """Bulk-compute population_reach for a set of candidate locations.
+
+    Returns {parcel_id: population_reach} for all rows that have lat/lon.
+    Uses a single SQL query with unnest + LATERAL to avoid N+1.
+    """
+    if not rows:
+        return {}
+
+    # Build arrays of (parcel_id, lon, lat)
+    pids = []
+    lons = []
+    lats = []
+    for r in rows:
+        pid = str(r.get("parcel_id") or r.get("id") or "")
+        lon = r.get("lon")
+        lat = r.get("lat")
+        if pid and lon is not None and lat is not None:
+            pids.append(pid)
+            lons.append(float(lon))
+            lats.append(float(lat))
+
+    if not pids:
+        return {}
+
+    # Check if population_density has a geom column
+    _pd_has_geom = False
+    try:
+        _pd_has_geom = bool(db.execute(text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'population_density' AND column_name = 'geom' LIMIT 1"
+        )).scalar())
+    except Exception:
+        pass
+
+    if _pd_has_geom:
+        _pd_geo = "pd.geom::geography"
+        _pd_where = "pd.geom IS NOT NULL"
+    else:
+        _pd_geo = "ST_SetSRID(ST_MakePoint(pd.lon::double precision, pd.lat::double precision), 4326)::geography"
+        _pd_where = "pd.lat IS NOT NULL AND pd.lon IS NOT NULL"
+
+    try:
+        result = db.execute(
+            text(f"""
+                WITH inputs AS (
+                    SELECT
+                        unnest(:pids) AS parcel_id,
+                        unnest(:lons) AS lon,
+                        unnest(:lats) AS lat
+                )
+                SELECT
+                    i.parcel_id,
+                    COALESCE(pop.population_reach, 0) AS population_reach
+                FROM inputs i
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(SUM(pd.population), 0) AS population_reach
+                    FROM population_density pd
+                    WHERE {_pd_where}
+                      AND ST_DWithin(
+                          ST_SetSRID(ST_MakePoint(i.lon, i.lat), 4326)::geography,
+                          {_pd_geo},
+                          :radius_m
+                      )
+                ) pop ON TRUE
+            """),
+            {"pids": pids, "lons": lons, "lats": lats, "radius_m": demand_radius_m},
+        ).mappings().all()
+
+        return {str(r["parcel_id"]): float(r["population_reach"]) for r in result}
+    except Exception as exc:
+        logger.warning("Bulk population enrichment failed: %s", exc, exc_info=True)
+        return {}
 
 
 def run_expansion_search(
@@ -3228,6 +3329,7 @@ def run_expansion_search(
                 ) ranked
                 WHERE district_rank <= CAST(:per_district_cap AS integer)
                 ORDER BY
+                    district_rank ASC,
                     landuse_priority ASC,
                     area_distance ASC,
                     CASE WHEN landuse_label IS NOT NULL THEN 0 ELSE 1 END,
@@ -3581,6 +3683,18 @@ def run_expansion_search(
             "expansion_search using candidate_location: %d candidates from %d primaries, search_id=%s",
             len(rows), _cl_count, search_id,
         )
+        # Bulk-enrich population reach for candidate_location rows
+        # (candidate_location path returns population_reach=0; we need real values)
+        _bulk_pop = _bulk_enrich_population(db, rows, demand_radius_m=1200.0)
+        if _bulk_pop:
+            for _r in rows:
+                _pid = str(_r.get("parcel_id") or _r.get("id") or "")
+                if _pid in _bulk_pop:
+                    _r["population_reach"] = _bulk_pop[_pid]
+            logger.info(
+                "expansion_search: bulk population enrichment applied to %d/%d candidates, search_id=%s",
+                len(_bulk_pop), len(rows), search_id,
+            )
     else:
         logger.info(
             "expansion_search: candidate_location has %d primaries (< 100), using legacy parcel query, search_id=%s",
@@ -3612,6 +3726,17 @@ def run_expansion_search(
                 "expansion_search using commercial units: %d candidates from %d total units, search_id=%s",
                 len(rows), _cu_count, search_id,
             )
+            # Bulk-enrich population reach for commercial_unit rows
+            _bulk_pop = _bulk_enrich_population(db, rows, demand_radius_m=1200.0)
+            if _bulk_pop:
+                for _r in rows:
+                    _pid = str(_r.get("parcel_id") or _r.get("id") or "")
+                    if _pid in _bulk_pop:
+                        _r["population_reach"] = _bulk_pop[_pid]
+                logger.info(
+                    "expansion_search: bulk population enrichment applied to %d/%d commercial_unit candidates, search_id=%s",
+                    len(_bulk_pop), len(rows), search_id,
+                )
 
             # ── Resolve commercial unit districts to Arabic names ──────────
             # Commercial units store English neighborhood names from Aqar,

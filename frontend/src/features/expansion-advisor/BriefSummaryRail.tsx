@@ -49,7 +49,7 @@ export default function BriefSummaryRail({ brief, onEditBrief, onRunAgain, loadi
         </div>
         <div className="ea-brief-rail__item">
           <span className="ea-brief-rail__label">{t("expansionAdvisor.serviceModel")}</span>
-          <span className="ea-brief-rail__value">{t(`expansionAdvisor.${brief.service_model === "delivery_first" ? "deliveryFirst" : brief.service_model}`)}</span>
+          <span className="ea-brief-rail__value">{t(`expansionAdvisor.${brief.service_model === "delivery_first" ? "deliveryFirst" : brief.service_model === "dine_in" ? "dineIn" : brief.service_model}`)}</span>
         </div>
         <div className="ea-brief-rail__item">
           <span className="ea-brief-rail__label">{t("expansionAdvisor.areaRange")}</span>
