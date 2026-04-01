@@ -180,6 +180,51 @@ class TestTargetDistrictNormalization:
         assert len(canonical) == 1
         assert canonical[0] == normalize_district_key("الملقا")
 
+    def test_english_name_resolved_via_lookup(self):
+        """English district names like 'Al Yasmin' should resolve to Arabic keys."""
+        # Simulate the district lookup that _cached_district_lookup returns
+        district_lookup = {
+            "الياسمين": {"label_ar": "الياسمين", "label_en": "Al Yasmin"},
+            "النخيل": {"label_ar": "النخيل", "label_en": "Al Nakheel"},
+            "الملقا": {"label_ar": "الملقا", "label_en": "Al Malqa"},
+        }
+        # Build reverse map (same logic as in the API handler)
+        en_to_ar: dict[str, str] = {}
+        for nk, entry in district_lookup.items():
+            en = (entry.get("label_en") or "").strip()
+            if en:
+                en_to_ar[en.lower()] = nk
+
+        # Simulate canonicalization of English inputs
+        inputs = ["Al Yasmin", "Al Nakheel"]
+        canonical = [normalize_district_key(td) for td in inputs]
+        resolved = []
+        for td in canonical:
+            if td in district_lookup:
+                resolved.append(td)
+            elif td.lower() in en_to_ar:
+                resolved.append(en_to_ar[td.lower()])
+            else:
+                resolved.append(td)
+
+        assert resolved == ["الياسمين", "النخيل"]
+
+    def test_arabic_name_not_double_resolved(self):
+        """Arabic names that already match should not be changed."""
+        district_lookup = {
+            "الياسمين": {"label_ar": "الياسمين", "label_en": "Al Yasmin"},
+        }
+        en_to_ar = {"al yasmin": "الياسمين"}
+
+        td = normalize_district_key("الياسمين")
+        if td in district_lookup:
+            result = td
+        elif td.lower() in en_to_ar:
+            result = en_to_ar[td.lower()]
+        else:
+            result = td
+        assert result == "الياسمين"
+
     def test_empty_input_skipped(self):
         norm = normalize_district_key("")
         assert norm == ""
