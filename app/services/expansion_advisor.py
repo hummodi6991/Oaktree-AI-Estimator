@@ -190,7 +190,7 @@ _CATEGORY_TO_DELIVERY_BUCKETS: dict[str, list[str]] = {
     "chicken": ["international", "traditional"],
     "shawarma": ["traditional"],
     "coffee": ["coffee_bakery"],
-    "cafe": ["coffee_bakery"],
+    "cafe": ["coffee", "coffee_bakery"],
     "fine dining": ["international"],
     "seafood": ["seafood"],
     "sandwich": ["international", "traditional"],
@@ -1129,6 +1129,25 @@ def _access_score(*, touches_road: bool, nearest_major_road_m: float | None, nea
     return _clamp(touch_signal * 0.40 + major_signal * 0.35 + road_density * 0.25)
 
 
+def _foot_traffic_score(nearby_amenity_count: int) -> float:
+    """Foot-traffic amenity proximity score for cafés.
+
+    Counts schools, mosques, parks, and malls within 500m.
+    More nearby amenities = more potential foot traffic for a café.
+
+    Targets:
+      0 amenities -> 30 (baseline — no nearby attractors)
+      2            -> 50
+      5            -> 70
+      10+          -> 90 (cap — diminishing returns)
+    """
+    if nearby_amenity_count <= 0:
+        return 30.0
+    # Log-scaled: steep gains for first few amenities, diminishing after
+    raw = 30.0 + 60.0 * (math.log1p(nearby_amenity_count) / math.log1p(12))
+    return min(90.0, max(30.0, raw))
+
+
 def _parking_score(*, area_m2: float, service_model: str, nearby_parking_count: int, access_score: float, parking_context_available: bool = True) -> float:
     area_signal = _clamp((area_m2 / 300.0) * 100.0)
     if not parking_context_available:
@@ -1565,7 +1584,7 @@ def _demand_blend_weights(service_model: str) -> tuple[float, float]:
     _BLENDS: dict[str, tuple[float, float]] = {
         "delivery_first": (0.40, 0.60),
         "qsr":            (0.60, 0.40),
-        "cafe":           (0.70, 0.30),
+        "cafe":           (0.55, 0.45),
         "dine_in":        (0.75, 0.25),
     }
     return _BLENDS.get(service_model, (0.60, 0.40))
@@ -4364,6 +4383,13 @@ def run_expansion_search(
         delivery_score = _delivery_score(delivery_listing_count)
         demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
 
+        # Café foot-traffic amenity bonus: adds up to +12 points of
+        # micro-differentiation based on nearby schools/mosques/parks/malls.
+        if service_model == "cafe" and _pid_key in _bulk_foot_traffic:
+            _ft_count = _bulk_foot_traffic[_pid_key]
+            _ft_bonus = (_foot_traffic_score(_ft_count) - 30.0) / 60.0 * 12.0  # 0–12 bonus
+            demand_score = _clamp(demand_score + _ft_bonus)
+
         confidence_score = _confidence_score(landuse_label, population_reach, delivery_listing_count)
         distance_to_nearest_branch_m = _nearest_branch_distance_m(
             _safe_float(row.get("lat")),
@@ -4689,6 +4715,70 @@ def run_expansion_search(
         t_parking_done = time.monotonic()
         logger.info("expansion_search timing: bulk_parking=%.2fs search_id=%s",
                      t_parking_done - t_parking_start, search_id)
+
+    # ── Bulk foot-traffic amenities (cafés only) ──
+    _bulk_foot_traffic: dict[str, int] = {}
+    if service_model == "cafe" and _shortlist_parcel_ids:
+        t_ft_start = time.monotonic()
+        # Query OSM for schools, mosques, parks, malls within 500m
+        _ft_query = None
+        if ea_parking_populated or parking_table_available:
+            # Use planet_osm_polygon + planet_osm_point if available
+            _ft_parts: list[str] = []
+            if _cached_table_available(db, "planet_osm_polygon"):
+                _ft_parts.append("""
+                    SELECT ST_Centroid(op.way) AS geom
+                    FROM planet_osm_polygon op
+                    WHERE op.way IS NOT NULL
+                      AND (
+                        lower(COALESCE(op.amenity, '')) IN ('school', 'university', 'college', 'place_of_worship', 'mosque')
+                        OR lower(COALESCE(op.leisure, '')) IN ('park', 'garden', 'playground')
+                        OR lower(COALESCE(op.shop, '')) = 'mall'
+                        OR lower(COALESCE(op.building, '')) IN ('mosque', 'school', 'university')
+                      )
+                """)
+            if _cached_table_available(db, "planet_osm_point"):
+                _ft_parts.append("""
+                    SELECT pt.way AS geom
+                    FROM planet_osm_point pt
+                    WHERE pt.way IS NOT NULL
+                      AND (
+                        lower(COALESCE(pt.amenity, '')) IN ('school', 'university', 'college', 'place_of_worship', 'mosque')
+                        OR lower(COALESCE(pt.leisure, '')) IN ('park', 'garden', 'playground')
+                        OR lower(COALESCE(pt.shop, '')) = 'mall'
+                      )
+                """)
+            if _ft_parts:
+                _ft_union = " UNION ALL ".join(_ft_parts)
+                _ft_query = f"""
+                    WITH pids(parcel_id) AS (VALUES {{values}}),
+                         foot_traffic_pois AS ({_ft_union})
+                    SELECT p.id::text AS parcel_id,
+                        COALESCE((
+                            SELECT COUNT(*) FROM foot_traffic_pois fp
+                            WHERE ST_DWithin(fp.geom::geography, ST_Centroid(p.geom)::geography, 500)
+                        ), 0) AS nearby_foot_traffic_count
+                    FROM pids
+                    JOIN {ARCGIS_PARCELS_TABLE} p ON p.id::text = pids.parcel_id
+                """
+        if _ft_query:
+            try:
+                _ft_values = ", ".join(f"(:pid_{i})" for i in range(len(_shortlist_parcel_ids)))
+                _ft_params = {f"pid_{i}": pid for i, pid in enumerate(_shortlist_parcel_ids)}
+                with db.begin_nested():
+                    _ft_rows = db.execute(
+                        text(_ft_query.format(values=_ft_values)),
+                        _ft_params,
+                    ).mappings().all()
+                for r in _ft_rows:
+                    _bulk_foot_traffic[str(r["parcel_id"])] = _safe_int(r.get("nearby_foot_traffic_count"))
+                logger.info("expansion_search bulk foot_traffic: enriched=%d/%d search_id=%s",
+                            len(_bulk_foot_traffic), len(_shortlist_parcel_ids), search_id)
+            except Exception:
+                logger.debug("expansion_search bulk foot_traffic failed", exc_info=True)
+        t_ft_done = time.monotonic()
+        logger.info("expansion_search timing: bulk_foot_traffic=%.2fs search_id=%s",
+                     t_ft_done - t_ft_start, search_id)
 
     _bulk_competitors: dict[str, list[dict[str, Any]]] = {}
     t_comp_start = time.monotonic()
