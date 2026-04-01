@@ -358,8 +358,8 @@ def _score_all_candidates(
         values_sql = ", ".join(values)
         sql = text(f"""
             UPDATE candidate_location cl
-            SET profitability_score = v.score,
-                success_proxy = v.proxy,
+            SET profitability_score = v.score::numeric,
+                success_proxy = v.proxy::numeric,
                 model_features = v.features::jsonb,
                 model_version = :version,
                 model_scored_at = :scored_at
