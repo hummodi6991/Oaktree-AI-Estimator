@@ -3101,31 +3101,32 @@ def _bulk_enrich_population(
         _pd_where = "pd.lat IS NOT NULL AND pd.lon IS NOT NULL"
 
     try:
-        result = db.execute(
-            text(f"""
-                WITH inputs AS (
+        with db.begin_nested():
+            result = db.execute(
+                text(f"""
+                    WITH inputs AS (
+                        SELECT
+                            unnest(CAST(:pids AS text[])) AS parcel_id,
+                            unnest(CAST(:lons AS double precision[])) AS lon,
+                            unnest(CAST(:lats AS double precision[])) AS lat
+                    )
                     SELECT
-                        unnest(:pids) AS parcel_id,
-                        unnest(:lons) AS lon,
-                        unnest(:lats) AS lat
-                )
-                SELECT
-                    i.parcel_id,
-                    COALESCE(pop.population_reach, 0) AS population_reach
-                FROM inputs i
-                LEFT JOIN LATERAL (
-                    SELECT COALESCE(SUM(pd.population), 0) AS population_reach
-                    FROM population_density pd
-                    WHERE {_pd_where}
-                      AND ST_DWithin(
-                          ST_SetSRID(ST_MakePoint(i.lon, i.lat), 4326)::geography,
-                          {_pd_geo},
-                          :radius_m
-                      )
-                ) pop ON TRUE
-            """),
-            {"pids": pids, "lons": lons, "lats": lats, "radius_m": demand_radius_m},
-        ).mappings().all()
+                        i.parcel_id,
+                        COALESCE(pop.population_reach, 0) AS population_reach
+                    FROM inputs i
+                    LEFT JOIN LATERAL (
+                        SELECT COALESCE(SUM(pd.population), 0) AS population_reach
+                        FROM population_density pd
+                        WHERE {_pd_where}
+                          AND ST_DWithin(
+                              ST_SetSRID(ST_MakePoint(i.lon, i.lat), 4326)::geography,
+                              {_pd_geo},
+                              :radius_m
+                          )
+                    ) pop ON TRUE
+                """),
+                {"pids": pids, "lons": lons, "lats": lats, "radius_m": demand_radius_m},
+            ).mappings().all()
 
         return {str(r["parcel_id"]): float(r["population_reach"]) for r in result}
     except Exception as exc:
@@ -3668,6 +3669,7 @@ def run_expansion_search(
         logger.warning("candidate_location count query failed, falling back to legacy: %s", exc)
 
     use_candidate_location = _cl_count >= 100
+    use_commercial_units = False
 
     if use_candidate_location:
         rows = _query_candidate_location_pool(
