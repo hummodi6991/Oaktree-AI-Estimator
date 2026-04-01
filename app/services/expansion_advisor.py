@@ -4133,6 +4133,7 @@ def run_expansion_search(
     parking_table_available = ea_parking_populated or _cached_table_available(db, "public.planet_osm_polygon")
     # ── Bulk delivery enrichment (replaces per-candidate N+1 pattern) ──
     _bulk_delivery: dict[str, dict[str, int]] = {}
+    _bulk_foot_traffic: dict[str, int] = {}
     if ea_delivery_populated:
         try:
             # Build a VALUES list of (parcel_id, lon, lat) for all candidates
@@ -4382,13 +4383,6 @@ def run_expansion_search(
         # Recompute demand_score if district fallback modified delivery_listing_count
         delivery_score = _delivery_score(delivery_listing_count)
         demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
-
-        # Café foot-traffic amenity bonus: adds up to +12 points of
-        # micro-differentiation based on nearby schools/mosques/parks/malls.
-        if service_model == "cafe" and _pid_key in _bulk_foot_traffic:
-            _ft_count = _bulk_foot_traffic[_pid_key]
-            _ft_bonus = (_foot_traffic_score(_ft_count) - 30.0) / 60.0 * 12.0  # 0–12 bonus
-            demand_score = _clamp(demand_score + _ft_bonus)
 
         confidence_score = _confidence_score(landuse_label, population_reach, delivery_listing_count)
         distance_to_nearest_branch_m = _nearest_branch_distance_m(
@@ -4717,7 +4711,6 @@ def run_expansion_search(
                      t_parking_done - t_parking_start, search_id)
 
     # ── Bulk foot-traffic amenities (cafés only) ──
-    _bulk_foot_traffic: dict[str, int] = {}
     if service_model == "cafe" and _shortlist_parcel_ids:
         t_ft_start = time.monotonic()
         # Query OSM for schools, mosques, parks, malls within 500m
@@ -4869,6 +4862,7 @@ def run_expansion_search(
     for prepared_item in prepared[:shortlist_size]:
       try:
         row = prepared_item["row"]
+        _pid_str = str(row.get("parcel_id") or "")
         area_m2 = prepared_item["area_m2"]
         population_reach = prepared_item["population_reach"]
         competitor_count = prepared_item["competitor_count"]
@@ -4879,6 +4873,14 @@ def run_expansion_search(
         landuse_code = prepared_item["landuse_code"]
         district = prepared_item["district"]
         demand_score = prepared_item["demand_score"]
+
+        # Café foot-traffic amenity bonus (applied in second pass
+        # after bulk enrichment has populated _bulk_foot_traffic).
+        if service_model == "cafe" and _pid_str in _bulk_foot_traffic:
+            _ft_count = _bulk_foot_traffic[_pid_str]
+            _ft_bonus = (_foot_traffic_score(_ft_count) - 30.0) / 60.0 * 12.0
+            demand_score = _clamp(demand_score + _ft_bonus)
+
         whitespace_score = prepared_item["whitespace_score"]
         fit_score = prepared_item["fit_score"]
         area_fit = float(prepared_item.get("area_fit") or 0.0)
@@ -4901,7 +4903,6 @@ def run_expansion_search(
         payback_band = prepared_item["payback_band"]
         provider_intelligence_composite = prepared_item["provider_intelligence_composite"]
 
-        _pid_str = str(row.get("parcel_id") or "")
         feature_snapshot_json = _candidate_feature_snapshot(
             db,
             parcel_id=_pid_str,
