@@ -2818,11 +2818,24 @@ def _query_candidate_location_pool(
         "limit": limit,
     }
 
+    # Arabic normalization in SQL: same TRANSLATE as legacy path
+    # Maps أ→ا إ→ا آ→ا ى→ي, strips tatweel, removes حي prefix.
+    _CL_NORM_SQL = (
+        "TRIM(REGEXP_REPLACE("
+        "TRANSLATE("
+        "COALESCE(cl.district_ar, ''), "
+        "E'\\u0623\\u0625\\u0622\\u0649\\u0640', "
+        "E'\\u0627\\u0627\\u0627\\u064A'"
+        "), "
+        "E'^\\u062D\\u064A\\\\s+', '', 'g'"
+        "))"
+    )
+
     if target_district_norm:
         district_clauses = []
         for i, td in enumerate(sorted(target_district_norm)):
             pname = f"td_{i}"
-            district_clauses.append(f"lower(cl.district_ar) = :{pname}")
+            district_clauses.append(f"lower({_CL_NORM_SQL}) = :{pname}")
             params[pname] = td.lower()
         district_filter = "AND (" + " OR ".join(district_clauses) + ")"
 
@@ -3131,6 +3144,75 @@ def _bulk_enrich_population(
         return {str(r["parcel_id"]): float(r["population_reach"]) for r in result}
     except Exception as exc:
         logger.warning("Bulk population enrichment failed: %s", exc, exc_info=True)
+        return {}
+
+
+def _bulk_enrich_competitors(
+    db: Session,
+    rows: list[dict],
+    category: str,
+    competition_radius_m: float = 1000.0,
+) -> dict[str, int]:
+    """Bulk-compute competitor_count for a set of candidate locations.
+
+    Returns {parcel_id: competitor_count} for all rows that have lat/lon.
+    Uses a single SQL query with unnest + LATERAL to avoid N+1.
+    """
+    if not rows:
+        return {}
+
+    # Build arrays of (parcel_id, lon, lat)
+    pids = []
+    lons = []
+    lats = []
+    for r in rows:
+        pid = str(r.get("parcel_id") or r.get("id") or "")
+        lon = r.get("lon")
+        lat = r.get("lat")
+        if pid and lon is not None and lat is not None:
+            pids.append(pid)
+            lons.append(float(lon))
+            lats.append(float(lat))
+
+    if not pids:
+        return {}
+
+    # Build category keys the same way the legacy path does
+    _cat_expanded = _expand_category(category)
+    category_keys = _cat_expanded["keys"]
+
+    try:
+        with db.begin_nested():
+            result = db.execute(
+                text("""
+                    WITH inputs AS (
+                        SELECT
+                            unnest(CAST(:pids AS text[])) AS parcel_id,
+                            unnest(CAST(:lons AS double precision[])) AS lon,
+                            unnest(CAST(:lats AS double precision[])) AS lat
+                    )
+                    SELECT
+                        i.parcel_id,
+                        COALESCE(comp.competitor_count, 0) AS competitor_count
+                    FROM inputs i
+                    LEFT JOIN LATERAL (
+                        SELECT COUNT(*) AS competitor_count
+                        FROM restaurant_poi rp
+                        WHERE lower(rp.category) = ANY(:category_keys)
+                          AND ST_DWithin(
+                              rp.geom::geography,
+                              ST_SetSRID(ST_MakePoint(i.lon, i.lat), 4326)::geography,
+                              :radius_m
+                          )
+                    ) comp ON TRUE
+                """),
+                {"pids": pids, "lons": lons, "lats": lats,
+                 "category_keys": category_keys, "radius_m": competition_radius_m},
+            ).mappings().all()
+
+        return {str(r["parcel_id"]): int(r["competitor_count"]) for r in result}
+    except Exception as exc:
+        logger.warning("Bulk competitor enrichment failed: %s", exc, exc_info=True)
         return {}
 
 
@@ -3681,9 +3763,17 @@ def run_expansion_search(
             per_district_cap=per_district_cap,
             limit=_CANDIDATE_POOL_LIMIT,
         )
+        # Log district distribution for diagnostics
+        _district_dist: dict[str, int] = {}
+        for _r in rows:
+            _d = _r.get("district") or "UNKNOWN"
+            _district_dist[_d] = _district_dist.get(_d, 0) + 1
         logger.info(
-            "expansion_search using candidate_location: %d candidates from %d primaries, search_id=%s",
-            len(rows), _cl_count, search_id,
+            "expansion_search using candidate_location: %d candidates from %d primaries, "
+            "district_distribution=%s, target_districts=%s, search_id=%s",
+            len(rows), _cl_count, dict(sorted(_district_dist.items(), key=lambda x: -x[1])[:10]),
+            sorted(target_district_norm) if target_district_norm else [],
+            search_id,
         )
         # Bulk-enrich population reach for candidate_location rows
         # (candidate_location path returns population_reach=0; we need real values)
@@ -3696,6 +3786,18 @@ def run_expansion_search(
             logger.info(
                 "expansion_search: bulk population enrichment applied to %d/%d candidates, search_id=%s",
                 len(_bulk_pop), len(rows), search_id,
+            )
+        # Bulk-enrich competitor counts for candidate_location rows
+        # (candidate_location path does not compute competitor_count)
+        _bulk_comp = _bulk_enrich_competitors(db, rows, category, competition_radius_m=1000.0)
+        if _bulk_comp:
+            for _r in rows:
+                _pid = str(_r.get("parcel_id") or _r.get("id") or "")
+                if _pid in _bulk_comp:
+                    _r["competitor_count"] = _bulk_comp[_pid]
+            logger.info(
+                "expansion_search: bulk competitor enrichment applied to %d/%d candidates, search_id=%s",
+                len(_bulk_comp), len(rows), search_id,
             )
     else:
         logger.info(
@@ -3738,6 +3840,18 @@ def run_expansion_search(
                 logger.info(
                     "expansion_search: bulk population enrichment applied to %d/%d commercial_unit candidates, search_id=%s",
                     len(_bulk_pop), len(rows), search_id,
+                )
+
+            # Bulk-enrich competitor counts for commercial_unit rows
+            _bulk_comp = _bulk_enrich_competitors(db, rows, category, competition_radius_m=1000.0)
+            if _bulk_comp:
+                for _r in rows:
+                    _pid = str(_r.get("parcel_id") or _r.get("id") or "")
+                    if _pid in _bulk_comp:
+                        _r["competitor_count"] = _bulk_comp[_pid]
+                logger.info(
+                    "expansion_search: bulk competitor enrichment applied to %d/%d commercial_unit candidates, search_id=%s",
+                    len(_bulk_comp), len(rows), search_id,
                 )
 
             # ── Resolve commercial unit districts to Arabic names ──────────
