@@ -906,6 +906,7 @@
     "reportSummaryLabel": "Executive Summary",
     "reportDetailedSummary": "Detailed Summary",
     "reportDimensionWinners": "Dimension Winners",
+    "memoAnalysisDetails": "Analysis Details",
     "memoFeatureSnapshot": "Data Quality & Sources",
     "memoScoreBreakdown": "Detailed Score Breakdown",
     "memoGateChecklist": "Gate Checklist",
@@ -962,6 +963,8 @@
     "tierHighPotential": "High Potential",
     "tierActualRent": "Actual rent",
     "tierCurrently": "Currently",
+    "tierActiveRestaurants": "Restaurants active here",
+    "tierAvgSuffix": "avg",
     "tierViewAqar": "View on Aqar"
   }
 }

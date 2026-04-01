@@ -84,8 +84,8 @@ export default function ExpansionMemoPanel({
             const snapshot = cand.feature_snapshot;
             const breakdown = cand.score_breakdown_json;
             const comps = (cand.comparable_competitors || []) as Array<Record<string, unknown>>;
-            const positives = toList(cand.top_positives_json);
-            const risks = toList(cand.top_risks_json);
+            const positives = toList(cand.top_positives_json).slice(0, 3);
+            const risks = toList(cand.top_risks_json).slice(0, 3);
 
             return (
               <>
@@ -148,10 +148,10 @@ export default function ExpansionMemoPanel({
                   </div>
                 </div>
 
-                {/* Theses - Cost & Revenue View */}
+                {/* Theses - Cost & Revenue View — collapsed by default */}
                 {(cand.demand_thesis || cand.cost_thesis) && (
-                  <div className="ea-report-section">
-                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoCostView")}</h5>
+                  <details className="ea-report-section">
+                    <summary className="ea-detail__section-title" style={{ cursor: "pointer" }}>{t("expansionAdvisor.memoAnalysisDetails")}</summary>
                     {cand.demand_thesis && (
                       <div className="ea-memo-callout ea-memo-callout--neutral">
                         <span className="ea-memo-callout__label">{t("expansionAdvisor.demandThesis")}</span>
@@ -164,7 +164,7 @@ export default function ExpansionMemoPanel({
                         <p className="ea-detail__text">{String(cand.cost_thesis)}</p>
                       </div>
                     )}
-                  </div>
+                  </details>
                 )}
 
                 {/* Site requirements */}
@@ -196,14 +196,14 @@ export default function ExpansionMemoPanel({
                   </div>
                 </div>
 
-                {/* Market intelligence */}
+                {/* Market intelligence — collapsed by default */}
                 {(mr.delivery_market_summary || mr.competitive_context || mr.district_fit_summary) && (
-                  <div className="ea-report-section">
-                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoMarketIntel")}</h5>
+                  <details className="ea-report-section">
+                    <summary className="ea-detail__section-title" style={{ cursor: "pointer" }}>{t("expansionAdvisor.memoMarketIntel")}</summary>
                     {mr.delivery_market_summary && <div className="ea-memo-callout ea-memo-callout--neutral"><span className="ea-memo-callout__label">{t("expansionAdvisor.deliveryMarket")}</span><p className="ea-detail__text">{mr.delivery_market_summary}</p></div>}
                     {mr.competitive_context && <div className="ea-memo-callout ea-memo-callout--neutral"><span className="ea-memo-callout__label">{t("expansionAdvisor.competitiveContext")}</span><p className="ea-detail__text">{mr.competitive_context}</p></div>}
                     {mr.district_fit_summary && <div className="ea-memo-callout ea-memo-callout--neutral"><span className="ea-memo-callout__label">{t("expansionAdvisor.districtFit")}</span><p className="ea-detail__text">{mr.district_fit_summary}</p></div>}
-                  </div>
+                  </details>
                 )}
 
                 {/* Competitors */}
@@ -225,10 +225,10 @@ export default function ExpansionMemoPanel({
                   </div>
                 )}
 
-                {/* Score breakdown — structured view */}
+                {/* Score breakdown — collapsed by default */}
                 {breakdown && breakdown.weighted_components && Object.keys(breakdown.weighted_components).length > 0 && (
-                  <div className="ea-report-section">
-                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.memoScoreBreakdown")}</h5>
+                  <details className="ea-report-section">
+                    <summary className="ea-detail__section-title" style={{ cursor: "pointer" }}>{t("expansionAdvisor.memoScoreBreakdown")}</summary>
                     <div className="ea-detail__grid">
                       {Object.entries(breakdown.weighted_components).map(([key, val]) => (
                         <div key={key} className="ea-detail__kv">
@@ -237,7 +237,7 @@ export default function ExpansionMemoPanel({
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </details>
                 )}
 
                 {/* Technical details — collapsed by default */}
