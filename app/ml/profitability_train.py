@@ -349,7 +349,7 @@ def _score_all_candidates(
             )
 
             values.append(
-                f"(:id_{idx}, :score_{idx}, :proxy_{idx}, :features_{idx}::jsonb)"
+                f"(:id_{idx}, :score_{idx}, :proxy_{idx}, :features_{idx})"
             )
 
         if not values:
@@ -360,7 +360,7 @@ def _score_all_candidates(
             UPDATE candidate_location cl
             SET profitability_score = v.score,
                 success_proxy = v.proxy,
-                model_features = v.features,
+                model_features = v.features::jsonb,
                 model_version = :version,
                 model_scored_at = :scored_at
             FROM (VALUES {values_sql}) AS v(id, score, proxy, features)
