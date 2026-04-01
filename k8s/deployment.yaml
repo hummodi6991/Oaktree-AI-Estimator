@@ -10,6 +10,8 @@ spec:
   template:
     metadata:
       labels: { app: oaktree-estimator }
+      annotations:
+        cache-bust: "2026-04-01-road-parking"
     spec:
       containers:
         - name: api
