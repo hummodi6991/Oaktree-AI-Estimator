@@ -4608,7 +4608,7 @@ def run_expansion_search(
             for i, pid in enumerate(_shortlist_parcel_ids):
                 coords = _shortlist_coords.get(pid)
                 if coords:
-                    _road_value_parts.append(f"(:rpid_{i}, :rlon_{i}::double precision, :rlat_{i}::double precision)")
+                    _road_value_parts.append(f"(:rpid_{i}, CAST(:rlon_{i} AS double precision), CAST(:rlat_{i} AS double precision))")
                     _road_params[f"rpid_{i}"] = pid
                     _road_params[f"rlon_{i}"] = coords[0]
                     _road_params[f"rlat_{i}"] = coords[1]
@@ -4705,7 +4705,7 @@ def run_expansion_search(
             for i, pid in enumerate(_shortlist_parcel_ids):
                 coords = _shortlist_coords.get(pid)
                 if coords:
-                    _park_value_parts.append(f"(:ppid_{i}, :plon_{i}::double precision, :plat_{i}::double precision)")
+                    _park_value_parts.append(f"(:ppid_{i}, CAST(:plon_{i} AS double precision), CAST(:plat_{i} AS double precision))")
                     _park_params[f"ppid_{i}"] = pid
                     _park_params[f"plon_{i}"] = coords[0]
                     _park_params[f"plat_{i}"] = coords[1]
@@ -4807,7 +4807,7 @@ def run_expansion_search(
                 for i, pid in enumerate(_shortlist_parcel_ids):
                     coords = _shortlist_coords.get(pid)
                     if coords:
-                        _ft_value_parts.append(f"(:fpid_{i}, :flon_{i}::double precision, :flat_{i}::double precision)")
+                        _ft_value_parts.append(f"(:fpid_{i}, CAST(:flon_{i} AS double precision), CAST(:flat_{i} AS double precision))")
                         _ft_params[f"fpid_{i}"] = pid
                         _ft_params[f"flon_{i}"] = coords[0]
                         _ft_params[f"flat_{i}"] = coords[1]
