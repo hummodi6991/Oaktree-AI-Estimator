@@ -136,8 +136,13 @@ export type ExpansionCandidate = {
   comparable_competitors_json?: ComparableCompetitor[];
   compare_rank?: number;
   site_fit_context?: SiteFitContext;
-  // Commercial unit fields
-  source_type?: "parcel" | "commercial_unit";
+  // Commercial unit / tier fields
+  source_type?: "parcel" | "commercial_unit" | "aqar" | "delivery_poi";
+  source_tier?: number | null;
+  is_vacant?: boolean | null;
+  current_tenant?: string | null;
+  current_category?: string | null;
+  rent_confidence?: string | null;
   commercial_unit_id?: string;
   listing_url?: string;
   image_url?: string;

@@ -4,6 +4,7 @@ import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import PaybackBadge from "./PaybackBadge";
 import WhyThisRank from "./WhyThisRank";
+import TierBadge from "./TierBadge";
 import { fmtSAR, fmtMeters, fmtScore, fmtM2, fmtSarPerM2, fmtMonths, candidateDistrictLabel, getDisplayScore, marketGapLabel, demandLevelLabel, locationMatchLabel, economicsStrengthLabel, dataCoverageLabel, branchOverlapLabel } from "./formatHelpers";
 
 type Props = {
@@ -48,7 +49,23 @@ export default function ExpansionCandidateCard({
   const risks = (candidate.top_risks_json || []).slice(0, 2);
 
   const isTop3 = (candidate.rank_position ?? 999) <= 3;
-  const isCommercialUnit = candidate.source_type === "commercial_unit";
+  const isCommercialUnit = candidate.source_type === "commercial_unit" || candidate.source_type === "aqar";
+
+  // Derive tier from explicit field, feature snapshot, or source_type fallback
+  const cl = candidate.feature_snapshot_json?.candidate_location as
+    | Record<string, unknown>
+    | undefined;
+  const sourceTier =
+    candidate.source_tier ??
+    (cl?.source_tier as number | undefined) ??
+    (isCommercialUnit ? 1 : null);
+  const clSourceType =
+    candidate.source_type ?? (cl?.source_type as string | undefined) ?? null;
+  const clCurrentCategory =
+    candidate.current_category ?? (cl?.current_category as string | undefined) ?? null;
+  const clAvgRating = (cl?.cl_avg_rating as number | undefined) ?? null;
+  const clRentConfidence =
+    candidate.rent_confidence ?? (cl?.rent_confidence as string | undefined) ?? null;
 
   const cls = [
     "ea-candidate",
@@ -95,6 +112,17 @@ export default function ExpansionCandidateCard({
         </div>
       </div>
 
+      {/* Tier badge — unified source tier indicator */}
+      <TierBadge
+        sourceTier={sourceTier}
+        sourceType={clSourceType}
+        isVacant={candidate.is_vacant ?? (cl?.is_vacant as boolean | undefined) ?? null}
+        currentCategory={clCurrentCategory}
+        clAvgRating={clAvgRating}
+        listingUrl={candidate.listing_url}
+        rentConfidence={clRentConfidence}
+      />
+
       {/* Commercial unit hero image — larger and prominent */}
       {isCommercialUnit && candidate.image_url && (
         <div className="ea-candidate__unit-image ea-candidate__unit-image--hero">
@@ -104,23 +132,6 @@ export default function ExpansionCandidateCard({
             loading="lazy"
             onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
           />
-          <span className="ea-candidate__aqar-trust">{t("expansionAdvisor.realListingFromAqar")}</span>
-        </div>
-      )}
-
-      {/* Commercial unit badge */}
-      {isCommercialUnit && (
-        <div className="ea-candidate__unit-badge">
-          <span className="ea-badge ea-badge--blue">{t("expansionAdvisor.commercialUnit")}</span>
-          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-            candidate.unit_listing_type === 'showroom'
-              ? 'bg-amber-100 text-amber-800'
-              : 'bg-teal-100 text-teal-800'
-          }`}>
-            {candidate.unit_listing_type === 'showroom'
-              ? t('expansionAdvisor.unitTypeShowroom')
-              : t('expansionAdvisor.unitTypeStore')}
-          </span>
         </div>
       )}
 
@@ -149,17 +160,6 @@ export default function ExpansionCandidateCard({
               <span className="ea-candidate__metric-label">{t("expansionAdvisor.streetWidth")}:</span>
               <span>{fmtMeters(candidate.unit_street_width_m)}</span>
             </div>
-          )}
-          {candidate.listing_url && (
-            <a
-              href={candidate.listing_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="oak-btn oak-btn--sm oak-btn--primary ea-candidate__aqar-btn"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {t("expansionAdvisor.viewOnAqar")} &#8599;
-            </a>
           )}
         </div>
       )}
