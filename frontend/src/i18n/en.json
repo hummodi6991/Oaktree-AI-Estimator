@@ -956,6 +956,12 @@
     "branchOverlap_none": "None",
     "branchOverlap_low": "Low",
     "branchOverlap_moderate": "Moderate",
-    "branchOverlap_high": "High"
+    "branchOverlap_high": "High",
+    "tierAvailableUnit": "Available Unit",
+    "tierProvenLocation": "Proven Location",
+    "tierHighPotential": "High Potential",
+    "tierActualRent": "Actual rent",
+    "tierCurrently": "Currently",
+    "tierViewAqar": "View on Aqar"
   }
 }

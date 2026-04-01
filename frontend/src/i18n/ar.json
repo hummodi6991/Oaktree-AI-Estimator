@@ -901,6 +901,12 @@
     "branchOverlap_none": "لا يوجد",
     "branchOverlap_low": "منخفض",
     "branchOverlap_moderate": "متوسط",
-    "branchOverlap_high": "مرتفع"
+    "branchOverlap_high": "مرتفع",
+    "tierAvailableUnit": "وحدة متاحة",
+    "tierProvenLocation": "موقع مُثبت",
+    "tierHighPotential": "إمكانات عالية",
+    "tierActualRent": "إيجار فعلي",
+    "tierCurrently": "حالياً",
+    "tierViewAqar": "عرض على عقار"
   }
 }
