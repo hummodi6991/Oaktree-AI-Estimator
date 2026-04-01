@@ -116,12 +116,24 @@ _CATEGORY_ALIAS_MAP: dict[str, dict] = {
             "coffee", "cafe", "قهوة", "مقهى", "كافيه",
         ],
     },
+    "shawarma": {
+        "keys": ["shawarma", "traditional"],
+        "raw_patterns": [
+            "shawarma", "شاورما", "شاورمة",
+        ],
+    },
     "traditional": {
         "keys": ["traditional"],
         "raw_patterns": [
             "arabic", "middle.eastern", "saudi", "lebanese", "syrian",
             "shawarma", "falafel", "kabsa", "mandi",
             "شعبي", "عربي", "كبسة", "مندي", "شاورما",
+        ],
+    },
+    "indian": {
+        "keys": ["indian", "asian"],
+        "raw_patterns": [
+            "indian", "هندي", "biryani", "بيرياني", "curry",
         ],
     },
     "asian": {
@@ -2818,12 +2830,21 @@ def _query_candidate_location_pool(
         "limit": limit,
     }
 
-    # Arabic normalization in SQL: same TRANSLATE as legacy path
-    # Maps أ→ا إ→ا آ→ا ى→ي, strips tatweel, removes حي prefix.
+    # Arabic normalization in SQL: must mirror Python normalize_district_key().
+    # 1. Strip NBSP (\u00A0), bidi marks (\u200F \u200E \u202A-\u202E \u2066-\u2069),
+    #    zero-width chars (\u200B-\u200D \uFEFF).
+    # 2. TRANSLATE: أ→ا إ→ا آ→ا ى→ي, delete tatweel.
+    # 3. REGEXP_REPLACE: strip leading "حي " prefix.
+    _CL_STRIP_INVISIBLE = (
+        "REGEXP_REPLACE("
+        "REPLACE(COALESCE(cl.district_ar, ''), E'\\u00A0', ' '), "
+        "E'[\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\uFEFF]', '', 'g'"
+        ")"
+    )
     _CL_NORM_SQL = (
         "TRIM(REGEXP_REPLACE("
         "TRANSLATE("
-        "COALESCE(cl.district_ar, ''), "
+        f"{_CL_STRIP_INVISIBLE}, "
         "E'\\u0623\\u0625\\u0622\\u0649\\u0640', "
         "E'\\u0627\\u0627\\u0627\\u064A'"
         "), "
@@ -2838,6 +2859,43 @@ def _query_candidate_location_pool(
             district_clauses.append(f"lower({_CL_NORM_SQL}) = :{pname}")
             params[pname] = td.lower()
         district_filter = "AND (" + " OR ".join(district_clauses) + ")"
+
+        # ── Debug: log resolved district filter values and per-district row counts ──
+        _debug_params = {f"td_{i}": td.lower() for i, td in enumerate(sorted(target_district_norm))}
+        logger.info(
+            "candidate_location_pool district filter: resolved_arabic_values=%s, "
+            "sql_param_values=%s, num_districts=%d",
+            sorted(target_district_norm),
+            _debug_params,
+            len(target_district_norm),
+        )
+        # Count matching rows per district_ar BEFORE the district_rank window
+        # to diagnose which districts the SQL TRANSLATE normalization actually matches.
+        try:
+            _diag_sql = sa_text(f"""
+                SELECT
+                    cl.district_ar,
+                    {_CL_NORM_SQL} AS norm_district,
+                    COUNT(*) AS cnt
+                FROM candidate_location cl
+                WHERE cl.is_cluster_primary = TRUE
+                  AND cl.geom IS NOT NULL
+                  AND COALESCE(cl.area_sqm, 120) BETWEEN :min_area AND :max_area
+                  {district_filter}
+                GROUP BY cl.district_ar, {_CL_NORM_SQL}
+                ORDER BY cnt DESC
+            """)
+            _diag_rows = db.execute(_diag_sql, params).mappings().all()
+            _diag_summary = {
+                str(r["district_ar"]): {"norm": str(r["norm_district"]), "count": int(r["cnt"])}
+                for r in _diag_rows
+            }
+            logger.info(
+                "candidate_location_pool district diagnostics: matched_districts=%s",
+                _diag_summary,
+            )
+        except Exception as _diag_exc:
+            logger.warning("candidate_location_pool district diagnostics failed: %s", _diag_exc)
 
     sql = sa_text(f"""
         WITH ranked AS (
@@ -3157,6 +3215,11 @@ def _bulk_enrich_competitors(
 
     Returns {parcel_id: competitor_count} for all rows that have lat/lon.
     Uses a single SQL query with unnest + LATERAL to avoid N+1.
+
+    Searches both restaurant_poi (Google Places data) and
+    delivery_source_record (HungerStation / delivery marketplace data) via
+    UNION to ensure categories like shawarma and indian that only exist in
+    delivery data are counted.
     """
     if not rows:
         return {}
@@ -3177,14 +3240,25 @@ def _bulk_enrich_competitors(
     if not pids:
         return {}
 
-    # Build category keys the same way the legacy path does
+    # Build category keys and regex the same way the legacy path does
     _cat_expanded = _expand_category(category)
     category_keys = _cat_expanded["keys"]
+    category_regex = _cat_expanded["regex"]
+
+    # Check if delivery_source_record has a geom column (Patch-5 migration)
+    _dsr_has_geom = _cached_column_exists(db, "delivery_source_record", "geom")
+
+    if _dsr_has_geom:
+        _dsr_geo = "dsr.geom::geography"
+        _dsr_where = "dsr.geom IS NOT NULL"
+    else:
+        _dsr_geo = "ST_SetSRID(ST_MakePoint(dsr.lon::double precision, dsr.lat::double precision), 4326)::geography"
+        _dsr_where = "dsr.lat IS NOT NULL AND dsr.lon IS NOT NULL"
 
     try:
         with db.begin_nested():
             result = db.execute(
-                text("""
+                text(f"""
                     WITH inputs AS (
                         SELECT
                             unnest(CAST(:pids AS text[])) AS parcel_id,
@@ -3197,17 +3271,34 @@ def _bulk_enrich_competitors(
                     FROM inputs i
                     LEFT JOIN LATERAL (
                         SELECT COUNT(*) AS competitor_count
-                        FROM restaurant_poi rp
-                        WHERE lower(rp.category) = ANY(:category_keys)
-                          AND ST_DWithin(
-                              rp.geom::geography,
-                              ST_SetSRID(ST_MakePoint(i.lon, i.lat), 4326)::geography,
-                              :radius_m
-                          )
+                        FROM (
+                            -- Source 1: restaurant_poi (Google Places)
+                            SELECT rp.geom
+                            FROM restaurant_poi rp
+                            WHERE lower(rp.category) = ANY(:category_keys)
+                              AND ST_DWithin(
+                                  rp.geom::geography,
+                                  ST_SetSRID(ST_MakePoint(i.lon, i.lat), 4326)::geography,
+                                  :radius_m
+                              )
+                            UNION ALL
+                            -- Source 2: delivery_source_record (HungerStation etc.)
+                            SELECT {_dsr_geo}::geometry AS geom
+                            FROM delivery_source_record dsr
+                            WHERE {_dsr_where}
+                              AND (lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
+                                   OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex)
+                              AND ST_DWithin(
+                                  {_dsr_geo},
+                                  ST_SetSRID(ST_MakePoint(i.lon, i.lat), 4326)::geography,
+                                  :radius_m
+                              )
+                        ) combined
                     ) comp ON TRUE
                 """),
                 {"pids": pids, "lons": lons, "lats": lats,
-                 "category_keys": category_keys, "radius_m": competition_radius_m},
+                 "category_keys": category_keys, "category_regex": category_regex,
+                 "radius_m": competition_radius_m},
             ).mappings().all()
 
         return {str(r["parcel_id"]): int(r["competitor_count"]) for r in result}
@@ -3259,12 +3350,19 @@ def run_expansion_search(
         _district_values = ", ".join(
             f"(:td_{i})" for i in range(len(td_norm))
         )
-        # TRANSLATE maps: أ→ا, إ→ا, آ→ا, ى→ي (same as ARABIC_VARIANTS)
-        # Then strip leading "حي " prefix and trim whitespace.
+        # Strip NBSP, bidi marks, zero-width chars, then TRANSLATE Arabic
+        # variants, then strip leading "حي " prefix.  Mirrors Python
+        # normalize_district_key() to avoid multi-district filter mismatches.
+        _P_STRIP_INVISIBLE = (
+            "REGEXP_REPLACE("
+            "REPLACE(COALESCE(p.district_label, ''), E'\\u00A0', ' '), "
+            "E'[\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\uFEFF]', '', 'g'"
+            ")"
+        )
         _NORM_SQL = (
             "TRIM(REGEXP_REPLACE("
             "TRANSLATE("
-            "COALESCE(p.district_label, ''), "
+            f"{_P_STRIP_INVISIBLE}, "
             "E'\\u0623\\u0625\\u0622\\u0649\\u0640', "
             "E'\\u0627\\u0627\\u0627\\u064A'"
             "), "
