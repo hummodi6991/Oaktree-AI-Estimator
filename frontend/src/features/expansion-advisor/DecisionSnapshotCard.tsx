@@ -11,53 +11,40 @@ type Props = {
   prominent?: boolean;
   /** Search-level pass count — prevents contradicting the search header */
   searchPassCount?: number;
+  onOpenMemo?: () => void;
 };
 
-export default function DecisionSnapshotCard({ candidate, report, memo, prominent, searchPassCount: passCount }: Props) {
+export default function DecisionSnapshotCard({ candidate, report, memo, prominent, searchPassCount: passCount, onOpenMemo }: Props) {
   const { t } = useTranslation();
   const snap = buildDecisionSnapshot(candidate, report, memo, passCount);
 
   return (
-    <div className={`ea-decision-snapshot${prominent ? " ea-decision-snapshot--prominent" : ""}`}>
-      <div className="ea-decision-snapshot__header">
-        <h4 className="ea-decision-snapshot__title">{t("expansionAdvisor.decisionSnapshot")}</h4>
-        <div className="ea-decision-snapshot__badges">
-          <ScorePill value={snap.finalScore} />
-          {/* Verdict badge */}
-          <span className={`ea-badge ea-badge--${snap.gateVerdict === "pass" ? "green" : snap.gateVerdict === "fail" ? "red" : "neutral"}`}>
-            {snap.gateVerdict === "pass" ? t("expansionAdvisor.gatePass") : snap.gateVerdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateNeedsValidation")}
-          </span>
-          {/* Confidence badge — separate from verdict */}
-          <ConfidenceBadge grade={snap.confidenceGrade} />
-        </div>
-      </div>
-      <div className="ea-decision-snapshot__body">
-        {/* No-pass notice when no gates pass */}
-        {!snap.allGatesPass && (
-          <div className="ea-decision-snapshot__notice">
-            {t("expansionAdvisor.noPassNotice")}
-          </div>
+    <div className={`ea-decision-snapshot ea-decision-snapshot--compact${prominent ? " ea-decision-snapshot--prominent" : ""}`}>
+      {/* Compact header row: Score | Verdict | Confidence | Format | Open Memo */}
+      <div className="ea-decision-snapshot__row-compact">
+        <ScorePill value={snap.finalScore} />
+        <span className={`ea-badge ea-badge--${snap.gateVerdict === "pass" ? "green" : snap.gateVerdict === "fail" ? "red" : "neutral"}`}>
+          {snap.gateVerdict === "pass" ? t("expansionAdvisor.gatePass") : snap.gateVerdict === "fail" ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateNeedsValidation")}
+        </span>
+        <ConfidenceBadge grade={snap.confidenceGrade} />
+        {snap.bestFormat && (
+          <span className="ea-decision-snapshot__format">{snap.bestFormat}</span>
         )}
-        <div className="ea-decision-snapshot__row">
-          <span className="ea-decision-snapshot__label">{snap.siteLabel}</span>
-          <span className="ea-decision-snapshot__value ea-decision-snapshot__value--lead">{snap.leadSite}</span>
-        </div>
-        <div className="ea-decision-snapshot__row">
-          <span className="ea-decision-snapshot__label">{snap.whyItWinsLabel}</span>
-          <span className="ea-decision-snapshot__value">{snap.whyItWins}</span>
-        </div>
-        <div className="ea-decision-snapshot__row">
-          <span className="ea-decision-snapshot__label">{t("expansionAdvisor.mainRisk")}</span>
-          <span className="ea-decision-snapshot__value">{snap.mainRisk}</span>
-        </div>
-        <div className="ea-decision-snapshot__row">
-          <span className="ea-decision-snapshot__label">{t("expansionAdvisor.reportBestFormat")}</span>
-          <span className="ea-decision-snapshot__value">{snap.bestFormat}</span>
-        </div>
-        <div className="ea-decision-snapshot__row">
-          <span className="ea-decision-snapshot__label">{t("expansionAdvisor.nextValidation")}</span>
-          <span className="ea-decision-snapshot__value">{snap.nextValidation}</span>
-        </div>
+        {onOpenMemo && (
+          <button
+            type="button"
+            className="oak-btn oak-btn--sm oak-btn--primary"
+            onClick={onOpenMemo}
+          >
+            {t("expansionAdvisor.viewDecisionMemo")}
+          </button>
+        )}
+      </div>
+
+      {/* Lead site — subtle secondary line */}
+      <div className="ea-decision-snapshot__runner-up">
+        <span className="ea-decision-snapshot__label">{snap.siteLabel}</span>
+        <span className="ea-decision-snapshot__value">{snap.leadSite}</span>
       </div>
     </div>
   );

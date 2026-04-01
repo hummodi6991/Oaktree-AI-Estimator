@@ -61,6 +61,7 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
   const [touched, setTouched] = useState(false);
   const [districtOptions, setDistrictOptions] = useState<DistrictOption[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showBranches, setShowBranches] = useState(false);
 
   useEffect(() => setBrief(initialValue), [initialValue]);
 
@@ -79,6 +80,7 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
     setBrief((prev) => ({ ...prev, brand_profile: { ...(prev.brand_profile || {}), [key]: value } }));
 
   const branches = brief.existing_branches || [];
+  const branchCount = branches.filter((b) => (b.lat !== 0 || b.lon !== 0) || (b.name && b.name.trim())).length;
   const errors = useMemo(() => validateBrief(brief), [brief]);
   const hasErrors = Boolean(errors.brand_name || errors.area_range || (errors.branches && errors.branches.length > 0));
   const showErrors = touched && hasErrors;
@@ -87,7 +89,6 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
     e.preventDefault();
     setTouched(true);
     if (hasErrors) return;
-    // Strip untouched placeholder branches (0,0 with no name) before submit
     const cleanedBranches = (brief.existing_branches || []).filter(
       (b) => (b.lat !== 0 || b.lon !== 0) || (b.name && b.name.trim()),
     );
@@ -100,10 +101,9 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
   };
 
   return (
-    <form className="ea-form" onSubmit={handleSubmit}>
+    <form className="ea-form ea-form--sticky-submit" onSubmit={handleSubmit}>
       {/* ── Essential fields (always visible) ── */}
       <div className="ea-form__section">
-        <h4 className="ea-form__section-title">{t("expansionAdvisor.brandBasics")}</h4>
         <div className="ea-form__row">
           <div className="ea-form__field">
             <label className="ea-form__label">{t("expansionAdvisor.brandName")}</label>
@@ -137,10 +137,9 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
         </div>
       </div>
 
-      {/* Size */}
+      {/* Area — 3-column compact row */}
       <div className="ea-form__section">
-        <h4 className="ea-form__section-title">{t("expansionAdvisor.unitSizing")}</h4>
-        <div className="ea-form__row">
+        <div className="ea-form__row ea-form__row--3col">
           <div className="ea-form__field">
             <label className="ea-form__label">{t("expansionAdvisor.minArea")}</label>
             <input
@@ -150,7 +149,7 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
               onChange={(e) => set("min_area_m2", e.target.value === "" ? 0 : Number(e.target.value))}
               disabled={loading}
               min={0}
-              placeholder="e.g. 80"
+              placeholder="80"
             />
           </div>
           <div className="ea-form__field">
@@ -162,7 +161,19 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
               onChange={(e) => set("max_area_m2", e.target.value === "" ? 0 : Number(e.target.value))}
               disabled={loading}
               min={0}
-              placeholder="e.g. 500"
+              placeholder="500"
+            />
+          </div>
+          <div className="ea-form__field">
+            <label className="ea-form__label">{t("expansionAdvisor.targetArea")}</label>
+            <input
+              className="ea-form__input"
+              type="number"
+              value={brief.target_area_m2 ?? ""}
+              onChange={(e) => set("target_area_m2", e.target.value === "" ? null : Number(e.target.value) || null)}
+              disabled={loading}
+              min={0}
+              placeholder="200"
             />
           </div>
         </div>
@@ -183,17 +194,34 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
         </div>
       </div>
 
-      {/* Existing branches */}
+      {/* Existing branches — collapsed to counter by default */}
       <div className="ea-form__section">
-        <h4 className="ea-form__section-title">{t("expansionAdvisor.existingBranchesLabel")}</h4>
-        <BranchLocationPicker
-          branches={branches}
-          onChange={(next) => set("existing_branches", next)}
-          disabled={loading}
-          districtOptions={districtOptions}
-        />
-        {touched && errors.branches && errors.branches.length > 0 && (
-          <span className="ea-form__error">{t("expansionAdvisor.validationLatRange")}</span>
+        <div className="ea-form__branch-summary">
+          <span className="ea-form__branch-count">
+            {branchCount > 0
+              ? t("expansionAdvisor.branchCountSummary", { count: branchCount })
+              : t("expansionAdvisor.noBranchesYet")}
+          </span>
+          <button
+            type="button"
+            className="oak-btn oak-btn--xs oak-btn--tertiary"
+            onClick={() => setShowBranches((v) => !v)}
+          >
+            {showBranches ? t("expansionAdvisor.hideBranches") : t("expansionAdvisor.editBranches")}
+          </button>
+        </div>
+        {showBranches && (
+          <>
+            <BranchLocationPicker
+              branches={branches}
+              onChange={(next) => set("existing_branches", next)}
+              disabled={loading}
+              districtOptions={districtOptions}
+            />
+            {touched && errors.branches && errors.branches.length > 0 && (
+              <span className="ea-form__error">{t("expansionAdvisor.validationLatRange")}</span>
+            )}
+          </>
         )}
       </div>
 
@@ -329,19 +357,17 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
               </div>
             </div>
           </div>
-
-          {/* Target area */}
-          <div className="ea-form__section">
-            <div className="ea-form__field">
-              <label className="ea-form__label">{t("expansionAdvisor.targetArea")}</label>
-              <input className="ea-form__input" type="number" value={brief.target_area_m2 ?? ""} onChange={(e) => set("target_area_m2", e.target.value === "" ? null : Number(e.target.value) || null)} disabled={loading} min={0} placeholder="e.g. 200" />
-            </div>
-          </div>
         </>
       )}
 
       {showErrors && <div className="ea-form__validation-summary">{t("expansionAdvisor.validationRequired")}</div>}
-      <button type="submit" className="oak-btn oak-btn--primary" disabled={loading || !brief.brand_name.trim()}>{loading ? t("expansionAdvisor.searchingCta") : t("expansionAdvisor.runSearchCta")}</button>
+
+      {/* Sticky submit button */}
+      <div className="ea-form__submit-sticky">
+        <button type="submit" className="oak-btn oak-btn--primary ea-form__submit-btn" disabled={loading || !brief.brand_name.trim()}>
+          {loading ? t("expansionAdvisor.searchingCta") : t("expansionAdvisor.runSearchCta")}
+        </button>
+      </div>
     </form>
   );
 }

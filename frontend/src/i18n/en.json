@@ -967,6 +967,21 @@
     "tierCurrently": "Currently",
     "tierActiveRestaurants": "Restaurants active here",
     "tierAvgSuffix": "avg",
-    "tierViewAqar": "View on Aqar"
+    "tierViewAqar": "View on Aqar",
+    "branchCountSummary": "{{count}} branches added",
+    "editBranches": "Edit",
+    "hideBranches": "Hide",
+    "memoTab_economics": "Economics",
+    "memoTab_market": "Market",
+    "memoTab_site": "Site",
+    "memoTab_risks": "Risks & Validation",
+    "revenueDisclaimer": "Estimated from modeled demand and comparable rents. Not a revenue forecast. Validate with actual lease terms.",
+    "paybackDisclaimer": "Estimated from modeled demand and comparable rents. Not a revenue forecast. Validate with actual lease terms.",
+    "execReportTitle": "Executive Report",
+    "execReportTopCandidates": "Top Candidates",
+    "execReportRecommendation": "Recommendation",
+    "execReportKeyRisks": "Key Risks",
+    "execReportNextSteps": "Next Steps",
+    "execCopySuccess": "Copied to clipboard"
   }
 }

@@ -12,6 +12,21 @@ export function fmtSAR(value: number | null | undefined): string {
   return formatCurrencySAR(value, FALLBACK);
 }
 
+/** Compact SAR formatting: SAR 168K, SAR 1.2M — no "Est. ~" prefix */
+export function fmtSARCompact(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return FALLBACK;
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) {
+    const m = value / 1_000_000;
+    return `SAR ${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+  }
+  if (abs >= 1_000) {
+    const k = value / 1_000;
+    return `SAR ${k % 1 === 0 ? k.toFixed(0) : k.toFixed(0)}K`;
+  }
+  return `SAR ${Math.round(value)}`;
+}
+
 export function fmtScore(value: number | null | undefined, digits = 0): string {
   return formatNumber(value, { maximumFractionDigits: digits, minimumFractionDigits: digits }, FALLBACK);
 }
