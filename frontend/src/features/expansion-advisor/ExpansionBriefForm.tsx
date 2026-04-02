@@ -251,10 +251,6 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
                   <option value="premium">{t("expansionAdvisor.premium")}</option>
                 </select>
               </div>
-              <div className="ea-form__field">
-                <label className="ea-form__label">{t("expansionAdvisor.averageCheck")}</label>
-                <input className="ea-form__input" type="number" value={brief.brand_profile?.average_check_sar ?? ""} onChange={(e) => setProfile("average_check_sar", Number(e.target.value) || null)} disabled={loading} />
-              </div>
             </div>
             <div className="ea-form__row">
               <div className="ea-form__field">

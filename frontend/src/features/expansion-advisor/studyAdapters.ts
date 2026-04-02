@@ -96,7 +96,7 @@ export function normalizeBriefPayload(raw: ExpansionBrief): ExpansionBrief {
 
   // Clean cannibalization
   if (!profile.cannibalization_tolerance_m) profile.cannibalization_tolerance_m = null;
-  if (!profile.average_check_sar) profile.average_check_sar = null;
+  profile.average_check_sar = null;
 
   // Clean target_area_m2
   const target_area_m2 = raw.target_area_m2 && raw.target_area_m2 > 0 ? raw.target_area_m2 : null;
