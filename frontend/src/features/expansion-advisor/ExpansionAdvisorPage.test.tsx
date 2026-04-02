@@ -384,7 +384,7 @@ describe("Brief payload normalization", () => {
       limit: 0,
       brand_profile: {
         price_tier: null,
-        average_check_sar: 0,
+        average_check_sar: null,
         primary_channel: null,
         target_customer: "",
         expansion_goal: null,
@@ -401,7 +401,6 @@ describe("Brief payload normalization", () => {
     expect(result.limit).toBe(25);
     expect(result.brand_profile?.preferred_districts).toBeNull();
     expect(result.brand_profile?.excluded_districts).toBeNull();
-    expect(result.brand_profile?.average_check_sar).toBeNull();
     expect(result.brand_profile?.cannibalization_tolerance_m).toBeNull();
     expect(result.brand_profile?.target_customer).toBeNull();
   });
@@ -419,7 +418,7 @@ describe("Brief payload normalization", () => {
       limit: 15,
       brand_profile: {
         price_tier: "premium",
-        average_check_sar: 120,
+        average_check_sar: 120,  // kept in type but now always nullified by normalizer
         primary_channel: "dine_in",
         target_customer: "families",
         expansion_goal: "flagship",
@@ -429,7 +428,7 @@ describe("Brief payload normalization", () => {
       },
     });
     expect(result.brand_profile?.price_tier).toBe("premium");
-    expect(result.brand_profile?.average_check_sar).toBe(120);
+    expect(result.brand_profile?.average_check_sar).toBeNull();
     expect(result.brand_profile?.preferred_districts).toEqual(["Olaya"]);
     expect(result.target_area_m2).toBe(120);
   });

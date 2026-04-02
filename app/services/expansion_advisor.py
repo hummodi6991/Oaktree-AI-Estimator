@@ -2491,6 +2491,71 @@ def _estimate_fitout_cost_sar(area_m2: float, service_model: str) -> float:
     return max(0.0, area_m2 * cost_per_m2)
 
 
+# Implied average check (SAR) by price_tier × category.
+# Used as a ticket-size multiplier in revenue estimation.
+# Sources: Riyadh F&B market norms, 2024-2025 aggregated ranges.
+_IMPLIED_CHECK_SAR: dict[str, dict[str, float]] = {
+    "value": {
+        "burger": 30.0,
+        "shawarma": 22.0,
+        "fried_chicken": 28.0,
+        "coffee": 18.0,
+        "cafe": 25.0,
+        "pizza": 30.0,
+        "sandwich": 22.0,
+        "healthy": 32.0,
+        "grills": 40.0,
+        "indian": 30.0,
+        "asian": 32.0,
+        "_default": 28.0,
+    },
+    "mid": {
+        "burger": 55.0,
+        "shawarma": 38.0,
+        "fried_chicken": 45.0,
+        "coffee": 35.0,
+        "cafe": 48.0,
+        "pizza": 50.0,
+        "sandwich": 40.0,
+        "healthy": 55.0,
+        "grills": 70.0,
+        "indian": 55.0,
+        "asian": 58.0,
+        "_default": 50.0,
+    },
+    "premium": {
+        "burger": 95.0,
+        "shawarma": 65.0,
+        "fried_chicken": 70.0,
+        "coffee": 60.0,
+        "cafe": 80.0,
+        "pizza": 85.0,
+        "sandwich": 65.0,
+        "healthy": 90.0,
+        "grills": 130.0,
+        "indian": 100.0,
+        "asian": 110.0,
+        "_default": 85.0,
+    },
+}
+_IMPLIED_CHECK_BASELINE_SAR = 50.0  # neutral midpoint when tier is unset
+
+
+def _implied_average_check(price_tier: str | None, category: str | None) -> float:
+    """Return implied average check SAR from price tier and category."""
+    tier = (price_tier or "").lower().strip()
+    cat = (category or "").lower().strip()
+    tier_map = _IMPLIED_CHECK_SAR.get(tier)
+    if not tier_map:
+        return _IMPLIED_CHECK_BASELINE_SAR
+    if cat in tier_map:
+        return tier_map[cat]
+    for key, val in tier_map.items():
+        if key != "_default" and key in cat:
+            return val
+    return tier_map.get("_default", _IMPLIED_CHECK_BASELINE_SAR)
+
+
 # Category throughput multipliers — high-frequency F&B categories have
 # higher average transaction velocity than their demand score implies.
 _CATEGORY_THROUGHPUT: dict[str, float] = {
@@ -2522,12 +2587,16 @@ def _estimate_revenue_index(
     population_reach: float,
     whitespace_score: float,
     category: str | None = None,
+    price_tier: str | None = None,
 ) -> float:
     """Composite revenue potential index using consistent sqrt scaling.
 
     Category throughput factor adjusts for inherent demand velocity
     of high-frequency F&B categories (burger, shawarma, coffee) vs
     slower-turn formats (grills, fine dining).
+
+    Ticket-size multiplier scales revenue potential by implied average
+    check derived from price_tier × category.
     """
     delivery_signal = _clamp((delivery_listing_count / 35.0) ** 0.5 * 100.0) if delivery_listing_count > 0 else 0.0
     population_signal = _clamp((population_reach / 80000.0) ** 0.5 * 100.0) if population_reach > 0 else 0.0
@@ -2535,7 +2604,12 @@ def _estimate_revenue_index(
     # Apply category throughput factor, clamped to [0.88, 1.12] to avoid
     # extreme distortion.  This is a soft signal, not a gate.
     factor = max(0.88, min(1.12, _category_throughput_factor(category)))
-    return _clamp(base * factor)
+    # Ticket-size multiplier: ratio of implied check to baseline.
+    # A premium burger (95 SAR) vs baseline (50 SAR) → 1.9× multiplier,
+    # clamped to [0.5, 2.5] to prevent extreme distortion.
+    implied_check = _implied_average_check(price_tier, category)
+    ticket_multiplier = max(0.5, min(2.5, implied_check / _IMPLIED_CHECK_BASELINE_SAR))
+    return _clamp(base * factor * ticket_multiplier)
 
 
 def _economics_score(
@@ -4429,6 +4503,7 @@ def run_expansion_search(
             population_reach,
             whitespace_score,
             category=category,
+            price_tier=effective_brand_profile.get("price_tier"),
         )
         economics_score = _economics_score(
             estimated_revenue_index=estimated_revenue_index,
