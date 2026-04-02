@@ -1,0 +1,74 @@
+name: Google Places Grid Search
+
+on:
+  workflow_dispatch:
+    inputs:
+      types:
+        description: "Comma-separated place types (restaurant,cafe,bakery,meal_takeaway,meal_delivery)"
+        required: false
+        default: "restaurant"
+      radius:
+        description: "Search radius in meters"
+        required: false
+        default: "2000"
+      dry_run:
+        description: "Dry run (estimate cost only)"
+        type: boolean
+        default: false
+      no_resume:
+        description: "Ignore previous progress, re-process all cells"
+        type: boolean
+        default: false
+
+concurrency:
+  group: google-places-grid
+  cancel-in-progress: false
+
+jobs:
+  grid-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Alembic migrations
+        env:
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_SSLMODE: ${{ secrets.POSTGRES_SSLMODE }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m alembic upgrade heads
+
+      - name: Run Google Places Grid Search
+        env:
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_SSLMODE: ${{ secrets.POSTGRES_SSLMODE }}
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          FLAGS="--types ${{ github.event.inputs.types }} --radius ${{ github.event.inputs.radius }}"
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            FLAGS="${FLAGS} --dry-run"
+          fi
+          if [ "${{ github.event.inputs.no_resume }}" = "true" ]; then
+            FLAGS="${FLAGS} --no-resume"
+          fi
+          echo "Running: python scripts/google_places_grid_search.py ${FLAGS}"
+          python scripts/google_places_grid_search.py ${FLAGS}
