@@ -350,7 +350,7 @@ def _upsert_poi(db, place: dict) -> tuple[bool, bool]:
         google_place_id=place_id,
         google_fetched_at=datetime.now(timezone.utc),
         google_confidence=0.95,  # direct Nearby Search = high confidence
-        district=vicinity,
+        district=vicinity[:128] if vicinity else None,
         raw={
             "types": types,
             "business_status": business_status,
