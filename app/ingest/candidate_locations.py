@@ -226,7 +226,7 @@ def _ingest_tier3_arcgis(db: Session, run_id: str) -> int:
             ST_X(ST_Centroid(p.geom)),
             p.district_label,
             NULL,  -- vacancy unknown
-            p.area_m2, 'actual',
+            p.area_m2, 'parcel_raw',
             'default',
             p.landuse_code, p.landuse_label,
             :run_id
