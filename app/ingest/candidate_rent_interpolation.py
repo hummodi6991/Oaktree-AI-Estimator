@@ -152,7 +152,7 @@ def _step_area_from_building_footprint(db: Session) -> int:
     sql = text("""
         UPDATE candidate_location cl
         SET area_sqm = sub.capped_area,
-            area_confidence = cl.area_confidence || '+footprint_cap'
+            area_confidence = 'footprint_cap'
         FROM (
             SELECT
                 cl2.id,
