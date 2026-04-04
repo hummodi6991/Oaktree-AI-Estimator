@@ -129,68 +129,12 @@ def _step_area_from_comps(db: Session) -> int:
 def _step_area_from_building_footprint(db: Session) -> int:
     """Cap area estimates using nearest MS building footprint.
 
-    For Tier 2 candidates that got area from comps, and for Tier 3 candidates
-    with raw parcel areas, check if a building footprint exists nearby. If the
-    footprint area is smaller than the current estimate, cap it.
-
-    This prevents assigning 200 m² to a restaurant that sits in a 90 m² building.
-    Only caps downward — never increases area.
+    Currently disabled — LATERAL join against ms_buildings_raw
+    is too slow for the full candidate set. Re-enable once a
+    pre-computed spatial join table is available.
     """
-    # First check if ms_buildings_raw has data
-    try:
-        has_buildings = db.execute(text(
-            "SELECT EXISTS(SELECT 1 FROM public.ms_buildings_raw LIMIT 1)"
-        )).scalar()
-    except Exception:
-        logger.warning("ms_buildings_raw not available, skipping footprint cap")
-        return 0
-
-    if not has_buildings:
-        logger.info("ms_buildings_raw is empty, skipping footprint cap")
-        return 0
-
-    sql = text("""
-        UPDATE candidate_location cl
-        SET area_sqm = sub.capped_area,
-            area_confidence = 'footprint_cap'
-        FROM (
-            SELECT
-                cl2.id,
-                ROUND(LEAST(cl2.area_sqm, bld.footprint_area)::numeric, 1) AS capped_area
-            FROM candidate_location cl2
-            CROSS JOIN LATERAL (
-                SELECT b.area_m2 AS footprint_area
-                FROM public.ms_buildings_raw b
-                WHERE ST_DWithin(
-                    cl2.geom::geography,
-                    b.geom::geography,
-                    :radius
-                )
-                ORDER BY ST_Distance(cl2.geom::geography, b.geom::geography)
-                LIMIT 1
-            ) bld
-            WHERE cl2.is_cluster_primary = TRUE
-              AND cl2.area_sqm IS NOT NULL
-              AND cl2.area_sqm > 0
-              -- Only cap Tier 2 (comp-interpolated) and Tier 3 (parcel-converted)
-              AND cl2.source_tier IN (2, 3)
-              -- Don't cap Tier 1 actual listings
-              AND cl2.area_confidence != 'actual'
-              -- Only cap if building is meaningfully smaller
-              AND bld.footprint_area < cl2.area_sqm * 0.85
-              -- Don't cap to absurdly small values
-              AND bld.footprint_area >= :min_area
-        ) sub
-        WHERE cl.id = sub.id
-    """)
-    result = db.execute(sql, {
-        "radius": AREA_FOOTPRINT_RADIUS_M,
-        "min_area": TIER3_MIN_UNIT_AREA,
-    })
-    count = result.rowcount
-    db.commit()
-    logger.info("Area footprint cap: capped %d candidates", count)
-    return count
+    logger.info("Area footprint cap: SKIPPED (performance — needs pre-computed join)")
+    return 0
 
 
 def _step_area_tier3_conversion(db: Session) -> int:
