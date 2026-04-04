@@ -4323,6 +4323,13 @@ def run_expansion_search(
     for row in rows:
       try:
         area_m2 = _safe_float(row.get("area_m2"))
+        # ── Search-time area cap for Tier 3 (parcel-derived) candidates ──
+        # Even after batch tiered conversion, some converted areas may exceed
+        # the user's requested max. Cap at max_area_m2 so the UI never shows
+        # a unit larger than what the operator asked for.
+        _source_tier = row.get("source_tier")
+        if _source_tier == 3 and max_area_m2 and area_m2 and area_m2 > max_area_m2:
+            area_m2 = max_area_m2
         population_reach = _safe_float(row.get("population_reach"))
         competitor_count = _safe_int(row.get("competitor_count"))
         delivery_listing_count = _safe_int(row.get("delivery_listing_count"))

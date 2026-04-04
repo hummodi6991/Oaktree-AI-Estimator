@@ -52,7 +52,7 @@ AREA_FOOTPRINT_RADIUS_M = 50   # radius to match candidate to nearest building f
 TIER3_SMALL_PARCEL_THRESHOLD = 300.0  # m² — parcels at or below this are kept as-is
 TIER3_DEFAULT_CONVERSION_FACTOR = 0.55  # fallback if empirical calibration returns nothing
 TIER3_MIN_UNIT_AREA = 30.0     # floor — no restaurant unit below 30 m²
-TIER3_MAX_UNIT_AREA = 800.0    # ceiling — cap unreasonably large estimates
+TIER3_MAX_UNIT_AREA = 300.0    # ceiling — no single restaurant unit above 300 m²
 
 # City-wide fallback rent
 CITY_DEFAULT_RENT_SAR_M2_YEAR = 900.0
@@ -208,29 +208,47 @@ def _step_area_tier3_conversion(db: Session) -> int:
             exc_info=True,
         )
 
-    # ── Step B: Apply conversion to large Tier 3 parcels ──
-    sql = text("""
-        UPDATE candidate_location
-        SET area_sqm = ROUND(
-                LEAST(
-                    GREATEST(area_sqm * :factor, :min_area),
-                    :max_area
-                )::numeric, 1
-            ),
-            area_confidence = 'parcel_converted'
-        WHERE source_tier = 3
-          AND is_cluster_primary = TRUE
-          AND area_sqm IS NOT NULL
-          AND area_sqm > :threshold
-          AND (area_confidence IS NULL OR area_confidence IN ('parcel_raw', 'actual', 'default'))
-    """)
-    result = db.execute(sql, {
-        "factor": empirical_factor,
-        "threshold": TIER3_SMALL_PARCEL_THRESHOLD,
-        "min_area": TIER3_MIN_UNIT_AREA,
-        "max_area": TIER3_MAX_UNIT_AREA,
-    })
-    large_count = result.rowcount
+    # ── Step B: Apply tiered conversion to large Tier 3 parcels ──
+    # Diminishing factor: bigger parcels contain more units, so each
+    # unit occupies a smaller share of the total parcel area.
+    tiers = [
+        (300.0, 500.0, 0.50),    # yields 150–250 m²
+        (500.0, 1000.0, 0.30),   # yields 150–300 m²
+        (1000.0, 999999.0, 0.15),  # yields 150–300 m² (capped)
+    ]
+
+    large_count = 0
+    for tier_min, tier_max, factor in tiers:
+        sql = text("""
+            UPDATE candidate_location
+            SET area_sqm = ROUND(
+                    LEAST(
+                        GREATEST(area_sqm * :factor, :min_area),
+                        :max_area
+                    )::numeric, 1
+                ),
+                area_confidence = 'parcel_converted'
+            WHERE source_tier = 3
+              AND is_cluster_primary = TRUE
+              AND area_sqm IS NOT NULL
+              AND area_sqm > :tier_min
+              AND area_sqm <= :tier_max
+              AND (area_confidence IS NULL OR area_confidence IN ('parcel_raw', 'actual', 'default'))
+        """)
+        result = db.execute(sql, {
+            "factor": factor,
+            "tier_min": tier_min,
+            "tier_max": tier_max,
+            "min_area": TIER3_MIN_UNIT_AREA,
+            "max_area": TIER3_MAX_UNIT_AREA,
+        })
+        tier_count = result.rowcount
+        large_count += tier_count
+        if tier_count > 0:
+            logger.info(
+                "Tier 3 area conversion: %d parcels in %.0f–%.0f m² range (factor=%.2f)",
+                tier_count, tier_min, tier_max, factor,
+            )
 
     # Mark small parcels as 'parcel_direct' (kept as-is but relabeled for clarity)
     result2 = db.execute(text("""
@@ -246,8 +264,8 @@ def _step_area_tier3_conversion(db: Session) -> int:
 
     db.commit()
     logger.info(
-        "Tier 3 area conversion: %d large parcels converted (factor=%.3f), %d small parcels kept as-is",
-        large_count, empirical_factor, small_count,
+        "Tier 3 area conversion: %d large parcels converted (tiered), %d small parcels kept as-is",
+        large_count, small_count,
     )
     return large_count + small_count
 
