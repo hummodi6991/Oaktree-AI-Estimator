@@ -920,7 +920,6 @@ def _default_brand_profile(brand_profile: dict[str, Any] | None = None) -> dict[
         "parking_sensitivity": "medium",
         "frontage_sensitivity": "medium",
         "visibility_sensitivity": "medium",
-        "target_customer": None,
         "expansion_goal": "balanced",
         "cannibalization_tolerance_m": 1800.0,
         "preferred_districts": [],
@@ -2791,12 +2790,12 @@ def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, 
                     INSERT INTO expansion_brand_profile (
                         id, search_id, price_tier, average_check_sar, primary_channel,
                         parking_sensitivity, frontage_sensitivity, visibility_sensitivity,
-                        target_customer, expansion_goal, cannibalization_tolerance_m,
+                        expansion_goal, cannibalization_tolerance_m,
                         preferred_districts_json, excluded_districts_json
                     ) VALUES (
                         :id, :search_id, :price_tier, :average_check_sar, :primary_channel,
                         :parking_sensitivity, :frontage_sensitivity, :visibility_sensitivity,
-                        :target_customer, :expansion_goal, :cannibalization_tolerance_m,
+                        :expansion_goal, :cannibalization_tolerance_m,
                         CAST(:preferred_districts_json AS jsonb), CAST(:excluded_districts_json AS jsonb)
                     )
                     ON CONFLICT (search_id) DO UPDATE SET
@@ -2806,7 +2805,6 @@ def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, 
                         parking_sensitivity = EXCLUDED.parking_sensitivity,
                         frontage_sensitivity = EXCLUDED.frontage_sensitivity,
                         visibility_sensitivity = EXCLUDED.visibility_sensitivity,
-                        target_customer = EXCLUDED.target_customer,
                         expansion_goal = EXCLUDED.expansion_goal,
                         cannibalization_tolerance_m = EXCLUDED.cannibalization_tolerance_m,
                         preferred_districts_json = EXCLUDED.preferred_districts_json,
@@ -2823,7 +2821,6 @@ def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, 
                     "parking_sensitivity": profile.get("parking_sensitivity"),
                     "frontage_sensitivity": profile.get("frontage_sensitivity"),
                     "visibility_sensitivity": profile.get("visibility_sensitivity"),
-                    "target_customer": profile.get("target_customer"),
                     "expansion_goal": profile.get("expansion_goal"),
                     "cannibalization_tolerance_m": profile.get("cannibalization_tolerance_m"),
                     "preferred_districts_json": json.dumps(profile.get("preferred_districts") or [], ensure_ascii=False),
@@ -2841,7 +2838,7 @@ def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, 
 def get_brand_profile(db: Session, search_id: str) -> dict[str, Any] | None:
     row = db.execute(text("""
         SELECT price_tier, average_check_sar, primary_channel, parking_sensitivity, frontage_sensitivity,
-               visibility_sensitivity, target_customer, expansion_goal, cannibalization_tolerance_m,
+               visibility_sensitivity, expansion_goal, cannibalization_tolerance_m,
                preferred_districts_json, excluded_districts_json
         FROM expansion_brand_profile WHERE search_id = :search_id
     """), {"search_id": search_id}).mappings().first()

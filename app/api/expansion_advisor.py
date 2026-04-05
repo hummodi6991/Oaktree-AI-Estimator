@@ -95,7 +95,6 @@ class ExpansionBrandProfileInput(BaseModel):
     parking_sensitivity: Literal["low", "medium", "high"] | None = None
     frontage_sensitivity: Literal["low", "medium", "high"] | None = None
     visibility_sensitivity: Literal["low", "medium", "high"] | None = None
-    target_customer: str | None = Field(default=None, max_length=64)
     expansion_goal: Literal["flagship", "neighborhood", "delivery_led", "balanced"] | None = None
     cannibalization_tolerance_m: float | None = None
     preferred_districts: list[str] | None = None

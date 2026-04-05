@@ -13,7 +13,6 @@ export type ExpansionBrandProfile = {
   parking_sensitivity?: "low" | "medium" | "high" | null;
   frontage_sensitivity?: "low" | "medium" | "high" | null;
   visibility_sensitivity?: "low" | "medium" | "high" | null;
-  target_customer?: string | null;
   expansion_goal?: "flagship" | "neighborhood" | "delivery_led" | "balanced" | null;
   cannibalization_tolerance_m?: number | null;
   preferred_districts?: string[] | null;
@@ -37,7 +36,6 @@ export type ExpansionAdvisorBrandProfileResponse = {
   price_tier?: string;
   average_check_sar?: number;
   primary_channel?: string;
-  target_customer?: string;
   expansion_goal?: string;
   preferred_districts?: string[];
   excluded_districts?: string[];

@@ -1467,7 +1467,6 @@ def test_run_expansion_search_production_payload():
         brand_profile={
             "strategy": "balanced",
             "price_tier": "mid",
-            "target_customer": "Families",
             "visibility_sensitivity": "35",
             "cannibalization_tolerance_m": 1500,
         },

@@ -386,7 +386,6 @@ describe("Brief payload normalization", () => {
         price_tier: null,
         average_check_sar: null,
         primary_channel: null,
-        target_customer: "",
         expansion_goal: null,
         preferred_districts: [],
         excluded_districts: [],
@@ -402,7 +401,6 @@ describe("Brief payload normalization", () => {
     expect(result.brand_profile?.preferred_districts).toBeNull();
     expect(result.brand_profile?.excluded_districts).toBeNull();
     expect(result.brand_profile?.cannibalization_tolerance_m).toBeNull();
-    expect(result.brand_profile?.target_customer).toBeNull();
   });
 
   it("preserves valid brand profile fields", () => {

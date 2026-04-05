@@ -252,12 +252,6 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
                 </select>
               </div>
             </div>
-            <div className="ea-form__row">
-              <div className="ea-form__field">
-                <label className="ea-form__label">{t("expansionAdvisor.targetCustomer")}</label>
-                <input className="ea-form__input" value={brief.brand_profile?.target_customer ?? ""} onChange={(e) => setProfile("target_customer", e.target.value || null)} disabled={loading} placeholder="e.g. Families, Young professionals" />
-              </div>
-            </div>
           </div>
 
           {/* Operating strategy */}

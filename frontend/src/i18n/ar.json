@@ -525,7 +525,6 @@
     "operatingStrategy": "استراتيجية التشغيل",
     "marketPreferences": "تفضيلات السوق",
     "priceTier": "فئة السعر",
-    "targetCustomer": "العميل المستهدف",
     "cannibalizationTolerance": "حد التداخل (م)",
     "preferredDistricts": "الأحياء المفضلة",
     "excludedDistricts": "الأحياء المستبعدة",
