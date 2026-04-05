@@ -418,7 +418,6 @@ describe("Brief payload normalization", () => {
         price_tier: "premium",
         average_check_sar: 120,  // kept in type but now always nullified by normalizer
         primary_channel: "dine_in",
-        target_customer: "families",
         expansion_goal: "flagship",
         preferred_districts: ["Olaya"],
         excluded_districts: ["Diriyah"],
