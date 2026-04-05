@@ -87,9 +87,6 @@ export function normalizeBriefPayload(raw: ExpansionBrief): ExpansionBrief {
   profile.frontage_sensitivity = normalizeEnum(profile.frontage_sensitivity, SENSITIVITY_MAP);
   profile.visibility_sensitivity = normalizeEnum(profile.visibility_sensitivity, SENSITIVITY_MAP);
 
-  // Coerce empty strings to null for free-text optional profile fields
-  if (!profile.target_customer || !profile.target_customer.trim()) profile.target_customer = null;
-
   // Clean district arrays
   if (profile.preferred_districts?.length === 0) profile.preferred_districts = null;
   if (profile.excluded_districts?.length === 0) profile.excluded_districts = null;

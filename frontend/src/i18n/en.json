@@ -525,7 +525,6 @@
     "operatingStrategy": "Operating strategy",
     "marketPreferences": "Market preferences",
     "priceTier": "Price tier",
-    "targetCustomer": "Target customer",
     "cannibalizationTolerance": "Cannibalization tolerance (m)",
     "preferredDistricts": "Preferred districts",
     "excludedDistricts": "Excluded districts",
