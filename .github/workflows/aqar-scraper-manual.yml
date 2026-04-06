@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       max_pages:
-        description: "Maximum pages to scrape"
+        description: "Maximum pages to scrape per listing type"
         required: false
-        default: "50"
+        default: "500"
       no_detail:
         description: "Skip detail page scraping (--no-detail)"
         type: boolean
@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
       listing_type:
-        description: "Listing types to crawl: all, store, or showroom"
+        description: "Listing types to crawl"
         required: false
         default: "all"
         type: choice
@@ -24,6 +24,8 @@ on:
           - all
           - store
           - showroom
+          - warehouse
+          - building
 
 concurrency:
   group: aqar-scraper
@@ -34,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    timeout-minutes: 300  # 5 hours
+    timeout-minutes: 360  # 6 hours
 
     steps:
       - name: Checkout
@@ -67,5 +69,6 @@ jobs:
           if [ "${{ github.event.inputs.skip_geocode }}" = "true" ]; then
             FLAGS="${FLAGS} --skip-geocode"
           fi
+          FLAGS="${FLAGS} --resume"
           echo "Running: python scripts/scrape_aqar.py ${FLAGS}"
           python scripts/scrape_aqar.py ${FLAGS}
