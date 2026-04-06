@@ -523,6 +523,64 @@ def classify_restaurant_suitability(listing: dict) -> dict:
     score = 0
     signals: list[str] = []
 
+    # ── Residential listing detection (negative classification) ──
+    # Aqar's building-for-rent category mixes commercial buildings with
+    # residential buildings (apartments, accommodation, furnished units).
+    # These are not suitable for F&B expansion and must be excluded.
+    title = listing.get("title", "") or ""
+    desc = listing.get("description", "") or ""
+    combined_text = f"{title} {desc}".lower()
+
+    # Arabic residential keywords
+    _RESIDENTIAL_AR_KEYWORDS = [
+        "شقة", "شقق", "سكني", "سكنية", "للسكن",
+        "دور سكني", "دور للسكن", "غرفة نوم", "غرف نوم",
+        "مفروشة", "مفروش", "عوائل", "عزاب",
+        "شقق مفروشة", "سكن طالبات", "سكن موظفات", "سكن عمال",
+        "استوديو", "ستوديو",
+        "عمارة سكنية", "مبنى سكني", "بناء سكني",
+        "فلة", "فيلا", "دوبلكس",
+    ]
+
+    # English residential keywords
+    _RESIDENTIAL_EN_KEYWORDS = [
+        "apartment", "apartments", "residential",
+        "accommodation", "accomodation",
+        "housing", "furnished",
+        "studio", "bedroom", "bedrooms",
+        "women's accommodation", "womens accommodation",
+        "employees accommodation", "students accommodation",
+        "workers housing", "staff housing",
+        "villa", "duplex", "townhouse",
+        "single family", "single-family",
+        "for living", "for residence",
+    ]
+
+    is_residential = False
+    matched_keyword = None
+
+    # Check Arabic keywords (substring match in original case)
+    title_desc_raw = f"{title} {desc}"
+    for kw in _RESIDENTIAL_AR_KEYWORDS:
+        if kw in title_desc_raw:
+            is_residential = True
+            matched_keyword = kw
+            break
+
+    # Check English keywords (lowercase match)
+    if not is_residential:
+        for kw in _RESIDENTIAL_EN_KEYWORDS:
+            if kw in combined_text:
+                is_residential = True
+                matched_keyword = kw
+                break
+
+    if is_residential:
+        listing["restaurant_score"] = 0
+        listing["restaurant_suitable"] = False
+        listing["restaurant_signals"] = [f"REJECTED residential: matched '{matched_keyword}'"]
+        return listing
+
     # All listings from the scraper are commercial spaces,
     # so they get a base score reflecting inherent restaurant potential.
     score += 15
@@ -578,7 +636,7 @@ def classify_restaurant_suitability(listing: dict) -> dict:
         signals.append("+5 has_mezzanine")
 
     listing["restaurant_score"] = score
-    listing["restaurant_suitable"] = True  # All commercial listings are expansion candidates
+    listing["restaurant_suitable"] = True  # Commercial listing — passed residential rejection
     listing["restaurant_signals"] = signals
     return listing
 

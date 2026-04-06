@@ -75,6 +75,7 @@ def _ingest_tier1_aqar(db: Session, run_id: str) -> int:
             :run_id
         FROM commercial_unit cu
         WHERE cu.status = 'active'
+          AND cu.restaurant_suitable = TRUE
           AND cu.lat IS NOT NULL
           AND cu.lon IS NOT NULL
           AND cu.lat BETWEEN :min_lat AND :max_lat

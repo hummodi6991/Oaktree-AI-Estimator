@@ -2972,6 +2972,7 @@ def _query_candidate_location_pool(
                   AND cl.source_tier = 1
                   AND cl.geom IS NOT NULL
                   AND COALESCE(cl.area_sqm, 120) BETWEEN :min_area AND :max_area
+                  AND (cl.rent_sar_m2_month IS NULL OR cl.rent_sar_m2_month >= 12)
                   {district_filter}
                 GROUP BY cl.district_ar, {_CL_NORM_SQL}
                 ORDER BY cnt DESC
@@ -3039,6 +3040,7 @@ def _query_candidate_location_pool(
               AND cl.source_tier = 1
               AND cl.geom IS NOT NULL
               AND COALESCE(cl.area_sqm, 120) BETWEEN :min_area AND :max_area
+              AND (cl.rent_sar_m2_month IS NULL OR cl.rent_sar_m2_month >= 12)
               {district_filter}
         )
         SELECT
