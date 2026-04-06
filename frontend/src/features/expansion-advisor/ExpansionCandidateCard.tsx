@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import PaybackBadge from "./PaybackBadge";
+import TierBadge from "./TierBadge";
 import { fmtSARCompact, fmtM2, fmtMonths, fmtMeters, candidateDistrictLabel, getDisplayScore } from "./formatHelpers";
 
 type Props = {
@@ -97,6 +98,14 @@ export default function ExpansionCandidateCard({
           )}
         </div>
       </div>
+
+      {/* Tier badge + listing link */}
+      <TierBadge
+        sourceTier={candidate.source_tier}
+        sourceType={candidate.source_type}
+        listingUrl={candidate.listing_url}
+        rentConfidence={clRentConfidence}
+      />
 
       {/* Commercial unit hero image */}
       {isCommercialUnit && candidate.image_url && (
