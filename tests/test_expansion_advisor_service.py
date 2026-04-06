@@ -25,6 +25,14 @@ class _Result:
     def __init__(self, rows):
         self._rows = rows
 
+    def scalar(self):
+        """Return first column of first row (for COUNT queries etc)."""
+        if self._rows and isinstance(self._rows[0], dict):
+            return next(iter(self._rows[0].values()), None)
+        if self._rows:
+            return self._rows[0]
+        return None
+
     def mappings(self):
         return self
 
@@ -58,6 +66,12 @@ class FakeDB:
     def execute(self, stmt, params=None):
         sql = stmt.text if hasattr(stmt, "text") else str(stmt)
         if "FROM candidate_base" in sql:
+            return _Result(self.candidate_rows)
+        # candidate_location count → return 0 so code falls to commercial_unit path
+        if "COUNT(*)" in sql and "candidate_location" in sql:
+            return _Result([{"count": 0}])
+        # commercial_unit queries → return candidate rows
+        if "FROM commercial_unit" in sql:
             return _Result(self.candidate_rows)
         if "INSERT INTO expansion_candidate" in sql:
             self.inserted.append(params)
