@@ -909,7 +909,14 @@ def main():
                     "City-level fallback for %s: area pages yielded only %d listings, trying %s",
                     listing_type, type_total_from_areas, city_url,
                 )
-                city_listings = fetch_neighborhood_listings(city_url, "Riyadh", max_pages=args.max_pages)
+                try:
+                    city_listings = fetch_neighborhood_listings(city_url, "Riyadh", max_pages=args.max_pages)
+                except Exception as e:
+                    logger.warning(
+                        "City-level fallback failed for %s (%s): %s — skipping",
+                        listing_type, city_url, e,
+                    )
+                    city_listings = []
                 logger.info("City-level fallback found %d listings for %s", len(city_listings), listing_type)
 
                 for k, listing in enumerate(city_listings):
