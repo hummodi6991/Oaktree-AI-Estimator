@@ -271,8 +271,19 @@ def _run_deduplication(db: Session, run_id: str) -> int:
         WHERE population_run_id = :run_id
     """), {"run_id": run_id})
 
-    # Mark the best candidate per cluster as primary
-    # Priority: lowest source_tier, then highest total_rating_count, then lowest id
+    # Step 1: Mark ALL Tier 1 candidates as primary.
+    # Each real listing (Aqar, etc.) is a distinct rentable unit and must never
+    # be collapsed by spatial dedup — multiple units legitimately exist within 50m
+    # in dense commercial areas of Riyadh.
+    db.execute(text("""
+        UPDATE candidate_location
+        SET is_cluster_primary = TRUE
+        WHERE population_run_id = :run_id
+          AND source_tier = 1
+    """), {"run_id": run_id})
+
+    # Step 2: For clusters with NO Tier 1 candidates, pick the best Tier 2/3
+    # candidate as primary using the original priority ordering.
     db.execute(text("""
         UPDATE candidate_location cl
         SET is_cluster_primary = TRUE
@@ -281,6 +292,13 @@ def _run_deduplication(db: Session, run_id: str) -> int:
             FROM candidate_location
             WHERE population_run_id = :run_id
               AND cluster_id IS NOT NULL
+              AND cluster_id NOT IN (
+                  SELECT DISTINCT cluster_id
+                  FROM candidate_location
+                  WHERE population_run_id = :run_id
+                    AND source_tier = 1
+                    AND cluster_id IS NOT NULL
+              )
             ORDER BY cluster_id,
                      source_tier ASC,
                      total_rating_count DESC NULLS LAST,
