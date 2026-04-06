@@ -168,7 +168,6 @@ def _step_area_tier3_conversion(db: Session) -> int:
                     ST_SetSRID(ST_MakePoint(cu.lon::float, cu.lat::float), 4326)
                 )
             WHERE cu.status = 'active'
-              AND cu.restaurant_suitable = TRUE
               AND cu.area_sqm IS NOT NULL
               AND cu.area_sqm > 10
               AND cu.lat IS NOT NULL

@@ -3103,7 +3103,6 @@ def _query_commercial_unit_candidates(
 
     filters = [
         "cu.status = 'active'",
-        "cu.restaurant_suitable = TRUE",
         "cu.lat IS NOT NULL",
         "cu.lon IS NOT NULL",
     ]
@@ -3999,7 +3998,7 @@ def run_expansion_search(
         try:
             _cu_count = int(db.execute(text(
                 "SELECT COUNT(*) FROM commercial_unit "
-                "WHERE status = 'active' AND restaurant_suitable = TRUE AND lat IS NOT NULL"
+                "WHERE status = 'active' AND lat IS NOT NULL"
             )).scalar() or 0)
         except Exception as exc:
             logger.warning("commercial unit count query failed: %s", exc)

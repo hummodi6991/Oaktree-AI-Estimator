@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Aqar.fm crawler: fetch Riyadh store-for-rent and showroom-for-rent listings by area/neighborhood."""
+"""Aqar.fm crawler: fetch Riyadh commercial-for-rent listings by area/neighborhood."""
 
 import argparse
 import json
+import logging
 import os
 import random
 import re
@@ -11,6 +12,9 @@ from decimal import Decimal
 
 import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 AREAS = [
     "north-of-riyadh",
@@ -23,6 +27,8 @@ AREAS = [
 LISTING_TYPES = {
     "store": "store-for-rent",
     "showroom": "showroom-for-rent",
+    "warehouse": "warehouse-for-rent",
+    "building": "building-for-rent",
 }
 
 _BASE_TMPL = "https://sa.aqar.fm/en/{listing_type}/riyadh"
@@ -82,7 +88,7 @@ def fetch_area(area: str, listing_type: str = "store-for-rent") -> list[dict]:
 # Phase 2: neighborhood page → listing cards
 # ---------------------------------------------------------------------------
 
-_CARD_HREF_RE = re.compile(r"(?:store|showroom)-for-rent-(\d+)")
+_CARD_HREF_RE = re.compile(r"(?:store|showroom|warehouse|building)-for-rent-(\d+)")
 _AREA_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*m²")
 _STREET_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*m\b")
 
@@ -517,11 +523,16 @@ def classify_restaurant_suitability(listing: dict) -> dict:
     score = 0
     signals: list[str] = []
 
-    # All listings from the scraper are commercial retail spaces
-    # (store-for-rent or showroom-for-rent), so they get a base score
-    # reflecting inherent restaurant potential.
+    # All listings from the scraper are commercial spaces,
+    # so they get a base score reflecting inherent restaurant potential.
     score += 15
     signals.append("+15 commercial_retail_base")
+
+    # Warehouse/building types get a boost for cloud kitchen / dark kitchen suitability
+    listing_type = listing.get("listing_type", "")
+    if listing_type in ("warehouse", "building"):
+        score += 30
+        signals.append(f"+30 {listing_type}_cloud_kitchen_boost")
 
     title = listing.get("title", "") or ""
     desc = listing.get("description", "") or ""
@@ -567,7 +578,7 @@ def classify_restaurant_suitability(listing: dict) -> dict:
         signals.append("+5 has_mezzanine")
 
     listing["restaurant_score"] = score
-    listing["restaurant_suitable"] = score >= _SUITABILITY_THRESHOLD
+    listing["restaurant_suitable"] = True  # All commercial listings are expansion candidates
     listing["restaurant_signals"] = signals
     return listing
 
@@ -672,11 +683,11 @@ def _listing_params(listing: dict) -> dict:
     }
 
 
-def mark_stale_listings(db, listing_types: list[str] | None = None) -> int:
+def mark_stale_listings(db, type_keys: list[str] | None = None) -> int:
     """Mark listings not seen in 28+ days as stale. Returns count of rows updated.
 
-    When ``listing_types`` is given (e.g. ``["store-for-rent"]``), only listings
-    whose ``listing_url`` contains one of the crawled type slugs are eligible for
+    When ``type_keys`` is given (e.g. ``["store", "showroom"]``), only listings
+    whose ``listing_type`` matches one of the crawled types are eligible for
     stale-marking.  This prevents marking store listings as stale when only
     showroom pages were crawled (and vice-versa).
     """
@@ -688,13 +699,13 @@ def mark_stale_listings(db, listing_types: list[str] | None = None) -> int:
     )
     params: dict = {"days": _STALE_DAYS}
 
-    if listing_types:
-        like_clauses = []
-        for i, lt in enumerate(listing_types):
+    if type_keys:
+        placeholders = []
+        for i, tk in enumerate(type_keys):
             key = f"lt_{i}"
-            params[key] = f"%{lt}%"
-            like_clauses.append(f"listing_url LIKE :{key}")
-        where += " AND (" + " OR ".join(like_clauses) + ")"
+            params[key] = tk
+            placeholders.append(f":{key}")
+        where += f" AND listing_type IN ({', '.join(placeholders)})"
 
     result = db.execute(
         sa_text(f"UPDATE commercial_unit SET status = 'stale' WHERE {where}"),
@@ -708,20 +719,63 @@ def mark_stale_listings(db, listing_types: list[str] | None = None) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _listing_already_exists(aqar_id: str, db) -> bool:
+    """Check if this listing already exists and was seen recently."""
+    from sqlalchemy import text as sa_text
+
+    result = db.execute(
+        sa_text("""
+            SELECT 1 FROM commercial_unit
+            WHERE aqar_id = :aqar_id
+              AND status = 'active'
+              AND last_seen_at > NOW() - INTERVAL '7 days'
+            LIMIT 1
+        """),
+        {"aqar_id": aqar_id},
+    ).first()
+    return result is not None
+
+
+def _touch_last_seen(aqar_id: str, db) -> None:
+    """Update last_seen_at for an already-existing listing."""
+    from sqlalchemy import text as sa_text
+
+    db.execute(
+        sa_text("""
+            UPDATE commercial_unit
+            SET last_seen_at = NOW()
+            WHERE aqar_id = :aqar_id
+        """),
+        {"aqar_id": aqar_id},
+    )
+
+
+_CITY_LEVEL_FALLBACK_THRESHOLD = 50
+
+
 def main():
     parser = argparse.ArgumentParser(description="Crawl Aqar.fm Riyadh commercial-for-rent listings")
     parser.add_argument("--area", choices=AREAS, help="Limit to a single area")
     parser.add_argument("--neighborhood", help="Limit to a single neighborhood slug (e.g. al-olaya)")
-    parser.add_argument("--max-pages", type=int, default=10, help="Max pages per neighborhood (default: 10)")
+    parser.add_argument("--max-pages", type=int, default=500,
+                        help="Max pages per neighborhood (default: 500)")
     parser.add_argument("--list-only", action="store_true", help="Only list neighborhoods, don't crawl listings")
     parser.add_argument("--no-detail", action="store_true", help="Skip fetching individual listing detail pages")
     parser.add_argument("--skip-geocode", action="store_true", help="Skip geocoding neighborhoods")
     parser.add_argument("--dry-run", action="store_true", help="Print results without writing to DB")
     parser.add_argument(
         "--listing-type",
-        choices=["all", "store", "showroom"],
+        choices=["all", "store", "showroom", "warehouse", "building"],
         default="all",
         help="Which listing types to crawl (default: all)",
+    )
+    parser.add_argument(
+        "--resume", action="store_true", default=True,
+        help="Skip listings already in DB with last_seen_at < 7 days (default: True)",
+    )
+    parser.add_argument(
+        "--no-resume", dest="resume", action="store_false",
+        help="Force re-scrape all listings even if already in DB",
     )
     args = parser.parse_args()
 
@@ -731,7 +785,7 @@ def main():
         print("WARN: GOOGLE_MAPS_API_KEY not set, skipping geocoding")
 
     db = None
-    need_db = do_geocode or not args.dry_run
+    need_db = do_geocode or not args.dry_run or args.resume
     if need_db:
         try:
             db = _get_db_session()
@@ -742,7 +796,6 @@ def main():
                 return
 
     areas = [args.area] if args.area else AREAS
-    stats = {"insert": 0, "update": 0, "total": 0}
 
     if args.listing_type == "all":
         type_keys = list(LISTING_TYPES.keys())
@@ -756,11 +809,20 @@ def main():
             print(f"  Listing type: {listing_type}")
             print(f"{'=' * 60}")
 
+            stats = {"scraped": 0, "skipped_existing": 0, "failed": 0,
+                     "insert": 0, "update": 0, "total": 0}
+            type_total_from_areas = 0
+            seen_aqar_ids: set[str] = set()  # For dedup across area + city-level
+
             for i, area in enumerate(areas):
                 if i > 0:
                     time.sleep(2)
                 print(f"\n=== {area} ({listing_type}) ===")
-                neighborhoods = fetch_area(area, listing_type=listing_type)
+                try:
+                    neighborhoods = fetch_area(area, listing_type=listing_type)
+                except requests.RequestException as e:
+                    logger.warning("Area URL %s/%s returned error: %s, skipping area", listing_type, area, e)
+                    continue
 
                 if args.neighborhood:
                     neighborhoods = [n for n in neighborhoods if n["slug"] == args.neighborhood]
@@ -793,6 +855,16 @@ def main():
                     geo = geo_cache.get(nbr["neighborhood"])
 
                     for k, listing in enumerate(listings):
+                        aqar_id = listing["aqar_id"]
+                        seen_aqar_ids.add(aqar_id)
+
+                        # Resumability: skip already-persisted listings
+                        if args.resume and db and _listing_already_exists(aqar_id, db):
+                            _touch_last_seen(aqar_id, db)
+                            stats["skipped_existing"] += 1
+                            _log_progress(stats, type_key, j, args.max_pages)
+                            continue
+
                         if not args.no_detail:
                             time.sleep(random.uniform(2, 3))
                             print(f"    [{k + 1}/{len(listings)}] fetching detail: {listing['listing_url']}")
@@ -801,41 +873,110 @@ def main():
                         if geo:
                             listing["lat"] = geo["lat"]
                             listing["lon"] = geo["lon"]
+                        # Tag listing type from crawl config
+                        listing["listing_type"] = type_key
                         # Classify restaurant suitability
                         classify_restaurant_suitability(listing)
-                        # Tag listing type from crawl config
-                        listing["listing_type"] = type_key  # 'store' or 'showroom'
                         # Compute price_per_sqm
                         listing["price_per_sqm"] = _compute_price_per_sqm(listing)
 
                         stats["total"] += 1
+                        stats["scraped"] += 1
 
                         if args.dry_run:
                             print(f"    [DRY-RUN] {listing}")
                         else:
                             action = upsert_listing(db, listing)
                             stats[action] += 1
-                            print(f"    [{action}] {listing['aqar_id']}  score={listing.get('restaurant_score')}"
+                            print(f"    [{action}] {aqar_id}  score={listing.get('restaurant_score')}"
                                   f"  suitable={listing.get('restaurant_suitable')}"
                                   f"  price_per_sqm={listing.get('price_per_sqm')}")
+
+                        _log_progress(stats, type_key, j, args.max_pages)
+
+                    type_total_from_areas += len(listings)
 
                     # Commit after each neighborhood batch
                     if db and not args.dry_run:
                         db.commit()
 
+            # ── City-level fallback ──────────────────────────────────────
+            # If area-level pages yielded few listings, try the city-level
+            # URL as a catch-all sweep (deduplicating by aqar_id).
+            if not args.list_only and type_total_from_areas < _CITY_LEVEL_FALLBACK_THRESHOLD:
+                city_url = _BASE_TMPL.format(listing_type=listing_type)
+                logger.info(
+                    "City-level fallback for %s: area pages yielded only %d listings, trying %s",
+                    listing_type, type_total_from_areas, city_url,
+                )
+                city_listings = fetch_neighborhood_listings(city_url, "Riyadh", max_pages=args.max_pages)
+                logger.info("City-level fallback found %d listings for %s", len(city_listings), listing_type)
+
+                for k, listing in enumerate(city_listings):
+                    aqar_id = listing["aqar_id"]
+                    if aqar_id in seen_aqar_ids:
+                        continue  # Already scraped from area pages
+                    seen_aqar_ids.add(aqar_id)
+
+                    if args.resume and db and _listing_already_exists(aqar_id, db):
+                        _touch_last_seen(aqar_id, db)
+                        stats["skipped_existing"] += 1
+                        _log_progress(stats, type_key, 0, args.max_pages)
+                        continue
+
+                    if not args.no_detail:
+                        time.sleep(random.uniform(2, 3))
+                        fetch_listing_detail(listing)
+
+                    listing["listing_type"] = type_key
+                    classify_restaurant_suitability(listing)
+                    listing["price_per_sqm"] = _compute_price_per_sqm(listing)
+                    stats["total"] += 1
+                    stats["scraped"] += 1
+
+                    if args.dry_run:
+                        print(f"    [DRY-RUN city] {listing}")
+                    else:
+                        action = upsert_listing(db, listing)
+                        stats[action] += 1
+
+                    _log_progress(stats, type_key, 0, args.max_pages)
+
+                if db and not args.dry_run:
+                    db.commit()
+
+            logger.info(
+                "Type %s done: scraped=%d, skipped_existing=%d, insert=%d, update=%d",
+                type_key, stats["scraped"], stats["skipped_existing"],
+                stats["insert"], stats["update"],
+            )
+
         # Mark stale listings after full scrape
         if db and not args.dry_run:
-            crawled_slugs = [LISTING_TYPES[k] for k in type_keys]
-            stale_count = mark_stale_listings(db, listing_types=crawled_slugs)
+            stale_count = mark_stale_listings(db, type_keys=type_keys)
             db.commit()
             if stale_count:
                 print(f"\nMarked {stale_count} listings as stale (not seen in {_STALE_DAYS}+ days)")
 
-        print(f"\n=== Summary: {stats['total']} processed, "
-              f"{stats['insert']} inserted, {stats['update']} updated ===")
+        print(f"\n=== Done ===")
     finally:
         if db is not None:
             db.close()
+
+
+def _log_progress(stats: dict, listing_type: str, current_page: int, max_pages: int) -> None:
+    """Log progress every 100 listings processed."""
+    processed = stats["scraped"] + stats["skipped_existing"]
+    if processed > 0 and processed % 100 == 0:
+        logger.info(
+            "Progress [%s]: scraped=%d, skipped_existing=%d, failed=%d, page=%d/%d",
+            listing_type,
+            stats["scraped"],
+            stats["skipped_existing"],
+            stats["failed"],
+            current_page,
+            max_pages,
+        )
 
 
 if __name__ == "__main__":
