@@ -402,7 +402,7 @@ def test_report_happy_path_returns_best_and_runner_up():
     report = get_recommendation_report(db, "search-1")
     assert report is not None
     assert report["recommendation"]["best_candidate_id"] == "c1"
-    assert report["meta"]["version"] == "expansion_advisor_v6.1"
+    assert report["meta"]["version"] == "expansion_advisor_v7"
 
 
 def test_brand_provider_scores_bounded():
@@ -779,7 +779,7 @@ def test_get_search_normalizes_sparse_legacy_row(monkeypatch):
     assert payload["notes"] == {}
     assert payload["existing_branches"] == []
     assert payload["brand_profile"] == {}
-    assert payload["meta"]["version"] == "expansion_advisor_v6.1"
+    assert payload["meta"]["version"] == "expansion_advisor_v7"
 
 
 def test_get_saved_search_normalizes_sparse_nested_payload(monkeypatch):
@@ -845,7 +845,7 @@ def test_get_recommendation_report_empty_state_is_deterministic(monkeypatch):
     report = get_recommendation_report(FakeDB(), "search-1")
 
     assert report is not None
-    assert report["meta"]["version"] == "expansion_advisor_v6.1"
+    assert report["meta"]["version"] == "expansion_advisor_v7"
     assert report["top_candidates"] == []
     assert set(report["recommendation"].keys()) == {
         "best_candidate_id",
