@@ -281,6 +281,121 @@ def _search_text_match(pattern: re.Pattern, *texts: str) -> re.Match | None:
     return None
 
 
+def _extract_property_type(soup: BeautifulSoup) -> str | None:
+    """Extract the 'Property Type' field from the Listing Details section.
+
+    Aqar only sets this field for residential listings. Offices and
+    commercial buildings typically leave it blank.
+
+    Returns the property type string (e.g. 'Residential') or None.
+    """
+    # Strategy 1: Find any element whose text contains exactly "Property Type"
+    for label_el in soup.find_all(string=lambda s: s and "Property Type" in s):
+        parent = label_el.parent
+        if parent is None:
+            continue
+
+        next_sib = parent.find_next_sibling()
+        if next_sib and next_sib.get_text(strip=True):
+            value = next_sib.get_text(strip=True)
+            if value and value != "Property Type":
+                return value
+
+        if parent.parent:
+            next_sib = parent.parent.find_next_sibling()
+            if next_sib and next_sib.get_text(strip=True):
+                value = next_sib.get_text(strip=True)
+                if value and value != "Property Type":
+                    return value
+
+        parent_text = parent.get_text(separator="|", strip=True)
+        parts = [p.strip() for p in parent_text.split("|") if p.strip()]
+        if "Property Type" in parts:
+            idx = parts.index("Property Type")
+            if idx + 1 < len(parts):
+                return parts[idx + 1]
+
+    # Strategy 2: Regex on the raw HTML as a fallback
+    html_str = str(soup)
+    match = re.search(
+        r"Property Type[^<>]*</[^>]+>\s*<[^>]+>([A-Za-z]+)",
+        html_str,
+    )
+    if match:
+        return match.group(1).strip()
+
+    # Strategy 3: Arabic equivalent (نوع العقار)
+    for label_el in soup.find_all(string=lambda s: s and "نوع العقار" in s):
+        parent = label_el.parent
+        if parent is None:
+            continue
+        next_sib = parent.find_next_sibling()
+        if next_sib and next_sib.get_text(strip=True):
+            return next_sib.get_text(strip=True)
+
+    return None
+
+
+def _extract_is_furnished(soup: BeautifulSoup) -> bool:
+    """Detect whether the Aqar 'Features' section includes 'Furnished'.
+
+    The Furnished feature is a strong negative signal for F&B because
+    operators want unfurnished shells (they install their own kitchen,
+    equipment, fixtures).
+
+    Returns True if 'Furnished' is found, False otherwise.
+    """
+    for el in soup.find_all(string=lambda s: s and s.strip() == "Furnished"):
+        return True
+
+    for el in soup.find_all(string=lambda s: s and "furnished" in s.lower()):
+        text = el.strip().lower()
+        if "unfurnished" in text:
+            continue
+        if text in ("furnished", "fully furnished") or text.startswith("furnished"):
+            return True
+
+    # Arabic equivalent (مفروش / مفروشة)
+    for el in soup.find_all(string=lambda s: s and ("مفروش" in s or "مفروشة" in s)):
+        return True
+
+    return False
+
+
+def _extract_description(soup: BeautifulSoup) -> str | None:
+    """Extract the actual ad body description from an Aqar listing detail page.
+
+    The description appears between the price and the "Listing Details" heading.
+    Avoid grabbing the metadata table that contains license numbers, parcel IDs,
+    and view counts.
+    """
+    price_el = soup.find(string=lambda s: s and ("/annually" in s or "/سنوي" in s))
+    if price_el:
+        current = price_el.parent
+        while current:
+            current = current.find_next()
+            if current is None:
+                break
+            text = current.get_text(separator=" ", strip=True) if hasattr(current, "get_text") else ""
+            if (len(text) > 50
+                    and "Listing Details" not in text
+                    and "Advertisement License" not in text
+                    and "Plan and Parcel" not in text
+                    and "View more" not in text):
+                if "Listing Details" in text or "Property Type" in text:
+                    break
+                return text[:2000]
+
+    for class_pattern in ("description", "ad-body", "listing-body", "details-text"):
+        el = soup.find("div", class_=lambda c: c and class_pattern in c.lower())
+        if el:
+            text = el.get_text(separator=" ", strip=True)
+            if len(text) > 50:
+                return text[:2000]
+
+    return None
+
+
 def _extract_detail_from_html(html: str) -> dict:
     """Extract detail fields by parsing the detail page HTML."""
     soup = BeautifulSoup(html, "html.parser")
@@ -295,22 +410,8 @@ def _extract_detail_from_html(html: str) -> dict:
         pm = _PHONE_RE.search(page_text)
         phone = pm.group(0).strip() if pm else None
 
-    # Full description: look for description container
-    desc = ""
-    for sel in ("div[class*='desc']", "div[class*='content']", "div[class*='body']", "p[class*='desc']"):
-        el = soup.select_one(sel)
-        if el:
-            desc = el.get_text(" ", strip=True)
-            if len(desc) > 50:
-                break
-    if not desc:
-        # Fallback: longest <p> on the page
-        longest = ""
-        for p in soup.find_all("p"):
-            t = p.get_text(" ", strip=True)
-            if len(t) > len(longest):
-                longest = t
-        desc = longest
+    # Extract the actual ad description (not metadata)
+    desc = _extract_description(soup) or ""
 
     facade = None
     fm = _FACADE_RE.search(page_text)
@@ -329,6 +430,8 @@ def _extract_detail_from_html(html: str) -> dict:
         "facade_direction": facade,
         "contact_phone": phone,
         "num_floors": num_floors,
+        "property_type": _extract_property_type(soup),
+        "is_furnished": _extract_is_furnished(soup),
     }
 
 
@@ -352,6 +455,14 @@ def fetch_listing_detail(listing: dict) -> dict:
     listing["facade_direction"] = detail["facade_direction"]
     listing["contact_phone"] = detail["contact_phone"]
     listing["num_floors"] = detail["num_floors"]
+
+    # Extract Aqar's structured Property Type field (set on residential listings)
+    if detail["property_type"]:
+        listing["property_type"] = detail["property_type"]
+
+    # Extract Furnished feature flag (negative signal for F&B)
+    listing["is_furnished"] = detail["is_furnished"]
+
     return listing
 
 
@@ -680,6 +791,8 @@ def upsert_listing(db, listing: dict) -> str:
                 "has_drive_thru = :has_drive_thru, facade_direction = :facade_direction, "
                 "contact_phone = :contact_phone, "
                 "listing_type = :listing_type, "
+                "property_type = :property_type, "
+                "is_furnished = :is_furnished, "
                 "lat = COALESCE(:lat, commercial_unit.lat), "
                 "lon = COALESCE(:lon, commercial_unit.lon), "
                 "image_url = :image_url, listing_url = :listing_url, "
@@ -699,13 +812,13 @@ def upsert_listing(db, listing: dict) -> str:
                 "(aqar_id, title, description, neighborhood, listing_url, image_url, "
                 "price_sar_annual, price_per_sqm, area_sqm, street_width_m, "
                 "num_floors, has_mezzanine, has_drive_thru, facade_direction, "
-                "contact_phone, listing_type, lat, lon, "
+                "contact_phone, listing_type, property_type, is_furnished, lat, lon, "
                 "restaurant_score, restaurant_suitable, restaurant_signals, "
                 "status, first_seen_at, last_seen_at) "
                 "VALUES (:aqar_id, :title, :description, :neighborhood, :listing_url, :image_url, "
                 ":price_sar_annual, :price_per_sqm, :area_sqm, :street_width_m, "
                 ":num_floors, :has_mezzanine, :has_drive_thru, :facade_direction, "
-                ":contact_phone, :listing_type, :lat, :lon, "
+                ":contact_phone, :listing_type, :property_type, :is_furnished, :lat, :lon, "
                 ":restaurant_score, :restaurant_suitable, :restaurant_signals, "
                 "'active', now(), now())"
             ),
@@ -733,6 +846,8 @@ def _listing_params(listing: dict) -> dict:
         "facade_direction": listing.get("facade_direction"),
         "contact_phone": listing.get("contact_phone"),
         "listing_type": listing.get("listing_type"),
+        "property_type": listing.get("property_type"),
+        "is_furnished": listing.get("is_furnished"),
         "lat": Decimal(str(listing["lat"])) if listing.get("lat") else None,
         "lon": Decimal(str(listing["lon"])) if listing.get("lon") else None,
         "restaurant_score": listing.get("restaurant_score"),

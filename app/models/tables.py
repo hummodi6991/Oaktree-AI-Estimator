@@ -392,7 +392,9 @@ class CommercialUnit(Base):
     has_drive_thru = Column(Boolean)
     facade_direction = Column(String(32))
     contact_phone = Column(Text)
-    listing_type = Column(String(32))  # 'store' or 'showroom'
+    listing_type = Column(String(32))  # 'store', 'showroom', 'warehouse', 'building'
+    property_type = Column(String(64))  # 'Residential', 'Commercial', etc. — from Aqar's structured field
+    is_furnished = Column(Boolean)  # True if Aqar's Features list includes 'Furnished'
     lat = Column(Numeric(10, 7))
     lon = Column(Numeric(10, 7))
     restaurant_score = Column(Integer)
@@ -406,6 +408,8 @@ class CommercialUnit(Base):
         Index("ix_commercial_unit_neighborhood", "neighborhood"),
         Index("ix_commercial_unit_status", "status"),
         Index("ix_commercial_unit_restaurant_suitable", "restaurant_suitable"),
+        Index("ix_commercial_unit_property_type", "property_type"),
+        Index("ix_commercial_unit_is_furnished", "is_furnished"),
     )
 
 
