@@ -70,7 +70,7 @@ def test_saved_search_crud_endpoints(monkeypatch):
                 "existing_branches": [],
                 "request_json": {},
                 "notes": {},
-                "meta": {"version": "expansion_advisor_v6.1", "parcel_source": "arcgis_only", "excluded_sources": ["suhail", "inferred_parcels"]},
+                "meta": {"version": "expansion_advisor_v7", "parcel_source": "listings_only", "excluded_sources": ["arcgis_parcels", "hungerstation_poi", "suhail", "inferred_parcels"]},
             },
             "candidates": [{"id": "c1", "gate_reasons_json": {"passed": [], "failed": [], "unknown": [], "thresholds": {}, "explanations": {}}, "feature_snapshot_json": {"context_sources": {}, "missing_context": [], "data_completeness_score": 0}, "score_breakdown_json": {"weights": {}, "inputs": {}, "weighted_components": {}, "final_score": 0}}],
         }],
@@ -87,7 +87,7 @@ def test_saved_search_crud_endpoints(monkeypatch):
             "filters_json": {},
             "ui_state_json": {},
             "description": None,
-            "search": {"id": "search-1", "target_districts": [], "existing_branches": [], "request_json": {}, "notes": {}, "meta": {"version": "expansion_advisor_v6.1", "parcel_source": "arcgis_only", "excluded_sources": ["suhail", "inferred_parcels"]}},
+            "search": {"id": "search-1", "target_districts": [], "existing_branches": [], "request_json": {}, "notes": {}, "meta": {"version": "expansion_advisor_v7", "parcel_source": "listings_only", "excluded_sources": ["arcgis_parcels", "hungerstation_poi", "suhail", "inferred_parcels"]}},
             "candidates": [{"id": "c1", "gate_reasons_json": {"passed": [], "failed": [], "unknown": [], "thresholds": {}, "explanations": {}}, "feature_snapshot_json": {"context_sources": {}, "missing_context": [], "data_completeness_score": 0}, "score_breakdown_json": {"weights": {}, "inputs": {}, "weighted_components": {}, "final_score": 0}}],
         },
     )
@@ -106,7 +106,7 @@ def test_saved_search_crud_endpoints(monkeypatch):
 
     assert created.status_code == 200
     assert listed.json()["items"][0]["id"] == "saved-1"
-    assert listed.json()["items"][0]["search"]["meta"]["version"] == "expansion_advisor_v6.1"
+    assert listed.json()["items"][0]["search"]["meta"]["version"] == "expansion_advisor_v7"
     assert fetched.json()["candidates"][0]["id"] == "c1"
     assert fetched.json()["selected_candidate_ids"] == []
     assert patched.json()["title"] == "Renamed"

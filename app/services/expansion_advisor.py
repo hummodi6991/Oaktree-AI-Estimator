@@ -22,9 +22,9 @@ logger = logging.getLogger(__name__)
 ARCGIS_PARCELS_TABLE = "public.riyadh_parcels_arcgis_proxy"
 
 # Candidate pool limits
-_CANDIDATE_POOL_LIMIT = 600          # max total candidates from SQL
+_CANDIDATE_POOL_LIMIT = 2000         # max total candidates from SQL
 _PER_DISTRICT_MIN_CAP = 5            # minimum parcels per district in stratified mode
-_PER_DISTRICT_MAX_CAP = 40           # upper bound per district to prevent one district hoarding slots
+_PER_DISTRICT_MAX_CAP = 200          # upper bound per district — raised for listings-only pool
 
 # Expansion Advisor normalized table names (from config)
 _EA_ROADS_TABLE = settings.EXPANSION_ROADS_TABLE
@@ -560,9 +560,9 @@ _EXPANSION_CITY = "riyadh"
 _EXPANSION_AQAR_ASSET = "commercial"
 _EXPANSION_AQAR_UNIT = "retail"
 _EXPANSION_DEFAULT_RENT_SAR_M2_YEAR = 900.0
-_EXPANSION_VERSION = "expansion_advisor_v6.1"
-_EXPANSION_PARCEL_SOURCE = "arcgis_only"
-_EXPANSION_EXCLUDED_SOURCES = ["suhail", "inferred_parcels"]
+_EXPANSION_VERSION = "expansion_advisor_v7"
+_EXPANSION_PARCEL_SOURCE = "listings_only"
+_EXPANSION_EXCLUDED_SOURCES = ["arcgis_parcels", "hungerstation_poi", "suhail", "inferred_parcels"]
 _EXPANSION_BULK_PERSIST_CHUNK_SIZE = max(
     10,
     int(os.getenv("EXPANSION_BULK_PERSIST_CHUNK_SIZE", "100")),
@@ -2969,6 +2969,7 @@ def _query_candidate_location_pool(
                     COUNT(*) AS cnt
                 FROM candidate_location cl
                 WHERE cl.is_cluster_primary = TRUE
+                  AND cl.source_tier = 1
                   AND cl.geom IS NOT NULL
                   AND COALESCE(cl.area_sqm, 120) BETWEEN :min_area AND :max_area
                   {district_filter}
@@ -3035,6 +3036,7 @@ def _query_candidate_location_pool(
                 ) AS district_rank
             FROM candidate_location cl
             WHERE cl.is_cluster_primary = TRUE
+              AND cl.source_tier = 1
               AND cl.geom IS NOT NULL
               AND COALESCE(cl.area_sqm, 120) BETWEEN :min_area AND :max_area
               {district_filter}
@@ -3932,12 +3934,12 @@ def run_expansion_search(
     try:
         _cl_count = int(db.execute(text(
             "SELECT COUNT(*) FROM candidate_location "
-            "WHERE is_cluster_primary = TRUE AND geom IS NOT NULL"
+            "WHERE is_cluster_primary = TRUE AND source_tier = 1 AND geom IS NOT NULL"
         )).scalar() or 0)
     except Exception as exc:
         logger.warning("candidate_location count query failed, falling back to legacy: %s", exc)
 
-    use_candidate_location = _cl_count >= 100
+    use_candidate_location = _cl_count >= 10
     use_commercial_units = False
 
     if use_candidate_location:
@@ -3988,35 +3990,25 @@ def run_expansion_search(
             )
     else:
         logger.info(
-            "expansion_search: candidate_location has %d primaries (< 100), using legacy parcel query, search_id=%s",
+            "expansion_search: candidate_location has %d Tier 1 listings (< 10), using direct commercial_unit query, search_id=%s",
             _cl_count, search_id,
         )
 
     if not use_candidate_location:
-        # ── Check if commercial units are available (units replace parcels) ──
-        _cu_count = 0
-        try:
-            _cu_count = int(db.execute(text(
-                "SELECT COUNT(*) FROM commercial_unit "
-                "WHERE status = 'active' AND lat IS NOT NULL"
-            )).scalar() or 0)
-        except Exception as exc:
-            logger.warning("commercial unit count query failed: %s", exc)
+        # ── Direct commercial_unit query (fallback when candidate_location not populated) ──
+        rows = _query_commercial_unit_candidates(
+            db,
+            target_district_norm=target_district_norm,
+            min_area_m2=min_area_m2,
+            max_area_m2=max_area_m2,
+            limit=600,
+        )
+        logger.info(
+            "expansion_search using direct commercial_unit query: %d candidates, search_id=%s",
+            len(rows), search_id,
+        )
 
-        use_commercial_units = _cu_count >= 50  # Only use if we have meaningful coverage
-
-        if use_commercial_units:
-            rows = _query_commercial_unit_candidates(
-                db,
-                target_district_norm=target_district_norm,
-                min_area_m2=min_area_m2,
-                max_area_m2=max_area_m2,
-                limit=600,
-            )
-            logger.info(
-                "expansion_search using commercial units: %d candidates from %d total units, search_id=%s",
-                len(rows), _cu_count, search_id,
-            )
+        if rows:
             # Bulk-enrich population reach for commercial_unit rows
             _bulk_pop = _bulk_enrich_population(db, rows, demand_radius_m=1200.0)
             if _bulk_pop:
@@ -4024,10 +4016,6 @@ def run_expansion_search(
                     _pid = str(_r.get("parcel_id") or _r.get("id") or "")
                     if _pid in _bulk_pop:
                         _r["population_reach"] = _bulk_pop[_pid]
-                logger.info(
-                    "expansion_search: bulk population enrichment applied to %d/%d commercial_unit candidates, search_id=%s",
-                    len(_bulk_pop), len(rows), search_id,
-                )
 
             # Bulk-enrich competitor counts for commercial_unit rows
             _bulk_comp = _bulk_enrich_competitors(db, rows, category, competition_radius_m=1000.0)
@@ -4036,138 +4024,61 @@ def run_expansion_search(
                     _pid = str(_r.get("parcel_id") or _r.get("id") or "")
                     if _pid in _bulk_comp:
                         _r["competitor_count"] = _bulk_comp[_pid]
-                logger.info(
-                    "expansion_search: bulk competitor enrichment applied to %d/%d commercial_unit candidates, search_id=%s",
-                    len(_bulk_comp), len(rows), search_id,
-                )
 
             # ── Resolve commercial unit districts to Arabic names ──────────
             # Commercial units store English neighborhood names from Aqar,
             # but the scoring loop expects Arabic district names matching
             # district_lookup built from riyadh_parcels_arcgis_raw.
-            if rows:
-                try:
-                    from sqlalchemy import text as _sa_text
+            try:
+                from sqlalchemy import text as _sa_text
 
-                    # Build VALUES list of (index, lon, lat) for all candidates
-                    values_parts = []
-                    resolve_params: dict[str, Any] = {}
-                    for idx, r in enumerate(rows):
-                        if r.get("lat") is not None and r.get("lon") is not None:
-                            values_parts.append(f"(:_ri_{idx}, :_rlon_{idx}, :_rlat_{idx})")
-                            resolve_params[f"_ri_{idx}"] = idx
-                            resolve_params[f"_rlon_{idx}"] = float(r["lon"])
-                            resolve_params[f"_rlat_{idx}"] = float(r["lat"])
+                # Build VALUES list of (index, lon, lat) for all candidates
+                values_parts = []
+                resolve_params: dict[str, Any] = {}
+                for idx, r in enumerate(rows):
+                    if r.get("lat") is not None and r.get("lon") is not None:
+                        values_parts.append(f"(:_ri_{idx}, :_rlon_{idx}, :_rlat_{idx})")
+                        resolve_params[f"_ri_{idx}"] = idx
+                        resolve_params[f"_rlon_{idx}"] = float(r["lon"])
+                        resolve_params[f"_rlat_{idx}"] = float(r["lat"])
 
-                    if values_parts:
-                        values_sql = ", ".join(values_parts)
-                        resolve_sql = _sa_text(f"""
-                            SELECT v.idx, lat_res.district_label
-                            FROM (VALUES {values_sql}) AS v(idx, lon, lat)
-                            LEFT JOIN LATERAL (
-                                SELECT DISTINCT district_label
-                                FROM riyadh_parcels_arcgis_raw
-                                WHERE geom IS NOT NULL
-                                  AND ST_DWithin(
-                                      geom::geography,
-                                      ST_SetSRID(ST_MakePoint(v.lon, v.lat), 4326)::geography,
-                                      500
-                                  )
-                                LIMIT 1
-                            ) lat_res ON true
-                        """)
-                        with db.begin_nested():
-                            resolved_rows = db.execute(resolve_sql, resolve_params).mappings().all()
-
-                        resolved_count = 0
-                        for rr in resolved_rows:
-                            idx = int(rr["idx"])
-                            if rr["district_label"]:
-                                rows[idx]["district"] = rr["district_label"]
-                                resolved_count += 1
-
-                        unresolved_count = len(rows) - resolved_count
-                        logger.info(
-                            "commercial_unit district resolution: resolved=%d, unresolved=%d",
-                            resolved_count, unresolved_count,
-                        )
-                except Exception:
-                    logger.warning(
-                        "commercial_unit district resolution failed, keeping English names",
-                        exc_info=True,
-                    )
-
-        else:
-            # ── Fall back to existing parcel-based query ──
-            # Execute candidate query with district SQL filter fallback.
-            # If district filter is active and the query fails (e.g. malformed
-            # external_feature GeoJSON), retry once without the SQL pushdown.
-            # The Python post-filter still enforces district correctness.
-            district_sql_used = bool(target_district_norm)
-            rows = None
-
-            if district_sql_used:
-                try:
+                if values_parts:
+                    values_sql = ", ".join(values_parts)
+                    resolve_sql = _sa_text(f"""
+                        SELECT v.idx, lat_res.district_label
+                        FROM (VALUES {values_sql}) AS v(idx, lon, lat)
+                        LEFT JOIN LATERAL (
+                            SELECT DISTINCT district_label
+                            FROM riyadh_parcels_arcgis_raw
+                            WHERE geom IS NOT NULL
+                              AND ST_DWithin(
+                                  geom::geography,
+                                  ST_SetSRID(ST_MakePoint(v.lon, v.lat), 4326)::geography,
+                                  500
+                              )
+                            LIMIT 1
+                        ) lat_res ON true
+                    """)
                     with db.begin_nested():
-                        sql = _build_candidate_sql(
-                            _build_district_filter_sql(target_district_norm),
-                            stratified=use_stratified,
-                            skip_delivery=ea_delivery_populated,
-                        )
-                        rows = db.execute(sql, sql_params).mappings().all()
-                except Exception as exc:
-                    logger.warning(
-                        "Expansion search district-filtered query failed, retrying without SQL district filter: "
-                        "search_id=%s category=%s area=[%s-%s] target_districts=%s "
-                        "district_sql_enabled=True exc_class=%s exc_msg=%s",
-                        search_id, category, min_area_m2, max_area_m2, target_districts,
-                        type(exc).__name__,
-                        str(exc)[:300],
-                        exc_info=True,
-                    )
-                    district_sql_used = False
-                    rows = None
+                        resolved_rows = db.execute(resolve_sql, resolve_params).mappings().all()
 
-            if rows is None:
-                try:
-                    with db.begin_nested():
-                        sql = _build_candidate_sql(
-                            "",
-                            stratified=use_stratified,
-                            skip_delivery=ea_delivery_populated,
-                        )
-                        rows = db.execute(sql, sql_params).mappings().all()
-                except Exception:
-                    logger.warning(
-                        "Expansion search main query failed, retrying without district labeling: "
-                        "search_id=%s category=%s area=[%s-%s] target_districts=%s "
-                        "district_sql_enabled=False",
-                        search_id, category, min_area_m2, max_area_m2, target_districts,
-                        exc_info=True,
-                    )
-                    # Log sample dirty coordinate values to aid diagnosis.
-                    _log_dirty_coord_samples(db, search_id)
-                    rows = None
+                    resolved_count = 0
+                    for rr in resolved_rows:
+                        idx = int(rr["idx"])
+                        if rr["district_label"]:
+                            rows[idx]["district"] = rr["district_label"]
+                            resolved_count += 1
 
-            if rows is None:
-                try:
-                    with db.begin_nested():
-                        sql = _build_candidate_sql_no_district(
-                            skip_delivery=ea_delivery_populated,
-                        )
-                        rows = db.execute(sql, sql_params).mappings().all()
+                    unresolved_count = len(rows) - resolved_count
                     logger.info(
-                        "Expansion search used last-resort query (no district labeling): "
-                        "search_id=%s returned %d rows",
-                        search_id, len(rows),
+                        "commercial_unit district resolution: resolved=%d, unresolved=%d",
+                        resolved_count, unresolved_count,
                     )
-                except Exception:
-                    logger.exception(
-                        "Expansion search last-resort query failed: search_id=%s category=%s "
-                        "area=[%s-%s]",
-                        search_id, category, min_area_m2, max_area_m2,
-                    )
-                    raise
+            except Exception:
+                logger.warning(
+                    "commercial_unit district resolution failed, keeping English names",
+                    exc_info=True,
+                )
 
     # Debug: log sample non-numeric landuse_code values for diagnosis
     _bad_landuse_sample: list[str] = []
@@ -5697,7 +5608,8 @@ def run_expansion_search(
             if d:
                 districts_in_result.add(d)
         coverage_meta = {
-            "parcel_source": "commercial_unit" if use_commercial_units else "arcgis_parcels",
+            "parcel_source": "listings_only",
+            "candidate_sources": ["aqar", "wasalt", "bayut"],
             "candidate_selection": "stratified" if use_stratified else "targeted",
             "per_district_cap": per_district_cap,
             "candidates_evaluated": len(rows),
@@ -5710,9 +5622,9 @@ def run_expansion_search(
             "districts_with_no_candidates_count": len(_districts_with_no_candidates),
             "data_gap": len(_districts_with_no_candidates) > 0,
             "data_gap_message": (
-                f"No commercial parcels found in: "
+                f"No commercial listings found in: "
                 f"{', '.join(_districts_with_no_candidates)}. "
-                "These districts may lack parcel data in the current dataset. "
+                "These districts may lack listing data in the current dataset. "
                 "Try a broader area search or remove these districts."
             ) if _districts_with_no_candidates else None,
         }

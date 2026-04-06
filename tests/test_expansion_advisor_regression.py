@@ -506,6 +506,12 @@ def test_area_fit_still_works_after_zoning_changes():
 class _Result:
     def __init__(self, rows):
         self._rows = rows
+    def scalar(self):
+        if self._rows and isinstance(self._rows[0], dict):
+            return next(iter(self._rows[0].values()), None)
+        if self._rows:
+            return self._rows[0]
+        return None
     def mappings(self):
         return self
     def all(self):
@@ -532,6 +538,10 @@ class _FakeDB:
     def execute(self, stmt, params=None):
         sql = stmt.text if hasattr(stmt, "text") else str(stmt)
         if "FROM candidate_base" in sql:
+            return _Result(self.candidate_rows)
+        if "COUNT(*)" in sql and "candidate_location" in sql:
+            return _Result([{"count": 0}])
+        if "FROM commercial_unit" in sql:
             return _Result(self.candidate_rows)
         if "INSERT INTO expansion_candidate" in sql:
             self.inserted.append(params)
@@ -623,34 +633,14 @@ def test_zoning_fit_score_non_numeric_values_safe():
 # District SQL pushdown fallback on failure
 # ---------------------------------------------------------------------------
 
-class _FailOnceFakeDB(_FakeDB):
-    """FakeDB that fails on first candidate query (with district filter) and
-    succeeds on second (without district filter)."""
-
-    def __init__(self, candidate_rows=None):
-        super().__init__(candidate_rows=candidate_rows)
-        self._query_attempt = 0
-
-    def execute(self, stmt, params=None):
-        sql = stmt.text if hasattr(stmt, "text") else str(stmt)
-        if "FROM candidate_base" in sql:
-            self._query_attempt += 1
-            if self._query_attempt == 1:
-                raise RuntimeError("Simulated district SQL filter failure (bad GeoJSON)")
-            return _Result(self.candidate_rows)
-        if "INSERT INTO expansion_candidate" in sql:
-            self.inserted.append(params)
-            return _Result([])
-        return _Result([])
-
-
 def test_district_sql_fallback_retries_without_filter():
-    """If district SQL pushdown fails, run_expansion_search retries without it."""
+    """When candidate_location has no Tier 1 rows, the search falls back to
+    the direct commercial_unit query and still returns results."""
     rows = [
         _make_candidate_row("p1", "2000", district="حي العليا"),
         _make_candidate_row("p2", "2000", district="الملقا"),
     ]
-    db = _FailOnceFakeDB(candidate_rows=rows)
+    db = _FakeDB(candidate_rows=rows)
 
     items = run_expansion_search(
         db,
@@ -664,11 +654,9 @@ def test_district_sql_fallback_retries_without_filter():
         limit=10,
         target_districts=["العليا"],
     )
-    # Should succeed via fallback; Python post-filter keeps only العليا match
+    # Should succeed via commercial_unit fallback; Python post-filter keeps only العليا match
     assert len(items) == 1
     assert items[0]["parcel_id"] == "p1"
-    # Verify it actually attempted 2 queries
-    assert db._query_attempt == 2
 
 
 def test_district_python_postfilter_works_after_fallback():
@@ -679,7 +667,7 @@ def test_district_python_postfilter_works_after_fallback():
         _make_candidate_row("p2", "2000", district="الملقا"),
         _make_candidate_row("p3", "2000", district="النرجس"),
     ]
-    db = _FailOnceFakeDB(candidate_rows=rows)
+    db = _FakeDB(candidate_rows=rows)
 
     items = run_expansion_search(
         db,
@@ -809,7 +797,12 @@ def test_valid_numeric_coords_still_work():
 
 def test_candidate_sql_uses_safe_coord_regex():
     """The generated candidate SQL must use regex-guarded coordinate casts
-    instead of raw ::float casts for dsr and pd tables."""
+    instead of raw ::float casts for dsr and pd tables.
+
+    NOTE: Since v7 (listings-only), the ArcGIS candidate_base SQL is no longer
+    used in the search path. This test now runs through the commercial_unit
+    fallback and verifies the search still completes without crashing.
+    """
     import re
     captured_sql = []
 
@@ -820,7 +813,7 @@ def test_candidate_sql_uses_safe_coord_regex():
             return super().execute(stmt, params)
 
     db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
-    run_expansion_search(
+    items = run_expansion_search(
         db,
         search_id="test-sql-check",
         brand_name="TestBrand",
@@ -832,33 +825,9 @@ def test_candidate_sql_uses_safe_coord_regex():
         limit=10,
     )
 
-    # Find the main candidate SQL (contains FROM candidate_base)
-    candidate_sqls = [s for s in captured_sql if "FROM candidate_base" in s]
-    assert candidate_sqls, "Expected at least one candidate SQL query"
-    main_sql = candidate_sqls[0]
-
-    # Must NOT contain raw ::float casts on dsr or pd columns
-    assert "dsr.lon::float" not in main_sql, "Unsafe dsr.lon::float cast still present"
-    assert "dsr.lat::float" not in main_sql, "Unsafe dsr.lat::float cast still present"
-    assert "pd.lon::float" not in main_sql, "Unsafe pd.lon::float cast still present"
-    assert "pd.lat::float" not in main_sql, "Unsafe pd.lat::float cast still present"
-
-    # Must contain the numeric-safe BTRIM(CAST(...)) pattern for coordinate validation
-    assert "BTRIM(CAST(dsr.lon AS text))" in main_sql, "Missing BTRIM(CAST()) for dsr.lon"
-    assert "BTRIM(CAST(dsr.lat AS text))" in main_sql, "Missing BTRIM(CAST()) for dsr.lat"
-    assert "BTRIM(CAST(pd.lon AS text))" in main_sql, "Missing BTRIM(CAST()) for pd.lon"
-    assert "BTRIM(CAST(pd.lat AS text))" in main_sql, "Missing BTRIM(CAST()) for pd.lat"
-
-    # Must NOT contain raw BTRIM on numeric columns (would crash with psycopg)
-    assert "BTRIM(pd.lon)" not in main_sql, "Raw BTRIM(pd.lon) still present — numeric column will crash"
-    assert "BTRIM(pd.lat)" not in main_sql, "Raw BTRIM(pd.lat) still present — numeric column will crash"
-    assert "BTRIM(dsr.lon)" not in main_sql, "Raw BTRIM(dsr.lon) still present — numeric column will crash"
-    assert "BTRIM(dsr.lat)" not in main_sql, "Raw BTRIM(dsr.lat) still present — numeric column will crash"
-
-    # Must contain the numeric regex pattern
-    assert re.search(r"\^\[-\+\]\?\[0-9\]", main_sql), (
-        "Missing numeric regex pattern in SQL"
-    )
+    # v7: ArcGIS candidate_base SQL no longer used; verify search completes
+    assert isinstance(items, list)
+    assert len(items) == 1
 
 
 def test_search_returns_results_not_error_with_dirty_rows():
@@ -897,37 +866,14 @@ def test_search_returns_results_not_error_with_dirty_rows():
 # Last-resort fallback: all queries fail except the no-district query
 # ---------------------------------------------------------------------------
 
-class _FailAllCandidateQueriesFakeDB(_FakeDB):
-    """FakeDB that fails on all candidate queries that contain the district
-    labeling subselect (external_feature), but succeeds on the last-resort
-    query that uses NULL AS district."""
-
-    def __init__(self, candidate_rows=None):
-        super().__init__(candidate_rows=candidate_rows)
-        self._query_attempt = 0
-
-    def execute(self, stmt, params=None):
-        sql = stmt.text if hasattr(stmt, "text") else str(stmt)
-        if "FROM candidate_base" in sql:
-            self._query_attempt += 1
-            if "external_feature" in sql:
-                raise RuntimeError("Simulated ST_GeomFromGeoJSON failure on corrupt geometry")
-            return _Result(self.candidate_rows)
-        if "INSERT INTO expansion_candidate" in sql:
-            self.inserted.append(params)
-            return _Result([])
-        return _Result([])
-
-
 def test_last_resort_fallback_returns_results():
-    """When both district-filtered and unfiltered queries fail due to bad
-    external_feature geometry, the last-resort no-district query should
-    still return results."""
+    """When candidate_location has no Tier 1 rows, the commercial_unit fallback
+    should still return results."""
     rows = [
         _make_candidate_row("p1", "2000", district=None),
         _make_candidate_row("p2", "7500", district=None),
     ]
-    db = _FailAllCandidateQueriesFakeDB(candidate_rows=rows)
+    db = _FakeDB(candidate_rows=rows)
 
     items = run_expansion_search(
         db,
@@ -941,22 +887,19 @@ def test_last_resort_fallback_returns_results():
         limit=10,
         target_districts=["العليا"],
     )
-    # Last-resort query returns candidates without district labeling;
+    # Commercial_unit fallback returns candidates without district labeling;
     # Python post-filter won't match target districts (all NULL), so
     # empty list when target_districts is set.
     assert isinstance(items, list)
-    # Simplified district filter (column read) no longer triggers spatial-join
-    # failure path — only one query attempt is needed.
-    assert db._query_attempt == 1
 
 
 def test_last_resort_fallback_no_districts_returns_candidates():
-    """Without target_districts, last-resort fallback returns all candidates
+    """Without target_districts, commercial_unit fallback returns all candidates
     even though they have NULL district."""
     rows = [
         _make_candidate_row("p1", "2000", district=None),
     ]
-    db = _FailAllCandidateQueriesFakeDB(candidate_rows=rows)
+    db = _FakeDB(candidate_rows=rows)
 
     items = run_expansion_search(
         db,
@@ -995,18 +938,10 @@ class _FailOnSpecificParcelDB(_FakeDB):
 
 
 def test_candidate_sql_uses_district_label_column():
-    """The generated candidate SQL must read district from the pre-materialized
-    district_label column instead of a correlated spatial subquery."""
-    captured_sql = []
-
-    class _CapturingDB(_FakeDB):
-        def execute(self, stmt, params=None):
-            sql_text = stmt.text if hasattr(stmt, "text") else str(stmt)
-            captured_sql.append(sql_text)
-            return super().execute(stmt, params)
-
-    db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
-    run_expansion_search(
+    """v7 (listings-only): search uses candidate_location/commercial_unit,
+    not the ArcGIS candidate_base SQL. Verify search completes normally."""
+    db = _FakeDB(candidate_rows=[_make_candidate_row("p1", "2000")])
+    items = run_expansion_search(
         db,
         search_id="test-district-label",
         brand_name="TestBrand",
@@ -1017,17 +952,8 @@ def test_candidate_sql_uses_district_label_column():
         target_area_m2=200,
         limit=10,
     )
-
-    candidate_sqls = [s for s in captured_sql if "FROM candidate_base" in s]
-    assert candidate_sqls, "Expected at least one candidate SQL query"
-    main_sql = candidate_sqls[0]
-
-    # Must read from the pre-materialized column, not a correlated subquery
-    assert "district_label" in main_sql, \
-        "Candidate SQL should read from district_label column"
-    # The old correlated ST_GeomFromGeoJSON subquery should be gone
-    assert "ST_GeomFromGeoJSON" not in main_sql, \
-        "Candidate SQL should not contain ST_GeomFromGeoJSON (correlated subquery removed)"
+    assert isinstance(items, list)
+    assert len(items) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1035,98 +961,27 @@ def test_candidate_sql_uses_district_label_column():
 # ---------------------------------------------------------------------------
 
 def test_candidate_sql_landuse_order_uses_direct_numeric_comparisons():
-    """The generated candidate SQL must use direct numeric comparisons on
-    p.landuse_code — no BTRIM, no CAST-to-text, no regex checks.
-    This prevents psycopg crashes like
-    'function btrim(numeric) does not exist'."""
-    captured_sql = []
-
-    class _CapturingDB(_FakeDB):
-        def execute(self, stmt, params=None):
-            sql_text = stmt.text if hasattr(stmt, "text") else str(stmt)
-            captured_sql.append(sql_text)
-            return super().execute(stmt, params)
-
-    db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
-    run_expansion_search(
-        db,
-        search_id="test-landuse-numeric",
-        brand_name="TestBrand",
-        category="burger",
-        service_model="qsr",
-        min_area_m2=100,
-        max_area_m2=500,
-        target_area_m2=200,
-        limit=10,
-    )
-
-    candidate_sqls = [s for s in captured_sql if "FROM candidate_base" in s]
-    assert candidate_sqls, "Expected at least one candidate SQL query"
-    main_sql = candidate_sqls[0]
-
-    # Must contain direct numeric comparisons
-    assert "p.landuse_code IN (2000, 7500)" in main_sql
-    assert "p.landuse_code IN (3000, 4000)" in main_sql
-    assert "p.landuse_code = 1000" in main_sql
-
-    # Must NOT contain text-based handling of p.landuse_code
-    assert "BTRIM(p.landuse_code)" not in main_sql, (
-        "BTRIM(p.landuse_code) still present — numeric column will crash"
-    )
-    assert "CAST(BTRIM(p.landuse_code)" not in main_sql, (
-        "CAST(BTRIM(p.landuse_code) still present"
-    )
-    assert "CAST(p.landuse_code AS text)" not in main_sql, (
-        "CAST(p.landuse_code AS text) still present — unnecessary for numeric column"
-    )
-    # No regex checks on p.landuse_code
-    assert "p.landuse_code)" not in main_sql.replace(
-        "p.landuse_code IN", ""
-    ).replace(
-        "p.landuse_code =", ""
-    ).replace(
-        "p.landuse_code IS NULL", ""
-    ).replace(
-        "p.landuse_code,", ""
-    ) or True  # structural guard — the explicit checks above are definitive
+    """ArcGIS classification semantics still correctly rank landuse codes."""
+    sem = _arcgis_classification_semantics
+    assert sem(2000, None)["normalized_class"] == "commercial"
+    assert sem(2000, None)["score"] == 100
+    assert sem(7500, None)["normalized_class"] == "mixed_use"
+    assert sem(7500, None)["score"] == 100
+    assert sem(1000, None)["normalized_class"] == "residential"
+    assert sem(1000, None)["score"] < 100  # deprioritised
 
 
 def test_candidate_sql_landuse_ordering_semantics_unchanged():
-    """The landuse ordering block must still rank 2000/7500 as 0 (best),
-    3000/4000 as 1, NULL+blank-label as 2, and 1000 as 3."""
-    captured_sql = []
-
-    class _CapturingDB(_FakeDB):
-        def execute(self, stmt, params=None):
-            sql_text = stmt.text if hasattr(stmt, "text") else str(stmt)
-            captured_sql.append(sql_text)
-            return super().execute(stmt, params)
-
-    db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
-    run_expansion_search(
-        db,
-        search_id="test-landuse-order",
-        brand_name="TestBrand",
-        category="burger",
-        service_model="qsr",
-        min_area_m2=100,
-        max_area_m2=500,
-        target_area_m2=200,
-        limit=10,
-    )
-
-    candidate_sqls = [s for s in captured_sql if "FROM candidate_base" in s]
-    assert candidate_sqls
-    main_sql = candidate_sqls[0]
-
-    # 2000, 7500 → rank 0 (commercial / mixed-use preferred)
-    assert "IN (2000, 7500) THEN 0" in main_sql
-    # 3000, 4000 → rank 1
-    assert "IN (3000, 4000) THEN 1" in main_sql
-    # NULL code + NULL/blank label → rank 2
-    assert "p.landuse_code IS NULL" in main_sql
-    # 1000 → rank 3 (residential deprioritised)
-    assert "= 1000 THEN 3" in main_sql
+    """The landuse ordering semantics are preserved in _arcgis_classification_semantics:
+    2000/7500 → commercial/mixed_use (pass), 3000/4000 → public/industrial,
+    NULL → unknown, 1000 → residential (unknown)."""
+    sem = _arcgis_classification_semantics
+    assert sem(2000, None)["verdict_hint"] == "pass"
+    assert sem(7500, None)["verdict_hint"] == "pass"
+    assert sem(3000, None)["normalized_class"] == "public_service"
+    assert sem(4000, None)["normalized_class"] == "industrial"
+    assert sem(None, None)["normalized_class"] == "unknown"
+    assert sem(1000, None)["verdict_hint"] == "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -1134,19 +989,10 @@ def test_candidate_sql_landuse_ordering_semantics_unchanged():
 # ---------------------------------------------------------------------------
 
 def test_candidate_sql_coord_btrim_wraps_cast_to_text():
-    """BTRIM on coordinate columns must use BTRIM(CAST(alias.col AS text))
-    to avoid 'function btrim(numeric) does not exist' on numeric-backed
-    lon/lat columns (population_density, delivery_source_record)."""
-    captured_sql = []
-
-    class _CapturingDB(_FakeDB):
-        def execute(self, stmt, params=None):
-            sql_text = stmt.text if hasattr(stmt, "text") else str(stmt)
-            captured_sql.append(sql_text)
-            return super().execute(stmt, params)
-
-    db = _CapturingDB(candidate_rows=[_make_candidate_row("p1", "2000")])
-    run_expansion_search(
+    """v7 (listings-only): the ArcGIS candidate_base SQL with BTRIM/CAST
+    patterns is no longer in the search path. Verify search still completes."""
+    db = _FakeDB(candidate_rows=[_make_candidate_row("p1", "2000")])
+    items = run_expansion_search(
         db,
         search_id="test-coord-cast",
         brand_name="TestBrand",
@@ -1157,19 +1003,5 @@ def test_candidate_sql_coord_btrim_wraps_cast_to_text():
         target_area_m2=200,
         limit=10,
     )
-
-    candidate_sqls = [s for s in captured_sql if "FROM candidate_base" in s]
-    assert candidate_sqls, "Expected at least one candidate SQL query"
-    main_sql = candidate_sqls[0]
-
-    # Raw BTRIM on coord columns must be absent (these crash on numeric cols)
-    for alias in ("pd", "dsr"):
-        for col in ("lon", "lat"):
-            raw_pattern = f"BTRIM({alias}.{col})"
-            safe_pattern = f"BTRIM(CAST({alias}.{col} AS text))"
-            assert raw_pattern not in main_sql, (
-                f"Raw {raw_pattern} still present — will crash on numeric column"
-            )
-            assert safe_pattern in main_sql, (
-                f"Missing numeric-safe {safe_pattern} in generated SQL"
-            )
+    assert isinstance(items, list)
+    assert len(items) == 1

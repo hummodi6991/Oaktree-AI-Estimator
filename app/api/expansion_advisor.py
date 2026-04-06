@@ -121,7 +121,7 @@ class ExpansionAdvisorSearchRequest(BaseModel):
 
 
 class ExpansionAdvisorMeta(StrictResponseModel):
-    version: str = "expansion_advisor_v6.1"
+    version: str = "expansion_advisor_v7"
     parcel_source: str | None = None
     excluded_sources: list[str] = Field(default_factory=list)
     degraded: bool = False
@@ -694,9 +694,10 @@ def create_expansion_search(
                 "request_json": json.dumps(request_json, ensure_ascii=False),
                 "notes": json.dumps(
                     {
-                        "version": "expansion_advisor_v6.1",
-                        "parcel_source": "arcgis_only",
-                        "excluded_sources": ["suhail", "inferred_parcels"],
+                        "version": "expansion_advisor_v7",
+                        "parcel_source": "listings_only",
+                        "candidate_sources": ["aqar", "wasalt", "bayut"],
+                        "excluded_sources": ["arcgis_parcels", "hungerstation_poi", "suhail", "inferred_parcels"],
                     },
                     ensure_ascii=False,
                 ),
@@ -782,9 +783,9 @@ def create_expansion_search(
         "items": items,
         "notes": search_notes,
         "meta": {
-            "version": "expansion_advisor_v6.1",
-            "parcel_source": "arcgis_only",
-            "excluded_sources": ["suhail", "inferred_parcels"],
+            "version": "expansion_advisor_v7",
+            "parcel_source": "listings_only",
+            "excluded_sources": ["arcgis_parcels", "hungerstation_poi", "suhail", "inferred_parcels"],
         },
     }
 
@@ -802,7 +803,7 @@ def get_expansion_search_candidates(search_id: str, db: Session = Depends(get_db
     search = get_search(db, search_id)
     if not search:
         raise HTTPException(status_code=404, detail="Expansion search not found")
-    return {"items": get_candidates(db, search_id), "meta": {"version": "expansion_advisor_v6.1"}}
+    return {"items": get_candidates(db, search_id), "meta": {"version": "expansion_advisor_v7"}}
 
 
 @router.get("/searches/{search_id}/report", response_model=RecommendationReportResponse)
@@ -822,7 +823,7 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
         report = {
             "search_id": search_id,
             "brand_profile": {},
-            "meta": {"version": "expansion_advisor_v6.1", "degraded": True, "error_class": type(exc).__name__},
+            "meta": {"version": "expansion_advisor_v7", "degraded": True, "error_class": type(exc).__name__},
             "top_candidates": [],
             "recommendation": {
                 "best_candidate_id": None,
@@ -837,7 +838,7 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
                 "summary": "Report could not be fully generated. The search results are still available.",
                 "report_summary": "",
             },
-            "assumptions": {"parcel_source": "arcgis_only", "city": "riyadh"},
+            "assumptions": {"parcel_source": "listings_only", "city": "riyadh"},
         }
     except Exception:
         # Non-recoverable errors (DB connection, infrastructure): let them surface as 500.
