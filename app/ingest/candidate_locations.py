@@ -78,6 +78,7 @@ def _ingest_tier1_aqar(db: Session, run_id: str) -> int:
           AND cu.restaurant_suitable = TRUE
           AND (cu.property_type IS NULL OR cu.property_type NOT IN ('Residential', 'سكني'))
           AND NOT (cu.is_furnished = TRUE AND cu.listing_type = 'building')
+          AND NOT (COALESCE(cu.apartments_count, 0) >= 2 AND cu.listing_type = 'building')
           AND cu.lat IS NOT NULL
           AND cu.lon IS NOT NULL
           AND cu.lat BETWEEN :min_lat AND :max_lat

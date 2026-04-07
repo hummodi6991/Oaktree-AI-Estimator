@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Backfill property_type and is_furnished on existing commercial_unit rows
-by re-fetching each listing's detail page from Aqar.
+"""Backfill property_type, is_furnished, apartments_count, and description on
+existing commercial_unit rows by re-fetching each listing's detail page from Aqar.
 
-This is a one-time script to populate the new columns for listings scraped
-before property_type and is_furnished extraction was added.
+This script populates the new columns for listings scraped before these
+extraction features were added. It also overwrites the metadata-garbage
+descriptions with real ad body text.
 
-Resumable: skips listings that already have property_type set.
+Resumable: skips listings that already have apartments_count set.
 Rate-limited: 2-3 second delay between requests.
 """
 
@@ -25,6 +26,7 @@ from app.db.session import SessionLocal
 from scripts.scrape_aqar import (
     _extract_property_type,
     _extract_is_furnished,
+    _extract_apartments_count,
     _extract_description,
 )
 
@@ -34,8 +36,8 @@ USER_AGENT = (
 )
 
 
-def fetch_listing_metadata(url: str) -> tuple[str | None, bool, str | None]:
-    """Fetch a listing detail page and extract property_type, is_furnished, description."""
+def fetch_listing_metadata(url: str) -> tuple[str | None, bool, int | None, str | None]:
+    """Fetch a listing detail page and extract property_type, is_furnished, apartments_count, description."""
     try:
         resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=20)
         resp.raise_for_status()
@@ -43,11 +45,12 @@ def fetch_listing_metadata(url: str) -> tuple[str | None, bool, str | None]:
         return (
             _extract_property_type(soup),
             _extract_is_furnished(soup),
+            _extract_apartments_count(soup),
             _extract_description(soup),
         )
     except Exception as e:
         print(f"  ERROR fetching {url}: {e}")
-        return None, False, None
+        return None, False, None, None
 
 
 def main():
@@ -58,8 +61,7 @@ def main():
             SELECT aqar_id, listing_url
             FROM commercial_unit
             WHERE status = 'active'
-              AND property_type IS NULL
-              AND is_furnished IS NULL
+              AND apartments_count IS NULL
               AND listing_url IS NOT NULL
             ORDER BY aqar_id
         """)).mappings().all()
@@ -69,24 +71,27 @@ def main():
         success_count = 0
         residential_count = 0
         furnished_count = 0
+        multi_apt_count = 0
         error_count = 0
 
         for i, row in enumerate(rows):
             aqar_id = row["aqar_id"]
             url = row["listing_url"]
 
-            property_type, is_furnished, description = fetch_listing_metadata(url)
+            property_type, is_furnished, apartments_count, description = fetch_listing_metadata(url)
 
-            # Update even if property_type is None — we still know it's not Residential
+            # Always overwrite description — the existing rows have metadata garbage
             db.execute(text("""
                 UPDATE commercial_unit
-                SET property_type = :pt,
-                    is_furnished = :furn,
+                SET property_type = COALESCE(:pt, property_type),
+                    is_furnished = COALESCE(:furn, is_furnished),
+                    apartments_count = :apt,
                     description = COALESCE(:desc, description)
                 WHERE aqar_id = :id
             """), {
                 "pt": property_type,
                 "furn": is_furnished,
+                "apt": apartments_count,
                 "desc": description,
                 "id": aqar_id,
             })
@@ -97,12 +102,14 @@ def main():
                 residential_count += 1
             if is_furnished:
                 furnished_count += 1
+            if apartments_count and apartments_count >= 2:
+                multi_apt_count += 1
 
             if (i + 1) % 50 == 0:
                 print(
                     f"  [{i+1}/{len(rows)}] success={success_count}, "
                     f"residential={residential_count}, furnished={furnished_count}, "
-                    f"errors={error_count}"
+                    f"multi_apt={multi_apt_count}, errors={error_count}"
                 )
 
             # Rate limit
@@ -113,6 +120,7 @@ def main():
         print(f"  Successful: {success_count}")
         print(f"  Residential found: {residential_count}")
         print(f"  Furnished found: {furnished_count}")
+        print(f"  Multi-apartment buildings (>=2): {multi_apt_count}")
         print(f"  Errors: {error_count}")
 
         # Final summary
@@ -136,24 +144,62 @@ def main():
         """)).all():
             print(f"  {row[0]} / furnished={row[1]}: {row[2]}")
 
-        # Show what would be filtered out
+        print("\nApartments count distribution:")
+        for row in db.execute(text("""
+            SELECT
+                CASE
+                    WHEN apartments_count IS NULL THEN '(NULL)'
+                    WHEN apartments_count = 0 THEN '0'
+                    WHEN apartments_count = 1 THEN '1'
+                    WHEN apartments_count BETWEEN 2 AND 5 THEN '2-5'
+                    WHEN apartments_count BETWEEN 6 AND 10 THEN '6-10'
+                    ELSE '11+'
+                END AS bucket,
+                COUNT(*)
+            FROM commercial_unit
+            WHERE status = 'active'
+            GROUP BY bucket
+            ORDER BY bucket
+        """)).all():
+            print(f"  {row[0]}: {row[1]}")
+
+        # Show what would be filtered out by ALL three rules
         print("\nListings that would be filtered out by new rules:")
         filtered = db.execute(text("""
             SELECT
                 COUNT(*) FILTER (WHERE property_type IN ('Residential', 'سكني')) AS residential,
                 COUNT(*) FILTER (WHERE is_furnished = TRUE AND listing_type = 'building') AS furnished_building,
+                COUNT(*) FILTER (WHERE COALESCE(apartments_count, 0) >= 2 AND listing_type = 'building') AS multi_apt_building,
                 COUNT(*) FILTER (
                     WHERE property_type IN ('Residential', 'سكني')
                        OR (is_furnished = TRUE AND listing_type = 'building')
+                       OR (COALESCE(apartments_count, 0) >= 2 AND listing_type = 'building')
                 ) AS total_excluded,
                 COUNT(*) AS total_active
             FROM commercial_unit
             WHERE status = 'active'
         """)).first()
-        print(f"  Residential: {filtered[0]}")
+        print(f"  Residential (Aqar tag): {filtered[0]}")
         print(f"  Furnished buildings (offices): {filtered[1]}")
-        print(f"  Total excluded: {filtered[2]} / {filtered[3]}")
-        print(f"  Remaining as candidates: {filtered[3] - filtered[2]}")
+        print(f"  Multi-apartment buildings (residential): {filtered[2]}")
+        print(f"  Total excluded: {filtered[3]} / {filtered[4]}")
+        print(f"  Remaining as candidates: {filtered[4] - filtered[3]}")
+
+        # Verify description extraction worked
+        print("\nDescription quality check:")
+        desc_check = db.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE description LIKE '%Advertisement License%') AS still_metadata,
+                COUNT(*) FILTER (WHERE description LIKE '%apartment%' OR description LIKE '%شقة%' OR description LIKE '%سكني%') AS has_residential_kw,
+                COUNT(*) FILTER (WHERE description LIKE '%shop%' OR description LIKE '%commercial%' OR description LIKE '%محل%' OR description LIKE '%تجاري%') AS has_commercial_kw,
+                COUNT(*) AS total
+            FROM commercial_unit
+            WHERE status = 'active'
+        """)).first()
+        print(f"  Still has metadata garbage: {desc_check[0]}")
+        print(f"  Contains residential keywords: {desc_check[1]}")
+        print(f"  Contains commercial keywords: {desc_check[2]}")
+        print(f"  Total active: {desc_check[3]}")
 
     finally:
         db.close()
