@@ -543,6 +543,63 @@ def _extract_apartments_count(soup: BeautifulSoup) -> int | None:
     return None
 
 
+def _extract_num_rooms(soup: BeautifulSoup) -> int | None:
+    """Extract the 'Rooms' field from the Listing Details section.
+
+    Aqar lists this as 'Rooms' (English) or 'عدد الغرف' (Arabic).
+    The value is a number ('18', '20', '6') or 'None' / blank.
+
+    A value of 6 or more on a building listing is a strong non-F&B signal:
+      - Residential apartment buildings (bedrooms counted as rooms)
+      - Multi-office commercial buildings
+      - Clinics / hotels / mixed-use
+    None of these are suitable for a QSR storefront conversion.
+
+    Returns the integer count, or None if not found / not numeric / 'None'.
+    """
+    label_variants = ("Rooms", "عدد الغرف", "الغرف")
+
+    for label_text in label_variants:
+        for label_el in soup.find_all(string=lambda s: s and label_text in s):
+            # Skip false positives where the label is embedded in a longer string
+            parent_text = label_el.parent.get_text(strip=True) if label_el.parent else ""
+            if len(parent_text) > len(label_text) + 10:
+                continue
+
+            parent = label_el.parent
+            if parent is None:
+                continue
+
+            # Try next sibling
+            next_sib = parent.find_next_sibling()
+            if next_sib:
+                value_text = next_sib.get_text(strip=True)
+                count = _parse_apartment_count(value_text)
+                if count is not None:
+                    return count
+
+            # Try parent's next sibling
+            if parent.parent:
+                next_sib = parent.parent.find_next_sibling()
+                if next_sib:
+                    value_text = next_sib.get_text(strip=True)
+                    count = _parse_apartment_count(value_text)
+                    if count is not None:
+                        return count
+
+            # Try parsing the parent's combined text after the label
+            parent_combined = parent.get_text(separator="|", strip=True)
+            parts = [p.strip() for p in parent_combined.split("|") if p.strip()]
+            if label_text in parts:
+                idx = parts.index(label_text)
+                if idx + 1 < len(parts):
+                    count = _parse_apartment_count(parts[idx + 1])
+                    if count is not None:
+                        return count
+
+    return None
+
+
 def _extract_detail_from_html(html: str) -> dict:
     """Extract detail fields by parsing the detail page HTML."""
     soup = BeautifulSoup(html, "html.parser")
@@ -580,6 +637,7 @@ def _extract_detail_from_html(html: str) -> dict:
         "property_type": _extract_property_type(soup),
         "is_furnished": _extract_is_furnished(soup),
         "apartments_count": _extract_apartments_count(soup),
+        "num_rooms": _extract_num_rooms(soup),
     }
 
 
@@ -613,6 +671,9 @@ def fetch_listing_detail(listing: dict) -> dict:
 
     # Extract apartments count (>=2 on a building = residential)
     listing["apartments_count"] = detail["apartments_count"]
+
+    # Extract rooms count (>=6 on a building = multi-room residential/office)
+    listing["num_rooms"] = detail["num_rooms"]
 
     return listing
 
@@ -945,6 +1006,7 @@ def upsert_listing(db, listing: dict) -> str:
                 "property_type = :property_type, "
                 "is_furnished = :is_furnished, "
                 "apartments_count = :apartments_count, "
+                "num_rooms = :num_rooms, "
                 "lat = COALESCE(:lat, commercial_unit.lat), "
                 "lon = COALESCE(:lon, commercial_unit.lon), "
                 "image_url = :image_url, listing_url = :listing_url, "
@@ -964,13 +1026,13 @@ def upsert_listing(db, listing: dict) -> str:
                 "(aqar_id, title, description, neighborhood, listing_url, image_url, "
                 "price_sar_annual, price_per_sqm, area_sqm, street_width_m, "
                 "num_floors, has_mezzanine, has_drive_thru, facade_direction, "
-                "contact_phone, listing_type, property_type, is_furnished, apartments_count, lat, lon, "
+                "contact_phone, listing_type, property_type, is_furnished, apartments_count, num_rooms, lat, lon, "
                 "restaurant_score, restaurant_suitable, restaurant_signals, "
                 "status, first_seen_at, last_seen_at) "
                 "VALUES (:aqar_id, :title, :description, :neighborhood, :listing_url, :image_url, "
                 ":price_sar_annual, :price_per_sqm, :area_sqm, :street_width_m, "
                 ":num_floors, :has_mezzanine, :has_drive_thru, :facade_direction, "
-                ":contact_phone, :listing_type, :property_type, :is_furnished, :apartments_count, :lat, :lon, "
+                ":contact_phone, :listing_type, :property_type, :is_furnished, :apartments_count, :num_rooms, :lat, :lon, "
                 ":restaurant_score, :restaurant_suitable, :restaurant_signals, "
                 "'active', now(), now())"
             ),
@@ -1001,6 +1063,7 @@ def _listing_params(listing: dict) -> dict:
         "property_type": listing.get("property_type"),
         "is_furnished": listing.get("is_furnished"),
         "apartments_count": listing.get("apartments_count"),
+        "num_rooms": listing.get("num_rooms"),
         "lat": Decimal(str(listing["lat"])) if listing.get("lat") else None,
         "lon": Decimal(str(listing["lon"])) if listing.get("lon") else None,
         "restaurant_score": listing.get("restaurant_score"),
