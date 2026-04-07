@@ -365,33 +365,180 @@ def _extract_is_furnished(soup: BeautifulSoup) -> bool:
 def _extract_description(soup: BeautifulSoup) -> str | None:
     """Extract the actual ad body description from an Aqar listing detail page.
 
-    The description appears between the price and the "Listing Details" heading.
-    Avoid grabbing the metadata table that contains license numbers, parcel IDs,
-    and view counts.
-    """
-    price_el = soup.find(string=lambda s: s and ("/annually" in s or "/سنوي" in s))
-    if price_el:
-        current = price_el.parent
-        while current:
-            current = current.find_next()
-            if current is None:
-                break
-            text = current.get_text(separator=" ", strip=True) if hasattr(current, "get_text") else ""
-            if (len(text) > 50
-                    and "Listing Details" not in text
-                    and "Advertisement License" not in text
-                    and "Plan and Parcel" not in text
-                    and "View more" not in text):
-                if "Listing Details" in text or "Property Type" in text:
-                    break
-                return text[:2000]
+    The description sits between the price heading (### NNN §/annually or
+    ### NNN §/سنوي) and the "Listing Details" / "تفاصيل الإعلان" heading.
 
-    for class_pattern in ("description", "ad-body", "listing-body", "details-text"):
-        el = soup.find("div", class_=lambda c: c and class_pattern in c.lower())
-        if el:
-            text = el.get_text(separator=" ", strip=True)
-            if len(text) > 50:
-                return text[:2000]
+    Strategy: find the price-containing element, then walk forward collecting
+    text until we hit the Listing Details heading. Return the accumulated text
+    if it's substantial enough.
+    """
+    # Markers that indicate we've left the description area
+    STOP_MARKERS = (
+        "Listing Details",
+        "تفاصيل الإعلان",
+        "Property Type",
+        "نوع العقار",
+        "Street direction",
+        "الواجهة",
+        "Street width",
+        "عرض الشارع",
+        "Apartments",
+        "عدد الشقق",
+        "Advertisement License",
+        "رخصة الإعلان",
+        "Plan and Parcel",
+        "المخطط",
+        "Created At",
+        "تاريخ الإضافة",
+        "View more",
+        "عرض المزيد",
+    )
+
+    # Markers that indicate the price element (description starts after this)
+    PRICE_RE = re.compile(r"[§﷼]\s*\d|annually|سنوي|/yr|/year")
+
+    # Strategy 1: Find any element whose text matches a price pattern,
+    # then walk through its next siblings collecting substantial text blocks.
+    price_el = None
+    for el in soup.find_all(["h3", "h2", "div", "span", "p"]):
+        el_text = el.get_text(strip=True) if hasattr(el, "get_text") else ""
+        if el_text and PRICE_RE.search(el_text) and len(el_text) < 100:
+            price_el = el
+            break
+
+    if price_el is None:
+        # Fallback: find any string node with price marker
+        price_str = soup.find(string=lambda s: s and PRICE_RE.search(s) and len(s) < 100)
+        if price_str:
+            price_el = price_str.parent
+
+    if price_el is None:
+        return None
+
+    # Walk forward from the price element collecting text
+    collected_parts: list[str] = []
+    current = price_el
+
+    # Try walking through next siblings of price element AND its parents
+    for _ in range(40):  # max 40 hops to prevent infinite loops
+        current = current.find_next() if current else None
+        if current is None:
+            break
+
+        cur_text = current.get_text(separator=" ", strip=True) if hasattr(current, "get_text") else str(current).strip()
+        if not cur_text:
+            continue
+
+        # Stop if we hit a marker indicating we've left the description
+        if any(marker in cur_text for marker in STOP_MARKERS):
+            break
+
+        # Skip very short fragments (likely UI noise)
+        if len(cur_text) < 15:
+            continue
+
+        # Skip if this looks like an image alt text or navigation
+        if cur_text.startswith("صورة") or cur_text.startswith("image"):
+            continue
+
+        # Avoid duplicates (BeautifulSoup walks return parent + child text)
+        if collected_parts and cur_text in collected_parts[-1]:
+            continue
+        if collected_parts and collected_parts[-1] in cur_text:
+            collected_parts[-1] = cur_text  # prefer the more complete text
+            continue
+
+        collected_parts.append(cur_text)
+
+        # If we have a substantial chunk already, that's enough
+        if sum(len(p) for p in collected_parts) > 300:
+            break
+
+    if not collected_parts:
+        return None
+
+    description = " ".join(collected_parts).strip()
+    if len(description) < 20:
+        return None
+
+    return description[:2000]
+
+
+def _parse_apartment_count(value: str) -> int | None:
+    """Parse an apartments count value. Returns int, or None if not numeric.
+
+    'None', 'لا يوجد', '0', '' → None (treated as no apartments)
+    '7' → 7
+    '٧' → 7 (Arabic numerals)
+    """
+    if not value:
+        return None
+
+    v = value.strip().lower()
+    if v in ("none", "لا يوجد", "بدون", "0", "صفر", "no", "n/a"):
+        return None
+
+    # Convert Arabic numerals to ASCII
+    arabic_to_ascii = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+    v = v.translate(arabic_to_ascii)
+
+    # Extract first number from string
+    match = re.search(r"\d+", v)
+    if match:
+        try:
+            count = int(match.group())
+            return count if count > 0 else None
+        except ValueError:
+            return None
+
+    return None
+
+
+def _extract_apartments_count(soup: BeautifulSoup) -> int | None:
+    """Extract the 'Apartments' field from the Listing Details section.
+
+    Aqar lists this as 'Apartments' (English) or 'عدد الشقق' (Arabic).
+    The value is either a number ('7') or 'None' / 'لا يوجد' / blank.
+
+    A value of 2 or more is a strong residential signal — multi-unit
+    residential buildings are not suitable for F&B.
+
+    Returns the integer count, or None if not found / not numeric / 'None'.
+    """
+    label_variants = ("Apartments", "عدد الشقق")
+
+    for label_text in label_variants:
+        for label_el in soup.find_all(string=lambda s: s and label_text in s):
+            parent = label_el.parent
+            if parent is None:
+                continue
+
+            # Try next sibling
+            next_sib = parent.find_next_sibling()
+            if next_sib:
+                value_text = next_sib.get_text(strip=True)
+                count = _parse_apartment_count(value_text)
+                if count is not None:
+                    return count
+
+            # Try parent's next sibling
+            if parent.parent:
+                next_sib = parent.parent.find_next_sibling()
+                if next_sib:
+                    value_text = next_sib.get_text(strip=True)
+                    count = _parse_apartment_count(value_text)
+                    if count is not None:
+                        return count
+
+            # Try parsing the parent's combined text after the label
+            parent_text = parent.get_text(separator="|", strip=True)
+            parts = [p.strip() for p in parent_text.split("|") if p.strip()]
+            if label_text in parts:
+                idx = parts.index(label_text)
+                if idx + 1 < len(parts):
+                    count = _parse_apartment_count(parts[idx + 1])
+                    if count is not None:
+                        return count
 
     return None
 
@@ -432,6 +579,7 @@ def _extract_detail_from_html(html: str) -> dict:
         "num_floors": num_floors,
         "property_type": _extract_property_type(soup),
         "is_furnished": _extract_is_furnished(soup),
+        "apartments_count": _extract_apartments_count(soup),
     }
 
 
@@ -462,6 +610,9 @@ def fetch_listing_detail(listing: dict) -> dict:
 
     # Extract Furnished feature flag (negative signal for F&B)
     listing["is_furnished"] = detail["is_furnished"]
+
+    # Extract apartments count (>=2 on a building = residential)
+    listing["apartments_count"] = detail["apartments_count"]
 
     return listing
 
@@ -793,6 +944,7 @@ def upsert_listing(db, listing: dict) -> str:
                 "listing_type = :listing_type, "
                 "property_type = :property_type, "
                 "is_furnished = :is_furnished, "
+                "apartments_count = :apartments_count, "
                 "lat = COALESCE(:lat, commercial_unit.lat), "
                 "lon = COALESCE(:lon, commercial_unit.lon), "
                 "image_url = :image_url, listing_url = :listing_url, "
@@ -812,13 +964,13 @@ def upsert_listing(db, listing: dict) -> str:
                 "(aqar_id, title, description, neighborhood, listing_url, image_url, "
                 "price_sar_annual, price_per_sqm, area_sqm, street_width_m, "
                 "num_floors, has_mezzanine, has_drive_thru, facade_direction, "
-                "contact_phone, listing_type, property_type, is_furnished, lat, lon, "
+                "contact_phone, listing_type, property_type, is_furnished, apartments_count, lat, lon, "
                 "restaurant_score, restaurant_suitable, restaurant_signals, "
                 "status, first_seen_at, last_seen_at) "
                 "VALUES (:aqar_id, :title, :description, :neighborhood, :listing_url, :image_url, "
                 ":price_sar_annual, :price_per_sqm, :area_sqm, :street_width_m, "
                 ":num_floors, :has_mezzanine, :has_drive_thru, :facade_direction, "
-                ":contact_phone, :listing_type, :property_type, :is_furnished, :lat, :lon, "
+                ":contact_phone, :listing_type, :property_type, :is_furnished, :apartments_count, :lat, :lon, "
                 ":restaurant_score, :restaurant_suitable, :restaurant_signals, "
                 "'active', now(), now())"
             ),
@@ -848,6 +1000,7 @@ def _listing_params(listing: dict) -> dict:
         "listing_type": listing.get("listing_type"),
         "property_type": listing.get("property_type"),
         "is_furnished": listing.get("is_furnished"),
+        "apartments_count": listing.get("apartments_count"),
         "lat": Decimal(str(listing["lat"])) if listing.get("lat") else None,
         "lon": Decimal(str(listing["lon"])) if listing.get("lon") else None,
         "restaurant_score": listing.get("restaurant_score"),
