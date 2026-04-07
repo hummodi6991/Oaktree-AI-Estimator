@@ -11,6 +11,12 @@ on:
         description: "Truncate and rebuild"
         type: boolean
         default: true
+  workflow_run:
+    workflows: ["Aqar Scraper (Manual)"]
+    types:
+      - completed
+    branches:
+      - main
 
 concurrency:
   group: candidate-locations
@@ -18,6 +24,7 @@ concurrency:
 
 jobs:
   populate:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -54,8 +61,10 @@ jobs:
           POSTGRES_SSLMODE: ${{ secrets.POSTGRES_SSLMODE }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          FLAGS="--tiers ${{ github.event.inputs.tiers }}"
-          if [ "${{ github.event.inputs.replace }}" = "true" ]; then
+          TIERS="${{ github.event.inputs.tiers || '1,2,3' }}"
+          REPLACE="${{ github.event.inputs.replace || 'true' }}"
+          FLAGS="--tiers ${TIERS}"
+          if [ "${REPLACE}" = "true" ]; then
             FLAGS="$FLAGS --replace"
           else
             FLAGS="$FLAGS --no-replace"
