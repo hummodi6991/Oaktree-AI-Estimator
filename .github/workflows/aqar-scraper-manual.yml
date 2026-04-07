@@ -26,6 +26,9 @@ on:
           - showroom
           - warehouse
           - building
+  schedule:
+    # Every Monday at 02:00 UTC (05:00 Riyadh time) — off-peak
+    - cron: '0 2 * * 1'
 
 concurrency:
   group: aqar-scraper
@@ -61,12 +64,16 @@ jobs:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          FLAGS="--max-pages ${{ github.event.inputs.max_pages }}"
-          FLAGS="${FLAGS} --listing-type ${{ github.event.inputs.listing_type }}"
-          if [ "${{ github.event.inputs.no_detail }}" = "true" ]; then
+          MAX_PAGES="${{ github.event.inputs.max_pages || '500' }}"
+          LISTING_TYPE="${{ github.event.inputs.listing_type || 'all' }}"
+          NO_DETAIL="${{ github.event.inputs.no_detail || 'false' }}"
+          SKIP_GEOCODE="${{ github.event.inputs.skip_geocode || 'false' }}"
+          FLAGS="--max-pages ${MAX_PAGES}"
+          FLAGS="${FLAGS} --listing-type ${LISTING_TYPE}"
+          if [ "${NO_DETAIL}" = "true" ]; then
             FLAGS="${FLAGS} --no-detail"
           fi
-          if [ "${{ github.event.inputs.skip_geocode }}" = "true" ]; then
+          if [ "${SKIP_GEOCODE}" = "true" ]; then
             FLAGS="${FLAGS} --skip-geocode"
           fi
           FLAGS="${FLAGS} --resume"
