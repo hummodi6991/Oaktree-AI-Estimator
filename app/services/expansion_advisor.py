@@ -1109,10 +1109,71 @@ def _table_available(db: Session, table_name: str) -> bool:
         return False
 
 
-def _frontage_score(*, parcel_perimeter_m: float, touches_road: bool, nearby_road_count: int, nearest_major_road_m: float | None,
+# ---------------------------------------------------------------------------
+# Calibrated frontage/access score curves from measured Riyadh Aqar street
+# widths (525-row real-store distribution):
+#   <10 m: 4%   (poor frontage — side streets, alleys)
+#   10-15 m: 1% (weak)
+#   15-20 m: 3% (solid)
+#   20-30 m: 5% (strong)
+#   30-40 m: 20% (arterial-adjacent)
+#   40+ m: 66%  (arterial / commercial spine)
+#
+# 95% of real listings have measured street_width_m — this is a direct
+# ground-truth signal and should fully replace the parcel-based fallback
+# when it is available.
+# ---------------------------------------------------------------------------
+
+
+def _frontage_score_from_street_width(street_width_m: float) -> float:
+    if street_width_m < 8.0:
+        return 25.0
+    if street_width_m < 12.0:
+        # Linear interpolate 25 → 42 across [8, 12)
+        return 25.0 + (street_width_m - 8.0) / 4.0 * 17.0
+    if street_width_m < 18.0:
+        return 42.0 + (street_width_m - 12.0) / 6.0 * 16.0
+    if street_width_m < 25.0:
+        return 58.0 + (street_width_m - 18.0) / 7.0 * 14.0
+    if street_width_m < 35.0:
+        return 72.0 + (street_width_m - 25.0) / 10.0 * 10.0
+    if street_width_m < 50.0:
+        return 82.0 + (street_width_m - 35.0) / 15.0 * 8.0
+    return 94.0
+
+
+def _access_score_from_street_width(street_width_m: float) -> float:
+    # Access slightly lower than frontage at extreme widths — very wide
+    # arterials (60 m+) reduce pedestrian access even as they improve
+    # drive-by visibility.
+    if street_width_m < 8.0:
+        return 30.0
+    if street_width_m < 12.0:
+        return 30.0 + (street_width_m - 8.0) / 4.0 * 15.0
+    if street_width_m < 18.0:
+        return 45.0 + (street_width_m - 12.0) / 6.0 * 13.0
+    if street_width_m < 25.0:
+        return 58.0 + (street_width_m - 18.0) / 7.0 * 12.0
+    if street_width_m < 35.0:
+        return 70.0 + (street_width_m - 25.0) / 10.0 * 8.0
+    if street_width_m < 50.0:
+        return 78.0 + (street_width_m - 35.0) / 15.0 * 7.0
+    return 90.0
+
+
+def _frontage_score(*, unit_street_width_m: float | None = None, parcel_perimeter_m: float, touches_road: bool, nearby_road_count: int, nearest_major_road_m: float | None,
     road_context_available: bool = True) -> float:
+    # Listing-aware path: if we have a measured street width from Aqar,
+    # use it directly.  This is ground truth for 95% of real stores and
+    # should completely replace the parcel-based fallback.
+    if unit_street_width_m is not None and unit_street_width_m > 0:
+        return _frontage_score_from_street_width(float(unit_street_width_m))
+    # Parcel-based path: existing logic, unchanged for parcel candidates.
     if not road_context_available:
-        return 55.0
+        # No listing data, no parcel road context — explicit neutral-unknown.
+        # Return 50 (not 55) so the gate evaluator correctly marks this as
+        # "unknown" rather than "borderline pass".
+        return 50.0
     perimeter_signal = _clamp((parcel_perimeter_m / 260.0) * 100.0)
     touch_signal = 100.0 if touches_road else 40.0
     density_signal = _clamp((nearby_road_count / 6.0) * 100.0)
@@ -1120,9 +1181,13 @@ def _frontage_score(*, parcel_perimeter_m: float, touches_road: bool, nearby_roa
     return _clamp(perimeter_signal * 0.30 + touch_signal * 0.30 + density_signal * 0.20 + major_road_signal * 0.20)
 
 
-def _access_score(*, touches_road: bool, nearest_major_road_m: float | None, nearby_road_count: int, road_context_available: bool = True) -> float:
+def _access_score(*, unit_street_width_m: float | None = None, touches_road: bool, nearest_major_road_m: float | None, nearby_road_count: int, road_context_available: bool = True) -> float:
+    # Listing-aware path: measured street width from Aqar.
+    if unit_street_width_m is not None and unit_street_width_m > 0:
+        return _access_score_from_street_width(float(unit_street_width_m))
+    # Parcel-based path: existing logic, unchanged.
     if not road_context_available:
-        return 55.0
+        return 50.0
     touch_signal = 100.0 if touches_road else 30.0
     major_signal = _clamp(100.0 - (_safe_float(nearest_major_road_m, 500.0) / 500.0) * 100.0)
     road_density = _clamp((nearby_road_count / 8.0) * 100.0)
@@ -1657,6 +1722,14 @@ def _candidate_gate_status(
         "cannibalization_min_distance_m": _safe_float(brand_profile.get("cannibalization_tolerance_m"), 1800.0),
     }
     area_fit_pass = area_fit_score >= thresholds["area_fit_min"]
+    # TEMPORARY diagnostic — revert after identifying the #6 الربوة area-fit
+    # bug (384 m² failing in a 100–500 m² search).  Log the actual values at
+    # the gate evaluation point to pin down the root cause.
+    if not area_fit_pass:
+        logger.info(
+            "area_fit gate FAIL diagnostic: area_fit_score=%.2f type=%s threshold=%.1f",
+            area_fit_score, type(area_fit_score).__name__, thresholds["area_fit_min"],
+        )
     # Tri-state zoning gate using ArcGIS classification semantics:
     #   - "pass" verdict  => True  (clearly commercial/mixed-use)
     #   - "fail" verdict  => False (clearly disallowed)
@@ -4552,6 +4625,15 @@ def run_expansion_search(
         whitespace_score = _competition_whitespace_score(competitor_count)
 
         area_fit = _area_fit(area_m2, target_area_m2, min_area_m2, max_area_m2)
+        # TEMPORARY diagnostic — revert after identifying the area-fit bug.
+        if area_fit <= 0 and area_m2 > 0:
+            logger.info(
+                "area_fit=0 diagnostic: area_m2=%s type=%s min=%s max=%s target=%s "
+                "parcel_id=%s commercial_unit_id=%s district=%s",
+                area_m2, type(area_m2).__name__, min_area_m2, max_area_m2,
+                target_area_m2, row.get("parcel_id"), row.get("commercial_unit_id"),
+                district,
+            )
         zoning_fit_score = _zoning_fit_score(landuse_label, landuse_code)
         fit_score = _clamp(area_fit * 0.55 + zoning_fit_score * 0.45)
 
@@ -4717,8 +4799,22 @@ def run_expansion_search(
             district=district,
             listing_type=row.get("unit_listing_type"),
         )
-        frontage_score = 55.0
-        access_score = 55.0
+        _unit_street_width = _safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None
+        frontage_score = _frontage_score(
+            unit_street_width_m=_unit_street_width,
+            parcel_perimeter_m=0.0,
+            touches_road=False,
+            nearby_road_count=0,
+            nearest_major_road_m=None,
+            road_context_available=False,
+        )
+        access_score = _access_score(
+            unit_street_width_m=_unit_street_width,
+            touches_road=False,
+            nearest_major_road_m=None,
+            nearby_road_count=0,
+            road_context_available=False,
+        )
         parking_score = _parking_score(
             area_m2=area_m2,
             service_model=service_model,
@@ -5308,6 +5404,12 @@ def run_expansion_search(
                 "profitability_score": row.get("profitability_score"),
             }
         road_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("road_context_available"))
+        # Listing street width is direct ground truth — treat it as road
+        # context so the frontage/access gate evaluates instead of returning
+        # None (unknown).
+        _unit_sw = _safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None
+        if _unit_sw and _unit_sw > 0:
+            road_context_available = True
         parking_context_available = bool((feature_snapshot_json.get("context_sources") or {}).get("parking_context_available"))
         # Add Expansion Advisor data provenance to context_sources
         cs = feature_snapshot_json.setdefault("context_sources", {})
@@ -5326,7 +5428,9 @@ def run_expansion_search(
         cs["delivery_observed"] = provider_listing_count > 0
         cs["rent_micro_adjustment"] = prepared_item.get("rent_micro_meta")
         cs["rent_base_sar_m2_year"] = prepared_item.get("rent_base_sar_m2_year")
+        _unit_street_width = _safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None
         frontage_score = _frontage_score(
+            unit_street_width_m=_unit_street_width,
             parcel_perimeter_m=_safe_float(feature_snapshot_json.get("parcel_perimeter_m")),
             touches_road=bool(feature_snapshot_json.get("touches_road")),
             nearby_road_count=_nonnegative_int(feature_snapshot_json.get("nearby_road_segment_count")),
@@ -5334,6 +5438,7 @@ def run_expansion_search(
             road_context_available=road_context_available,
         )
         access_score = _access_score(
+            unit_street_width_m=_unit_street_width,
             touches_road=bool(feature_snapshot_json.get("touches_road")),
             nearest_major_road_m=_safe_float(feature_snapshot_json.get("nearest_major_road_distance_m")),
             nearby_road_count=_nonnegative_int(feature_snapshot_json.get("nearby_road_segment_count")),
