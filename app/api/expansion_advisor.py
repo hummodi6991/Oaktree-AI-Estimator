@@ -167,6 +167,7 @@ class CandidateScoreBreakdownResponse(StrictResponseModel):
     display: dict[str, Any] = Field(default_factory=dict)
     final_score: float = 0.0
     display_score: float | None = None
+    economics_detail: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExpansionCandidateResponse(FlexibleResponseModel):
