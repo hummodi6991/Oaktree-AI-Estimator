@@ -234,7 +234,6 @@ class CompareSummaryResponse(StrictResponseModel):
     strongest_delivery_market_candidate_id: str | None = None
     strongest_whitespace_candidate_id: str | None = None
     lowest_rent_burden_candidate_id: str | None = None
-    fastest_payback_candidate_id: str | None = None
     most_confident_candidate_id: str | None = None
     best_gate_pass_candidate_id: str | None = None
 
