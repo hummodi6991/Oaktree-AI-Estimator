@@ -128,7 +128,6 @@ export default function ExpansionReportPanel({
                     { label: t("expansionAdvisor.compareWinnerBestEconomics"), id: rec.best_economics_candidate_id },
                     { label: t("expansionAdvisor.compareWinnerBestBrandFit"), id: rec.best_brand_fit_candidate_id },
                     { label: t("expansionAdvisor.compareWinnerStrongestWhitespace"), id: rec.strongest_whitespace_candidate_id },
-                    { label: t("expansionAdvisor.compareWinnerFastestPayback"), id: rec.fastest_payback_candidate_id },
                     { label: t("expansionAdvisor.compareWinnerMostConfident"), id: rec.most_confident_candidate_id },
                     { label: t("expansionAdvisor.compareWinnerBestGatePass"), id: rec.best_pass_candidate_id },
                   ].filter((d) => d.id);

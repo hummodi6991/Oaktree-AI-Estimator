@@ -3,7 +3,6 @@ import type { ExpansionCandidate, CandidateMemoResponse } from "../../lib/api/ex
 import { buildFinalistTiles, type FinalistTile } from "./studyAdapters";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
-import PaybackBadge from "./PaybackBadge";
 import { fmtSAR, fmtScore, isGarbledText } from "./formatHelpers";
 
 type Props = {
@@ -66,13 +65,6 @@ function TileCard({
       </div>
 
       <div className="ea-finalist-tile__metrics">
-        <div className="ea-finalist-tile__metric">
-          <span className="ea-finalist-tile__metric-label">{t("expansionAdvisor.payback")}</span>
-          <PaybackBadge
-            band={tile.paybackBand !== "—" ? tile.paybackBand : undefined}
-            months={tile.paybackMonths}
-          />
-        </div>
         <div className="ea-finalist-tile__metric">
           <span className="ea-finalist-tile__metric-label">{t("expansionAdvisor.annualRent")}</span>
           <span className="ea-finalist-tile__metric-value">{fmtSAR(tile.estimatedAnnualRent)}</span>

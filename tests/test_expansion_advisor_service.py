@@ -137,8 +137,8 @@ def test_district_filtering_narrows_results_and_sets_economics_fields():
     assert items[0]["cannibalization_score"] is not None
     assert items[0]["distance_to_nearest_branch_m"] is not None
     assert items[0]["economics_score"] is not None
-    assert items[0]["estimated_payback_months"] is not None
-    assert items[0]["payback_band"] in {"strong", "promising", "borderline", "weak"}
+    assert items[0]["estimated_payback_months"] is None
+    assert items[0]["payback_band"] is None
     assert 0.0 <= items[0]["final_score"] <= 100.0
     assert items[0]["compare_rank"] == 1
 
@@ -936,8 +936,8 @@ def test_run_expansion_search_with_brand_profile_and_branches():
     assert item["cannibalization_score"] is not None
     assert item["distance_to_nearest_branch_m"] is not None
     assert item["economics_score"] is not None
-    assert item["estimated_payback_months"] is not None
-    assert item["payback_band"] in {"strong", "promising", "borderline", "weak"}
+    assert item["estimated_payback_months"] is None
+    assert item["payback_band"] is None
     assert "gate_status_json" in item
     assert "score_breakdown_json" in item
     assert "top_positives_json" in item
@@ -1022,7 +1022,7 @@ def test_run_expansion_search_empty_existing_branches():
     assert item["cannibalization_score"] == 0.0
     assert 0.0 <= item["final_score"] <= 100.0
     assert item["economics_score"] is not None
-    assert item["estimated_payback_months"] is not None
+    assert item["estimated_payback_months"] is None
 
 
 def test_run_expansion_search_preferred_districts_typo_no_crash():
@@ -1146,7 +1146,7 @@ def test_run_expansion_search_exact_production_payload():
     assert item["distance_to_nearest_branch_m"] is None
     assert item["cannibalization_score"] == 0.0
     assert 0.0 <= item["final_score"] <= 100.0
-    assert item["payback_band"] in {"strong", "promising", "borderline", "weak"}
+    assert item["payback_band"] is None
     assert "gate_status_json" in item
     assert "score_breakdown_json" in item
 
@@ -1373,7 +1373,7 @@ def test_production_payload_c3ace4a6_regression(monkeypatch):
     assert isinstance(items, list)
     for item in items:
         assert 0.0 <= item["final_score"] <= 100.0
-        assert item["payback_band"] in {"strong", "promising", "borderline", "weak"}
+        assert item["payback_band"] is None
         assert "gate_status_json" in item
         assert "score_breakdown_json" in item
         assert "feature_snapshot_json" in item
@@ -1488,7 +1488,7 @@ def test_run_expansion_search_production_payload():
     assert isinstance(items, list)
     for item in items:
         assert 0.0 <= item["final_score"] <= 100.0
-        assert item["payback_band"] in {"strong", "promising", "borderline", "weak"}
+        assert item["payback_band"] is None
 
 
 def test_run_expansion_search_no_bbox_empty_result():

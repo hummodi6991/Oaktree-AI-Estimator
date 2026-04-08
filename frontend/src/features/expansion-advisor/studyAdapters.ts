@@ -139,7 +139,6 @@ export function normalizeBriefPayload(raw: ExpansionBrief): ExpansionBrief {
 
 export type SortKey =
   | "rank"
-  | "payback"
   | "economics"
   | "brand_fit"
   | "cannibalization"
@@ -149,7 +148,6 @@ export type SortKey =
 export type FilterKey =
   | "all"
   | "pass_only"
-  | "fastest_payback"
   | "strongest_economics"
   | "strongest_brand_fit"
   | "lowest_cannibalization"
@@ -170,10 +168,6 @@ export function filterCandidates(
   switch (filter) {
     case "pass_only":
       return result.filter((c) => c.gate_status_json?.overall_pass === true);
-    case "fastest_payback":
-      return [...result].sort(
-        (a, b) => (a.estimated_payback_months ?? 999) - (b.estimated_payback_months ?? 999),
-      );
     case "strongest_economics":
       return [...result].sort((a, b) => (b.economics_score ?? 0) - (a.economics_score ?? 0));
     case "strongest_brand_fit":
@@ -199,10 +193,6 @@ export function sortCandidates(candidates: ExpansionCandidate[], sortKey: SortKe
   switch (sortKey) {
     case "rank":
       return sorted.sort((a, b) => (a.rank_position ?? 999) - (b.rank_position ?? 999));
-    case "payback":
-      return sorted.sort(
-        (a, b) => (a.estimated_payback_months ?? 999) - (b.estimated_payback_months ?? 999),
-      );
     case "economics":
       return sorted.sort((a, b) => (b.economics_score ?? 0) - (a.economics_score ?? 0));
     case "brand_fit":
@@ -390,8 +380,8 @@ export function restoreSortFilter(
   uiState: Record<string, unknown> | null | undefined,
 ): { activeFilter: FilterKey; activeSort: SortKey; districtFilter: string } {
   const raw = (uiState || {}) as Record<string, unknown>;
-  const validFilters: FilterKey[] = ["all", "pass_only", "fastest_payback", "strongest_economics", "strongest_brand_fit", "lowest_cannibalization", "strongest_delivery"];
-  const validSorts: SortKey[] = ["rank", "payback", "economics", "brand_fit", "cannibalization", "delivery", "district"];
+  const validFilters: FilterKey[] = ["all", "pass_only", "strongest_economics", "strongest_brand_fit", "lowest_cannibalization", "strongest_delivery"];
+  const validSorts: SortKey[] = ["rank", "economics", "brand_fit", "cannibalization", "delivery", "district"];
   const f = typeof raw.active_filter === "string" && validFilters.includes(raw.active_filter as FilterKey) ? (raw.active_filter as FilterKey) : "all";
   const s = typeof raw.active_sort === "string" && validSorts.includes(raw.active_sort as SortKey) ? (raw.active_sort as SortKey) : "rank";
   const d = typeof raw.district_filter === "string" ? raw.district_filter : "";
@@ -457,8 +447,6 @@ export type FinalistTile = {
   rankPosition: number | null;
   district: string;
   gateVerdict: string;
-  paybackBand: string;
-  paybackMonths: number | null;
   estimatedAnnualRent: number | null;
   fitoutCost: number | null;
   revenueIndex: number | null;
@@ -487,8 +475,6 @@ export function buildFinalistTiles(
         rankPosition: candidate.rank_position ?? null,
         district: candidateDistrictLabel(candidate, candidate.parcel_id || "—"),
         gateVerdict: gatePass === true ? "pass" : gatePass === false ? "fail" : "unknown",
-        paybackBand: candidate.payback_band || "—",
-        paybackMonths: candidate.estimated_payback_months ?? null,
         estimatedAnnualRent: candidate.estimated_annual_rent_sar ?? null,
         fitoutCost: candidate.estimated_fitout_cost_sar ?? null,
         revenueIndex: candidate.estimated_revenue_index ?? null,
@@ -618,17 +604,6 @@ export function deriveDecisionChecklist(
       status: candidate.economics_score >= 70 ? "strong" : candidate.economics_score >= 40 ? "caution" : "risk",
     });
   }
-  if (candidate.payback_band) {
-    const band = candidate.payback_band.toLowerCase();
-    const isStrong = band === "fast" || band === "promising" || band === "strong";
-    const isNeutral = band === "moderate" || band === "standard" || band === "borderline";
-    items.push({
-      category: "economics",
-      label: `Payback: ${candidate.payback_band}${candidate.estimated_payback_months ? ` (${Math.round(candidate.estimated_payback_months)} mo)` : ""}`,
-      status: isStrong ? "strong" : isNeutral ? "caution" : "risk",
-    });
-  }
-
   // Unknowns to verify
   if (reasons?.unknown) {
     for (const u of reasons.unknown) {
@@ -1040,7 +1015,7 @@ export function deriveCompareOutcome(
   const runnerUpStrengths: string[] = [];
   const dimensionKeys = [
     "best_economics_candidate_id",
-    "fastest_payback_candidate_id",
+
     "best_brand_fit_candidate_id",
     "highest_demand_candidate_id",
     "strongest_delivery_market_candidate_id",

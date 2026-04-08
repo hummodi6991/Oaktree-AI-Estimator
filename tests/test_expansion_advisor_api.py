@@ -162,8 +162,8 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
                 "estimated_fitout_cost_sar": 468000.0,
                 "estimated_revenue_index": 73.0,
                 "economics_score": 69.0,
-                "estimated_payback_months": 24.0,
-                "payback_band": "promising",
+                "estimated_payback_months": None,
+                "payback_band": None,
                 "decision_summary": "summary",
                 "key_risks_json": ["risk"],
                 "key_strengths_json": ["strength"],
@@ -194,7 +194,7 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
     assert body["items"][0]["district"] == "Olaya"
     assert body["items"][0]["compare_rank"] == 1
     assert body["items"][0]["economics_score"] == 69.0
-    assert body["items"][0]["payback_band"] == "promising"
+    assert body["items"][0]["payback_band"] is None
     assert body["items"][0]["confidence_grade"] == "A"
     assert body["items"][0]["gate_status_json"]["overall_pass"] is True
     assert body["items"][0]["rank_position"] == 1
@@ -213,8 +213,8 @@ def test_compare_endpoint_happy_path(monkeypatch):
         "compare_candidates",
         lambda _db, _search_id, _candidate_ids: {
             "items": [
-                {"candidate_id": "c1", "economics_score": 70.0, "estimated_payback_months": 20.0, "zoning_fit_score": 82, "frontage_score": 65, "access_score": 66, "parking_score": 61, "access_visibility_score": 64},
-                {"candidate_id": "c2", "economics_score": 62.0, "estimated_payback_months": 28.0},
+                {"candidate_id": "c1", "economics_score": 70.0, "estimated_payback_months": None, "zoning_fit_score": 82, "frontage_score": 65, "access_score": 66, "parking_score": 61, "access_visibility_score": 64},
+                {"candidate_id": "c2", "economics_score": 62.0, "estimated_payback_months": None},
             ],
             "summary": {
                 "best_overall_candidate_id": "c1",
@@ -226,7 +226,7 @@ def test_compare_endpoint_happy_path(monkeypatch):
                 "strongest_delivery_market_candidate_id": "c2",
                 "strongest_whitespace_candidate_id": "c2",
                 "lowest_rent_burden_candidate_id": "c2",
-                "fastest_payback_candidate_id": "c1",
+                "fastest_payback_candidate_id": None,
                 "most_confident_candidate_id": "c2",
                 "best_gate_pass_candidate_id": "c1",
             },
@@ -355,8 +355,8 @@ def test_candidate_memo_endpoint_happy_path(monkeypatch):
                 "estimated_annual_rent_sar": 176400,
                 "estimated_fitout_cost_sar": 468000,
                 "estimated_revenue_index": 75,
-                "estimated_payback_months": 21,
-                "payback_band": "promising",
+                "estimated_payback_months": None,
+                "payback_band": None,
                 "key_strengths": ["Strong demand"],
                 "key_risks": ["Competition"],
                 "decision_summary": "summary",
