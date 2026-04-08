@@ -2309,6 +2309,43 @@ def _build_explanation(
     }
 
 
+def _road_signal_from_context(road_context: dict | None) -> float:
+    """Compute a normalized road-quality signal in [0, 1] from bulk_roads data.
+
+    The signal blends two components:
+      - touches_road (70% weight): binary, captures whether the candidate
+        has direct street frontage.
+      - arterial proximity (30% weight): distance to nearest major road,
+        normalized so 0m -> 1.0, 500m+ -> 0.0.
+
+    Returns 0.5 (neutral) when road_context is missing, so candidates
+    without enrichment data are not penalized.
+    """
+    if not road_context:
+        return 0.5
+
+    touches = bool(road_context.get("touches_road"))
+    distance_m = road_context.get("nearest_major_road_distance_m")
+
+    touches_component = 1.0 if touches else 0.0
+
+    if distance_m is None:
+        distance_component = 0.5
+    else:
+        try:
+            d = float(distance_m)
+            if d <= 0:
+                distance_component = 1.0
+            elif d >= 500:
+                distance_component = 0.0
+            else:
+                distance_component = 1.0 - (d / 500.0)
+        except (TypeError, ValueError):
+            distance_component = 0.5
+
+    return round(touches_component * 0.70 + distance_component * 0.30, 4)
+
+
 def _rent_micro_location_multiplier(
     *,
     provider_listing_count: int,
@@ -2317,6 +2354,7 @@ def _rent_micro_location_multiplier(
     competitor_count: int,
     district_delivery_stats: dict | None = None,
     city_benchmarks: dict | None = None,
+    road_context: dict | None = None,
 ) -> tuple[float, dict]:
     """Compute a per-parcel rent multiplier based on local commercial activity.
 
@@ -2371,13 +2409,18 @@ def _rent_micro_location_multiplier(
                 (district_vs_city * 0.4 + min(2.0, parcel_vs_district) * 0.3) / 1.4
             ))
 
+    # Road signal from bulk_roads enrichment (touches_road + arterial distance)
+    road_signal = _road_signal_from_context(road_context)
+
     # Blend signals into composite score [0, 1]
+    # Weights reduced proportionally to make room for road_signal (0.20)
     composite = (
-        density_signal * 0.35
-        + pop_signal * 0.20
-        + comp_signal * 0.15
-        + cat_comp_signal * 0.15
-        + district_relative * 0.15
+        density_signal * 0.28
+        + pop_signal * 0.16
+        + comp_signal * 0.12
+        + cat_comp_signal * 0.12
+        + district_relative * 0.12
+        + road_signal * 0.20
     )
 
     # Map composite [0, 1] → multiplier [0.70, 1.35]
@@ -2392,6 +2435,7 @@ def _rent_micro_location_multiplier(
         "comp_signal": round(comp_signal, 3),
         "cat_comp_signal": round(cat_comp_signal, 3),
         "district_relative": round(district_relative, 3),
+        "road_signal": round(road_signal, 3),
         "composite": round(composite, 3),
         "multiplier": round(multiplier, 3),
     }
@@ -2587,6 +2631,7 @@ def _estimate_revenue_index(
     whitespace_score: float,
     category: str | None = None,
     price_tier: str | None = None,
+    road_context: dict | None = None,
 ) -> float:
     """Composite revenue potential index using consistent sqrt scaling.
 
@@ -2596,6 +2641,10 @@ def _estimate_revenue_index(
 
     Ticket-size multiplier scales revenue potential by implied average
     check derived from price_tier × category.
+
+    Road multiplier adjusts for storefront visibility/access: candidates
+    on arterials with street frontage get a boost, those without get a
+    penalty.  Maps road_signal [0,1] → multiplier [0.85, 1.20].
     """
     delivery_signal = _clamp((delivery_listing_count / 35.0) ** 0.5 * 100.0) if delivery_listing_count > 0 else 0.0
     population_signal = _clamp((population_reach / 80000.0) ** 0.5 * 100.0) if population_reach > 0 else 0.0
@@ -2608,7 +2657,12 @@ def _estimate_revenue_index(
     # clamped to [0.5, 2.5] to prevent extreme distortion.
     implied_check = _implied_average_check(price_tier, category)
     ticket_multiplier = max(0.5, min(2.5, implied_check / _IMPLIED_CHECK_BASELINE_SAR))
-    return _clamp(base * factor * ticket_multiplier)
+    # Road multiplier: storefront visibility/access drives walk-in and
+    # drive-by revenue independent of demographic demand.
+    # road_signal [0,1] -> multiplier [0.85, 1.20]
+    road_signal = _road_signal_from_context(road_context)
+    road_multiplier = 0.85 + road_signal * 0.35
+    return _clamp(base * factor * ticket_multiplier * road_multiplier)
 
 
 def _economics_score(
@@ -4947,6 +5001,52 @@ def run_expansion_search(
         estimated_payback_months = prepared_item["estimated_payback_months"]
         payback_band = prepared_item["payback_band"]
         provider_intelligence_composite = prepared_item["provider_intelligence_composite"]
+
+        # ── Recompute revenue index and rent with road context ──
+        # Road enrichment (_bulk_roads) is only available after shortlisting,
+        # so the first scoring pass runs without it. Recompute here for
+        # final scores using the road signal.
+        _road_ctx = _bulk_roads.get(_pid_str)
+        estimated_revenue_index = _estimate_revenue_index(
+            demand_score,
+            delivery_listing_count,
+            population_reach,
+            whitespace_score,
+            category=category,
+            price_tier=effective_brand_profile.get("price_tier"),
+            road_context=_road_ctx,
+        )
+        if rent_source != "commercial_unit_actual":
+            _base_rent_sar_m2_year = prepared_item.get("rent_base_sar_m2_year", estimated_rent_sar_m2_year)
+            _district_norm_2 = normalize_district_key(district) if district else None
+            _rent_multiplier, _rent_micro_meta = _rent_micro_location_multiplier(
+                provider_listing_count=provider_listing_count,
+                delivery_competition_count=prepared_item.get("delivery_competition_count", 0),
+                population_reach=population_reach,
+                competitor_count=competitor_count,
+                district_delivery_stats=_district_delivery_stats.get(_district_norm_2) if _district_norm_2 else None,
+                city_benchmarks=_city_delivery_benchmarks,
+                road_context=_road_ctx,
+            )
+            estimated_rent_sar_m2_year = round(_base_rent_sar_m2_year * _rent_multiplier, 2)
+            if abs(_rent_multiplier - 1.0) > 0.01:
+                rent_source = f"{rent_source}+micro"
+            estimated_annual_rent_sar = round(area_m2 * estimated_rent_sar_m2_year)
+        economics_score = _economics_score(
+            estimated_revenue_index=estimated_revenue_index,
+            estimated_annual_rent_sar=estimated_annual_rent_sar,
+            estimated_fitout_cost_sar=estimated_fitout_cost_sar,
+            area_m2=area_m2,
+            cannibalization_score=cannibalization_score,
+            fit_score=fit_score,
+        )
+        estimated_payback_months = _estimate_payback_months(
+            estimated_fitout_cost_sar=estimated_fitout_cost_sar,
+            estimated_annual_rent_sar=estimated_annual_rent_sar,
+            estimated_revenue_index=estimated_revenue_index,
+            confidence_score=confidence_score,
+        )
+        payback_band = _payback_band(estimated_payback_months)
 
         feature_snapshot_json = _candidate_feature_snapshot(
             db,
