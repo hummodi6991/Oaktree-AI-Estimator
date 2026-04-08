@@ -866,6 +866,18 @@ _NEG_RE = re.compile("|".join(re.escape(k) for k in _NEGATIVE_KW), re.I)
 
 _SUITABILITY_THRESHOLD = 25
 
+# Listing types that can plausibly host an F&B operator. Any other
+# listing_type (warehouse, building, land, rest_house, farm, etc.) is
+# structurally not an F&B candidate regardless of area, rent, or other
+# signals — hard-excluded from restaurant_suitable.
+_FNB_COMPATIBLE_LISTING_TYPES: frozenset[str] = frozenset({"store", "showroom"})
+
+
+def _is_fnb_compatible_listing_type(listing_type: str | None) -> bool:
+    if not listing_type:
+        return False
+    return listing_type.strip().lower() in _FNB_COMPATIBLE_LISTING_TYPES
+
 
 def classify_restaurant_suitability(listing: dict) -> dict:
     """Score a listing for restaurant suitability based on keywords and physical traits.
@@ -873,6 +885,18 @@ def classify_restaurant_suitability(listing: dict) -> dict:
     Mutates listing in-place, adding restaurant_score, restaurant_suitable, and
     restaurant_signals fields. Returns the listing.
     """
+    # Hard gate: listing must be a structurally F&B-compatible product type.
+    # This runs before all other checks — warehouses, full buildings, land,
+    # etc. are not F&B candidates regardless of their area or rent signals.
+    if not _is_fnb_compatible_listing_type(listing.get("listing_type")):
+        listing["restaurant_score"] = 0
+        listing["restaurant_suitable"] = False
+        listing["restaurant_signals"] = [
+            f"REJECTED listing_type_not_fnb_compatible: "
+            f"'{listing.get('listing_type')}'"
+        ]
+        return listing
+
     score = 0
     signals: list[str] = []
 
@@ -938,12 +962,6 @@ def classify_restaurant_suitability(listing: dict) -> dict:
     # so they get a base score reflecting inherent restaurant potential.
     score += 15
     signals.append("+15 commercial_retail_base")
-
-    # Warehouse/building types get a boost for cloud kitchen / dark kitchen suitability
-    listing_type = listing.get("listing_type", "")
-    if listing_type in ("warehouse", "building"):
-        score += 30
-        signals.append(f"+30 {listing_type}_cloud_kitchen_boost")
 
     title = listing.get("title", "") or ""
     desc = listing.get("description", "") or ""
