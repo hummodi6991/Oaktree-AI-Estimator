@@ -162,7 +162,10 @@ def test_area_fit_out_of_range_returns_zero():
 def test_gate_all_hard_fail_produces_overall_false():
     gate_status, reasons = _candidate_gate_status(
         fit_score=30.0,
-        area_fit_score=20.0,  # below 55 threshold -> hard fail
+        area_fit_score=20.0,
+        area_m2=600.0,  # outside range -> hard fail
+        min_area_m2=100.0,
+        max_area_m2=500.0,
         zoning_fit_score=20.0,  # below 60 threshold -> hard fail
         landuse_available=True,
         frontage_score=20.0,
@@ -186,6 +189,9 @@ def test_gate_unknown_when_no_landuse_data():
     gate_status, reasons = _candidate_gate_status(
         fit_score=80.0,
         area_fit_score=80.0,
+        area_m2=200.0,
+        min_area_m2=100.0,
+        max_area_m2=500.0,
         zoning_fit_score=80.0,
         landuse_available=False,  # no landuse -> zoning = unknown
         frontage_score=80.0,
@@ -342,6 +348,9 @@ def test_zoning_fit_score_clamps():
 _GATE_DEFAULTS = dict(
     fit_score=80.0,
     area_fit_score=80.0,
+    area_m2=200.0,
+    min_area_m2=100.0,
+    max_area_m2=500.0,
     frontage_score=80.0,
     access_score=80.0,
     parking_score=80.0,
