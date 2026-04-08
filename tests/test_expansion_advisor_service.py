@@ -1524,9 +1524,8 @@ def test_area_inside_range_passes_area_gate():
 def test_area_outside_range_fails_area_gate():
     """Candidate with parcel area outside range -> area_fit_pass False."""
     gates, reasons = _candidate_gate_status(
-        **_GATE_BASE,
+        **{**_GATE_BASE, "area_m2": 600},  # outside 100–300 range -> hard fail
         area_fit_score=20.0,
-        area_m2=600,  # outside 100–300 range -> hard fail
         zoning_fit_score=80.0,
         landuse_available=True,
     )
@@ -1583,9 +1582,8 @@ def test_production_like_mixed_verdicts():
 
     # Candidate 3: area outside range, good zoning
     g3, r3 = _candidate_gate_status(
-        **_GATE_BASE,
+        **{**_GATE_BASE, "area_m2": 600},  # outside 100–300 range -> hard fail
         area_fit_score=20.0,
-        area_m2=600,  # outside 100–300 range -> hard fail
         zoning_fit_score=100.0,
         landuse_available=True,
     )
