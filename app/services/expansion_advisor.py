@@ -2677,6 +2677,22 @@ def _estimate_revenue_index(
 _RENT_COMP_MIN_SAR_M2_MONTH: float = 15.0
 _RENT_COMP_MAX_SAR_M2_MONTH: float = 350.0
 
+# Maximum area for a comparable listing (m²).  Rows above this are typically
+# whole-building or land-plot listings whose per-m² rate is not representative
+# of a typical F&B retail unit.
+_RENT_COMP_MAX_AREA_SQM: float = 1000.0
+
+# Property types that should never appear in the comparable set.  These are
+# structurally incompatible with F&B retail rents and distort the percentile
+# distribution when included.
+_RENT_COMP_EXCLUDED_PROPERTY_TYPES: tuple[str, ...] = (
+    "warehouse",
+    "building",
+    "land",
+    "rest_house",
+    "farm",
+)
+
 # Area bands (m²) used to bucket comparable listings for rent percentiles.
 _RENT_COMP_AREA_BANDS: list[tuple[float, float]] = [
     (0, 100),
@@ -2726,6 +2742,8 @@ def _percentile_rent_burden(
             "comparable_bounds": {
                 "min_sar_m2_month": _RENT_COMP_MIN_SAR_M2_MONTH,
                 "max_sar_m2_month": _RENT_COMP_MAX_SAR_M2_MONTH,
+                "max_area_sqm": _RENT_COMP_MAX_AREA_SQM,
+                "excluded_property_types": list(_RENT_COMP_EXCLUDED_PROPERTY_TYPES),
             },
             "note": "listing rent below sanity envelope — likely data quality issue, neutral burden assigned",
         }
@@ -2740,6 +2758,8 @@ def _percentile_rent_burden(
             "comparable_bounds": {
                 "min_sar_m2_month": _RENT_COMP_MIN_SAR_M2_MONTH,
                 "max_sar_m2_month": _RENT_COMP_MAX_SAR_M2_MONTH,
+                "max_area_sqm": _RENT_COMP_MAX_AREA_SQM,
+                "excluded_property_types": list(_RENT_COMP_EXCLUDED_PROPERTY_TYPES),
             },
             "note": "listing rent above sanity envelope — heavy burden penalty assigned",
         }
@@ -2747,7 +2767,12 @@ def _percentile_rent_burden(
     band_lo, band_hi = _area_band_bounds(area_m2)
     district_norm = normalize_district_key(district) if district else None
 
-    base_where = """
+    # Build a SQL-safe literal for the excluded property types.
+    _excluded_pt_sql = ", ".join(
+        f"'{pt}'" for pt in _RENT_COMP_EXCLUDED_PROPERTY_TYPES
+    )
+
+    base_where = f"""
         FROM commercial_unit
         WHERE restaurant_suitable = true
           AND price_sar_annual IS NOT NULL
@@ -2756,6 +2781,8 @@ def _percentile_rent_burden(
           AND area_sqm > 0
           AND status = 'active'
           AND (price_sar_annual / area_sqm / 12.0) BETWEEN :rent_floor AND :rent_ceiling
+          AND area_sqm <= :max_comp_area
+          AND (property_type IS NULL OR lower(property_type) NOT IN ({_excluded_pt_sql}))
     """
 
     # Fallback chain: narrowest → broadest.
@@ -2812,6 +2839,7 @@ def _percentile_rent_burden(
                         "listing_rate": float(listing_monthly_rent_per_m2),
                         "rent_floor": _RENT_COMP_MIN_SAR_M2_MONTH,
                         "rent_ceiling": _RENT_COMP_MAX_SAR_M2_MONTH,
+                        "max_comp_area": _RENT_COMP_MAX_AREA_SQM,
                     },
                 ).mappings().first()
         except Exception:
@@ -2848,6 +2876,8 @@ def _percentile_rent_burden(
             "comparable_bounds": {
                 "min_sar_m2_month": _RENT_COMP_MIN_SAR_M2_MONTH,
                 "max_sar_m2_month": _RENT_COMP_MAX_SAR_M2_MONTH,
+                "max_area_sqm": _RENT_COMP_MAX_AREA_SQM,
+                "excluded_property_types": list(_RENT_COMP_EXCLUDED_PROPERTY_TYPES),
             },
         }
 
