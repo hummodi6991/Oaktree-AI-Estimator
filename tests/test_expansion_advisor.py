@@ -174,7 +174,6 @@ def test_candidate_gate_status_exposes_advisory_failures_without_blocking():
         provider_density_score=52.0,
         multi_platform_presence_score=15.0,
         economics_score=58.0,
-        payback_band="healthy",
         brand_profile={"primary_channel": "delivery"},
         road_context_available=True,
         parking_context_available=True,
@@ -592,7 +591,6 @@ def test_candidate_gate_status_blocking_failure_on_low_fit():
         provider_density_score=52.0,
         multi_platform_presence_score=15.0,
         economics_score=58.0,
-        payback_band="healthy",
         brand_profile={"primary_channel": "delivery"},
         road_context_available=True,
         parking_context_available=True,
@@ -806,7 +804,6 @@ def test_delivery_gate_explanation_inferred_when_no_observed():
         provider_density_score=0.0,   # No observed delivery
         multi_platform_presence_score=0.0,  # No observed delivery
         economics_score=58.0,
-        payback_band="healthy",
         brand_profile={"primary_channel": "balanced"},
         road_context_available=True,
         parking_context_available=True,
@@ -831,7 +828,6 @@ def test_delivery_gate_explanation_observed_when_listings_present():
         provider_density_score=52.0,   # Observed
         multi_platform_presence_score=35.0,  # Observed
         economics_score=58.0,
-        payback_band="healthy",
         brand_profile={"primary_channel": "delivery"},
         road_context_available=True,
         parking_context_available=True,

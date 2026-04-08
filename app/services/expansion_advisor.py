@@ -835,10 +835,6 @@ def _normalize_candidate_payload(
     payload["demand_thesis"] = payload.get("demand_thesis") or ""
     payload["cost_thesis"] = payload.get("cost_thesis") or ""
 
-    # ── Payback: kept in schema but no longer surfaced to UI ──
-    payload["estimated_payback_months"] = None
-    payload["payback_band"] = None
-
     # ── Commercial unit fields (pass through) ──
     payload["source_type"] = payload.get("source_type", "parcel")
     payload["commercial_unit_id"] = payload.get("commercial_unit_id")
@@ -1644,7 +1640,6 @@ def _candidate_gate_status(
     provider_density_score: float,
     multi_platform_presence_score: float,
     economics_score: float,
-    payback_band: str,
     brand_profile: dict[str, Any],
     road_context_available: bool,
     parking_context_available: bool,
@@ -1708,7 +1703,7 @@ def _candidate_gate_status(
     else:
         delivery_market_pass = True
 
-    economics_pass = economics_score >= thresholds["economics_min"] and str(payback_band or "").lower() != "weak"
+    economics_pass = economics_score >= thresholds["economics_min"]
 
     gate_states: dict[str, bool | None] = {
         "zoning_fit_pass": zoning_fit_pass,
@@ -1788,7 +1783,7 @@ def _candidate_gate_status(
         "district_pass": "District gate fails only for explicitly excluded districts.",
         "cannibalization_pass": "Cannibalization gate checks minimum spacing from existing branches.",
         "delivery_market_pass": delivery_explanation,
-        "economics_pass": "Economics gate requires minimum economics score and non-weak payback.",
+        "economics_pass": "Economics gate requires minimum economics score.",
     }
     reasons = {
         "passed": passed,
@@ -2048,8 +2043,6 @@ def _build_cost_thesis(
     estimated_rent_sar_m2_year: float,
     estimated_annual_rent_sar: float,
     estimated_fitout_cost_sar: float,
-    estimated_payback_months: float,  # kept for signature compatibility
-    payback_band: str,  # kept for signature compatibility
 ) -> str:
     return (
         f"Estimated rent is {estimated_rent_sar_m2_year:.0f} SAR/m²/year (~{estimated_annual_rent_sar:,.0f} SAR annually), "
@@ -2248,8 +2241,6 @@ def _build_explanation(
     estimated_annual_rent_sar: float,
     estimated_fitout_cost_sar: float,
     estimated_revenue_index: float,
-    estimated_payback_months: float,
-    payback_band: str,
     rent_source: str,
     final_score: float,
 ) -> dict[str, Any]:
@@ -2306,8 +2297,6 @@ def _build_explanation(
             "estimated_annual_rent_sar": estimated_annual_rent_sar,
             "estimated_fitout_cost_sar": estimated_fitout_cost_sar,
             "estimated_revenue_index": estimated_revenue_index,
-            "estimated_payback_months": estimated_payback_months,
-            "payback_band": payback_band,
             "rent_source": rent_source,
         },
     }
@@ -2692,37 +2681,12 @@ def _economics_score(
     )
 
 
-def _estimate_payback_months(
-    *,
-    estimated_fitout_cost_sar: float,
-    estimated_annual_rent_sar: float,
-    estimated_revenue_index: float,
-    confidence_score: float,
-) -> float:
-    annual_burden = estimated_annual_rent_sar + estimated_fitout_cost_sar * 0.45
-    normalized_burden = _clamp((annual_burden / 1_800_000.0) * 100.0)
-    quality_factor = 0.85 + (confidence_score / 100.0) * 0.3
-    months = 16.0 + normalized_burden * 0.38 - estimated_revenue_index * 0.18
-    return round(_clamp(months / max(quality_factor, 0.55), 9.0, 72.0), 2)
-
-
-def _payback_band(estimated_payback_months: float) -> str:
-    if estimated_payback_months <= 18.0:
-        return "strong"
-    if estimated_payback_months <= 28.0:
-        return "promising"
-    if estimated_payback_months <= 40.0:
-        return "borderline"
-    return "weak"
-
-
 def _build_strengths_and_risks(
     *,
     demand_score: float,
     whitespace_score: float,
     fit_score: float,
     cannibalization_score: float,
-    payback_band: str,  # kept for signature compatibility, no longer used in bullets
     rent_source: str,
 ) -> tuple[list[str], list[str]]:
     strengths: list[str] = []
@@ -2757,7 +2721,6 @@ def _decision_summary(
     district: str | None,
     final_score: float,
     economics_score: float,
-    payback_band: str,  # kept for signature compatibility
     key_risks: list[str],
     service_model: str,
     area_m2: float,
@@ -4479,13 +4442,6 @@ def run_expansion_search(
             cannibalization_score=cannibalization_score,
             fit_score=fit_score,
         )
-        estimated_payback_months = _estimate_payback_months(
-            estimated_fitout_cost_sar=estimated_fitout_cost_sar,
-            estimated_annual_rent_sar=estimated_annual_rent_sar,
-            estimated_revenue_index=estimated_revenue_index,
-            confidence_score=confidence_score,
-        )
-        payback_band = _payback_band(estimated_payback_months)
         frontage_score = 55.0
         access_score = 55.0
         parking_score = _parking_score(
@@ -4564,8 +4520,6 @@ def run_expansion_search(
                 "estimated_fitout_cost_sar": estimated_fitout_cost_sar,
                 "estimated_revenue_index": estimated_revenue_index,
                 "economics_score": economics_score,
-                "estimated_payback_months": estimated_payback_months,
-                "payback_band": payback_band,
                 "provider_intelligence_composite": provider_intelligence_composite,
                 "preliminary_final_score": _safe_float(preliminary_breakdown.get("final_score")),
             }
@@ -4994,8 +4948,6 @@ def run_expansion_search(
         estimated_fitout_cost_sar = prepared_item["estimated_fitout_cost_sar"]
         estimated_revenue_index = prepared_item["estimated_revenue_index"]
         economics_score = prepared_item["economics_score"]
-        estimated_payback_months = prepared_item["estimated_payback_months"]
-        payback_band = prepared_item["payback_band"]
         provider_intelligence_composite = prepared_item["provider_intelligence_composite"]
 
         # ── Recompute revenue index and rent with road context ──
@@ -5036,14 +4988,6 @@ def run_expansion_search(
             cannibalization_score=cannibalization_score,
             fit_score=fit_score,
         )
-        estimated_payback_months = _estimate_payback_months(
-            estimated_fitout_cost_sar=estimated_fitout_cost_sar,
-            estimated_annual_rent_sar=estimated_annual_rent_sar,
-            estimated_revenue_index=estimated_revenue_index,
-            confidence_score=confidence_score,
-        )
-        payback_band = _payback_band(estimated_payback_months)
-
         feature_snapshot_json = _candidate_feature_snapshot(
             db,
             parcel_id=_pid_str,
@@ -5161,7 +5105,6 @@ def run_expansion_search(
             whitespace_score=whitespace_score,
             fit_score=fit_score,
             cannibalization_score=cannibalization_score,
-            payback_band=payback_band,
             rent_source=rent_source,
         )
         zoning_hint = _zoning_verdict(landuse_label, landuse_code)
@@ -5180,7 +5123,6 @@ def run_expansion_search(
             provider_density_score=provider_density_score,
             multi_platform_presence_score=multi_platform_presence_score,
             economics_score=economics_score,
-            payback_band=payback_band,
             brand_profile=effective_brand_profile,
             road_context_available=road_context_available,
             parking_context_available=parking_context_available,
@@ -5210,8 +5152,6 @@ def run_expansion_search(
             estimated_rent_sar_m2_year=estimated_rent_sar_m2_year,
             estimated_annual_rent_sar=estimated_annual_rent_sar,
             estimated_fitout_cost_sar=estimated_fitout_cost_sar,
-            estimated_payback_months=estimated_payback_months,
-            payback_band=payback_band,
         )
         if _pid_str and _pid_str in _bulk_competitors:
             comparable_competitors_json = _bulk_competitors[_pid_str]
@@ -5237,8 +5177,6 @@ def run_expansion_search(
             estimated_annual_rent_sar=estimated_annual_rent_sar,
             estimated_fitout_cost_sar=estimated_fitout_cost_sar,
             estimated_revenue_index=estimated_revenue_index,
-            estimated_payback_months=estimated_payback_months,
-            payback_band=payback_band,
             rent_source=rent_source,
             final_score=final_score,
         )
@@ -5265,7 +5203,6 @@ def run_expansion_search(
             district=district_canon["district_display"] or district,
             final_score=final_score,
             economics_score=economics_score,
-            payback_band=payback_band,
             key_risks=key_risks_json,
             service_model=service_model,
             area_m2=area_m2,
@@ -5312,8 +5249,6 @@ def run_expansion_search(
                 "provider_whitespace_score": round(provider_whitespace_score, 2),
                 "multi_platform_presence_score": round(multi_platform_presence_score, 2),
                 "delivery_competition_score": round(delivery_competition_score, 2),
-                "estimated_payback_months": None,
-                "payback_band": None,
                 "gate_status_json": gate_status_json,
                 "gate_reasons_json": gate_reasons_json,
                 "feature_snapshot_json": feature_snapshot_json,
@@ -5519,8 +5454,6 @@ def run_expansion_search(
             provider_whitespace_score,
             multi_platform_presence_score,
             delivery_competition_score,
-            estimated_payback_months,
-            payback_band,
             gate_status_json,
             gate_reasons_json,
             feature_snapshot_json,
@@ -5581,8 +5514,6 @@ def run_expansion_search(
             :provider_whitespace_score,
             :multi_platform_presence_score,
             :delivery_competition_score,
-            :estimated_payback_months,
-            :payback_band,
             CAST(:gate_status_json AS jsonb),
             CAST(:gate_reasons_json AS jsonb),
             CAST(:feature_snapshot_json AS jsonb),
@@ -5863,8 +5794,6 @@ def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[
                 provider_whitespace_score,
                 multi_platform_presence_score,
                 delivery_competition_score,
-                estimated_payback_months,
-                payback_band,
                 decision_summary,
                 key_risks_json,
                 key_strengths_json,
@@ -6095,7 +6024,6 @@ _COMPARE_SUMMARY_KEYS = [
     "strongest_delivery_market_candidate_id",
     "strongest_whitespace_candidate_id",
     "lowest_rent_burden_candidate_id",
-    "fastest_payback_candidate_id",
     "most_confident_candidate_id",
     "best_gate_pass_candidate_id",
 ]
@@ -6156,8 +6084,6 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
                 provider_whitespace_score,
                 multi_platform_presence_score,
                 delivery_competition_score,
-                estimated_payback_months,
-                payback_band,
                 competitor_count,
                 delivery_listing_count,
                 population_reach,
@@ -6239,8 +6165,6 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "provider_whitespace_score": row.get("provider_whitespace_score"),
             "multi_platform_presence_score": row.get("multi_platform_presence_score"),
             "delivery_competition_score": row.get("delivery_competition_score"),
-            "estimated_payback_months": None,
-            "payback_band": None,
             "competitor_count": row.get("competitor_count"),
             "delivery_listing_count": row.get("delivery_listing_count"),
             "population_reach": row.get("population_reach"),
@@ -6271,7 +6195,6 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
         strongest_delivery_market = max(items, key=lambda item: _safe_float(item.get("provider_density_score")) + _safe_float(item.get("multi_platform_presence_score")))["candidate_id"]
         strongest_whitespace = max(items, key=lambda item: _safe_float(item.get("provider_whitespace_score")))["candidate_id"]
         lowest_rent_burden = min(items, key=lambda item: _safe_float(item.get("estimated_annual_rent_sar"), 10**12))["candidate_id"]
-        fastest_payback = min(items, key=lambda item: _safe_float(item.get("estimated_payback_months"), 10**6))["candidate_id"]
         grade_order = {"A": 4, "B": 3, "C": 2, "D": 1}
         most_confident = max(
             items,
@@ -6293,7 +6216,6 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "strongest_delivery_market_candidate_id": strongest_delivery_market,
             "strongest_whitespace_candidate_id": strongest_whitespace,
             "lowest_rent_burden_candidate_id": lowest_rent_burden,
-            "fastest_payback_candidate_id": None,
             "most_confident_candidate_id": most_confident,
             "best_gate_pass_candidate_id": best_gate_pass,
         })
@@ -6348,8 +6270,6 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
                 c.estimated_annual_rent_sar,
                 c.estimated_fitout_cost_sar,
                 c.estimated_revenue_index,
-                c.estimated_payback_months,
-                c.payback_band,
                 c.key_strengths_json,
                 c.key_risks_json,
                 c.decision_summary,
@@ -6476,8 +6396,6 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "estimated_annual_rent_sar": candidate.get("estimated_annual_rent_sar"),
             "estimated_fitout_cost_sar": candidate.get("estimated_fitout_cost_sar"),
             "estimated_revenue_index": candidate.get("estimated_revenue_index"),
-            "estimated_payback_months": None,
-            "payback_band": None,
             "key_strengths": strengths,
             "key_risks": risks,
             "decision_summary": candidate.get("decision_summary") or "",

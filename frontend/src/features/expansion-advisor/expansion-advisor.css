@@ -3595,7 +3595,7 @@
   color: var(--oak-text-light, #828282);
 }
 
-/* ── Revenue/Payback disclaimer tooltip ── */
+/* ── Revenue disclaimer tooltip ── */
 .ea-memo-disclaimer-icon {
   display: inline-flex;
   align-items: center;

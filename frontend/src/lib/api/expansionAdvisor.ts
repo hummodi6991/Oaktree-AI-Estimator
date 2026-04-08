@@ -120,8 +120,6 @@ export type ExpansionCandidate = {
   display_annual_rent_sar?: number;
   estimated_fitout_cost_sar?: number;
   estimated_revenue_index?: number;
-  estimated_payback_months?: number;
-  payback_band?: string;
   decision_summary?: string;
   gate_status_json?: Record<string, boolean | null | undefined>;
   gate_reasons_json?: CandidateGateReasons;
@@ -222,8 +220,6 @@ export type CompareCandidateItem = {
   delivery_competition_score?: number;
   multi_platform_presence_score?: number;
   cannibalization_score?: number;
-  estimated_payback_months?: number;
-  payback_band?: string;
   estimated_rent_sar_m2_year?: number;
   estimated_annual_rent_sar?: number;
   estimated_fitout_cost_sar?: number;
@@ -255,8 +251,6 @@ export type CandidateMemoResponse = {
     confidence_grade?: string;
     economics_score?: number;
     brand_fit_score?: number;
-    payback_band?: string;
-    estimated_payback_months?: number;
     score_breakdown_json?: CandidateScoreBreakdown;
     top_positives_json?: string[];
     top_risks_json?: string[];
@@ -306,7 +300,6 @@ export type RecommendationReportResponse = {
     best_brand_fit_candidate_id?: string;
     highest_demand_candidate_id?: string;
     strongest_whitespace_candidate_id?: string;
-    fastest_payback_candidate_id?: string;
     lowest_cannibalization_candidate_id?: string;
     most_confident_candidate_id?: string;
     pass_count?: number;
@@ -374,7 +367,6 @@ export function normalizeCandidate(candidate: ExpansionCandidate): ExpansionCand
     ...candidate,
     rank_position: candidate.rank_position ?? undefined,
     confidence_grade: candidate.confidence_grade || "D",
-    payback_band: candidate.payback_band || "",
     compare_rank: candidate.compare_rank ?? undefined,
     decision_summary: candidate.decision_summary || "",
     demand_thesis: candidate.demand_thesis || "",
@@ -480,7 +472,6 @@ export function normalizeCompareResponse(data: CompareCandidatesResponse): Compa
     items: (data.items || []).map((item) => ({
       ...item,
       confidence_grade: item.confidence_grade || "D",
-      payback_band: item.payback_band || "",
       gate_status_json: (typeof item.gate_status_json === "object" && item.gate_status_json !== null) ? item.gate_status_json : {},
       gate_reasons_json: item.gate_reasons_json || DEFAULT_GATE_REASONS,
       feature_snapshot_json: item.feature_snapshot_json || DEFAULT_FEATURE_SNAPSHOT,

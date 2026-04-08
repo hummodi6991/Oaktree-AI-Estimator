@@ -65,7 +65,7 @@ import { CandidateListSkeleton, DetailSkeleton } from "./SkeletonLoaders";
 import CandidateDetailPanel from "./CandidateDetailPanel";
 import ExpansionCandidateCard from "./ExpansionCandidateCard";
 import FinalistsWorkspace from "./FinalistsWorkspace";
-import { humanGateLabel, humanGateSentence, isGarbledText, safeDistrictLabel, candidateDistrictLabel, paybackColor } from "./formatHelpers";
+import { humanGateLabel, humanGateSentence, isGarbledText, safeDistrictLabel, candidateDistrictLabel } from "./formatHelpers";
 
 /* ─── Helpers for test data ─── */
 function makeCandidate(overrides: Partial<ExpansionCandidate> = {}): ExpansionCandidate {
@@ -201,7 +201,7 @@ describe("Expansion advisor UI behavior", () => {
 
   it("compare response rows use candidate_id", () => {
     const rows = getCompareRows({
-      items: [{ candidate_id: "c1", final_score: 81, economics_score: 72, estimated_payback_months: 22, payback_band: "promising", brand_fit_score: 77, provider_density_score: 69 }],
+      items: [{ candidate_id: "c1", final_score: 81, economics_score: 72, brand_fit_score: 77, provider_density_score: 69 }],
       summary: {},
     });
     expect(rows[0].candidate_id).toBe("c1");
@@ -472,9 +472,9 @@ describe("Local shortlist restore from saved study", () => {
 
 describe("Local filter/sort without losing rank_position", () => {
   const candidates: ExpansionCandidate[] = [
-    makeCandidate({ id: "c1", rank_position: 1, economics_score: 80, brand_fit_score: 60, cannibalization_score: 20, estimated_payback_months: 18, gate_status_json: { overall_pass: true }, district: "Olaya", provider_whitespace_score: 70, multi_platform_presence_score: 50 }),
-    makeCandidate({ id: "c2", rank_position: 2, economics_score: 60, brand_fit_score: 90, cannibalization_score: 50, estimated_payback_months: 30, gate_status_json: { overall_pass: false }, district: "Malqa", provider_whitespace_score: 40, multi_platform_presence_score: 30 }),
-    makeCandidate({ id: "c3", rank_position: 3, economics_score: 70, brand_fit_score: 75, cannibalization_score: 10, estimated_payback_months: 12, gate_status_json: { overall_pass: true }, district: "Olaya", provider_whitespace_score: 80, multi_platform_presence_score: 60 }),
+    makeCandidate({ id: "c1", rank_position: 1, economics_score: 80, brand_fit_score: 60, cannibalization_score: 20, gate_status_json: { overall_pass: true }, district: "Olaya", provider_whitespace_score: 70, multi_platform_presence_score: 50 }),
+    makeCandidate({ id: "c2", rank_position: 2, economics_score: 60, brand_fit_score: 90, cannibalization_score: 50, gate_status_json: { overall_pass: false }, district: "Malqa", provider_whitespace_score: 40, multi_platform_presence_score: 30 }),
+    makeCandidate({ id: "c3", rank_position: 3, economics_score: 70, brand_fit_score: 75, cannibalization_score: 10, gate_status_json: { overall_pass: true }, district: "Olaya", provider_whitespace_score: 80, multi_platform_presence_score: 60 }),
   ];
 
   it("filterCandidates pass_only excludes failed gate", () => {
@@ -791,8 +791,8 @@ describe("buildUiStateJson", () => {
 describe("Finalist tile builder", () => {
   it("builds tiles from shortlist with lead designation", () => {
     const candidates = [
-      makeCandidate({ id: "c1", rank_position: 1, district: "Olaya", final_score: 85, gate_status_json: { overall_pass: true }, payback_band: "fast", estimated_payback_months: 18, estimated_annual_rent_sar: 120000, estimated_fitout_cost_sar: 80000, estimated_revenue_index: 72, top_positives_json: ["Great location"], top_risks_json: ["High rent"], confidence_grade: "A" }),
-      makeCandidate({ id: "c2", rank_position: 2, district: "Malqa", final_score: 78, gate_status_json: { overall_pass: false }, payback_band: "moderate", top_positives_json: [], top_risks_json: [], confidence_grade: "B" }),
+      makeCandidate({ id: "c1", rank_position: 1, district: "Olaya", final_score: 85, gate_status_json: { overall_pass: true }, estimated_annual_rent_sar: 120000, estimated_fitout_cost_sar: 80000, estimated_revenue_index: 72, top_positives_json: ["Great location"], top_risks_json: ["High rent"], confidence_grade: "A" }),
+      makeCandidate({ id: "c2", rank_position: 2, district: "Malqa", final_score: 78, gate_status_json: { overall_pass: false }, top_positives_json: [], top_risks_json: [], confidence_grade: "B" }),
     ];
     const tiles = buildFinalistTiles(candidates, ["c1", "c2"], "c1");
     expect(tiles).toHaveLength(2);
@@ -821,8 +821,6 @@ describe("Decision checklist derivation", () => {
       brand_fit_score: 75,
       estimated_revenue_index: 65,
       economics_score: 80,
-      payback_band: "fast",
-      estimated_payback_months: 18,
       cannibalization_score: 25,
       distance_to_nearest_branch_m: 3000,
       provider_whitespace_score: 72,
@@ -2426,8 +2424,6 @@ describe("Compare panel rendering with full result", () => {
               final_score: 85,
               rank_position: 1,
               confidence_grade: "A",
-              payback_band: "fast",
-              estimated_payback_months: 18,
               estimated_annual_rent_sar: 120000,
               brand_fit_score: 80,
               economics_score: 75,
@@ -2449,8 +2445,6 @@ describe("Compare panel rendering with full result", () => {
               final_score: 72,
               rank_position: 2,
               confidence_grade: "B",
-              payback_band: "medium",
-              estimated_payback_months: 24,
               estimated_annual_rent_sar: 90000,
               brand_fit_score: 65,
               economics_score: 80,
@@ -2844,7 +2838,6 @@ describe("Normalizer robustness against edge-case backend payloads", () => {
     expect(c.demand_thesis).toBe("");
     expect(c.cost_thesis).toBe("");
     expect(c.confidence_grade).toBe("D");
-    expect(c.payback_band).toBe("");
   });
 
   it("normalizeCandidate handles non-array top_positives_json / top_risks_json", () => {
@@ -4020,20 +4013,6 @@ describe("UX correctness: no-pass state never shows Lead-approval wording", () =
     );
     expect(html).toContain("Set as Lead");
     expect(html).not.toContain("Mark exploratory pick");
-  });
-});
-
-describe("UX correctness: paybackColor handles backend band values", () => {
-  it("strong band → green", () => {
-    expect(paybackColor("strong")).toBe("green");
-  });
-
-  it("borderline band → amber", () => {
-    expect(paybackColor("borderline")).toBe("amber");
-  });
-
-  it("weak band → red", () => {
-    expect(paybackColor("weak")).toBe("red");
   });
 });
 

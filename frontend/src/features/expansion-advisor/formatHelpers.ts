@@ -92,15 +92,6 @@ export function confidenceColor(grade: string | null | undefined): "green" | "am
   return "red";
 }
 
-/** Payback band color */
-export function paybackColor(band: string | null | undefined): "green" | "amber" | "red" | "neutral" {
-  if (!band) return "neutral";
-  const b = band.toLowerCase();
-  if (b === "fast" || b === "promising" || b === "strong") return "green";
-  if (b === "moderate" || b === "standard" || b === "borderline") return "amber";
-  return "red";
-}
-
 /** Gate color */
 export function gateColor(pass: boolean | null | undefined): "green" | "red" | "neutral" {
   if (pass === true) return "green";

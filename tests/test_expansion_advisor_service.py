@@ -6,7 +6,6 @@ from app.services.expansion_advisor import (
     _candidate_gate_status,
     _comparable_competitors,
     _confidence_grade,
-    _payback_band,
     compare_candidates,
     get_candidate_memo,
     get_recommendation_report,
@@ -137,8 +136,8 @@ def test_district_filtering_narrows_results_and_sets_economics_fields():
     assert items[0]["cannibalization_score"] is not None
     assert items[0]["distance_to_nearest_branch_m"] is not None
     assert items[0]["economics_score"] is not None
-    assert items[0]["estimated_payback_months"] is None
-    assert items[0]["payback_band"] is None
+    assert "estimated_payback_months" not in items[0]
+    assert "payback_band" not in items[0]
     assert 0.0 <= items[0]["final_score"] <= 100.0
     assert items[0]["compare_rank"] == 1
 
@@ -163,8 +162,6 @@ def test_compare_candidates_rejects_candidate_ids_from_other_search():
                 "estimated_fitout_cost_sar": 390000,
                 "estimated_revenue_index": 71,
                 "economics_score": 68,
-                "estimated_payback_months": 24,
-                "payback_band": "promising",
                 "competitor_count": 3,
                 "delivery_listing_count": 12,
                 "population_reach": 14000,
@@ -214,8 +211,6 @@ def test_compare_candidates_includes_v5_fields_and_gate_summary_uses_actual_gate
                 "estimated_fitout_cost_sar": 390000,
                 "estimated_revenue_index": 71,
                 "economics_score": 68,
-                "estimated_payback_months": 24,
-                "payback_band": "promising",
                 "competitor_count": 3,
                 "delivery_listing_count": 12,
                 "population_reach": 14000,
@@ -250,8 +245,6 @@ def test_compare_candidates_includes_v5_fields_and_gate_summary_uses_actual_gate
                 "estimated_fitout_cost_sar": 430000,
                 "estimated_revenue_index": 70,
                 "economics_score": 64,
-                "estimated_payback_months": 27,
-                "payback_band": "promising",
                 "competitor_count": 4,
                 "delivery_listing_count": 11,
                 "population_reach": 13200,
@@ -273,13 +266,6 @@ def test_compare_candidates_includes_v5_fields_and_gate_summary_uses_actual_gate
     assert result["items"][0]["cost_thesis"] == "Cost is manageable"
     assert result["items"][0]["comparable_competitors_json"] == [{"id": "r1"}]
     assert result["summary"]["best_gate_pass_candidate_id"] == "c2"
-
-
-def test_payback_band_assignment_logic():
-    assert _payback_band(12) == "strong"
-    assert _payback_band(24) == "promising"
-    assert _payback_band(35) == "borderline"
-    assert _payback_band(52) == "weak"
 
 
 def test_get_candidate_memo_returns_recommendation_shape():
@@ -311,8 +297,6 @@ def test_get_candidate_memo_returns_recommendation_shape():
             "estimated_annual_rent_sar": 176400,
             "estimated_fitout_cost_sar": 468000,
             "estimated_revenue_index": 74,
-            "estimated_payback_months": 22,
-            "payback_band": "promising",
             "key_strengths_json": ["Strong demand index supports branch throughput"],
             "key_risks_json": ["Competitive density may pressure launch economics"],
             "decision_summary": "summary",
@@ -469,7 +453,6 @@ def test_gate_status_logic():
         provider_density_score=50,
         multi_platform_presence_score=40,
         economics_score=65,
-        payback_band="promising",
         brand_profile={"primary_channel": "delivery", "excluded_districts": ["Malqa"], "cannibalization_tolerance_m": 1800},
         road_context_available=True,
         parking_context_available=True,
@@ -538,7 +521,6 @@ def test_gate_status_uses_v6_scores_for_failure():
         provider_density_score=60,
         multi_platform_presence_score=70,
         economics_score=75,
-        payback_band="promising",
         brand_profile={"excluded_districts": [], "cannibalization_tolerance_m": 1800},
         road_context_available=True,
         parking_context_available=True,
@@ -610,8 +592,8 @@ def test_compare_includes_v61_fields():
                 "cannibalization_score": 40, "distance_to_nearest_branch_m": 2300, "estimated_rent_sar_m2_year": 960,
                 "estimated_annual_rent_sar": 144000, "estimated_fitout_cost_sar": 390000, "estimated_revenue_index": 71,
                 "economics_score": 68, "brand_fit_score": 70, "provider_density_score": 50, "provider_whitespace_score": 60,
-                "multi_platform_presence_score": 60, "delivery_competition_score": 50, "estimated_payback_months": 24,
-                "payback_band": "promising", "competitor_count": 3, "delivery_listing_count": 12, "population_reach": 14000,
+                "multi_platform_presence_score": 60, "delivery_competition_score": 50,
+                "competitor_count": 3, "delivery_listing_count": 12, "population_reach": 14000,
                 "landuse_label": "Commercial", "rank_position": 1,
             },
             {
@@ -624,8 +606,8 @@ def test_compare_includes_v61_fields():
                 "cannibalization_score": 35, "distance_to_nearest_branch_m": 2500, "estimated_rent_sar_m2_year": 990,
                 "estimated_annual_rent_sar": 168300, "estimated_fitout_cost_sar": 430000, "estimated_revenue_index": 70,
                 "economics_score": 64, "brand_fit_score": 69, "provider_density_score": 48, "provider_whitespace_score": 58,
-                "multi_platform_presence_score": 58, "delivery_competition_score": 52, "estimated_payback_months": 27,
-                "payback_band": "promising", "competitor_count": 4, "delivery_listing_count": 11, "population_reach": 13200,
+                "multi_platform_presence_score": 58, "delivery_competition_score": 52,
+                "competitor_count": 4, "delivery_listing_count": 11, "population_reach": 13200,
                 "landuse_label": "Commercial", "rank_position": 2,
             },
         ]
@@ -845,7 +827,6 @@ def test_compare_candidates_returns_full_summary_contract_for_empty_list():
         "strongest_delivery_market_candidate_id",
         "strongest_whitespace_candidate_id",
         "lowest_rent_burden_candidate_id",
-        "fastest_payback_candidate_id",
         "most_confident_candidate_id",
         "best_gate_pass_candidate_id",
     }
@@ -936,8 +917,8 @@ def test_run_expansion_search_with_brand_profile_and_branches():
     assert item["cannibalization_score"] is not None
     assert item["distance_to_nearest_branch_m"] is not None
     assert item["economics_score"] is not None
-    assert item["estimated_payback_months"] is None
-    assert item["payback_band"] is None
+    assert "estimated_payback_months" not in item
+    assert "payback_band" not in item
     assert "gate_status_json" in item
     assert "score_breakdown_json" in item
     assert "top_positives_json" in item
@@ -1022,7 +1003,7 @@ def test_run_expansion_search_empty_existing_branches():
     assert item["cannibalization_score"] == 0.0
     assert 0.0 <= item["final_score"] <= 100.0
     assert item["economics_score"] is not None
-    assert item["estimated_payback_months"] is None
+    assert "estimated_payback_months" not in item
 
 
 def test_run_expansion_search_preferred_districts_typo_no_crash():
@@ -1146,7 +1127,7 @@ def test_run_expansion_search_exact_production_payload():
     assert item["distance_to_nearest_branch_m"] is None
     assert item["cannibalization_score"] == 0.0
     assert 0.0 <= item["final_score"] <= 100.0
-    assert item["payback_band"] is None
+    assert "payback_band" not in item
     assert "gate_status_json" in item
     assert "score_breakdown_json" in item
 
@@ -1373,7 +1354,7 @@ def test_production_payload_c3ace4a6_regression(monkeypatch):
     assert isinstance(items, list)
     for item in items:
         assert 0.0 <= item["final_score"] <= 100.0
-        assert item["payback_band"] is None
+        assert "payback_band" not in item
         assert "gate_status_json" in item
         assert "score_breakdown_json" in item
         assert "feature_snapshot_json" in item
@@ -1488,7 +1469,7 @@ def test_run_expansion_search_production_payload():
     assert isinstance(items, list)
     for item in items:
         assert 0.0 <= item["final_score"] <= 100.0
-        assert item["payback_band"] is None
+        assert "payback_band" not in item
 
 
 def test_run_expansion_search_no_bbox_empty_result():
@@ -1513,7 +1494,6 @@ _GATE_BASE = dict(
     provider_density_score=50,
     multi_platform_presence_score=40,
     economics_score=65,
-    payback_band="promising",
     brand_profile={"excluded_districts": [], "cannibalization_tolerance_m": 1800},
     road_context_available=True,
     parking_context_available=True,
@@ -1836,8 +1816,6 @@ def test_memo_gate_verdict_uses_tristate():
             "estimated_annual_rent_sar": 162000,
             "estimated_fitout_cost_sar": 468000,
             "estimated_revenue_index": 60,
-            "estimated_payback_months": 28,
-            "payback_band": "promising",
             "key_strengths_json": ["strength"],
             "key_risks_json": ["risk"],
             "decision_summary": "summary",
