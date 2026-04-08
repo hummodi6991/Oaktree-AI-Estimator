@@ -2761,7 +2761,7 @@ def _percentile_rent_burden(
                     {**params, "listing_rate": float(listing_monthly_rent_per_m2)},
                 ).mappings().first()
         except Exception:
-            logger.debug("percentile rent comp failed for label=%s", label, exc_info=True)
+            logger.exception("percentile rent comp failed for label=%s", label)
             continue
 
         if not agg or agg["n"] is None or int(agg["n"]) < min_n:
@@ -2819,13 +2819,20 @@ def _economics_score(
     rent_burden_score: float
 
     if is_listing and db is not None:
-        comp = _percentile_rent_burden(
-            db,
-            listing_monthly_rent_per_m2=monthly_rent_per_m2,
-            district=district,
-            area_m2=area_m2,
-            listing_type=listing_type,
-        )
+        try:
+            comp = _percentile_rent_burden(
+                db,
+                listing_monthly_rent_per_m2=monthly_rent_per_m2,
+                district=district,
+                area_m2=area_m2,
+                listing_type=listing_type,
+            )
+        except Exception:
+            logger.exception(
+                "percentile rent burden raised; falling back. district=%s area=%s listing_type=%s rate=%s",
+                district, area_m2, listing_type, monthly_rent_per_m2,
+            )
+            comp = None
         if comp is not None:
             rent_burden_score = comp["burden_score"]
             rent_burden_meta = {"mode": "percentile", **comp}
@@ -4617,18 +4624,25 @@ def run_expansion_search(
             price_tier=effective_brand_profile.get("price_tier"),
         )
         _is_listing = bool(row.get("commercial_unit_id"))
-        economics_score, economics_meta = _economics_score(
-            estimated_revenue_index=estimated_revenue_index,
-            estimated_annual_rent_sar=estimated_annual_rent_sar,
-            estimated_fitout_cost_sar=estimated_fitout_cost_sar,
-            area_m2=area_m2,
-            cannibalization_score=cannibalization_score,
-            fit_score=fit_score,
-            db=db,
-            is_listing=_is_listing,
-            district=district,
-            listing_type=row.get("unit_listing_type"),
-        )
+        try:
+            economics_score, economics_meta = _economics_score(
+                estimated_revenue_index=estimated_revenue_index,
+                estimated_annual_rent_sar=estimated_annual_rent_sar,
+                estimated_fitout_cost_sar=estimated_fitout_cost_sar,
+                area_m2=area_m2,
+                cannibalization_score=cannibalization_score,
+                fit_score=fit_score,
+                db=db,
+                is_listing=_is_listing,
+                district=district,
+                listing_type=row.get("unit_listing_type"),
+            )
+        except Exception:
+            logger.exception(
+                "economics_score failed at first call site. parcel_id=%s commercial_unit_id=%s district=%s area=%s annual_rent=%s",
+                row.get("parcel_id"), row.get("commercial_unit_id"), district, area_m2, estimated_annual_rent_sar,
+            )
+            raise
         frontage_score = 55.0
         access_score = 55.0
         parking_score = _parking_score(
@@ -5169,18 +5183,25 @@ def run_expansion_search(
                 rent_source = f"{rent_source}+micro"
             estimated_annual_rent_sar = round(area_m2 * estimated_rent_sar_m2_year)
         _is_listing = bool(row.get("commercial_unit_id"))
-        economics_score, economics_meta = _economics_score(
-            estimated_revenue_index=estimated_revenue_index,
-            estimated_annual_rent_sar=estimated_annual_rent_sar,
-            estimated_fitout_cost_sar=estimated_fitout_cost_sar,
-            area_m2=area_m2,
-            cannibalization_score=cannibalization_score,
-            fit_score=fit_score,
-            db=db,
-            is_listing=_is_listing,
-            district=district,
-            listing_type=row.get("unit_listing_type"),
-        )
+        try:
+            economics_score, economics_meta = _economics_score(
+                estimated_revenue_index=estimated_revenue_index,
+                estimated_annual_rent_sar=estimated_annual_rent_sar,
+                estimated_fitout_cost_sar=estimated_fitout_cost_sar,
+                area_m2=area_m2,
+                cannibalization_score=cannibalization_score,
+                fit_score=fit_score,
+                db=db,
+                is_listing=_is_listing,
+                district=district,
+                listing_type=row.get("unit_listing_type"),
+            )
+        except Exception:
+            logger.exception(
+                "economics_score failed at second call site. parcel_id=%s commercial_unit_id=%s district=%s area=%s annual_rent=%s",
+                row.get("parcel_id"), row.get("commercial_unit_id"), district, area_m2, estimated_annual_rent_sar,
+            )
+            raise
         feature_snapshot_json = _candidate_feature_snapshot(
             db,
             parcel_id=_pid_str,
