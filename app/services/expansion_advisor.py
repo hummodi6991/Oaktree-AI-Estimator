@@ -2658,6 +2658,147 @@ def _estimate_revenue_index(
     return _clamp(base * factor * ticket_multiplier * road_multiplier)
 
 
+# ---------------------------------------------------------------------------
+# Percentile-based rent burden helpers
+# ---------------------------------------------------------------------------
+
+# Area bands (m²) used to bucket comparable listings for rent percentiles.
+_RENT_COMP_AREA_BANDS: list[tuple[float, float]] = [
+    (0, 100),
+    (100, 200),
+    (200, 400),
+    (400, 800),
+    (800, 1e9),
+]
+
+
+def _area_band_bounds(area_m2: float) -> tuple[float, float]:
+    for lo, hi in _RENT_COMP_AREA_BANDS:
+        if lo <= area_m2 < hi:
+            return lo, hi
+    return _RENT_COMP_AREA_BANDS[-1]
+
+
+def _percentile_rent_burden(
+    db: Session,
+    *,
+    listing_monthly_rent_per_m2: float,
+    district: str | None,
+    area_m2: float,
+    listing_type: str | None,
+) -> dict[str, Any] | None:
+    """Score a listing's rent/m² against comparable real listings.
+
+    Returns a dict with burden_score, percentile, n_comparable,
+    source_label, median_monthly_rent_per_m2, listing_monthly_rent_per_m2.
+    Returns None when no comparable cell meets the minimum N threshold.
+    """
+    if listing_monthly_rent_per_m2 <= 0 or area_m2 <= 0:
+        return None
+
+    band_lo, band_hi = _area_band_bounds(area_m2)
+    district_norm = normalize_district_key(district) if district else None
+
+    base_where = """
+        FROM commercial_unit
+        WHERE restaurant_suitable = true
+          AND price_sar_annual IS NOT NULL
+          AND price_sar_annual > 0
+          AND area_sqm IS NOT NULL
+          AND area_sqm > 0
+          AND status = 'active'
+    """
+
+    # Fallback chain: narrowest → broadest.
+    # Each entry: (extra_where, params, min_n, label)
+    chains: list[tuple[str, dict[str, Any], int, str]] = []
+
+    if district_norm:
+        chains.append((
+            "AND lower(neighborhood) = :district AND area_sqm >= :band_lo AND area_sqm < :band_hi AND listing_type = :ltype",
+            {"district": district_norm, "band_lo": band_lo, "band_hi": band_hi, "ltype": listing_type or "store"},
+            8,
+            "district_band_type",
+        ))
+        chains.append((
+            "AND lower(neighborhood) = :district AND listing_type = :ltype",
+            {"district": district_norm, "ltype": listing_type or "store"},
+            8,
+            "district_type",
+        ))
+        chains.append((
+            "AND lower(neighborhood) = :district",
+            {"district": district_norm},
+            8,
+            "district",
+        ))
+
+    chains.append((
+        "AND area_sqm >= :band_lo AND area_sqm < :band_hi AND listing_type = :ltype",
+        {"band_lo": band_lo, "band_hi": band_hi, "ltype": listing_type or "store"},
+        12,
+        "city_band_type",
+    ))
+    chains.append((
+        "",
+        {},
+        20,
+        "city",
+    ))
+
+    for extra_where, params, min_n, label in chains:
+        try:
+            agg = db.execute(
+                text(f"""
+                    SELECT
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY (price_sar_annual / area_sqm / 12.0)) AS median_monthly_per_m2,
+                        COUNT(*) AS n,
+                        SUM(CASE WHEN (price_sar_annual / area_sqm / 12.0) <= :listing_rate THEN 1 ELSE 0 END) AS n_below
+                    {base_where}
+                    {extra_where}
+                """),
+                {**params, "listing_rate": float(listing_monthly_rent_per_m2)},
+            ).mappings().first()
+        except Exception:
+            logger.debug("percentile rent comp failed for label=%s", label, exc_info=True)
+            continue
+
+        if not agg or agg["n"] is None or int(agg["n"]) < min_n:
+            continue
+
+        n = int(agg["n"])
+        n_below = int(agg["n_below"] or 0)
+        percentile = max(0.0, min(1.0, n_below / n))
+
+        # Map percentile → burden score using anchor interpolation:
+        #   p10 → 92, p50 → 60, p90 → 18.
+        if percentile <= 0.10:
+            burden_score = 92.0 + (0.10 - percentile) / 0.10 * 5.0
+        elif percentile <= 0.50:
+            burden_score = 60.0 + (0.50 - percentile) / 0.40 * 32.0
+        elif percentile <= 0.90:
+            burden_score = 18.0 + (0.90 - percentile) / 0.40 * 42.0
+        else:
+            burden_score = 18.0 - (percentile - 0.90) / 0.10 * 15.0
+
+        burden_score = _clamp(burden_score)
+
+        return {
+            "burden_score": round(burden_score, 2),
+            "percentile": round(percentile, 3),
+            "n_comparable": n,
+            "source_label": label,
+            "median_monthly_rent_per_m2": round(float(agg["median_monthly_per_m2"] or 0.0), 2),
+            "listing_monthly_rent_per_m2": round(float(listing_monthly_rent_per_m2), 2),
+        }
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Economics composite score
+# ---------------------------------------------------------------------------
+
 def _economics_score(
     *,
     estimated_revenue_index: float,
@@ -2666,19 +2807,59 @@ def _economics_score(
     area_m2: float,
     cannibalization_score: float,
     fit_score: float,
-) -> float:
+    db: Session | None = None,
+    is_listing: bool = False,
+    district: str | None = None,
+    listing_type: str | None = None,
+) -> tuple[float, dict[str, Any]]:
     monthly_rent_per_m2 = estimated_annual_rent_sar / max(area_m2 * 12.0, 1.0)
-    rent_burden_score = _clamp(100.0 - (monthly_rent_per_m2 / 180.0) * 100.0)
+
+    rent_burden_meta: dict[str, Any] = {"mode": "absolute_legacy"}
+    rent_burden_score: float
+
+    if is_listing and db is not None:
+        comp = _percentile_rent_burden(
+            db,
+            listing_monthly_rent_per_m2=monthly_rent_per_m2,
+            district=district,
+            area_m2=area_m2,
+            listing_type=listing_type,
+        )
+        if comp is not None:
+            rent_burden_score = comp["burden_score"]
+            rent_burden_meta = {"mode": "percentile", **comp}
+        else:
+            rent_burden_score = _clamp(100.0 - (monthly_rent_per_m2 / 220.0) * 100.0)
+            rent_burden_meta = {
+                "mode": "absolute_fallback",
+                "listing_monthly_rent_per_m2": round(monthly_rent_per_m2, 2),
+                "ceiling": 220.0,
+            }
+    else:
+        rent_burden_score = _clamp(100.0 - (monthly_rent_per_m2 / 180.0) * 100.0)
+        rent_burden_meta = {
+            "mode": "absolute_legacy",
+            "monthly_rent_per_m2": round(monthly_rent_per_m2, 2),
+            "ceiling": 180.0,
+        }
+
     fitout_cost_per_m2 = estimated_fitout_cost_sar / max(area_m2, 1.0)
     fitout_burden_score = _clamp(100.0 - ((fitout_cost_per_m2 - 1800.0) / 2600.0) * 100.0)
     cannibalization_component = 100.0 - cannibalization_score
-    return _clamp(
+
+    score = _clamp(
         estimated_revenue_index * 0.38
         + rent_burden_score * 0.20
         + fitout_burden_score * 0.14
         + cannibalization_component * 0.13
         + fit_score * 0.15
     )
+    return score, {
+        "rent_burden_score": round(rent_burden_score, 2),
+        "rent_burden": rent_burden_meta,
+        "fitout_burden_score": round(fitout_burden_score, 2),
+        "monthly_rent_per_m2": round(monthly_rent_per_m2, 2),
+    }
 
 
 def _build_strengths_and_risks(
@@ -4434,13 +4615,18 @@ def run_expansion_search(
             category=category,
             price_tier=effective_brand_profile.get("price_tier"),
         )
-        economics_score = _economics_score(
+        _is_listing = bool(row.get("commercial_unit_id"))
+        economics_score, economics_meta = _economics_score(
             estimated_revenue_index=estimated_revenue_index,
             estimated_annual_rent_sar=estimated_annual_rent_sar,
             estimated_fitout_cost_sar=estimated_fitout_cost_sar,
             area_m2=area_m2,
             cannibalization_score=cannibalization_score,
             fit_score=fit_score,
+            db=db,
+            is_listing=_is_listing,
+            district=district,
+            listing_type=row.get("unit_listing_type"),
         )
         frontage_score = 55.0
         access_score = 55.0
@@ -4520,6 +4706,7 @@ def run_expansion_search(
                 "estimated_fitout_cost_sar": estimated_fitout_cost_sar,
                 "estimated_revenue_index": estimated_revenue_index,
                 "economics_score": economics_score,
+                "economics_meta": economics_meta,
                 "provider_intelligence_composite": provider_intelligence_composite,
                 "preliminary_final_score": _safe_float(preliminary_breakdown.get("final_score")),
             }
@@ -4980,13 +5167,18 @@ def run_expansion_search(
             if abs(_rent_multiplier - 1.0) > 0.01:
                 rent_source = f"{rent_source}+micro"
             estimated_annual_rent_sar = round(area_m2 * estimated_rent_sar_m2_year)
-        economics_score = _economics_score(
+        _is_listing = bool(row.get("commercial_unit_id"))
+        economics_score, economics_meta = _economics_score(
             estimated_revenue_index=estimated_revenue_index,
             estimated_annual_rent_sar=estimated_annual_rent_sar,
             estimated_fitout_cost_sar=estimated_fitout_cost_sar,
             area_m2=area_m2,
             cannibalization_score=cannibalization_score,
             fit_score=fit_score,
+            db=db,
+            is_listing=_is_listing,
+            district=district,
+            listing_type=row.get("unit_listing_type"),
         )
         feature_snapshot_json = _candidate_feature_snapshot(
             db,
@@ -5099,6 +5291,9 @@ def run_expansion_search(
         score_breakdown_json["inputs"]["road_context_available"] = bool(feature_snapshot_json["context_sources"].get("road_context_available"))
         score_breakdown_json["inputs"]["parking_evidence_band"] = feature_snapshot_json["context_sources"].get("parking_evidence_band")
         score_breakdown_json["inputs"]["road_evidence_band"] = feature_snapshot_json["context_sources"].get("road_evidence_band")
+        # Surface percentile rent burden context in the breakdown.
+        if isinstance(score_breakdown_json, dict):
+            score_breakdown_json.setdefault("economics_detail", {}).update(economics_meta)
         final_score = _safe_float(score_breakdown_json.get("final_score"))
         key_strengths_json, key_risks_json = _build_strengths_and_risks(
             demand_score=demand_score,
