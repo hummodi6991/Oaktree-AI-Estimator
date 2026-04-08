@@ -1696,6 +1696,9 @@ def _candidate_gate_status(
     *,
     fit_score: float,
     area_fit_score: float,
+    area_m2: float,
+    min_area_m2: float,
+    max_area_m2: float,
     zoning_fit_score: float,
     landuse_available: bool,
     frontage_score: float,
@@ -1709,6 +1712,8 @@ def _candidate_gate_status(
     brand_profile: dict[str, Any],
     road_context_available: bool,
     parking_context_available: bool,
+    is_listing: bool = False,
+    unit_street_width_m: float | None = None,
     zoning_verdict_hint: str | None = None,
 ) -> tuple[dict[str, bool | None], dict[str, Any]]:
     thresholds = {
@@ -1721,15 +1726,11 @@ def _candidate_gate_status(
         "delivery_platform_presence_min": 35.0,
         "cannibalization_min_distance_m": _safe_float(brand_profile.get("cannibalization_tolerance_m"), 1800.0),
     }
-    area_fit_pass = area_fit_score >= thresholds["area_fit_min"]
-    # TEMPORARY diagnostic — revert after identifying the #6 الربوة area-fit
-    # bug (384 m² failing in a 100–500 m² search).  Log the actual values at
-    # the gate evaluation point to pin down the root cause.
-    if not area_fit_pass:
-        logger.info(
-            "area_fit gate FAIL diagnostic: area_fit_score=%.2f type=%s threshold=%.1f",
-            area_fit_score, type(area_fit_score).__name__, thresholds["area_fit_min"],
-        )
+    # Area fit gate: pure range check against the user's stated bounds.
+    # target_area_m2 still influences ranking via area_fit_score → fit_score,
+    # but no longer acts as a hard constraint.  A 384 m² listing in a 100–500
+    # range must not hard-fail because it is "not close enough to target."
+    area_fit_pass: bool | None = (min_area_m2 <= area_m2 <= max_area_m2) if area_m2 > 0 else None
     # Tri-state zoning gate using ArcGIS classification semantics:
     #   - "pass" verdict  => True  (clearly commercial/mixed-use)
     #   - "fail" verdict  => False (clearly disallowed)
@@ -1752,8 +1753,19 @@ def _candidate_gate_status(
     else:
         # Legacy fallback: plain threshold
         zoning_fit_pass = zoning_fit_score >= thresholds["zoning_fit_min"]
-    frontage_access_pass = (frontage_score >= thresholds["frontage_access_min"]) and (access_score >= thresholds["frontage_access_min"])
-    parking_pass = parking_score >= thresholds["parking_min"]
+    # Frontage/access gate: tri-state for listings without street width data.
+    _has_street_width = bool(unit_street_width_m and unit_street_width_m > 0)
+    if is_listing and not _has_street_width and not road_context_available:
+        frontage_access_pass: bool | None = None
+    else:
+        frontage_access_pass = (frontage_score >= thresholds["frontage_access_min"]) and (access_score >= thresholds["frontage_access_min"])
+    # Parking gate: tri-state for listings.  Aqar doesn't publish parking
+    # data, so failing a listing on a low parking score is penalizing operators
+    # for missing data we can never get.  Mark unknown instead.
+    if is_listing and not parking_context_available:
+        parking_pass: bool | None = None
+    else:
+        parking_pass = parking_score >= thresholds["parking_min"]
 
     district_norm = normalize_district_key(district) if district else None
     excluded = {
@@ -1851,9 +1863,21 @@ def _candidate_gate_status(
             )
     explanations = {
         "zoning_fit_pass": "Zoning fit compares parcel land-use compatibility against threshold.",
-        "area_fit_pass": "Area fit checks candidate area against requested branch range.",
-        "frontage_access_pass": "Frontage/access gate depends on road context and road-adjacent signals.",
-        "parking_pass": "Parking gate depends on nearby parking amenity context and parcel suitability.",
+        "area_fit_pass": (
+            "Area data not available for this candidate."
+            if area_fit_pass is None
+            else "Area fit checks candidate area against requested branch range."
+        ),
+        "frontage_access_pass": (
+            "Street width not available in listing; frontage cannot be evaluated."
+            if frontage_access_pass is None and is_listing
+            else "Frontage/access gate depends on road context and road-adjacent signals."
+        ),
+        "parking_pass": (
+            "Parking context is not available for Aqar listings — cannot evaluate."
+            if parking_pass is None and is_listing
+            else "Parking gate depends on nearby parking amenity context and parcel suitability."
+        ),
         "district_pass": "District gate fails only for explicitly excluded districts.",
         "cannibalization_pass": "Cannibalization gate checks minimum spacing from existing branches.",
         "delivery_market_pass": delivery_explanation,
@@ -4625,15 +4649,6 @@ def run_expansion_search(
         whitespace_score = _competition_whitespace_score(competitor_count)
 
         area_fit = _area_fit(area_m2, target_area_m2, min_area_m2, max_area_m2)
-        # TEMPORARY diagnostic — revert after identifying the area-fit bug.
-        if area_fit <= 0 and area_m2 > 0:
-            logger.info(
-                "area_fit=0 diagnostic: area_m2=%s type=%s min=%s max=%s target=%s "
-                "parcel_id=%s commercial_unit_id=%s district=%s",
-                area_m2, type(area_m2).__name__, min_area_m2, max_area_m2,
-                target_area_m2, row.get("parcel_id"), row.get("commercial_unit_id"),
-                district,
-            )
         zoning_fit_score = _zoning_fit_score(landuse_label, landuse_code)
         fit_score = _clamp(area_fit * 0.55 + zoning_fit_score * 0.45)
 
@@ -5502,6 +5517,9 @@ def run_expansion_search(
         gate_status_json, gate_reasons_json = _candidate_gate_status(
             fit_score=fit_score,
             area_fit_score=area_fit,
+            area_m2=area_m2,
+            min_area_m2=min_area_m2,
+            max_area_m2=max_area_m2,
             zoning_fit_score=zoning_fit_score,
             landuse_available=bool(landuse_label or landuse_code),
             frontage_score=frontage_score,
@@ -5515,6 +5533,8 @@ def run_expansion_search(
             brand_profile=effective_brand_profile,
             road_context_available=road_context_available,
             parking_context_available=parking_context_available,
+            is_listing=_is_listing,
+            unit_street_width_m=_unit_street_width,
             zoning_verdict_hint=zoning_hint,
         )
         confidence_grade = _confidence_grade(

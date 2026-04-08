@@ -164,6 +164,9 @@ def test_candidate_gate_status_exposes_advisory_failures_without_blocking():
     gate_status, reasons = _candidate_gate_status(
         fit_score=78.0,
         area_fit_score=82.0,
+        area_m2=200.0,
+        min_area_m2=100.0,
+        max_area_m2=500.0,
         zoning_fit_score=88.0,
         landuse_available=True,
         frontage_score=40.0,  # advisory fail
@@ -581,6 +584,9 @@ def test_candidate_gate_status_blocking_failure_on_low_fit():
     gate_status, reasons = _candidate_gate_status(
         fit_score=30.0,  # well below threshold
         area_fit_score=20.0,
+        area_m2=600.0,  # outside range -> area gate fails
+        min_area_m2=100.0,
+        max_area_m2=500.0,
         zoning_fit_score=25.0,
         landuse_available=True,
         frontage_score=80.0,
@@ -794,6 +800,9 @@ def test_delivery_gate_explanation_inferred_when_no_observed():
     gate_status, reasons = _candidate_gate_status(
         fit_score=78.0,
         area_fit_score=82.0,
+        area_m2=200.0,
+        min_area_m2=100.0,
+        max_area_m2=500.0,
         zoning_fit_score=88.0,
         landuse_available=True,
         frontage_score=70.0,
@@ -818,6 +827,9 @@ def test_delivery_gate_explanation_observed_when_listings_present():
     gate_status, reasons = _candidate_gate_status(
         fit_score=78.0,
         area_fit_score=82.0,
+        area_m2=200.0,
+        min_area_m2=100.0,
+        max_area_m2=500.0,
         zoning_fit_score=88.0,
         landuse_available=True,
         frontage_score=70.0,

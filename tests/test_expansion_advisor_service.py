@@ -443,6 +443,9 @@ def test_gate_status_logic():
     gates, reasons = _candidate_gate_status(
         fit_score=60,
         area_fit_score=80,
+        area_m2=200,
+        min_area_m2=100,
+        max_area_m2=300,
         zoning_fit_score=80,
         landuse_available=True,
         frontage_score=70,
@@ -511,6 +514,9 @@ def test_gate_status_uses_v6_scores_for_failure():
     gates, reasons = _candidate_gate_status(
         fit_score=75,
         area_fit_score=80,
+        area_m2=200,
+        min_area_m2=100,
+        max_area_m2=300,
         zoning_fit_score=40,
         landuse_available=True,
         frontage_score=30,
@@ -1486,6 +1492,9 @@ def test_run_expansion_search_no_bbox_empty_result():
 
 _GATE_BASE = dict(
     fit_score=75,
+    area_m2=200,
+    min_area_m2=100,
+    max_area_m2=300,
     frontage_score=70,
     access_score=66,
     parking_score=55,
@@ -1515,8 +1524,8 @@ def test_area_inside_range_passes_area_gate():
 def test_area_outside_range_fails_area_gate():
     """Candidate with parcel area outside range -> area_fit_pass False."""
     gates, reasons = _candidate_gate_status(
-        **_GATE_BASE,
-        area_fit_score=20.0,  # outside range (score < 55 threshold)
+        **{**_GATE_BASE, "area_m2": 600},  # outside 100–300 range -> hard fail
+        area_fit_score=20.0,
         zoning_fit_score=80.0,
         landuse_available=True,
     )
@@ -1573,7 +1582,7 @@ def test_production_like_mixed_verdicts():
 
     # Candidate 3: area outside range, good zoning
     g3, r3 = _candidate_gate_status(
-        **_GATE_BASE,
+        **{**_GATE_BASE, "area_m2": 600},  # outside 100–300 range -> hard fail
         area_fit_score=20.0,
         zoning_fit_score=100.0,
         landuse_available=True,
