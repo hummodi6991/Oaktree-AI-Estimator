@@ -80,6 +80,13 @@ def _ingest_tier1_aqar(db: Session, run_id: str) -> int:
           AND NOT (cu.is_furnished = TRUE AND cu.listing_type = 'building')
           AND NOT (COALESCE(cu.apartments_count, 0) >= 2 AND cu.listing_type = 'building')
           AND NOT (COALESCE(cu.num_rooms, 0) >= 6 AND cu.listing_type = 'building')
+          AND NOT (
+                cu.listing_type = 'building'
+                AND (
+                    cu.description ~* '(bedroom|غرفة نوم|غرف نوم|غرفة ماستر|ماستر)'
+                    OR cu.area_sqm < 150
+                )
+            )
           AND cu.listing_type != 'warehouse'
           AND cu.lat IS NOT NULL
           AND cu.lon IS NOT NULL
