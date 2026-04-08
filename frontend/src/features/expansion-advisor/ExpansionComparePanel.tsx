@@ -3,14 +3,12 @@ import { useTranslation } from "react-i18next";
 import type { CompareCandidatesResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
-import PaybackBadge from "./PaybackBadge";
 import { fmtScore, fmtSAR, fmtMonths, fmtSarPerM2Year, gateColor, candidateDistrictLabel } from "./formatHelpers";
 
 const SUMMARY_KEY_ORDER = [
   "best_overall_candidate_id",
   "best_gate_pass_candidate_id",
   "best_economics_candidate_id",
-  "fastest_payback_candidate_id",
   "lowest_rent_burden_candidate_id",
   "best_brand_fit_candidate_id",
   "highest_demand_candidate_id",
@@ -24,7 +22,6 @@ const SUMMARY_LABELS: Record<string, string> = {
   best_overall_candidate_id: "Best Overall",
   best_gate_pass_candidate_id: "Best Gate Pass",
   best_economics_candidate_id: "Best Economics",
-  fastest_payback_candidate_id: "Fastest Payback",
   lowest_rent_burden_candidate_id: "Lowest Rent Burden",
   best_brand_fit_candidate_id: "Best Brand Fit",
   highest_demand_candidate_id: "Highest Demand",
@@ -76,8 +73,6 @@ const DIMENSION_GROUPS: DimensionGroup[] = [
     label: "Economics & Rent",
     rows: [
       { label: "Economics", key: "economics_score" },
-      { label: "Payback", key: "payback_band" },
-      { label: "Payback months", key: "estimated_payback_months", fmt: "months" },
       { label: "Rent/m²/yr", key: "estimated_rent_sar_m2_year", fmt: "sar_m2_year" },
       { label: "Annual rent", key: "display_annual_rent_sar", fmt: "sar" },
       { label: "Cannibalization", key: "cannibalization_score" },
@@ -97,9 +92,9 @@ const DIMENSION_GROUPS: DimensionGroup[] = [
 
 function findBestOnKey(items: Array<Record<string, unknown>>, key: string): string | null {
   if (!items.length) return null;
-  if (key === "gate" || key === "confidence_grade" || key === "payback_band") return null;
-  // For payback/cannibalization/rent, lower is better
-  const lowerIsBetter = key === "estimated_payback_months" || key === "cannibalization_score" || key === "estimated_rent_sar_m2_year" || key === "estimated_annual_rent_sar" || key === "display_annual_rent_sar";
+  if (key === "gate" || key === "confidence_grade") return null;
+  // For cannibalization/rent, lower is better
+  const lowerIsBetter = key === "cannibalization_score" || key === "estimated_rent_sar_m2_year" || key === "estimated_annual_rent_sar" || key === "display_annual_rent_sar";
   let best: { id: string | null; val: number } = { id: null, val: lowerIsBetter ? Infinity : -Infinity };
   for (const item of items) {
     const raw = item[key];
@@ -212,7 +207,6 @@ export default function ExpansionComparePanel({
                               if (row.key === "final_score") return <td key={item.candidate_id} className={cellCls}><ScorePill value={item.score_breakdown_json?.display_score ?? item.final_score} /></td>;
                               if (row.key === "confidence_grade") return <td key={item.candidate_id}><ConfidenceBadge grade={item.confidence_grade} /></td>;
                               if (row.key === "gate") { const gv = item.gate_status_json?.overall_pass; return <td key={item.candidate_id}><span className={`ea-badge ea-badge--${gateColor(gv ?? null)}`}>{gv === true ? t("expansionAdvisor.gatePass") : gv === false ? t("expansionAdvisor.gateFail") : t("expansionAdvisor.gateUnknown")}</span></td>; }
-                              if (row.key === "payback_band") return <td key={item.candidate_id}><PaybackBadge band={item.payback_band} months={item.estimated_payback_months} /></td>;
                               if (row.fmt === "sar" && typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtSAR(raw)}</td>;
                               if (row.fmt === "sar_m2_year" && typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtSarPerM2Year(raw)}</td>;
                               if (row.fmt === "months" && typeof raw === "number") return <td key={item.candidate_id} className={cellCls}>{fmtMonths(raw)}</td>;

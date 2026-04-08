@@ -2,10 +2,9 @@ import { useTranslation } from "react-i18next";
 import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
-import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
 import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
-import { fmtSAR, fmtMeters, fmtScore, fmtPct, fmtSarPerM2, fmtM2, fmtMonths, businessGateLabel } from "./formatHelpers";
+import { fmtSAR, fmtMeters, fmtScore, fmtPct, fmtSarPerM2, fmtM2, businessGateLabel } from "./formatHelpers";
 
 function EstimatedTag({ mode, t }: { mode?: "observed" | "estimated"; t: (k: string) => string }) {
   if (mode !== "estimated") return null;
@@ -64,10 +63,6 @@ export default function CandidateDetailPanel({ candidate }: Props) {
           <div className="ea-detail__kv">
             <span className="ea-detail__kv-label">{t("expansionAdvisor.confidence")}</span>
             <ConfidenceBadge grade={candidate.confidence_grade} />
-          </div>
-          <div className="ea-detail__kv">
-            <span className="ea-detail__kv-label">{t("expansionAdvisor.payback")}</span>
-            <PaybackBadge band={candidate.payback_band} months={candidate.estimated_payback_months} />
           </div>
           <div className="ea-detail__kv">
             <span className="ea-detail__kv-label">{t("expansionAdvisor.economicsLabel")}</span>
@@ -139,13 +134,6 @@ export default function CandidateDetailPanel({ candidate }: Props) {
             <span className="ea-detail__kv-value">
               {fmtScore(candidate.estimated_revenue_index, 1)}
               <span className="ea-memo-disclaimer-icon" title={t("expansionAdvisor.revenueDisclaimer")}>&#9432;</span>
-            </span>
-          </div>
-          <div className="ea-detail__kv">
-            <span className="ea-detail__kv-label">{t("expansionAdvisor.payback")}</span>
-            <span className="ea-detail__kv-value">
-              <PaybackBadge band={candidate.payback_band} months={candidate.estimated_payback_months} />
-              <span className="ea-memo-disclaimer-icon" title={t("expansionAdvisor.paybackDisclaimer")}>&#9432;</span>
             </span>
           </div>
           <div className="ea-detail__kv">

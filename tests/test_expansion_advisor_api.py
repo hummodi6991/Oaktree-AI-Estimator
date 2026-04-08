@@ -194,7 +194,7 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
     assert body["items"][0]["district"] == "Olaya"
     assert body["items"][0]["compare_rank"] == 1
     assert body["items"][0]["economics_score"] == 69.0
-    assert body["items"][0]["payback_band"] == "promising"
+    assert body["items"][0]["payback_band"] is None
     assert body["items"][0]["confidence_grade"] == "A"
     assert body["items"][0]["gate_status_json"]["overall_pass"] is True
     assert body["items"][0]["rank_position"] == 1

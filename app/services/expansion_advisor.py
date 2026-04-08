@@ -835,6 +835,10 @@ def _normalize_candidate_payload(
     payload["demand_thesis"] = payload.get("demand_thesis") or ""
     payload["cost_thesis"] = payload.get("cost_thesis") or ""
 
+    # ── Payback: kept in schema but no longer surfaced to UI ──
+    payload["estimated_payback_months"] = None
+    payload["payback_band"] = None
+
     # ── Commercial unit fields (pass through) ──
     payload["source_type"] = payload.get("source_type", "parcel")
     payload["commercial_unit_id"] = payload.get("commercial_unit_id")
@@ -2044,12 +2048,12 @@ def _build_cost_thesis(
     estimated_rent_sar_m2_year: float,
     estimated_annual_rent_sar: float,
     estimated_fitout_cost_sar: float,
-    estimated_payback_months: float,
-    payback_band: str,
+    estimated_payback_months: float,  # kept for signature compatibility
+    payback_band: str,  # kept for signature compatibility
 ) -> str:
     return (
         f"Estimated rent is {estimated_rent_sar_m2_year:.0f} SAR/m²/year (~{estimated_annual_rent_sar:,.0f} SAR annually), "
-        f"fit-out is ~{estimated_fitout_cost_sar:,.0f} SAR, and payback is {estimated_payback_months:.1f} months ({payback_band})."
+        f"fit-out is ~{estimated_fitout_cost_sar:,.0f} SAR."
     )
 
 
@@ -2718,7 +2722,7 @@ def _build_strengths_and_risks(
     whitespace_score: float,
     fit_score: float,
     cannibalization_score: float,
-    payback_band: str,
+    payback_band: str,  # kept for signature compatibility, no longer used in bullets
     rent_source: str,
 ) -> tuple[list[str], list[str]]:
     strengths: list[str] = []
@@ -2729,14 +2733,10 @@ def _build_strengths_and_risks(
         strengths.append("Competitive whitespace remains attractive")
     if fit_score >= 70:
         strengths.append("Parcel characteristics align with target format")
-    if payback_band in {"strong", "promising"}:
-        strengths.append(f"Heuristic payback is {payback_band} for first-pass screening")
     if rent_source == "conservative_default":
         risks.append("Rent benchmark fell back to conservative city default (lower confidence)")
     if cannibalization_score >= 70:
         risks.append("High overlap risk with existing branches")
-    if payback_band in {"borderline", "weak"}:
-        risks.append("Payback profile is slower versus preferred expansion targets")
     if whitespace_score <= 45:
         risks.append("Competitive density may pressure launch economics")
     return strengths[:4], risks[:4]
@@ -2757,7 +2757,7 @@ def _decision_summary(
     district: str | None,
     final_score: float,
     economics_score: float,
-    payback_band: str,
+    payback_band: str,  # kept for signature compatibility
     key_risks: list[str],
     service_model: str,
     area_m2: float,
@@ -2770,17 +2770,13 @@ def _decision_summary(
         risk_text = (
             "rent economics are tight and should be validated with actual lease terms"
         )
-    elif payback_band == "borderline":
-        risk_text = (
-            "payback timeline is borderline \u2014 validate revenue assumptions before commitment"
-        )
     else:
         risk_text = (
             "execution risk should be managed during leasing and design"
         )
     return (
         f"This {area_label} candidate in {district_label} scores {final_score:.1f}/100 overall with an economics score of {economics_score:.1f}/100. "
-        f"The payback profile is {payback_band}, making it a practical first-pass option for {_recommended_use_case(service_model, area_m2)}. "
+        f"It is a practical first-pass option for {_recommended_use_case(service_model, area_m2)}. "
         f"The biggest commercial risk is {risk_text.lower()}."
     )
 
@@ -5316,8 +5312,8 @@ def run_expansion_search(
                 "provider_whitespace_score": round(provider_whitespace_score, 2),
                 "multi_platform_presence_score": round(multi_platform_presence_score, 2),
                 "delivery_competition_score": round(delivery_competition_score, 2),
-                "estimated_payback_months": round(estimated_payback_months, 2),
-                "payback_band": payback_band,
+                "estimated_payback_months": None,
+                "payback_band": None,
                 "gate_status_json": gate_status_json,
                 "gate_reasons_json": gate_reasons_json,
                 "feature_snapshot_json": feature_snapshot_json,
@@ -6243,8 +6239,8 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "provider_whitespace_score": row.get("provider_whitespace_score"),
             "multi_platform_presence_score": row.get("multi_platform_presence_score"),
             "delivery_competition_score": row.get("delivery_competition_score"),
-            "estimated_payback_months": row.get("estimated_payback_months"),
-            "payback_band": row.get("payback_band"),
+            "estimated_payback_months": None,
+            "payback_band": None,
             "competitor_count": row.get("competitor_count"),
             "delivery_listing_count": row.get("delivery_listing_count"),
             "population_reach": row.get("population_reach"),
@@ -6297,7 +6293,7 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "strongest_delivery_market_candidate_id": strongest_delivery_market,
             "strongest_whitespace_candidate_id": strongest_whitespace,
             "lowest_rent_burden_candidate_id": lowest_rent_burden,
-            "fastest_payback_candidate_id": fastest_payback,
+            "fastest_payback_candidate_id": None,
             "most_confident_candidate_id": most_confident,
             "best_gate_pass_candidate_id": best_gate_pass,
         })
@@ -6480,8 +6476,8 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "estimated_annual_rent_sar": candidate.get("estimated_annual_rent_sar"),
             "estimated_fitout_cost_sar": candidate.get("estimated_fitout_cost_sar"),
             "estimated_revenue_index": candidate.get("estimated_revenue_index"),
-            "estimated_payback_months": candidate.get("estimated_payback_months"),
-            "payback_band": candidate.get("payback_band"),
+            "estimated_payback_months": None,
+            "payback_band": None,
             "key_strengths": strengths,
             "key_risks": risks,
             "decision_summary": candidate.get("decision_summary") or "",

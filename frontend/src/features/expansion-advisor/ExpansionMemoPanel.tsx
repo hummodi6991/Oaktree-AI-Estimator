@@ -3,10 +3,9 @@ import { useTranslation } from "react-i18next";
 import type { CandidateMemoResponse, RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
-import PaybackBadge from "./PaybackBadge";
 import GateSummary from "./GateSummary";
 import CopySummaryBlock from "./CopySummaryBlock";
-import { fmtScore, fmtMeters, fmtSAR, fmtSARCompact, fmtM2, fmtMonths, businessGateLabel, safeDistrictLabel, getDisplayScore } from "./formatHelpers";
+import { fmtScore, fmtMeters, fmtSAR, fmtSARCompact, fmtM2, businessGateLabel, safeDistrictLabel, getDisplayScore } from "./formatHelpers";
 
 function toList(input: unknown): string[] {
   return Array.isArray(input) ? input.map(String) : [];
@@ -132,7 +131,6 @@ export default function ExpansionMemoPanel({
                       </span>
                     )}
                     <ConfidenceBadge grade={cand.confidence_grade as string | undefined} />
-                    <PaybackBadge band={cand.payback_band as string | undefined} months={cand.estimated_payback_months as number | undefined} />
                   </div>
                   {rec.headline && <p className="ea-memo-summary-card__headline">{rec.headline}</p>}
                 </div>
@@ -164,10 +162,6 @@ export default function ExpansionMemoPanel({
                           <div className="ea-detail__kv">
                             <span className="ea-detail__kv-label">{t("expansionAdvisor.fitoutCost")}</span>
                             <span className="ea-detail__kv-value">{fmtSAR(cand.estimated_fitout_cost_sar as number | undefined)}</span>
-                          </div>
-                          <div className="ea-detail__kv">
-                            <span className="ea-detail__kv-label">{t("expansionAdvisor.payback")}</span>
-                            <span className="ea-detail__kv-value">{fmtMonths(cand.estimated_payback_months as number | undefined)}</span>
                           </div>
                           <div className="ea-detail__kv">
                             <span className="ea-detail__kv-label">{t("expansionAdvisor.revenueIndex")}</span>

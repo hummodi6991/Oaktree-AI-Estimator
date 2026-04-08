@@ -304,12 +304,10 @@ describe("Expansion advisor UI behavior", () => {
     const entries = getOrderedCompareSummaryEntries({
       most_confident_candidate_id: "c4",
       best_overall_candidate_id: "c1",
-      fastest_payback_candidate_id: "c2",
       custom_metric: "c9",
     });
     expect(entries.map(([key]) => key)).toEqual([
       "best_overall_candidate_id",
-      "fastest_payback_candidate_id",
       "most_confident_candidate_id",
       "custom_metric",
     ]);
@@ -508,12 +506,6 @@ describe("Local filter/sort without losing rank_position", () => {
     const result = sortCandidates(candidates, "cannibalization");
     expect(result[0].id).toBe("c3");
     expect(result[0].cannibalization_score).toBe(10);
-  });
-
-  it("sortCandidates payback sorts ascending", () => {
-    const result = sortCandidates(candidates, "payback");
-    expect(result[0].id).toBe("c3");
-    expect(result[0].estimated_payback_months).toBe(12);
   });
 
   it("sortCandidates delivery sorts by combined whitespace+multi-platform", () => {
@@ -807,7 +799,6 @@ describe("Finalist tile builder", () => {
     expect(tiles[0].isLead).toBe(true);
     expect(tiles[0].district).toBe("Olaya");
     expect(tiles[0].gateVerdict).toBe("pass");
-    expect(tiles[0].paybackMonths).toBe(18);
     expect(tiles[0].bestStrength).toBe("Great location");
     expect(tiles[0].mainRisk).toBe("High rent");
     expect(tiles[1].isLead).toBe(false);
@@ -1210,7 +1201,6 @@ describe("Compare outcome derivation", () => {
       summary: {
         best_overall_candidate_id: "c1",
         best_economics_candidate_id: "c2",
-        fastest_payback_candidate_id: "c1",
         best_brand_fit_candidate_id: "c2",
       },
     };
@@ -2398,13 +2388,11 @@ describe("Compare panel dimension groups", () => {
       best_overall_candidate_id: "c1",
       best_economics_candidate_id: "c2",
       some_custom_candidate_id: "c3",
-      fastest_payback_candidate_id: "c1",
     };
     const entries = getOrderedCompareSummaryEntries(summary);
     const keys = entries.map(([k]) => k);
     // Known keys first in defined order
     expect(keys.indexOf("best_overall_candidate_id")).toBeLessThan(keys.indexOf("best_economics_candidate_id"));
-    expect(keys.indexOf("best_economics_candidate_id")).toBeLessThan(keys.indexOf("fastest_payback_candidate_id"));
     // Custom key last
     expect(keys.indexOf("some_custom_candidate_id")).toBe(keys.length - 1);
   });
@@ -2567,11 +2555,9 @@ describe("Candidate card enhanced fields", () => {
 /* ─── CandidateDetailPanel enhanced economics fields ─── */
 
 describe("CandidateDetailPanel enhanced economics", () => {
-  it("renders area_m2, payback, and cannibalization in detail view", () => {
+  it("renders area_m2 and cannibalization in detail view", () => {
     const candidate = makeCandidate({
       area_m2: 200,
-      estimated_payback_months: 14,
-      payback_band: "fast",
       cannibalization_score: 25,
     });
     const html = renderToStaticMarkup(<CandidateDetailPanel candidate={candidate} />);
@@ -2740,7 +2726,6 @@ describe("Report panel dimension winners rendering", () => {
             best_economics_candidate_id: "c1",
             best_brand_fit_candidate_id: "c3",
             strongest_whitespace_candidate_id: "c2",
-            fastest_payback_candidate_id: "c1",
             most_confident_candidate_id: "c3",
             best_pass_candidate_id: "c1",
           },
@@ -3019,7 +3004,6 @@ describe("Compare outcome derivation regression", () => {
         summary: {
           best_overall_candidate_id: "c1",
           best_economics_candidate_id: "c2",
-          fastest_payback_candidate_id: "c2",
           best_brand_fit_candidate_id: "c1",
         },
       },
@@ -3030,7 +3014,6 @@ describe("Compare outcome derivation regression", () => {
     expect(outcome.winnerLabel).toContain("Olaya");
     expect(outcome.leadsAligned).toBe(true);
     expect(outcome.runnerUpStrengths).toContain("best economics");
-    expect(outcome.runnerUpStrengths).toContain("fastest payback");
     expect(outcome.whatWouldChange).toContain("best economics");
   });
 
@@ -4037,52 +4020,6 @@ describe("UX correctness: no-pass state never shows Lead-approval wording", () =
     );
     expect(html).toContain("Set as Lead");
     expect(html).not.toContain("Mark exploratory pick");
-  });
-});
-
-describe("UX correctness: payback status renders correctly in checklist", () => {
-  it("strong payback (14 mo) renders as pass, not fail", () => {
-    const c = makeCandidate({
-      payback_band: "strong",
-      estimated_payback_months: 14,
-      economics_score: 80,
-    });
-    const items = deriveDecisionChecklist(c);
-    const paybackItem = items.find((i) => i.label.startsWith("Payback:"));
-    expect(paybackItem).toBeDefined();
-    expect(paybackItem!.status).toBe("strong");
-    expect(paybackItem!.label).toContain("strong");
-    expect(paybackItem!.label).toContain("14 mo");
-  });
-
-  it("promising payback renders as pass", () => {
-    const c = makeCandidate({
-      payback_band: "promising",
-      estimated_payback_months: 24,
-    });
-    const items = deriveDecisionChecklist(c);
-    const paybackItem = items.find((i) => i.label.startsWith("Payback:"));
-    expect(paybackItem!.status).toBe("strong");
-  });
-
-  it("borderline payback renders as neutral/caution", () => {
-    const c = makeCandidate({
-      payback_band: "borderline",
-      estimated_payback_months: 35,
-    });
-    const items = deriveDecisionChecklist(c);
-    const paybackItem = items.find((i) => i.label.startsWith("Payback:"));
-    expect(paybackItem!.status).toBe("caution");
-  });
-
-  it("weak payback renders as risk/fail", () => {
-    const c = makeCandidate({
-      payback_band: "weak",
-      estimated_payback_months: 52,
-    });
-    const items = deriveDecisionChecklist(c);
-    const paybackItem = items.find((i) => i.label.startsWith("Payback:"));
-    expect(paybackItem!.status).toBe("risk");
   });
 });
 

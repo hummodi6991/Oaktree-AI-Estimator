@@ -1,9 +1,8 @@
 import { useTranslation } from "react-i18next";
 import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
-import PaybackBadge from "./PaybackBadge";
 import TierBadge from "./TierBadge";
-import { fmtSARCompact, fmtM2, fmtMonths, fmtMeters, candidateDistrictLabel, getDisplayScore } from "./formatHelpers";
+import { fmtSARCompact, fmtM2, fmtMeters, candidateDistrictLabel, getDisplayScore } from "./formatHelpers";
 
 type Props = {
   candidate: ExpansionCandidate;
@@ -88,9 +87,6 @@ export default function ExpansionCandidateCard({
         </div>
         <div className="ea-candidate__badges">
           <ScorePill value={getDisplayScore(candidate)} />
-          {candidate.payback_band && (
-            <PaybackBadge band={candidate.payback_band} months={candidate.estimated_payback_months} />
-          )}
           {showNearestBranch && (
             <span className="ea-badge ea-badge--neutral ea-candidate__nearest-pill">
               {fmtMeters(nearestBranchM)}
@@ -149,7 +145,6 @@ export default function ExpansionCandidateCard({
           <span className="ea-candidate__metric-compact">{fmtM2(candidate.area_m2)}</span>
         )}
         <span className="ea-candidate__metric-compact">{fmtSARCompact(candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar)}/yr</span>
-        <span className="ea-candidate__metric-compact">{fmtMonths(candidate.estimated_payback_months)}</span>
         {candidate.estimated_fitout_cost_sar != null && (
           <span className="ea-candidate__metric-compact">{fmtSARCompact(candidate.estimated_fitout_cost_sar)}</span>
         )}
