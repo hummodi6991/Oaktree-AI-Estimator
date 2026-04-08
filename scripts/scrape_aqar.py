@@ -600,6 +600,36 @@ def _extract_num_rooms(soup: BeautifulSoup) -> int | None:
     return None
 
 
+# Bedroom-related keywords. Presence of ANY of these in a description is a
+# near-100% precision residential signal — commercial F&B shells, offices,
+# warehouses, and showrooms never describe themselves with bedroom counts.
+_BEDROOM_KEYWORDS = (
+    # English
+    "bedroom",
+    "bedrooms",
+    "master bedroom",
+    # Arabic
+    "غرفة نوم",
+    "غرف نوم",
+    "غرفة ماستر",
+    "ماستر",
+)
+
+
+def _has_bedroom_keywords(description: str | None) -> bool:
+    """Return True if the description contains any bedroom-related keyword.
+
+    Bedrooms are a near-perfect residential signal — they never appear in
+    commercial real estate vocabulary. A single match is sufficient.
+
+    Case-insensitive for English; Arabic is case-less so direct match works.
+    """
+    if not description:
+        return False
+    desc_lower = description.lower()
+    return any(kw in desc_lower for kw in _BEDROOM_KEYWORDS)
+
+
 def _extract_detail_from_html(html: str) -> dict:
     """Extract detail fields by parsing the detail page HTML."""
     soup = BeautifulSoup(html, "html.parser")
