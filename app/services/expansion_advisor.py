@@ -2663,6 +2663,20 @@ def _estimate_revenue_index(
 # Percentile-based rent burden helpers
 # ---------------------------------------------------------------------------
 
+# Sanity bounds for comparable rent rows in SAR/m²/month.
+# Rows outside this range are excluded from the percentile comparable set
+# because they are overwhelmingly scraper artifacts (multi-year lease totals
+# stored as annual, whole-building listings, parsing bugs, etc.) rather than
+# real F&B-comparable rents in the Riyadh retail market.
+#
+# Floor (15): below this, listings are almost always multi-year totals,
+#             whole-building listings, or far-suburb storefronts that aren't
+#             realistic F&B comparables.
+# Ceiling (350): above this, listings are scraper bugs — prime Riyadh F&B
+#                retail tops out around 250 SAR/m²/month even on Tahlia.
+_RENT_COMP_MIN_SAR_M2_MONTH: float = 15.0
+_RENT_COMP_MAX_SAR_M2_MONTH: float = 350.0
+
 # Area bands (m²) used to bucket comparable listings for rent percentiles.
 _RENT_COMP_AREA_BANDS: list[tuple[float, float]] = [
     (0, 100),
@@ -2697,6 +2711,39 @@ def _percentile_rent_burden(
     if listing_monthly_rent_per_m2 <= 0 or area_m2 <= 0:
         return None
 
+    # Listing rate falls outside the defensible Riyadh F&B retail envelope.
+    # Don't compute a percentile against a bounded population that doesn't
+    # contain the listing's own rate — return a neutral / penalized burden
+    # score with a clear meta flag instead.
+    if listing_monthly_rent_per_m2 < _RENT_COMP_MIN_SAR_M2_MONTH:
+        return {
+            "burden_score": 50.0,
+            "percentile": None,
+            "n_comparable": 0,
+            "source_label": "listing_below_envelope",
+            "median_monthly_rent_per_m2": None,
+            "listing_monthly_rent_per_m2": round(float(listing_monthly_rent_per_m2), 2),
+            "comparable_bounds": {
+                "min_sar_m2_month": _RENT_COMP_MIN_SAR_M2_MONTH,
+                "max_sar_m2_month": _RENT_COMP_MAX_SAR_M2_MONTH,
+            },
+            "note": "listing rent below sanity envelope — likely data quality issue, neutral burden assigned",
+        }
+    if listing_monthly_rent_per_m2 > _RENT_COMP_MAX_SAR_M2_MONTH:
+        return {
+            "burden_score": 15.0,
+            "percentile": None,
+            "n_comparable": 0,
+            "source_label": "listing_above_envelope",
+            "median_monthly_rent_per_m2": None,
+            "listing_monthly_rent_per_m2": round(float(listing_monthly_rent_per_m2), 2),
+            "comparable_bounds": {
+                "min_sar_m2_month": _RENT_COMP_MIN_SAR_M2_MONTH,
+                "max_sar_m2_month": _RENT_COMP_MAX_SAR_M2_MONTH,
+            },
+            "note": "listing rent above sanity envelope — heavy burden penalty assigned",
+        }
+
     band_lo, band_hi = _area_band_bounds(area_m2)
     district_norm = normalize_district_key(district) if district else None
 
@@ -2708,6 +2755,7 @@ def _percentile_rent_burden(
           AND area_sqm IS NOT NULL
           AND area_sqm > 0
           AND status = 'active'
+          AND (price_sar_annual / area_sqm / 12.0) BETWEEN :rent_floor AND :rent_ceiling
     """
 
     # Fallback chain: narrowest → broadest.
@@ -2759,7 +2807,12 @@ def _percentile_rent_burden(
                         {base_where}
                         {extra_where}
                     """),
-                    {**params, "listing_rate": float(listing_monthly_rent_per_m2)},
+                    {
+                        **params,
+                        "listing_rate": float(listing_monthly_rent_per_m2),
+                        "rent_floor": _RENT_COMP_MIN_SAR_M2_MONTH,
+                        "rent_ceiling": _RENT_COMP_MAX_SAR_M2_MONTH,
+                    },
                 ).mappings().first()
         except Exception:
             logger.debug("percentile rent comp failed for label=%s", label, exc_info=True)
@@ -2792,6 +2845,10 @@ def _percentile_rent_burden(
             "source_label": label,
             "median_monthly_rent_per_m2": round(float(agg["median_monthly_per_m2"] or 0.0), 2),
             "listing_monthly_rent_per_m2": round(float(listing_monthly_rent_per_m2), 2),
+            "comparable_bounds": {
+                "min_sar_m2_month": _RENT_COMP_MIN_SAR_M2_MONTH,
+                "max_sar_m2_month": _RENT_COMP_MAX_SAR_M2_MONTH,
+            },
         }
 
     return None
