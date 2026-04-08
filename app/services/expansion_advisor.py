@@ -2748,17 +2748,18 @@ def _percentile_rent_burden(
 
     for extra_where, params, min_n, label in chains:
         try:
-            agg = db.execute(
-                text(f"""
-                    SELECT
-                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY (price_sar_annual / area_sqm / 12.0)) AS median_monthly_per_m2,
-                        COUNT(*) AS n,
-                        SUM(CASE WHEN (price_sar_annual / area_sqm / 12.0) <= :listing_rate THEN 1 ELSE 0 END) AS n_below
-                    {base_where}
-                    {extra_where}
-                """),
-                {**params, "listing_rate": float(listing_monthly_rent_per_m2)},
-            ).mappings().first()
+            with db.begin_nested():
+                agg = db.execute(
+                    text(f"""
+                        SELECT
+                            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY (price_sar_annual / area_sqm / 12.0)) AS median_monthly_per_m2,
+                            COUNT(*) AS n,
+                            SUM(CASE WHEN (price_sar_annual / area_sqm / 12.0) <= :listing_rate THEN 1 ELSE 0 END) AS n_below
+                        {base_where}
+                        {extra_where}
+                    """),
+                    {**params, "listing_rate": float(listing_monthly_rent_per_m2)},
+                ).mappings().first()
         except Exception:
             logger.debug("percentile rent comp failed for label=%s", label, exc_info=True)
             continue
