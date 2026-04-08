@@ -541,8 +541,8 @@ def test_missing_road_context_uses_neutral_scores_and_unknown_gate(monkeypatch):
 
     items = run_expansion_search(db, search_id="s", brand_name="b", category="burger", service_model="qsr", min_area_m2=100, max_area_m2=300, target_area_m2=180, limit=3)
     item = items[0]
-    assert item["frontage_score"] == 55.0
-    assert item["access_score"] == 55.0
+    assert item["frontage_score"] == 50.0
+    assert item["access_score"] == 50.0
     assert "frontage/access" in item["gate_reasons_json"]["unknown"]
     # With both road tables missing, frontage/parking gates are unknown (None),
     # so overall_pass is None (indeterminate), not True.
@@ -1209,8 +1209,8 @@ def test_snapshot_db_failure_does_not_poison_session(monkeypatch):
         target_area_m2=180, limit=5,
     )
     assert len(items) >= 1
-    assert items[0]["frontage_score"] == 55.0
-    assert items[0]["access_score"] == 55.0
+    assert items[0]["frontage_score"] == 50.0
+    assert items[0]["access_score"] == 50.0
 
 
 def test_candidate_insert_failure_skips_candidate_gracefully(monkeypatch):
