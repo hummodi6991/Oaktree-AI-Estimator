@@ -1753,16 +1753,23 @@ def _candidate_gate_status(
     else:
         # Legacy fallback: plain threshold
         zoning_fit_pass = zoning_fit_score >= thresholds["zoning_fit_min"]
-    # Frontage/access gate: tri-state for listings without street width data.
+    # Frontage/access gate: tri-state for listings.
+    # For listings, the only ground truth we have is unit_street_width_m.
+    # Bulk OSM road enrichment is about the surrounding road network, not
+    # the listing's own street, so it cannot substitute. If we don't have
+    # the listing's street width, mark unknown.
     _has_street_width = bool(unit_street_width_m and unit_street_width_m > 0)
-    if is_listing and not _has_street_width and not road_context_available:
+    if is_listing and not _has_street_width:
         frontage_access_pass: bool | None = None
     else:
         frontage_access_pass = (frontage_score >= thresholds["frontage_access_min"]) and (access_score >= thresholds["frontage_access_min"])
-    # Parking gate: tri-state for listings.  Aqar doesn't publish parking
-    # data, so failing a listing on a low parking score is penalizing operators
-    # for missing data we can never get.  Mark unknown instead.
-    if is_listing and not parking_context_available:
+    # Parking gate: tri-state for listings.
+    # Aqar publishes no parking ground truth on units. Bulk OSM parking
+    # enrichment is about the surrounding neighborhood, not the listing
+    # itself, so it cannot substitute. For listings, always mark parking
+    # as unknown — failing a listing on a low parking score is penalizing
+    # operators for data we structurally cannot get.
+    if is_listing:
         parking_pass: bool | None = None
     else:
         parking_pass = parking_score >= thresholds["parking_min"]
