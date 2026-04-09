@@ -1681,7 +1681,45 @@ def _competition_whitespace_score(competitor_count: int) -> float:
     return _clamp(max(15.0, raw))
 
 
-def _confidence_score(landuse_label: str | None, population_reach: float, delivery_listing_count: int) -> float:
+def _confidence_score(
+    *,
+    is_listing: bool = False,
+    rent_confidence: str | None = None,
+    area_confidence: str | None = None,
+    unit_street_width_m: float | None = None,
+    image_url: str | None = None,
+    landuse_label: str | None = None,
+    population_reach: float = 0.0,
+    delivery_listing_count: int = 0,
+) -> float:
+    """Confidence score on a 0-100 scale.
+
+    For listings: rewards measured ground truth from Aqar.
+    For parcels: legacy district-context formula, capped at 70.
+    """
+    if is_listing:
+        score = 30.0  # base for being a real listing
+
+        if rent_confidence == "actual":
+            score += 20.0
+
+        if area_confidence == "actual":
+            score += 15.0
+
+        if unit_street_width_m is not None and unit_street_width_m > 0:
+            score += 15.0
+
+        if image_url:
+            score += 10.0
+
+        if landuse_label:
+            score += 5.0
+        if population_reach > 0:
+            score += 5.0
+
+        return _clamp(score)
+
+    # Parcel path: legacy formula, capped at 70.
     score = 40.0
     if landuse_label:
         score += 25.0
@@ -1689,7 +1727,7 @@ def _confidence_score(landuse_label: str | None, population_reach: float, delive
         score += 20.0
     if delivery_listing_count > 0:
         score += 15.0
-    return _clamp(score)
+    return min(70.0, _clamp(score))
 
 
 def _candidate_gate_status(
@@ -2077,7 +2115,17 @@ def _confidence_grade(
     zoning_available: bool = True,
     delivery_observed: bool = True,
     data_completeness_score: int | float = 0,
+    is_listing: bool = False,
 ) -> str:
+    """Map a 0-100 confidence score to an A/B/C/D grade.
+
+    For listings, the score already encodes data quality (measured rent,
+    area, street width, image) — parcel-era critical-missing checks are
+    irrelevant. Use the score directly.
+
+    For parcels, the score is from district-context enrichment, so the
+    critical-missing flags meaningfully indicate thin context.
+    """
     adjusted = _safe_float(confidence_score)
     if district:
         adjusted += 2.5
@@ -2087,9 +2135,18 @@ def _confidence_grade(
     if rent_source != "conservative_default":
         adjusted += 3.0
 
-    # Cap grade when critical observed context is missing.
-    # Missing zoning, delivery observation, road or parking context
-    # should prevent inflated A/B grades.
+    if is_listing:
+        # Listings: score is grounded in unit-level ground truth.
+        # Trust the score directly without parcel-context demotions.
+        if adjusted >= 85.0:
+            return "A"
+        if adjusted >= 70.0:
+            return "B"
+        if adjusted >= 50.0:
+            return "C"
+        return "D"
+
+    # Parcel path: legacy logic, unchanged.
     critical_missing = 0
     if not zoning_available:
         critical_missing += 1
@@ -3402,6 +3459,7 @@ def _query_candidate_location_pool(
                 cl.current_tenant,
                 cl.current_category,
                 cl.rent_confidence,
+                cl.area_confidence,
                 cl.rent_sar_m2_month::float AS cl_rent_m2_month,
                 cl.rent_sar_annual::float AS cl_rent_annual,
                 cl.avg_rating::float AS cl_avg_rating,
@@ -3447,6 +3505,7 @@ def _query_candidate_location_pool(
             current_tenant,
             current_category,
             rent_confidence,
+            area_confidence,
             cl_rent_m2_month,
             cl_rent_annual,
             cl_avg_rating,
@@ -4761,7 +4820,17 @@ def run_expansion_search(
         delivery_score = _delivery_score(delivery_listing_count)
         demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
 
-        confidence_score = _confidence_score(landuse_label, population_reach, delivery_listing_count)
+        _is_listing = bool(row.get("commercial_unit_id"))
+        confidence_score = _confidence_score(
+            is_listing=_is_listing,
+            rent_confidence=row.get("rent_confidence"),
+            area_confidence=row.get("area_confidence"),
+            unit_street_width_m=_safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None,
+            image_url=row.get("image_url"),
+            landuse_label=landuse_label,
+            population_reach=population_reach,
+            delivery_listing_count=delivery_listing_count,
+        )
         distance_to_nearest_branch_m = _nearest_branch_distance_m(
             _safe_float(row.get("lat")),
             _safe_float(row.get("lon")),
@@ -4808,7 +4877,6 @@ def run_expansion_search(
             category=category,
             price_tier=effective_brand_profile.get("price_tier"),
         )
-        _is_listing = bool(row.get("commercial_unit_id"))
         economics_score, economics_meta = _economics_score(
             estimated_revenue_index=estimated_revenue_index,
             estimated_annual_rent_sar=estimated_annual_rent_sar,
@@ -5555,6 +5623,7 @@ def run_expansion_search(
             zoning_available=bool(landuse_label or landuse_code),
             delivery_observed=provider_listing_count > 0,
             data_completeness_score=feature_snapshot_json.get("data_completeness_score", 0),
+            is_listing=_is_listing,
         )
         demand_thesis = _build_demand_thesis(
             demand_score=demand_score,

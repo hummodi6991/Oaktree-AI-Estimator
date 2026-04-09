@@ -2,6 +2,7 @@ from app.services.expansion_advisor import (
     _candidate_feature_snapshot,
     _candidate_gate_status,
     _confidence_grade,
+    _confidence_score,
     _context_checked,
     _dedupe_candidates,
     _build_demand_thesis,
@@ -425,6 +426,157 @@ def test_confidence_grade_b_with_one_missing():
         data_completeness_score=85,
     )
     assert grade == "B"
+
+
+# ---------------------------------------------------------------------------
+# Listings-aware confidence score tests (Patch 04)
+# ---------------------------------------------------------------------------
+
+def test_confidence_score_listing_full_ground_truth():
+    """Listing with all measured fields scores ~95."""
+    score = _confidence_score(
+        is_listing=True,
+        rent_confidence="actual",
+        area_confidence="actual",
+        unit_street_width_m=12.0,
+        image_url="https://example.com/img.jpg",
+        landuse_label="commercial",
+        population_reach=5000.0,
+    )
+    assert score == 100.0  # 30+20+15+15+10+5+5 = 100
+
+
+def test_confidence_score_listing_no_image():
+    """Missing image costs exactly 10 points."""
+    with_image = _confidence_score(
+        is_listing=True,
+        rent_confidence="actual",
+        area_confidence="actual",
+        unit_street_width_m=12.0,
+        image_url="https://example.com/img.jpg",
+        landuse_label="commercial",
+        population_reach=5000.0,
+    )
+    without_image = _confidence_score(
+        is_listing=True,
+        rent_confidence="actual",
+        area_confidence="actual",
+        unit_street_width_m=12.0,
+        image_url=None,
+        landuse_label="commercial",
+        population_reach=5000.0,
+    )
+    assert with_image - without_image == 10.0
+
+
+def test_confidence_score_listing_no_measured_rent():
+    """Listing without actual rent scores lower."""
+    score = _confidence_score(
+        is_listing=True,
+        rent_confidence="interpolated",
+        area_confidence="actual",
+        unit_street_width_m=12.0,
+        image_url="https://example.com/img.jpg",
+        landuse_label="commercial",
+        population_reach=5000.0,
+    )
+    assert score == 80.0  # 30+0+15+15+10+5+5
+
+
+def test_confidence_score_listing_minimal():
+    """Listing with no measured fields gets base 30."""
+    score = _confidence_score(
+        is_listing=True,
+        rent_confidence=None,
+        area_confidence=None,
+        unit_street_width_m=None,
+        image_url=None,
+        landuse_label=None,
+        population_reach=0.0,
+    )
+    assert score == 30.0
+
+
+def test_confidence_score_parcel_capped_at_70():
+    """Parcel path is capped at 70 regardless of context richness."""
+    score = _confidence_score(
+        is_listing=False,
+        landuse_label="commercial",
+        population_reach=5000.0,
+        delivery_listing_count=10,
+    )
+    assert score == 70.0  # 40+25+20+15=100 but capped at 70
+
+
+def test_confidence_score_parcel_legacy_base():
+    """Parcel with no context gets base 40."""
+    score = _confidence_score(
+        is_listing=False,
+        landuse_label=None,
+        population_reach=0.0,
+        delivery_listing_count=0,
+    )
+    assert score == 40.0
+
+
+def test_confidence_grade_listing_a():
+    """Listing with high score grades A without needing parcel context."""
+    grade = _confidence_grade(
+        confidence_score=85.0,
+        district="Al Olaya",
+        provider_platform_count=3,
+        multi_platform_presence_score=20.0,
+        rent_source="commercial_unit_actual",
+        road_context_available=False,
+        parking_context_available=False,
+        zoning_available=False,
+        delivery_observed=False,
+        data_completeness_score=0,
+        is_listing=True,
+    )
+    assert grade == "A"
+
+
+def test_confidence_grade_listing_not_demoted_by_missing_context():
+    """Listing grade is NOT demoted by missing parcel-era context flags."""
+    grade_with_context = _confidence_grade(
+        confidence_score=75.0,
+        district="Al Olaya",
+        provider_platform_count=2,
+        multi_platform_presence_score=10.0,
+        rent_source="commercial_unit_actual",
+        road_context_available=True,
+        parking_context_available=True,
+        zoning_available=True,
+        delivery_observed=True,
+        is_listing=True,
+    )
+    grade_without_context = _confidence_grade(
+        confidence_score=75.0,
+        district="Al Olaya",
+        provider_platform_count=2,
+        multi_platform_presence_score=10.0,
+        rent_source="commercial_unit_actual",
+        road_context_available=False,
+        parking_context_available=False,
+        zoning_available=False,
+        delivery_observed=False,
+        is_listing=True,
+    )
+    assert grade_with_context == grade_without_context
+
+
+def test_confidence_grade_listing_d_for_low_score():
+    """Listing with very low score still gets D."""
+    grade = _confidence_grade(
+        confidence_score=20.0,
+        district=None,
+        provider_platform_count=0,
+        multi_platform_presence_score=0.0,
+        rent_source="conservative_default",
+        is_listing=True,
+    )
+    assert grade == "D"
 
 
 # ---------------------------------------------------------------------------
