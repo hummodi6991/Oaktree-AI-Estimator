@@ -1734,13 +1734,19 @@ def _confidence_score(
 def _listing_quality_score(
     *,
     is_listing: bool,
-    last_seen_at: datetime | None,
+    first_seen_at: datetime | None,
     is_furnished: bool | None,
     unit_restaurant_score: float | None,
     has_image: bool,
     has_drive_thru: bool | None = None,
 ) -> float:
     """Pure listing-quality score on a 0-100 scale.
+
+    Freshness is measured from first_seen_at — the date the listing
+    first appeared on Aqar. This is the listing's true age, not the
+    last time the scraper confirmed it was still live. A listing that
+    has been on Aqar for 9 months and is still being re-confirmed is
+    exactly the case we want to deprioritize.
 
     Distinct from _confidence_score (which measures whether the data is
     trustworthy). This measures whether the listing itself is a good
@@ -1751,7 +1757,8 @@ def _listing_quality_score(
     returns a neutral 50.
 
     Components:
-      - Freshness (40%): how recently seen on Aqar
+      - Freshness from first_seen_at (40%): how recently the listing
+        first appeared on Aqar (measures listing age, not scrape recency)
       - Aqar suitability (35%): the classifier's assessment
       - Image presence (15%): operator can visually verify
       - Furnished (10%): faster open, lower risk, lower fitout
@@ -1760,12 +1767,12 @@ def _listing_quality_score(
     if not is_listing:
         return 50.0
 
-    # Freshness band
-    if last_seen_at is None:
+    # Freshness band (based on listing age from first_seen_at)
+    if first_seen_at is None:
         freshness = 50.0
     else:
         try:
-            days = (datetime.utcnow() - last_seen_at).days
+            days = (datetime.utcnow() - first_seen_at).days
         except Exception:
             days = 30
         if days <= 14:
@@ -3626,6 +3633,7 @@ def _query_candidate_location_pool(
                 cl.profitability_score::float AS profitability_score,
                 -- Commercial unit signals (Tier 1 only, via LEFT JOIN)
                 cu.is_furnished AS unit_is_furnished,
+                cu.first_seen_at AS unit_first_seen_at,
                 cu.last_seen_at AS unit_last_seen_at,
                 cu.restaurant_score AS unit_restaurant_score,
                 cu.has_drive_thru AS unit_has_drive_thru,
@@ -3679,6 +3687,7 @@ def _query_candidate_location_pool(
             cl_platform_count,
             profitability_score,
             unit_is_furnished,
+            unit_first_seen_at,
             unit_last_seen_at,
             unit_restaurant_score,
             unit_has_drive_thru,
@@ -5112,7 +5121,7 @@ def run_expansion_search(
 
         listing_quality = _listing_quality_score(
             is_listing=_is_listing,
-            last_seen_at=row.get("unit_last_seen_at"),
+            first_seen_at=row.get("unit_first_seen_at"),
             is_furnished=row.get("unit_is_furnished"),
             unit_restaurant_score=_safe_float(row.get("unit_restaurant_score")) if row.get("unit_restaurant_score") is not None else None,
             has_image=bool(row.get("image_url")),
@@ -5743,7 +5752,7 @@ def run_expansion_search(
         )
         listing_quality = _listing_quality_score(
             is_listing=_is_listing,
-            last_seen_at=row.get("unit_last_seen_at"),
+            first_seen_at=row.get("unit_first_seen_at"),
             is_furnished=row.get("unit_is_furnished"),
             unit_restaurant_score=_safe_float(row.get("unit_restaurant_score")) if row.get("unit_restaurant_score") is not None else None,
             has_image=bool(row.get("image_url")),

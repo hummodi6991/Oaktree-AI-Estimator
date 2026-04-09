@@ -1030,7 +1030,7 @@ def test_listing_quality_parcel_returns_neutral_50():
     """Parcels (non-listings) should return a neutral 50."""
     score = _listing_quality_score(
         is_listing=False,
-        last_seen_at=None,
+        first_seen_at=None,
         is_furnished=None,
         unit_restaurant_score=None,
         has_image=False,
@@ -1042,7 +1042,7 @@ def test_listing_quality_fresh_full_data_high_score():
     """A fresh listing with full data should score close to 100."""
     score = _listing_quality_score(
         is_listing=True,
-        last_seen_at=datetime.utcnow() - timedelta(days=3),
+        first_seen_at=datetime.utcnow() - timedelta(days=3),
         is_furnished=True,
         unit_restaurant_score=90.0,
         has_image=True,
@@ -1056,7 +1056,7 @@ def test_listing_quality_stale_no_image_low_score():
     """A very stale listing without image should score below 50."""
     score = _listing_quality_score(
         is_listing=True,
-        last_seen_at=datetime.utcnow() - timedelta(days=400),
+        first_seen_at=datetime.utcnow() - timedelta(days=400),
         is_furnished=False,
         unit_restaurant_score=None,
         has_image=False,
@@ -1069,7 +1069,7 @@ def test_listing_quality_drive_thru_adds_5():
     """Drive-thru bonus should add exactly 5 points."""
     base = _listing_quality_score(
         is_listing=True,
-        last_seen_at=datetime.utcnow() - timedelta(days=10),
+        first_seen_at=datetime.utcnow() - timedelta(days=10),
         is_furnished=False,
         unit_restaurant_score=50.0,
         has_image=True,
@@ -1077,7 +1077,7 @@ def test_listing_quality_drive_thru_adds_5():
     )
     with_dt = _listing_quality_score(
         is_listing=True,
-        last_seen_at=datetime.utcnow() - timedelta(days=10),
+        first_seen_at=datetime.utcnow() - timedelta(days=10),
         is_furnished=False,
         unit_restaurant_score=50.0,
         has_image=True,
