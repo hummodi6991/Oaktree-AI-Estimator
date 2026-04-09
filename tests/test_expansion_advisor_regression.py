@@ -15,12 +15,17 @@ Covers:
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from app.services.expansion_advisor import (
     _arcgis_classification_semantics,
     _area_fit,
     _candidate_gate_status,
+    _estimate_fitout_cost_sar,
+    _estimate_revenue_index,
     _gate_verdict_label,
     _landuse_fit,
+    _listing_quality_score,
     _score_breakdown,
     _zoning_fit_score,
     _zoning_signal_class,
@@ -71,6 +76,7 @@ def test_score_breakdown_display_has_distinct_weight_percent_and_weighted_points
         provider_intelligence_composite=40.0,
         access_visibility_score=30.0,
         confidence_score=90.0,
+        listing_quality_score=65.0,
     )
 
     for name, entry in bd["display"].items():
@@ -96,6 +102,7 @@ def test_score_breakdown_weights_sum_to_100():
         provider_intelligence_composite=50.0,
         access_visibility_score=50.0,
         confidence_score=50.0,
+        listing_quality_score=50.0,
     )
     assert sum(bd["weights"].values()) == 100
 
@@ -110,6 +117,7 @@ def test_score_breakdown_weighted_points_never_exceed_100():
         provider_intelligence_composite=100.0,
         access_visibility_score=100.0,
         confidence_score=100.0,
+        listing_quality_score=100.0,
     )
     for name, pts in bd["weighted_components"].items():
         assert pts <= bd["weights"][name] + 0.01, (
@@ -126,6 +134,7 @@ def test_score_breakdown_final_score_clamped_to_100():
         provider_intelligence_composite=100.0,
         access_visibility_score=100.0,
         confidence_score=100.0,
+        listing_quality_score=100.0,
     )
     assert bd["final_score"] <= 100.0
 
@@ -1011,3 +1020,160 @@ def test_candidate_sql_coord_btrim_wraps_cast_to_text():
     )
     assert isinstance(items, list)
     assert len(items) == 1
+
+
+# ---------------------------------------------------------------------------
+# Patch 06: _listing_quality_score
+# ---------------------------------------------------------------------------
+
+def test_listing_quality_parcel_returns_neutral_50():
+    """Parcels (non-listings) should return a neutral 50."""
+    score = _listing_quality_score(
+        is_listing=False,
+        last_seen_at=None,
+        is_furnished=None,
+        unit_restaurant_score=None,
+        has_image=False,
+    )
+    assert score == 50.0
+
+
+def test_listing_quality_fresh_full_data_high_score():
+    """A fresh listing with full data should score close to 100."""
+    score = _listing_quality_score(
+        is_listing=True,
+        last_seen_at=datetime.utcnow() - timedelta(days=3),
+        is_furnished=True,
+        unit_restaurant_score=90.0,
+        has_image=True,
+        has_drive_thru=True,
+    )
+    # freshness=100*0.4 + suitability~92*0.35 + image=100*0.15 + furnished=100*0.10 + drive_thru=5
+    assert score > 90.0
+
+
+def test_listing_quality_stale_no_image_low_score():
+    """A very stale listing without image should score below 50."""
+    score = _listing_quality_score(
+        is_listing=True,
+        last_seen_at=datetime.utcnow() - timedelta(days=400),
+        is_furnished=False,
+        unit_restaurant_score=None,
+        has_image=False,
+    )
+    # freshness=15*0.4 + suitability=50*0.35 + image=30*0.15 + furnished=50*0.10 = 33
+    assert score < 50.0
+
+
+def test_listing_quality_drive_thru_adds_5():
+    """Drive-thru bonus should add exactly 5 points."""
+    base = _listing_quality_score(
+        is_listing=True,
+        last_seen_at=datetime.utcnow() - timedelta(days=10),
+        is_furnished=False,
+        unit_restaurant_score=50.0,
+        has_image=True,
+        has_drive_thru=False,
+    )
+    with_dt = _listing_quality_score(
+        is_listing=True,
+        last_seen_at=datetime.utcnow() - timedelta(days=10),
+        is_furnished=False,
+        unit_restaurant_score=50.0,
+        has_image=True,
+        has_drive_thru=True,
+    )
+    assert abs(with_dt - base - 5.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# Patch 06: _estimate_fitout_cost_sar furnished discount
+# ---------------------------------------------------------------------------
+
+def test_fitout_cost_furnished_discount():
+    """Furnished units get a 35% discount on fitout cost."""
+    unfurnished = _estimate_fitout_cost_sar(200.0, "qsr")
+    furnished = _estimate_fitout_cost_sar(200.0, "qsr", is_furnished=True)
+    assert abs(furnished - unfurnished * 0.65) < 0.01
+
+
+def test_fitout_cost_unfurnished_unchanged():
+    """Unfurnished (default) path is unchanged."""
+    cost = _estimate_fitout_cost_sar(200.0, "qsr")
+    assert cost == 200.0 * 2600.0
+
+
+# ---------------------------------------------------------------------------
+# Patch 06: _estimate_revenue_index listing-grounded
+# ---------------------------------------------------------------------------
+
+def test_revenue_index_wide_street_beats_narrow():
+    """A listing on a wide street should score higher than one on a narrow street."""
+    wide = _estimate_revenue_index(
+        area_m2=200.0,
+        unit_street_width_m=40.0,
+        demand_score=60.0,
+        whitespace_score=60.0,
+    )
+    narrow = _estimate_revenue_index(
+        area_m2=200.0,
+        unit_street_width_m=8.0,
+        demand_score=60.0,
+        whitespace_score=60.0,
+    )
+    assert wide > narrow
+
+
+def test_revenue_index_sweet_spot_area_beats_extreme():
+    """A QSR sweet-spot area (200 m2) should score higher than a very small unit."""
+    sweet = _estimate_revenue_index(area_m2=200.0, demand_score=60.0, whitespace_score=60.0)
+    tiny = _estimate_revenue_index(area_m2=40.0, demand_score=60.0, whitespace_score=60.0)
+    assert sweet > tiny
+
+
+# ---------------------------------------------------------------------------
+# Patch 06: rebalanced _score_breakdown weights
+# ---------------------------------------------------------------------------
+
+def test_score_breakdown_economics_weight_is_30():
+    """occupancy_economics should now be weighted at 30%."""
+    bd = _score_breakdown(
+        demand_score=50.0,
+        whitespace_score=50.0,
+        brand_fit_score=50.0,
+        economics_score=50.0,
+        provider_intelligence_composite=50.0,
+        access_visibility_score=50.0,
+        confidence_score=50.0,
+        listing_quality_score=50.0,
+    )
+    assert bd["weights"]["occupancy_economics"] == 30
+    assert bd["weights"]["listing_quality"] == 15
+
+
+def test_score_breakdown_listing_quality_contributes():
+    """A high listing_quality should raise final_score vs a low one."""
+    high = _score_breakdown(
+        demand_score=60.0,
+        whitespace_score=60.0,
+        brand_fit_score=60.0,
+        economics_score=60.0,
+        provider_intelligence_composite=60.0,
+        access_visibility_score=60.0,
+        confidence_score=60.0,
+        listing_quality_score=95.0,
+    )
+    low = _score_breakdown(
+        demand_score=60.0,
+        whitespace_score=60.0,
+        brand_fit_score=60.0,
+        economics_score=60.0,
+        provider_intelligence_composite=60.0,
+        access_visibility_score=60.0,
+        confidence_score=60.0,
+        listing_quality_score=20.0,
+    )
+    assert high["final_score"] > low["final_score"]
+    # With 15% weight, the difference should be (95-20)*0.15 = 11.25 points
+    diff = high["final_score"] - low["final_score"]
+    assert abs(diff - 11.25) < 0.1
