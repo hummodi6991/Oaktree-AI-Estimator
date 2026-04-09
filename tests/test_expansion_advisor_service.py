@@ -578,6 +578,7 @@ def test_score_breakdown_matches_final_score():
         provider_intelligence_composite=65,
         access_visibility_score=55,
         confidence_score=50,
+        listing_quality_score=60,
     )
     weighted_sum = sum((breakdown.get("weighted_components") or {}).values())
     assert abs(weighted_sum - breakdown["final_score"]) < 0.01
@@ -1742,18 +1743,26 @@ def test_score_breakdown_has_display_structure():
         provider_intelligence_composite=65,
         access_visibility_score=55,
         confidence_score=50,
+        listing_quality_score=60,
     )
 
     assert "display" in breakdown
     assert "demand_potential" in breakdown["display"]
+    assert "listing_quality" in breakdown["display"]
 
     dp = breakdown["display"]["demand_potential"]
     assert "raw_input_score" in dp
     assert "weight_percent" in dp
     assert "weighted_points" in dp
     assert dp["raw_input_score"] == 80.0
-    assert dp["weight_percent"] == 25
-    assert dp["weighted_points"] == round(80.0 * 0.25, 2)
+    assert dp["weight_percent"] == 10  # Patch 06: demand_potential weight is now 10
+    assert dp["weighted_points"] == round(80.0 * 0.10, 2)
+
+    # Verify listing_quality entry
+    lq = breakdown["display"]["listing_quality"]
+    assert lq["raw_input_score"] == 60.0
+    assert lq["weight_percent"] == 15
+    assert lq["weighted_points"] == round(60.0 * 0.15, 2)
 
     # Verify weighted_points != weight_percent (they are NOT the same thing)
     for name, entry in breakdown["display"].items():

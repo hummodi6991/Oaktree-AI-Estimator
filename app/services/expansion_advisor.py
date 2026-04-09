@@ -7,6 +7,7 @@ import re
 import time
 import os
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -1730,6 +1731,86 @@ def _confidence_score(
     return min(70.0, _clamp(score))
 
 
+def _listing_quality_score(
+    *,
+    is_listing: bool,
+    last_seen_at: datetime | None,
+    is_furnished: bool | None,
+    unit_restaurant_score: float | None,
+    has_image: bool,
+    has_drive_thru: bool | None = None,
+) -> float:
+    """Pure listing-quality score on a 0-100 scale.
+
+    Distinct from _confidence_score (which measures whether the data is
+    trustworthy). This measures whether the listing itself is a good
+    F&B real estate opportunity, independent of how confident we are
+    in the underlying data.
+
+    For parcels (or any candidate without a commercial_unit row),
+    returns a neutral 50.
+
+    Components:
+      - Freshness (40%): how recently seen on Aqar
+      - Aqar suitability (35%): the classifier's assessment
+      - Image presence (15%): operator can visually verify
+      - Furnished (10%): faster open, lower risk, lower fitout
+      - Drive-thru bonus: small additive (+5) when present
+    """
+    if not is_listing:
+        return 50.0
+
+    # Freshness band
+    if last_seen_at is None:
+        freshness = 50.0
+    else:
+        try:
+            days = (datetime.utcnow() - last_seen_at).days
+        except Exception:
+            days = 30
+        if days <= 14:
+            freshness = 100.0
+        elif days <= 30:
+            freshness = 92.0
+        elif days <= 60:
+            freshness = 80.0
+        elif days <= 120:
+            freshness = 65.0
+        elif days <= 240:
+            freshness = 45.0
+        elif days <= 365:
+            freshness = 28.0
+        else:
+            freshness = 15.0
+
+    # Aqar suitability score: map [25 (gate threshold) -> 100] to [40 -> 100]
+    if unit_restaurant_score is not None and unit_restaurant_score > 0:
+        suitability = max(0.0, min(100.0,
+            40.0 + (float(unit_restaurant_score) - 25.0) * (60.0 / 75.0)
+        ))
+    else:
+        suitability = 50.0
+
+    # Image presence: operator can visually verify before site visit
+    image_signal = 100.0 if has_image else 30.0
+
+    # Furnished: faster open, lower risk
+    furnished_signal = 100.0 if is_furnished else 50.0
+
+    composite = (
+        freshness * 0.40
+        + suitability * 0.35
+        + image_signal * 0.15
+        + furnished_signal * 0.10
+    )
+
+    # Small drive-thru bonus when present (rare on Aqar but valuable for QSR)
+    if has_drive_thru:
+        composite += 5.0
+
+    return _clamp(composite)
+
+
 def _candidate_gate_status(
     *,
     fit_score: float,
@@ -1950,38 +2031,52 @@ def _score_breakdown(
     provider_intelligence_composite: float,
     access_visibility_score: float,
     confidence_score: float,
+    listing_quality_score: float,
 ) -> dict[str, Any]:
-    # weight_percent values sum to 100 and represent each component's share.
+    """Listings-first weight distribution.
+
+    55% of weight is on listing-specific components:
+      - occupancy_economics (30%): rent burden, fitout, area, cannibalization
+      - listing_quality (15%): freshness, suitability, furnished, image
+      - access_visibility (10%): measured street width
+    45% on district context:
+      - brand_fit (15%): district preference + format fit
+      - competition_whitespace (10%)
+      - demand_potential (10%)
+      - delivery_demand (5%)
+      - confidence (5%): data trust signal
+    """
     component_weights = {
-        "demand_potential": 25,
-        "competition_whitespace": 20,
-        "brand_fit": 20,
-        "occupancy_economics": 15,
-        "delivery_demand": 10,
-        "access_visibility": 5,
+        "occupancy_economics": 30,
+        "listing_quality": 15,
+        "brand_fit": 15,
+        "competition_whitespace": 10,
+        "demand_potential": 10,
+        "access_visibility": 10,
+        "delivery_demand": 5,
         "confidence": 5,
     }
     raw_inputs = {
-        "demand_potential": round(_safe_float(demand_score), 2),
-        "competition_whitespace": round(_safe_float(whitespace_score), 2),
-        "brand_fit": round(_safe_float(brand_fit_score), 2),
         "occupancy_economics": round(_safe_float(economics_score), 2),
-        "delivery_demand": round(_safe_float(provider_intelligence_composite), 2),
+        "listing_quality": round(_safe_float(listing_quality_score), 2),
+        "brand_fit": round(_safe_float(brand_fit_score), 2),
+        "competition_whitespace": round(_safe_float(whitespace_score), 2),
+        "demand_potential": round(_safe_float(demand_score), 2),
         "access_visibility": round(_safe_float(access_visibility_score), 2),
+        "delivery_demand": round(_safe_float(provider_intelligence_composite), 2),
         "confidence": round(_safe_float(confidence_score), 2),
     }
-    # weighted_components are weighted *points* (input * weight/100), NOT percentages.
     weighted_components = {
-        "demand_potential": round(_safe_float(demand_score) * 0.25, 2),
-        "competition_whitespace": round(_safe_float(whitespace_score) * 0.20, 2),
-        "brand_fit": round(_safe_float(brand_fit_score) * 0.20, 2),
-        "occupancy_economics": round(_safe_float(economics_score) * 0.15, 2),
-        "delivery_demand": round(_safe_float(provider_intelligence_composite) * 0.10, 2),
-        "access_visibility": round(_safe_float(access_visibility_score) * 0.05, 2),
+        "occupancy_economics": round(_safe_float(economics_score) * 0.30, 2),
+        "listing_quality": round(_safe_float(listing_quality_score) * 0.15, 2),
+        "brand_fit": round(_safe_float(brand_fit_score) * 0.15, 2),
+        "competition_whitespace": round(_safe_float(whitespace_score) * 0.10, 2),
+        "demand_potential": round(_safe_float(demand_score) * 0.10, 2),
+        "access_visibility": round(_safe_float(access_visibility_score) * 0.10, 2),
+        "delivery_demand": round(_safe_float(provider_intelligence_composite) * 0.05, 2),
         "confidence": round(_safe_float(confidence_score) * 0.05, 2),
     }
     final_score = round(sum(weighted_components.values()), 2)
-    # Display structure for frontend rendering (change #5).
     display = {
         name: {
             "raw_input_score": raw_inputs[name],
@@ -2679,14 +2774,30 @@ def _estimate_rent_sar_m2_year(db: Session, district: str | None) -> tuple[float
     return _EXPANSION_DEFAULT_RENT_SAR_M2_YEAR, "conservative_default"
 
 
-def _estimate_fitout_cost_sar(area_m2: float, service_model: str) -> float:
+# Furnished commercial units arrive with kitchen equipment, finished
+# walls/floors/ceiling, working HVAC, and an existing facade. The
+# operator typically only needs branding, light refurbishment, and
+# equipment top-up rather than a full bare-shell buildout. The standard
+# discount range is 30-40%; we use the midpoint.
+_FURNISHED_FITOUT_DISCOUNT = 0.35
+
+
+def _estimate_fitout_cost_sar(
+    area_m2: float,
+    service_model: str,
+    *,
+    is_furnished: bool = False,
+) -> float:
     cost_per_m2 = {
         "delivery_first": 1900.0,
         "qsr": 2600.0,
         "cafe": 2800.0,
         "dine_in": 3600.0,
     }.get(service_model, 2600.0)
-    return max(0.0, area_m2 * cost_per_m2)
+    base_cost = max(0.0, area_m2 * cost_per_m2)
+    if is_furnished:
+        return base_cost * (1.0 - _FURNISHED_FITOUT_DISCOUNT)
+    return base_cost
 
 
 # Implied average check (SAR) by price_tier × category.
@@ -2780,44 +2891,91 @@ def _category_throughput_factor(category: str | None) -> float:
 
 
 def _estimate_revenue_index(
-    demand_score: float,
-    delivery_listing_count: int,
-    population_reach: float,
-    whitespace_score: float,
+    *,
+    # Primary listing features (drive 70% of base)
+    area_m2: float,
+    unit_street_width_m: float | None = None,
+    unit_listing_type: str | None = None,
+    # District context (drives 30% of base, soft modifier)
+    demand_score: float = 50.0,
+    whitespace_score: float = 50.0,
+    # Multipliers (unchanged from original)
     category: str | None = None,
     price_tier: str | None = None,
+    # Legacy parcel inputs (preserved as fallbacks; do not contribute when
+    # listing fields are present)
+    delivery_listing_count: int = 0,
+    population_reach: float = 0.0,
     road_context: dict | None = None,
 ) -> float:
-    """Composite revenue potential index using consistent sqrt scaling.
+    """Listings-grounded revenue index.
 
-    Category throughput factor adjusts for inherent demand velocity
-    of high-frequency F&B categories (burger, shawarma, coffee) vs
-    slower-turn formats (grills, fine dining).
+    Primary inputs: listing-level features (street width as drive-by
+    traffic proxy, area as throughput capacity, listing_type as
+    visibility signal). District demand/whitespace are secondary
+    soft modifiers, not primary drivers.
 
-    Ticket-size multiplier scales revenue potential by implied average
-    check derived from price_tier × category.
-
-    Road multiplier adjusts for storefront visibility/access: candidates
-    on arterials with street frontage get a boost, those without get a
-    penalty.  Maps road_signal [0,1] → multiplier [0.85, 1.20].
+    For parcels: street width and listing_type fall to neutral defaults
+    and the district inputs effectively dominate, preserving legacy
+    behavior for the parcel path.
     """
-    delivery_signal = _clamp((delivery_listing_count / 35.0) ** 0.5 * 100.0) if delivery_listing_count > 0 else 0.0
-    population_signal = _clamp((population_reach / 80000.0) ** 0.5 * 100.0) if population_reach > 0 else 0.0
-    base = _clamp(demand_score * 0.45 + whitespace_score * 0.20 + delivery_signal * 0.20 + population_signal * 0.15)
-    # Apply category throughput factor, clamped to [0.88, 1.12] to avoid
-    # extreme distortion.  This is a soft signal, not a gate.
+    # Street width as drive-by traffic proxy (35% of base)
+    if unit_street_width_m is not None and unit_street_width_m > 0:
+        street_signal = _frontage_score_from_street_width(float(unit_street_width_m))
+    else:
+        street_signal = 50.0
+
+    # Area as throughput capacity (20% of base)
+    # QSR sweet spot is roughly 150-300 m2. Smaller units cap throughput;
+    # very large units have higher fixed cost per cover.
+    if area_m2 < 60:
+        area_signal = 35.0
+    elif area_m2 < 100:
+        area_signal = 60.0
+    elif area_m2 < 150:
+        area_signal = 80.0
+    elif area_m2 < 300:
+        area_signal = 100.0
+    elif area_m2 < 500:
+        area_signal = 85.0
+    elif area_m2 < 800:
+        area_signal = 65.0
+    else:
+        area_signal = 45.0
+
+    # Listing type signal (15% of base)
+    # Showrooms typically sit on corners with better visibility than
+    # interior store units.
+    lt = (unit_listing_type or "").lower()
+    if lt == "showroom":
+        type_signal = 80.0
+    elif lt == "store":
+        type_signal = 65.0
+    else:
+        type_signal = 50.0
+
+    # District demand as soft modifier (20% of base)
+    demand_signal = _safe_float(demand_score, 50.0)
+
+    # District whitespace as soft modifier (10% of base)
+    whitespace_signal = _safe_float(whitespace_score, 50.0)
+
+    base = _clamp(
+        street_signal * 0.35
+        + area_signal * 0.20
+        + type_signal * 0.15
+        + demand_signal * 0.20
+        + whitespace_signal * 0.10
+    )
+
+    # Category throughput factor (preserved from original)
     factor = max(0.88, min(1.12, _category_throughput_factor(category)))
-    # Ticket-size multiplier: ratio of implied check to baseline.
-    # A premium burger (95 SAR) vs baseline (50 SAR) → 1.9× multiplier,
-    # clamped to [0.5, 2.5] to prevent extreme distortion.
+
+    # Ticket-size multiplier (preserved from original)
     implied_check = _implied_average_check(price_tier, category)
     ticket_multiplier = max(0.5, min(2.5, implied_check / _IMPLIED_CHECK_BASELINE_SAR))
-    # Road multiplier: storefront visibility/access drives walk-in and
-    # drive-by revenue independent of demographic demand.
-    # road_signal [0,1] -> multiplier [0.85, 1.20]
-    road_signal = _road_signal_from_context(road_context)
-    road_multiplier = 0.85 + road_signal * 0.35
-    return _clamp(base * factor * ticket_multiplier * road_multiplier)
+
+    return _clamp(base * factor * ticket_multiplier)
 
 
 # ---------------------------------------------------------------------------
@@ -3466,6 +3624,11 @@ def _query_candidate_location_pool(
                 cl.total_rating_count,
                 cl.platform_count AS cl_platform_count,
                 cl.profitability_score::float AS profitability_score,
+                -- Commercial unit signals (Tier 1 only, via LEFT JOIN)
+                cu.is_furnished AS unit_is_furnished,
+                cu.last_seen_at AS unit_last_seen_at,
+                cu.restaurant_score AS unit_restaurant_score,
+                cu.has_drive_thru AS unit_has_drive_thru,
                 -- Scoring helpers
                 ABS(COALESCE(cl.area_sqm, 120) - :target_area) AS area_distance,
                 0 AS delivery_listing_count,
@@ -3481,6 +3644,9 @@ def _query_candidate_location_pool(
                         cl.id ASC
                 ) AS district_rank
             FROM candidate_location cl
+            LEFT JOIN commercial_unit cu
+                   ON cl.source_tier = 1
+                  AND cl.source_id = cu.aqar_id
             WHERE cl.is_cluster_primary = TRUE
               AND cl.source_tier = 1
               AND cl.geom IS NOT NULL
@@ -3512,6 +3678,10 @@ def _query_candidate_location_pool(
             total_rating_count,
             cl_platform_count,
             profitability_score,
+            unit_is_furnished,
+            unit_last_seen_at,
+            unit_restaurant_score,
+            unit_has_drive_thru,
             delivery_listing_count,
             delivery_cat_count,
             delivery_platform_count,
@@ -4868,12 +5038,13 @@ def run_expansion_search(
             if abs(_rent_multiplier - 1.0) > 0.01:
                 rent_source = f"{rent_source}+micro"
             estimated_annual_rent_sar = round(area_m2 * estimated_rent_sar_m2_year)
-        estimated_fitout_cost_sar = round(_estimate_fitout_cost_sar(area_m2, service_model))
+        estimated_fitout_cost_sar = round(_estimate_fitout_cost_sar(area_m2, service_model, is_furnished=bool(row.get("unit_is_furnished"))))
         estimated_revenue_index = _estimate_revenue_index(
-            demand_score,
-            delivery_listing_count,
-            population_reach,
-            whitespace_score,
+            area_m2=area_m2,
+            unit_street_width_m=_safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None,
+            unit_listing_type=row.get("unit_listing_type"),
+            demand_score=demand_score,
+            whitespace_score=whitespace_score,
             category=category,
             price_tier=effective_brand_profile.get("price_tier"),
         )
@@ -4939,6 +5110,14 @@ def run_expansion_search(
             + (100.0 - delivery_competition_score) * 0.20
         )
 
+        listing_quality = _listing_quality_score(
+            is_listing=_is_listing,
+            last_seen_at=row.get("unit_last_seen_at"),
+            is_furnished=row.get("unit_is_furnished"),
+            unit_restaurant_score=_safe_float(row.get("unit_restaurant_score")) if row.get("unit_restaurant_score") is not None else None,
+            has_image=bool(row.get("image_url")),
+            has_drive_thru=row.get("unit_has_drive_thru"),
+        )
         preliminary_breakdown = _score_breakdown(
             demand_score=demand_score,
             whitespace_score=whitespace_score,
@@ -4947,6 +5126,7 @@ def run_expansion_search(
             provider_intelligence_composite=provider_intelligence_composite,
             access_visibility_score=access_visibility_score,
             confidence_score=confidence_score,
+            listing_quality_score=listing_quality,
         )
         prepared.append(
             {
@@ -5418,13 +5598,13 @@ def run_expansion_search(
         # final scores using the road signal.
         _road_ctx = _bulk_roads.get(_pid_str)
         estimated_revenue_index = _estimate_revenue_index(
-            demand_score,
-            delivery_listing_count,
-            population_reach,
-            whitespace_score,
+            area_m2=area_m2,
+            unit_street_width_m=_safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None,
+            unit_listing_type=row.get("unit_listing_type"),
+            demand_score=demand_score,
+            whitespace_score=whitespace_score,
             category=category,
             price_tier=effective_brand_profile.get("price_tier"),
-            road_context=_road_ctx,
         )
         if rent_source != "commercial_unit_actual":
             _base_rent_sar_m2_year = prepared_item.get("rent_base_sar_m2_year", estimated_rent_sar_m2_year)
@@ -5561,6 +5741,14 @@ def run_expansion_search(
             brand_profile=effective_brand_profile,
             service_model=service_model,
         )
+        listing_quality = _listing_quality_score(
+            is_listing=_is_listing,
+            last_seen_at=row.get("unit_last_seen_at"),
+            is_furnished=row.get("unit_is_furnished"),
+            unit_restaurant_score=_safe_float(row.get("unit_restaurant_score")) if row.get("unit_restaurant_score") is not None else None,
+            has_image=bool(row.get("image_url")),
+            has_drive_thru=row.get("unit_has_drive_thru"),
+        )
         score_breakdown_json = _score_breakdown(
             demand_score=demand_score,
             whitespace_score=whitespace_score,
@@ -5569,6 +5757,7 @@ def run_expansion_search(
             provider_intelligence_composite=provider_intelligence_composite,
             access_visibility_score=access_visibility_score,
             confidence_score=confidence_score,
+            listing_quality_score=listing_quality,
         )
         score_breakdown_json["inputs"]["rent_fallback_used"] = rent_fallback_used
         score_breakdown_json["inputs"]["parking_context_available"] = bool(feature_snapshot_json["context_sources"].get("parking_context_available"))
@@ -5876,26 +6065,16 @@ def run_expansion_search(
         candidate["compare_rank"] = index
         candidate["rank_position"] = index
 
-    # ── Rank-percentile display score ──
-    # Maps rank position to a consistent visual spread.
-    # #1 gets the raw top score (capped at 95).
-    # Last place gets top - 15 (floored at 50).
-    # Middle candidates are evenly distributed between.
-    if len(candidates) >= 2:
-        _top_raw = candidates[0]["final_score"]
-        _display_ceil = min(round(_top_raw), 95)
-        _display_floor = max(_display_ceil - 15, 50)
-        _n = len(candidates)
-        for _i, _c in enumerate(candidates):
-            # rank 0 → 1.0, rank n-1 → 0.0
-            _pct = 1.0 - (_i / (_n - 1))
-            _c["display_score"] = round(
-                _display_floor + _pct * (_display_ceil - _display_floor),
-                1,
-            )
-    else:
-        for _c in candidates:
-            _c["display_score"] = round(_c["final_score"], 1)
+    # ── Display score ──
+    # Show the real final_score directly. Cap at 99 (avoid showing 100 since
+    # nothing in the system is ever a perfect candidate) and floor at 1
+    # (operators interpret 0 as "broken" rather than "very low scoring").
+    # The previous redistribution forced a 50-95 spread regardless of
+    # underlying spread, which actively hid the differentiation produced
+    # by the new scoring architecture.
+    for _c in candidates:
+        raw = _safe_float(_c.get("final_score"), 0.0)
+        _c["display_score"] = round(max(1.0, min(99.0, raw)), 1)
 
     # Store display_score inside score_breakdown_json for frontend access
     for _c in candidates:
