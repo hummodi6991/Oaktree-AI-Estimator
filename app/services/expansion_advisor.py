@@ -948,7 +948,8 @@ def _channel_fit_score(service_model: str, primary_channel: str | None, provider
 
 def _brand_fit_score(*, district: str | None, area_m2: float, demand_score: float, fit_score: float, cannibalization_score: float,
     provider_density_score: float, provider_whitespace_score: float, multi_platform_presence_score: float, delivery_competition_score: float,
-    visibility_signal: float, parking_signal: float, brand_profile: dict[str, Any], service_model: str) -> float:
+    visibility_signal: float, parking_signal: float, brand_profile: dict[str, Any], service_model: str,
+    target_area_m2: float | None = None) -> float:
     preferred = {normalize_district_key(d) for d in (brand_profile.get("preferred_districts") or []) if normalize_district_key(d)}
     excluded = {normalize_district_key(d) for d in (brand_profile.get("excluded_districts") or []) if normalize_district_key(d)}
     district_norm = normalize_district_key(district) if district else None
@@ -964,7 +965,22 @@ def _brand_fit_score(*, district: str | None, area_m2: float, demand_score: floa
     goal = (brand_profile.get("expansion_goal") or "balanced").lower()
     goal_component = 60.0
     if goal == "flagship":
-        goal_component = _clamp((area_m2 / 350.0) * 60.0 + visibility_signal * 0.4 + demand_score * 0.2)
+        # Flagship goal rewards listings close to the operator's target
+        # area, with visibility and demand as additional inputs. Falls
+        # back to 350 m² when target_area_m2 is missing.
+        _target = float(target_area_m2) if target_area_m2 and target_area_m2 > 0 else 350.0
+        # Ratio-based area signal: full credit at target, taper for
+        # significant deviation in either direction.
+        _ratio = area_m2 / _target if _target > 0 else 1.0
+        if 0.80 <= _ratio <= 1.20:
+            _area_component = 100.0
+        elif 0.60 <= _ratio <= 1.50:
+            _area_component = 80.0
+        elif 0.40 <= _ratio <= 2.00:
+            _area_component = 55.0
+        else:
+            _area_component = 30.0
+        goal_component = _clamp(_area_component * 0.6 + visibility_signal * 0.4 + demand_score * 0.2)
     elif goal == "neighborhood":
         spacing = 100.0 - abs(cannibalization_score - 45.0)
         goal_component = _clamp(fit_score * 0.45 + spacing * 0.25 + parking_signal * 0.3)
@@ -2901,6 +2917,7 @@ def _estimate_revenue_index(
     *,
     # Primary listing features (drive 70% of base)
     area_m2: float,
+    target_area_m2: float | None = None,
     unit_street_width_m: float | None = None,
     unit_listing_type: str | None = None,
     # District context (drives 30% of base, soft modifier)
@@ -2932,23 +2949,41 @@ def _estimate_revenue_index(
     else:
         street_signal = 50.0
 
-    # Area as throughput capacity (20% of base)
-    # QSR sweet spot is roughly 150-300 m2. Smaller units cap throughput;
-    # very large units have higher fixed cost per cover.
-    if area_m2 < 60:
-        area_signal = 35.0
-    elif area_m2 < 100:
-        area_signal = 60.0
-    elif area_m2 < 150:
-        area_signal = 80.0
-    elif area_m2 < 300:
-        area_signal = 100.0
-    elif area_m2 < 500:
-        area_signal = 85.0
-    elif area_m2 < 800:
-        area_signal = 65.0
+    # Area as throughput capacity (20% of base).
+    # The brief specifies target_area_m2 — the operator's stated ideal
+    # branch size. Score the listing by how close it is to that target,
+    # not against a hardcoded QSR-shaped sweet spot. Listings within ±20%
+    # of target get full credit; the curve tapers gently in either
+    # direction so candidates that are close-but-not-perfect still rank
+    # well.
+    #
+    # Falls back to the hardcoded QSR sweet spot (centered on 225 m²)
+    # when target_area_m2 is missing — preserves legacy behavior for any
+    # caller that doesn't pass the new parameter.
+    _target = float(target_area_m2) if target_area_m2 and target_area_m2 > 0 else 225.0
+    if area_m2 <= 0:
+        area_signal = 50.0
     else:
-        area_signal = 45.0
+        ratio = area_m2 / _target
+        if 0.80 <= ratio <= 1.20:
+            area_signal = 100.0
+        elif 0.60 <= ratio < 0.80:
+            # Tapering down from 100 to 80 as ratio drops 0.80 → 0.60
+            area_signal = 80.0 + (ratio - 0.60) / 0.20 * 20.0
+        elif 1.20 < ratio <= 1.50:
+            # Tapering down from 100 to 80 as ratio rises 1.20 → 1.50
+            area_signal = 100.0 - (ratio - 1.20) / 0.30 * 20.0
+        elif 0.40 <= ratio < 0.60:
+            area_signal = 55.0 + (ratio - 0.40) / 0.20 * 25.0
+        elif 1.50 < ratio <= 2.00:
+            area_signal = 80.0 - (ratio - 1.50) / 0.50 * 25.0
+        elif 0.25 <= ratio < 0.40:
+            area_signal = 35.0 + (ratio - 0.25) / 0.15 * 20.0
+        elif 2.00 < ratio <= 3.00:
+            area_signal = 55.0 - (ratio - 2.00) / 1.00 * 20.0
+        else:
+            # Either way too small or way too big.
+            area_signal = 25.0
 
     # Listing type signal (15% of base)
     # Showrooms typically sit on corners with better visibility than
@@ -3042,7 +3077,8 @@ def _percentile_rent_burden(
     listing_monthly_rent_per_m2: float,
     district: str | None,
     area_m2: float,
-    listing_type: str | None,
+    listing_type: str | None = None,
+    unit_neighborhood_raw: str | None = None,
 ) -> dict[str, Any] | None:
     """Score a listing's rent/m² against comparable real listings.
 
@@ -3115,22 +3151,39 @@ def _percentile_rent_burden(
     # Each entry: (extra_where, params, min_n, label)
     chains: list[tuple[str, dict[str, Any], int, str]] = []
 
-    if district_norm:
+    # District tier match: prefer the listing's own English neighborhood
+    # string from Aqar (commercial_unit.neighborhood) when available. The
+    # Arabic-normalized district key never matches the English neighborhood
+    # values stored on commercial_unit rows, so the legacy district_norm
+    # match silently returned zero rows for every lookup and every burden
+    # was computed against a citywide comparable set. The
+    # unit_neighborhood_raw value is in the same English namespace as the
+    # comparable set's neighborhood column, so the match works directly.
+    neighborhood_match_value: str | None = None
+    if unit_neighborhood_raw:
+        neighborhood_match_value = unit_neighborhood_raw.strip().lower()
+    elif district_norm:
+        # Fallback: try the Arabic-normalized district, which only matches
+        # the rare commercial_unit rows whose neighborhood happens to be
+        # stored in Arabic. Almost always returns zero, but cheap to try.
+        neighborhood_match_value = district_norm
+
+    if neighborhood_match_value:
         chains.append((
-            "AND lower(neighborhood) = :district AND area_sqm >= :band_lo AND area_sqm < :band_hi AND listing_type = :ltype",
-            {"district": district_norm, "band_lo": band_lo, "band_hi": band_hi, "ltype": listing_type or "store"},
+            "AND lower(neighborhood) = :neighborhood AND area_sqm >= :band_lo AND area_sqm < :band_hi AND listing_type = :ltype",
+            {"neighborhood": neighborhood_match_value, "band_lo": band_lo, "band_hi": band_hi, "ltype": listing_type or "store"},
             8,
             "district_band_type",
         ))
         chains.append((
-            "AND lower(neighborhood) = :district AND listing_type = :ltype",
-            {"district": district_norm, "ltype": listing_type or "store"},
+            "AND lower(neighborhood) = :neighborhood AND listing_type = :ltype",
+            {"neighborhood": neighborhood_match_value, "ltype": listing_type or "store"},
             8,
             "district_type",
         ))
         chains.append((
-            "AND lower(neighborhood) = :district",
-            {"district": district_norm},
+            "AND lower(neighborhood) = :neighborhood",
+            {"neighborhood": neighborhood_match_value},
             8,
             "district",
         ))
@@ -3226,6 +3279,7 @@ def _economics_score(
     is_listing: bool = False,
     district: str | None = None,
     listing_type: str | None = None,
+    unit_neighborhood_raw: str | None = None,
 ) -> tuple[float, dict[str, Any]]:
     monthly_rent_per_m2 = estimated_annual_rent_sar / max(area_m2 * 12.0, 1.0)
 
@@ -3239,6 +3293,7 @@ def _economics_score(
             district=district,
             area_m2=area_m2,
             listing_type=listing_type,
+            unit_neighborhood_raw=unit_neighborhood_raw,
         )
         if comp is not None:
             rent_burden_score = comp["burden_score"]
@@ -3637,6 +3692,7 @@ def _query_candidate_location_pool(
                 cu.last_seen_at AS unit_last_seen_at,
                 cu.restaurant_score AS unit_restaurant_score,
                 cu.has_drive_thru AS unit_has_drive_thru,
+                cu.neighborhood AS unit_neighborhood_raw,
                 -- Scoring helpers
                 ABS(COALESCE(cl.area_sqm, 120) - :target_area) AS area_distance,
                 0 AS delivery_listing_count,
@@ -3691,6 +3747,7 @@ def _query_candidate_location_pool(
             unit_last_seen_at,
             unit_restaurant_score,
             unit_has_drive_thru,
+            unit_neighborhood_raw,
             delivery_listing_count,
             delivery_cat_count,
             delivery_platform_count,
@@ -5050,6 +5107,7 @@ def run_expansion_search(
         estimated_fitout_cost_sar = round(_estimate_fitout_cost_sar(area_m2, service_model, is_furnished=bool(row.get("unit_is_furnished"))))
         estimated_revenue_index = _estimate_revenue_index(
             area_m2=area_m2,
+            target_area_m2=target_area_m2,
             unit_street_width_m=_safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None,
             unit_listing_type=row.get("unit_listing_type"),
             demand_score=demand_score,
@@ -5068,6 +5126,7 @@ def run_expansion_search(
             is_listing=_is_listing,
             district=district,
             listing_type=row.get("unit_listing_type"),
+            unit_neighborhood_raw=row.get("unit_neighborhood_raw"),
         )
         _unit_street_width = _safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None
         frontage_score = _frontage_score(
@@ -5100,6 +5159,7 @@ def run_expansion_search(
         brand_fit_score = _brand_fit_score(
             district=district,
             area_m2=area_m2,
+            target_area_m2=target_area_m2,
             demand_score=demand_score,
             fit_score=fit_score,
             cannibalization_score=cannibalization_score,
@@ -5608,6 +5668,7 @@ def run_expansion_search(
         _road_ctx = _bulk_roads.get(_pid_str)
         estimated_revenue_index = _estimate_revenue_index(
             area_m2=area_m2,
+            target_area_m2=target_area_m2,
             unit_street_width_m=_safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None,
             unit_listing_type=row.get("unit_listing_type"),
             demand_score=demand_score,
@@ -5643,6 +5704,7 @@ def run_expansion_search(
             is_listing=_is_listing,
             district=district,
             listing_type=row.get("unit_listing_type"),
+            unit_neighborhood_raw=row.get("unit_neighborhood_raw"),
         )
         feature_snapshot_json = _candidate_feature_snapshot(
             db,
@@ -5738,6 +5800,7 @@ def run_expansion_search(
         brand_fit_score = _brand_fit_score(
             district=district,
             area_m2=area_m2,
+            target_area_m2=target_area_m2,
             demand_score=demand_score,
             fit_score=fit_score,
             cannibalization_score=cannibalization_score,
