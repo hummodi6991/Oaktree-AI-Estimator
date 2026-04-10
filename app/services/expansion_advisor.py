@@ -3708,9 +3708,11 @@ def _query_candidate_location_pool(
                         cl.id ASC
                 ) AS district_rank
             FROM candidate_location cl
-            LEFT JOIN commercial_unit cu
+            INNER JOIN commercial_unit cu
                    ON cl.source_tier = 1
                   AND cl.source_id = cu.aqar_id
+                  AND cu.restaurant_suitable = TRUE
+                  AND cu.listing_type IN ('store', 'showroom')
             WHERE cl.is_cluster_primary = TRUE
               AND cl.source_tier = 1
               AND cl.geom IS NOT NULL
