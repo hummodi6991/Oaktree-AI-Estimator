@@ -4931,7 +4931,23 @@ def run_expansion_search(
         delivery_competition_count = _safe_int(row.get("delivery_competition_count"))
         landuse_label = row.get("landuse_label")
         landuse_code = row.get("landuse_code")
-        district = row.get("district")
+        # District resolution fallback chain. The primary source is the
+        # Arabic district label populated by spatial matching against
+        # external_feature polygons (aliased to "district" in the pool
+        # SQL); when that fails (≈1.3% of rows in the current pool),
+        # fall back through the English district, then the raw Aqar
+        # neighborhood string from commercial_unit.neighborhood (already
+        # projected as unit_neighborhood_raw since Patch 07), then a
+        # clean placeholder. The English fallback values are surfaced
+        # as-is rather than being translated or wrapped — the mixed
+        # Arabic/English list is mild and the alternative ("—" or a
+        # leaked aqar_id in the UI) is materially worse.
+        district = (
+            row.get("district")
+            or row.get("district_en")
+            or row.get("unit_neighborhood_raw")
+            or "District unknown"
+        )
         # ── Apply bulk delivery enrichment results ──
         _pid_key = str(row.get("parcel_id") or "")
         if _pid_key and _pid_key in _bulk_delivery:
@@ -5633,7 +5649,16 @@ def run_expansion_search(
         provider_platform_count = prepared_item["provider_platform_count"]
         landuse_label = prepared_item["landuse_label"]
         landuse_code = prepared_item["landuse_code"]
-        district = prepared_item["district"]
+        # District resolution fallback chain (mirror of first construction
+        # loop). Re-resolving from row here keeps the two sites symmetric
+        # and guarantees the final candidate dict never leaks a raw
+        # aqar_id or em-dash into the district slot.
+        district = (
+            row.get("district")
+            or row.get("district_en")
+            or row.get("unit_neighborhood_raw")
+            or "District unknown"
+        )
         demand_score = prepared_item["demand_score"]
 
         # Café foot-traffic amenity bonus (applied in second pass
