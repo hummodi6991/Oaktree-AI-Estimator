@@ -1806,11 +1806,23 @@ def _listing_quality_score(
         else:
             freshness = 15.0
 
-    # Aqar suitability score: map [25 (gate threshold) -> 100] to [40 -> 100]
+    # Aqar suitability score: linear rescale from the empirical 0–50
+    # range observed in the live pool to a 0–100 contribution. The
+    # previous mapping (40 + (score-25)*0.8) assumed a 25–100 range
+    # that the classifier never produces — 92% of the pool falls in
+    # scores 20–30, which under that mapping collapsed to suitability
+    # values 36–44 (an 8-point spread on a 100-point scale, effectively
+    # a constant). Using `score * 2.0` restores discrimination across
+    # the full range the classifier actually emits without changing
+    # how rows are filtered.
+    #
+    # A score of 50 (top of observed range) → suitability 100.
+    # A score of 25 → 50 (neutral).
+    # A score of 0 → 0 (bottom).
+    # Missing/None falls back to 50 (neutral) so candidates without a
+    # computed score don't get unfairly penalized.
     if unit_restaurant_score is not None and unit_restaurant_score > 0:
-        suitability = max(0.0, min(100.0,
-            40.0 + (float(unit_restaurant_score) - 25.0) * (60.0 / 75.0)
-        ))
+        suitability = _clamp(float(unit_restaurant_score) * 2.0)
     else:
         suitability = 50.0
 
@@ -3703,7 +3715,6 @@ def _query_candidate_location_pool(
                     PARTITION BY cl.district_ar
                     ORDER BY
                         cl.source_tier ASC,
-                        cl.profitability_score DESC NULLS LAST,
                         ABS(COALESCE(cl.area_sqm, 120) - :target_area) ASC,
                         cl.id ASC
                 ) AS district_rank
@@ -3759,7 +3770,6 @@ def _query_candidate_location_pool(
         ORDER BY
             district_rank ASC,
             source_tier ASC,
-            profitability_score DESC NULLS LAST,
             ABS(COALESCE(area_m2, 120) - :target_area) ASC,
             id ASC
         LIMIT :limit
