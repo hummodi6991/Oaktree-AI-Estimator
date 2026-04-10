@@ -570,6 +570,56 @@ _EXPANSION_BULK_PERSIST_CHUNK_SIZE = max(
 )
 
 
+# ---------------------------------------------------------------------------
+# Service-model-aware catchment radii.
+# Real-world F&B catchment scales differ by service model:
+#   dine_in:        destination restaurants, 15-20 minute drive → 3-5 km
+#   delivery_first: bounded by platform delivery radius        → 3 km
+#   qsr:            convenience-driven walk/drive-thru          → 1.5 km
+#   cafe:           walking + short drives                       → 800 m-1 km
+# Using a fixed 1200 m catchment for all four (the legacy default)
+# materially under-scores dine-in and delivery-first candidates.
+# ---------------------------------------------------------------------------
+_CATCHMENT_RADII_M: dict[str, dict[str, float]] = {
+    "dine_in":        {"demand": 3500.0, "competition": 3000.0, "provider": 3500.0},
+    "delivery_first": {"demand": 3000.0, "competition": 2500.0, "provider": 3000.0},
+    "qsr":            {"demand": 1500.0, "competition": 1200.0, "provider": 1500.0},
+    "cafe":           {"demand": 1000.0, "competition":  800.0, "provider": 1000.0},
+}
+
+# Population-score saturation references must scale with the catchment
+# radius. A dine-in site with a 3.5 km catchment in Al Olaya can have
+# 200-300k residents; saturating at 80k (the legacy QSR-scaled reference)
+# would compress every populous site to the same score.
+_POPULATION_SCORE_REFERENCE: dict[str, float] = {
+    "dine_in":        250000.0,
+    "delivery_first": 180000.0,
+    "qsr":             80000.0,
+    "cafe":            40000.0,
+}
+
+
+def _catchment_radii(service_model: str | None) -> dict[str, float]:
+    """Return the (demand, competition, provider) radii for this service model.
+
+    Falls back to QSR values for unknown service models — QSR's 1500 m
+    demand radius is the closest to the legacy 1200 m constant and is
+    the safest default for a brief with an unexpected service_model.
+    """
+    return _CATCHMENT_RADII_M.get(
+        (service_model or "qsr").lower(),
+        _CATCHMENT_RADII_M["qsr"],
+    )
+
+
+def _population_reference(service_model: str | None) -> float:
+    """Return the population-score saturation reference for this service model."""
+    return _POPULATION_SCORE_REFERENCE.get(
+        (service_model or "qsr").lower(),
+        _POPULATION_SCORE_REFERENCE["qsr"],
+    )
+
+
 def _chunked(seq: list[Any], size: int):
     for i in range(0, len(seq), size):
         yield seq[i : i + size]
@@ -1636,16 +1686,30 @@ def _area_fit(area_m2: float, target_area_m2: float, min_area_m2: float, max_are
     return _clamp(score)
 
 
-def _population_score(population_reach: float) -> float:
-    """Square-root scaled population score tuned for Riyadh metro density.
+def _population_score(
+    population_reach: float,
+    *,
+    service_model: str | None = None,
+) -> float:
+    """Square-root scaled population score with service-model-aware reference.
 
-    Linear scaling saturated at 18,000 — nearly all urban parcels hit 100/100.
-    Square-root with 80,000 reference gives meaningful spread:
-      5,000 → 25,  15,000 → 43,  30,000 → 61,  50,000 → 79,  80,000+ → 100
+    The saturation reference scales with the catchment radius so the
+    score remains meaningfully distributed across the realistic range:
+
+      service_model    catchment    reference    reach → score examples
+      dine_in          3.5 km       250,000      50k→45, 100k→63, 250k→100
+      delivery_first   3.0 km       180,000      30k→41, 80k→67, 180k→100
+      qsr              1.5 km        80,000       5k→25, 30k→61,  80k→100
+      cafe             1.0 km        40,000       5k→35, 15k→61,  40k→100
+
+    Without a service model the function falls back to the QSR reference
+    (80k), which matches legacy behavior for any caller that hasn't been
+    updated yet.
     """
     if population_reach <= 0:
         return 0.0
-    return _clamp((population_reach / 80000.0) ** 0.5 * 100.0)
+    reference = _population_reference(service_model)
+    return _clamp((population_reach / reference) ** 0.5 * 100.0)
 
 
 def _delivery_score(delivery_listing_count: int) -> float:
@@ -3915,13 +3979,29 @@ def _query_commercial_unit_candidates(
 def _bulk_enrich_population(
     db: Session,
     rows: list[dict],
-    demand_radius_m: float = 1200.0,
+    demand_radius_m: float | None = None,
+    *,
+    service_model: str | None = None,
 ) -> dict[str, float]:
     """Bulk-compute population_reach for a set of candidate locations.
 
     Returns {parcel_id: population_reach} for all rows that have lat/lon.
     Uses a single SQL query with unnest + LATERAL to avoid N+1.
+
+    The catchment radius comes from one of three sources, in priority
+    order:
+      1. An explicit ``demand_radius_m`` argument (for direct callers).
+      2. The service_model lookup via ``_catchment_radii`` (for callers
+         that know the brief's service model).
+      3. The legacy 1200 m default (for safety; preserves old behavior
+         if neither is supplied).
     """
+    if demand_radius_m is None:
+        if service_model is not None:
+            demand_radius_m = _catchment_radii(service_model)["demand"]
+        else:
+            demand_radius_m = 1200.0
+
     if not rows:
         return {}
 
@@ -3996,7 +4076,9 @@ def _bulk_enrich_competitors(
     db: Session,
     rows: list[dict],
     category: str,
-    competition_radius_m: float = 1000.0,
+    competition_radius_m: float | None = None,
+    *,
+    service_model: str | None = None,
 ) -> dict[str, int]:
     """Bulk-compute competitor_count for a set of candidate locations.
 
@@ -4007,7 +4089,17 @@ def _bulk_enrich_competitors(
     delivery_source_record (HungerStation / delivery marketplace data) via
     UNION to ensure categories like shawarma and indian that only exist in
     delivery data are counted.
+
+    The competition radius follows the same priority as
+    ``_bulk_enrich_population``'s demand radius: explicit arg >
+    service_model lookup > legacy 1000 m default.
     """
+    if competition_radius_m is None:
+        if service_model is not None:
+            competition_radius_m = _catchment_radii(service_model)["competition"]
+        else:
+            competition_radius_m = 1000.0
+
     if not rows:
         return {}
 
@@ -4598,9 +4690,11 @@ def run_expansion_search(
         "category_keys": _cat_expanded["keys"],
         "category_regex": _cat_expanded["regex"],
         "category_like": _cat_expanded["like"],
-        "demand_radius_m": 1200,
-        "competition_radius_m": 1000,
-        "provider_radius_m": 1200,
+        # Catchment radii derived from the brief's service model. See
+        # _catchment_radii() for the lookup table and rationale.
+        "demand_radius_m":      _catchment_radii(service_model)["demand"],
+        "competition_radius_m": _catchment_radii(service_model)["competition"],
+        "provider_radius_m":    _catchment_radii(service_model)["provider"],
         "per_district_cap": per_district_cap,
     }
     logger.info(
@@ -4662,7 +4756,7 @@ def run_expansion_search(
         )
         # Bulk-enrich population reach for candidate_location rows
         # (candidate_location path returns population_reach=0; we need real values)
-        _bulk_pop = _bulk_enrich_population(db, rows, demand_radius_m=1200.0)
+        _bulk_pop = _bulk_enrich_population(db, rows, service_model=service_model)
         if _bulk_pop:
             for _r in rows:
                 _pid = str(_r.get("parcel_id") or _r.get("id") or "")
@@ -4674,7 +4768,7 @@ def run_expansion_search(
             )
         # Bulk-enrich competitor counts for candidate_location rows
         # (candidate_location path does not compute competitor_count)
-        _bulk_comp = _bulk_enrich_competitors(db, rows, category, competition_radius_m=1000.0)
+        _bulk_comp = _bulk_enrich_competitors(db, rows, category, service_model=service_model)
         if _bulk_comp:
             for _r in rows:
                 _pid = str(_r.get("parcel_id") or _r.get("id") or "")
@@ -4706,7 +4800,7 @@ def run_expansion_search(
 
         if rows:
             # Bulk-enrich population reach for commercial_unit rows
-            _bulk_pop = _bulk_enrich_population(db, rows, demand_radius_m=1200.0)
+            _bulk_pop = _bulk_enrich_population(db, rows, service_model=service_model)
             if _bulk_pop:
                 for _r in rows:
                     _pid = str(_r.get("parcel_id") or _r.get("id") or "")
@@ -4714,7 +4808,7 @@ def run_expansion_search(
                         _r["population_reach"] = _bulk_pop[_pid]
 
             # Bulk-enrich competitor counts for commercial_unit rows
-            _bulk_comp = _bulk_enrich_competitors(db, rows, category, competition_radius_m=1000.0)
+            _bulk_comp = _bulk_enrich_competitors(db, rows, category, service_model=service_model)
             if _bulk_comp:
                 for _r in rows:
                     _pid = str(_r.get("parcel_id") or _r.get("id") or "")
@@ -4971,7 +5065,7 @@ def run_expansion_search(
         if target_district_norm and (not district_norm or district_norm not in target_district_norm):
             continue
 
-        pop_score = _population_score(population_reach)
+        pop_score = _population_score(population_reach, service_model=service_model)
         delivery_score = _delivery_score(delivery_listing_count)
         _pop_w, _del_w = _demand_blend_weights(service_model)
         demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
