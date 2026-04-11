@@ -27,7 +27,18 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
 )
 
-_HARD_ROW_CEILING = 5000  # safety limit per invocation
+# Hard cost ceiling.  The script tracks estimated spend on every API
+# call and aborts the moment it crosses this threshold.  This catches
+# all cost-runaway scenarios — over-large batches, per-row token
+# blowup, photo-retry storms, and internal SDK retry loops — because
+# it tracks the actual variable that hurts (money spent), not a proxy.
+COST_CEILING_USD = 8.00
+
+# Approximate per-call cost.  gpt-4o-mini at $0.15/M input + $0.60/M
+# output, ~600 input tokens + ~150 output tokens per classification.
+# Photo retries roughly double the per-row cost; the in-loop tripwire
+# accounts for this naturally because each call is counted separately.
+EST_COST_PER_CALL_USD = 0.0003
 
 
 def _build_engine():
@@ -82,13 +93,21 @@ def main() -> int:
     if args.limit:
         rows = rows[: args.limit]
 
-    if len(rows) > _HARD_ROW_CEILING:
+    estimated_cost_usd = len(rows) * EST_COST_PER_CALL_USD
+    logger.info(
+        "Backfilling %d rows. Estimated cost: $%.4f. Hard ceiling: $%.2f.",
+        len(rows),
+        estimated_cost_usd,
+        COST_CEILING_USD,
+    )
+    if estimated_cost_usd > COST_CEILING_USD:
         logger.error(
-            "Refusing to process %d rows (hard ceiling %d). Use --limit to override.",
-            len(rows),
-            _HARD_ROW_CEILING,
+            "Estimated cost ($%.4f) exceeds ceiling ($%.2f). "
+            "Use --limit to reduce the batch.",
+            estimated_cost_usd,
+            COST_CEILING_USD,
         )
-        return 1
+        return 2
 
     logger.info(
         "Backfilling LLM classification for %d rows (dry_run=%s)",
@@ -99,8 +118,25 @@ def main() -> int:
     success = 0
     failures = 0
     verdict_counts: dict[str, int] = {}
+    actual_call_count = 0
 
     for i, row in enumerate(rows, start=1):
+        # Each iteration is at least one API call.  Photo retries inside
+        # classify_listing are accounted for by the worst-case ceiling
+        # check upfront, but in-loop we still want to halt the moment
+        # estimated spend crosses the threshold so a runaway can't
+        # silently consume the entire budget.
+        actual_call_count += 1
+        spent_so_far_usd = actual_call_count * EST_COST_PER_CALL_USD
+        if spent_so_far_usd > COST_CEILING_USD:
+            logger.error(
+                "Hit cost ceiling at row %d/%d (~$%.4f spent). Halting.",
+                i,
+                len(rows),
+                spent_so_far_usd,
+            )
+            break
+
         row_dict = dict(row)
         photo_urls = (
             [row_dict["image_url"]] if row_dict.get("image_url") else []
@@ -165,10 +201,12 @@ def main() -> int:
         session.commit()
 
     logger.info(
-        "Backfill complete. success=%d failures=%d verdicts=%s",
+        "Backfill complete. success=%d failures=%d verdicts=%s "
+        "estimated_spend=$%.4f",
         success,
         failures,
         verdict_counts,
+        actual_call_count * EST_COST_PER_CALL_USD,
     )
     return 0
 

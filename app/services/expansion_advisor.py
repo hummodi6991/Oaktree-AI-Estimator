@@ -3794,15 +3794,22 @@ def _query_candidate_location_pool(
                    ON cl.source_tier = 1
                   AND cl.source_id = cu.aqar_id
                   AND cu.listing_type IN ('store', 'showroom')
+                  -- Patch 12 design decision (revisit in Patch 13):
+                  -- This clause is recall-favoring.  We accept both
+                  -- 'suitable' and 'uncertain' LLM verdicts because
+                  -- sparse listings with thin scraper-extracted
+                  -- descriptions are mostly legitimate listings the
+                  -- scraper extracted poorly, not non-F&B junk.  The
+                  -- Patch 08 listing_type whitelist still protects
+                  -- against the worst structural cases.  Patch 13
+                  -- should measure the production rate of 'uncertain'
+                  -- verdicts and tighten this to 'suitable'-only if
+                  -- the rate is below ~5%.
                   AND (
-                      -- LLM classifier verdict takes precedence when present.
-                      -- Accept both 'suitable' and 'uncertain' so sparse
-                      -- listings aren't silently dropped; only 'unsuitable'
-                      -- is hard-filtered.
                       (cu.llm_classified_at IS NOT NULL
                        AND cu.llm_suitability_verdict IN ('suitable', 'uncertain'))
                       OR
-                      -- Fallback to structural classifier for unclassified rows.
+                      -- Structural fallback for rows not yet LLM-classified.
                       (cu.llm_classified_at IS NULL
                        AND cu.restaurant_suitable = TRUE)
                   )
