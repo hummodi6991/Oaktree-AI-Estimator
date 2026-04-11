@@ -1819,6 +1819,8 @@ def _listing_quality_score(
     unit_restaurant_score: float | None,
     has_image: bool,
     has_drive_thru: bool | None = None,
+    llm_suitability_score: int | None = None,
+    llm_listing_quality_score: int | None = None,
 ) -> float:
     """Pure listing-quality score on a 0-100 scale.
 
@@ -1870,28 +1872,28 @@ def _listing_quality_score(
         else:
             freshness = 15.0
 
-    # Aqar suitability score: linear rescale from the empirical 0–50
-    # range observed in the live pool to a 0–100 contribution. The
-    # previous mapping (40 + (score-25)*0.8) assumed a 25–100 range
-    # that the classifier never produces — 92% of the pool falls in
-    # scores 20–30, which under that mapping collapsed to suitability
-    # values 36–44 (an 8-point spread on a 100-point scale, effectively
-    # a constant). Using `score * 2.0` restores discrimination across
-    # the full range the classifier actually emits without changing
-    # how rows are filtered.
-    #
-    # A score of 50 (top of observed range) → suitability 100.
-    # A score of 25 → 50 (neutral).
-    # A score of 0 → 0 (bottom).
-    # Missing/None falls back to 50 (neutral) so candidates without a
-    # computed score don't get unfairly penalized.
-    if unit_restaurant_score is not None and unit_restaurant_score > 0:
+    # Suitability sub-component: prefer the LLM verdict when present.
+    # The LLM produces a calibrated 0–100 score directly, so no rescale
+    # is needed. Falls back to the Patch 10 structural rescale
+    # (score * 2) for rows that haven't been LLM-classified yet — during
+    # the rollout window after Patch 12 deploys but before the backfill
+    # completes, and as a permanent safety net for any row whose LLM
+    # classification returned None.
+    if llm_suitability_score is not None:
+        suitability = _clamp(float(llm_suitability_score))
+    elif unit_restaurant_score is not None and unit_restaurant_score > 0:
         suitability = _clamp(float(unit_restaurant_score) * 2.0)
     else:
         suitability = 50.0
 
-    # Image presence: operator can visually verify before site visit
-    image_signal = 100.0 if has_image else 30.0
+    # Visual / fit-out readiness signal: prefer the LLM-derived quality
+    # score when present (it captures fit-out readiness from photos plus
+    # description, not just whether an image exists).  Fall back to the
+    # binary "has_image" check.
+    if llm_listing_quality_score is not None:
+        image_signal = _clamp(float(llm_listing_quality_score))
+    else:
+        image_signal = 100.0 if has_image else 30.0
 
     # Furnished: faster open, lower risk
     furnished_signal = 100.0 if is_furnished else 50.0
@@ -3769,6 +3771,11 @@ def _query_candidate_location_pool(
                 cu.restaurant_score AS unit_restaurant_score,
                 cu.has_drive_thru AS unit_has_drive_thru,
                 cu.neighborhood AS unit_neighborhood_raw,
+                cu.llm_suitability_score AS unit_llm_suitability_score,
+                cu.llm_listing_quality_score AS unit_llm_listing_quality_score,
+                cu.llm_landlord_signal_score AS unit_llm_landlord_signal_score,
+                cu.llm_suitability_verdict AS unit_llm_suitability_verdict,
+                cu.llm_classified_at AS unit_llm_classified_at,
                 -- Scoring helpers
                 ABS(COALESCE(cl.area_sqm, 120) - :target_area) AS area_distance,
                 0 AS delivery_listing_count,
@@ -3786,8 +3793,19 @@ def _query_candidate_location_pool(
             INNER JOIN commercial_unit cu
                    ON cl.source_tier = 1
                   AND cl.source_id = cu.aqar_id
-                  AND cu.restaurant_suitable = TRUE
                   AND cu.listing_type IN ('store', 'showroom')
+                  AND (
+                      -- LLM classifier verdict takes precedence when present.
+                      -- Accept both 'suitable' and 'uncertain' so sparse
+                      -- listings aren't silently dropped; only 'unsuitable'
+                      -- is hard-filtered.
+                      (cu.llm_classified_at IS NOT NULL
+                       AND cu.llm_suitability_verdict IN ('suitable', 'uncertain'))
+                      OR
+                      -- Fallback to structural classifier for unclassified rows.
+                      (cu.llm_classified_at IS NULL
+                       AND cu.restaurant_suitable = TRUE)
+                  )
             WHERE cl.is_cluster_primary = TRUE
               AND cl.source_tier = 1
               AND cl.geom IS NOT NULL
@@ -3825,6 +3843,11 @@ def _query_candidate_location_pool(
             unit_restaurant_score,
             unit_has_drive_thru,
             unit_neighborhood_raw,
+            unit_llm_suitability_score,
+            unit_llm_listing_quality_score,
+            unit_llm_landlord_signal_score,
+            unit_llm_suitability_verdict,
+            unit_llm_classified_at,
             delivery_listing_count,
             delivery_cat_count,
             delivery_platform_count,
@@ -5308,6 +5331,8 @@ def run_expansion_search(
             unit_restaurant_score=_safe_float(row.get("unit_restaurant_score")) if row.get("unit_restaurant_score") is not None else None,
             has_image=bool(row.get("image_url")),
             has_drive_thru=row.get("unit_has_drive_thru"),
+            llm_suitability_score=row.get("unit_llm_suitability_score"),
+            llm_listing_quality_score=row.get("unit_llm_listing_quality_score"),
         )
         preliminary_breakdown = _score_breakdown(
             demand_score=demand_score,
@@ -5951,6 +5976,8 @@ def run_expansion_search(
             unit_restaurant_score=_safe_float(row.get("unit_restaurant_score")) if row.get("unit_restaurant_score") is not None else None,
             has_image=bool(row.get("image_url")),
             has_drive_thru=row.get("unit_has_drive_thru"),
+            llm_suitability_score=row.get("unit_llm_suitability_score"),
+            llm_listing_quality_score=row.get("unit_llm_listing_quality_score"),
         )
         score_breakdown_json = _score_breakdown(
             demand_score=demand_score,
