@@ -1758,11 +1758,20 @@ def test_score_breakdown_has_display_structure():
     assert dp["weight_percent"] == 10  # Patch 06: demand_potential weight is now 10
     assert dp["weighted_points"] == round(80.0 * 0.10, 2)
 
-    # Verify listing_quality entry
+    # Verify listing_quality entry (Patch 13: 15 -> 11, 4 pts shifted to landlord_signal)
     lq = breakdown["display"]["listing_quality"]
     assert lq["raw_input_score"] == 60.0
-    assert lq["weight_percent"] == 15
-    assert lq["weighted_points"] == round(60.0 * 0.15, 2)
+    assert lq["weight_percent"] == 11
+    assert lq["weighted_points"] == round(60.0 * 0.11, 2)
+
+    # Patch 13: landlord_signal is a new first-class 8% component.
+    # When the optional landlord_signal_score arg is omitted it falls back
+    # to a neutral 50.0 so rows missing the LLM signal aren't penalized.
+    assert "landlord_signal" in breakdown["display"]
+    ls = breakdown["display"]["landlord_signal"]
+    assert ls["raw_input_score"] == 50.0
+    assert ls["weight_percent"] == 8
+    assert ls["weighted_points"] == round(50.0 * 0.08, 2)
 
     # Verify weighted_points != weight_percent (they are NOT the same thing)
     for name, entry in breakdown["display"].items():

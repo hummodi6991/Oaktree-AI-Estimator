@@ -1351,7 +1351,11 @@ def test_percentile_rent_burden_falls_through_without_neighborhood():
 # ---------------------------------------------------------------------------
 
 def test_score_breakdown_economics_weight_is_30():
-    """occupancy_economics should now be weighted at 30%."""
+    """occupancy_economics should still be weighted at 30%.
+
+    Patch 13 moved 4 points of listing_quality weight into a new
+    landlord_signal component, so listing_quality is now 11% not 15%.
+    """
     bd = _score_breakdown(
         demand_score=50.0,
         whitespace_score=50.0,
@@ -1363,11 +1367,18 @@ def test_score_breakdown_economics_weight_is_30():
         listing_quality_score=50.0,
     )
     assert bd["weights"]["occupancy_economics"] == 30
-    assert bd["weights"]["listing_quality"] == 15
+    assert bd["weights"]["listing_quality"] == 11
+    assert bd["weights"]["landlord_signal"] == 8
+    # Weight total invariant: everything must sum to 100.
+    assert sum(bd["weights"].values()) == 100
 
 
 def test_score_breakdown_listing_quality_contributes():
-    """A high listing_quality should raise final_score vs a low one."""
+    """A high listing_quality should raise final_score vs a low one.
+
+    Patch 13 rebalance: listing_quality now carries 11% weight (down
+    from 15%) because 4 points moved to the new landlord_signal slot.
+    """
     high = _score_breakdown(
         demand_score=60.0,
         whitespace_score=60.0,
@@ -1389,6 +1400,6 @@ def test_score_breakdown_listing_quality_contributes():
         listing_quality_score=20.0,
     )
     assert high["final_score"] > low["final_score"]
-    # With 15% weight, the difference should be (95-20)*0.15 = 11.25 points
+    # With 11% weight, the difference should be (95-20)*0.11 = 8.25 points
     diff = high["final_score"] - low["final_score"]
-    assert abs(diff - 11.25) < 0.1
+    assert abs(diff - 8.25) < 0.1

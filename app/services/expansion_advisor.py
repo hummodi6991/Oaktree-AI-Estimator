@@ -770,6 +770,76 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(high, value))
 
 
+# Patch 13: candidates whose ``final_score`` values are within this many
+# points of each other are treated as fuzzy-tied; within each such group
+# rows are reordered by combined LLM signal strength so rich-copy
+# listings win over sparse-copy listings at the same structural rank.
+_FUZZY_TIE_WINDOW = 1.5
+
+
+def _apply_llm_fuzzy_tiebreak(ranked_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Re-sort candidates within fuzzy-tie groups by LLM signal strength.
+
+    Two candidates whose ``final_score`` values are within ``_FUZZY_TIE_WINDOW``
+    of each other are considered tied for ranking purposes; within each
+    such group we prefer rows with the higher combined LLM signal
+    (``unit_llm_landlord_signal_score`` + ``unit_llm_suitability_score``).
+    Rows outside any group keep their original order, and the global
+    ordering by ``final_score`` is preserved across group boundaries —
+    only within-group order can change.
+
+    Rows missing LLM scores are treated as ``0 + 0`` and fall to the
+    bottom of their group, which is the desired behavior: sparse-copy
+    listings should yield to rich-copy listings within the same fuzzy
+    bucket on the rare occasion both land at the same ``final_score``.
+
+    Input must already be sorted by ``final_score`` descending.
+    """
+    if not ranked_rows or len(ranked_rows) < 2:
+        return ranked_rows
+
+    def _final_score(row: dict[str, Any]) -> float:
+        return _safe_float(row.get("final_score"), 0.0)
+
+    def _llm_strength(row: dict[str, Any]) -> float:
+        return (
+            _safe_float(row.get("unit_llm_landlord_signal_score"), 0.0)
+            + _safe_float(row.get("unit_llm_suitability_score"), 0.0)
+        )
+
+    # Walk the list and collect contiguous groups of rows whose final_score
+    # values are within _FUZZY_TIE_WINDOW of each other.  A row joins the
+    # current group when it is within the window of the group's *first*
+    # (highest-scoring) row — this prevents drift where a long chain of
+    # closely-spaced rows would pull the window open indefinitely.
+    groups: list[list[int]] = []
+    current_group: list[int] = [0]
+    for i in range(1, len(ranked_rows)):
+        head_score = _final_score(ranked_rows[current_group[0]])
+        this_score = _final_score(ranked_rows[i])
+        if abs(head_score - this_score) <= _FUZZY_TIE_WINDOW:
+            current_group.append(i)
+        else:
+            if len(current_group) > 1:
+                groups.append(current_group)
+            current_group = [i]
+    if len(current_group) > 1:
+        groups.append(current_group)
+
+    if not groups:
+        return ranked_rows
+
+    out = list(ranked_rows)
+    for group in groups:
+        group_rows = [ranked_rows[i] for i in group]
+        # Stable sort by LLM signal descending — rows with equal signal
+        # retain their original final_score order.
+        group_rows.sort(key=_llm_strength, reverse=True)
+        for idx, row in zip(group, group_rows):
+            out[idx] = row
+    return out
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         if value is None:
@@ -1839,12 +1909,21 @@ def _listing_quality_score(
     returns a neutral 50.
 
     Components:
-      - Freshness from first_seen_at (40%): how recently the listing
+      - Freshness from first_seen_at (30%): how recently the listing
         first appeared on Aqar (measures listing age, not scrape recency)
-      - Aqar suitability (35%): the classifier's assessment
-      - Image presence (15%): operator can visually verify
+      - Aqar suitability (40%): the classifier's assessment — LLM verdict
+        when available, structural restaurant_score fallback otherwise
+      - Image / fit-out signal (20%): LLM-derived listing quality when
+        available, binary image presence fallback otherwise
       - Furnished (10%): faster open, lower risk, lower fitout
       - Drive-thru bonus: small additive (+5) when present
+
+    Patch 13 rebalance: shifted 10 points from ``freshness`` into the
+    LLM-derived sub-components (+5 suitability, +5 image_signal) so that
+    when both LLM scores are populated they carry 60% of the composite,
+    up from 50% under Patch 12.  The fallback paths use the same weights —
+    the structural stand-ins inherit the higher weight, which is fine
+    because they are direct substitutes for the missing LLM signal.
     """
     if not is_listing:
         return 50.0
@@ -1899,9 +1978,9 @@ def _listing_quality_score(
     furnished_signal = 100.0 if is_furnished else 50.0
 
     composite = (
-        freshness * 0.40
-        + suitability * 0.35
-        + image_signal * 0.15
+        freshness * 0.30
+        + suitability * 0.40
+        + image_signal * 0.20
         + furnished_signal * 0.10
     )
 
@@ -2123,6 +2202,20 @@ def _candidate_gate_status(
     return gate_status, reasons
 
 
+def _landlord_signal_component(landlord_signal_score: int | float | None) -> float:
+    """Return the LLM landlord-signal score clamped to 0-100.
+
+    When the row is missing an LLM landlord signal (e.g. structural-fallback
+    rows during the rollout window before Patch 12's backfill completes),
+    fall back to a neutral 50.0 so the row is neither penalized nor boosted
+    for the absence of the signal. Mirrors the None-handling pattern used by
+    ``_listing_quality_score`` for ``llm_suitability_score``.
+    """
+    if landlord_signal_score is None:
+        return 50.0
+    return _clamp(float(landlord_signal_score))
+
+
 def _score_breakdown(
     *,
     demand_score: float,
@@ -2133,34 +2226,50 @@ def _score_breakdown(
     access_visibility_score: float,
     confidence_score: float,
     listing_quality_score: float,
+    landlord_signal_score: int | float | None = None,
 ) -> dict[str, Any]:
     """Listings-first weight distribution.
 
     55% of weight is on listing-specific components:
       - occupancy_economics (30%): rent burden, fitout, area, cannibalization
-      - listing_quality (15%): freshness, suitability, furnished, image
+      - listing_quality (11%): freshness, suitability, furnished, image
+      - landlord_signal (8%):  LLM read of landlord intent / listing copy
       - access_visibility (10%): measured street width
-    45% on district context:
-      - brand_fit (15%): district preference + format fit
+    41% on district context:
+      - brand_fit (11%): district preference + format fit
       - competition_whitespace (10%)
       - demand_potential (10%)
       - delivery_demand (5%)
       - confidence (5%): data trust signal
+
+    Patch 13 promoted ``landlord_signal`` to its own first-class 8% component,
+    taking 4 points each from ``brand_fit`` and ``listing_quality`` so total
+    weights still sum to 100. Combined with the Patch 13 sub-component
+    rebalance inside ``_listing_quality_score``, the LLM-influenced share of
+    ``final_score`` rises from roughly 9% to roughly 18%.
     """
     component_weights = {
         "occupancy_economics": 30,
-        "listing_quality": 15,
-        "brand_fit": 15,
+        "listing_quality": 11,
+        "brand_fit": 11,
+        "landlord_signal": 8,
         "competition_whitespace": 10,
         "demand_potential": 10,
         "access_visibility": 10,
         "delivery_demand": 5,
         "confidence": 5,
     }
+    # Invariant: weights must sum to 100 so final_score stays on a 0-100 scale.
+    assert sum(component_weights.values()) == 100, (
+        f"_score_breakdown component weights must sum to 100, "
+        f"got {sum(component_weights.values())}"
+    )
+    landlord_input = _landlord_signal_component(landlord_signal_score)
     raw_inputs = {
         "occupancy_economics": round(_safe_float(economics_score), 2),
         "listing_quality": round(_safe_float(listing_quality_score), 2),
         "brand_fit": round(_safe_float(brand_fit_score), 2),
+        "landlord_signal": round(landlord_input, 2),
         "competition_whitespace": round(_safe_float(whitespace_score), 2),
         "demand_potential": round(_safe_float(demand_score), 2),
         "access_visibility": round(_safe_float(access_visibility_score), 2),
@@ -2169,8 +2278,9 @@ def _score_breakdown(
     }
     weighted_components = {
         "occupancy_economics": round(_safe_float(economics_score) * 0.30, 2),
-        "listing_quality": round(_safe_float(listing_quality_score) * 0.15, 2),
-        "brand_fit": round(_safe_float(brand_fit_score) * 0.15, 2),
+        "listing_quality": round(_safe_float(listing_quality_score) * 0.11, 2),
+        "brand_fit": round(_safe_float(brand_fit_score) * 0.11, 2),
+        "landlord_signal": round(landlord_input * 0.08, 2),
         "competition_whitespace": round(_safe_float(whitespace_score) * 0.10, 2),
         "demand_potential": round(_safe_float(demand_score) * 0.10, 2),
         "access_visibility": round(_safe_float(access_visibility_score) * 0.10, 2),
@@ -5350,6 +5460,7 @@ def run_expansion_search(
             access_visibility_score=access_visibility_score,
             confidence_score=confidence_score,
             listing_quality_score=listing_quality,
+            landlord_signal_score=row.get("unit_llm_landlord_signal_score"),
         )
         prepared.append(
             {
@@ -5995,6 +6106,7 @@ def run_expansion_search(
             access_visibility_score=access_visibility_score,
             confidence_score=confidence_score,
             listing_quality_score=listing_quality,
+            landlord_signal_score=row.get("unit_llm_landlord_signal_score"),
         )
         score_breakdown_json["inputs"]["rent_fallback_used"] = rent_fallback_used
         score_breakdown_json["inputs"]["parking_context_available"] = bool(feature_snapshot_json["context_sources"].get("parking_context_available"))
@@ -6205,6 +6317,10 @@ def run_expansion_search(
                 "unit_street_width_m": _safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") is not None else None,
                 "unit_neighborhood": row.get("district"),
                 "unit_listing_type": row.get("unit_listing_type"),
+                # LLM signals kept on the candidate for post-sort tiebreak.
+                "unit_llm_suitability_score": row.get("unit_llm_suitability_score"),
+                "unit_llm_landlord_signal_score": row.get("unit_llm_landlord_signal_score"),
+                "unit_llm_listing_quality_score": row.get("unit_llm_listing_quality_score"),
             }
         )
       except Exception:
@@ -6263,6 +6379,13 @@ def run_expansion_search(
             "expansion_search score-dedup: search_id=%s before=%d after=%d",
             search_id, _pre_score_dedup, len(candidates),
         )
+
+    # Patch 13: LLM-aware fuzzy tiebreak. Within groups whose final_score
+    # values fall inside _FUZZY_TIE_WINDOW points of each other, prefer rows
+    # with higher combined LLM signal (suitability + landlord). Runs after
+    # dedup so we don't reorder rows about to be removed, but before
+    # district balancing so the tiebroken order feeds into district pick.
+    candidates = _apply_llm_fuzzy_tiebreak(candidates)
 
     # ── District balancing: ensure multi-district searches get representation ──
     # When target_districts has 2+ districts, guarantee at least min_per_district
