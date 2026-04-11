@@ -3,6 +3,7 @@ uvicorn[standard]>=0.30.0
 pydantic>=2.7.0
 SQLAlchemy>=2.0.29
 psycopg[binary,pool]>=3.1.18
+psycopg2-binary>=2.9  # required by SQLAlchemy postgresql:// dialect (used by backfill scripts in CI)
 alembic>=1.13.1
 httpx>=0.27.0
 python-dotenv>=1.0.1
