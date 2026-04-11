@@ -167,6 +167,7 @@ jobs:
             --from-literal=POSTGRES_HOST="${{ secrets.POSTGRES_HOST }}" \
             --from-literal=POSTGRES_PORT="${{ secrets.POSTGRES_PORT }}" \
             --from-literal=PGSSLMODE=require \
+            --from-literal=OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Create/Update App Secret (oaktree-app-env)

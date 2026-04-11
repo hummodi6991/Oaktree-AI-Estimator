@@ -402,6 +402,14 @@ class CommercialUnit(Base):
     restaurant_score = Column(Integer)
     restaurant_suitable = Column(Boolean)
     restaurant_signals = Column(JSONB)
+    # LLM-based suitability classifier outputs (Patch 12)
+    llm_suitability_verdict = Column(String(16))
+    llm_suitability_score = Column(Integer)
+    llm_listing_quality_score = Column(Integer)
+    llm_landlord_signal_score = Column(Integer)
+    llm_reasoning = Column(Text)
+    llm_classified_at = Column(DateTime)
+    llm_classifier_version = Column(String(32))
     status = Column(String(16), nullable=False, server_default=text("'active'"))
     first_seen_at = Column(DateTime, server_default=text("now()"))
     last_seen_at = Column(DateTime, server_default=text("now()"))
@@ -414,6 +422,14 @@ class CommercialUnit(Base):
         Index("ix_commercial_unit_is_furnished", "is_furnished"),
         Index("ix_commercial_unit_apartments_count", "apartments_count"),
         Index("ix_commercial_unit_num_rooms", "num_rooms"),
+        Index(
+            "ix_commercial_unit_llm_suitability_verdict",
+            "llm_suitability_verdict",
+        ),
+        Index(
+            "ix_commercial_unit_llm_classified_at",
+            "llm_classified_at",
+        ),
     )
 
 

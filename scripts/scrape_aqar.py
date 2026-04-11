@@ -1009,6 +1009,32 @@ def classify_restaurant_suitability(listing: dict) -> dict:
     listing["restaurant_score"] = score
     listing["restaurant_suitable"] = True  # Commercial listing — passed residential rejection
     listing["restaurant_signals"] = signals
+
+    # LLM enrichment: classify the listing with GPT-4o-mini and store the
+    # structured verdict + scores.  The scoring path in expansion_advisor.py
+    # uses these LLM-derived scores when present, falling back to the
+    # structural restaurant_score when llm_classified_at is null.
+    #
+    # Failure here is non-fatal: classify_listing always returns a dict
+    # (returning a neutral 'uncertain' verdict on any error) so the row
+    # still upserts cleanly.  The expansion_advisor scoring path treats
+    # null LLM scores as "use the structural fallback."
+    try:
+        from app.services.llm_suitability import classify_listing
+
+        photo_urls = [listing["image_url"]] if listing.get("image_url") else []
+        llm_result = classify_listing(listing, photo_urls=photo_urls)
+        listing.update(llm_result)
+    except Exception as exc:
+        # Don't let LLM failures block scraping. Log and move on.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "LLM classification failed for aqar_id=%s: %s",
+            listing.get("aqar_id"),
+            exc,
+        )
+
     return listing
 
 
@@ -1061,6 +1087,13 @@ def upsert_listing(db, listing: dict) -> str:
                 "restaurant_score = :restaurant_score, "
                 "restaurant_suitable = :restaurant_suitable, "
                 "restaurant_signals = :restaurant_signals, "
+                "llm_suitability_verdict = COALESCE(:llm_suitability_verdict, commercial_unit.llm_suitability_verdict), "
+                "llm_suitability_score = COALESCE(:llm_suitability_score, commercial_unit.llm_suitability_score), "
+                "llm_listing_quality_score = COALESCE(:llm_listing_quality_score, commercial_unit.llm_listing_quality_score), "
+                "llm_landlord_signal_score = COALESCE(:llm_landlord_signal_score, commercial_unit.llm_landlord_signal_score), "
+                "llm_reasoning = COALESCE(:llm_reasoning, commercial_unit.llm_reasoning), "
+                "llm_classified_at = COALESCE(:llm_classified_at, commercial_unit.llm_classified_at), "
+                "llm_classifier_version = COALESCE(:llm_classifier_version, commercial_unit.llm_classifier_version), "
                 "status = 'active', last_seen_at = now() "
                 "WHERE aqar_id = :aqar_id"
             ),
@@ -1076,12 +1109,18 @@ def upsert_listing(db, listing: dict) -> str:
                 "num_floors, has_mezzanine, has_drive_thru, facade_direction, "
                 "contact_phone, listing_type, property_type, is_furnished, apartments_count, num_rooms, lat, lon, "
                 "restaurant_score, restaurant_suitable, restaurant_signals, "
+                "llm_suitability_verdict, llm_suitability_score, "
+                "llm_listing_quality_score, llm_landlord_signal_score, "
+                "llm_reasoning, llm_classified_at, llm_classifier_version, "
                 "status, first_seen_at, last_seen_at) "
                 "VALUES (:aqar_id, :title, :description, :neighborhood, :listing_url, :image_url, "
                 ":price_sar_annual, :price_per_sqm, :area_sqm, :street_width_m, "
                 ":num_floors, :has_mezzanine, :has_drive_thru, :facade_direction, "
                 ":contact_phone, :listing_type, :property_type, :is_furnished, :apartments_count, :num_rooms, :lat, :lon, "
                 ":restaurant_score, :restaurant_suitable, :restaurant_signals, "
+                ":llm_suitability_verdict, :llm_suitability_score, "
+                ":llm_listing_quality_score, :llm_landlord_signal_score, "
+                ":llm_reasoning, :llm_classified_at, :llm_classifier_version, "
                 "'active', now(), now())"
             ),
             _listing_params(listing),
@@ -1117,6 +1156,13 @@ def _listing_params(listing: dict) -> dict:
         "restaurant_score": listing.get("restaurant_score"),
         "restaurant_suitable": listing.get("restaurant_suitable"),
         "restaurant_signals": json.dumps(listing.get("restaurant_signals", [])),
+        "llm_suitability_verdict": listing.get("llm_suitability_verdict"),
+        "llm_suitability_score": listing.get("llm_suitability_score"),
+        "llm_listing_quality_score": listing.get("llm_listing_quality_score"),
+        "llm_landlord_signal_score": listing.get("llm_landlord_signal_score"),
+        "llm_reasoning": listing.get("llm_reasoning"),
+        "llm_classified_at": listing.get("llm_classified_at"),
+        "llm_classifier_version": listing.get("llm_classifier_version"),
     }
 
 
