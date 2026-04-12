@@ -103,20 +103,38 @@ _AREA_MAX_SQM = 5000.0
 
 
 def _parse_area_token(text: str | None, listing_type: str | None = None) -> float | None:
-    """Parse an Aqar area token like ``'120,205 m²'`` or ``'85.5 m²'``.
+    """Parse an Aqar area token like ``'120,205 m²'`` or ``'5,000 m²'``.
 
-    Aqar inherits the Saudi deed-registry convention where area is recorded
-    with millimeter precision (3 digits after the decimal) and rendered with
-    a comma as the decimal separator.  Plain comma-as-thousands parsing
-    produces 1000× area inflation on those rows.  Confirmed against listing
-    6294239: the page shows ``Area: 120,205 m²`` which is 120.205 m².
+    Aqar uses commas in area tokens in **two mutually incompatible ways**
+    with identical syntax:
 
-    Disambiguation rules for store/showroom (and unknown types):
+      1. **Thousands separator** — e.g. ``"5,000 m²"`` = 5000 m² (a real
+         large store).
+      2. **Decimal separator** (Saudi deed-registry convention, 3 digits
+         after the decimal) — e.g. ``"120,205 m²"`` = 120.205 m². Confirmed
+         against listing 6294239.
+
+    Punctuation alone cannot distinguish the two. The Patch-14 dry-run
+    proved the earlier "comma only → decimal" rule was wrong: it correctly
+    fixed the 120,205-class rows but then corrupted the 5,000-class rows
+    (real large stores) into 5.0 m² entries.
+
+    Disambiguation rule for store/showroom (and unknown types):
 
       - Both ``','`` and ``'.'`` present → comma is thousands, period is decimal
-      - Comma only                      → comma is decimal separator (deed convention)
-      - Period only                     → period is decimal separator
-      - Neither                         → plain integer
+      - Comma only → **prefer thousands**; fall back to decimal **only** if
+        the thousands interpretation is implausibly large for the listing
+        type (i.e. > ``_AREA_MAX_SQM``)
+      - Period only → period is decimal separator
+      - Neither → plain integer
+
+    Worked examples under the new rule:
+
+      - ``"5,000 m²"``   → thousands=5000 (≤5000) → **5000.0** ✓ real store
+      - ``"4,500 m²"``   → thousands=4500 (≤5000) → **4500.0** ✓ real store
+      - ``"1,200 m²"``   → thousands=1200 (≤5000) → **1200.0** ✓ real store
+      - ``"120,205 m²"`` → thousands=120205 (>5000) → decimal=**120.205** ✓ deed
+      - ``"28,580 m²"``  → thousands=28580  (>5000) → decimal=**28.580**  ✓ deed
 
     For ``listing_type in ('building', 'warehouse')`` the population
     legitimately contains real large-area listings with comma-as-thousands
@@ -129,7 +147,9 @@ def _parse_area_token(text: str | None, listing_type: str | None = None) -> floa
     For store/showroom, the parsed value is validated against
     ``[_AREA_MIN_SQM, _AREA_MAX_SQM]``; out-of-range values are logged and
     rejected (returns ``None``) so junk does not land in the DB.  Unknown
-    listing types get the new disambiguator but no plausibility guard.
+    listing types get the same disambiguator (using the store/showroom
+    ceiling as a heuristic, since that's Aqar's dominant comma-token
+    population) but no final plausibility guard.
     """
     if not text:
         return None
@@ -152,8 +172,17 @@ def _parse_area_token(text: str | None, listing_type: str | None = None) -> floa
             # Both present: comma is thousands, period is decimal (e.g., "1,200.50")
             value = float(cleaned.replace(",", ""))
         elif has_comma:
-            # Comma only: treat as decimal separator (Saudi deed convention)
-            value = float(cleaned.replace(",", "."))
+            # Comma-only is ambiguous: the same "N,NNN m²" syntax is used
+            # both for plain thousands ("5,000 m²" = 5000) and for the
+            # Saudi deed-registry decimal-comma convention ("120,205 m²"
+            # = 120.205). Disambiguate by plausibility — prefer the
+            # thousands interpretation, fall back to decimal only if
+            # thousands is implausibly large for a store/showroom.
+            thousands_value = float(cleaned.replace(",", ""))
+            if thousands_value <= _AREA_MAX_SQM:
+                value = thousands_value
+            else:
+                value = float(cleaned.replace(",", "."))
         else:
             value = float(cleaned)
     except ValueError:
