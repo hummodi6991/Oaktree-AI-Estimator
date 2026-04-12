@@ -100,6 +100,63 @@ _ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 # outside is almost certainly a parse corruption or a category miscoding.
 _AREA_MIN_SQM = 5.0
 _AREA_MAX_SQM = 5000.0
+# Stricter floor applied ONLY on the decimal-fallback path. The general
+# _AREA_MIN_SQM stays at 5.0 because real Aqar listings can legitimately
+# show very small areas (souk kiosks, market stalls) when not coming
+# through the comma disambiguator. The fallback path is different — by
+# the time we land there, we already know the source token had a comma
+# AND the thousands interpretation was too large, which is strong
+# evidence of decimal-comma corruption. A stricter floor catches the
+# 14-class decimal results from sources like "14,285 m²" without
+# affecting any non-fallback parsing.
+_AREA_FALLBACK_MIN_SQM = 20.0
+
+
+# Telemetry counters for area parsing reliability. Reset at the start
+# of each scrape via _reset_area_parse_telemetry().
+_area_parse_stats = {
+    "attempted": 0,
+    "succeeded": 0,
+    "rejected_multi_separator": 0,
+    "rejected_decimal_fallback_too_small": 0,
+    "rejected_plausibility_floor": 0,
+    "rejected_plausibility_ceiling": 0,
+    "rejected_unparseable": 0,
+}
+
+
+def _reset_area_parse_telemetry() -> None:
+    for k in _area_parse_stats:
+        _area_parse_stats[k] = 0
+
+
+def _log_area_parse_telemetry() -> None:
+    """Log the area parser's success/failure counts and emit a WARNING
+    if the rejection rate exceeds 5% of attempted parses.
+    """
+    attempted = _area_parse_stats["attempted"]
+    if attempted == 0:
+        logger.info("Area parser telemetry: no parses attempted")
+        return
+    succeeded = _area_parse_stats["succeeded"]
+    rejected = attempted - succeeded
+    rejection_rate = (rejected / attempted) * 100.0
+    summary = (
+        "Area parser telemetry: attempted=%d succeeded=%d rejected=%d "
+        "(%.1f%%) — multi_separator=%d fallback_too_small=%d "
+        "plausibility_floor=%d plausibility_ceiling=%d unparseable=%d"
+    ) % (
+        attempted, succeeded, rejected, rejection_rate,
+        _area_parse_stats["rejected_multi_separator"],
+        _area_parse_stats["rejected_decimal_fallback_too_small"],
+        _area_parse_stats["rejected_plausibility_floor"],
+        _area_parse_stats["rejected_plausibility_ceiling"],
+        _area_parse_stats["rejected_unparseable"],
+    )
+    if rejection_rate > 5.0:
+        logger.warning("HIGH AREA PARSE REJECTION RATE: %s", summary)
+    else:
+        logger.info(summary)
 
 
 def _parse_area_token(text: str | None, listing_type: str | None = None) -> float | None:
@@ -158,12 +215,43 @@ def _parse_area_token(text: str | None, listing_type: str | None = None) -> floa
     if not cleaned:
         return None
 
+    # Count as an attempted parse once we know we have something to parse.
+    _area_parse_stats["attempted"] += 1
+
+    # Multi-separator reject: catches source-data corruption like
+    # "5,028,580 m²" (real case from listing 6550938) where the area token
+    # has multiple commas glued together in a way that's neither a clean
+    # thousands separator nor a clean decimal-comma. The only legitimate
+    # multi-separator pattern is the international thousands+decimal form
+    # (exactly one comma, exactly one period, in that order), which the
+    # disambiguator already handles correctly downstream.
+    comma_count = cleaned.count(",")
+    period_count = cleaned.count(".")
+    total_separators = comma_count + period_count
+    if total_separators > 1:
+        legit_thousands_decimal = (
+            comma_count == 1
+            and period_count == 1
+            and cleaned.index(",") < cleaned.index(".")
+        )
+        if not legit_thousands_decimal:
+            _area_parse_stats["rejected_multi_separator"] += 1
+            logger.warning(
+                "Rejected multi-separator area %r for listing_type=%s "
+                "(commas=%d, periods=%d)",
+                text, listing_type, comma_count, period_count,
+            )
+            return None
+
     # building / warehouse → legacy thousands-separator behavior, no guard
     if listing_type in ("building", "warehouse"):
         try:
-            return float(cleaned.replace(",", ""))
+            result = float(cleaned.replace(",", ""))
         except ValueError:
+            _area_parse_stats["rejected_unparseable"] += 1
             return None
+        _area_parse_stats["succeeded"] += 1
+        return result
 
     has_comma = "," in cleaned
     has_period = "." in cleaned
@@ -182,17 +270,44 @@ def _parse_area_token(text: str | None, listing_type: str | None = None) -> floa
             if thousands_value <= _AREA_MAX_SQM:
                 value = thousands_value
             else:
-                value = float(cleaned.replace(",", "."))
+                # Decimal-fallback path. Apply a STRICTER floor than the
+                # general _AREA_MIN_SQM because anything reaching this
+                # branch is an interpretation we have lower confidence
+                # in (the thousands reading was implausibly large,
+                # suggesting deed-convention decimal-comma — but a
+                # 14.285 m² store is still nonsense and almost certainly
+                # contamination, not a real kiosk).
+                decimal_value = float(cleaned.replace(",", "."))
+                if decimal_value < _AREA_FALLBACK_MIN_SQM:
+                    _area_parse_stats["rejected_decimal_fallback_too_small"] += 1
+                    logger.warning(
+                        "Rejected implausible decimal-fallback area %.3f "
+                        "for listing_type=%s (raw=%r, thousands=%.0f)",
+                        decimal_value, listing_type, text, thousands_value,
+                    )
+                    return None
+                value = decimal_value
         else:
             value = float(cleaned)
     except ValueError:
+        _area_parse_stats["rejected_unparseable"] += 1
         return None
 
     # Plausibility guardrail for store/showroom only.  Keeps junk out of the
     # DB even if a future parser bug slips through; rejected values show up
     # in the scraper logs so false rejections are recoverable.
     if listing_type in ("store", "showroom"):
-        if value < _AREA_MIN_SQM or value > _AREA_MAX_SQM:
+        if value < _AREA_MIN_SQM:
+            _area_parse_stats["rejected_plausibility_floor"] += 1
+            logger.warning(
+                "Rejected implausible area value %.3f for listing_type=%s (raw=%r)",
+                value,
+                listing_type,
+                text,
+            )
+            return None
+        if value > _AREA_MAX_SQM:
+            _area_parse_stats["rejected_plausibility_ceiling"] += 1
             logger.warning(
                 "Rejected implausible area value %.3f for listing_type=%s (raw=%r)",
                 value,
@@ -201,6 +316,7 @@ def _parse_area_token(text: str | None, listing_type: str | None = None) -> floa
             )
             return None
 
+    _area_parse_stats["succeeded"] += 1
     return value
 
 
@@ -1395,6 +1511,10 @@ def main():
     )
     args = parser.parse_args()
 
+    # Reset area-parser telemetry at the start of each run so the
+    # end-of-run summary reflects only this scrape's counts.
+    _reset_area_parse_telemetry()
+
     api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
     do_geocode = not args.skip_geocode and bool(api_key)
     if not args.skip_geocode and not api_key:
@@ -1501,6 +1621,20 @@ def main():
                         # Compute price_per_sqm
                         listing["price_per_sqm"] = _compute_price_per_sqm(listing)
 
+                        # Skip rows where the area parser rejected the
+                        # token (returned None). Letting these through
+                        # would insert an area_sqm=NULL row that the LLM
+                        # classifier can't reason about and that would
+                        # still appear in the active pool — exactly the
+                        # contamination path Patch 14b is trying to
+                        # close.
+                        if listing.get("area_sqm") is None:
+                            logger.info(
+                                "Skipping listing %s: area_sqm could not be parsed",
+                                aqar_id,
+                            )
+                            continue
+
                         stats["total"] += 1
                         stats["scraped"] += 1
 
@@ -1564,6 +1698,16 @@ def main():
                     listing["listing_type"] = type_key
                     classify_restaurant_suitability(listing)
                     listing["price_per_sqm"] = _compute_price_per_sqm(listing)
+
+                    # Same None-area skip as the area-level loop — see
+                    # comment above.
+                    if listing.get("area_sqm") is None:
+                        logger.info(
+                            "Skipping listing %s: area_sqm could not be parsed",
+                            aqar_id,
+                        )
+                        continue
+
                     stats["total"] += 1
                     stats["scraped"] += 1
 
@@ -1590,6 +1734,13 @@ def main():
             db.commit()
             if stale_count:
                 print(f"\nMarked {stale_count} listings as stale (not seen in {_STALE_DAYS}+ days)")
+
+        # Surface parser reliability on every run. If the rejection
+        # rate spikes (e.g. Aqar changes their HTML layout and tokens
+        # stop matching the disambiguator), this emits a WARNING line
+        # so we catch it in the next scrape log instead of waiting
+        # for a user complaint.
+        _log_area_parse_telemetry()
 
         print(f"\n=== Done ===")
     finally:

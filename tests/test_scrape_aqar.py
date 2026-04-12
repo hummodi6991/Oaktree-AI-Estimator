@@ -36,21 +36,25 @@ class TestParseAreaTokenDecimalComma:
         )
 
     def test_all_failing_rows_from_diagnostic(self):
-        # Every row from the production diagnostic query gets pinned here.
-        # Each thousands reading (28580, 22376, ...) is > _AREA_MAX_SQM
-        # so the disambiguator falls back to decimal.
-        cases = [
+        """Diagnostic rows from production. Some now correctly return None
+        after the Patch-14b decimal-fallback floor (anything < 20 m²)."""
+        accepted_cases = [
             ("28,580 m²", 28.580),
             ("22,376 m²", 22.376),
             ("22,108 m²", 22.108),
-            ("16,446 m²", 16.446),
-            ("16,205 m²", 16.205),
-            ("14,285 m²", 14.285),
         ]
-        for raw, expected in cases:
+        for raw, expected in accepted_cases:
             assert _parse_area_token(raw, listing_type="store") == pytest.approx(
                 expected
             ), f"{raw!r} did not parse to {expected}"
+
+        # These now correctly return None: their decimal-fallback values
+        # (16.446, 16.205, 14.285) all fall below the 20 m² fallback floor
+        # and are treated as contamination rather than tiny kiosks.
+        rejected_cases = ["16,446 m²", "16,205 m²", "14,285 m²"]
+        for raw in rejected_cases:
+            assert _parse_area_token(raw, listing_type="store") is None, \
+                f"{raw!r} should be rejected by the decimal-fallback floor"
 
 
 class TestParseAreaTokenThousandsComma:
@@ -84,9 +88,13 @@ class TestParseAreaTokenThousandsComma:
         # Exactly at the ceiling stays as thousands.
         assert _parse_area_token("5,000 m²", listing_type="store") == 5000.0
 
-    def test_just_over_ceiling_falls_back_to_decimal(self):
-        # "5,500 m²" thousands=5500 > 5000 → decimal=5.5 (plausible for store).
-        assert _parse_area_token("5,500 m²", listing_type="store") == pytest.approx(5.5)
+    def test_just_over_ceiling_falls_back_to_decimal_rejected(self):
+        # "5,500 m²" thousands=5500 > 5000 → decimal=5.5 → now rejected
+        # by the Patch-14b decimal-fallback floor (5.5 < 20.0). The old
+        # behavior accepted 5.5 as a plausible-looking kiosk value, but
+        # no real F&B store in Riyadh is 5.5 m², and the fallback path
+        # is low-confidence by construction — treat as contamination.
+        assert _parse_area_token("5,500 m²", listing_type="store") is None
 
 
 class TestParseAreaTokenPeriodDecimal:
@@ -186,3 +194,91 @@ class TestParseAreaTokenEmptyOrGarbage:
 
     def test_only_unit_with_whitespace(self):
         assert _parse_area_token("  m²  ") is None
+
+
+class TestParseAreaTokenMultiSeparatorReject:
+    """Multi-separator garbage like '5,028,580 m²' must be rejected."""
+
+    def test_rejects_three_commas(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="scripts.scrape_aqar"):
+            assert _parse_area_token("5,028,580 m²", listing_type="store") is None
+        assert any("multi-separator" in rec.message.lower() for rec in caplog.records)
+
+    def test_rejects_two_commas(self):
+        assert _parse_area_token("1,234,567 m²", listing_type="store") is None
+
+    def test_rejects_two_periods(self):
+        assert _parse_area_token("12.345.678 m²", listing_type="store") is None
+
+    def test_rejects_for_building_too(self):
+        # Multi-separator garbage is invalid for ALL listing types, not
+        # just store/showroom. A 1.2 million sqm building is nonsense.
+        assert _parse_area_token("1,200,500 m²", listing_type="building") is None
+
+    def test_accepts_legit_thousands_decimal(self):
+        # Exactly one comma followed by exactly one period, in order, is the
+        # international thousands+decimal form and stays valid.
+        assert _parse_area_token("1,200.50 m²", listing_type="building") == pytest.approx(1200.50)
+
+    def test_rejects_period_then_comma(self):
+        # period-then-comma is invalid (would be European decimal-with-thousands,
+        # which Aqar doesn't use, and is too risky to disambiguate)
+        assert _parse_area_token("1.200,50 m²", listing_type="store") is None
+
+
+class TestParseAreaTokenDecimalFallbackFloor:
+    """Stricter floor on decimal-fallback path to catch contamination
+    like '12,500 m²' falling back to 12.5 m²."""
+
+    def test_rejects_fallback_below_20(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="scripts.scrape_aqar"):
+            # 12,500 → thousands=12500 > 5000 → fallback decimal=12.5 → < 20 → reject
+            assert _parse_area_token("12,500 m²", listing_type="store") is None
+        assert any("decimal-fallback" in rec.message.lower() for rec in caplog.records)
+
+    def test_rejects_fallback_14_class(self):
+        # 14,285 → thousands=14285 > 5000 → fallback decimal=14.285 → < 20 → reject
+        assert _parse_area_token("14,285 m²", listing_type="store") is None
+
+    def test_accepts_fallback_above_20(self):
+        # 28,580 → thousands=28580 > 5000 → fallback decimal=28.580 → ≥ 20 → accept
+        assert _parse_area_token("28,580 m²", listing_type="store") == pytest.approx(28.580)
+
+    def test_accepts_fallback_120_class(self):
+        # The original Patch 14 canary case still works
+        assert _parse_area_token("120,205 m²", listing_type="store") == pytest.approx(120.205)
+
+    def test_general_floor_unchanged_for_non_fallback(self):
+        # A direct "10 m²" (no comma, no fallback) still passes the
+        # general floor of 5.0 because it didn't come through fallback.
+        assert _parse_area_token("10 m²", listing_type="store") == 10.0
+
+    def test_general_floor_still_rejects_below_5(self):
+        # The general floor is unchanged.
+        assert _parse_area_token("3 m²", listing_type="store") is None
+
+
+class TestParseAreaTelemetryCounters:
+    """Verify the telemetry counters increment on each return path."""
+
+    def test_counters_increment_on_success(self):
+        from scripts.scrape_aqar import _area_parse_stats, _reset_area_parse_telemetry
+        _reset_area_parse_telemetry()
+        _parse_area_token("100 m²", listing_type="store")
+        assert _area_parse_stats["attempted"] == 1
+        assert _area_parse_stats["succeeded"] == 1
+
+    def test_counters_increment_on_multi_separator_reject(self):
+        from scripts.scrape_aqar import _area_parse_stats, _reset_area_parse_telemetry
+        _reset_area_parse_telemetry()
+        _parse_area_token("5,028,580 m²", listing_type="store")
+        assert _area_parse_stats["attempted"] == 1
+        assert _area_parse_stats["succeeded"] == 0
+        assert _area_parse_stats["rejected_multi_separator"] == 1
+
+    def test_counters_increment_on_fallback_too_small(self):
+        from scripts.scrape_aqar import _area_parse_stats, _reset_area_parse_telemetry
+        _reset_area_parse_telemetry()
+        _parse_area_token("14,285 m²", listing_type="store")
+        assert _area_parse_stats["attempted"] == 1
+        assert _area_parse_stats["rejected_decimal_fallback_too_small"] == 1
