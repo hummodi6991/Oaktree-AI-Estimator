@@ -1,0 +1,44 @@
+name: Quarantine Legacy Bad Areas
+
+# Manual trigger ONLY. This is a one-time cleanup for pre-Patch-14
+# corrupted areas. Future contamination is prevented by Patch 14b's
+# parser changes, not by this workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (don't write to DB)"
+        required: false
+        default: "true"
+      restore:
+        description: "Restore: flip quarantined_area rows back to active"
+        required: false
+        default: "false"
+
+jobs:
+  quarantine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Run quarantine script
+        env:
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_SSLMODE: ${{ secrets.POSTGRES_SSLMODE }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "false" ]; then
+            ARGS="$ARGS --no-dry-run"
+          fi
+          if [ "${{ inputs.restore }}" = "true" ]; then
+            ARGS="$ARGS --restore"
+          fi
+          python scripts/quarantine_legacy_corrupt_areas.py $ARGS
