@@ -1,0 +1,54 @@
+name: Repair Bad Areas
+
+# Manual trigger ONLY — this workflow re-fetches Aqar listing pages to
+# re-parse area tokens corrupted by the pre-Patch-14 parser.  It must
+# NOT be wired to a workflow_run / cron trigger because it places a
+# courtesy load on Aqar's servers.  Run it by hand after Patch 14 ships
+# and re-run on-demand if the health-check soft warning from
+# deploy-sccc.yml ever surfaces a fresh regression.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (don't write to DB)"
+        required: false
+        default: "true"
+      limit:
+        description: "Max rows to process (hard ceiling is 100)"
+        required: false
+        default: ""
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run repair script
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_SSLMODE: ${{ secrets.POSTGRES_SSLMODE }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          if [ -n "${{ inputs.limit }}" ]; then
+            ARGS="$ARGS --limit ${{ inputs.limit }}"
+          fi
+          python scripts/repair_bad_areas.py $ARGS

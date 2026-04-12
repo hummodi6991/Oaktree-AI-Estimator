@@ -92,8 +92,94 @@ _CARD_HREF_RE = re.compile(r"(?:store|showroom|warehouse|building)-for-rent-(\d+
 _AREA_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*m²")
 _STREET_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*m\b")
 
+# Arabic-Indic to ASCII digit translation table, shared by helpers below.
+_ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 
-def _parse_listing_from_card(card_link, neighborhood: str) -> dict | None:
+# Plausibility bounds applied to store/showroom listings only. Real commercial
+# stores/showrooms on Aqar essentially never fall outside this range; anything
+# outside is almost certainly a parse corruption or a category miscoding.
+_AREA_MIN_SQM = 5.0
+_AREA_MAX_SQM = 5000.0
+
+
+def _parse_area_token(text: str | None, listing_type: str | None = None) -> float | None:
+    """Parse an Aqar area token like ``'120,205 m²'`` or ``'85.5 m²'``.
+
+    Aqar inherits the Saudi deed-registry convention where area is recorded
+    with millimeter precision (3 digits after the decimal) and rendered with
+    a comma as the decimal separator.  Plain comma-as-thousands parsing
+    produces 1000× area inflation on those rows.  Confirmed against listing
+    6294239: the page shows ``Area: 120,205 m²`` which is 120.205 m².
+
+    Disambiguation rules for store/showroom (and unknown types):
+
+      - Both ``','`` and ``'.'`` present → comma is thousands, period is decimal
+      - Comma only                      → comma is decimal separator (deed convention)
+      - Period only                     → period is decimal separator
+      - Neither                         → plain integer
+
+    For ``listing_type in ('building', 'warehouse')`` the population
+    legitimately contains real large-area listings with comma-as-thousands
+    separators, so this branch keeps the legacy behavior and skips the
+    plausibility guardrail (real buildings can be 8 000+ m²).  Those listing
+    types are enrichment-only per the listings-only architecture and not in
+    the F&B candidate pool, so this conservative branch carries no risk for
+    the Expansion Advisor.
+
+    For store/showroom, the parsed value is validated against
+    ``[_AREA_MIN_SQM, _AREA_MAX_SQM]``; out-of-range values are logged and
+    rejected (returns ``None``) so junk does not land in the DB.  Unknown
+    listing types get the new disambiguator but no plausibility guard.
+    """
+    if not text:
+        return None
+    text = text.translate(_ARABIC_DIGITS)
+    cleaned = re.sub(r"[^\d.,]", "", text)
+    if not cleaned:
+        return None
+
+    # building / warehouse → legacy thousands-separator behavior, no guard
+    if listing_type in ("building", "warehouse"):
+        try:
+            return float(cleaned.replace(",", ""))
+        except ValueError:
+            return None
+
+    has_comma = "," in cleaned
+    has_period = "." in cleaned
+    try:
+        if has_comma and has_period:
+            # Both present: comma is thousands, period is decimal (e.g., "1,200.50")
+            value = float(cleaned.replace(",", ""))
+        elif has_comma:
+            # Comma only: treat as decimal separator (Saudi deed convention)
+            value = float(cleaned.replace(",", "."))
+        else:
+            value = float(cleaned)
+    except ValueError:
+        return None
+
+    # Plausibility guardrail for store/showroom only.  Keeps junk out of the
+    # DB even if a future parser bug slips through; rejected values show up
+    # in the scraper logs so false rejections are recoverable.
+    if listing_type in ("store", "showroom"):
+        if value < _AREA_MIN_SQM or value > _AREA_MAX_SQM:
+            logger.warning(
+                "Rejected implausible area value %.3f for listing_type=%s (raw=%r)",
+                value,
+                listing_type,
+                text,
+            )
+            return None
+
+    return value
+
+
+def _parse_listing_from_card(
+    card_link,
+    neighborhood: str,
+    listing_type: str | None = None,
+) -> dict | None:
     """Parse a listing from an <a> card link matching the Aqar HTML structure.
 
     ``card_link`` is an <a> tag whose href contains ``store-for-rent-NNNN``.
@@ -133,9 +219,13 @@ def _parse_listing_from_card(card_link, neighborhood: str) -> dict | None:
         span_text = sibling.get_text(strip=True)
 
         if "area.svg" in src:
+            # Route the raw token through the decimal/thousands disambiguator
+            # so Saudi deed-convention rows like "120,205 m²" land as 120.205
+            # instead of 120 205.  Passing the known listing_type lets the
+            # helper keep legacy thousands behavior for building/warehouse.
             am = _AREA_RE.search(span_text)
             if am:
-                area_sqm = float(am.group(1).replace(",", ""))
+                area_sqm = _parse_area_token(am.group(0), listing_type=listing_type)
         elif "street.svg" in src:
             sm = _STREET_RE.search(span_text)
             if sm:
@@ -217,8 +307,20 @@ def _find_next_page_url(soup: BeautifulSoup, current_url: str) -> str | None:
     return href if href.startswith("http") else f"https://sa.aqar.fm{href}"
 
 
-def fetch_neighborhood_listings(neighborhood_url: str, neighborhood_name: str, max_pages: int = 10) -> list[dict]:
-    """Fetch all listing cards from a neighborhood page, following pagination."""
+def fetch_neighborhood_listings(
+    neighborhood_url: str,
+    neighborhood_name: str,
+    max_pages: int = 10,
+    listing_type: str | None = None,
+) -> list[dict]:
+    """Fetch all listing cards from a neighborhood page, following pagination.
+
+    ``listing_type`` is the canonical type key (``store`` / ``showroom`` /
+    ``building`` / ``warehouse``) from the caller's crawl configuration.  It
+    is threaded through so the card parser can branch the area token
+    disambiguator correctly — store/showroom use the decimal-comma rule,
+    building/warehouse keep the legacy thousands-separator behavior.
+    """
     all_listings = []
     url = neighborhood_url
     seen_ids: set[str] = set()
@@ -237,7 +339,9 @@ def fetch_neighborhood_listings(neighborhood_url: str, neighborhood_name: str, m
         soup = BeautifulSoup(html, "html.parser")
         card_links = soup.find_all("a", href=_CARD_HREF_RE)
         for card_link in card_links:
-            parsed = _parse_listing_from_card(card_link, neighborhood_name)
+            parsed = _parse_listing_from_card(
+                card_link, neighborhood_name, listing_type=listing_type
+            )
             if parsed and parsed["aqar_id"] not in seen_ids:
                 seen_ids.add(parsed["aqar_id"])
                 listings_on_page.append(parsed)
@@ -1332,7 +1436,12 @@ def main():
                     if j > 0 or i > 0:
                         time.sleep(2)
                     print(f"\n  --- Crawling: {nbr['neighborhood']} ---")
-                    listings = fetch_neighborhood_listings(nbr["url"], nbr["neighborhood"], max_pages=args.max_pages)
+                    listings = fetch_neighborhood_listings(
+                        nbr["url"],
+                        nbr["neighborhood"],
+                        max_pages=args.max_pages,
+                        listing_type=type_key,
+                    )
                     print(f"  Found {len(listings)} listings")
 
                     geo = geo_cache.get(nbr["neighborhood"])
@@ -1393,7 +1502,12 @@ def main():
                     listing_type, type_total_from_areas, city_url,
                 )
                 try:
-                    city_listings = fetch_neighborhood_listings(city_url, "Riyadh", max_pages=args.max_pages)
+                    city_listings = fetch_neighborhood_listings(
+                        city_url,
+                        "Riyadh",
+                        max_pages=args.max_pages,
+                        listing_type=type_key,
+                    )
                 except Exception as e:
                     logger.warning(
                         "City-level fallback failed for %s (%s): %s — skipping",
