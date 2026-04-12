@@ -12,7 +12,9 @@ on:
         required: false
         default: "false"
   workflow_run:
-    workflows: ["Deploy to sccc (Alibaba Cloud Riyadh)"]
+    workflows:
+      - "Deploy to sccc (Alibaba Cloud Riyadh)"
+      - "Aqar Scraper"
     types: [completed]
 
 jobs:
