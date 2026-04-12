@@ -634,6 +634,37 @@
   padding: 0;
 }
 
+/* Split layout — map column on the left (~30%), content on the right (~70%).
+   Used by the Expansion Advisor (Patch 16). */
+.ui-v2-main--split {
+  display: grid;
+  grid-template-columns: minmax(0, 30%) minmax(0, 1fr);
+  gap: 0;
+  align-items: stretch;
+}
+
+.ui-v2-main--split .ui-v2-map-hero {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100vh;
+  overflow: hidden;
+}
+
+.ui-v2-main--split .ui-v2-content {
+  min-width: 0;
+}
+
+@media (max-width: 768px) {
+  .ui-v2-main--split {
+    grid-template-columns: 1fr;
+  }
+  .ui-v2-main--split .ui-v2-map-hero {
+    position: static;
+    max-height: none;
+  }
+}
+
 .ui-v2-map-hero {
   border-radius: var(--radius-lg);
 }

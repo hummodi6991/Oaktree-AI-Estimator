@@ -62,17 +62,21 @@
 }
 
 /* ─ Layout ─ */
+/* Legacy two-column layout preserved for backward-compat only. Patch 16
+   removed the left sidebar so the page now renders a single column stack. */
 .ea-layout {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: var(--oak-gap, 16px);
   align-items: start;
 }
 
-@media (max-width: 1024px) {
-  .ea-layout {
-    grid-template-columns: 1fr;
-  }
+/* Page title shown above the header toolbar after a search */
+.ea-page__title {
+  margin: 0;
+  font-size: var(--oak-fs-lg, 18px);
+  font-weight: var(--oak-fw-bold, 700);
+  color: var(--oak-primary, #14312c);
 }
 
 /* ─ Card ─ */

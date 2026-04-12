@@ -12,10 +12,12 @@ type Props = {
   isLead?: boolean;
   localSortActive?: boolean;
   onSelect: () => void;
-  onToggleShortlist: () => void;
   onCompareToggle: () => void;
   onOpenMemo?: () => void;
   onShowOnMap?: () => void;
+  /** Retained for backward compatibility with tests and saved-study restoration;
+   *  Patch 16 removed the in-card shortlist button so this is never invoked. */
+  onToggleShortlist?: () => void;
 };
 
 export default function ExpansionCandidateCard({
@@ -26,7 +28,6 @@ export default function ExpansionCandidateCard({
   isLead,
   localSortActive,
   onSelect,
-  onToggleShortlist,
   onCompareToggle,
   onOpenMemo,
   onShowOnMap,
@@ -193,15 +194,6 @@ export default function ExpansionCandidateCard({
             aria-label={compared ? t("expansionAdvisor.removeCompare") : t("expansionAdvisor.addToCompare")}
           >
             <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor"><path d="M5 4a1 1 0 00-2 0v7.268a2 2 0 000 3.464V16a1 1 0 102 0v-1.268a2 2 0 000-3.464V4zM11 4a1 1 0 10-2 0v1.268a2 2 0 000 3.464V16a1 1 0 102 0V8.732a2 2 0 000-3.464V4zM17 4a1 1 0 10-2 0v7.268a2 2 0 000 3.464V16a1 1 0 102 0v-1.268a2 2 0 000-3.464V4z"/></svg>
-          </button>
-          <button
-            type="button"
-            className={`ea-candidate__icon-btn${shortlisted ? " ea-candidate__icon-btn--active" : ""}`}
-            onClick={onToggleShortlist}
-            title={shortlisted ? t("expansionAdvisor.removeShortlist") : t("expansionAdvisor.shortlist")}
-            aria-label={shortlisted ? t("expansionAdvisor.removeShortlist") : t("expansionAdvisor.shortlist")}
-          >
-            <svg width="16" height="16" viewBox="0 0 20 20" fill={shortlisted ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.5"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z"/></svg>
           </button>
         </div>
       </div>
