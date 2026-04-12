@@ -35,6 +35,7 @@ from app.services.expansion_advisor import (
 )
 
 
+from app.services.llm_decision_memo import generate_decision_memo
 from app.services.aqar_district_match import normalize_district_key
 from app.api.search import normalize_search_text
 
@@ -971,3 +972,27 @@ def delete_expansion_saved_search(saved_id: str, db: Session = Depends(get_db)) 
     except Exception:
         db.rollback()
         raise
+
+
+# ── LLM Decision Memo ───────────────────────────────────────────────
+
+
+class DecisionMemoRequest(BaseModel):
+    candidate: dict[str, Any]
+    brief: dict[str, Any]
+    lang: str = "en"
+
+
+@router.post("/decision-memo")
+def post_decision_memo(req: DecisionMemoRequest):
+    """Generate an LLM decision memo for a candidate site."""
+    try:
+        memo = generate_decision_memo(
+            candidate=req.candidate,
+            brief=req.brief,
+            lang=req.lang if req.lang in ("en", "ar") else "en",
+        )
+        return {"memo": memo}
+    except RuntimeError as exc:
+        logger.warning("Decision memo generation failed: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc))

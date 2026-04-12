@@ -161,7 +161,7 @@ export default function ExpansionAdvisorPage({
   externalSelectedCandidateId?: string | null;
   onMapViewRequest?: (view: MapViewState) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [brief, setBrief] = useState<ExpansionBrief>(defaultBrief);
   const [candidates, setCandidates] = useState<ExpansionCandidate[]>([]);
   const [searchId, setSearchId] = useState<string>("");
@@ -939,6 +939,9 @@ export default function ExpansionAdvisorPage({
           loading={loadingMemo}
           isLeadCandidate={selectedCandidate?.id === leadCandidateId}
           report={report}
+          candidateRaw={selectedCandidate as unknown as Record<string, unknown>}
+          briefRaw={brief as unknown as Record<string, unknown>}
+          lang={i18n.language?.startsWith("ar") ? "ar" : "en"}
           onClose={() => setActiveDrawer("none")}
           onBackToDetail={() => setActiveDrawer("none")}
           onBackToCompare={compareResult ? () => setActiveDrawer("compare") : undefined}
