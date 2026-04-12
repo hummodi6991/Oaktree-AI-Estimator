@@ -28,11 +28,7 @@ import ExpansionComparePanel from "./ExpansionComparePanel";
 import ExpansionMemoPanel from "./ExpansionMemoPanel";
 import SavedSearchesPanel from "./SavedSearchesPanel";
 import ExpansionReportPanel from "./ExpansionReportPanel";
-import CandidateDetailPanel from "./CandidateDetailPanel";
 import SaveStudyDialog from "./SaveStudyDialog";
-import BriefSummaryRail from "./BriefSummaryRail";
-import StudyHeader from "./StudyHeader";
-import ShortlistTray from "./ShortlistTray";
 import SortFilterBar from "./SortFilterBar";
 import {
   normalizeBriefPayload,
@@ -55,16 +51,8 @@ import {
   reportCacheKey,
   extractSavedStudyMeta,
 } from "./studyAdapters";
-import FinalistsWorkspace from "./FinalistsWorkspace";
-import DecisionChecklist from "./DecisionChecklist";
-import NextStepsStrip from "./NextStepsStrip";
-import CopySummaryBlock from "./CopySummaryBlock";
-import ValidationPlanPanel from "./ValidationPlanPanel";
-import AssumptionsCard from "./AssumptionsCard";
-import { candidateDistrictLabel } from "./formatHelpers";
-import DecisionSnapshotCard from "./DecisionSnapshotCard";
 import CompareOutcomeBanner from "./CompareOutcomeBanner";
-import { CandidateListSkeleton, DetailSkeleton } from "./SkeletonLoaders";
+import { CandidateListSkeleton } from "./SkeletonLoaders";
 import { trackEvent } from "../../api";
 import "./expansion-advisor.css";
 
@@ -196,7 +184,6 @@ export default function ExpansionAdvisorPage({
   const [mapViewState, setMapViewState] = useState<MapViewState>({});
   const [saveToast, setSaveToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [showSavedWorkspace, setShowSavedWorkspace] = useState(false);
-  const detailRef = useRef<HTMLDivElement | null>(null);
   const saveToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = useCallback((type: "success" | "error", message: string) => {
@@ -331,7 +318,6 @@ export default function ExpansionAdvisorPage({
       setMemo(memoResult);
     } catch { setMemoError(t("expansionAdvisor.errorMemo")); } finally {
       setLoadingMemo(false);
-      requestAnimationFrame(() => detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
     }
   };
 
@@ -516,7 +502,6 @@ export default function ExpansionAdvisorPage({
 
   const title = useMemo(() => generateStudyTitle(brief), [brief]);
   const bestCandidate = candidates[0] || null;
-  const passCount = candidates.filter((c) => c.gate_status_json?.overall_pass === true).length;
   const hasResults = candidates.length > 0;
   const districts = useMemo(() => extractDistricts(candidates), [candidates]);
 
@@ -531,405 +516,221 @@ export default function ExpansionAdvisorPage({
 
   const localSortActive = activeSort !== "rank" || activeFilter !== "all" || districtFilter !== "";
   const compareShortlistEnabled = shortlistIds.length >= 2 && shortlistIds.length <= 6;
-  const isFinalStudy = activeSavedId !== null && activeSavedStatus === "final";
-  const leadCandidate = useMemo(() => resolveCandidateById(candidates, leadCandidateId), [candidates, leadCandidateId]);
+  const showBriefForm = briefMode === "edit" || !hasResults;
 
   return (
     <div className="ea-page">
-      {/* Story steps header */}
-      <div className="ea-story-steps">
-        <span className={`ea-story-step ${!hasResults ? "ea-story-step--active" : "ea-story-step--done"}`}>{t("expansionAdvisor.storyStep1")}</span>
-        <span className={`ea-story-step ${hasResults && !selectedCandidate ? "ea-story-step--active" : hasResults ? "ea-story-step--done" : ""}`}>{t("expansionAdvisor.storyStep2")}</span>
-        <span className={`ea-story-step ${shortlistIds.length > 0 ? "ea-story-step--active" : selectedCandidate ? "ea-story-step--done" : ""}`}>{t("expansionAdvisor.storyStep3")}</span>
-        <span className={`ea-story-step ${leadCandidateId ? "ea-story-step--active" : compareResult ? "ea-story-step--done" : ""}`}>{t("expansionAdvisor.storyStep4")}</span>
-        <span className={`ea-story-step ${activeSavedId ? "ea-story-step--active" : ""}`}>{t("expansionAdvisor.storyStep5")}</span>
-      </div>
-
-      {/* Study header — shown after search completes */}
-      {searchId && hasResults && (
-        <StudyHeader
-          title={title}
-          candidateCount={candidates.length}
-          shortlistCount={shortlistIds.length}
-          bestCandidate={bestCandidate}
-          leadCandidate={resolveCandidateById(candidates, leadCandidateId)}
-          report={report}
-          activeSavedId={activeSavedId}
-          searchId={searchId}
-          onSaveStudy={() => setActiveDrawer("save")}
-          onOpenReport={() => { void loadReport(searchId); setActiveDrawer("report"); }}
-          onCompareShortlist={async () => {
-            if (shortlistIds.length >= 2) {
-              setCompareIds(shortlistIds.slice(0, 6));
-              await loadCompare(searchId, shortlistIds.slice(0, 6));
-              setActiveDrawer("compare");
-            }
-          }}
-          compareEnabled={compareShortlistEnabled}
-          onOpenSavedStudies={() => setShowSavedWorkspace(true)}
-        />
+      {/* Page title */}
+      {hasResults && (
+        <h2 className="ea-page__title">{title}</h2>
       )}
 
-      {/* Decision snapshot — shown when lead candidate exists */}
-      {searchId && hasResults && leadCandidate && (
-        <DecisionSnapshotCard
-          candidate={leadCandidate}
-          report={report}
-          memo={leadCandidateId && selectedCandidate?.id === leadCandidateId ? memo : null}
-          prominent={isFinalStudy}
-          searchPassCount={candidates.filter((c) => c.gate_status_json?.overall_pass === true).length}
-        />
-      )}
-
-      {/* Two-column layout: form + results */}
-      <div className={`ea-layout${isFinalStudy ? " ea-layout--final" : ""}`}>
-        {/* Left column: brief form/summary + shortlist tray + saved studies */}
-        <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
-          {/* Brief: edit or summary mode */}
-          {briefMode === "edit" || !hasResults ? (
-            <div className="ea-card">
-              <div className="ea-card__header">
-                <h3 className="ea-card__title">{t("expansionAdvisor.brandBrief")}</h3>
-                <span className="ea-card__subtitle">{t("expansionAdvisor.heroSubtitle")}</span>
-              </div>
-              <div className="ea-card__body">
-                <ExpansionBriefForm initialValue={brief} loading={loadingSearch} onSubmit={onSubmitBrief} />
-                {searchError && <div className="ea-state ea-state--error" style={{ marginTop: 8 }}>{searchError}</div>}
-              </div>
-            </div>
-          ) : (
-            <BriefSummaryRail
-              brief={brief}
-              onEditBrief={() => setBriefMode("edit")}
-              onRunAgain={() => void onSubmitBrief(brief)}
-              loading={loadingSearch}
-            />
+      {/* Header toolbar — shown after search completes, in summary mode */}
+      {hasResults && briefMode === "summary" && (
+        <div className="ea-actions-bar">
+          <button
+            type="button"
+            className="oak-btn oak-btn--sm oak-btn--tertiary"
+            onClick={() => setBriefMode("edit")}
+          >
+            {t("expansionAdvisor.editBrief")}
+          </button>
+          <button
+            type="button"
+            className="oak-btn oak-btn--sm oak-btn--tertiary"
+            onClick={() => void onSubmitBrief(brief)}
+            disabled={loadingSearch}
+          >
+            {loadingSearch ? t("expansionAdvisor.searchingCta") : t("expansionAdvisor.runAgain")}
+          </button>
+          <button
+            type="button"
+            className="oak-btn oak-btn--sm oak-btn--tertiary"
+            onClick={() => { void loadReport(searchId); setActiveDrawer("report"); }}
+          >
+            {t("expansionAdvisor.openExecutiveReport")}
+          </button>
+          <button
+            type="button"
+            className="oak-btn oak-btn--sm oak-btn--primary"
+            onClick={() => setActiveDrawer("save")}
+            disabled={!searchId}
+          >
+            {activeSavedId ? t("expansionAdvisor.updateStudy") : t("expansionAdvisor.saveStudy")}
+          </button>
+          {savedItems.length > 0 && (
+            <button
+              type="button"
+              className="oak-btn oak-btn--sm oak-btn--tertiary"
+              onClick={() => setShowSavedWorkspace(true)}
+            >
+              {t("expansionAdvisor.savedStudiesWorkspace")}
+            </button>
           )}
+          {compareIds.length >= 2 && compareIds.length <= 6 && (
+            <button
+              type="button"
+              className="oak-btn oak-btn--sm oak-btn--primary"
+              disabled={loadingCompare}
+              onClick={async () => {
+                await loadCompare(searchId, compareIds);
+                setActiveDrawer("compare");
+              }}
+            >
+              {t("expansionAdvisor.compareSelected", { count: compareIds.length })}
+            </button>
+          )}
+        </div>
+      )}
 
-          {/* Finalists workspace (replaces shortlist tray when shortlisted) */}
-          {hasResults && shortlistIds.length > 0 ? (
-            <FinalistsWorkspace
-              candidates={candidates}
-              shortlistIds={shortlistIds}
-              leadCandidateId={leadCandidateId}
-              selectedCandidateId={selectedCandidate?.id || null}
-              onSetLead={(id) => setLeadCandidateId(id)}
-              onClearLead={() => setLeadCandidateId(null)}
-              onOpenMemo={(id) => void handleOpenMemoById(id)}
-              onCompare={async () => {
-                if (shortlistIds.length >= 2) {
-                  setCompareIds(shortlistIds.slice(0, 6));
-                  await loadCompare(searchId, shortlistIds.slice(0, 6));
-                  setActiveDrawer("compare");
-                }
-              }}
-              onRemoveShortlist={(id) => {
-                setShortlistIds((cur) => cur.filter((sid) => sid !== id));
-                if (leadCandidateId === id) setLeadCandidateId(null);
-              }}
-              onSelectCandidate={(id) => void handleSelectCandidateById(id)}
-              compareEnabled={compareShortlistEnabled}
-            />
-          ) : hasResults ? (
-            <ShortlistTray
-              candidates={candidates}
-              shortlistIds={shortlistIds}
-              compareIds={compareIds}
-              selectedCandidateId={selectedCandidate?.id || null}
-              onSelectCandidate={(id) => void handleSelectCandidateById(id)}
-              onRemoveShortlist={(id) => setShortlistIds((cur) => cur.filter((sid) => sid !== id))}
-              onOpenMemo={(id) => void handleOpenMemoById(id)}
-              onCompare={async () => {
-                if (shortlistIds.length >= 2) {
-                  setCompareIds(shortlistIds.slice(0, 6));
-                  await loadCompare(searchId, shortlistIds.slice(0, 6));
-                  setActiveDrawer("compare");
-                }
-              }}
-              compareEnabled={compareShortlistEnabled}
-            />
-          ) : null}
+      {/* Brief form — shown in edit mode or before first search */}
+      {showBriefForm && !loadingSearch && (
+        <div className="ea-card">
+          <div className="ea-card__header">
+            <h3 className="ea-card__title">{t("expansionAdvisor.brandBrief")}</h3>
+            <span className="ea-card__subtitle">{t("expansionAdvisor.heroSubtitle")}</span>
+          </div>
+          <div className="ea-card__body">
+            <ExpansionBriefForm initialValue={brief} loading={loadingSearch} onSubmit={onSubmitBrief} />
+            {searchError && <div className="ea-state ea-state--error" style={{ marginTop: 8 }}>{searchError}</div>}
+          </div>
+        </div>
+      )}
 
-          <div className="ea-card">
-            <div className="ea-card__header">
-              <h3 className="ea-card__title">{t("expansionAdvisor.expansionStudies")}</h3>
-              {savedItems.length > 0 && (
-                <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={() => setShowSavedWorkspace(true)}>
-                  {t("expansionAdvisor.openSavedStudies")}
+      {/* Summary strip */}
+      {hasResults && (
+        <div className="ea-summary-strip">
+          <span className="ea-summary-strip__value">
+            {t("expansionAdvisor.summaryLocationsFound", { count: candidates.length })}
+            {bestCandidate && bestCandidate.final_score != null
+              ? ` · ${t("expansionAdvisor.summaryTopScore", { score: Math.round(bestCandidate.final_score) })}`
+              : ""}
+          </span>
+        </div>
+      )}
+
+      {/* Search elapsed time — footnote style */}
+      {hasResults && searchElapsedMs !== null && (
+        <div style={{ textAlign: "end", fontSize: "0.7rem", color: "var(--oak-text-light, #9ca3af)", padding: "0.1rem 0" }}>
+          {t("expansionAdvisor.searchCompletedIn", { seconds: (searchElapsedMs / 1000).toFixed(1) })}
+        </div>
+      )}
+
+      {/* Sort & filter bar */}
+      {hasResults && (
+        <SortFilterBar
+          activeFilter={activeFilter}
+          activeSort={activeSort}
+          districtFilter={districtFilter}
+          districts={districts}
+          totalCount={candidates.length}
+          filteredCount={displayCandidates.length}
+          onFilterChange={setActiveFilter}
+          onSortChange={setActiveSort}
+          onDistrictFilterChange={setDistrictFilter}
+        />
+      )}
+
+      {/* Missing districts banner */}
+      {hasResults && Array.isArray(searchNotes.districts_with_no_candidates) && (searchNotes.districts_with_no_candidates as string[]).length > 0 && (
+        <div className="ea-missing-districts-banner">
+          <span className="ea-missing-districts-banner__icon">ℹ️</span>
+          <span>
+            {t("expansionAdvisor.noMatchingParcelsInDistricts", {
+              districts: (searchNotes.districts_with_no_candidates as string[]).join(", "),
+            })}
+            {searchNotes.districts_no_candidates_reason ? (
+              <> — {String(searchNotes.districts_no_candidates_reason)}</>
+            ) : null}
+          </span>
+        </div>
+      )}
+
+      {/* Candidate list */}
+      {hasResults ? (
+        <ExpansionResultsPanel
+          items={displayCandidates}
+          selectedCandidateId={selectedCandidate?.id || null}
+          shortlistIds={shortlistIds}
+          compareIds={compareIds}
+          leadCandidateId={leadCandidateId}
+          localSortActive={localSortActive}
+          onSelectCandidate={(candidate) => { void handleSelectCandidate(candidate); void trackEvent("ui_expansion_candidate_opened", { meta: { candidate_id: candidate.id } }); }}
+          onToggleCompare={(candidateId) => setCompareIds((cur) => getNextCompareIds(cur, candidateId))}
+          onOpenMemo={(candidateId) => void handleOpenMemoById(candidateId)}
+          onShowOnMap={(candidate) => {
+            onSelectedCandidateChange(candidate);
+            setSelectedCandidate(candidate);
+          }}
+        />
+      ) : loadingSearch ? (
+        <>
+          {searchStartTime && searchElapsedMs === null && (
+            <div className="ea-search-timer" style={{ textAlign: "center", padding: "0.5rem 0", fontSize: "0.85rem", color: "#6b7280", fontVariantNumeric: "tabular-nums" }}>
+              {t("expansionAdvisor.searchingCta")} {(liveElapsed / 1000).toFixed(1)}s
+            </div>
+          )}
+          <CandidateListSkeleton count={5} />
+        </>
+      ) : (
+        <div className="ea-first-run">
+          <div className="ea-first-run__hero">
+            <h3 className="ea-first-run__title">{t("expansionAdvisor.heroTitle")}</h3>
+            <p className="ea-first-run__subtitle">{t("expansionAdvisor.heroSubtitle")}</p>
+          </div>
+          {/* Resume previous study prompt */}
+          {savedItems.length > 0 && (
+            <div className="ea-first-run__resume">
+              <p className="ea-first-run__resume-text">{t("expansionAdvisor.resumeStudyPrompt")}</p>
+              <div className="ea-first-run__resume-list">
+                {savedItems.slice(0, 3).map((item) => {
+                  const meta = extractSavedStudyMeta(item);
+                  return (
+                    <button
+                      key={item.id}
+                      className="ea-first-run__resume-item"
+                      onClick={async () => {
+                        setLoadingSaved(true);
+                        setSavedLoadError(null);
+                        try { const saved = await getSavedExpansionSearch(item.id); await hydrateSavedStudy(saved); } catch { setSavedLoadError(t("expansionAdvisor.errorSavedLoad")); } finally { setLoadingSaved(false); }
+                      }}
+                    >
+                      <span className="ea-first-run__resume-title">{item.title}</span>
+                      <span className="ea-first-run__resume-meta">
+                        <span className={`ea-badge ea-badge--${meta.isFinal ? "green" : "neutral"}`} style={{ fontSize: "var(--oak-fs-xs)" }}>
+                          {meta.isFinal ? t("expansionAdvisor.savedStudyFinal") : t("expansionAdvisor.savedStudyDraft")}
+                        </span>
+                        {meta.shortlistCount > 0 && <span>{t("expansionAdvisor.shortlistCountBadge", { count: meta.shortlistCount })}</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {savedItems.length > 3 && (
+                <button className="oak-btn oak-btn--sm oak-btn--tertiary" style={{ marginTop: 8 }} onClick={() => setShowSavedWorkspace(true)}>
+                  {t("expansionAdvisor.openSavedStudies")} ({savedItems.length})
                 </button>
               )}
             </div>
-            <div className="ea-card__body">
-              {savedLoadError && (
-                <div className="ea-state ea-state--error">
-                  {savedLoadError}
-                  <button
-                    className="oak-btn oak-btn--xs oak-btn--tertiary"
-                    style={{ marginTop: 8 }}
-                    onClick={() => {
-                      setLoadingSaved(true);
-                      setSavedLoadError(null);
-                      listSavedExpansionSearches()
-                        .then((res) => {
-                          setSavedItems(res.items || []);
-                          setSavedLoadError(null);
-                        })
-                        .catch(() => {
-                          setSavedLoadError(t("expansionAdvisor.errorSavedLoad"));
-                        })
-                        .finally(() => setLoadingSaved(false));
-                    }}
-                  >
-                    {t("expansionAdvisor.retry")}
-                  </button>
-                </div>
-              )}
-              {!savedLoadError && (
-                <SavedSearchesPanel
-                  items={savedItems}
-                  loading={loadingSaved}
-                  activeSavedId={activeSavedId}
-                  onOpen={async (savedId) => {
-                    setLoadingSaved(true);
-                    setSavedLoadError(null);
-                    setShowSavedWorkspace(false);
-                    try { const saved = await getSavedExpansionSearch(savedId); await hydrateSavedStudy(saved); } catch { setSavedLoadError(t("expansionAdvisor.errorSavedLoad")); } finally { setLoadingSaved(false); }
-                  }}
-                  onDelete={handleDeleteSaved}
-                  onRename={handleRenameSaved}
-                  onEditDescription={handleEditDescriptionSaved}
-                  onChangeStatus={handleChangeStatusSaved}
-                />
-              )}
-            </div>
+          )}
+          <div className="ea-first-run__divider">
+            <span>{savedItems.length > 0 ? t("expansionAdvisor.startNewStudy") : ""}</span>
           </div>
+          <ol className="ea-first-run__steps">
+            <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep1")}</li>
+            <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep2")}</li>
+            <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep3")}</li>
+            <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep4")}</li>
+            <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep5")}</li>
+            <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep6")}</li>
+          </ol>
         </div>
+      )}
 
-        {/* Right column: results + detail */}
-        <div style={{ display: "grid", gap: 16, alignContent: "start" }}>
-          {/* Summary strip */}
-          {hasResults && (
-            <div className="ea-summary-strip">
-              <span className="ea-summary-strip__value">
-                {t("expansionAdvisor.summaryLocationsFound", { count: candidates.length })}
-                {bestCandidate && bestCandidate.final_score != null
-                  ? ` · ${t("expansionAdvisor.summaryTopScore", { score: Math.round(bestCandidate.final_score) })}`
-                  : ""}
-              </span>
-            </div>
-          )}
-
-          {/* Next steps strip - shown when lead candidate is set */}
-          {hasResults && leadCandidateId && (
-            <NextStepsStrip
-              candidates={candidates}
-              shortlistIds={shortlistIds}
-              leadCandidateId={leadCandidateId}
-              report={report}
-              onOpenMemo={(id) => void handleOpenMemoById(id)}
-              onOpenReport={() => { void loadReport(searchId); setActiveDrawer("report"); }}
-              onCompare={async () => {
-                if (shortlistIds.length >= 2) {
-                  setCompareIds(shortlistIds.slice(0, 6));
-                  await loadCompare(searchId, shortlistIds.slice(0, 6));
-                  setActiveDrawer("compare");
-                }
-              }}
-            />
-          )}
-
-          {/* Search elapsed time — footnote style */}
-          {hasResults && searchElapsedMs !== null && (
-            <div style={{ textAlign: "end", fontSize: "0.7rem", color: "var(--oak-text-light, #9ca3af)", padding: "0.1rem 0" }}>
-              {t("expansionAdvisor.searchCompletedIn", { seconds: (searchElapsedMs / 1000).toFixed(1) })}
-            </div>
-          )}
-
-          {/* Sort & filter bar */}
-          {hasResults && (
-            <SortFilterBar
-              activeFilter={activeFilter}
-              activeSort={activeSort}
-              districtFilter={districtFilter}
-              districts={districts}
-              totalCount={candidates.length}
-              filteredCount={displayCandidates.length}
-              onFilterChange={setActiveFilter}
-              onSortChange={setActiveSort}
-              onDistrictFilterChange={setDistrictFilter}
-            />
-          )}
-
-          {/* Actions bar */}
-          {searchId && (
-            <div className="ea-actions-bar">
-              <button
-                className={`oak-btn oak-btn--sm ${compareIds.length >= 2 && compareIds.length <= 6 ? "oak-btn--primary" : "oak-btn--tertiary"}`}
-                disabled={compareIds.length < 2 || compareIds.length > 6 || loadingCompare}
-                onClick={async () => {
-                  await loadCompare(searchId, compareIds);
-                  setActiveDrawer("compare");
-                }}
-              >
-                {compareIds.length >= 2 && compareIds.length <= 6
-                  ? t("expansionAdvisor.compareSelected", { count: compareIds.length })
-                  : t("expansionAdvisor.compareNeedTwo")}
-              </button>
-              <button className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => { void loadReport(searchId); setActiveDrawer("report"); }}>
-                {t("expansionAdvisor.openExecutiveReport")}
-              </button>
-              <button className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => setActiveDrawer("save")} disabled={!searchId}>
-                {activeSavedId ? t("expansionAdvisor.updateStudy") : t("expansionAdvisor.saveStudy")}
-              </button>
-            </div>
-          )}
-
-          {/* Missing districts banner */}
-          {hasResults && Array.isArray(searchNotes.districts_with_no_candidates) && (searchNotes.districts_with_no_candidates as string[]).length > 0 && (
-            <div className="ea-missing-districts-banner">
-              <span className="ea-missing-districts-banner__icon">ℹ️</span>
-              <span>
-                {t("expansionAdvisor.noMatchingParcelsInDistricts", {
-                  districts: (searchNotes.districts_with_no_candidates as string[]).join(", "),
-                })}
-                {searchNotes.districts_no_candidates_reason ? (
-                  <> — {String(searchNotes.districts_no_candidates_reason)}</>
-                ) : null}
-              </span>
-            </div>
-          )}
-
-          {/* Candidate list */}
-          {hasResults ? (
-            <ExpansionResultsPanel
-              items={displayCandidates}
-              selectedCandidateId={selectedCandidate?.id || null}
-              shortlistIds={shortlistIds}
-              compareIds={compareIds}
-              leadCandidateId={leadCandidateId}
-              localSortActive={localSortActive}
-              onSelectCandidate={(candidate) => { void handleSelectCandidate(candidate); void trackEvent("ui_expansion_candidate_opened", { meta: { candidate_id: candidate.id } }); }}
-              onToggleShortlist={(candidateId) => setShortlistIds((cur) => cur.includes(candidateId) ? cur.filter((id) => id !== candidateId) : [...cur, candidateId])}
-              onToggleCompare={(candidateId) => setCompareIds((cur) => getNextCompareIds(cur, candidateId))}
-              onOpenMemo={(candidateId) => void handleOpenMemoById(candidateId)}
-              onShowOnMap={(candidate) => {
-                onSelectedCandidateChange(candidate);
-                setSelectedCandidate(candidate);
-              }}
-            />
-          ) : loadingSearch ? (
-            <>
-              {searchStartTime && searchElapsedMs === null && (
-                <div className="ea-search-timer" style={{ textAlign: "center", padding: "0.5rem 0", fontSize: "0.85rem", color: "#6b7280", fontVariantNumeric: "tabular-nums" }}>
-                  {t("expansionAdvisor.searchingCta")} {(liveElapsed / 1000).toFixed(1)}s
-                </div>
-              )}
-              <CandidateListSkeleton count={5} />
-            </>
-          ) : (
-            <div className="ea-first-run">
-              <div className="ea-first-run__hero">
-                <h3 className="ea-first-run__title">{t("expansionAdvisor.heroTitle")}</h3>
-                <p className="ea-first-run__subtitle">{t("expansionAdvisor.heroSubtitle")}</p>
-              </div>
-              {/* Resume previous study prompt */}
-              {savedItems.length > 0 && (
-                <div className="ea-first-run__resume">
-                  <p className="ea-first-run__resume-text">{t("expansionAdvisor.resumeStudyPrompt")}</p>
-                  <div className="ea-first-run__resume-list">
-                    {savedItems.slice(0, 3).map((item) => {
-                      const meta = extractSavedStudyMeta(item);
-                      return (
-                        <button
-                          key={item.id}
-                          className="ea-first-run__resume-item"
-                          onClick={async () => {
-                            setLoadingSaved(true);
-                            setSavedLoadError(null);
-                            try { const saved = await getSavedExpansionSearch(item.id); await hydrateSavedStudy(saved); } catch { setSavedLoadError(t("expansionAdvisor.errorSavedLoad")); } finally { setLoadingSaved(false); }
-                          }}
-                        >
-                          <span className="ea-first-run__resume-title">{item.title}</span>
-                          <span className="ea-first-run__resume-meta">
-                            <span className={`ea-badge ea-badge--${meta.isFinal ? "green" : "neutral"}`} style={{ fontSize: "var(--oak-fs-xs)" }}>
-                              {meta.isFinal ? t("expansionAdvisor.savedStudyFinal") : t("expansionAdvisor.savedStudyDraft")}
-                            </span>
-                            {meta.shortlistCount > 0 && <span>{t("expansionAdvisor.shortlistCountBadge", { count: meta.shortlistCount })}</span>}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {savedItems.length > 3 && (
-                    <button className="oak-btn oak-btn--sm oak-btn--tertiary" style={{ marginTop: 8 }} onClick={() => setShowSavedWorkspace(true)}>
-                      {t("expansionAdvisor.openSavedStudies")} ({savedItems.length})
-                    </button>
-                  )}
-                </div>
-              )}
-              <div className="ea-first-run__divider">
-                <span>{savedItems.length > 0 ? t("expansionAdvisor.startNewStudy") : ""}</span>
-              </div>
-              <ol className="ea-first-run__steps">
-                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep1")}</li>
-                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep2")}</li>
-                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep3")}</li>
-                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep4")}</li>
-                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep5")}</li>
-                <li className="ea-first-run__step">{t("expansionAdvisor.workflowStep6")}</li>
-              </ol>
-            </div>
-          )}
-
-          {/* Selected candidate detail */}
-          <div ref={detailRef} />
-          {memoError && <div className="ea-state ea-state--error">{memoError}</div>}
-          {loadingMemo && <DetailSkeleton />}
-          {selectedCandidate && !loadingMemo && (
-            <div className="ea-card">
-              <div className="ea-card__header">
-                <h3 className="ea-card__title">
-                  {selectedCandidate.id === leadCandidateId && selectedCandidate.gate_status_json?.overall_pass === true && <span className="ea-lead-tag">{t("expansionAdvisor.leadSite")}</span>}
-                  {selectedCandidate.id === leadCandidateId && selectedCandidate.gate_status_json?.overall_pass !== true && <span className="ea-lead-tag ea-lead-tag--exploratory">{t("expansionAdvisor.topExploratoryCandidate")}</span>}
-                  #{selectedCandidate.rank_position} {candidateDistrictLabel(selectedCandidate, selectedCandidate.parcel_id || "")}
-                </h3>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {selectedCandidate.id !== leadCandidateId && shortlistIds.includes(selectedCandidate.id) && (
-                    <button className="oak-btn oak-btn--sm oak-btn--tertiary" onClick={() => setLeadCandidateId(selectedCandidate.id)}>
-                      {selectedCandidate.gate_status_json?.overall_pass === true ? t("expansionAdvisor.setAsLead") : t("expansionAdvisor.markExploratoryPick")}
-                    </button>
-                  )}
-                  <button className="oak-btn oak-btn--sm oak-btn--primary" onClick={() => setActiveDrawer("memo")}>
-                    {t("expansionAdvisor.viewDecisionMemo")}
-                  </button>
-                </div>
-              </div>
-              <div className="ea-card__body">
-                <CandidateDetailPanel candidate={selectedCandidate} />
-                <DecisionChecklist candidate={selectedCandidate} memo={memo} />
-                {selectedCandidate.id === leadCandidateId && (
-                  <>
-                    <ValidationPlanPanel candidate={selectedCandidate} memo={memo} report={report} />
-                    <AssumptionsCard candidate={selectedCandidate} report={report} />
-                  </>
-                )}
-                {selectedCandidate.id !== leadCandidateId && (
-                  <AssumptionsCard candidate={selectedCandidate} report={report} compact />
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Copy summary block when lead candidate has a memo */}
-          {leadCandidateId && selectedCandidate?.id === leadCandidateId && (memo || report) && (
-            <CopySummaryBlock
-              candidate={selectedCandidate}
-              report={report}
-              memo={memo}
-            />
-          )}
-        </div>
-      </div>
+      {/* Saved load error (surfaced when loading a saved study fails) */}
+      {savedLoadError && (
+        <div className="ea-state ea-state--error">{savedLoadError}</div>
+      )}
 
       {/* ─── Drawers / dialogs ─── */}
 

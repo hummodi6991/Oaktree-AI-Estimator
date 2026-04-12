@@ -272,6 +272,7 @@ function App() {
     <>
       {uiV2 ? (
         <AppShell
+          layout={analysisMode === "expansion" ? "split" : "stacked"}
           header={<HeaderBar onSearchSelect={(item) => setSearchTarget(item)} />}
           map={
             <>

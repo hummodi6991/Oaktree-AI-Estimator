@@ -9,10 +9,12 @@ export default function ExpansionResultsPanel(props: {
   leadCandidateId?: string | null;
   localSortActive?: boolean;
   onSelectCandidate: (candidate: ExpansionCandidate) => void;
-  onToggleShortlist: (candidateId: string) => void;
   onToggleCompare: (candidateId: string) => void;
   onOpenMemo?: (candidateId: string) => void;
   onShowOnMap?: (candidate: ExpansionCandidate) => void;
+  /** Retained for backward compatibility with tests. Patch 16 removed the
+   *  in-card shortlist button so this callback is never invoked. */
+  onToggleShortlist?: (candidateId: string) => void;
 }) {
   return (
     <div className="ea-candidate-list">
@@ -26,7 +28,6 @@ export default function ExpansionResultsPanel(props: {
           isLead={item.id === props.leadCandidateId}
           localSortActive={props.localSortActive}
           onSelect={() => props.onSelectCandidate(item)}
-          onToggleShortlist={() => props.onToggleShortlist(item.id)}
           onCompareToggle={() => props.onToggleCompare(item.id)}
           onOpenMemo={props.onOpenMemo ? () => props.onOpenMemo!(item.id) : undefined}
           onShowOnMap={props.onShowOnMap ? () => props.onShowOnMap!(item) : undefined}
