@@ -972,5 +972,17 @@
     "execReportKeyRisks": "Key Risks",
     "execReportNextSteps": "Next Steps",
     "execCopySuccess": "Copied to clipboard"
+  },
+  "decisionMemo": {
+    "loading": "Generating decision memo...",
+    "error": "Could not generate decision memo. Please try again.",
+    "showFullBreakdown": "Show full score breakdown",
+    "whyPursue": "Why pursue",
+    "risksToWeigh": "Risks to weigh",
+    "nextAction": "Recommended next action",
+    "finalScore": "Final score",
+    "area": "Area",
+    "annualRent": "Annual rent",
+    "streetWidth": "Street width"
   }
 }

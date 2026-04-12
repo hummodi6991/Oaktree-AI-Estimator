@@ -576,3 +576,28 @@ export async function searchBranchSuggestions(q: string, limit = 15): Promise<Br
   const data = await readJson<BranchSuggestionsResponse>(res);
   return data.items || [];
 }
+
+// ── LLM Decision Memo ──────────────────────────────────────────────
+
+export type LLMDecisionMemo = {
+  headline: string;
+  fit_summary: string;
+  top_reasons_to_pursue: string[];
+  top_risks: string[];
+  recommended_next_action: string;
+  rent_context: string;
+};
+
+export async function generateDecisionMemo(
+  candidate: Record<string, unknown>,
+  brief: Record<string, unknown>,
+  lang: string,
+): Promise<LLMDecisionMemo> {
+  const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/decision-memo"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ candidate, brief, lang }),
+  });
+  const data = await readJson<{ memo: LLMDecisionMemo }>(res);
+  return data.memo;
+}

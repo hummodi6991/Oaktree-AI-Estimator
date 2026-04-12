@@ -919,5 +919,17 @@
     "execReportKeyRisks": "المخاطر الرئيسية",
     "execReportNextSteps": "الخطوات التالية",
     "execCopySuccess": "تم النسخ"
+  },
+  "decisionMemo": {
+    "loading": "جارٍ إنشاء مذكرة القرار...",
+    "error": "تعذّر إنشاء مذكرة القرار. يرجى المحاولة مرة أخرى.",
+    "showFullBreakdown": "عرض تفاصيل الدرجات الكاملة",
+    "whyPursue": "لماذا نتابع",
+    "risksToWeigh": "مخاطر يجب مراعاتها",
+    "nextAction": "الخطوة التالية الموصى بها",
+    "finalScore": "الدرجة النهائية",
+    "area": "المساحة",
+    "annualRent": "الإيجار السنوي",
+    "streetWidth": "عرض الشارع"
   }
 }
