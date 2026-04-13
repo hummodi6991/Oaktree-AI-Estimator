@@ -75,5 +75,27 @@ class Settings:
         "EXPANSION_COMPETITOR_TABLE", "expansion_competitor_quality"
     )
 
+    # --- Realized demand (rating_count Δ) signal ---
+    # When enabled AND the ``expansion_delivery_rating_history`` table has
+    # ≥2 snapshots for the candidate's catchment, the service layer blends a
+    # realized-demand score (rating_count growth per category per radius over
+    # the last N days) into the supply-based _delivery_score().  Default OFF
+    # so behavior is unchanged until history has accumulated.
+    EXPANSION_REALIZED_DEMAND_ENABLED: bool = (
+        os.getenv("EXPANSION_REALIZED_DEMAND_ENABLED", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    EXPANSION_REALIZED_DEMAND_WINDOW_DAYS: int = int(
+        os.getenv("EXPANSION_REALIZED_DEMAND_WINDOW_DAYS", "30")
+    )
+    EXPANSION_REALIZED_DEMAND_RADIUS_M: int = int(
+        os.getenv("EXPANSION_REALIZED_DEMAND_RADIUS_M", "1200")
+    )
+    # Weight given to realized-demand vs listing-count when both are available.
+    # 0.5 = equal blend; 1.0 = realized-demand only; 0.0 = listing-count only.
+    EXPANSION_REALIZED_DEMAND_BLEND: float = float(
+        os.getenv("EXPANSION_REALIZED_DEMAND_BLEND", "0.5")
+    )
+
 
 settings = Settings()

@@ -1951,3 +1951,52 @@ def test_report_compatible_with_legacy_two_arg_get_candidates():
     report = get_recommendation_report(db, "search-1")
     assert report is not None
     assert report["recommendation"]["best_candidate_id"] == "c1"
+
+
+# ── Realized-demand signal (rating_count Δ) ──
+
+def test_delivery_score_backwards_compatible_without_realized_demand():
+    """Legacy call signature must return the original supply-proxy score."""
+    from app.services.expansion_advisor import _delivery_score
+
+    # Reference point from the existing calibration: 40 listings → 100
+    assert _delivery_score(0) == 0.0
+    assert _delivery_score(40) == 100.0
+    assert 0.0 < _delivery_score(10) < _delivery_score(40)
+    # Explicit None realized_demand must equal listing-only score
+    assert _delivery_score(10, realized_demand=None) == _delivery_score(10)
+    # Zero realized_demand means "no signal" and must not drag the score down
+    assert _delivery_score(10, realized_demand=0.0) == _delivery_score(10)
+
+
+def test_delivery_score_blends_realized_demand_when_provided():
+    """When realized_demand is present, it blends with listing-count."""
+    from app.services.expansion_advisor import _delivery_score
+
+    listing_only = _delivery_score(10)  # ~50
+    # Realized demand of 200 Δ ratings ≈ 100 on the realized curve
+    blended = _delivery_score(10, realized_demand=200.0, blend_weight=0.5)
+    # Blend pulls the score toward the stronger realized signal
+    assert blended > listing_only
+    # Full-realized weight = realized score only
+    realized_only = _delivery_score(
+        10, realized_demand=200.0, blend_weight=1.0
+    )
+    assert abs(realized_only - 100.0) < 0.01
+    # Zero blend weight = listing-only
+    ignore_realized = _delivery_score(
+        10, realized_demand=200.0, blend_weight=0.0
+    )
+    assert abs(ignore_realized - listing_only) < 0.01
+
+
+def test_delivery_score_realized_low_demand_pulls_score_down():
+    """Saturated supply but no realized growth signals stagnation."""
+    from app.services.expansion_advisor import _delivery_score
+
+    saturated_listing_only = _delivery_score(80)  # high supply score
+    # Tiny realized-demand delta: catchment is over-served
+    saturated_with_low_demand = _delivery_score(
+        80, realized_demand=5.0, blend_weight=0.5
+    )
+    assert saturated_with_low_demand < saturated_listing_only
