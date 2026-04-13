@@ -77,14 +77,30 @@ def _ingest_tier1_aqar(db: Session, run_id: str) -> int:
         WHERE cu.status = 'active'
           AND cu.restaurant_suitable = TRUE
           AND (cu.property_type IS NULL OR cu.property_type NOT IN ('Residential', 'سكني'))
-          AND NOT (cu.is_furnished = TRUE AND cu.listing_type = 'building')
-          AND NOT (COALESCE(cu.apartments_count, 0) >= 2 AND cu.listing_type = 'building')
-          AND NOT (COALESCE(cu.num_rooms, 0) >= 6 AND cu.listing_type = 'building')
-          AND NOT (
-                cu.listing_type = 'building'
-                AND (
-                    cu.description ~* '(bedroom|غرفة نوم|غرف نوم|غرفة ماستر|ماستر)'
-                    OR cu.area_sqm < 150
+          -- Structural residential heuristics below are bypassed when the LLM
+          -- suitability classifier has strong unit-level ground truth
+          -- (verdict='suitable' AND score>=70). Rationale: Riyadh mixed-use
+          -- buildings often list legitimate ground-floor F&B units whose
+          -- structural fields (apartments_count, num_rooms, small area) look
+          -- residential. The LLM reads the ad copy + photos and is more
+          -- reliable at the unit level. See Codespace Test 2 (2026-04-13):
+          -- ~34 rescued listings, e.g. aqar_id 6518374, 6642176, 6618901.
+          AND (
+                (
+                    cu.llm_suitability_verdict = 'suitable'
+                    AND COALESCE(cu.llm_suitability_score, 0) >= 70
+                )
+                OR (
+                    NOT (cu.is_furnished = TRUE AND cu.listing_type = 'building')
+                    AND NOT (COALESCE(cu.apartments_count, 0) >= 2 AND cu.listing_type = 'building')
+                    AND NOT (COALESCE(cu.num_rooms, 0) >= 6 AND cu.listing_type = 'building')
+                    AND NOT (
+                        cu.listing_type = 'building'
+                        AND (
+                            cu.description ~* '(bedroom|غرفة نوم|غرف نوم|غرفة ماستر|ماستر)'
+                            OR cu.area_sqm < 150
+                        )
+                    )
                 )
             )
           AND cu.listing_type != 'warehouse'
