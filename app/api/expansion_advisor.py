@@ -994,6 +994,55 @@ class DecisionMemoRequest(BaseModel):
     search_id: str | None = None
 
 
+def _structured_to_legacy_shape(memo_json: dict[str, Any]) -> dict[str, Any]:
+    """Project a structured memo onto the legacy response-dict shape so
+    ``response["memo"]`` is always safe for un-updated frontends.
+
+    Canonical (new) fields are ``response["memo_json"]`` / ``response["memo_text"]``.
+    ``response["memo"]`` is a backward-compat shim only.
+    """
+    evidence = memo_json.get("key_evidence") or []
+    risks = memo_json.get("risks") or []
+    reasons: list[str] = []
+    for item in evidence:
+        if isinstance(item, dict):
+            impl = item.get("implication")
+            if impl:
+                reasons.append(str(impl))
+    risk_strings: list[str] = []
+    for item in risks:
+        if isinstance(item, dict):
+            r = item.get("risk")
+            if r:
+                risk_strings.append(str(r))
+    return {
+        "headline": str(memo_json.get("headline_recommendation") or "—"),
+        "fit_summary": str(memo_json.get("ranking_explanation") or "—"),
+        "top_reasons_to_pursue": reasons,
+        "top_risks": risk_strings,
+        "recommended_next_action": str(memo_json.get("bottom_line") or "—"),
+        # Structured prompt does not produce a rent_context field; keep the
+        # legacy key populated with a placeholder so callers that expect it
+        # never KeyError.
+        "rent_context": "—",
+    }
+
+
+def _text_only_to_legacy_shape(cached_text: str) -> dict[str, Any]:
+    """Project a text-only cache hit (legacy-fallback memo persisted earlier)
+    onto the legacy response-dict shape."""
+    text_str = str(cached_text or "").strip()
+    headline = text_str[:120] if text_str else "—"
+    return {
+        "headline": headline or "—",
+        "fit_summary": text_str or "—",
+        "top_reasons_to_pursue": [],
+        "top_risks": [],
+        "recommended_next_action": "—",
+        "rent_context": "—",
+    }
+
+
 def _legacy_memo_to_text(memo: dict[str, Any], lang: str) -> str:
     """Render the legacy decision-memo dict to a plain text block so we
     can still populate ``expansion_candidate.decision_memo`` on the
@@ -1114,6 +1163,19 @@ def post_decision_memo(
          NULL. Still return a valid response to the caller.
       4. Ceiling-breach raises ``RuntimeError`` from the legacy path and
          surfaces as HTTP 503 — same as today.
+
+    Response shape (backward-compat contract):
+      ``response["memo"]`` is ALWAYS a legacy-shape dict (keys: headline,
+      fit_summary, top_reasons_to_pursue, top_risks, recommended_next_action,
+      rent_context). On the structured path it is synthesized from the
+      structured JSON; on legacy fallback it is the dict as-returned by
+      ``generate_decision_memo``; on a text-only cache hit it is derived
+      from the cached text. Un-updated frontends that read
+      ``response.memo.headline`` (etc.) never crash.
+
+      New Phase-3 frontend code should prefer ``response["memo_text"]`` and
+      ``response["memo_json"]`` as the canonical fields. ``response["memo"]``
+      is a backward-compat shim only.
     """
     lang = req.lang if req.lang in ("en", "ar") else "en"
 
@@ -1132,7 +1194,7 @@ def post_decision_memo(
             cached_text, cached_json = cached
             if cached_json is not None:
                 return {
-                    "memo": cached_json,
+                    "memo": _structured_to_legacy_shape(cached_json),
                     "memo_text": cached_text,
                     "memo_json": cached_json,
                     "cached": True,
@@ -1141,7 +1203,7 @@ def post_decision_memo(
                 # Legacy-fallback memo was persisted earlier — serve as-is,
                 # do not regenerate.
                 return {
-                    "memo": {"text": cached_text},
+                    "memo": _text_only_to_legacy_shape(cached_text),
                     "memo_text": cached_text,
                     "memo_json": None,
                     "cached": True,
@@ -1179,7 +1241,7 @@ def post_decision_memo(
 
     if memo_json is not None:
         response_payload = {
-            "memo": memo_json,
+            "memo": _structured_to_legacy_shape(memo_json),
             "memo_text": memo_text,
             "memo_json": memo_json,
             "cached": False,

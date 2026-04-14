@@ -678,6 +678,61 @@ class TestDecisionMemoEndpointCeilingStillReturns503:
         assert resp.status_code == 503
 
 
+class TestDecisionMemoEndpointMemoIsLegacyShape:
+    """Backward-compat contract: response['memo'] is always a legacy-shape
+    dict so un-updated frontends reading memo.headline never crash.
+    """
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_structured_path_memo_has_all_six_legacy_keys_populated(self, mock_get_client):
+        mock_get_client.return_value = _mock_client_returning(VALID_STRUCTURED_RESPONSE)
+
+        db = _DummyDB(preload_row=None)
+        api = _endpoint_client(db)
+
+        payload = {
+            "candidate": BASE_STRUCTURED_CANDIDATE,
+            "brief": BASE_STRUCTURED_BRIEF,
+            "lang": "en",
+            "search_id": "search-legacy-shape",
+            "parcel_id": "parcel-9",
+        }
+        resp = api.post("/v1/expansion-advisor/decision-memo", json=payload)
+        assert resp.status_code == 200, resp.text
+        memo = resp.json()["memo"]
+
+        # All six legacy keys present and non-empty
+        for key in (
+            "headline",
+            "fit_summary",
+            "top_reasons_to_pursue",
+            "top_risks",
+            "recommended_next_action",
+            "rent_context",
+        ):
+            assert key in memo, f"missing legacy key: {key}"
+            assert memo[key], f"legacy key empty: {key}"
+
+        # Headline maps from headline_recommendation
+        assert memo["headline"] == VALID_STRUCTURED_RESPONSE["headline_recommendation"]
+        # fit_summary maps from ranking_explanation
+        assert memo["fit_summary"] == VALID_STRUCTURED_RESPONSE["ranking_explanation"]
+        # recommended_next_action maps from bottom_line
+        assert memo["recommended_next_action"] == VALID_STRUCTURED_RESPONSE["bottom_line"]
+
+        # Lists are non-empty when source key_evidence / risks are non-empty
+        assert isinstance(memo["top_reasons_to_pursue"], list)
+        assert len(memo["top_reasons_to_pursue"]) == len(VALID_STRUCTURED_RESPONSE["key_evidence"])
+        assert memo["top_reasons_to_pursue"][0] == VALID_STRUCTURED_RESPONSE["key_evidence"][0]["implication"]
+
+        assert isinstance(memo["top_risks"], list)
+        assert len(memo["top_risks"]) == len(VALID_STRUCTURED_RESPONSE["risks"])
+        assert memo["top_risks"][0] == VALID_STRUCTURED_RESPONSE["risks"][0]["risk"]
+
+        # rent_context is the documented placeholder
+        assert memo["rent_context"] == "—"
+
+
 class TestRenderStructuredMemoAsTextSmoke:
     def test_text_renderer_uses_six_section_headers(self):
         out = render_structured_memo_as_text(VALID_STRUCTURED_RESPONSE, "en")
