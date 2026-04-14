@@ -1782,11 +1782,41 @@ def _population_score(
     return _clamp((population_reach / reference) ** 0.5 * 100.0)
 
 
-def _delivery_score(delivery_listing_count: int) -> float:
-    """Square-root scaled delivery score for wider dynamic range."""
-    if delivery_listing_count <= 0:
-        return 0.0
-    return _clamp((delivery_listing_count / 40.0) ** 0.5 * 100.0)
+def _delivery_score(
+    delivery_listing_count: int,
+    *,
+    realized_demand: float | None = None,
+    blend_weight: float = 0.5,
+) -> float:
+    """Square-root scaled delivery score for wider dynamic range.
+
+    Two signals are supported:
+
+    * ``delivery_listing_count`` — same-category branches observed in the
+      delivery catchment (supply / saturation proxy).  Always available.
+    * ``realized_demand`` — Σ Δrating_count across same-category branches in
+      the catchment over the trailing window (proxy for actual order volume;
+      a rating accrues roughly per order on delivery platforms).  Only
+      populated when ``EXPANSION_REALIZED_DEMAND_ENABLED`` is true and the
+      history table has ≥2 snapshots for the catchment.
+
+    When realized demand is available, blend it with the listing-count
+    signal: ``score = (1-w) · listing + w · realized``.  Otherwise fall
+    back to today's supply-count behavior unchanged.
+    """
+    listing_score = (
+        0.0
+        if delivery_listing_count <= 0
+        else _clamp((delivery_listing_count / 40.0) ** 0.5 * 100.0)
+    )
+    if realized_demand is None or realized_demand <= 0:
+        return listing_score
+    # Reference: 200 new ratings/window ≈ 100.  Square-root scaling mirrors
+    # the listing-count term so the two blend cleanly.  Calibrate once
+    # enough history has accumulated across Riyadh.
+    realized_score = _clamp((realized_demand / 200.0) ** 0.5 * 100.0)
+    bw = max(0.0, min(1.0, blend_weight))
+    return _clamp(listing_score * (1.0 - bw) + realized_score * bw)
 
 
 def _demand_blend_weights(service_model: str) -> tuple[float, float]:
@@ -5113,6 +5143,105 @@ def run_expansion_search(
                 )
         except Exception:
             logger.warning("expansion_search bulk delivery enrichment failed, using legacy counts", exc_info=True)
+
+    # ── Bulk realized-demand enrichment (Δrating_count over trailing window) ──
+    # Category-specific realized-demand signal derived from the rating_count
+    # history table.  Runs only when the feature flag is on AND the history
+    # table is present with data.  Listing-count-only behavior is preserved
+    # when disabled or when the history table is empty for the catchment.
+    if (
+        settings.EXPANSION_REALIZED_DEMAND_ENABLED
+        and _bulk_delivery
+        and _cached_table_available(db, "expansion_delivery_rating_history")
+    ):
+        try:
+            _window_days = int(settings.EXPANSION_REALIZED_DEMAND_WINDOW_DAYS)
+            _rd_radius_m = int(settings.EXPANSION_REALIZED_DEMAND_RADIUS_M)
+            _rd_values_parts: list[str] = []
+            _rd_cat_terms = _expand_category_terms(category)
+            _rd_cat_conditions = " OR ".join(
+                f"(lower(COALESCE(h.category_raw, '')) LIKE :rd_cat_{i} "
+                f"OR lower(COALESCE(h.cuisine_raw, '')) LIKE :rd_cat_{i})"
+                for i in range(len(_rd_cat_terms))
+            )
+            _rd_params: dict[str, Any] = {
+                f"rd_cat_{i}": f"%{term}%"
+                for i, term in enumerate(_rd_cat_terms)
+            }
+            _rd_params["rd_window_days"] = _window_days
+            _rd_params["rd_radius_m"] = _rd_radius_m
+            for _idx, _r in enumerate(rows):
+                _pid = str(_r.get("parcel_id") or "")
+                _lon = _safe_float(_r.get("lon"))
+                _lat = _safe_float(_r.get("lat"))
+                if _pid and _lon != 0.0 and _lat != 0.0:
+                    _rd_values_parts.append(f"(:rdp_{_idx}, :rdx_{_idx}, :rdy_{_idx})")
+                    _rd_params[f"rdp_{_idx}"] = _pid
+                    _rd_params[f"rdx_{_idx}"] = _lon
+                    _rd_params[f"rdy_{_idx}"] = _lat
+            if _rd_values_parts:
+                _rd_values_sql = ", ".join(_rd_values_parts)
+                with db.begin_nested():
+                    _rd_rows = db.execute(
+                        text(f"""
+                            WITH cands(parcel_id, lon, lat) AS (
+                                VALUES {_rd_values_sql}
+                            ),
+                            branch_delta AS (
+                                SELECT
+                                    h.source_record_id,
+                                    (ARRAY_AGG(h.geom ORDER BY h.captured_at DESC))[1] AS geom,
+                                    GREATEST(
+                                        0,
+                                        MAX(h.rating_count) - MIN(h.rating_count)
+                                    ) AS delta
+                                FROM expansion_delivery_rating_history h
+                                WHERE h.captured_at >= now() - (:rd_window_days || ' days')::interval
+                                  AND h.rating_count IS NOT NULL
+                                  AND h.geom IS NOT NULL
+                                  AND ({_rd_cat_conditions})
+                                GROUP BY h.source_record_id
+                                HAVING COUNT(*) >= 2
+                            )
+                            SELECT
+                                c.parcel_id,
+                                COALESCE(SUM(bd.delta), 0) AS realized_demand,
+                                COUNT(DISTINCT bd.source_record_id) AS contributing_branches
+                            FROM cands c
+                            LEFT JOIN branch_delta bd
+                              ON bd.geom IS NOT NULL
+                             AND ST_DWithin(
+                                 bd.geom::geography,
+                                 ST_SetSRID(ST_MakePoint(
+                                     c.lon::double precision, c.lat::double precision
+                                 ), 4326)::geography,
+                                 :rd_radius_m
+                             )
+                            GROUP BY c.parcel_id
+                        """),
+                        _rd_params,
+                    ).mappings().all()
+                _rd_hits = 0
+                for _dr in _rd_rows:
+                    _pid_key = str(_dr["parcel_id"])
+                    _rd_val = _safe_int(_dr.get("realized_demand"))
+                    _rd_branches = _safe_int(_dr.get("contributing_branches"))
+                    if _pid_key in _bulk_delivery:
+                        _bulk_delivery[_pid_key]["realized_demand_30d"] = _rd_val
+                        _bulk_delivery[_pid_key]["realized_demand_branches"] = _rd_branches
+                        if _rd_branches > 0:
+                            _rd_hits += 1
+                logger.info(
+                    "expansion_search realized-demand enrichment: search_id=%s "
+                    "window_days=%d radius_m=%d parcels_with_signal=%d/%d",
+                    search_id, _window_days, _rd_radius_m, _rd_hits, len(_bulk_delivery),
+                )
+        except Exception:
+            logger.warning(
+                "expansion_search realized-demand enrichment failed; falling back to listing-count only",
+                exc_info=True,
+            )
+
     t_delivery_enrich_done = time.monotonic()
     logger.info(
         "expansion_search timing: delivery_enrichment=%.2fs search_id=%s",
@@ -5194,19 +5323,31 @@ def run_expansion_search(
         )
         # ── Apply bulk delivery enrichment results ──
         _pid_key = str(row.get("parcel_id") or "")
+        _realized_demand_30d: float | None = None
+        _realized_demand_branches: int = 0
         if _pid_key and _pid_key in _bulk_delivery:
             _del_stats = _bulk_delivery[_pid_key]
             provider_listing_count = _del_stats["listing_count"]
             provider_platform_count = _del_stats["platform_count"]
             delivery_listing_count = _del_stats["cat_count"]
             delivery_competition_count = delivery_listing_count
+            # Realized-demand signal (populated only when feature flag is on
+            # AND ≥2 rating_count snapshots exist for branches in the catchment).
+            _rd_raw = _del_stats.get("realized_demand_30d")
+            _realized_demand_branches = int(_del_stats.get("realized_demand_branches") or 0)
+            if _rd_raw is not None and _realized_demand_branches >= 3:
+                _realized_demand_30d = float(_rd_raw)
 
         district_norm = normalize_district_key(district)
         if target_district_norm and (not district_norm or district_norm not in target_district_norm):
             continue
 
         pop_score = _population_score(population_reach, service_model=service_model)
-        delivery_score = _delivery_score(delivery_listing_count)
+        delivery_score = _delivery_score(
+            delivery_listing_count,
+            realized_demand=_realized_demand_30d,
+            blend_weight=settings.EXPANSION_REALIZED_DEMAND_BLEND,
+        )
         _pop_w, _del_w = _demand_blend_weights(service_model)
         demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
 
@@ -5314,8 +5455,14 @@ def run_expansion_search(
                 multi_platform_presence_score = 0.0
                 delivery_competition_score = 0.0
 
-        # Recompute demand_score if district fallback modified delivery_listing_count
-        delivery_score = _delivery_score(delivery_listing_count)
+        # Recompute demand_score if district fallback modified delivery_listing_count.
+        # Realized-demand signal (if any) still applies at catchment level, so
+        # pass it through — the district fallback only adjusts listing_count.
+        delivery_score = _delivery_score(
+            delivery_listing_count,
+            realized_demand=_realized_demand_30d,
+            blend_weight=settings.EXPANSION_REALIZED_DEMAND_BLEND,
+        )
         demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
 
         _is_listing = bool(row.get("commercial_unit_id"))
@@ -6041,6 +6188,24 @@ def run_expansion_search(
         )
         cs["competitor_source"] = "expansion_competitor_quality" if ea_competitor_populated else "restaurant_poi"
         cs["delivery_observed"] = provider_listing_count > 0
+        # Realized-demand evidence (rating_count velocity over the trailing
+        # window).  Only populated when the feature flag is on and the
+        # history table has ≥3 contributing branches in the catchment;
+        # otherwise the field is explicitly None so the UI can distinguish
+        # "not computed" from "zero demand observed".
+        if _realized_demand_30d is not None:
+            feature_snapshot_json["realized_demand_30d"] = _realized_demand_30d
+            feature_snapshot_json["realized_demand_branches"] = _realized_demand_branches
+            feature_snapshot_json["realized_demand_window_days"] = int(
+                settings.EXPANSION_REALIZED_DEMAND_WINDOW_DAYS
+            )
+            cs["realized_demand_source"] = "expansion_delivery_rating_history"
+        else:
+            cs["realized_demand_source"] = (
+                "history_unavailable"
+                if not settings.EXPANSION_REALIZED_DEMAND_ENABLED
+                else "insufficient_history"
+            )
         cs["rent_micro_adjustment"] = prepared_item.get("rent_micro_meta")
         cs["rent_base_sar_m2_year"] = prepared_item.get("rent_base_sar_m2_year")
         _unit_street_width = _safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None

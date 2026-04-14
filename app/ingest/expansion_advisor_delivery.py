@@ -205,6 +205,67 @@ def _normalize_delivery_records(db, platforms: list[str], allow_empty: bool) -> 
     }
 
 
+def _snapshot_rating_counts(db, platforms: list[str]) -> dict:
+    """Append a daily snapshot of rating_count per delivery_source_record.
+
+    Feeds the ``expansion_delivery_rating_history`` table so the service
+    layer can derive a realized-demand signal (Δrating_count over a trailing
+    window) per category per hex.  Idempotent per UTC day via the
+    ``ux_edrh_source_captured_date`` unique index.
+
+    Safe no-op when the history table does not yet exist (migration not
+    applied).  Only Riyadh-geolocated rows are captured.
+    """
+    if not table_exists(db, "expansion_delivery_rating_history"):
+        msg = "expansion_delivery_rating_history table does not exist; skipping snapshot"
+        logger.info(msg)
+        return {"inserted": 0, "skipped_reason": msg}
+    if not table_exists(db, "delivery_source_record"):
+        return {"inserted": 0, "skipped_reason": "delivery_source_record missing"}
+
+    bbox = RIYADH_BBOX
+    platform_list = ", ".join(f"'{p}'" for p in platforms)
+    insert_sql = text(f"""
+        INSERT INTO expansion_delivery_rating_history (
+            source_record_id, platform, brand_name,
+            category_raw, cuisine_raw, rating, rating_count,
+            lat, lon, geom
+        )
+        SELECT
+            dsr.id,
+            lower(dsr.platform),
+            COALESCE(dsr.brand_raw, dsr.restaurant_name_normalized, dsr.restaurant_name_raw),
+            dsr.category_raw,
+            dsr.cuisine_raw,
+            dsr.rating,
+            dsr.rating_count,
+            CAST(BTRIM(CAST(dsr.lat AS text)) AS double precision),
+            CAST(BTRIM(CAST(dsr.lon AS text)) AS double precision),
+            ST_SetSRID(ST_MakePoint(
+                CAST(BTRIM(CAST(dsr.lon AS text)) AS double precision),
+                CAST(BTRIM(CAST(dsr.lat AS text)) AS double precision)
+            ), 4326)
+        FROM delivery_source_record dsr
+        WHERE dsr.rating_count IS NOT NULL
+          AND dsr.lat IS NOT NULL
+          AND dsr.lon IS NOT NULL
+          AND BTRIM(CAST(dsr.lon AS text)) ~ '^[-+]?[0-9]*\\.?[0-9]+$'
+          AND BTRIM(CAST(dsr.lat AS text)) ~ '^[-+]?[0-9]*\\.?[0-9]+$'
+          AND CAST(BTRIM(CAST(dsr.lon AS text)) AS double precision)
+              BETWEEN {bbox['min_lon']} AND {bbox['max_lon']}
+          AND CAST(BTRIM(CAST(dsr.lat AS text)) AS double precision)
+              BETWEEN {bbox['min_lat']} AND {bbox['max_lat']}
+          AND lower(dsr.platform) IN ({platform_list})
+        ON CONFLICT (source_record_id, captured_date) DO NOTHING
+    """)
+
+    result = db.execute(insert_sql)
+    db.commit()
+    inserted = result.rowcount or 0
+    logger.info("Appended %d delivery rating-count history rows", inserted)
+    return {"inserted": inserted}
+
+
 def _run_delivery_scrape(platforms: list[str], max_pages: int) -> list[dict]:
     """Run the delivery scrape pipeline to populate delivery_source_record.
 
@@ -268,6 +329,12 @@ def main() -> None:
         stats = _normalize_delivery_records(db, platforms, args.allow_empty)
         stats["resolved_platforms"] = platforms
         stats["platform_preset"] = args.platforms
+        # Append a daily rating_count snapshot for the realized-demand signal.
+        # Safe when the history table does not yet exist.
+        try:
+            stats["rating_history_snapshot"] = _snapshot_rating_counts(db, platforms)
+        except Exception:
+            logger.warning("rating-count history snapshot failed", exc_info=True)
         stats["scrape_results"] = [
             {k: v for k, v in r.items() if k != "raw_results"}
             for r in scrape_results
