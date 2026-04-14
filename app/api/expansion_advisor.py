@@ -35,7 +35,12 @@ from app.services.expansion_advisor import (
 )
 
 
-from app.services.llm_decision_memo import generate_decision_memo
+from app.services.llm_decision_memo import (
+    build_memo_context,
+    generate_decision_memo,
+    generate_structured_memo,
+    render_structured_memo_as_text,
+)
 from app.services.aqar_district_match import normalize_district_key
 from app.api.search import normalize_search_text
 
@@ -981,18 +986,228 @@ class DecisionMemoRequest(BaseModel):
     candidate: dict[str, Any]
     brief: dict[str, Any]
     lang: str = "en"
+    # Additive (Phase 1) — frontend will be updated in Phase 3 to pass these
+    # so the endpoint can cache memos per-candidate in ``expansion_candidate``.
+    # When either is missing, the endpoint behaves as today (generate fresh,
+    # no cache, no persistence).
+    parcel_id: str | None = None
+    search_id: str | None = None
+
+
+def _legacy_memo_to_text(memo: dict[str, Any], lang: str) -> str:
+    """Render the legacy decision-memo dict to a plain text block so we
+    can still populate ``expansion_candidate.decision_memo`` on the
+    legacy-fallback path.
+    """
+    parts: list[str] = []
+    headline = memo.get("headline")
+    fit = memo.get("fit_summary")
+    reasons = memo.get("top_reasons_to_pursue") or []
+    risks = memo.get("top_risks") or []
+    action = memo.get("recommended_next_action")
+    rent = memo.get("rent_context")
+
+    if headline:
+        parts.append(str(headline))
+    if fit:
+        parts.append(str(fit))
+    if reasons:
+        label = "الأسباب" if lang == "ar" else "Reasons to pursue"
+        parts.append(label + ":\n" + "\n".join(f"- {r}" for r in reasons))
+    if risks:
+        label = "المخاطر" if lang == "ar" else "Risks"
+        parts.append(label + ":\n" + "\n".join(f"- {r}" for r in risks))
+    if action:
+        label = "الخطوة التالية" if lang == "ar" else "Next action"
+        parts.append(f"{label}: {action}")
+    if rent:
+        parts.append(str(rent))
+    return "\n\n".join(parts).strip() + "\n"
+
+
+def _decision_memo_cache_lookup(
+    db: Session,
+    search_id: str,
+    parcel_id: str,
+) -> tuple[str | None, dict[str, Any] | None] | None:
+    """Return (cached_text, cached_json) if a row exists, else None.
+    Any DB error is swallowed and treated as a cache miss."""
+    try:
+        row = db.execute(
+            text(
+                "SELECT decision_memo, decision_memo_json "
+                "FROM expansion_candidate "
+                "WHERE search_id = :sid AND parcel_id = :pid "
+                "LIMIT 1"
+            ),
+            {"sid": search_id, "pid": parcel_id},
+        ).fetchone()
+    except Exception as exc:
+        logger.warning(
+            "Decision memo cache lookup failed for (%s,%s): %s",
+            search_id, parcel_id, exc,
+        )
+        return None
+    if row is None:
+        return None
+    cached_text = row[0]
+    cached_json = row[1]
+    if cached_text is None and cached_json is None:
+        return None
+    return cached_text, cached_json
+
+
+def _decision_memo_cache_write(
+    db: Session,
+    search_id: str,
+    parcel_id: str,
+    memo_text: str | None,
+    memo_json: dict[str, Any] | None,
+) -> None:
+    """Persist the memo to expansion_candidate. Swallows errors — a persist
+    failure must not break the endpoint response."""
+    try:
+        db.execute(
+            text(
+                "UPDATE expansion_candidate "
+                "SET decision_memo = :txt, "
+                "    decision_memo_json = CAST(:j AS JSONB) "
+                "WHERE search_id = :sid AND parcel_id = :pid"
+            ),
+            {
+                "sid": search_id,
+                "pid": parcel_id,
+                "txt": memo_text,
+                "j": json.dumps(memo_json, ensure_ascii=False) if memo_json is not None else None,
+            },
+        )
+        db.commit()
+    except Exception as exc:
+        logger.warning(
+            "Decision memo persist failed for (%s,%s): %s",
+            search_id, parcel_id, exc,
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 @router.post("/decision-memo")
-def post_decision_memo(req: DecisionMemoRequest):
-    """Generate an LLM decision memo for a candidate site."""
+def post_decision_memo(
+    req: DecisionMemoRequest,
+    db: Session = Depends(get_db),
+):
+    """Generate (or fetch cached) LLM decision memo for a candidate site.
+
+    Flow:
+      1. If both ``search_id`` and ``parcel_id`` are supplied, check the
+         cache in ``expansion_candidate``. If either column has a value,
+         serve it — never regenerate. (Phase 1: memos never expire;
+         reruning the search produces a new search_id and a fresh memo.)
+      2. Otherwise, build a MemoContext and call ``generate_structured_memo``.
+         On success, render text, optionally persist both columns, and
+         return the structured output.
+      3. On any structured-path failure (flag off, LLM error, malformed
+         JSON, renderer blow-up), fall back to the legacy generic memo
+         path. Persist only the text column; leave ``decision_memo_json``
+         NULL. Still return a valid response to the caller.
+      4. Ceiling-breach raises ``RuntimeError`` from the legacy path and
+         surfaces as HTTP 503 — same as today.
+    """
+    lang = req.lang if req.lang in ("en", "ar") else "en"
+
+    # Allow parcel_id to be inferred from the candidate dict if the frontend
+    # hasn't been updated yet to pass it at the top level.
+    parcel_id = req.parcel_id or (
+        req.candidate.get("parcel_id") if isinstance(req.candidate, dict) else None
+    )
+    search_id = req.search_id
+    cache_keyed = bool(search_id and parcel_id)
+
+    # 1) Cache lookup
+    if cache_keyed:
+        cached = _decision_memo_cache_lookup(db, search_id, parcel_id)
+        if cached is not None:
+            cached_text, cached_json = cached
+            if cached_json is not None:
+                return {
+                    "memo": cached_json,
+                    "memo_text": cached_text,
+                    "memo_json": cached_json,
+                    "cached": True,
+                }
+            if cached_text is not None:
+                # Legacy-fallback memo was persisted earlier — serve as-is,
+                # do not regenerate.
+                return {
+                    "memo": {"text": cached_text},
+                    "memo_text": cached_text,
+                    "memo_json": None,
+                    "cached": True,
+                }
+
+    # 2) Cache miss / unkeyed — try structured path first
+    memo_json: dict[str, Any] | None = None
+    memo_text: str | None = None
+    ctx = None
     try:
-        memo = generate_decision_memo(
+        ctx = build_memo_context(
             candidate=req.candidate,
             brief=req.brief,
-            lang=req.lang if req.lang in ("en", "ar") else "en",
+            lang=lang,
         )
-        return {"memo": memo}
-    except RuntimeError as exc:
-        logger.warning("Decision memo generation failed: %s", exc)
-        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:  # pragma: no cover — build is designed not to raise
+        logger.warning("build_memo_context failed: %s", exc)
+
+    if ctx is not None:
+        memo_json = generate_structured_memo(ctx)
+
+    if memo_json is not None:
+        # Renderer is wrapped defensively — a malformed-but-validation-passing
+        # JSON must not 500 the endpoint. On renderer failure, drop to legacy
+        # and log the offending JSON so we can tighten validation later.
+        try:
+            memo_text = render_structured_memo_as_text(memo_json, lang)
+        except Exception as exc:
+            logger.warning(
+                "render_structured_memo_as_text failed for %s: %s | json=%s",
+                parcel_id, exc, json.dumps(memo_json, ensure_ascii=False)[:500],
+            )
+            memo_json = None
+            memo_text = None
+
+    if memo_json is not None:
+        response_payload = {
+            "memo": memo_json,
+            "memo_text": memo_text,
+            "memo_json": memo_json,
+            "cached": False,
+        }
+    else:
+        # 3) Legacy fallback (also the flag-off path — byte-for-byte legacy
+        # behavior when EXPANSION_MEMO_STRUCTURED_ENABLED=False).
+        try:
+            legacy = generate_decision_memo(
+                candidate=req.candidate,
+                brief=req.brief,
+                lang=lang,
+            )
+        except RuntimeError as exc:
+            logger.warning("Decision memo generation failed: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc))
+        memo_text = _legacy_memo_to_text(legacy, lang)
+        response_payload = {
+            "memo": legacy,
+            "memo_text": memo_text,
+            "memo_json": None,
+            "cached": False,
+        }
+
+    # 4) Persist when keyed
+    if cache_keyed:
+        _decision_memo_cache_write(
+            db, search_id, parcel_id, memo_text, response_payload["memo_json"]
+        )
+
+    return response_payload
