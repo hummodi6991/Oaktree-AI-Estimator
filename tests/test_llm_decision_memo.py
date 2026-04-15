@@ -262,8 +262,8 @@ VALID_STRUCTURED_RESPONSE = {
         "component and the gap to rank 1 is narrow."
     ),
     "key_evidence": [
-        {"signal": "annual rent", "value": "SAR 480,000/yr", "implication": "15% below Al Olaya median"},
-        {"signal": "realized demand 30d", "value": "1,400 orders", "implication": "7.8x district median"},
+        {"signal": "annual rent", "value": "SAR 480,000/yr", "implication": "15% below Al Olaya median", "polarity": "positive"},
+        {"signal": "realized demand 30d", "value": "1,400 orders", "implication": "7.8x district median", "polarity": "positive"},
     ],
     "risks": [
         {"risk": "street width 8 m limits drive-thru", "mitigation": "curbside handoff via Keeta"},
@@ -750,3 +750,166 @@ class TestRenderStructuredMemoAsTextSmoke:
             "## Bottom Line",
         ):
             assert header in out
+
+
+# ── Phase 1 hotfix: evidence polarity routing in the legacy shim ─────
+
+VALID_STRUCTURED_RESPONSE_WITH_POLARITY = {
+    "headline_recommendation": "recommend with reservations — rent is attractive but competition is heavy",
+    "ranking_explanation": (
+        "occupancy_economics contributed 26.0 out of 30 and competition_whitespace "
+        "only 4.0 out of 10, netting rank 3 of 12."
+    ),
+    "key_evidence": [
+        {
+            "signal": "annual rent",
+            "value": "SAR 480,000/yr",
+            "implication": "15% below Al Olaya median",
+            "polarity": "positive",
+        },
+        {
+            "signal": "competitor density",
+            "value": "3 QSR within 400 m",
+            "implication": "3 competitors limit market share",
+            "polarity": "negative",
+        },
+        {
+            "signal": "street width",
+            "value": "12 m",
+            "implication": "adequate but not drive-thru capable",
+            "polarity": "neutral",
+        },
+    ],
+    "risks": [
+        {"risk": "landlord wants 3-year escalator", "mitigation": "negotiate cap at CPI+2%"},
+    ],
+    "comparison": "Matches Peer A on rent; trails Peer B on competition exposure.",
+    "bottom_line": "Worth a site visit but push hard on the escalator.",
+}
+
+
+class TestStructuredToLegacyShapeEvidencePolarity:
+    """Phase 1 hotfix: polarity-aware routing of key_evidence into
+    top_reasons_to_pursue vs top_risks in _structured_to_legacy_shape."""
+
+    def test_mixed_polarity_routes_positives_and_neutrals_to_reasons_and_negatives_to_risks(self):
+        from app.api.expansion_advisor import _structured_to_legacy_shape
+
+        memo = _structured_to_legacy_shape(VALID_STRUCTURED_RESPONSE_WITH_POLARITY)
+
+        positive_impl = "15% below Al Olaya median"
+        neutral_impl = "adequate but not drive-thru capable"
+        negative_impl = "3 competitors limit market share"
+        explicit_risk = "landlord wants 3-year escalator"
+
+        # top_reasons_to_pursue: positive first, then neutral — order matters.
+        assert memo["top_reasons_to_pursue"] == [positive_impl, neutral_impl]
+        assert memo["top_reasons_to_pursue"].index(positive_impl) < memo["top_reasons_to_pursue"].index(neutral_impl)
+        assert negative_impl not in memo["top_reasons_to_pursue"]
+
+        # top_risks: explicit risk first, then negative implication — order matters.
+        assert memo["top_risks"] == [explicit_risk, negative_impl]
+        assert memo["top_risks"].index(explicit_risk) < memo["top_risks"].index(negative_impl)
+
+    def test_missing_polarity_is_backward_compat_and_treated_as_neutral(self):
+        """Cached structured memos generated before this hotfix have no
+        polarity field; the shim must route every implication to
+        top_reasons_to_pursue (same behavior as before the hotfix) and must
+        not raise."""
+        from app.api.expansion_advisor import _structured_to_legacy_shape
+
+        legacy_cached_memo = {
+            "headline_recommendation": "recommend — below-median rent",
+            "ranking_explanation": "occupancy_economics drove the rank.",
+            "key_evidence": [
+                {"signal": "rent", "value": "SAR 400k/yr", "implication": "12% below median"},
+                {"signal": "footfall", "value": "high", "implication": "adjacent to Hyper Panda"},
+                {"signal": "frontage", "value": "10 m", "implication": "decent visibility"},
+            ],
+            "risks": [{"risk": "permit delay", "mitigation": "start early"}],
+            "comparison": "Matches peers.",
+            "bottom_line": "Pursue.",
+        }
+
+        memo = _structured_to_legacy_shape(legacy_cached_memo)
+
+        assert memo["top_reasons_to_pursue"] == [
+            "12% below median",
+            "adjacent to Hyper Panda",
+            "decent visibility",
+        ]
+        assert memo["top_risks"] == ["permit delay"]
+
+    def test_all_negative_evidence_falls_back_to_ranking_explanation(self):
+        from app.api.expansion_advisor import _structured_to_legacy_shape
+
+        ranking_explanation = (
+            "access_visibility was the only component above median at 6.8 of 10; "
+            "every other component trailed peers, leaving rank 11 of 12 with a "
+            "final score that sits two full points below the recommend threshold."
+        )
+        all_negative_memo = {
+            "headline_recommendation": "decline — every signal except frontage is weak",
+            "ranking_explanation": ranking_explanation,
+            "key_evidence": [
+                {"signal": "rent", "value": "SAR 700k/yr", "implication": "22% above median", "polarity": "negative"},
+                {"signal": "competition", "value": "5 QSR within 300 m", "implication": "saturated corridor", "polarity": "negative"},
+            ],
+            "risks": [{"risk": "parking fails municipal minimum", "mitigation": None}],
+            "comparison": "Trails all peers.",
+            "bottom_line": "Skip.",
+        }
+
+        memo = _structured_to_legacy_shape(all_negative_memo)
+
+        # top_reasons_to_pursue falls back to ranking_explanation truncated to 200 chars.
+        assert len(memo["top_reasons_to_pursue"]) == 1
+        assert memo["top_reasons_to_pursue"][0] == ranking_explanation[:200]
+        assert len(memo["top_reasons_to_pursue"][0]) <= 200
+
+        # top_risks contains every negative implication plus the explicit risk.
+        assert "parking fails municipal minimum" in memo["top_risks"]
+        assert "22% above median" in memo["top_risks"]
+        assert "saturated corridor" in memo["top_risks"]
+        # Explicit risk comes before negative implications.
+        assert memo["top_risks"][0] == "parking fails municipal minimum"
+
+    def test_malformed_evidence_items_are_skipped_not_crashed(self):
+        from app.api.expansion_advisor import _structured_to_legacy_shape
+
+        malformed_memo = {
+            "headline_recommendation": "recommend — rent edge",
+            "ranking_explanation": "occupancy_economics drove the rank.",
+            "key_evidence": [
+                {"signal": "rent", "value": "SAR 400k/yr", "implication": "below median", "polarity": "positive"},
+                "not a dict, should be skipped",
+                {"signal": "frontage", "value": "10 m"},  # missing implication, should be skipped
+                None,  # not a dict, should be skipped
+                {"signal": "footfall", "value": "high", "implication": "busy corridor", "polarity": "neutral"},
+            ],
+            "risks": [
+                {"risk": "permit delay", "mitigation": "start early"},
+                "not a dict",
+                {"mitigation": "no risk key"},  # missing risk, should be skipped
+                None,
+            ],
+            "comparison": "Matches peers.",
+            "bottom_line": "Pursue.",
+        }
+
+        memo = _structured_to_legacy_shape(malformed_memo)
+
+        # Only the two well-formed evidence items made it through.
+        assert memo["top_reasons_to_pursue"] == ["below median", "busy corridor"]
+        # Only the one well-formed risk made it through.
+        assert memo["top_risks"] == ["permit delay"]
+        # Function returned a valid legacy-shape dict (all six keys present).
+        for key in (
+            "headline",
+            "fit_summary",
+            "top_reasons_to_pursue",
+            "top_risks",
+            "recommended_next_action",
+            "rent_context",
+        ):
+            assert key in memo

@@ -1000,26 +1000,70 @@ def _structured_to_legacy_shape(memo_json: dict[str, Any]) -> dict[str, Any]:
 
     Canonical (new) fields are ``response["memo_json"]`` / ``response["memo_text"]``.
     ``response["memo"]`` is a backward-compat shim only.
+
+    Evidence is routed by its ``polarity`` field: positive/neutral implications
+    populate ``top_reasons_to_pursue`` (positives first), and negative
+    implications are merged into ``top_risks`` after the explicit risks list.
+    Missing or malformed polarity is treated as ``"neutral"`` so cached memos
+    generated before polarity was required still render correctly.
     """
+    if not isinstance(memo_json, dict):
+        memo_json = {}
     evidence = memo_json.get("key_evidence") or []
     risks = memo_json.get("risks") or []
-    reasons: list[str] = []
+    if not isinstance(evidence, list):
+        evidence = []
+    if not isinstance(risks, list):
+        risks = []
+
+    positive_reasons: list[str] = []
+    negative_implications: list[str] = []
+    neutral_context: list[str] = []
     for item in evidence:
-        if isinstance(item, dict):
-            impl = item.get("implication")
-            if impl:
-                reasons.append(str(impl))
-    risk_strings: list[str] = []
+        if not isinstance(item, dict):
+            continue
+        impl = item.get("implication")
+        if not impl:
+            continue
+        impl_str = str(impl)
+        polarity_raw = item.get("polarity")
+        polarity = str(polarity_raw).strip().lower() if polarity_raw else ""
+        if polarity == "positive":
+            positive_reasons.append(impl_str)
+        elif polarity == "negative":
+            negative_implications.append(impl_str)
+        else:
+            neutral_context.append(impl_str)
+
+    explicit_risks: list[str] = []
     for item in risks:
-        if isinstance(item, dict):
-            r = item.get("risk")
-            if r:
-                risk_strings.append(str(r))
+        if not isinstance(item, dict):
+            continue
+        r = item.get("risk")
+        if not r:
+            continue
+        explicit_risks.append(str(r))
+
+    top_reasons_to_pursue = positive_reasons + neutral_context
+
+    top_risks: list[str] = []
+    seen: set[str] = set()
+    for s in explicit_risks + negative_implications:
+        if s in seen:
+            continue
+        seen.add(s)
+        top_risks.append(s)
+
+    if not top_reasons_to_pursue:
+        ranking_explanation = str(memo_json.get("ranking_explanation") or "").strip()
+        if ranking_explanation:
+            top_reasons_to_pursue = [ranking_explanation[:200]]
+
     return {
         "headline": str(memo_json.get("headline_recommendation") or "—"),
         "fit_summary": str(memo_json.get("ranking_explanation") or "—"),
-        "top_reasons_to_pursue": reasons,
-        "top_risks": risk_strings,
+        "top_reasons_to_pursue": top_reasons_to_pursue,
+        "top_risks": top_risks,
         "recommended_next_action": str(memo_json.get("bottom_line") or "—"),
         # Structured prompt does not produce a rent_context field; keep the
         # legacy key populated with a placeholder so callers that expect it

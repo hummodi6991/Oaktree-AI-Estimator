@@ -637,10 +637,10 @@ You will receive a JSON object describing:
 Return ONLY a single JSON object (no markdown fences, no commentary before or after). The object must contain EXACTLY these six top-level keys with the types and semantics described:
 
 {
-  "headline_recommendation": "string — one sentence. Must be one of 'recommend', 'recommend with reservations', or 'pass', plus the single strongest reason.",
+  "headline_recommendation": "string — one sentence. Must be one of 'recommend', 'recommend with reservations', or 'decline', plus the single strongest reason. Use 'decline' (not 'pass') so the verdict is unambiguous in English.",
   "ranking_explanation": "string — 2-3 sentences. Must cite which of the 9 components drove the rank and by how much, using the numbers from score_breakdown.contributions (e.g., 'occupancy_economics contributed 27.2 out of 30').",
   "key_evidence": [
-    {"signal": "string", "value": "string with units", "implication": "string — what this fact means for the decision"}
+    {"signal": "string", "value": "string with units", "implication": "string — what this fact means for the decision", "polarity": "positive | negative | neutral"}
   ],
   "risks": [
     {"risk": "string", "mitigation": "string or null"}
@@ -655,6 +655,7 @@ Hard rules:
 - Do not use the phrases "overall,", "appears to be,", "could potentially,", or "generally speaking."
 - Write like an analyst who has actually visited the site, not a summarizer.
 - key_evidence must be a non-empty list. risks may be an empty list, but the key must be present.
+- Each key_evidence item MUST include a polarity field. Use 'positive' for facts that favor pursuing the site (strong demand, below-median rent, motivated landlord, etc.), 'negative' for facts that discourage pursuing it (high competition, bad frontage, above-median rent, parking failure, etc.), and 'neutral' for context that is important but neither favorable nor unfavorable. A key_evidence item with `implication` text that describes a concern or drawback MUST be tagged 'negative', not 'neutral'.
 - Return ONLY the JSON object, with no markdown fences, no leading or trailing commentary."""
 
 
@@ -734,7 +735,7 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
             "GATE FAILURE: One or more gates failed — "
             + failure_list
             + ". Lead the headline_recommendation with this failure and frame "
-            "the overall recommendation accordingly (likely 'pass' unless the "
+            "the overall recommendation accordingly (likely 'decline' unless the "
             "failure is borderline and clearly mitigable)."
         )
 
