@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.services.aqar_district_match import is_mojibake, normalize_district_key
+from app.services.expansion_rerank import generate_rerank
 from app.services.rent import aqar_rent_median
 
 logger = logging.getLogger(__name__)
@@ -838,6 +839,122 @@ def _apply_llm_fuzzy_tiebreak(ranked_rows: list[dict[str, Any]]) -> list[dict[st
         for idx, row in zip(group, group_rows):
             out[idx] = row
     return out
+
+
+# Rerank metadata fields attached to every candidate, whether or not the
+# bounded LLM reranker ran. Consumers rely on the presence of these keys.
+_RERANK_STATUS_FLAG_OFF = "flag_off"
+_RERANK_STATUS_BELOW_MIN = "shortlist_below_minimum"
+_RERANK_STATUS_LLM_FAILED = "llm_failed"
+_RERANK_STATUS_APPLIED = "applied"
+_RERANK_STATUS_UNCHANGED = "unchanged"
+_RERANK_STATUS_OUTSIDE_CAP = "outside_rerank_cap"
+
+
+def _apply_rerank_to_candidates(
+    candidates: list[dict[str, Any]],
+    brand_profile: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Attach rerank metadata to every candidate and, when enabled, apply
+    bounded LLM shortlist reranking (Phase 2).
+
+    This function is safe to call whether or not the feature flag is on:
+    with the flag off it annotates each candidate with ``rerank_status``
+    ``"flag_off"`` and leaves ``final_rank == deterministic_rank``, so the
+    candidate list order is unchanged. With the flag on and a valid LLM
+    response, the in-shortlist candidates are reordered by ``new_rank`` and
+    the returned list is sorted by ``final_rank`` ascending.
+
+    The six metadata fields attached to every candidate:
+      - deterministic_rank (1-based position before reranking)
+      - final_rank         (1-based position after reranking)
+      - rerank_applied     (True iff the LLM moved this candidate)
+      - rerank_reason      (structured reason dict when applied, else None)
+      - rerank_delta       (final_rank - deterministic_rank; 0 when unchanged)
+      - rerank_status      (one of the _RERANK_STATUS_* constants)
+    """
+    if not candidates:
+        return candidates
+
+    # 1. Assign deterministic_rank + default metadata to every candidate.
+    for idx, c in enumerate(candidates, start=1):
+        c["deterministic_rank"] = idx
+        c["final_rank"] = idx
+        c["rerank_applied"] = False
+        c["rerank_reason"] = None
+        c["rerank_delta"] = 0
+        c["rerank_status"] = _RERANK_STATUS_FLAG_OFF
+
+    cap = settings.EXPANSION_LLM_RERANK_SHORTLIST_SIZE
+    min_size = settings.EXPANSION_LLM_RERANK_MIN_SHORTLIST
+    rerank_shortlist_size = min(len(candidates), cap)
+
+    # 2. Mark candidates beyond the shortlist cap up front (their status
+    #    stays correct regardless of which fallback branch fires below).
+    for c in candidates[rerank_shortlist_size:]:
+        c["rerank_status"] = _RERANK_STATUS_OUTSIDE_CAP
+
+    # 3. Call the bounded reranker. Returns None on any failure path
+    #    (flag off, below-min, ceiling exceeded, client error, JSON parse
+    #    failure, validation failure) — deterministic order is preserved.
+    decisions = generate_rerank(candidates[:rerank_shortlist_size], brand_profile)
+
+    if decisions is None:
+        # Pick the right status code for the in-shortlist candidates.
+        if not settings.EXPANSION_LLM_RERANK_ENABLED:
+            status = _RERANK_STATUS_FLAG_OFF
+        elif rerank_shortlist_size < min_size:
+            status = _RERANK_STATUS_BELOW_MIN
+        else:
+            status = _RERANK_STATUS_LLM_FAILED
+        for c in candidates[:rerank_shortlist_size]:
+            c["rerank_status"] = status
+        return candidates
+
+    # 4. Apply the rerank. Every decision's parcel_id appears exactly once
+    #    in the shortlist (validator guarantees set equality + uniqueness).
+    decisions_by_pid: dict[Any, dict[str, Any]] = {
+        d["parcel_id"]: d for d in decisions
+    }
+    moved_count = 0
+    max_delta_abs = 0
+    for c in candidates[:rerank_shortlist_size]:
+        pid = c.get("parcel_id") or c.get("id")
+        decision = decisions_by_pid.get(pid)
+        if decision is None:
+            # Shouldn't happen post-validation, but preserve deterministic
+            # order defensively rather than crash.
+            c["rerank_status"] = _RERANK_STATUS_LLM_FAILED
+            continue
+        new_rank = int(decision["new_rank"])
+        c["final_rank"] = new_rank
+        delta = new_rank - c["deterministic_rank"]
+        c["rerank_delta"] = delta
+        if delta != 0:
+            c["rerank_applied"] = True
+            c["rerank_reason"] = decision.get("rerank_reason")
+            c["rerank_status"] = _RERANK_STATUS_APPLIED
+            moved_count += 1
+            max_delta_abs = max(max_delta_abs, abs(delta))
+        else:
+            c["rerank_status"] = _RERANK_STATUS_UNCHANGED
+
+    # 5. Reorder the candidate list by final_rank ascending. Candidates
+    #    beyond the shortlist keep final_rank == deterministic_rank (their
+    #    original position), so a stable sort by final_rank preserves their
+    #    relative order and places them after the reranked shortlist.
+    candidates.sort(key=lambda c: c.get("final_rank", 0))
+
+    logger.info(
+        "expansion_rerank applied: candidates=%d shortlist=%d moved=%d "
+        "max_delta=%d",
+        len(candidates),
+        rerank_shortlist_size,
+        moved_count,
+        max_delta_abs,
+    )
+
+    return candidates
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -6586,6 +6703,18 @@ def run_expansion_search(
         candidates = _balanced
 
     candidates = candidates[:limit]
+
+    # Phase 2: bounded LLM shortlist reranking. Annotates every candidate
+    # with rerank metadata (deterministic_rank, final_rank, rerank_applied,
+    # rerank_reason, rerank_delta, rerank_status) and, when
+    # EXPANSION_LLM_RERANK_ENABLED is True, reorders the top
+    # min(len(candidates), EXPANSION_LLM_RERANK_SHORTLIST_SIZE) within
+    # ±EXPANSION_LLM_RERANK_MAX_MOVE ranks of their deterministic position.
+    # With the flag off (the default) this is a no-op for ordering: every
+    # candidate keeps final_rank == deterministic_rank and the list is
+    # unchanged.
+    candidates = _apply_rerank_to_candidates(candidates, effective_brand_profile)
+
     for index, candidate in enumerate(candidates, start=1):
         candidate["compare_rank"] = index
         candidate["rank_position"] = index
