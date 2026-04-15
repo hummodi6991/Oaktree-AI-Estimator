@@ -550,5 +550,128 @@ def generate_rerank(
     candidates: list[dict[str, Any]],
     brand_profile: dict[str, Any] | None,
 ) -> list[dict[str, Any]] | None:
-    """Public entry point for bounded LLM shortlist reranking. Filled in Step 4."""
-    raise NotImplementedError("Step 4 will implement generate_rerank")
+    """Public entry point for bounded LLM shortlist reranking.
+
+    Returns the list of rerank decisions (one per shortlist candidate) on
+    success, or ``None`` on any failure path (flag off, shortlist below
+    minimum, ceiling exceeded, client unavailable, LLM error, JSON parse
+    failure, validation failure). The caller preserves deterministic order
+    whenever this returns ``None``.
+    """
+    # 1. Flag check. Never call the client when disabled.
+    if not settings.EXPANSION_LLM_RERANK_ENABLED:
+        return None
+
+    # 2. Compute shortlist size.
+    cap = settings.EXPANSION_LLM_RERANK_SHORTLIST_SIZE
+    min_size = settings.EXPANSION_LLM_RERANK_MIN_SHORTLIST
+    shortlist_size = min(len(candidates), cap)
+    if shortlist_size < min_size:
+        return None
+
+    shortlist = candidates[:shortlist_size]
+    max_move = settings.EXPANSION_LLM_RERANK_MAX_MOVE
+
+    # 3. Daily cost ceiling (reuses the decision-memo tracker).
+    try:
+        _check_daily_ceiling()
+    except Exception as exc:
+        logger.warning(
+            "rerank skipped: daily cost ceiling exceeded (candidates=%d, "
+            "error=%s: %s)",
+            shortlist_size,
+            type(exc).__name__,
+            exc,
+        )
+        return None
+
+    # 4. Lazy client.
+    try:
+        client = _get_client()
+    except Exception as exc:
+        logger.warning(
+            "rerank skipped: LLM client unavailable (candidates=%d, "
+            "error=%s: %s)",
+            shortlist_size,
+            type(exc).__name__,
+            exc,
+        )
+        return None
+
+    # 5. Build messages and call the LLM.
+    system_prompt = RERANK_SYSTEM_PROMPT.format(max_move=max_move)
+    user_message = _serialize_shortlist_for_prompt(
+        shortlist, brand_profile, shortlist_size
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=settings.EXPANSION_LLM_RERANK_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            response_format={"type": "json_object"},
+            temperature=settings.EXPANSION_LLM_RERANK_TEMPERATURE,
+            max_tokens=settings.EXPANSION_LLM_RERANK_MAX_TOKENS,
+        )
+    except Exception as exc:
+        logger.warning(
+            "rerank LLM call failed (candidates=%d, error=%s: %s)",
+            shortlist_size,
+            type(exc).__name__,
+            exc,
+        )
+        return None
+
+    # 6. Parse JSON.
+    try:
+        content = (response.choices[0].message.content or "").strip()
+    except Exception as exc:
+        logger.warning(
+            "rerank response had no content (candidates=%d, error=%s: %s)",
+            shortlist_size,
+            type(exc).__name__,
+            exc,
+        )
+        return None
+
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "rerank JSON parse failed (candidates=%d, error=%s, raw=%r)",
+            shortlist_size,
+            exc,
+            content[:1000],
+        )
+        return None
+
+    # 7. Validate (hard-fail on any violation, discard the entire rerank).
+    ok, reasons = _validate_rerank_response(parsed, shortlist, max_move)
+    if not ok:
+        logger.warning(
+            "rerank validation failed (candidates=%d, reasons=%s, raw=%r)",
+            shortlist_size,
+            reasons,
+            content[:1000],
+        )
+        return None
+
+    # 8. Record cost against the shared daily tracker.
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    cost = _record_cost(input_tokens, output_tokens)
+
+    logger.info(
+        "rerank generated | candidates=%d prompt_tokens=%d "
+        "completion_tokens=%d cost=$%.5f",
+        shortlist_size,
+        input_tokens,
+        output_tokens,
+        cost,
+    )
+
+    # 9. Return the validated list of decisions.
+    return parsed["reranked"]
