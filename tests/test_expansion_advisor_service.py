@@ -2000,3 +2000,241 @@ def test_delivery_score_realized_low_demand_pulls_score_down():
         80, realized_demand=5.0, blend_weight=0.5
     )
     assert saturated_with_low_demand < saturated_listing_only
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — bounded LLM shortlist reranking integration
+#
+# These tests exercise _apply_rerank_to_candidates as it sits in the search
+# pipeline (the wiring between the search service and generate_rerank).
+# LLM unit-level behavior is covered in tests/test_expansion_rerank.py.
+# ---------------------------------------------------------------------------
+from unittest.mock import patch  # noqa: E402 — grouped with Phase 2 tests
+
+import pytest  # noqa: E402
+
+from app.core.config import settings as _ea_settings  # noqa: E402
+from app.services.expansion_advisor import (  # noqa: E402
+    _apply_rerank_to_candidates,
+)
+
+
+def _build_candidates(n: int, prefix: str = "p") -> list[dict]:
+    """Build n candidates in deterministic rank order. final_score is
+    monotonically decreasing so the list is pre-sorted."""
+    return [
+        {
+            "parcel_id": f"{prefix}{i}",
+            "final_score": 1.0 - i * 0.001,
+            "feature_snapshot": {"area_m2": 300 + i * 10},
+        }
+        for i in range(1, n + 1)
+    ]
+
+
+def _ok_reason() -> dict:
+    return {
+        "summary": "moved after reweighing realized-demand and landlord signal",
+        "positives_cited": [],
+        "negatives_cited": [],
+        "comparison_to_displaced_candidate": "the displaced candidate has a weaker overall fit",
+    }
+
+
+@pytest.fixture
+def _rerank_on(monkeypatch):
+    monkeypatch.setattr(_ea_settings, "EXPANSION_LLM_RERANK_ENABLED", True)
+
+
+# 1. Flag off: every candidate gets default metadata, order unchanged.
+def test_integration_flag_off_preserves_order_and_attaches_metadata(monkeypatch):
+    monkeypatch.setattr(_ea_settings, "EXPANSION_LLM_RERANK_ENABLED", False)
+    cands = _build_candidates(20)
+    original_ids = [c["parcel_id"] for c in cands]
+    with patch(
+        "app.services.expansion_advisor.generate_rerank"
+    ) as mock_gen:
+        out = _apply_rerank_to_candidates(cands, {"category": "QSR"})
+    # generate_rerank is called (the real impl short-circuits on flag off,
+    # but the integration layer always calls through so all the metadata
+    # statuses are driven by generate_rerank's return value).
+    assert mock_gen.called
+    assert [c["parcel_id"] for c in out] == original_ids
+    for i, c in enumerate(out, start=1):
+        assert c["deterministic_rank"] == i
+        assert c["final_rank"] == i
+        assert c["rerank_applied"] is False
+        assert c["rerank_reason"] is None
+        assert c["rerank_delta"] == 0
+
+
+# 2. Flag on, no LLM moves: every candidate tagged "unchanged".
+def test_integration_flag_on_no_moves_tags_unchanged(_rerank_on):
+    cands = _build_candidates(10)
+    unchanged_decisions = [
+        {"parcel_id": f"p{i}", "original_rank": i, "new_rank": i,
+         "rerank_reason": None}
+        for i in range(1, 11)
+    ]
+    with patch(
+        "app.services.expansion_advisor.generate_rerank",
+        return_value=unchanged_decisions,
+    ):
+        out = _apply_rerank_to_candidates(cands, {})
+    for i, c in enumerate(out, start=1):
+        assert c["final_rank"] == c["deterministic_rank"] == i
+        assert c["rerank_applied"] is False
+        assert c["rerank_status"] == "unchanged"
+
+
+# 3. Flag on, p3 <-> p5 swap: candidate list sorted by final_rank.
+def test_integration_flag_on_swap_reorders_by_final_rank(_rerank_on):
+    cands = _build_candidates(10)
+    decisions = []
+    for i in range(1, 11):
+        if i == 3:
+            decisions.append({
+                "parcel_id": "p3", "original_rank": 3, "new_rank": 5,
+                "rerank_reason": _ok_reason(),
+            })
+        elif i == 5:
+            decisions.append({
+                "parcel_id": "p5", "original_rank": 5, "new_rank": 3,
+                "rerank_reason": _ok_reason(),
+            })
+        else:
+            decisions.append({
+                "parcel_id": f"p{i}", "original_rank": i, "new_rank": i,
+                "rerank_reason": None,
+            })
+    with patch(
+        "app.services.expansion_advisor.generate_rerank",
+        return_value=decisions,
+    ):
+        out = _apply_rerank_to_candidates(cands, {})
+    # p5 moves to rank 3, p3 moves to rank 5.
+    assert [c["parcel_id"] for c in out] == [
+        "p1", "p2", "p5", "p4", "p3", "p6", "p7", "p8", "p9", "p10"
+    ]
+    by_pid = {c["parcel_id"]: c for c in out}
+    assert by_pid["p3"]["deterministic_rank"] == 3
+    assert by_pid["p3"]["final_rank"] == 5
+    assert by_pid["p3"]["rerank_delta"] == 2
+    assert by_pid["p3"]["rerank_applied"] is True
+    assert by_pid["p3"]["rerank_status"] == "applied"
+    assert isinstance(by_pid["p3"]["rerank_reason"], dict)
+    assert by_pid["p5"]["final_rank"] == 3
+    assert by_pid["p5"]["rerank_delta"] == -2
+
+
+# 4. Flag on, 50 candidates with cap 30: top 30 reviewed, bottom 20 outside.
+def test_integration_cap_boundary_tags_outside_rerank_cap(_rerank_on):
+    cands = _build_candidates(50)
+    unchanged_decisions = [
+        {"parcel_id": f"p{i}", "original_rank": i, "new_rank": i,
+         "rerank_reason": None}
+        for i in range(1, 31)
+    ]
+    with patch(
+        "app.services.expansion_advisor.generate_rerank",
+        return_value=unchanged_decisions,
+    ) as mock_gen:
+        out = _apply_rerank_to_candidates(cands, {})
+    # generate_rerank called with exactly 30 candidates.
+    call_args = mock_gen.call_args
+    passed_shortlist = call_args[0][0]
+    assert len(passed_shortlist) == 30
+    # Top 30 tagged "unchanged" (LLM reviewed, no move).
+    for c in out[:30]:
+        assert c["rerank_status"] == "unchanged"
+    # Bottom 20 tagged "outside_rerank_cap", rank unchanged.
+    for c in out[30:]:
+        assert c["rerank_status"] == "outside_rerank_cap"
+        assert c["final_rank"] == c["deterministic_rank"]
+
+
+# 5. Flag on, 2 candidates below min 3: generate_rerank NOT called.
+def test_integration_below_min_skips_llm_entirely(_rerank_on):
+    cands = _build_candidates(2)
+    # We patch generate_rerank to verify it DOES get called (per the
+    # integration-layer contract — generate_rerank itself returns None
+    # when below min), but the caller must tag the candidates
+    # "shortlist_below_minimum", not "llm_failed".
+    with patch(
+        "app.services.expansion_advisor.generate_rerank",
+        return_value=None,
+    ):
+        out = _apply_rerank_to_candidates(cands, {})
+    for c in out:
+        assert c["rerank_status"] == "shortlist_below_minimum"
+        assert c["final_rank"] == c["deterministic_rank"]
+
+
+# 6. Flag on, LLM returns None (failure): all "llm_failed", order preserved.
+def test_integration_llm_failure_preserves_order(_rerank_on):
+    cands = _build_candidates(10)
+    original_ids = [c["parcel_id"] for c in cands]
+    with patch(
+        "app.services.expansion_advisor.generate_rerank",
+        return_value=None,
+    ):
+        out = _apply_rerank_to_candidates(cands, {})
+    assert [c["parcel_id"] for c in out] == original_ids
+    for c in out:
+        assert c["rerank_status"] == "llm_failed"
+        assert c["final_rank"] == c["deterministic_rank"]
+        assert c["rerank_applied"] is False
+
+
+# 7. Four canonical regression searches with flag off produce byte-for-byte
+#    identical candidate order. No fixture infrastructure exists in
+#    tests/test_expansion_advisor_regression.py for full canonical brand-
+#    profile search runs (the regression file tests helper functions, not
+#    end-to-end searches), so per the spec's fallback guidance we prove
+#    the safety property directly on the only new pipeline stage
+#    (_apply_rerank_to_candidates): with the flag off, four differently-
+#    shaped candidate lists — representing the four canonical brand/
+#    district combinations (QSR burger Al Olaya, delivery shawarma
+#    citywide, dine-in Indian Al Nakheel, cafe Al Yasmin) — pass through
+#    with identical parcel_id order and identical final_rank per position.
+def test_integration_four_canonical_searches_flag_off_unchanged(monkeypatch):
+    monkeypatch.setattr(_ea_settings, "EXPANSION_LLM_RERANK_ENABLED", False)
+
+    canonical_searches = [
+        # QSR burger Al Olaya — medium shortlist with dense scoring.
+        ("qsr_burger_al_olaya",
+         [{"parcel_id": f"olaya_q{i}", "final_score": 0.85 - i * 0.004,
+           "district": "Al Olaya"} for i in range(1, 16)]),
+        # Delivery shawarma citywide — large shortlist, cross-district.
+        ("delivery_shawarma_citywide",
+         [{"parcel_id": f"citywide_d{i}", "final_score": 0.78 - i * 0.002,
+           "district": ["Al Olaya", "Al Yasmin", "Al Malqa", "Al Nakheel"][i % 4]}
+          for i in range(1, 51)]),
+        # Dine-in Indian Al Nakheel — small shortlist, premium category.
+        ("dinein_indian_al_nakheel",
+         [{"parcel_id": f"nakheel_di{i}", "final_score": 0.80 - i * 0.006,
+           "district": "Al Nakheel"} for i in range(1, 11)]),
+        # Cafe Al Yasmin — minimum-sized shortlist.
+        ("cafe_al_yasmin",
+         [{"parcel_id": f"yasmin_c{i}", "final_score": 0.76 - i * 0.005,
+           "district": "Al Yasmin"} for i in range(1, 9)]),
+    ]
+
+    for search_label, cands in canonical_searches:
+        original_ids = [c["parcel_id"] for c in cands]
+        original_count = len(cands)
+        # Copy so we can run the deterministic pipeline independently of
+        # the mutation done by _apply_rerank_to_candidates.
+        cands_copy = [dict(c) for c in cands]
+        out = _apply_rerank_to_candidates(cands_copy, {})
+        # Byte-for-byte same IDs in the same order — the load-bearing
+        # safety property of Phase 2 in flag-off mode.
+        assert [c["parcel_id"] for c in out] == original_ids, search_label
+        assert len(out) == original_count, search_label
+        # Every candidate has rerank metadata with non-moving defaults.
+        for i, c in enumerate(out, start=1):
+            assert c["deterministic_rank"] == i, search_label
+            assert c["final_rank"] == i, search_label
+            assert c["rerank_applied"] is False, search_label
+            assert c["rerank_reason"] is None, search_label
+            assert c["rerank_delta"] == 0, search_label

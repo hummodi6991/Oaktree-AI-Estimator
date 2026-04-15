@@ -113,5 +113,38 @@ class Settings:
         in {"1", "true", "yes", "on"}
     )
 
+    # --- Expansion Advisor LLM shortlist reranking (Phase 2) ---
+    # Bounded LLM reranking on the top deterministic shortlist. Default OFF.
+    # When enabled, after the deterministic scorer + sort + LLM fuzzy tiebreak +
+    # district balancing produce a candidate list, the top
+    # min(len(candidates), EXPANSION_LLM_RERANK_SHORTLIST_SIZE) are sent to an
+    # LLM that may rerank them within ±EXPANSION_LLM_RERANK_MAX_MOVE positions
+    # from their deterministic rank. Candidates outside the shortlist cap pass
+    # through unchanged with rerank_reason="outside_rerank_cap". Candidates
+    # inside the cap with no LLM-proposed move pass through with
+    # rerank_applied=False and rerank_reason=None.
+    EXPANSION_LLM_RERANK_ENABLED: bool = (
+        os.getenv("EXPANSION_LLM_RERANK_ENABLED", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    EXPANSION_LLM_RERANK_MODEL: str = os.getenv(
+        "EXPANSION_LLM_RERANK_MODEL", "gpt-4o-mini"
+    )
+    EXPANSION_LLM_RERANK_MAX_TOKENS: int = int(
+        os.getenv("EXPANSION_LLM_RERANK_MAX_TOKENS", "2400")
+    )
+    EXPANSION_LLM_RERANK_TEMPERATURE: float = float(
+        os.getenv("EXPANSION_LLM_RERANK_TEMPERATURE", "0.2")
+    )
+    EXPANSION_LLM_RERANK_MAX_MOVE: int = int(
+        os.getenv("EXPANSION_LLM_RERANK_MAX_MOVE", "5")
+    )
+    EXPANSION_LLM_RERANK_SHORTLIST_SIZE: int = int(
+        os.getenv("EXPANSION_LLM_RERANK_SHORTLIST_SIZE", "30")
+    )
+    EXPANSION_LLM_RERANK_MIN_SHORTLIST: int = int(
+        os.getenv("EXPANSION_LLM_RERANK_MIN_SHORTLIST", "3")
+    )
+
 
 settings = Settings()
