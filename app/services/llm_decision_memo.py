@@ -12,8 +12,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -342,3 +345,596 @@ def generate_decision_memo(
     )
 
     return parsed
+
+
+# ── Structured decision memo (Phase 1) ──────────────────────────────
+#
+# The structured memo path is additive: it sits on top of the 9-component
+# deterministic scorer, does NOT modify scoring/gating/ranking, and can be
+# toggled off via ``settings.EXPANSION_MEMO_STRUCTURED_ENABLED`` to revert
+# to the legacy ``generate_decision_memo`` output byte-for-byte.
+
+# Deterministic scorer weights — kept in sync with the 9-component weights
+# in ``app.services.expansion_advisor``. Editing these here does NOT change
+# scoring; these are used only to compute memo-display contributions.
+COMPONENT_WEIGHTS: dict[str, float] = {
+    "occupancy_economics": 0.30,
+    "listing_quality": 0.11,
+    "brand_fit": 0.11,
+    "competition_whitespace": 0.10,
+    "demand_potential": 0.10,
+    "access_visibility": 0.10,
+    "landlord_signal": 0.08,
+    "delivery_demand": 0.05,
+    "confidence": 0.05,
+}
+
+# Feature-snapshot fields that actually drive a decision. Used to truncate
+# oversized snapshots to a compact LLM-friendly payload.
+_FEATURE_SNAPSHOT_WHITELIST: tuple[str, ...] = (
+    "district",
+    "district_display",
+    "area_m2",
+    "unit_area_sqm",
+    "estimated_annual_rent_sar",
+    "display_annual_rent_sar",
+    "estimated_rent_sar_m2_year",
+    "district_median_rent",
+    "unit_street_width_m",
+    "street_width_m",
+    "population_reach",
+    "competitor_count",
+    "delivery_listing_count",
+    "access_visibility_score",
+    "landlord_signal",
+    "realized_demand_30d",
+    "realized_demand_branches",
+    "realized_demand_district_median",
+    "zoning_fit",
+    "parking_score",
+    "frontage_score",
+)
+
+
+@dataclass
+class MemoContext:
+    """Inputs to the structured memo LLM call.
+
+    All optional fields tolerate None / empty; callers should never have
+    to pre-normalize before constructing this.
+    """
+
+    candidate_id: str
+    parcel_id: str | None
+    rank_position: int
+    next_candidate_summary: dict | None
+    brand_profile: dict
+    feature_snapshot: dict
+    score_breakdown: dict
+    gate_verdicts: list[dict]
+    comparable_competitors: list[dict]
+    realized_demand: dict | None
+    listing_image_url: str | None
+    locale: str
+
+
+# ── Context assembly helpers ────────────────────────────────────────
+
+
+def _as_dict(v: Any) -> dict:
+    if isinstance(v, dict):
+        return dict(v)
+    return {}
+
+
+def _as_list(v: Any) -> list:
+    if isinstance(v, list):
+        return list(v)
+    return []
+
+
+def _coerce_gate_verdicts(raw: Any) -> list[dict]:
+    """Normalize various gate-status shapes into a list of
+    ``{gate, verdict, reason}`` dicts."""
+    if isinstance(raw, list):
+        out: list[dict] = []
+        for item in raw:
+            if isinstance(item, dict):
+                out.append({
+                    "gate": item.get("gate") or item.get("name") or "",
+                    "verdict": item.get("verdict") or item.get("status") or "",
+                    "reason": item.get("reason") or item.get("message") or "",
+                })
+        return out
+    if isinstance(raw, dict):
+        out = []
+        for name, val in raw.items():
+            if isinstance(val, dict):
+                out.append({
+                    "gate": name,
+                    "verdict": val.get("verdict") or val.get("status") or "",
+                    "reason": val.get("reason") or val.get("message") or "",
+                })
+            else:
+                out.append({
+                    "gate": name,
+                    "verdict": "pass" if bool(val) else "fail",
+                    "reason": "",
+                })
+        return out
+    return []
+
+
+def _component_score_value(
+    score_breakdown: dict,
+    candidate: dict | None,
+    comp: str,
+) -> float:
+    """Best-effort lookup of a per-component score (0..100) by trying the
+    canonical key, then ``<comp>_score``, then the flat candidate dict."""
+    bd = score_breakdown or {}
+    if isinstance(bd.get(comp), (int, float)):
+        return float(bd[comp])
+    score_key = f"{comp}_score"
+    if isinstance(bd.get(score_key), (int, float)):
+        return float(bd[score_key])
+    components = bd.get("components")
+    if isinstance(components, dict):
+        v = components.get(comp)
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, dict) and isinstance(v.get("score"), (int, float)):
+            return float(v["score"])
+    if candidate is not None:
+        for k in (comp, score_key):
+            if isinstance(candidate.get(k), (int, float)):
+                return float(candidate[k])
+    return 0.0
+
+
+def _build_contributions(
+    score_breakdown: dict,
+    candidate: dict | None = None,
+) -> dict[str, float]:
+    """Return ``{component: weight × component_score}`` for all 9 components."""
+    return {
+        comp: round(weight * _component_score_value(score_breakdown, candidate, comp), 3)
+        for comp, weight in COMPONENT_WEIGHTS.items()
+    }
+
+
+def _extract_realized_demand(
+    candidate: dict,
+    feature_snapshot: dict,
+) -> dict | None:
+    """Pull realized-demand fields from candidate/feature_snapshot into the
+    canonical ``{value_30d, branch_count, district_median}`` shape.
+    Returns None when neither value_30d nor branch_count is present — matching
+    the realized-demand signal being OFF or absent for this catchment.
+    """
+    def _pick(key: str) -> Any:
+        return candidate.get(key) if candidate.get(key) is not None else feature_snapshot.get(key)
+
+    v30 = _pick("realized_demand_30d")
+    branches = _pick("realized_demand_branches")
+    district_median = _pick("realized_demand_district_median")
+    if v30 is None and branches is None:
+        return None
+    out: dict[str, Any] = {}
+    if v30 is not None:
+        out["value_30d"] = v30
+    if branches is not None:
+        out["branch_count"] = branches
+    if district_median is not None:
+        out["district_median"] = district_median
+    return out or None
+
+
+def build_memo_context(
+    *,
+    candidate: dict[str, Any],
+    brief: dict[str, Any],
+    lang: str = "en",
+    next_candidate_summary: dict[str, Any] | None = None,
+) -> MemoContext:
+    """Build a MemoContext from the raw candidate/brief dicts already
+    available at the existing call site.
+
+    Pure: never raises on missing fields. Missing optional fields become
+    None or an empty list. Always enriches ``score_breakdown`` with
+    ``weights`` and ``contributions`` (``weight × component_score``) so the
+    LLM can cite per-component impact directly.
+    """
+    candidate_id = str(
+        candidate.get("id")
+        or candidate.get("candidate_id")
+        or candidate.get("parcel_id")
+        or ""
+    )
+    parcel_id = candidate.get("parcel_id")
+
+    feature_snapshot = _as_dict(candidate.get("feature_snapshot_json"))
+    if not feature_snapshot:
+        # Fall back to a flat whitelist of candidate fields so the LLM still
+        # gets the decision-driving signals even when feature_snapshot_json
+        # isn't populated.
+        feature_snapshot = {
+            k: candidate.get(k)
+            for k in _FEATURE_SNAPSHOT_WHITELIST
+            if candidate.get(k) is not None
+        }
+
+    raw_breakdown = _as_dict(candidate.get("score_breakdown_json"))
+    contributions = _build_contributions(raw_breakdown, candidate)
+    # Do not mutate caller's dict.
+    score_breakdown = dict(raw_breakdown)
+    score_breakdown["weights"] = dict(COMPONENT_WEIGHTS)
+    score_breakdown["contributions"] = contributions
+
+    gate_verdicts = _coerce_gate_verdicts(
+        candidate.get("gate_status_json")
+        or candidate.get("gate_reasons_json")
+    )
+    comparable_competitors = _as_list(
+        candidate.get("comparable_competitors_json")
+    )
+    realized_demand = _extract_realized_demand(candidate, feature_snapshot)
+
+    rank_raw = candidate.get("rank_position")
+    try:
+        rank_position = int(rank_raw) if rank_raw is not None else 0
+    except (TypeError, ValueError):
+        rank_position = 0
+
+    brand_profile = _as_dict(brief.get("brand_profile"))
+    for k in (
+        "brand_name",
+        "category",
+        "service_model",
+        "expansion_goal",
+        "target_area_m2",
+        "min_area_m2",
+        "max_area_m2",
+    ):
+        if brand_profile.get(k) is None and brief.get(k) is not None:
+            brand_profile[k] = brief.get(k)
+
+    listing_image_url = (
+        candidate.get("listing_image_url")
+        or candidate.get("primary_image_url")
+    )
+    locale = "ar" if lang == "ar" else "en"
+
+    return MemoContext(
+        candidate_id=candidate_id,
+        parcel_id=parcel_id,
+        rank_position=rank_position,
+        next_candidate_summary=next_candidate_summary,
+        brand_profile=brand_profile,
+        feature_snapshot=feature_snapshot,
+        score_breakdown=score_breakdown,
+        gate_verdicts=gate_verdicts,
+        comparable_competitors=comparable_competitors,
+        realized_demand=realized_demand,
+        listing_image_url=listing_image_url,
+        locale=locale,
+    )
+
+
+# ── Prompt ──────────────────────────────────────────────────────────
+
+
+STRUCTURED_MEMO_SYSTEM_PROMPT = """You are a senior commercial real-estate analyst covering Riyadh, Saudi Arabia, evaluating a candidate site for a specific restaurant/retail operator's expansion.
+
+You will receive a JSON object describing:
+- the brand profile (category, service model, expansion goal, preferences),
+- the candidate's feature snapshot (area, rent, street width, competitor counts, delivery signals, etc.),
+- the candidate's score_breakdown, including the 9 deterministic component scores, their weights, and each component's contribution (weight × component_score) to the final score,
+- the gate verdicts (pass/fail) applied during screening,
+- comparable competitors and (optionally) the next-ranked candidate,
+- optionally, a realized_demand block (actual customer-order growth, not supply proxy).
+
+Return ONLY a single JSON object (no markdown fences, no commentary before or after). The object must contain EXACTLY these six top-level keys with the types and semantics described:
+
+{
+  "headline_recommendation": "string — one sentence. Must be one of 'recommend', 'recommend with reservations', or 'pass', plus the single strongest reason.",
+  "ranking_explanation": "string — 2-3 sentences. Must cite which of the 9 components drove the rank and by how much, using the numbers from score_breakdown.contributions (e.g., 'occupancy_economics contributed 27.2 out of 30').",
+  "key_evidence": [
+    {"signal": "string", "value": "string with units", "implication": "string — what this fact means for the decision"}
+  ],
+  "risks": [
+    {"risk": "string", "mitigation": "string or null"}
+  ],
+  "comparison": "string — 1-2 sentences on how this compares to the comparable competitors or the next-ranked candidate.",
+  "bottom_line": "string — one sentence an analyst would say to the CEO in a hallway."
+}
+
+Hard rules:
+- Cite specific numbers with units. Do not hedge.
+- If a signal is strong, say so. If it's weak, say so.
+- Do not use the phrases "overall,", "appears to be,", "could potentially,", or "generally speaking."
+- Write like an analyst who has actually visited the site, not a summarizer.
+- key_evidence must be a non-empty list. risks may be an empty list, but the key must be present.
+- Return ONLY the JSON object, with no markdown fences, no leading or trailing commentary."""
+
+
+_MAX_USER_PAYLOAD_CHARS = 12000
+_FEATURE_SNAPSHOT_SOFT_LIMIT = 4000
+
+
+def _serialize_context_for_user_message(ctx: MemoContext) -> str:
+    """Serialize the MemoContext to a compact JSON string for the user turn,
+    truncating ``feature_snapshot`` to the whitelist if the full payload would
+    blow the size budget."""
+    snap = ctx.feature_snapshot
+    serialized_full = json.dumps(snap, default=str, ensure_ascii=False)
+    if len(serialized_full) > _FEATURE_SNAPSHOT_SOFT_LIMIT:
+        snap = {
+            k: snap.get(k)
+            for k in _FEATURE_SNAPSHOT_WHITELIST
+            if snap.get(k) is not None
+        }
+
+    body = {
+        "candidate_id": ctx.candidate_id,
+        "parcel_id": ctx.parcel_id,
+        "rank_position": ctx.rank_position,
+        "brand_profile": ctx.brand_profile,
+        "feature_snapshot": snap,
+        "score_breakdown": ctx.score_breakdown,
+        "gate_verdicts": ctx.gate_verdicts,
+        "comparable_competitors": ctx.comparable_competitors[:5],
+        "next_candidate_summary": ctx.next_candidate_summary,
+        "realized_demand": ctx.realized_demand,
+        "listing_image_url": ctx.listing_image_url,
+        "locale": ctx.locale,
+    }
+    text = json.dumps(body, default=str, ensure_ascii=False)
+    if len(text) > _MAX_USER_PAYLOAD_CHARS:
+        # Last-resort: drop most competitors and tighten feature_snapshot.
+        body["comparable_competitors"] = body["comparable_competitors"][:2]
+        body["feature_snapshot"] = {
+            k: snap.get(k)
+            for k in _FEATURE_SNAPSHOT_WHITELIST
+            if snap.get(k) is not None
+        }
+        text = json.dumps(body, default=str, ensure_ascii=False)
+    return text
+
+
+def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
+    """Render an OpenAI-style ``[system, user]`` messages list for the
+    structured memo call. Appends situational instructions to the system
+    prompt when locale is Arabic, realized_demand is present, or any gate
+    failed.
+    """
+    addenda: list[str] = []
+    if ctx.locale == "ar":
+        addenda.append(
+            "LOCALE: Produce every string value in Modern Standard Arabic "
+            "(فصحى). JSON keys stay in English; all string values in Arabic."
+        )
+    if ctx.realized_demand is not None:
+        addenda.append(
+            "EVIDENCE PRIORITY: realized_demand is present. Prioritize it in "
+            "key_evidence because it reflects actual customer orders, not just "
+            "supply presence. Cite value_30d, branch_count, and district_median "
+            "when available."
+        )
+    failed = [
+        g for g in ctx.gate_verdicts
+        if str(g.get("verdict") or "").lower() == "fail"
+    ]
+    if failed:
+        failure_list = "; ".join(
+            f"{g.get('gate','?')}: {g.get('reason','')}".rstrip(": ")
+            for g in failed
+        )
+        addenda.append(
+            "GATE FAILURE: One or more gates failed — "
+            + failure_list
+            + ". Lead the headline_recommendation with this failure and frame "
+            "the overall recommendation accordingly (likely 'pass' unless the "
+            "failure is borderline and clearly mitigable)."
+        )
+
+    system_content = STRUCTURED_MEMO_SYSTEM_PROMPT
+    if addenda:
+        system_content = (
+            system_content
+            + "\n\nSITUATIONAL INSTRUCTIONS:\n- "
+            + "\n- ".join(addenda)
+        )
+
+    return [
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": _serialize_context_for_user_message(ctx)},
+    ]
+
+
+# ── Generation with graceful fallback ───────────────────────────────
+
+
+_STRUCTURED_REQUIRED_KEYS: tuple[str, ...] = (
+    "headline_recommendation",
+    "ranking_explanation",
+    "key_evidence",
+    "risks",
+    "comparison",
+    "bottom_line",
+)
+
+
+def generate_structured_memo(ctx: MemoContext) -> dict | None:
+    """Call the LLM for a structured memo, or return None on any failure.
+
+    Never raises — logs a warning and returns None so the caller can fall
+    back to the legacy ``generate_decision_memo`` path.
+
+    Returns the parsed JSON dict on success. Token usage is recorded against
+    the same ``_daily_cost_tracker`` as the legacy path so the $/day ceiling
+    covers both surfaces.
+    """
+    if not settings.EXPANSION_MEMO_STRUCTURED_ENABLED:
+        return None
+
+    # Same hard cost cap as the legacy path. Skip (not raise) when breached so
+    # the caller can fall through to legacy; legacy will raise uniformly and
+    # the endpoint will translate to a 503 as it does today.
+    #
+    # NOTE: on a ceiling breach this function returns None and relies on the
+    # caller's legacy fallback to raise. The endpoint's 503 therefore comes
+    # from the legacy path, not from here — the path is indirect but the
+    # end-user behavior (HTTP 503) is unchanged.
+    try:
+        _check_daily_ceiling()
+    except RuntimeError as exc:
+        logger.warning("Structured memo skipped (cost ceiling): %s", exc)
+        return None
+
+    try:
+        client = _get_client()
+    except RuntimeError as exc:
+        logger.warning("Structured memo client unavailable: %s", exc)
+        return None
+
+    messages = render_structured_memo_prompt(ctx)
+
+    try:
+        response = client.chat.completions.create(
+            model=settings.EXPANSION_MEMO_MODEL,
+            messages=messages,
+            temperature=settings.EXPANSION_MEMO_TEMPERATURE,
+            max_tokens=settings.EXPANSION_MEMO_MAX_TOKENS,
+            response_format={"type": "json_object"},
+        )
+    except Exception as exc:
+        logger.warning(
+            "Structured memo OpenAI call failed for %s: %s",
+            ctx.candidate_id, exc,
+        )
+        return None
+
+    try:
+        content = (response.choices[0].message.content or "").strip()
+    except Exception as exc:
+        logger.warning(
+            "Structured memo response malformed for %s: %s",
+            ctx.candidate_id, exc,
+        )
+        return None
+
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError) as exc:
+        # TypeError guards against a client returning a non-string for
+        # ``content`` (real OpenAI always returns str; defensive only).
+        logger.warning(
+            "Structured memo JSON parse failed for %s: %s | raw=%s",
+            ctx.candidate_id, exc, str(content)[:500],
+        )
+        return None
+
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "Structured memo returned non-object JSON for %s",
+            ctx.candidate_id,
+        )
+        return None
+
+    missing = [k for k in _STRUCTURED_REQUIRED_KEYS if k not in parsed]
+    if missing:
+        logger.warning(
+            "Structured memo missing keys for %s: %s",
+            ctx.candidate_id, missing,
+        )
+        return None
+
+    if not isinstance(parsed.get("key_evidence"), list) or not parsed["key_evidence"]:
+        logger.warning(
+            "Structured memo key_evidence invalid/empty for %s",
+            ctx.candidate_id,
+        )
+        return None
+
+    if not isinstance(parsed.get("risks"), list):
+        logger.warning(
+            "Structured memo risks not a list for %s",
+            ctx.candidate_id,
+        )
+        return None
+
+    usage = getattr(response, "usage", None)
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    cost = _record_cost(input_tokens, output_tokens)
+
+    logger.info(
+        "Structured memo generated | candidate_id=%s locale=%s "
+        "input_tokens=%d output_tokens=%d cost=$%.5f",
+        ctx.candidate_id, ctx.locale, input_tokens, output_tokens, cost,
+    )
+
+    return parsed
+
+
+# ── Text rendering of structured memo (for legacy text column) ──────
+
+
+_TEXT_SECTION_HEADERS_EN: tuple[tuple[str, str], ...] = (
+    ("headline_recommendation", "Headline Recommendation"),
+    ("ranking_explanation", "Ranking Explanation"),
+    ("key_evidence", "Key Evidence"),
+    ("risks", "Risks"),
+    ("comparison", "Comparison"),
+    ("bottom_line", "Bottom Line"),
+)
+_TEXT_SECTION_HEADERS_AR: tuple[tuple[str, str], ...] = (
+    ("headline_recommendation", "التوصية الرئيسية"),
+    ("ranking_explanation", "تفسير الترتيب"),
+    ("key_evidence", "الأدلة الرئيسية"),
+    ("risks", "المخاطر"),
+    ("comparison", "المقارنة"),
+    ("bottom_line", "الخلاصة"),
+)
+
+
+def render_structured_memo_as_text(memo_json: dict, locale: str) -> str:
+    """Render the six-section structured memo as a plain-text memo with
+    markdown-style headers, suitable for the legacy ``decision_memo`` text
+    column so existing consumers keep working unchanged.
+    """
+    headers = _TEXT_SECTION_HEADERS_AR if locale == "ar" else _TEXT_SECTION_HEADERS_EN
+    lines: list[str] = []
+    for key, label in headers:
+        value = memo_json.get(key)
+        lines.append(f"## {label}")
+        if key == "key_evidence" and isinstance(value, list):
+            if not value:
+                lines.append("- —")
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                signal = str(item.get("signal", "—"))
+                v = str(item.get("value", "—"))
+                impl = str(item.get("implication", "") or "")
+                line = f"- {signal}: {v}"
+                if impl:
+                    line = f"{line} — {impl}"
+                lines.append(line)
+        elif key == "risks" and isinstance(value, list):
+            if not value:
+                lines.append("- —")
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                risk = str(item.get("risk", "—"))
+                mit = item.get("mitigation")
+                if mit:
+                    lines.append(f"- {risk} (mitigation: {mit})")
+                else:
+                    lines.append(f"- {risk}")
+        else:
+            lines.append(str(value) if value else "—")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"

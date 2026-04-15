@@ -97,5 +97,21 @@ class Settings:
         os.getenv("EXPANSION_REALIZED_DEMAND_BLEND", "0.5")
     )
 
+    # --- Expansion Advisor structured decision memo (Phase 1) ---
+    # Model/token/temperature controls for the new structured memo path in
+    # ``app.services.llm_decision_memo``. When ``EXPANSION_MEMO_STRUCTURED_ENABLED``
+    # is false the service falls back to the legacy generic memo path byte-for-byte.
+    EXPANSION_MEMO_MODEL: str = os.getenv("EXPANSION_MEMO_MODEL", "gpt-4o-mini")
+    EXPANSION_MEMO_MAX_TOKENS: int = int(
+        os.getenv("EXPANSION_MEMO_MAX_TOKENS", "1200")
+    )
+    EXPANSION_MEMO_TEMPERATURE: float = float(
+        os.getenv("EXPANSION_MEMO_TEMPERATURE", "0.3")
+    )
+    EXPANSION_MEMO_STRUCTURED_ENABLED: bool = (
+        os.getenv("EXPANSION_MEMO_STRUCTURED_ENABLED", "true").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
 
 settings = Settings()
