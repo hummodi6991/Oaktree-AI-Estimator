@@ -498,9 +498,14 @@ class TestGenerateStructuredMemoFlagOff:
 
     @patch("app.services.llm_decision_memo._get_client")
     def test_flag_off_returns_none_without_calling_client(self, mock_get_client, monkeypatch):
-        from app.core.config import settings as _settings
-
-        monkeypatch.setattr(_settings, "EXPANSION_MEMO_STRUCTURED_ENABLED", False)
+        # IMPORTANT: patch the settings binding the function actually reads,
+        # not app.core.config.settings. Other tests (test_config_settings,
+        # test_parcel_table_overrides) reload app.core.config during the
+        # suite, which creates a fresh settings singleton — but
+        # llm_decision_memo.settings was bound at its own import time and
+        # still references the original instance.
+        import app.services.llm_decision_memo as memo_mod
+        monkeypatch.setattr(memo_mod.settings, "EXPANSION_MEMO_STRUCTURED_ENABLED", False)
 
         ctx = build_memo_context(
             candidate=BASE_STRUCTURED_CANDIDATE,

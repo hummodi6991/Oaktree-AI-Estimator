@@ -826,10 +826,12 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
 
     try:
         parsed = json.loads(content)
-    except json.JSONDecodeError as exc:
+    except (json.JSONDecodeError, TypeError) as exc:
+        # TypeError guards against a client returning a non-string for
+        # ``content`` (real OpenAI always returns str; defensive only).
         logger.warning(
             "Structured memo JSON parse failed for %s: %s | raw=%s",
-            ctx.candidate_id, exc, content[:500],
+            ctx.candidate_id, exc, str(content)[:500],
         )
         return None
 
