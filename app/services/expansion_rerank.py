@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from app.core.config import settings
@@ -237,8 +238,136 @@ def _serialize_shortlist_for_prompt(
 
 
 # ---------------------------------------------------------------------------
-# Stubs filled in subsequent steps (Step 3: validation; Step 4: generation).
+# Validation (Step 3)
 # ---------------------------------------------------------------------------
+
+_REQUIRED_DECISION_KEYS: tuple[str, ...] = (
+    "parcel_id",
+    "original_rank",
+    "new_rank",
+    "rerank_reason",
+)
+
+_REQUIRED_REASON_FIELDS: tuple[str, ...] = (
+    "summary",
+    "positives_cited",
+    "negatives_cited",
+    "comparison_to_displaced_candidate",
+)
+
+# Case-insensitive word-boundary matches. Spaces between words are matched
+# literally; leading/trailing \b prevents "introduced to" from matching
+# "due to" (no word boundary inside "introduced") and "undue toll" from
+# matching because "d" is preceded by a word char.
+_FORBIDDEN_PHRASES: tuple[str, ...] = (
+    "due to",
+    "because of",
+    "as a result of",
+    "leading to",
+    "causing",
+)
+_FORBIDDEN_PHRASE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
+    (p, re.compile(r"\b" + re.escape(p) + r"\b", re.IGNORECASE))
+    for p in _FORBIDDEN_PHRASES
+)
+
+# Patterns used by the soft anti-hallucination spot-check. We look for
+# numerical claims with units that the LLM might fabricate.
+_NUMERIC_CLAIM_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(\d+(?:\.\d+)?)\s*%"),
+    re.compile(r"(\d+(?:\.\d+)?)\s*SAR", re.IGNORECASE),
+    re.compile(r"=\s*(\d+(?:\.\d+)?)"),
+)
+
+_MIN_SUMMARY_CHARS = 20
+_MIN_COMPARISON_CHARS = 20
+
+
+def _flatten_numbers(value: Any) -> set[str]:
+    """Recursively extract numeric tokens (as normalized strings) from a
+    nested value, used for the soft anti-hallucination spot-check."""
+    out: set[str] = set()
+    if value is None:
+        return out
+    if isinstance(value, bool):
+        return out
+    if isinstance(value, (int, float)):
+        # Normalize: drop trailing zeros for floats, keep ints as-is.
+        if isinstance(value, float) and value.is_integer():
+            out.add(str(int(value)))
+        out.add(str(value))
+        return out
+    if isinstance(value, str):
+        for m in re.finditer(r"\d+(?:\.\d+)?", value):
+            out.add(m.group(0))
+        return out
+    if isinstance(value, dict):
+        for v in value.values():
+            out |= _flatten_numbers(v)
+        return out
+    if isinstance(value, (list, tuple)):
+        for v in value:
+            out |= _flatten_numbers(v)
+        return out
+    return out
+
+
+def _candidate_known_numbers(candidate: dict[str, Any]) -> set[str]:
+    """Collect numeric tokens from the candidate's feature_snapshot and
+    score_breakdown for the soft spot-check."""
+    known: set[str] = set()
+    known |= _flatten_numbers(candidate.get("feature_snapshot"))
+    known |= _flatten_numbers(candidate.get("score_breakdown"))
+    known |= _flatten_numbers(candidate.get("realized_demand"))
+    return known
+
+
+def _spot_check_numeric_claims(
+    decision: dict[str, Any], candidate: dict[str, Any]
+) -> list[str]:
+    """Return a list of unverifiable numeric claims found in the reason's
+    positives_cited / negatives_cited. Soft check - caller logs, does not
+    fail."""
+    reason = decision.get("rerank_reason")
+    if not isinstance(reason, dict):
+        return []
+    known = _candidate_known_numbers(candidate)
+    unverifiable: list[str] = []
+    for field in ("positives_cited", "negatives_cited"):
+        entries = reason.get(field) or []
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, str):
+                continue
+            for pat in _NUMERIC_CLAIM_PATTERNS:
+                for m in pat.finditer(entry):
+                    num = m.group(1)
+                    norm = num
+                    try:
+                        f = float(num)
+                        if f.is_integer():
+                            norm = str(int(f))
+                    except ValueError:
+                        pass
+                    if num not in known and norm not in known:
+                        unverifiable.append(entry)
+                        break
+                else:
+                    continue
+                break
+    return unverifiable
+
+
+def _find_forbidden_phrase(text: str) -> str | None:
+    """Return the first forbidden phrase found in ``text`` (word-boundary,
+    case-insensitive), or None."""
+    if not isinstance(text, str):
+        return None
+    for phrase, pattern in _FORBIDDEN_PHRASE_PATTERNS:
+        if pattern.search(text):
+            return phrase
+    return None
 
 
 def _validate_rerank_response(
@@ -246,8 +375,175 @@ def _validate_rerank_response(
     shortlist: list[dict[str, Any]],
     max_move: int,
 ) -> tuple[bool, list[str]]:
-    """Validate an LLM rerank response. Filled in Step 3."""
-    raise NotImplementedError("Step 3 will implement _validate_rerank_response")
+    """Validate an LLM rerank response against the bounded-rerank contract.
+
+    Returns ``(True, [])`` on success, or ``(False, [reasons])`` on the
+    first hard-fail. The soft anti-hallucination spot-check (check 11)
+    logs a warning but does NOT affect the return value.
+    """
+    # Check 1: parsed is a dict with key "reranked".
+    if not isinstance(parsed, dict) or "reranked" not in parsed:
+        return False, ["missing_reranked_key"]
+
+    reranked = parsed["reranked"]
+
+    # Check 2: reranked is a list with length == len(shortlist).
+    if not isinstance(reranked, list):
+        return False, ["reranked_not_list"]
+    if len(reranked) != len(shortlist):
+        return False, [
+            f"reranked_length_mismatch: got {len(reranked)}, expected {len(shortlist)}"
+        ]
+
+    # Check 3: every item has the required keys.
+    for i, item in enumerate(reranked):
+        if not isinstance(item, dict):
+            return False, [f"decision_not_dict_at_index_{i}"]
+        missing = [k for k in _REQUIRED_DECISION_KEYS if k not in item]
+        if missing:
+            return False, [
+                f"decision_missing_keys_at_index_{i}: {missing}"
+            ]
+
+    # Build lookup maps from the shortlist.
+    shortlist_by_pid: dict[Any, dict[str, Any]] = {}
+    shortlist_ranks_by_pid: dict[Any, int] = {}
+    for c in shortlist:
+        pid = c.get("parcel_id") or c.get("id")
+        shortlist_by_pid[pid] = c
+        shortlist_ranks_by_pid[pid] = c.get(
+            "deterministic_rank", c.get("rank")
+        )
+
+    # Check 4: set of parcel_ids matches exactly.
+    response_pids = [item["parcel_id"] for item in reranked]
+    if len(set(response_pids)) != len(response_pids):
+        return False, ["duplicate_parcel_id_in_response"]
+    if set(response_pids) != set(shortlist_by_pid.keys()):
+        extra = set(response_pids) - set(shortlist_by_pid.keys())
+        missing = set(shortlist_by_pid.keys()) - set(response_pids)
+        return False, [
+            f"parcel_id_set_mismatch: extra={sorted(map(str, extra))} "
+            f"missing={sorted(map(str, missing))}"
+        ]
+
+    n = len(shortlist)
+
+    # Check 5 + 6: original_rank matches, new_rank is int in [1, N].
+    for item in reranked:
+        pid = item["parcel_id"]
+        expected_rank = shortlist_ranks_by_pid[pid]
+        if item["original_rank"] != expected_rank:
+            return False, [
+                f"original_rank_mismatch for {pid}: "
+                f"got {item['original_rank']}, expected {expected_rank}"
+            ]
+        new_rank = item["new_rank"]
+        if not isinstance(new_rank, int) or isinstance(new_rank, bool):
+            return False, [f"new_rank_not_int for {pid}: {new_rank!r}"]
+        if new_rank < 1 or new_rank > n:
+            return False, [
+                f"new_rank_out_of_range for {pid}: {new_rank} not in [1,{n}]"
+            ]
+
+    # Check 7: set of new_ranks is exactly {1..N} (no duplicates, no gaps).
+    new_ranks = [item["new_rank"] for item in reranked]
+    if set(new_ranks) != set(range(1, n + 1)):
+        return False, [
+            f"new_rank_set_mismatch: got {sorted(new_ranks)}, "
+            f"expected {list(range(1, n + 1))}"
+        ]
+
+    # Check 8: |new_rank - original_rank| <= max_move.
+    for item in reranked:
+        delta = abs(item["new_rank"] - item["original_rank"])
+        if delta > max_move:
+            return False, [
+                f"move_exceeds_max for {item['parcel_id']}: "
+                f"delta={delta} > max_move={max_move}"
+            ]
+
+    # Check 9 + 10: rerank_reason shape depends on whether the candidate moved.
+    for item in reranked:
+        pid = item["parcel_id"]
+        moved = item["new_rank"] != item["original_rank"]
+        reason = item["rerank_reason"]
+        if not moved:
+            if reason is not None:
+                return False, [
+                    f"rerank_reason_must_be_null_when_unchanged for {pid}"
+                ]
+            continue
+        # moved -> reason must be a fully populated dict.
+        if not isinstance(reason, dict):
+            return False, [
+                f"rerank_reason_not_dict for moved candidate {pid}"
+            ]
+        missing = [k for k in _REQUIRED_REASON_FIELDS if k not in reason]
+        if missing:
+            return False, [
+                f"rerank_reason_missing_fields for {pid}: {missing}"
+            ]
+        summary = reason.get("summary")
+        if not isinstance(summary, str) or len(summary.strip()) < _MIN_SUMMARY_CHARS:
+            return False, [
+                f"rerank_reason_summary_too_short for {pid} "
+                f"(min {_MIN_SUMMARY_CHARS} chars)"
+            ]
+        if not isinstance(reason.get("positives_cited"), list):
+            return False, [f"positives_cited_not_list for {pid}"]
+        if not isinstance(reason.get("negatives_cited"), list):
+            return False, [f"negatives_cited_not_list for {pid}"]
+        comp = reason.get("comparison_to_displaced_candidate")
+        if not isinstance(comp, str) or len(comp.strip()) < _MIN_COMPARISON_CHARS:
+            return False, [
+                f"comparison_to_displaced_candidate_too_short for {pid} "
+                f"(min {_MIN_COMPARISON_CHARS} chars)"
+            ]
+
+    # Check 12 (HARD): forbidden causal phrases (word-boundary, case-insensitive).
+    for item in reranked:
+        reason = item.get("rerank_reason")
+        if not isinstance(reason, dict):
+            continue
+        pid = item["parcel_id"]
+        # summary + comparison (strings)
+        for field in ("summary", "comparison_to_displaced_candidate"):
+            hit = _find_forbidden_phrase(reason.get(field, ""))
+            if hit:
+                return False, [
+                    f"forbidden_phrase: '{hit}' in {field} of {pid}"
+                ]
+        # positives_cited + negatives_cited (lists of strings)
+        for field in ("positives_cited", "negatives_cited"):
+            entries = reason.get(field) or []
+            if not isinstance(entries, list):
+                continue
+            for entry in entries:
+                hit = _find_forbidden_phrase(entry if isinstance(entry, str) else "")
+                if hit:
+                    return False, [
+                        f"forbidden_phrase: '{hit}' in {field} of {pid}"
+                    ]
+
+    # Check 11 (SOFT): anti-hallucination spot-check. Log warnings only.
+    for item in reranked:
+        if item["new_rank"] == item["original_rank"]:
+            continue
+        pid = item["parcel_id"]
+        candidate = shortlist_by_pid.get(pid)
+        if candidate is None:
+            continue
+        unverifiable = _spot_check_numeric_claims(item, candidate)
+        for claim in unverifiable:
+            logger.warning(
+                "rerank anti-hallucination: unverifiable numeric claim for "
+                "%s: %r",
+                pid,
+                claim,
+            )
+
+    return True, []
 
 
 def generate_rerank(
