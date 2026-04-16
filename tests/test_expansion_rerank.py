@@ -261,11 +261,11 @@ def test_forbidden_phrase_reverts_cycle_only(_rerank_enabled, caplog):
     permutation cycle but preserves independent clean swaps."""
     shortlist = _shortlist(6)
     decisions = _unchanged_decisions(6)
-    # Tainted swap: p1 <-> p2, p1 has "due to" in summary.
+    # Tainted swap: p1 <-> p2, p1 has "as a result of" in summary.
     decisions[0] = {
         "parcel_id": "p1", "original_rank": 1, "new_rank": 2,
         "rerank_reason": _ok_reason(
-            summary="moved down due to weaker realized demand signal",
+            summary="moved down as a result of weaker realized demand signal",
             comparison="the displaced candidate has a weaker overall fit"),
     }
     decisions[1] = {
@@ -309,7 +309,7 @@ def test_forbidden_phrase_reverts_cycle_only(_rerank_enabled, caplog):
     assert isinstance(by_pid["p4"]["rerank_reason"], dict)
     # Warning logged for the tainted candidate.
     assert any(
-        "forbidden-phrase" in r.getMessage() and "due to" in r.getMessage()
+        "forbidden-phrase" in r.getMessage() and "as a result of" in r.getMessage()
         for r in caplog.records
     )
 
@@ -391,17 +391,19 @@ def test_cost_recorded_on_success(_rerank_enabled):
 # ---------------------------------------------------------------------------
 def test_forbidden_phrase_case_and_boundary_variants():
     # All three case variants must hit.
-    assert _find_forbidden_phrase("moved up due to realized demand") == "due to"
-    assert _find_forbidden_phrase("moved up Due To realized demand") == "due to"
-    assert _find_forbidden_phrase("moved up DUE TO realized demand") == "due to"
+    assert _find_forbidden_phrase("moved up as a result of realized demand") == "as a result of"
+    assert _find_forbidden_phrase("moved up As A Result Of realized demand") == "as a result of"
+    assert _find_forbidden_phrase("moved up AS A RESULT OF realized demand") == "as a result of"
 
-    # Non-matches (word-boundary + substring-neighbor guards).
+    # Non-matches (word-boundary + substring-neighbor guards). "due to"
+    # and "because of" were intentionally removed from the blocklist
+    # because the LLM uses them reflexively as plain English connectives.
+    assert _find_forbidden_phrase("moved up due to realized demand") is None
+    assert _find_forbidden_phrase("strong frontage because of the corner") is None
     assert _find_forbidden_phrase("introduced to the market") is None
-    assert _find_forbidden_phrase("undue toll on the budget") is None
     assert _find_forbidden_phrase("introducing to market") is None
 
     # Other forbidden phrases covered too.
-    assert _find_forbidden_phrase("strong frontage Because Of the corner") == "because of"
     assert _find_forbidden_phrase("high signal leading to approval") == "leading to"
     assert _find_forbidden_phrase("changes AS A RESULT OF the audit") == "as a result of"
     assert _find_forbidden_phrase("latency issues causing churn") == "causing"
