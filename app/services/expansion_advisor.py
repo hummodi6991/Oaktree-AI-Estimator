@@ -3406,6 +3406,34 @@ def _area_band_bounds(area_m2: float) -> tuple[float, float]:
     return _RENT_COMP_AREA_BANDS[-1]
 
 
+def _rent_burden_confidence(source_label: str | None, n_comparable: int | None) -> float:
+    """Confidence multiplier for rent_burden's 20% weight in the economics composite.
+
+    Narrow fix: only damp the specific pathology where _percentile_rent_burden
+    silently falls back to a citywide comp pool but the caller treats it as a
+    real district hit. All other paths (district hits, envelope flags,
+    absolute_legacy, absolute_fallback, unknown labels, missing metadata)
+    preserve full weight to avoid unintended behavior changes.
+    """
+    if source_label is None:
+        return 1.0  # preserve legacy behavior — no damping
+
+    n = int(n_comparable) if n_comparable is not None else 0
+
+    if source_label in ("district_band_type", "district_type", "district"):
+        # District tiers self-enforce min_n inside _percentile_rent_burden;
+        # if one of these labels is present, n should already be >= 8.
+        return 1.0
+
+    if source_label == "city_band_type":
+        return 0.25 if n >= 12 else 0.0
+    if source_label == "city":
+        return 0.15 if n >= 20 else 0.0
+
+    # Unknown / envelope / absolute paths: preserve full weight.
+    return 1.0
+
+
 def _percentile_rent_burden(
     db: Session,
     *,
@@ -3652,9 +3680,15 @@ def _economics_score(
     fitout_burden_score = _clamp(100.0 - ((fitout_cost_per_m2 - 1800.0) / 2600.0) * 100.0)
     cannibalization_component = 100.0 - cannibalization_score
 
+    rb_confidence = _rent_burden_confidence(
+        rent_burden_meta.get("source_label") if isinstance(rent_burden_meta, dict) else None,
+        rent_burden_meta.get("n_comparable") if isinstance(rent_burden_meta, dict) else None,
+    )
+    rb_weight = 0.20 * rb_confidence
+    revenue_weight = 0.38 + (0.20 - rb_weight)  # absorb deficit into most reliable component
     score = _clamp(
-        estimated_revenue_index * 0.38
-        + rent_burden_score * 0.20
+        estimated_revenue_index * revenue_weight
+        + rent_burden_score * rb_weight
         + fitout_burden_score * 0.14
         + cannibalization_component * 0.13
         + fit_score * 0.15
@@ -3662,6 +3696,9 @@ def _economics_score(
     return score, {
         "rent_burden_score": round(rent_burden_score, 2),
         "rent_burden": rent_burden_meta,
+        "rent_burden_confidence": round(rb_confidence, 3),
+        "rent_burden_weight": round(rb_weight, 4),
+        "revenue_weight": round(revenue_weight, 4),
         "fitout_burden_score": round(fitout_burden_score, 2),
         "monthly_rent_per_m2": round(monthly_rent_per_m2, 2),
     }
