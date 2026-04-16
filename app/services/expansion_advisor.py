@@ -3389,6 +3389,11 @@ _RENT_COMP_EXCLUDED_PROPERTY_TYPES: tuple[str, ...] = (
     "farm",
 )
 
+# Minimum sample size required for a district-level UNION comp pool to be
+# considered usable. Not environment-configured today; tune here if the
+# district comp pool in production trends sparser or denser than expected.
+_RENT_COMP_MIN_N_DISTRICT: int = 8
+
 # Area bands (m²) used to bucket comparable listings for rent percentiles.
 _RENT_COMP_AREA_BANDS: list[tuple[float, float]] = [
     (0, 100),
@@ -3469,103 +3474,92 @@ def _percentile_rent_burden(
         f"'{pt}'" for pt in _RENT_COMP_EXCLUDED_PROPERTY_TYPES
     )
 
-    base_where = f"""
-        FROM commercial_unit
-        WHERE restaurant_suitable = true
-          AND price_sar_annual IS NOT NULL
-          AND price_sar_annual > 0
-          AND area_sqm IS NOT NULL
-          AND area_sqm > 0
-          AND status = 'active'
-          AND (price_sar_annual / area_sqm / 12.0) BETWEEN :rent_floor AND :rent_ceiling
-          AND area_sqm <= :max_comp_area
-          AND (property_type IS NULL OR lower(property_type) NOT IN ({_excluded_pt_sql}))
-    """
-
-    # Fallback chain: narrowest → broadest.
-    # Each entry: (extra_where, params, min_n, label)
-    chains: list[tuple[str, dict[str, Any], int, str]] = []
-
-    # District tier match: prefer the listing's own English neighborhood
-    # string from Aqar (commercial_unit.neighborhood) when available. The
-    # Arabic-normalized district key never matches the English neighborhood
-    # values stored on commercial_unit rows, so the legacy district_norm
-    # match silently returned zero rows for every lookup and every burden
-    # was computed against a citywide comparable set. The
-    # unit_neighborhood_raw value is in the same English namespace as the
-    # comparable set's neighborhood column, so the match works directly.
+    # English neighborhood text match is only ever reliable when the listing
+    # itself carries a neighborhood string from Aqar. The Arabic-normalized
+    # district_norm is kept as a last-resort text key to preserve the legacy
+    # behavior where commercial_unit.neighborhood is occasionally populated in
+    # Arabic, but it almost always returns zero.
     neighborhood_match_value: str | None = None
     if unit_neighborhood_raw:
         neighborhood_match_value = unit_neighborhood_raw.strip().lower()
     elif district_norm:
-        # Fallback: try the Arabic-normalized district, which only matches
-        # the rare commercial_unit rows whose neighborhood happens to be
-        # stored in Arabic. Almost always returns zero, but cheap to try.
         neighborhood_match_value = district_norm
 
-    if neighborhood_match_value:
-        chains.append((
-            "AND lower(neighborhood) = :neighborhood AND area_sqm >= :band_lo AND area_sqm < :band_hi AND listing_type = :ltype",
-            {"neighborhood": neighborhood_match_value, "band_lo": band_lo, "band_hi": band_hi, "ltype": listing_type or "store"},
-            8,
-            "district_band_type",
-        ))
-        chains.append((
-            "AND lower(neighborhood) = :neighborhood AND listing_type = :ltype",
-            {"neighborhood": neighborhood_match_value, "ltype": listing_type or "store"},
-            8,
-            "district_type",
-        ))
-        chains.append((
-            "AND lower(neighborhood) = :neighborhood",
-            {"neighborhood": neighborhood_match_value},
-            8,
-            "district",
-        ))
+    # Mirror of _NORM_SQL at ~line 4180: TRANSLATE أ→ا إ→ا آ→ا ى→ي and strip
+    # the "حي " prefix. Replicated inline (not a shared helper) so we don't
+    # perturb the centroid lookup site that currently owns this pattern.
+    _district_norm_sql = (
+        "TRIM(REGEXP_REPLACE("
+        "TRANSLATE("
+        "COALESCE(p.district_label, ''), "
+        "E'\\u0623\\u0625\\u0622\\u0649\\u0640', "
+        "E'\\u0627\\u0627\\u0627\\u064A'"
+        "), "
+        "E'^\\u062D\\u064A\\s+', '', 'g'"
+        "))"
+    )
 
-    chains.append((
-        "AND area_sqm >= :band_lo AND area_sqm < :band_hi AND listing_type = :ltype",
-        {"band_lo": band_lo, "band_hi": band_hi, "ltype": listing_type or "store"},
-        12,
-        "city_band_type",
-    ))
-    chains.append((
-        "",
-        {},
-        20,
-        "city",
-    ))
+    # Tier chain for the district-level UNION pool. Each tier tightens or
+    # relaxes the size_band / listing_type filters applied to both the
+    # spatial sub-pool and the text sub-pool before they are UNION'd.
+    # Only district-level tiers use the UNION pool; city tiers fall back to
+    # the legacy text-agnostic citywide comp set.
+    tier_specs: list[dict[str, Any]] = []
+    if district_norm:
+        tier_specs.append({
+            "kind": "district_union",
+            "label_hint": "district_band_type",
+            "spatial_extra": " AND cu.area_sqm >= :band_lo AND cu.area_sqm < :band_hi AND cu.listing_type = :ltype",
+            "text_extra": " AND cu.area_sqm >= :band_lo AND cu.area_sqm < :band_hi AND cu.listing_type = :ltype",
+            "params": {
+                "band_lo": band_lo,
+                "band_hi": band_hi,
+                "ltype": listing_type or "store",
+            },
+            "min_n": _RENT_COMP_MIN_N_DISTRICT,
+        })
+        tier_specs.append({
+            "kind": "district_union",
+            "label_hint": "district_type",
+            "spatial_extra": " AND cu.listing_type = :ltype",
+            "text_extra": " AND cu.listing_type = :ltype",
+            "params": {"ltype": listing_type or "store"},
+            "min_n": _RENT_COMP_MIN_N_DISTRICT,
+        })
 
-    for extra_where, params, min_n, label in chains:
-        try:
-            with db.begin_nested():
-                agg = db.execute(
-                    text(f"""
-                        SELECT
-                            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY (price_sar_annual / area_sqm / 12.0)) AS median_monthly_per_m2,
-                            COUNT(*) AS n,
-                            SUM(CASE WHEN (price_sar_annual / area_sqm / 12.0) <= :listing_rate THEN 1 ELSE 0 END) AS n_below
-                        {base_where}
-                        {extra_where}
-                    """),
-                    {
-                        **params,
-                        "listing_rate": float(listing_monthly_rent_per_m2),
-                        "rent_floor": _RENT_COMP_MIN_SAR_M2_MONTH,
-                        "rent_ceiling": _RENT_COMP_MAX_SAR_M2_MONTH,
-                        "max_comp_area": _RENT_COMP_MAX_AREA_SQM,
-                    },
-                ).mappings().first()
-        except Exception:
-            logger.debug("percentile rent comp failed for label=%s", label, exc_info=True)
-            continue
+    tier_specs.append({
+        "kind": "city",
+        "label_hint": "city_band_type",
+        "extra": "AND area_sqm >= :band_lo AND area_sqm < :band_hi AND listing_type = :ltype",
+        "params": {
+            "band_lo": band_lo,
+            "band_hi": band_hi,
+            "ltype": listing_type or "store",
+        },
+        "min_n": 12,
+    })
+    tier_specs.append({
+        "kind": "city",
+        "label_hint": "city",
+        "extra": "",
+        "params": {},
+        "min_n": 20,
+    })
 
-        if not agg or agg["n"] is None or int(agg["n"]) < min_n:
-            continue
-
-        n = int(agg["n"])
-        n_below = int(agg["n_below"] or 0)
-        percentile = max(0.0, min(1.0, n_below / n))
+    def _build_result(
+        *,
+        source_label: str,
+        median_monthly: float,
+        n_comparable: int,
+        n_below: int,
+        n_spatial: int,
+        n_text: int,
+        median_monthly_spatial: float | None,
+        median_monthly_text: float | None,
+        disagreement_ratio: float | None,
+        confidence: float,
+    ) -> dict[str, Any]:
+        percentile = max(0.0, min(1.0, n_below / n_comparable)) if n_comparable else 0.5
 
         # Map percentile → burden score using anchor interpolation:
         #   p10 → 92, p50 → 60, p90 → 18.
@@ -3580,12 +3574,12 @@ def _percentile_rent_burden(
 
         burden_score = _clamp(burden_score)
 
-        return {
+        result = {
             "burden_score": round(burden_score, 2),
             "percentile": round(percentile, 3),
-            "n_comparable": n,
-            "source_label": label,
-            "median_monthly_rent_per_m2": round(float(agg["median_monthly_per_m2"] or 0.0), 2),
+            "n_comparable": n_comparable,
+            "source_label": source_label,
+            "median_monthly_rent_per_m2": round(float(median_monthly or 0.0), 2),
             "listing_monthly_rent_per_m2": round(float(listing_monthly_rent_per_m2), 2),
             "comparable_bounds": {
                 "min_sar_m2_month": _RENT_COMP_MIN_SAR_M2_MONTH,
@@ -3593,7 +3587,272 @@ def _percentile_rent_burden(
                 "max_area_sqm": _RENT_COMP_MAX_AREA_SQM,
                 "excluded_property_types": list(_RENT_COMP_EXCLUDED_PROPERTY_TYPES),
             },
+            # New additive fields.
+            "confidence": round(float(confidence), 3),
+            "n_spatial": int(n_spatial),
+            "n_text": int(n_text),
+            "median_monthly_spatial": (
+                round(float(median_monthly_spatial), 2)
+                if median_monthly_spatial is not None else None
+            ),
+            "median_monthly_text": (
+                round(float(median_monthly_text), 2)
+                if median_monthly_text is not None else None
+            ),
+            "disagreement_ratio": (
+                round(float(disagreement_ratio), 3)
+                if disagreement_ratio is not None else None
+            ),
         }
+        logger.info(
+            "rent_burden.comp_pool",
+            extra={
+                "district_norm": district_norm,
+                "source_label": source_label,
+                "n_comparable": n_comparable,
+                "n_spatial": int(n_spatial),
+                "n_text": int(n_text),
+                "median_monthly": result["median_monthly_rent_per_m2"],
+                "median_monthly_spatial": result["median_monthly_spatial"],
+                "median_monthly_text": result["median_monthly_text"],
+                "disagreement_ratio": result["disagreement_ratio"],
+                "confidence": result["confidence"],
+            },
+        )
+        return result
+
+    def _confidence_for(
+        *, kind: str, label: str, n: int, disagreement: float | None
+    ) -> float:
+        if n < 5:
+            return 0.0
+        if kind == "district_union":
+            if label == "district_spatial_union":
+                if n >= 8:
+                    if disagreement is None or disagreement <= 2.0:
+                        return 1.0
+                    if disagreement <= 3.0:
+                        return 0.60
+                    return 0.25
+                # 5 <= n < 8
+                return 0.60
+            # district_spatial_only / district_text_only
+            if n >= 8:
+                return 0.70
+            return 0.0
+        if label == "city_band_type":
+            return 0.25 if n >= 8 else 0.0
+        if label == "city":
+            return 0.15 if n >= 8 else 0.0
+        return 0.0
+
+    common_params = {
+        "listing_rate": float(listing_monthly_rent_per_m2),
+        "rent_floor": _RENT_COMP_MIN_SAR_M2_MONTH,
+        "rent_ceiling": _RENT_COMP_MAX_SAR_M2_MONTH,
+        "max_comp_area": _RENT_COMP_MAX_AREA_SQM,
+    }
+    if district_norm:
+        common_params["district_norm"] = district_norm
+    if neighborhood_match_value:
+        common_params["neighborhood"] = neighborhood_match_value
+
+    for tier in tier_specs:
+        if tier["kind"] == "district_union":
+            # Both sub-pools share the common comp envelope (bounds, property
+            # type filters, restaurant suitability). Spatial joins against
+            # riyadh_parcels_arcgis_raw polygons matching the normalized
+            # district via a 200m ST_DWithin buffer, because listing points
+            # geocode to road centerlines outside the parcel polygons.
+            text_clause = (
+                " AND lower(cu.neighborhood) = :neighborhood"
+                if neighborhood_match_value else " AND 1=0"
+            )
+            sql = text(f"""
+                WITH parcels AS (
+                    SELECT ST_MakeValid(p.geom) AS geom
+                    FROM public.riyadh_parcels_arcgis_raw p
+                    WHERE p.geom IS NOT NULL
+                      AND {_district_norm_sql} = :district_norm
+                ),
+                comp_spatial AS (
+                    SELECT DISTINCT cu.aqar_id,
+                           (cu.price_sar_annual / NULLIF(cu.area_sqm, 0) / 12.0) AS rate
+                    FROM commercial_unit cu
+                    WHERE cu.status = 'active'
+                      AND cu.restaurant_suitable = true
+                      AND cu.price_sar_annual IS NOT NULL
+                      AND cu.price_sar_annual > 0
+                      AND cu.area_sqm IS NOT NULL
+                      AND cu.area_sqm > 0
+                      AND cu.lat IS NOT NULL AND cu.lon IS NOT NULL
+                      AND (cu.price_sar_annual / cu.area_sqm / 12.0) BETWEEN :rent_floor AND :rent_ceiling
+                      AND cu.area_sqm <= :max_comp_area
+                      AND (cu.property_type IS NULL OR lower(cu.property_type) NOT IN ({_excluded_pt_sql}))
+                      {tier["spatial_extra"]}
+                      AND EXISTS (
+                          SELECT 1 FROM parcels pp
+                          WHERE ST_DWithin(
+                              ST_SetSRID(ST_MakePoint(cu.lon::float, cu.lat::float), 4326)::geography,
+                              pp.geom::geography,
+                              200
+                          )
+                      )
+                ),
+                comp_text AS (
+                    SELECT DISTINCT cu.aqar_id,
+                           (cu.price_sar_annual / NULLIF(cu.area_sqm, 0) / 12.0) AS rate
+                    FROM commercial_unit cu
+                    WHERE cu.status = 'active'
+                      AND cu.restaurant_suitable = true
+                      AND cu.price_sar_annual IS NOT NULL
+                      AND cu.price_sar_annual > 0
+                      AND cu.area_sqm IS NOT NULL
+                      AND cu.area_sqm > 0
+                      AND (cu.price_sar_annual / cu.area_sqm / 12.0) BETWEEN :rent_floor AND :rent_ceiling
+                      AND cu.area_sqm <= :max_comp_area
+                      AND (cu.property_type IS NULL OR lower(cu.property_type) NOT IN ({_excluded_pt_sql}))
+                      {text_clause}
+                      {tier["text_extra"]}
+                ),
+                comp_union AS (
+                    SELECT aqar_id, rate FROM comp_spatial
+                    UNION
+                    SELECT aqar_id, rate FROM comp_text
+                )
+                SELECT
+                    (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY rate) FROM comp_union) AS median_monthly_per_m2,
+                    (SELECT COUNT(*) FROM comp_union) AS n,
+                    (SELECT COUNT(*) FROM comp_union WHERE rate <= :listing_rate) AS n_below,
+                    (SELECT COUNT(*) FROM comp_spatial) AS n_spatial,
+                    (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY rate) FROM comp_spatial) AS median_spatial,
+                    (SELECT COUNT(*) FROM comp_text) AS n_text,
+                    (SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY rate) FROM comp_text) AS median_text
+            """)
+            params = {**common_params, **tier["params"]}
+
+            try:
+                with db.begin_nested():
+                    agg = db.execute(sql, params).mappings().first()
+            except Exception:
+                logger.debug(
+                    "percentile rent comp (district union) failed for label=%s",
+                    tier["label_hint"], exc_info=True,
+                )
+                continue
+
+            if not agg or agg["n"] is None or int(agg["n"]) < tier["min_n"]:
+                continue
+
+            n = int(agg["n"])
+            n_spatial = int(agg["n_spatial"] or 0)
+            n_text = int(agg["n_text"] or 0)
+            median_spatial_val = (
+                float(agg["median_spatial"])
+                if agg["median_spatial"] is not None else None
+            )
+            median_text_val = (
+                float(agg["median_text"])
+                if agg["median_text"] is not None else None
+            )
+
+            # Compute disagreement ratio between spatial and text sub-pool
+            # medians when both are populated enough (n >= 3 each).
+            disagreement_ratio: float | None = None
+            if (
+                n_spatial >= 3 and n_text >= 3
+                and median_spatial_val is not None and median_text_val is not None
+                and median_spatial_val > 0 and median_text_val > 0
+            ):
+                hi = max(median_spatial_val, median_text_val)
+                lo = min(median_spatial_val, median_text_val)
+                disagreement_ratio = hi / lo
+
+            # Pick the label that actually reflects pool composition.
+            if n_spatial > 0 and n_text > 0:
+                source_label = "district_spatial_union"
+            elif n_spatial > 0:
+                source_label = "district_spatial_only"
+            elif n_text > 0:
+                source_label = "district_text_only"
+            else:
+                continue
+
+            confidence = _confidence_for(
+                kind="district_union",
+                label=source_label,
+                n=n,
+                disagreement=disagreement_ratio,
+            )
+            if confidence <= 0.0:
+                # Not trustworthy at this tier — let fallback chain handle it.
+                continue
+
+            return _build_result(
+                source_label=source_label,
+                median_monthly=float(agg["median_monthly_per_m2"] or 0.0),
+                n_comparable=n,
+                n_below=int(agg["n_below"] or 0),
+                n_spatial=n_spatial,
+                n_text=n_text,
+                median_monthly_spatial=median_spatial_val,
+                median_monthly_text=median_text_val,
+                disagreement_ratio=disagreement_ratio,
+                confidence=confidence,
+            )
+
+        # city tier: legacy citywide comp pool, no spatial/text split.
+        sql = text(f"""
+            SELECT
+                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY (price_sar_annual / area_sqm / 12.0)) AS median_monthly_per_m2,
+                COUNT(*) AS n,
+                SUM(CASE WHEN (price_sar_annual / area_sqm / 12.0) <= :listing_rate THEN 1 ELSE 0 END) AS n_below
+            FROM commercial_unit
+            WHERE restaurant_suitable = true
+              AND price_sar_annual IS NOT NULL
+              AND price_sar_annual > 0
+              AND area_sqm IS NOT NULL
+              AND area_sqm > 0
+              AND status = 'active'
+              AND (price_sar_annual / area_sqm / 12.0) BETWEEN :rent_floor AND :rent_ceiling
+              AND area_sqm <= :max_comp_area
+              AND (property_type IS NULL OR lower(property_type) NOT IN ({_excluded_pt_sql}))
+              {tier["extra"]}
+        """)
+        params = {**common_params, **tier["params"]}
+
+        try:
+            with db.begin_nested():
+                agg = db.execute(sql, params).mappings().first()
+        except Exception:
+            logger.debug(
+                "percentile rent comp (city) failed for label=%s",
+                tier["label_hint"], exc_info=True,
+            )
+            continue
+
+        if not agg or agg["n"] is None or int(agg["n"]) < tier["min_n"]:
+            continue
+
+        n = int(agg["n"])
+        confidence = _confidence_for(
+            kind="city", label=tier["label_hint"], n=n, disagreement=None,
+        )
+        if confidence <= 0.0:
+            continue
+
+        return _build_result(
+            source_label=tier["label_hint"],
+            median_monthly=float(agg["median_monthly_per_m2"] or 0.0),
+            n_comparable=n,
+            n_below=int(agg["n_below"] or 0),
+            n_spatial=0,
+            n_text=0,
+            median_monthly_spatial=None,
+            median_monthly_text=None,
+            disagreement_ratio=None,
+            confidence=confidence,
+        )
 
     return None
 
@@ -3652,9 +3911,26 @@ def _economics_score(
     fitout_burden_score = _clamp(100.0 - ((fitout_cost_per_m2 - 1800.0) / 2600.0) * 100.0)
     cannibalization_component = 100.0 - cannibalization_score
 
+    # Confidence-gated rent-burden weight. A low-confidence comp pool (e.g.
+    # citywide fallback, high disagreement between spatial and text sub-pools,
+    # or small-N) contributes less of the 20% rent-burden slot. The
+    # remaining weight is redistributed to estimated_revenue_index, which
+    # carries its own sample-size guards and is the most reliable component.
+    rb_confidence = 1.0
+    rb_meta_conf = rent_burden_meta.get("confidence") if isinstance(rent_burden_meta, dict) else None
+    if rb_meta_conf is not None:
+        try:
+            rb_confidence = max(0.0, min(1.0, float(rb_meta_conf)))
+        except (TypeError, ValueError):
+            rb_confidence = 1.0
+
+    rb_weight = 0.20 * rb_confidence
+    weight_deficit = 0.20 - rb_weight
+    revenue_weight = 0.38 + weight_deficit
+
     score = _clamp(
-        estimated_revenue_index * 0.38
-        + rent_burden_score * 0.20
+        estimated_revenue_index * revenue_weight
+        + rent_burden_score * rb_weight
         + fitout_burden_score * 0.14
         + cannibalization_component * 0.13
         + fit_score * 0.15
@@ -3662,6 +3938,8 @@ def _economics_score(
     return score, {
         "rent_burden_score": round(rent_burden_score, 2),
         "rent_burden": rent_burden_meta,
+        "rent_burden_weight": round(rb_weight, 4),
+        "revenue_weight": round(revenue_weight, 4),
         "fitout_burden_score": round(fitout_burden_score, 2),
         "monthly_rent_per_m2": round(monthly_rent_per_m2, 2),
     }
