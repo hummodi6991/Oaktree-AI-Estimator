@@ -1346,6 +1346,48 @@ def test_percentile_rent_burden_falls_through_without_neighborhood():
     assert db.calls[0]["params"].get("neighborhood") == "العليا"
 
 
+def test_economics_score_damps_rent_burden_on_city_fallback():
+    """When _percentile_rent_burden returns citywide labels, the rent_burden
+    slot must be damped and the deficit redirected to revenue_weight. Other
+    paths (district hits, envelope flags, absolute modes) preserve full weight.
+    The five composite weights must always sum to 1.0.
+    """
+    from app.services.expansion_advisor import _rent_burden_confidence
+
+    # Citywide fallbacks are damped.
+    assert _rent_burden_confidence("city_band_type", 20) == 0.25
+    assert _rent_burden_confidence("city_band_type", 5) == 0.0     # below min_n
+    assert _rent_burden_confidence("city", 25) == 0.15
+    assert _rent_burden_confidence("city", 10) == 0.0              # below min_n
+
+    # District tiers keep full weight.
+    assert _rent_burden_confidence("district_band_type", 12) == 1.0
+    assert _rent_burden_confidence("district_type", 8) == 1.0
+    assert _rent_burden_confidence("district", 8) == 1.0
+
+    # Envelope flags, absolute modes, unknown labels, and missing metadata
+    # preserve legacy behavior (full weight).
+    assert _rent_burden_confidence("listing_below_envelope", 0) == 1.0
+    assert _rent_burden_confidence("listing_above_envelope", 0) == 1.0
+    assert _rent_burden_confidence("absolute_legacy", None) == 1.0
+    assert _rent_burden_confidence(None, None) == 1.0
+
+    # Composite-weight arithmetic: damped and preserved cases must each
+    # sum to 1.0 across the five components.
+    for conf in (1.0, 0.25, 0.15, 0.0):
+        rb_w = 0.20 * conf
+        rev_w = 0.38 + (0.20 - rb_w)
+        assert abs(rev_w + rb_w + 0.14 + 0.13 + 0.15 - 1.0) < 1e-9
+
+    # Spot-check the specific pathology from the revert: city_band_type with
+    # n=20 redirects 15 points of weight to revenue_index.
+    conf = _rent_burden_confidence("city_band_type", 20)
+    rb_w = 0.20 * conf
+    rev_w = 0.38 + (0.20 - rb_w)
+    assert abs(rb_w - 0.05) < 1e-9
+    assert abs(rev_w - 0.53) < 1e-9
+
+
 # ---------------------------------------------------------------------------
 # Patch 06: rebalanced _score_breakdown weights
 # ---------------------------------------------------------------------------
