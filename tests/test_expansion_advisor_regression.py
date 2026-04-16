@@ -25,6 +25,7 @@ from app.services.expansion_advisor import (
     _estimate_fitout_cost_sar,
     _estimate_revenue_index,
     _gate_verdict_label,
+    _is_plausible_neighborhood,
     _landuse_fit,
     _listing_quality_score,
     _percentile_rent_burden,
@@ -1445,3 +1446,21 @@ def test_score_breakdown_listing_quality_contributes():
     # With 11% weight, the difference should be (95-20)*0.11 = 8.25 points
     diff = high["final_score"] - low["final_score"]
     assert abs(diff - 8.25) < 0.1
+
+
+# ---------------------------------------------------------------------------
+# Neighborhood plausibility guard rejects scraper-garbage values
+# ---------------------------------------------------------------------------
+
+def test_is_plausible_neighborhood_rejects_garbage_accepts_real_names():
+    # Scraper-garbage / empty values must be rejected so the rent-burden
+    # comp pool doesn't match on pure-digit neighborhood strings.
+    assert _is_plausible_neighborhood("3") is False
+    assert _is_plausible_neighborhood("12") is False
+    assert _is_plausible_neighborhood("  ") is False
+    assert _is_plausible_neighborhood("") is False
+    assert _is_plausible_neighborhood(None) is False
+    # Real neighborhood names (English and Arabic) must be accepted.
+    assert _is_plausible_neighborhood("Olaya") is True
+    assert _is_plausible_neighborhood("العليا") is True
+    assert _is_plausible_neighborhood("An Nadhim") is True

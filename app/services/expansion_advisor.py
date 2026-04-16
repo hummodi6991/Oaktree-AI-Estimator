@@ -3434,6 +3434,23 @@ def _rent_burden_confidence(source_label: str | None, n_comparable: int | None) 
     return 1.0
 
 
+def _is_plausible_neighborhood(value: str | None) -> bool:
+    """Reject scraper-garbage neighborhood values that cause false-positive
+    comp pool matches. Currently observed garbage in commercial_unit:
+    pure-digit strings like "2", "3", "4" (87 rows across 600 active
+    listings). The conservative rule: require at least one non-digit,
+    non-whitespace character AND >=3 chars after strip.
+    """
+    if not value:
+        return False
+    stripped = value.strip()
+    if len(stripped) < 3:
+        return False
+    if stripped.isdigit():
+        return False
+    return True
+
+
 def _percentile_rent_burden(
     db: Session,
     *,
@@ -3523,13 +3540,16 @@ def _percentile_rent_burden(
     # unit_neighborhood_raw value is in the same English namespace as the
     # comparable set's neighborhood column, so the match works directly.
     neighborhood_match_value: str | None = None
-    if unit_neighborhood_raw:
+    if unit_neighborhood_raw and _is_plausible_neighborhood(unit_neighborhood_raw):
         neighborhood_match_value = unit_neighborhood_raw.strip().lower()
-    elif district_norm:
+    elif district_norm and _is_plausible_neighborhood(district_norm):
         # Fallback: try the Arabic-normalized district, which only matches
         # the rare commercial_unit rows whose neighborhood happens to be
         # stored in Arabic. Almost always returns zero, but cheap to try.
         neighborhood_match_value = district_norm
+    # If both fail the plausibility check, neighborhood_match_value stays None;
+    # the district tier chains short-circuit and the function falls to the
+    # city_band_type tier (correctly damped at confidence 0.25 by PR #1114).
 
     if neighborhood_match_value:
         chains.append((
