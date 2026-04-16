@@ -3723,11 +3723,16 @@ def _decision_summary(
         risk_text = (
             "execution risk should be managed during leasing and design"
         )
-    return (
+    summary = (
         f"This {area_label} candidate in {district_label} scores {final_score:.1f}/100 overall with an economics score of {economics_score:.1f}/100. "
-        f"It is a practical first-pass option for {_recommended_use_case(service_model, area_m2)}. "
-        f"The biggest commercial risk is {risk_text.lower()}."
+        f"It is a practical first-pass option for {_recommended_use_case(service_model, area_m2)}."
     )
+    risk_sentence = risk_text.strip().rstrip(".").strip()
+    if risk_sentence:
+        if not risk_sentence[0].isupper():
+            risk_sentence = risk_sentence[0].upper() + risk_sentence[1:]
+        summary = f"{summary} Biggest commercial risk: {risk_sentence}."
+    return summary
 
 
 def persist_existing_branches(db: Session, search_id: str, existing_branches: list[dict[str, Any]]) -> None:
