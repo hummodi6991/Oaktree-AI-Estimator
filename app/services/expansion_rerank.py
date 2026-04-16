@@ -140,7 +140,13 @@ def _candidate_payload(
     competitor_keep: int,
     truncate_descriptions: bool,
 ) -> dict[str, Any]:
-    """Build the per-candidate dict that goes into the user message."""
+    """Build the per-candidate dict that goes into the user message.
+
+    Search-service candidate dicts use ``_json``-suffixed keys
+    (``score_breakdown_json``, ``feature_snapshot_json``, etc.).  Test
+    helpers may use the bare names, so we try both with the ``_json``
+    variant first.
+    """
     payload: dict[str, Any] = {
         "parcel_id": candidate.get("parcel_id") or candidate.get("id"),
         "deterministic_rank": candidate.get(
@@ -148,22 +154,56 @@ def _candidate_payload(
         ),
         "final_score": candidate.get("final_score", candidate.get("score")),
     }
-    breakdown = candidate.get("score_breakdown")
+    # Score breakdown.
+    breakdown = (
+        candidate.get("score_breakdown_json")
+        or candidate.get("score_breakdown")
+    )
     if breakdown:
         payload["score_breakdown"] = breakdown
-    gates = candidate.get("gate_verdicts")
-    if gates:
-        payload["gate_verdicts"] = gates
+    # Gate verdicts — search-service candidates store status and reasons
+    # in two separate ``_json``-suffixed keys.
+    gate_status = candidate.get("gate_status_json")
+    gate_reasons = candidate.get("gate_reasons_json")
+    if gate_status or gate_reasons:
+        payload["gate_verdicts"] = {
+            "status": gate_status,
+            "reasons": gate_reasons,
+        }
+    elif candidate.get("gate_verdicts"):
+        payload["gate_verdicts"] = candidate["gate_verdicts"]
+    # Feature snapshot.
     snapshot = _trim_feature_snapshot(
-        candidate.get("feature_snapshot"), whitelist_only=whitelist_only
+        candidate.get("feature_snapshot_json")
+        or candidate.get("feature_snapshot"),
+        whitelist_only=whitelist_only,
     )
     if snapshot:
         payload["feature_snapshot"] = snapshot
-    realized = candidate.get("realized_demand")
-    if realized is not None:
-        payload["realized_demand"] = realized
+    # Realized demand — lives inside the feature snapshot; surface it at
+    # the top level so the LLM sees it prominently (the system prompt
+    # describes it as the strongest available signal).
+    fs = (
+        candidate.get("feature_snapshot_json")
+        or candidate.get("feature_snapshot")
+        or {}
+    )
+    if isinstance(fs, dict):
+        rd_30d = fs.get("realized_demand_30d")
+        if rd_30d is not None:
+            payload["realized_demand"] = {
+                "realized_demand_30d": rd_30d,
+                "realized_demand_branches": fs.get(
+                    "realized_demand_branches"
+                ),
+                "realized_demand_district_median": fs.get(
+                    "realized_demand_district_median"
+                ),
+            }
+    # Comparable competitors.
     competitors = _truncate_competitors(
-        candidate.get("comparable_competitors"),
+        candidate.get("comparable_competitors_json")
+        or candidate.get("comparable_competitors"),
         keep=competitor_keep,
         truncate_descriptions=truncate_descriptions,
     )
@@ -316,9 +356,24 @@ def _candidate_known_numbers(candidate: dict[str, Any]) -> set[str]:
     """Collect numeric tokens from the candidate's feature_snapshot and
     score_breakdown for the soft spot-check."""
     known: set[str] = set()
-    known |= _flatten_numbers(candidate.get("feature_snapshot"))
-    known |= _flatten_numbers(candidate.get("score_breakdown"))
-    known |= _flatten_numbers(candidate.get("realized_demand"))
+    known |= _flatten_numbers(
+        candidate.get("feature_snapshot_json")
+        or candidate.get("feature_snapshot")
+    )
+    known |= _flatten_numbers(
+        candidate.get("score_breakdown_json")
+        or candidate.get("score_breakdown")
+    )
+    # Realized demand lives inside the feature snapshot.
+    fs = (
+        candidate.get("feature_snapshot_json")
+        or candidate.get("feature_snapshot")
+        or {}
+    )
+    if isinstance(fs, dict):
+        known |= _flatten_numbers(fs.get("realized_demand_30d"))
+        known |= _flatten_numbers(fs.get("realized_demand_branches"))
+        known |= _flatten_numbers(fs.get("realized_demand_district_median"))
     return known
 
 
@@ -501,30 +556,10 @@ def _validate_rerank_response(
                 f"(min {_MIN_COMPARISON_CHARS} chars)"
             ]
 
-    # Check 12 (HARD): forbidden causal phrases (word-boundary, case-insensitive).
-    for item in reranked:
-        reason = item.get("rerank_reason")
-        if not isinstance(reason, dict):
-            continue
-        pid = item["parcel_id"]
-        # summary + comparison (strings)
-        for field in ("summary", "comparison_to_displaced_candidate"):
-            hit = _find_forbidden_phrase(reason.get(field, ""))
-            if hit:
-                return False, [
-                    f"forbidden_phrase: '{hit}' in {field} of {pid}"
-                ]
-        # positives_cited + negatives_cited (lists of strings)
-        for field in ("positives_cited", "negatives_cited"):
-            entries = reason.get(field) or []
-            if not isinstance(entries, list):
-                continue
-            for entry in entries:
-                hit = _find_forbidden_phrase(entry if isinstance(entry, str) else "")
-                if hit:
-                    return False, [
-                        f"forbidden_phrase: '{hit}' in {field} of {pid}"
-                    ]
+    # Check 12 (forbidden causal phrases) is now handled per-candidate in
+    # _scrub_forbidden_phrases(), called after validation passes. Moved
+    # out of hard-fail so that a single bad reason only reverts its own
+    # permutation cycle instead of discarding the entire rerank.
 
     # Check 11 (SOFT): anti-hallucination spot-check. Log warnings only.
     for item in reranked:
@@ -544,6 +579,106 @@ def _validate_rerank_response(
             )
 
     return True, []
+
+
+# ---------------------------------------------------------------------------
+# Forbidden-phrase scrub (per-candidate, cycle-aware)
+# ---------------------------------------------------------------------------
+
+
+def _reason_has_forbidden_phrase(reason: dict[str, Any]) -> str | None:
+    """Return the first forbidden phrase found in any text field of a
+    ``rerank_reason`` dict, or ``None``."""
+    for field in ("summary", "comparison_to_displaced_candidate"):
+        hit = _find_forbidden_phrase(reason.get(field, ""))
+        if hit:
+            return hit
+    for field in ("positives_cited", "negatives_cited"):
+        entries = reason.get(field) or []
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if isinstance(entry, str):
+                hit = _find_forbidden_phrase(entry)
+                if hit:
+                    return hit
+    return None
+
+
+def _scrub_forbidden_phrases(reranked: list[dict[str, Any]]) -> int:
+    """Per-candidate forbidden-phrase check with cycle-aware revert.
+
+    Identifies moved candidates whose ``rerank_reason`` contains a
+    forbidden causal phrase, then reverts the *entire permutation cycle*
+    containing each offending candidate.  Reverting a full cycle is
+    necessary to maintain a valid rank permutation ({1..N} with no
+    gaps or duplicates).  Modifies ``reranked`` in place.
+
+    Returns the number of candidates whose moves were reverted.
+    """
+    n = len(reranked)
+    if n == 0:
+        return 0
+
+    # 1. Identify tainted candidates.
+    tainted_pids: set[str] = set()
+    for item in reranked:
+        if item["new_rank"] == item["original_rank"]:
+            continue
+        reason = item.get("rerank_reason")
+        if not isinstance(reason, dict):
+            continue
+        hit = _reason_has_forbidden_phrase(reason)
+        if hit:
+            logger.warning(
+                "rerank forbidden-phrase hit: reverting parcel_id=%s, "
+                "phrase='%s'",
+                item["parcel_id"],
+                hit,
+            )
+            tainted_pids.add(item["parcel_id"])
+
+    if not tainted_pids:
+        return 0
+
+    # 2. Decompose the rank permutation into disjoint cycles and revert
+    #    every cycle that contains at least one tainted candidate.
+    by_orig_rank: dict[int, dict[str, Any]] = {
+        item["original_rank"]: item for item in reranked
+    }
+    perm: dict[int, int] = {
+        item["original_rank"]: item["new_rank"] for item in reranked
+    }
+
+    visited: set[int] = set()
+    reverted = 0
+
+    for start_rank in range(1, n + 1):
+        if start_rank in visited:
+            continue
+        # Trace one cycle.
+        cycle_ranks: list[int] = []
+        r = start_rank
+        while r not in visited:
+            visited.add(r)
+            cycle_ranks.append(r)
+            r = perm[r]
+
+        # Fixed points (length-1 cycles) never need reverting.
+        if len(cycle_ranks) <= 1:
+            continue
+
+        cycle_items = [by_orig_rank[cr] for cr in cycle_ranks]
+        if not any(it["parcel_id"] in tainted_pids for it in cycle_items):
+            continue
+
+        # Revert the entire cycle.
+        for item in cycle_items:
+            item["new_rank"] = item["original_rank"]
+            item["rerank_reason"] = None
+            reverted += 1
+
+    return reverted
 
 
 def generate_rerank(
@@ -647,7 +782,7 @@ def generate_rerank(
         )
         return None
 
-    # 7. Validate (hard-fail on any violation, discard the entire rerank).
+    # 7. Validate (hard-fail on structural violations).
     ok, reasons = _validate_rerank_response(parsed, shortlist, max_move)
     if not ok:
         logger.warning(
@@ -657,6 +792,15 @@ def generate_rerank(
             content[:1000],
         )
         return None
+
+    # 7b. Per-candidate forbidden-phrase scrub. Reverts offending
+    #     candidates (and their permutation-cycle partners) in place.
+    reverted = _scrub_forbidden_phrases(parsed["reranked"])
+    if reverted:
+        logger.info(
+            "rerank forbidden-phrase scrub reverted %d candidate(s)",
+            reverted,
+        )
 
     # 8. Record cost against the shared daily tracker.
     usage = getattr(response, "usage", None)

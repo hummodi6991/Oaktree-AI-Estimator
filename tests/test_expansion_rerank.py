@@ -254,11 +254,14 @@ def test_moved_candidate_with_null_reason_discarded(_rerank_enabled):
 
 
 # ---------------------------------------------------------------------------
-# 9. Validation failure: forbidden phrase in summary
+# 9. Forbidden phrase: per-candidate revert (cycle-aware), not whole-response
 # ---------------------------------------------------------------------------
-def test_forbidden_phrase_in_summary_discarded(_rerank_enabled, caplog):
-    shortlist = _shortlist(5)
-    decisions = _unchanged_decisions(5)
+def test_forbidden_phrase_reverts_cycle_only(_rerank_enabled, caplog):
+    """A forbidden phrase in one candidate reverts that candidate's entire
+    permutation cycle but preserves independent clean swaps."""
+    shortlist = _shortlist(6)
+    decisions = _unchanged_decisions(6)
+    # Tainted swap: p1 <-> p2, p1 has "due to" in summary.
     decisions[0] = {
         "parcel_id": "p1", "original_rank": 1, "new_rank": 2,
         "rerank_reason": _ok_reason(
@@ -267,7 +270,22 @@ def test_forbidden_phrase_in_summary_discarded(_rerank_enabled, caplog):
     }
     decisions[1] = {
         "parcel_id": "p2", "original_rank": 2, "new_rank": 1,
-        "rerank_reason": _ok_reason(),
+        "rerank_reason": _ok_reason(
+            summary="promoted after reweighing frontage and landlord signal",
+            comparison="the displaced candidate has a weaker overall fit"),
+    }
+    # Clean swap: p3 <-> p4 (no forbidden phrases).
+    decisions[2] = {
+        "parcel_id": "p3", "original_rank": 3, "new_rank": 4,
+        "rerank_reason": _ok_reason(
+            summary="moved down after reweighing frontage and landlord signal",
+            comparison="the displaced candidate has a weaker overall fit"),
+    }
+    decisions[3] = {
+        "parcel_id": "p4", "original_rank": 4, "new_rank": 3,
+        "rerank_reason": _ok_reason(
+            summary="promoted after reweighing frontage and landlord signal",
+            comparison="the displaced candidate has a weaker overall fit"),
     }
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _make_mock_response(
@@ -276,9 +294,22 @@ def test_forbidden_phrase_in_summary_discarded(_rerank_enabled, caplog):
     with patch.object(expansion_rerank, "_get_client", return_value=mock_client), \
          caplog.at_level(logging.WARNING, logger="app.services.expansion_rerank"):
         result = generate_rerank(shortlist, {})
-    assert result is None
+    # The tainted cycle (p1 <-> p2) is reverted; clean cycle preserved.
+    assert result is not None
+    by_pid = {d["parcel_id"]: d for d in result}
+    # p1 and p2 reverted to original ranks.
+    assert by_pid["p1"]["new_rank"] == 1
+    assert by_pid["p1"]["rerank_reason"] is None
+    assert by_pid["p2"]["new_rank"] == 2
+    assert by_pid["p2"]["rerank_reason"] is None
+    # p3 <-> p4 swap preserved.
+    assert by_pid["p3"]["new_rank"] == 4
+    assert isinstance(by_pid["p3"]["rerank_reason"], dict)
+    assert by_pid["p4"]["new_rank"] == 3
+    assert isinstance(by_pid["p4"]["rerank_reason"], dict)
+    # Warning logged for the tainted candidate.
     assert any(
-        "forbidden_phrase" in r.getMessage() and "due to" in r.getMessage()
+        "forbidden-phrase" in r.getMessage() and "due to" in r.getMessage()
         for r in caplog.records
     )
 
