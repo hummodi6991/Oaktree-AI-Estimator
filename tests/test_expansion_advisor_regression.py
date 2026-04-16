@@ -1273,34 +1273,11 @@ def test_brand_fit_flagship_falls_back_when_target_missing():
 
 
 class _FakeRentBurdenDB:
-    """Fake DB that records the SQL params and returns a canned comparable row.
+    """Fake DB that records the SQL params and returns a canned comparable row."""
 
-    When the query is the district UNION shape (identified by the presence of
-    the comp_spatial / comp_union CTEs), the fake also returns n_spatial,
-    median_spatial, n_text, median_text so the caller can compute the
-    disagreement ratio and pick the right source_label.
-    """
-
-    def __init__(
-        self,
-        n_rows: int = 12,
-        median: float = 80.0,
-        *,
-        n_spatial: int | None = None,
-        n_text: int | None = None,
-        median_spatial: float | None = None,
-        median_text: float | None = None,
-    ):
+    def __init__(self, n_rows: int = 12, median: float = 80.0):
         self._n = n_rows
         self._median = median
-        # When the sub-pool sizes are not specified explicitly, fall back to
-        # a balanced 50/50 split (both sub-pools populated, medians equal →
-        # disagreement_ratio ~ 1.0 → "district_spatial_union" with
-        # confidence 1.0 at n >= 8).
-        self._n_spatial = n_rows // 2 if n_spatial is None else n_spatial
-        self._n_text = (n_rows - (n_rows // 2)) if n_text is None else n_text
-        self._median_spatial = median if median_spatial is None else median_spatial
-        self._median_text = median if median_text is None else median_text
         self.calls: list[dict] = []
 
     def begin_nested(self):
@@ -1309,20 +1286,8 @@ class _FakeRentBurdenDB:
     def execute(self, stmt, params=None):
         sql = stmt.text if hasattr(stmt, "text") else str(stmt)
         self.calls.append({"sql": sql, "params": dict(params or {})})
-        if "comp_union" in sql and "comp_spatial" in sql:
-            # District UNION tier query shape.
-            return _Result([
-                {
-                    "median_monthly_per_m2": self._median,
-                    "n": self._n,
-                    "n_below": self._n // 2,
-                    "n_spatial": self._n_spatial,
-                    "median_spatial": self._median_spatial if self._n_spatial > 0 else None,
-                    "n_text": self._n_text,
-                    "median_text": self._median_text if self._n_text > 0 else None,
-                }
-            ])
-        # Legacy citywide tier shape.
+        # Return a comparable aggregation: n rows with median=self._median,
+        # n_below = half of n (puts the listing at the 50th percentile).
         return _Result([
             {
                 "median_monthly_per_m2": self._median,
@@ -1333,50 +1298,38 @@ class _FakeRentBurdenDB:
 
 
 def test_percentile_rent_burden_uses_unit_neighborhood():
-    """When unit_neighborhood_raw is passed, the district UNION tier must hit.
+    """When unit_neighborhood_raw is passed, the district tier must be hit.
 
-    Both sub-pools are populated by the fake DB (n_spatial=6, n_text=6) with
-    equal medians, so the label is "district_spatial_union" with full
-    confidence 1.0 (disagreement_ratio ~ 1.0).
+    Without this fix, the Arabic district_norm never matches the English
+    neighborhood column on commercial_unit, so every lookup silently fell
+    through to the city tier.
     """
-    db = _FakeRentBurdenDB(
-        n_rows=12, median=80.0,
-        n_spatial=6, n_text=6,
-        median_spatial=80.0, median_text=80.0,
-    )
+    db = _FakeRentBurdenDB(n_rows=12, median=80.0)
     result = _percentile_rent_burden(
         db,
         listing_monthly_rent_per_m2=80.0,
-        district="حي العليا",  # Arabic district — normalized for the parcel join
+        district="حي العليا",  # Arabic district — would never match English
         area_m2=180.0,
         listing_type="store",
         unit_neighborhood_raw="Olaya",
     )
     assert result is not None
-    # Combined union pool hits at the first (band+type) tier.
-    assert result["source_label"] == "district_spatial_union"
-    assert result["confidence"] == 1.0
-    assert result["n_spatial"] == 6
-    assert result["n_text"] == 6
-    # Verify the SQL params carried both the Arabic-normalized parcel-match
-    # key and the English neighborhood text value.
+    # First chain executed is district_band_type (n=12 > min_n=8 → returned).
+    assert result["source_label"] == "district_band_type"
+    # Verify the SQL params actually carried the English neighborhood value.
     first_call_params = db.calls[0]["params"]
     assert first_call_params.get("neighborhood") == "olaya"
-    assert first_call_params.get("district_norm") == "العليا"
 
 
 def test_percentile_rent_burden_falls_through_without_neighborhood():
-    """Without unit_neighborhood_raw the text sub-pool is empty.
+    """Without unit_neighborhood_raw the function falls through to the city tier.
 
-    The district UNION tier still fires because the spatial sub-pool
-    (parcel ST_DWithin join) returns enough rows. Source label becomes
-    "district_spatial_only" with confidence 0.70 at n>=8.
+    The Arabic district_norm is still tried (as a cheap fallback), but it
+    never matches English neighborhood values — so we exhaust the district
+    chains and reach city_band_type. With n=12 >= city_band_type min_n=12,
+    city_band_type fires.
     """
-    db = _FakeRentBurdenDB(
-        n_rows=12, median=100.0,
-        n_spatial=12, n_text=0,
-        median_spatial=100.0,
-    )
+    db = _FakeRentBurdenDB(n_rows=12, median=100.0)
     result = _percentile_rent_burden(
         db,
         listing_monthly_rent_per_m2=100.0,
@@ -1386,199 +1339,11 @@ def test_percentile_rent_burden_falls_through_without_neighborhood():
         unit_neighborhood_raw=None,
     )
     assert result is not None
-    assert result["source_label"] == "district_spatial_only"
-    assert result["confidence"] == 0.70
-    # The SQL carries the Arabic-normalized district key for the parcel join.
-    assert db.calls[0]["params"].get("district_norm") == "العليا"
-
-
-def test_percentile_rent_burden_low_confidence_small_n_spatial_union():
-    """A spatial-union hit with 5<=n<8 gets a damped confidence of 0.60."""
-    db = _FakeRentBurdenDB(
-        n_rows=6, median=60.0,
-        n_spatial=3, n_text=3,
-        median_spatial=60.0, median_text=60.0,
-    )
-    # Bypass the first band+type tier (min_n=8) by making the first call fall
-    # through: we set n_rows=6, which is < 8. The fake returns the same row
-    # shape for every tier, so the second tier (type-only, also min_n=8)
-    # also fails. The city_band_type tier (min_n=12) also fails. The city
-    # tier (min_n=20) also fails. Result: no comp → None.
-    result = _percentile_rent_burden(
-        db,
-        listing_monthly_rent_per_m2=60.0,
-        district="حي العليا",
-        area_m2=180.0,
-        listing_type="store",
-        unit_neighborhood_raw="Olaya",
-    )
-    assert result is None
-
-    # Now: repeat but with n=7 (still <8). The min_n=8 district tiers fail
-    # and city tiers with min_n=12/20 also fail, so None is returned. This
-    # documents that low-N spatial-union pools intentionally do not short-
-    # circuit — the current policy is to surface None rather than emit a
-    # potentially noisy low-confidence result when n<8 AND no fallback
-    # tier is satisfied. (If the task spec later wants to emit 5<=n<8
-    # results directly, the confidence table already supports that path.)
-    db2 = _FakeRentBurdenDB(
-        n_rows=7, median=60.0,
-        n_spatial=4, n_text=3,
-        median_spatial=60.0, median_text=60.0,
-    )
-    assert _percentile_rent_burden(
-        db2,
-        listing_monthly_rent_per_m2=60.0,
-        district="حي العليا",
-        area_m2=180.0,
-        listing_type="store",
-        unit_neighborhood_raw="Olaya",
-    ) is None
-
-
-def test_percentile_rent_burden_high_disagreement_damps_confidence():
-    """Spatial and text sub-pool medians that diverge >3x yield confidence 0.25.
-
-    Mirrors the An Nadhim pathology: spatial median ~28 SAR/m²/month,
-    text median ~10 — a ~2.8x ratio. Push it past 3.0 here to verify the
-    bucketing.
-    """
-    db = _FakeRentBurdenDB(
-        n_rows=12, median=60.0,
-        n_spatial=6, n_text=6,
-        median_spatial=120.0, median_text=30.0,  # 4.0x disagreement
-    )
-    result = _percentile_rent_burden(
-        db,
-        listing_monthly_rent_per_m2=60.0,
-        district="حي العليا",
-        area_m2=180.0,
-        listing_type="store",
-        unit_neighborhood_raw="Olaya",
-    )
-    assert result is not None
-    assert result["source_label"] == "district_spatial_union"
-    assert result["disagreement_ratio"] is not None
-    assert result["disagreement_ratio"] > 3.0
-    assert result["confidence"] == 0.25
-
-
-def test_percentile_rent_burden_city_fallback_has_low_confidence():
-    """When no district tier fires, the city tier yields confidence 0.25.
-
-    Force district tier failure by setting n_rows below the district min_n
-    of 8. City_band_type requires n>=12 — still fails. City requires n>=20.
-    So we need n_rows=20, which means the district tiers ALSO succeed
-    (they only need 8). To force a city-tier-only hit, set n_spatial=0
-    AND n_text=0 so the union pool is empty even though the raw n column
-    is non-zero.
-    """
-    # A cleaner approach: make the fake return 0 for sub-pools so the
-    # district-union tier fails (both n_spatial and n_text are 0 →
-    # source_label selection falls through → continue). Then the city
-    # tiers see n=20 and fire at city_band_type (min_n=12).
-    db = _FakeRentBurdenDB(
-        n_rows=20, median=98.75,
-        n_spatial=0, n_text=0,
-    )
-    result = _percentile_rent_burden(
-        db,
-        listing_monthly_rent_per_m2=98.75,
-        district="حي العليا",
-        area_m2=180.0,
-        listing_type="store",
-        unit_neighborhood_raw="Olaya",
-    )
-    assert result is not None
-    assert result["source_label"] == "city_band_type"
-    assert result["confidence"] == 0.25
-
-
-def test_economics_score_weights_sum_to_one_across_confidence_branches():
-    """The five composite weights must sum to 1.00 for every confidence value.
-
-    Proves that the weight deficit from damping rent_burden is fully
-    absorbed by revenue_weight and nothing is silently dropped.
-    """
-    from app.services.expansion_advisor import _economics_score
-
-    for rb_conf in (0.0, 0.15, 0.25, 0.60, 0.70, 1.0):
-        # Seed the meta with a specific confidence; is_listing=False takes
-        # the absolute_legacy branch, so we need to exercise the percentile
-        # branch via is_listing + db. But we can verify the math by calling
-        # _economics_score once and reading back rent_burden_weight +
-        # revenue_weight and checking the sum.
-        _, meta = _economics_score(
-            estimated_revenue_index=60.0,
-            estimated_annual_rent_sar=300_000.0,
-            estimated_fitout_cost_sar=800_000.0,
-            area_m2=180.0,
-            cannibalization_score=30.0,
-            fit_score=70.0,
-            db=None,
-            is_listing=False,  # absolute_legacy path — no confidence key
-            district=None,
-            listing_type=None,
-            unit_neighborhood_raw=None,
-        )
-        # Absolute_legacy path has no confidence → defaults to 1.0.
-        assert meta["rent_burden_weight"] == 0.20
-        assert meta["revenue_weight"] == 0.38
-        total = (
-            meta["revenue_weight"]
-            + meta["rent_burden_weight"]
-            + 0.14 + 0.13 + 0.15
-        )
-        assert abs(total - 1.0) < 1e-9
-
-    # Now exercise the is_listing=True path with a controlled comp result
-    # to confirm the redistribution math at several confidence levels.
-    class _ConfPinnedDB(_FakeRentBurdenDB):
-        def __init__(self, pinned_confidence: float):
-            super().__init__(
-                n_rows=12, median=80.0,
-                n_spatial=6, n_text=6,
-                median_spatial=80.0, median_text=80.0,
-            )
-            self._pinned = pinned_confidence
-
-    # We cannot directly pin confidence inside _percentile_rent_burden, but
-    # we can cover the branches that the upstream function actually
-    # produces: 1.0 (balanced union), 0.70 (spatial_only), 0.25 (high
-    # disagreement), 0.25 (city_band_type).
-    scenarios = [
-        # (fake_db_kwargs, expected_rb_weight)
-        (dict(n_rows=12, median=80.0, n_spatial=6, n_text=6,
-              median_spatial=80.0, median_text=80.0), 0.20),  # conf=1.0
-        (dict(n_rows=12, median=80.0, n_spatial=12, n_text=0,
-              median_spatial=80.0), 0.14),                     # conf=0.70
-        (dict(n_rows=12, median=80.0, n_spatial=6, n_text=6,
-              median_spatial=150.0, median_text=30.0), 0.05),  # conf=0.25
-    ]
-    for fake_kwargs, expected_rb_weight in scenarios:
-        db = _FakeRentBurdenDB(**fake_kwargs)
-        _, meta = _economics_score(
-            estimated_revenue_index=60.0,
-            estimated_annual_rent_sar=300_000.0,
-            estimated_fitout_cost_sar=800_000.0,
-            area_m2=180.0,
-            cannibalization_score=30.0,
-            fit_score=70.0,
-            db=db,
-            is_listing=True,
-            district="حي العليا",
-            listing_type="store",
-            unit_neighborhood_raw="Olaya",
-        )
-        assert abs(meta["rent_burden_weight"] - expected_rb_weight) < 1e-9, (
-            f"rb_weight mismatch: got {meta['rent_burden_weight']} expected {expected_rb_weight}"
-        )
-        total = (
-            meta["revenue_weight"]
-            + meta["rent_burden_weight"]
-            + 0.14 + 0.13 + 0.15
-        )
-        assert abs(total - 1.0) < 1e-9, f"weights don't sum to 1.0 (got {total})"
+    # The district chains silently return 12 rows (the fake DB returns the
+    # same canned row regardless of filter), so district_band_type still
+    # fires first. The meaningful assertion is that the fallback parameter
+    # carries the Arabic district_norm — not an English neighborhood.
+    assert db.calls[0]["params"].get("neighborhood") == "العليا"
 
 
 # ---------------------------------------------------------------------------
