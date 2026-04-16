@@ -59,6 +59,7 @@ Hard rules (violations cause your output to be discarded):
    a. Do NOT assert causal relationships between facts unless the causation is directly supported by the data. Forbidden phrases when joining unrelated facts: "due to", "because of", "as a result of", "leading to", "causing". If two facts are both true but not causally linked, report them separately.
    b. Every numerical claim with units in positives_cited or negatives_cited (e.g., "rent 18% below median", "realized_demand_30d=1400") must be directly derivable from the candidate's feature_snapshot or score_breakdown. Do not invent percentages, dollar amounts, or counts. If you don't have a number for a claim, phrase it qualitatively without inventing one.
    c. Do not use the phrases "overall", "appears to be", "could potentially", or "generally speaking".
+   d. Do NOT use causal connective phrases like "as a result of", "leading to", or "causing" in your reasons. Describe what you observed in the candidate, not a claim about cause-and-effect. Good: "Higher economics score and stronger parking signal." Bad: "Promoted as a result of stronger economics."
 
 Output: a single JSON object with one top-level key "reranked", whose value is an array of exactly N objects (one per shortlist candidate, in any order). Each object has:
 {{
@@ -296,12 +297,13 @@ _REQUIRED_REASON_FIELDS: tuple[str, ...] = (
 )
 
 # Case-insensitive word-boundary matches. Spaces between words are matched
-# literally; leading/trailing \b prevents "introduced to" from matching
-# "due to" (no word boundary inside "introduced") and "undue toll" from
-# matching because "d" is preceded by a word char.
+# literally; leading/trailing \b prevents partial-word false positives
+# (e.g. "undue toll" matching "due to" because "d" would be preceded by a
+# word char). "due to" and "because of" were intentionally dropped from
+# this list: the LLM uses them reflexively as plain English connectives,
+# so reverting on them caused every rerank to end with moved=0. The
+# remaining phrases still flag speculative causal-chain reasoning.
 _FORBIDDEN_PHRASES: tuple[str, ...] = (
-    "due to",
-    "because of",
     "as a result of",
     "leading to",
     "causing",
