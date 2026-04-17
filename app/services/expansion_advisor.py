@@ -37,6 +37,12 @@ _EA_DELIVERY_TABLE = settings.EXPANSION_DELIVERY_TABLE
 _EA_RENT_TABLE = settings.EXPANSION_RENT_TABLE
 _EA_COMPETITOR_TABLE = settings.EXPANSION_COMPETITOR_TABLE
 
+# Sentinel returned by the road-distance COALESCE fallbacks when no
+# is_major_road segment exists within the 700 m ST_DWithin search radius.
+# Any value >= this sentinel should be treated as "unknown", not as a real
+# distance — see _road_signal_from_context.
+_ROAD_DISTANCE_SENTINEL_M = 5000.0
+
 # ---------------------------------------------------------------------------
 # Gate-key to human-readable label mapping (change #4)
 # ---------------------------------------------------------------------------
@@ -1661,7 +1667,7 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
                                  WHERE erc.is_major_road = TRUE
                                    AND erc.geom IS NOT NULL
                                    AND ST_DWithin(erc.geom::geography, p.geom::geography, 700)),
-                                5000
+                                {_ROAD_DISTANCE_SENTINEL_M}
                             ) AS nearest_major_road_distance_m,
                             COALESCE((
                                 SELECT COUNT(*)
@@ -1712,7 +1718,7 @@ def _candidate_feature_snapshot(db: Session, *, parcel_id: str, lat: float, lon:
                                     l.highway IN ('motorway','trunk','primary','secondary')
                                     OR NULLIF(l.name, '') IS NOT NULL
                                   )
-                            ), 5000) AS nearest_major_road_distance_m,
+                            ), {_ROAD_DISTANCE_SENTINEL_M}) AS nearest_major_road_distance_m,
                             COALESCE((
                                 SELECT COUNT(*)
                                 FROM planet_osm_line l
@@ -2929,7 +2935,10 @@ def _road_signal_from_context(road_context: dict | None) -> float:
         normalized so 0m -> 1.0, 500m+ -> 0.0.
 
     Returns 0.5 (neutral) when road_context is missing, so candidates
-    without enrichment data are not penalized.
+    without enrichment data are not penalized. A distance at or above
+    _ROAD_DISTANCE_SENTINEL_M is also treated as unknown, since it is the
+    COALESCE fallback emitted when no major road was found within the
+    700 m search radius — not a real measurement.
     """
     if not road_context:
         return 0.5
@@ -2944,7 +2953,9 @@ def _road_signal_from_context(road_context: dict | None) -> float:
     else:
         try:
             d = float(distance_m)
-            if d <= 0:
+            if d >= _ROAD_DISTANCE_SENTINEL_M:
+                distance_component = 0.5
+            elif d <= 0:
                 distance_component = 1.0
             elif d >= 500:
                 distance_component = 0.0
@@ -5935,7 +5946,7 @@ def run_expansion_search(
                                  WHERE erc.is_major_road = TRUE AND erc.geom IS NOT NULL
                                    AND ST_DWithin(erc.geom::geography,
                                        ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography, 700)),
-                                5000
+                                {_ROAD_DISTANCE_SENTINEL_M}
                             ) AS nearest_major_road_distance_m,
                             COALESCE((
                                 SELECT COUNT(*) FROM {_EA_ROADS_TABLE} erc
@@ -5966,7 +5977,7 @@ def run_expansion_search(
                                        OR NULLIF(l.name, '') IS NOT NULL)
                                   AND ST_DWithin(l.way::geography,
                                       ST_SetSRID(ST_MakePoint(pids.lon, pids.lat), 4326)::geography, 700)
-                            ), 5000) AS nearest_major_road_distance_m,
+                            ), {_ROAD_DISTANCE_SENTINEL_M}) AS nearest_major_road_distance_m,
                             COALESCE((
                                 SELECT COUNT(*) FROM planet_osm_line l
                                 WHERE l.way IS NOT NULL AND l.highway IS NOT NULL
