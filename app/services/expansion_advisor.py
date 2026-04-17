@@ -27,6 +27,8 @@ ARCGIS_PARCELS_TABLE = "public.riyadh_parcels_arcgis_proxy"
 _CANDIDATE_POOL_LIMIT = 2000         # max total candidates from SQL
 _PER_DISTRICT_MIN_CAP = 5            # minimum parcels per district in stratified mode
 _PER_DISTRICT_MAX_CAP = 200          # upper bound per district — raised for listings-only pool
+_PER_DISTRICT_HEADROOM_MULTIPLIER = 3  # pull 3x the fair share per district
+                                        # to give scoring/reranking headroom
 
 # Expansion Advisor normalized table names (from config)
 _EA_ROADS_TABLE = settings.EXPANSION_ROADS_TABLE
@@ -4999,11 +5001,18 @@ def run_expansion_search(
     # bounded by _PER_DISTRICT_MIN_CAP and _PER_DISTRICT_MAX_CAP.
     per_district_cap = _PER_DISTRICT_MAX_CAP
     if use_stratified and target_district_norm:
-        # Multi-district targeted: allocate slots proportionally across
-        # the requested districts.
+        # Multi-district targeted: each district gets headroom of
+        # MULTIPLIER * (limit / N), bounded by [MIN_CAP, MAX_CAP]. This
+        # supersedes the old formula which used _CANDIDATE_POOL_LIMIT // N
+        # and silently collapsed to _PER_DISTRICT_MAX_CAP for any realistic N.
+        n_districts = max(len(target_district_norm), 1)
+        effective_limit = max(limit, 25)  # floor prevents tiny-limit starvation
+        fair_share_headroom = (
+            effective_limit * _PER_DISTRICT_HEADROOM_MULTIPLIER
+        ) // n_districts
         per_district_cap = max(
             _PER_DISTRICT_MIN_CAP,
-            min(_PER_DISTRICT_MAX_CAP, _CANDIDATE_POOL_LIMIT // max(len(target_district_norm), 1)),
+            min(_PER_DISTRICT_MAX_CAP, fair_share_headroom),
         )
         logger.info(
             "expansion_search stratified multi-district mode: target_count=%d per_district_cap=%d search_id=%s",
