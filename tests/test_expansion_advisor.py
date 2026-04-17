@@ -1,4 +1,7 @@
+import pytest
+
 from app.services.expansion_advisor import (
+    _ROAD_DISTANCE_SENTINEL_M,
     _candidate_feature_snapshot,
     _candidate_gate_status,
     _confidence_grade,
@@ -14,6 +17,7 @@ from app.services.expansion_advisor import (
     _nonnegative_int,
     _parking_evidence_band,
     _road_evidence_band,
+    _road_signal_from_context,
     clear_expansion_caches,
 )
 from app.services.aqar_district_match import (
@@ -159,6 +163,76 @@ def test_road_evidence_band_moderate():
 
 def test_road_evidence_band_strong():
     assert _road_evidence_band(6, False) == "strong"
+
+
+def _road_signal_distance_component(distance_m, *, touches: bool = False) -> float:
+    """Recover the distance_component of _road_signal_from_context.
+
+    The scorer returns touches_component * 0.70 + distance_component * 0.30.
+    With touches=False, touches_component is 0 and the whole signal equals
+    distance_component * 0.30, so distance_component = signal / 0.30.
+    """
+    signal = _road_signal_from_context(
+        {"touches_road": touches, "nearest_major_road_distance_m": distance_m}
+    )
+    return signal / 0.30
+
+
+def test_road_signal_distance_none_is_neutral():
+    # Missing distance — unknown, neutral component.
+    assert _road_signal_distance_component(None) == pytest.approx(0.5, abs=1e-3)
+
+
+def test_road_signal_distance_sentinel_is_neutral():
+    # 5000 is the COALESCE fallback for "no major road within 700 m" and
+    # must be treated as unknown, not penalised. Previously returned 0.0.
+    assert _road_signal_distance_component(_ROAD_DISTANCE_SENTINEL_M) == pytest.approx(
+        0.5, abs=1e-3
+    )
+    # Any distance at or beyond the sentinel is equally bogus.
+    assert _road_signal_distance_component(_ROAD_DISTANCE_SENTINEL_M + 1.0) == pytest.approx(
+        0.5, abs=1e-3
+    )
+
+
+def test_road_signal_distance_close_is_reward():
+    # 50 m from an arterial — strong proximity reward unchanged.
+    assert _road_signal_distance_component(50.0) > 0.9
+
+
+def test_road_signal_distance_near_threshold_unchanged():
+    # 699 m — below the 700 m search radius and below the sentinel, so the
+    # real falloff still applies (capped at 500 m → 0.0, but strictly > 0
+    # for d < 500). Use a value just under the 500 m cap.
+    assert _road_signal_distance_component(499.0) > 0.0
+    # At 699 m we are past the 500 m falloff cap, so component is 0.0.
+    assert _road_signal_distance_component(699.0) == pytest.approx(0.0, abs=1e-3)
+
+
+def test_road_signal_sentinel_lifts_score_vs_old_behaviour():
+    # Regression guard: a parcel that touches a side street but has no
+    # arterial in range (sentinel distance) should now score ≈ +0.09 higher
+    # than under the old logic (0.0 penalty on the 30% distance component).
+    ctx = {
+        "touches_road": True,
+        "nearest_major_road_distance_m": _ROAD_DISTANCE_SENTINEL_M,
+    }
+    new_signal = _road_signal_from_context(ctx)
+    # Old behaviour: distance_component = 0.0 → 1.0*0.70 + 0.0*0.30 = 0.70
+    old_signal = 1.0 * 0.70 + 0.0 * 0.30
+    # New behaviour: distance_component = 0.5 → 1.0*0.70 + 0.5*0.30 = 0.85
+    expected_new = 1.0 * 0.70 + 0.5 * 0.30
+    assert new_signal == pytest.approx(expected_new, abs=1e-3)
+    assert new_signal > old_signal
+    # Lock direction: the lift is ~0.15 on the composite [0,1] signal,
+    # which feeds a rent multiplier with 0.20 weight and later gets scaled
+    # into the 0.70–1.35 range. Keep the direction-of-change assertion
+    # conservative — we only care that sentinel is no longer harsher than
+    # "unknown".
+    neutral_signal = _road_signal_from_context(
+        {"touches_road": True, "nearest_major_road_distance_m": None}
+    )
+    assert new_signal == pytest.approx(neutral_signal, abs=1e-3)
 
 
 def test_candidate_gate_status_exposes_advisory_failures_without_blocking():
