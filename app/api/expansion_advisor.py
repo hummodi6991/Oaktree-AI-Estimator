@@ -636,10 +636,16 @@ def _prewarm_decision_memos(
 
     Runs in a fresh DB session — FastAPI's per-request session has already
     been closed by the time BackgroundTasks fires the callback. Per-candidate
-    failures are caught and logged; one bad memo cannot abort the batch. A
-    wall-clock budget (``EXPANSION_MEMO_PREWARM_BUDGET_S``) is enforced
-    between iterations so a stuck LLM call cannot keep the worker busy
-    indefinitely.
+    failures are caught and logged; one bad memo cannot abort the batch.
+
+    Wall-clock budget semantics (``EXPANSION_MEMO_PREWARM_BUDGET_S``):
+      * > 0 → enforced. The budget check runs at the END of each iteration,
+        so the first candidate is ALWAYS attempted regardless of how small
+        the budget is. Subsequent iterations abort early when
+        ``elapsed >= budget`` and log "budget exhausted".
+      * <= 0 → treated as UNBOUNDED (no wall-clock gate). Use the
+        ``ENABLED`` / ``TOP_N`` knobs to disable pre-warm entirely; the
+        budget is an LLM-stuck-call safety valve, not an on/off switch.
 
     ``candidate_specs`` is a list of {id, parcel_id, ...candidate-fields}
     dicts pre-built from the in-memory search result, so the task does not
@@ -653,6 +659,7 @@ def _prewarm_decision_memos(
 
     targets = candidate_specs[:top_n]
     budget = float(settings.EXPANSION_MEMO_PREWARM_BUDGET_S)
+    budget_enforced = budget > 0
     started_at = _prewarm_time.monotonic()
     generated = 0
     skipped = 0
@@ -661,64 +668,83 @@ def _prewarm_decision_memos(
     db: Session = db_session.SessionLocal()
     try:
         logger.info(
-            "expansion_memo_prewarm start: search_id=%s top_n=%d budget_s=%.0f",
-            search_id, len(targets), budget,
+            "expansion_memo_prewarm start: search_id=%s top_n=%d "
+            "budget_s=%s",
+            search_id, len(targets),
+            f"{budget:.0f}" if budget_enforced else "unbounded",
         )
-        for spec in targets:
-            elapsed = _prewarm_time.monotonic() - started_at
-            if elapsed >= budget:
-                logger.info(
-                    "expansion_memo_prewarm budget exhausted: search_id=%s "
-                    "elapsed=%.2fs generated=%d remaining=%d",
-                    search_id, elapsed, generated, len(targets) - (generated + skipped + failed),
-                )
-                break
-
+        for index, spec in enumerate(targets):
             parcel_id = spec.get("parcel_id")
             if not parcel_id:
                 skipped += 1
-                continue
+            else:
+                try:
+                    cached = _decision_memo_cache_lookup(
+                        db, search_id, str(parcel_id)
+                    )
+                    if cached is not None and cached[1] is not None:
+                        skipped += 1
+                        logger.info(
+                            "expansion_memo_prewarm skip cached: "
+                            "search_id=%s parcel_id=%s",
+                            search_id, parcel_id,
+                        )
+                    else:
+                        ctx = build_memo_context(
+                            candidate=spec,
+                            brief={"brand_profile": brand_profile or {}},
+                            lang="en",
+                        )
+                        memo_json = generate_structured_memo(ctx)
+                        if memo_json is None:
+                            skipped += 1
+                            logger.info(
+                                "expansion_memo_prewarm skip (no memo): "
+                                "search_id=%s parcel_id=%s",
+                                search_id, parcel_id,
+                            )
+                        else:
+                            memo_text = render_structured_memo_as_text(
+                                memo_json, "en"
+                            )
+                            _decision_memo_cache_write(
+                                db, search_id, str(parcel_id),
+                                memo_text, memo_json,
+                            )
+                            generated += 1
+                            logger.info(
+                                "expansion_memo_prewarm ok: "
+                                "search_id=%s parcel_id=%s",
+                                search_id, parcel_id,
+                            )
+                except Exception:
+                    failed += 1
+                    logger.warning(
+                        "expansion_memo_prewarm fail: "
+                        "search_id=%s parcel_id=%s",
+                        search_id, parcel_id,
+                        exc_info=True,
+                    )
 
-            try:
-                cached = _decision_memo_cache_lookup(db, search_id, str(parcel_id))
-                if cached is not None and cached[1] is not None:
-                    skipped += 1
+            # Budget check runs AFTER the iteration so the first candidate
+            # is always attempted even when the budget is tiny. Skip the
+            # check after the final iteration (nothing left to abort).
+            is_last = index == len(targets) - 1
+            if budget_enforced and not is_last:
+                elapsed = _prewarm_time.monotonic() - started_at
+                if elapsed >= budget:
+                    remaining = len(targets) - (index + 1)
                     logger.info(
-                        "expansion_memo_prewarm skip cached: search_id=%s parcel_id=%s",
-                        search_id, parcel_id,
+                        "expansion_memo_prewarm budget exhausted: "
+                        "search_id=%s elapsed=%.2fs budget=%.2fs "
+                        "generated=%d skipped=%d failed=%d remaining=%d",
+                        search_id, elapsed, budget,
+                        generated, skipped, failed, remaining,
                     )
-                    continue
-                ctx = build_memo_context(
-                    candidate=spec,
-                    brief={"brand_profile": brand_profile or {}},
-                    lang="en",
-                )
-                memo_json = generate_structured_memo(ctx)
-                if memo_json is None:
-                    skipped += 1
-                    logger.info(
-                        "expansion_memo_prewarm skip (no memo): search_id=%s parcel_id=%s",
-                        search_id, parcel_id,
-                    )
-                    continue
-                memo_text = render_structured_memo_as_text(memo_json, "en")
-                _decision_memo_cache_write(
-                    db, search_id, str(parcel_id), memo_text, memo_json,
-                )
-                generated += 1
-                logger.info(
-                    "expansion_memo_prewarm ok: search_id=%s parcel_id=%s",
-                    search_id, parcel_id,
-                )
-            except Exception:
-                failed += 1
-                logger.warning(
-                    "expansion_memo_prewarm fail: search_id=%s parcel_id=%s",
-                    search_id, parcel_id,
-                    exc_info=True,
-                )
+                    break
         logger.info(
-            "expansion_memo_prewarm done: search_id=%s wall_s=%.2f generated=%d skipped=%d failed=%d",
+            "expansion_memo_prewarm done: search_id=%s wall_s=%.2f "
+            "generated=%d skipped=%d failed=%d",
             search_id,
             _prewarm_time.monotonic() - started_at,
             generated, skipped, failed,

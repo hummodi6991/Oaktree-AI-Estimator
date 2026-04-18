@@ -160,9 +160,17 @@ class Settings:
     EXPANSION_MEMO_PREWARM_TOP_N: int = int(
         os.getenv("EXPANSION_MEMO_PREWARM_TOP_N", "10")
     )
-    # Hard wall-clock cap across the whole pre-warm batch; abandoned
-    # candidates simply stay un-warmed and the lazy POST /decision-memo
-    # path will generate them on demand.
+    # Wall-clock cap across the whole pre-warm batch. The check runs AFTER
+    # each iteration, so the first candidate is ALWAYS attempted regardless
+    # of how small the budget is; abandoned candidates stay un-warmed and
+    # the lazy POST /decision-memo path will generate them on demand.
+    #
+    # Semantics:
+    #   * > 0 → enforced budget (default 120s for a top-10 batch).
+    #   * <= 0 → treated as UNBOUNDED (no wall-clock gate). The budget is an
+    #     LLM-stuck-call safety valve, not an on/off switch — use
+    #     ``EXPANSION_MEMO_PREWARM_ENABLED=false`` or
+    #     ``EXPANSION_MEMO_PREWARM_TOP_N=0`` to disable pre-warm.
     EXPANSION_MEMO_PREWARM_BUDGET_S: float = float(
         os.getenv("EXPANSION_MEMO_PREWARM_BUDGET_S", "120")
     )

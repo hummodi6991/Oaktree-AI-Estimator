@@ -370,31 +370,26 @@ def test_prewarm_per_candidate_error_does_not_abort_batch(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 9. Pre-warm: wall-clock budget is enforced between iterations.
+# 9a. Pre-warm: generous budget + fast LLM warms every candidate.
 # ---------------------------------------------------------------------------
-def test_prewarm_budget_exhausted_skips_remaining(monkeypatch):
+def test_prewarm_generous_budget_warms_all(monkeypatch):
     from app.api import expansion_advisor as api_mod
 
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_ENABLED", True)
-    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_TOP_N", 5)
-    # Budget of ~0: anything after the first iteration sees elapsed > budget.
-    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_BUDGET_S", 0.0)
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_TOP_N", 3)
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_BUDGET_S", 120.0)
 
-    specs = [{"id": f"c{i}", "parcel_id": f"p{i}"} for i in range(1, 6)]
+    specs = [{"id": f"c{i}", "parcel_id": f"p{i}"} for i in range(1, 4)]
 
-    # Drive monotonic clock manually so we know the budget is the gate.
+    # Deterministic, fast clock — each iteration "takes" 0.1s.
     clock = {"t": 0.0}
+    monkeypatch.setattr(api_mod._prewarm_time, "monotonic", lambda: clock["t"])
 
-    def _mono():
-        return clock["t"]
-
-    def _tick(ctx):
-        # Simulate the LLM taking time; after the first call, budget is blown.
-        clock["t"] = 1.0
+    def _gen(ctx):
+        clock["t"] += 0.1
         return {"headline_recommendation": "ok"}
 
-    monkeypatch.setattr(api_mod._prewarm_time, "monotonic", _mono)
-    monkeypatch.setattr(api_mod, "generate_structured_memo", _tick)
+    monkeypatch.setattr(api_mod, "generate_structured_memo", _gen)
     monkeypatch.setattr(
         api_mod, "render_structured_memo_as_text", lambda j, lang: "text"
     )
@@ -409,9 +404,191 @@ def test_prewarm_budget_exhausted_skips_remaining(monkeypatch):
     )
     with patch.object(api_mod.db_session, "SessionLocal", return_value=MagicMock()):
         api_mod._prewarm_decision_memos("s1", specs, {})
-    # First iteration's budget check sees elapsed=0 (<0=budget? no, 0>=0),
-    # so even p1 is skipped — the budget is actively enforced.
-    assert writes == []
+    assert writes == ["p1", "p2", "p3"]
+
+
+# ---------------------------------------------------------------------------
+# 9b. Pre-warm: first candidate is always attempted; budget trips the rest.
+#
+#     3 specs, budget=1.0s, first LLM call consumes 2s of monotonic time:
+#       * p1 is warmed (budget check happens AFTER iteration 1).
+#       * p2 and p3 are skipped with "budget exhausted" logged.
+# ---------------------------------------------------------------------------
+def test_prewarm_first_attempt_always_runs_then_budget_trips(monkeypatch, caplog):
+    from app.api import expansion_advisor as api_mod
+
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_ENABLED", True)
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_TOP_N", 3)
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_BUDGET_S", 1.0)
+
+    specs = [{"id": f"c{i}", "parcel_id": f"p{i}"} for i in range(1, 4)]
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(api_mod._prewarm_time, "monotonic", lambda: clock["t"])
+
+    gen_calls: list[str] = []
+
+    def _gen(ctx):
+        gen_calls.append(str(ctx.parcel_id))
+        # First LLM call consumes 2s; subsequent calls (if reached) add 0.1s.
+        clock["t"] += 2.0 if len(gen_calls) == 1 else 0.1
+        return {"headline_recommendation": "ok"}
+
+    monkeypatch.setattr(api_mod, "generate_structured_memo", _gen)
+    monkeypatch.setattr(
+        api_mod, "render_structured_memo_as_text", lambda j, lang: "text"
+    )
+    monkeypatch.setattr(
+        api_mod, "_decision_memo_cache_lookup", lambda db, sid, pid: None
+    )
+    writes: list[str] = []
+    monkeypatch.setattr(
+        api_mod,
+        "_decision_memo_cache_write",
+        lambda db, sid, pid, t, j: writes.append(pid),
+    )
+    with caplog.at_level("INFO", logger=api_mod.logger.name):
+        with patch.object(api_mod.db_session, "SessionLocal", return_value=MagicMock()):
+            api_mod._prewarm_decision_memos("s1", specs, {})
+    # Exactly p1 warmed; LLM called once; p2 and p3 skipped.
+    assert gen_calls == ["p1"]
+    assert writes == ["p1"]
+    # "budget exhausted" log line emitted with the right remaining count.
+    budget_lines = [
+        r.message for r in caplog.records if "budget exhausted" in r.message
+    ]
+    assert len(budget_lines) == 1
+    assert "remaining=2" in budget_lines[0]
+
+
+# ---------------------------------------------------------------------------
+# 9c. Pre-warm: BUDGET_S <= 0 is treated as UNBOUNDED (no wall-clock gate).
+# ---------------------------------------------------------------------------
+def test_prewarm_budget_non_positive_is_unbounded(monkeypatch):
+    from app.api import expansion_advisor as api_mod
+
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_ENABLED", True)
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_TOP_N", 3)
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_BUDGET_S", 0.0)
+
+    specs = [{"id": f"c{i}", "parcel_id": f"p{i}"} for i in range(1, 4)]
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(api_mod._prewarm_time, "monotonic", lambda: clock["t"])
+
+    def _gen(ctx):
+        # Every call burns wall-clock time that would blow any positive budget.
+        clock["t"] += 9999.0
+        return {"headline_recommendation": "ok"}
+
+    monkeypatch.setattr(api_mod, "generate_structured_memo", _gen)
+    monkeypatch.setattr(
+        api_mod, "render_structured_memo_as_text", lambda j, lang: "text"
+    )
+    monkeypatch.setattr(
+        api_mod, "_decision_memo_cache_lookup", lambda db, sid, pid: None
+    )
+    writes: list[str] = []
+    monkeypatch.setattr(
+        api_mod,
+        "_decision_memo_cache_write",
+        lambda db, sid, pid, t, j: writes.append(pid),
+    )
+    with patch.object(api_mod.db_session, "SessionLocal", return_value=MagicMock()):
+        api_mod._prewarm_decision_memos("s1", specs, {})
+    # All three warmed — the non-positive budget is NOT an on/off switch.
+    assert writes == ["p1", "p2", "p3"]
+
+
+# ---------------------------------------------------------------------------
+# 9d. rerank_reason runtime shape invariant.
+#
+# The validator in app/services/expansion_rerank.py strictly requires
+# rerank_reason to be either (a) None for unchanged candidates or (b) a
+# fully-populated dict for moved candidates. This test makes that
+# invariant loud and round-trips both shapes through CandidateMemoResponse
+# to confirm the Pydantic type stays correct.
+# ---------------------------------------------------------------------------
+def test_rerank_reason_is_strictly_dict_or_none(monkeypatch):
+    """After _apply_rerank_to_candidates runs, every candidate's
+    rerank_reason is either a dict (moved) or None (not moved). Never
+    a string, never anything else."""
+    from app.services import expansion_advisor as svc
+
+    # Flag off → every candidate's rerank_reason is None.
+    monkeypatch.setattr(_ea_settings, "EXPANSION_LLM_RERANK_ENABLED", False)
+    cands = [{"parcel_id": f"p{i}", "final_score": 1.0 - i * 0.01} for i in range(1, 6)]
+    out = _apply_rerank_to_candidates(cands, {})
+    for c in out:
+        assert c["rerank_reason"] is None, (c["parcel_id"], c["rerank_reason"])
+
+    # Flag on, p2<->p4 swap → moved rows carry a dict, others stay None.
+    monkeypatch.setattr(_ea_settings, "EXPANSION_LLM_RERANK_ENABLED", True)
+    reason = {
+        "summary": "moved after reweighing realized-demand and landlord signal",
+        "positives_cited": [],
+        "negatives_cited": [],
+        "comparison_to_displaced_candidate": "the displaced candidate has a weaker overall fit",
+    }
+    decisions = [
+        {"parcel_id": "p1", "original_rank": 1, "new_rank": 1, "rerank_reason": None},
+        {"parcel_id": "p2", "original_rank": 2, "new_rank": 4, "rerank_reason": reason},
+        {"parcel_id": "p3", "original_rank": 3, "new_rank": 3, "rerank_reason": None},
+        {"parcel_id": "p4", "original_rank": 4, "new_rank": 2, "rerank_reason": reason},
+        {"parcel_id": "p5", "original_rank": 5, "new_rank": 5, "rerank_reason": None},
+    ]
+    cands2 = [{"parcel_id": f"p{i}", "final_score": 1.0 - i * 0.01} for i in range(1, 6)]
+    with patch.object(svc, "generate_rerank", return_value=decisions):
+        out2 = _apply_rerank_to_candidates(cands2, {})
+    by_pid = {c["parcel_id"]: c for c in out2}
+    # Moved candidates → dict. Unchanged → None. Strictly those two shapes.
+    assert isinstance(by_pid["p2"]["rerank_reason"], dict)
+    assert isinstance(by_pid["p4"]["rerank_reason"], dict)
+    for pid in ("p1", "p3", "p5"):
+        assert by_pid[pid]["rerank_reason"] is None
+    for pid, c in by_pid.items():
+        assert c["rerank_reason"] is None or isinstance(c["rerank_reason"], dict), pid
+
+
+def test_candidate_memo_response_accepts_both_rerank_reason_shapes():
+    """CandidateMemoResponse must round-trip rerank_reason=None AND
+    rerank_reason=<dict> without a ValidationError. If this fails, the
+    Pydantic type on the response model has drifted from the runtime shape
+    produced by _apply_rerank_to_candidates."""
+    from app.api.expansion_advisor import CandidateMemoResponse
+
+    base = {
+        "candidate_id": "c1",
+        "search_id": "s1",
+        "brand_profile": {},
+        "candidate": {},
+        "recommendation": {
+            "headline": "", "verdict": "", "best_use_case": "",
+            "main_watchout": "", "gate_verdict": "",
+        },
+        "market_research": {
+            "delivery_market_summary": "",
+            "competitive_context": "",
+            "district_fit_summary": "",
+        },
+    }
+
+    # Shape A: rerank_reason=None (unchanged / flag-off candidate).
+    payload_none = {**base, "rerank_reason": None, "rerank_status": "flag_off"}
+    m1 = CandidateMemoResponse.model_validate(payload_none)
+    assert m1.rerank_reason is None
+
+    # Shape B: rerank_reason=<structured dict> (moved candidate).
+    reason = {
+        "summary": "moved after reweighing realized-demand and landlord signal",
+        "positives_cited": ["realized demand"],
+        "negatives_cited": [],
+        "comparison_to_displaced_candidate": "the displaced candidate has a weaker overall fit",
+    }
+    payload_dict = {**base, "rerank_reason": reason, "rerank_status": "applied"}
+    m2 = CandidateMemoResponse.model_validate(payload_dict)
+    assert isinstance(m2.rerank_reason, dict)
+    assert m2.rerank_reason["summary"].startswith("moved")
 
 
 # ---------------------------------------------------------------------------
