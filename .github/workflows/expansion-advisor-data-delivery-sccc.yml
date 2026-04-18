@@ -2,7 +2,7 @@ name: "Expansion Advisor Data — Delivery (SCCC)"
 
 on:
   schedule:
-    - cron: "0 5 * * 3"  # Weekly on Wednesday at 05:00 UTC
+    - cron: "0 5 * * *"  # Daily at 05:00 UTC (08:00 AST)
   workflow_dispatch:
     inputs:
       platforms:
