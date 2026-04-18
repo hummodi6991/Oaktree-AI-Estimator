@@ -6395,9 +6395,19 @@ def run_expansion_search(
         # history table has ≥3 contributing branches in the catchment;
         # otherwise the field is explicitly None so the UI can distinguish
         # "not computed" from "zero demand observed".
-        if _realized_demand_30d is not None:
-            feature_snapshot_json["realized_demand_30d"] = _realized_demand_30d
-            feature_snapshot_json["realized_demand_branches"] = _realized_demand_branches
+        #
+        # Look up per-parcel from _bulk_delivery here — the outer-scope
+        # `_realized_demand_30d` / `_realized_demand_branches` are written
+        # in the first scoring pass (the `for row in rows:` loop above)
+        # and retain whatever value the final iteration produced, which
+        # would broadcast a single catchment's figure to every candidate
+        # surfaced in this shortlist loop.
+        _rd_stats_this = _bulk_delivery.get(_pid_str) or {}
+        _rd_value_this = _rd_stats_this.get("realized_demand_30d")
+        _rd_branches_this = int(_rd_stats_this.get("realized_demand_branches") or 0)
+        if _rd_value_this is not None and _rd_branches_this >= 3:
+            feature_snapshot_json["realized_demand_30d"] = float(_rd_value_this)
+            feature_snapshot_json["realized_demand_branches"] = _rd_branches_this
             feature_snapshot_json["realized_demand_window_days"] = int(
                 settings.EXPANSION_REALIZED_DEMAND_WINDOW_DAYS
             )
