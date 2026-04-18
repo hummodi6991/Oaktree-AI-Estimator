@@ -6891,7 +6891,13 @@ def run_expansion_search(
             unit_area_sqm,
             unit_street_width_m,
             unit_neighborhood,
-            unit_listing_type
+            unit_listing_type,
+            deterministic_rank,
+            final_rank,
+            rerank_applied,
+            rerank_reason,
+            rerank_delta,
+            rerank_status
         ) VALUES (
             :id,
             :search_id,
@@ -6951,7 +6957,13 @@ def run_expansion_search(
             :unit_area_sqm,
             :unit_street_width_m,
             :unit_neighborhood,
-            :unit_listing_type
+            :unit_listing_type,
+            :deterministic_rank,
+            :final_rank,
+            :rerank_applied,
+            CAST(:rerank_reason AS jsonb),
+            :rerank_delta,
+            :rerank_status
         )
         """
     )
@@ -6970,6 +6982,11 @@ def run_expansion_search(
             "top_positives_json": json.dumps(_sanitize_for_json(candidate["top_positives_json"]), ensure_ascii=False),
             "top_risks_json": json.dumps(_sanitize_for_json(candidate["top_risks_json"]), ensure_ascii=False),
             "comparable_competitors_json": json.dumps(_sanitize_for_json(candidate["comparable_competitors_json"]), ensure_ascii=False),
+            "rerank_reason": (
+                json.dumps(_sanitize_for_json(candidate["rerank_reason"]), ensure_ascii=False)
+                if candidate.get("rerank_reason") is not None
+                else None
+            ),
         }
 
     persisted_candidates: list[dict[str, Any]] = []
@@ -7223,7 +7240,14 @@ def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[
                 unit_area_sqm,
                 unit_street_width_m,
                 unit_neighborhood,
-                unit_listing_type
+                unit_listing_type,
+                deterministic_rank,
+                final_rank,
+                rerank_applied,
+                rerank_reason,
+                rerank_delta,
+                rerank_status,
+                (decision_memo_json IS NOT NULL OR decision_memo IS NOT NULL) AS decision_memo_present
             FROM expansion_candidate
             WHERE search_id = :search_id
             ORDER BY rank_position ASC NULLS LAST, compare_rank ASC NULLS LAST, final_score DESC, computed_at DESC
@@ -7231,6 +7255,11 @@ def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[
         ),
         {"search_id": search_id},
     ).mappings().all()
+    # NOTE: ``decision_memo`` (text) and ``decision_memo_json`` (multi-KB
+    # structured object) are intentionally NOT included in the list
+    # response — the frontend reads ``decision_memo_present`` to know
+    # whether to enable the "View decision memo" affordance and fetches
+    # the full memo via GET /candidates/{id}/memo on demand.
     return [_normalize_candidate_payload(dict(row), district_lookup) for row in rows]
 
 
@@ -7695,7 +7724,15 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
                 c.unit_area_sqm,
                 c.unit_street_width_m,
                 c.unit_neighborhood,
-                c.unit_listing_type
+                c.unit_listing_type,
+                c.deterministic_rank,
+                c.final_rank,
+                c.rerank_applied,
+                c.rerank_reason,
+                c.rerank_delta,
+                c.rerank_status,
+                c.decision_memo,
+                c.decision_memo_json
             FROM expansion_candidate c
             JOIN expansion_search s ON s.id = c.search_id
             WHERE c.id = :candidate_id
@@ -7827,6 +7864,20 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "competitive_context": competitive_context,
             "district_fit_summary": district_fit_summary,
         },
+        # Phase 3 chunk 1: rerank metadata + the structured memo JSON written
+        # by POST /decision-memo. Persisted on expansion_candidate so they
+        # survive a page reload. With EXPANSION_LLM_RERANK_ENABLED=False (the
+        # default) deterministic_rank == final_rank and rerank_status is
+        # "flag_off". decision_memo_json is None until POST /decision-memo
+        # (or the pre-warm background task on POST /searches) populates it.
+        "deterministic_rank": candidate.get("deterministic_rank"),
+        "final_rank": candidate.get("final_rank"),
+        "rerank_applied": bool(candidate.get("rerank_applied")),
+        "rerank_reason": candidate.get("rerank_reason"),
+        "rerank_delta": _safe_int(candidate.get("rerank_delta"), 0),
+        "rerank_status": candidate.get("rerank_status"),
+        "decision_memo": candidate.get("decision_memo"),
+        "decision_memo_json": candidate.get("decision_memo_json"),
     }
 
 

@@ -5,14 +5,17 @@ import logging
 import uuid
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from datetime import datetime
+import time as _prewarm_time
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.db import session as db_session
 from app.db.deps import get_db
 
 logger = logging.getLogger(__name__)
@@ -193,6 +196,21 @@ class ExpansionCandidateResponse(FlexibleResponseModel):
     demand_thesis: str = ""
     cost_thesis: str = ""
     decision_summary: str = ""
+    # Phase 3 chunk 1: rerank metadata persisted on the candidate row.
+    # Declared for documentation; FlexibleResponseModel (extra="allow") would
+    # surface them either way, but the explicit fields make the contract
+    # discoverable via /openapi.json for the frontend.
+    deterministic_rank: int | None = None
+    final_rank: int | None = None
+    rerank_applied: bool = False
+    rerank_reason: dict[str, Any] | None = None
+    rerank_delta: int = 0
+    rerank_status: str | None = None
+    # True iff the candidate row has either decision_memo (legacy text) or
+    # decision_memo_json (structured) populated. Frontend uses this to
+    # enable the "View decision memo" affordance without fetching the full
+    # multi-KB memo for every list item.
+    decision_memo_present: bool = False
 
 
 
@@ -282,6 +300,19 @@ class CandidateMemoResponse(StrictResponseModel):
     candidate: CandidateMemoCandidateResponse
     recommendation: CandidateMemoRecommendationResponse
     market_research: CandidateMemoMarketResearchResponse
+    # Phase 3 chunk 1: rerank metadata + persisted structured memo.
+    # ``decision_memo`` is the legacy rendered text; ``decision_memo_json``
+    # is the structured object (headline_recommendation, ranking_explanation,
+    # key_evidence, risks, comparison, bottom_line) populated by POST
+    # /decision-memo or by the pre-warm background task on POST /searches.
+    deterministic_rank: int | None = None
+    final_rank: int | None = None
+    rerank_applied: bool = False
+    rerank_reason: dict[str, Any] | None = None
+    rerank_delta: int = 0
+    rerank_status: str | None = None
+    decision_memo: str | None = None
+    decision_memo_json: dict[str, Any] | None = None
 
 
 class RecommendationTopCandidateResponse(StrictResponseModel):
@@ -595,9 +626,162 @@ def search_branch_suggestions(
     return {"items": merged}
 
 
+def _prewarm_decision_memos(
+    search_id: str,
+    candidate_specs: list[dict[str, Any]],
+    brand_profile: dict[str, Any] | None,
+) -> None:
+    """Background task: generate structured decision memos for the top-N
+    candidates so the first tap in the UI is instant.
+
+    Runs in a fresh DB session — FastAPI's per-request session has already
+    been closed by the time BackgroundTasks fires the callback. Per-candidate
+    failures are caught and logged; one bad memo cannot abort the batch.
+
+    Wall-clock budget semantics (``EXPANSION_MEMO_PREWARM_BUDGET_S``):
+      * > 0 → enforced. The budget check runs at the END of each iteration,
+        so the first candidate is ALWAYS attempted regardless of how small
+        the budget is. Subsequent iterations abort early when
+        ``elapsed >= budget`` and log "budget exhausted".
+      * <= 0 → treated as UNBOUNDED (no wall-clock gate). Use the
+        ``ENABLED`` / ``TOP_N`` knobs to disable pre-warm entirely; the
+        budget is an LLM-stuck-call safety valve, not an on/off switch.
+
+    ``candidate_specs`` is a list of {id, parcel_id, ...candidate-fields}
+    dicts pre-built from the in-memory search result, so the task does not
+    need to re-query the DB to know what to warm.
+    """
+    if not settings.EXPANSION_MEMO_PREWARM_ENABLED:
+        return
+    top_n = max(0, int(settings.EXPANSION_MEMO_PREWARM_TOP_N))
+    if top_n == 0 or not candidate_specs:
+        return
+
+    targets = candidate_specs[:top_n]
+    budget = float(settings.EXPANSION_MEMO_PREWARM_BUDGET_S)
+    budget_enforced = budget > 0
+    started_at = _prewarm_time.monotonic()
+    generated = 0
+    skipped = 0
+    failed = 0
+
+    db: Session = db_session.SessionLocal()
+    try:
+        logger.info(
+            "expansion_memo_prewarm start: search_id=%s top_n=%d "
+            "budget_s=%s",
+            search_id, len(targets),
+            f"{budget:.0f}" if budget_enforced else "unbounded",
+        )
+        for index, spec in enumerate(targets):
+            parcel_id = spec.get("parcel_id")
+            if not parcel_id:
+                skipped += 1
+            else:
+                try:
+                    cached = _decision_memo_cache_lookup(
+                        db, search_id, str(parcel_id)
+                    )
+                    if cached is not None and cached[1] is not None:
+                        skipped += 1
+                        logger.info(
+                            "expansion_memo_prewarm skip cached: "
+                            "search_id=%s parcel_id=%s",
+                            search_id, parcel_id,
+                        )
+                    else:
+                        ctx = build_memo_context(
+                            candidate=spec,
+                            brief={"brand_profile": brand_profile or {}},
+                            lang="en",
+                        )
+                        memo_json = generate_structured_memo(ctx)
+                        if memo_json is None:
+                            skipped += 1
+                            logger.info(
+                                "expansion_memo_prewarm skip (no memo): "
+                                "search_id=%s parcel_id=%s",
+                                search_id, parcel_id,
+                            )
+                        else:
+                            memo_text = render_structured_memo_as_text(
+                                memo_json, "en"
+                            )
+                            _decision_memo_cache_write(
+                                db, search_id, str(parcel_id),
+                                memo_text, memo_json,
+                            )
+                            generated += 1
+                            logger.info(
+                                "expansion_memo_prewarm ok: "
+                                "search_id=%s parcel_id=%s",
+                                search_id, parcel_id,
+                            )
+                except Exception:
+                    failed += 1
+                    logger.warning(
+                        "expansion_memo_prewarm fail: "
+                        "search_id=%s parcel_id=%s",
+                        search_id, parcel_id,
+                        exc_info=True,
+                    )
+
+            # Budget check runs AFTER the iteration so the first candidate
+            # is always attempted even when the budget is tiny. Skip the
+            # check after the final iteration (nothing left to abort).
+            is_last = index == len(targets) - 1
+            if budget_enforced and not is_last:
+                elapsed = _prewarm_time.monotonic() - started_at
+                if elapsed >= budget:
+                    remaining = len(targets) - (index + 1)
+                    logger.info(
+                        "expansion_memo_prewarm budget exhausted: "
+                        "search_id=%s elapsed=%.2fs budget=%.2fs "
+                        "generated=%d skipped=%d failed=%d remaining=%d",
+                        search_id, elapsed, budget,
+                        generated, skipped, failed, remaining,
+                    )
+                    break
+        logger.info(
+            "expansion_memo_prewarm done: search_id=%s wall_s=%.2f "
+            "generated=%d skipped=%d failed=%d",
+            search_id,
+            _prewarm_time.monotonic() - started_at,
+            generated, skipped, failed,
+        )
+    finally:
+        try:
+            db.close()
+        except Exception:
+            logger.debug("expansion_memo_prewarm: db close failed", exc_info=True)
+
+
+def _build_prewarm_specs(
+    items: list[dict[str, Any]],
+    top_n: int,
+) -> list[dict[str, Any]]:
+    """Pick the top-N candidates by ``final_rank`` (falling back to
+    ``rank_position``) and snapshot the fields ``build_memo_context``
+    needs. Snapshotting keeps the background task independent of the
+    request session and avoids a second DB round-trip."""
+    if top_n <= 0 or not items:
+        return []
+
+    def _key(item: dict[str, Any]) -> tuple[int, int]:
+        fr = item.get("final_rank")
+        rp = item.get("rank_position")
+        primary = fr if isinstance(fr, int) else (rp if isinstance(rp, int) else 10**9)
+        secondary = rp if isinstance(rp, int) else 10**9
+        return (primary, secondary)
+
+    ranked = sorted(items, key=_key)[:top_n]
+    return [dict(item) for item in ranked]
+
+
 @router.post("/searches", response_model=ExpansionSearchResponse)
 def create_expansion_search(
     req: ExpansionAdvisorSearchRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     if req.min_area_m2 > req.max_area_m2:
@@ -772,6 +956,28 @@ def create_expansion_search(
         search_id, len(items), pass_count,
         req.brand_name, req.category, req_target_districts,
     )
+
+    # Phase 3 chunk 1: pre-warm structured decision memos for the top-N
+    # candidates so the first tap in the UI is instant rather than incurring
+    # a 3–5s LLM cold-call. Runs AFTER the response is returned to the
+    # client (FastAPI BackgroundTasks contract), so response time is
+    # unaffected. Disabled when EXPANSION_MEMO_PREWARM_ENABLED=False or
+    # EXPANSION_MEMO_PREWARM_TOP_N=0.
+    if (
+        settings.EXPANSION_MEMO_PREWARM_ENABLED
+        and settings.EXPANSION_MEMO_PREWARM_TOP_N > 0
+        and items
+    ):
+        prewarm_specs = _build_prewarm_specs(
+            items, settings.EXPANSION_MEMO_PREWARM_TOP_N
+        )
+        if prewarm_specs:
+            background_tasks.add_task(
+                _prewarm_decision_memos,
+                search_id,
+                prewarm_specs,
+                brand_profile_payload,
+            )
 
     return {
         "search_id": search_id,
@@ -1158,7 +1364,15 @@ def _decision_memo_cache_write(
     memo_json: dict[str, Any] | None,
 ) -> None:
     """Persist the memo to expansion_candidate. Swallows errors — a persist
-    failure must not break the endpoint response."""
+    failure must not break the endpoint response.
+
+    Phase 3 chunk 1 verification: this UPDATE is bound to the request session
+    via :func:`get_db` and committed inline. The 0-memos-in-prod observation
+    in production today is therefore explained by no caller having hit POST
+    /decision-memo against those 3,898 candidates yet — not by a missing
+    write. The pre-warm background task on POST /searches will populate
+    memos automatically going forward.
+    """
     try:
         db.execute(
             text(

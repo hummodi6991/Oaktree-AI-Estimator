@@ -146,5 +146,34 @@ class Settings:
         os.getenv("EXPANSION_LLM_RERANK_MIN_SHORTLIST", "3")
     )
 
+    # --- Expansion Advisor decision-memo pre-warm (Phase 3) ---
+    # After POST /searches returns, schedule a background task that
+    # generates structured decision memos for the top-N candidates so the
+    # first tap on a candidate in the UI is instant rather than incurring
+    # a 3–5s LLM cold-call. The pre-warm task NEVER blocks the search
+    # response and silently catches per-candidate failures so one bad memo
+    # cannot abort the batch. Set TOP_N=0 (or ENABLED=false) to disable.
+    EXPANSION_MEMO_PREWARM_ENABLED: bool = (
+        os.getenv("EXPANSION_MEMO_PREWARM_ENABLED", "true").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    EXPANSION_MEMO_PREWARM_TOP_N: int = int(
+        os.getenv("EXPANSION_MEMO_PREWARM_TOP_N", "10")
+    )
+    # Wall-clock cap across the whole pre-warm batch. The check runs AFTER
+    # each iteration, so the first candidate is ALWAYS attempted regardless
+    # of how small the budget is; abandoned candidates stay un-warmed and
+    # the lazy POST /decision-memo path will generate them on demand.
+    #
+    # Semantics:
+    #   * > 0 → enforced budget (default 120s for a top-10 batch).
+    #   * <= 0 → treated as UNBOUNDED (no wall-clock gate). The budget is an
+    #     LLM-stuck-call safety valve, not an on/off switch — use
+    #     ``EXPANSION_MEMO_PREWARM_ENABLED=false`` or
+    #     ``EXPANSION_MEMO_PREWARM_TOP_N=0`` to disable pre-warm.
+    EXPANSION_MEMO_PREWARM_BUDGET_S: float = float(
+        os.getenv("EXPANSION_MEMO_PREWARM_BUDGET_S", "120")
+    )
+
 
 settings = Settings()
