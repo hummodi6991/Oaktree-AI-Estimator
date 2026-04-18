@@ -85,6 +85,37 @@ export type SiteFitContext = {
   parking_score_mode: "observed" | "estimated";
 };
 
+export interface StructuredMemoEvidence {
+  signal: string;
+  value: string | number;
+  implication: string;
+  polarity?: "positive" | "negative" | "neutral";
+}
+
+export interface StructuredMemo {
+  headline_recommendation: string;
+  ranking_explanation: string;
+  key_evidence: StructuredMemoEvidence[];
+  risks: string[];
+  comparison: string;
+  bottom_line: string;
+}
+
+export type RerankStatus =
+  | "flag_off"
+  | "shortlist_below_minimum"
+  | "llm_failed"
+  | "outside_rerank_cap"
+  | "unchanged"
+  | "applied";
+
+export interface RerankReason {
+  summary: string;
+  positives_cited: string[];
+  negatives_cited: string[];
+  comparison_to_displaced_candidate: string;
+}
+
 export type ExpansionCandidate = {
   id: string;
   candidate_id?: string;
@@ -147,6 +178,16 @@ export type ExpansionCandidate = {
   unit_street_width_m?: number;
   unit_neighborhood?: string;
   unit_listing_type?: string;
+  // Rerank + decision-memo presence metadata (Phase 3 chunk 1). The list
+  // endpoint intentionally excludes `decision_memo` and `decision_memo_json`
+  // for payload size — those live on the memo endpoint only.
+  deterministic_rank?: number | null;
+  final_rank?: number | null;
+  rerank_applied?: boolean;
+  rerank_reason?: RerankReason | null;
+  rerank_delta?: number;
+  rerank_status?: RerankStatus | null;
+  decision_memo_present?: boolean;
 };
 
 export type ExpansionSearchResponse = {
@@ -261,6 +302,15 @@ export type CandidateMemoResponse = {
     demand_thesis?: string;
     cost_thesis?: string;
     site_fit_context?: SiteFitContext;
+    // Rerank + structured-memo fields (Phase 3 chunk 1 persistence).
+    deterministic_rank?: number | null;
+    final_rank?: number | null;
+    rerank_applied?: boolean;
+    rerank_reason?: RerankReason | null;
+    rerank_delta?: number;
+    rerank_status?: RerankStatus | null;
+    decision_memo?: string | null;
+    decision_memo_json?: StructuredMemo | null;
     [key: string]: unknown;
   };
   market_research: {
@@ -385,6 +435,13 @@ export function normalizeCandidate(candidate: ExpansionCandidate): ExpansionCand
     top_risks_json: Array.isArray(candidate.top_risks_json) ? candidate.top_risks_json : [],
     comparable_competitors_json: Array.isArray(candidate.comparable_competitors_json) ? candidate.comparable_competitors_json : [],
     site_fit_context: candidate.site_fit_context || undefined,
+    deterministic_rank: candidate.deterministic_rank ?? null,
+    final_rank: candidate.final_rank ?? null,
+    rerank_applied: candidate.rerank_applied ?? false,
+    rerank_reason: candidate.rerank_reason ?? null,
+    rerank_delta: typeof candidate.rerank_delta === "number" ? candidate.rerank_delta : 0,
+    rerank_status: candidate.rerank_status ?? null,
+    decision_memo_present: candidate.decision_memo_present ?? false,
   };
 }
 
@@ -447,7 +504,7 @@ export function normalizeReportResponse(data: RecommendationReportResponse): Rec
 }
 
 export function normalizeMemoResponse(data: CandidateMemoResponse): CandidateMemoResponse {
-  const cand = data.candidate || {};
+  const cand = data.candidate || ({} as CandidateMemoResponse["candidate"]);
   return {
     ...data,
     brand_profile: data.brand_profile || {},
@@ -461,6 +518,14 @@ export function normalizeMemoResponse(data: CandidateMemoResponse): CandidateMem
       gate_status: (cand.gate_status as Record<string, boolean> | undefined) || {},
       gate_reasons: (cand.gate_reasons as CandidateGateReasons | undefined) || DEFAULT_GATE_REASONS,
       feature_snapshot: (cand.feature_snapshot as CandidateFeatureSnapshot | undefined) || DEFAULT_FEATURE_SNAPSHOT,
+      deterministic_rank: cand.deterministic_rank ?? null,
+      final_rank: cand.final_rank ?? null,
+      rerank_applied: cand.rerank_applied ?? false,
+      rerank_reason: cand.rerank_reason ?? null,
+      rerank_delta: typeof cand.rerank_delta === "number" ? cand.rerank_delta : 0,
+      rerank_status: cand.rerank_status ?? null,
+      decision_memo: cand.decision_memo ?? null,
+      decision_memo_json: cand.decision_memo_json ?? null,
     },
     market_research: data.market_research || {},
   };
@@ -588,16 +653,30 @@ export type LLMDecisionMemo = {
   rent_context: string;
 };
 
+export interface GeneratedDecisionMemo {
+  memo: LLMDecisionMemo;
+  memo_text: string | null;
+  memo_json: StructuredMemo | null;
+}
+
 export async function generateDecisionMemo(
   candidate: Record<string, unknown>,
   brief: Record<string, unknown>,
   lang: string,
-): Promise<LLMDecisionMemo> {
+): Promise<GeneratedDecisionMemo> {
   const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/decision-memo"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ candidate, brief, lang }),
   });
-  const data = await readJson<{ memo: LLMDecisionMemo }>(res);
-  return data.memo;
+  const data = await readJson<{
+    memo: LLMDecisionMemo;
+    memo_text?: string | null;
+    memo_json?: StructuredMemo | null;
+  }>(res);
+  return {
+    memo: data.memo,
+    memo_text: data.memo_text ?? null,
+    memo_json: data.memo_json ?? null,
+  };
 }

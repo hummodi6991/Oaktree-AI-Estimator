@@ -37,8 +37,8 @@ export default function DecisionMemoNarrative({ candidate, brief, lang }: Props)
     generateDecisionMemo(candidate, brief, lang)
       .then((result) => {
         if (cancelled) return;
-        cacheRef.current.set(candidateId, result);
-        setMemo(result);
+        cacheRef.current.set(candidateId, result.memo);
+        setMemo(result.memo);
       })
       .catch(() => {
         if (cancelled) return;
