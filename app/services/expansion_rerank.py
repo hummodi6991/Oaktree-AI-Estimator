@@ -777,10 +777,11 @@ def generate_rerank(
         parsed = json.loads(content)
     except json.JSONDecodeError as exc:
         logger.warning(
-            "rerank JSON parse failed (candidates=%d, error=%s, raw=%r)",
+            "rerank JSON parse failed (candidates=%d, error=%s, shortlist_pids=%r, raw_full=%r)",
             shortlist_size,
             exc,
-            content[:1000],
+            [c.get("parcel_id") or c.get("id") for c in shortlist],
+            content,
         )
         return None
 
@@ -788,10 +789,11 @@ def generate_rerank(
     ok, reasons = _validate_rerank_response(parsed, shortlist, max_move)
     if not ok:
         logger.warning(
-            "rerank validation failed (candidates=%d, reasons=%s, raw=%r)",
+            "rerank validation failed (candidates=%d, reasons=%s, shortlist_pids=%r, raw_full=%r)",
             shortlist_size,
             reasons,
-            content[:1000],
+            [c.get("parcel_id") or c.get("id") for c in shortlist],
+            content,
         )
         return None
 
