@@ -134,12 +134,30 @@ def _truncate_competitors(
     return out
 
 
+def _slim_score_breakdown(breakdown: Any) -> list[dict[str, Any]]:
+    """Compress ``score_breakdown`` to a list of ``{component, weight, score}``
+    dicts, dropping narrative/explanation/contribution/reasoning fields. Keeps
+    only numeric fields so the LLM still has the ranking context it needs."""
+    if not isinstance(breakdown, dict):
+        return []
+    weights = breakdown.get("weights") if isinstance(breakdown.get("weights"), dict) else {}
+    inputs = breakdown.get("inputs") if isinstance(breakdown.get("inputs"), dict) else {}
+    out: list[dict[str, Any]] = []
+    for name, weight in weights.items():
+        score = inputs.get(name)
+        if not isinstance(score, (int, float)):
+            continue
+        out.append({"component": name, "weight": weight, "score": score})
+    return out
+
+
 def _candidate_payload(
     candidate: dict[str, Any],
     *,
     whitelist_only: bool,
     competitor_keep: int,
     truncate_descriptions: bool,
+    score_breakdown_slim: bool = False,
 ) -> dict[str, Any]:
     """Build the per-candidate dict that goes into the user message.
 
@@ -161,7 +179,9 @@ def _candidate_payload(
         or candidate.get("score_breakdown")
     )
     if breakdown:
-        payload["score_breakdown"] = breakdown
+        payload["score_breakdown"] = (
+            _slim_score_breakdown(breakdown) if score_breakdown_slim else breakdown
+        )
     # Gate verdicts — search-service candidates store status and reasons
     # in two separate ``_json``-suffixed keys.
     gate_status = candidate.get("gate_status_json")
@@ -234,13 +254,17 @@ def _serialize_shortlist_for_prompt(
     shortlist = candidates[:shortlist_size]
     brand_payload = brand_profile or {}
 
-    # Progressive trim tiers (most generous -> most compact).
+    # Progressive trim tiers (most generous -> most compact). Tier 0 is
+    # uncompressed; tier 1 slims score_breakdown (the dominant contributor
+    # to payload size since score_breakdown became fully populated). Once
+    # slim, stay slim.
     tiers = [
-        {"whitelist_only": False, "competitor_keep": 2, "truncate_descriptions": False},
-        {"whitelist_only": False, "competitor_keep": 1, "truncate_descriptions": False},
-        {"whitelist_only": False, "competitor_keep": 0, "truncate_descriptions": False},
-        {"whitelist_only": True, "competitor_keep": 0, "truncate_descriptions": False},
-        {"whitelist_only": True, "competitor_keep": 0, "truncate_descriptions": True},
+        {"whitelist_only": False, "competitor_keep": 2, "truncate_descriptions": False, "score_breakdown_slim": False},
+        {"whitelist_only": False, "competitor_keep": 2, "truncate_descriptions": False, "score_breakdown_slim": True},
+        {"whitelist_only": False, "competitor_keep": 1, "truncate_descriptions": False, "score_breakdown_slim": True},
+        {"whitelist_only": False, "competitor_keep": 0, "truncate_descriptions": False, "score_breakdown_slim": True},
+        {"whitelist_only": True, "competitor_keep": 0, "truncate_descriptions": False, "score_breakdown_slim": True},
+        {"whitelist_only": True, "competitor_keep": 0, "truncate_descriptions": True, "score_breakdown_slim": True},
     ]
 
     serialized = ""
@@ -274,6 +298,12 @@ def _serialize_shortlist_for_prompt(
             trimmed_at_tier,
             len(serialized),
         )
+
+    logger.info(
+        "rerank shortlist payload size: %d chars (cap %d)",
+        len(serialized),
+        _MAX_USER_MESSAGE_CHARS,
+    )
 
     return serialized
 
