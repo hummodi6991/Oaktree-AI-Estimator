@@ -412,10 +412,15 @@ class MemoContext:
     feature_snapshot: dict
     score_breakdown: dict
     gate_verdicts: list[dict]
-    comparable_competitors: list[dict]
-    realized_demand: dict | None
-    listing_image_url: str | None
-    locale: str
+    gate_buckets: dict = field(default_factory=dict)
+    comparable_competitors: list[dict] = field(default_factory=list)
+    realized_demand: dict | None = None
+    listing_image_url: str | None = None
+    locale: str = "en"
+    overall_pass: bool | None = None
+    final_rank: int | None = None
+    final_score: float | None = None
+    deterministic_verdict: str | None = None
 
 
 # ── Context assembly helpers ────────────────────────────────────────
@@ -433,36 +438,198 @@ def _as_list(v: Any) -> list:
     return []
 
 
+# Bucketed gate_reasons_json has these top-level keys. When a dict has them
+# we treat it as the bucketed shape (authoritative source of tri-state);
+# otherwise we treat it as the flat gate_status_json shape.
+_GATE_REASONS_BUCKET_KEYS: tuple[str, ...] = ("passed", "failed", "unknown")
+
+
+def _lookup_gate_explanation(
+    gate_name: str,
+    explanations: dict[str, Any],
+) -> str:
+    """Look up an explanation for ``gate_name`` in the ``explanations`` map,
+    tolerating either the humanized ("parking") or raw ("parking_pass") form."""
+    if not isinstance(explanations, dict) or not gate_name:
+        return ""
+    # Direct hit (humanized name used as key, or raw key form).
+    direct = explanations.get(gate_name)
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    # Try raw-key form ("parking" -> "parking_pass").
+    raw_key = gate_name.replace(" ", "_").replace("/", "_") + "_pass"
+    hit = explanations.get(raw_key)
+    if isinstance(hit, str) and hit.strip():
+        return hit.strip()
+    # Last attempt: scan explanation keys, humanize to compare.
+    for k, v in explanations.items():
+        if not isinstance(v, str) or not v.strip():
+            continue
+        humanized = str(k).replace("_pass", "").replace("_", " ").replace("/", " ")
+        if humanized.strip().lower() == gate_name.strip().lower():
+            return v.strip()
+    return ""
+
+
 def _coerce_gate_verdicts(raw: Any) -> list[dict]:
     """Normalize various gate-status shapes into a list of
-    ``{gate, verdict, reason}`` dicts."""
+    ``{gate, verdict, reason}`` dicts.
+
+    Tri-state preserving:
+      - ``None`` / missing booleans map to ``verdict="unknown"`` (NOT "fail").
+      - Bucketed ``gate_reasons_json`` (``{passed:[], failed:[], unknown:[],
+        explanations:{}}``) is the authoritative source when present; gates
+        are drawn from the bucket arrays, not by iterating top-level keys.
+    """
     if isinstance(raw, list):
         out: list[dict] = []
         for item in raw:
-            if isinstance(item, dict):
-                out.append({
-                    "gate": item.get("gate") or item.get("name") or "",
-                    "verdict": item.get("verdict") or item.get("status") or "",
-                    "reason": item.get("reason") or item.get("message") or "",
-                })
+            if not isinstance(item, dict):
+                continue
+            verdict_raw = (
+                item.get("verdict")
+                or item.get("status")
+                or ""
+            )
+            verdict = str(verdict_raw).strip().lower() if verdict_raw else ""
+            if verdict in ("pass", "passed"):
+                verdict = "pass"
+            elif verdict in ("fail", "failed"):
+                verdict = "fail"
+            elif verdict in ("unknown", "indeterminate", "n/a", "na", ""):
+                verdict = "unknown" if verdict else ""
+            out.append({
+                "gate": item.get("gate") or item.get("name") or "",
+                "verdict": verdict,
+                "reason": item.get("reason") or item.get("message") or "",
+            })
         return out
+
     if isinstance(raw, dict):
+        # Bucketed shape: gate_reasons_json with passed/failed/unknown arrays.
+        if any(k in raw for k in _GATE_REASONS_BUCKET_KEYS):
+            explanations = raw.get("explanations") if isinstance(raw.get("explanations"), dict) else {}
+            out = []
+            for bucket_key, verdict_label in (
+                ("passed", "pass"),
+                ("failed", "fail"),
+                ("unknown", "unknown"),
+            ):
+                names = raw.get(bucket_key) or []
+                if not isinstance(names, list):
+                    continue
+                for name in names:
+                    gate_name = str(name or "").strip()
+                    if not gate_name:
+                        continue
+                    out.append({
+                        "gate": gate_name,
+                        "verdict": verdict_label,
+                        "reason": _lookup_gate_explanation(gate_name, explanations or {}),
+                    })
+            return out
+
+        # Flat shape: gate_status_json with booleans / None values.
         out = []
         for name, val in raw.items():
+            if name == "overall_pass":
+                continue
             if isinstance(val, dict):
                 out.append({
                     "gate": name,
                     "verdict": val.get("verdict") or val.get("status") or "",
                     "reason": val.get("reason") or val.get("message") or "",
                 })
+            elif val is True:
+                out.append({"gate": name, "verdict": "pass", "reason": ""})
+            elif val is False:
+                out.append({"gate": name, "verdict": "fail", "reason": ""})
             else:
-                out.append({
-                    "gate": name,
-                    "verdict": "pass" if bool(val) else "fail",
-                    "reason": "",
-                })
+                # None / anything else → unknown, NOT fail. This fixes the
+                # tri-state collapse bug.
+                out.append({"gate": name, "verdict": "unknown", "reason": ""})
         return out
+
     return []
+
+
+def _build_gate_buckets(
+    gate_reasons: dict[str, Any] | None,
+    gate_verdicts: list[dict],
+) -> dict[str, list[dict]]:
+    """Return ``{"passed": [...], "failed": [...], "unknown": [...]}`` of
+    ``{name, explanation}`` entries.
+
+    Prefers ``gate_reasons`` (``passed/failed/unknown`` arrays + ``explanations``)
+    as the authoritative source, because the bucket arrays carry the right
+    tri-state semantics. Falls back to ``gate_verdicts`` when
+    ``gate_reasons`` is unavailable or empty.
+    """
+    buckets: dict[str, list[dict]] = {"passed": [], "failed": [], "unknown": []}
+
+    def _append(bucket: str, name: str, explanation: str) -> None:
+        gate_name = str(name or "").strip()
+        if not gate_name:
+            return
+        buckets[bucket].append({
+            "name": gate_name,
+            "explanation": explanation or "",
+        })
+
+    if isinstance(gate_reasons, dict) and any(
+        isinstance(gate_reasons.get(k), list) and gate_reasons.get(k)
+        for k in _GATE_REASONS_BUCKET_KEYS
+    ):
+        explanations = gate_reasons.get("explanations") if isinstance(
+            gate_reasons.get("explanations"), dict
+        ) else {}
+        for bucket_key in _GATE_REASONS_BUCKET_KEYS:
+            for name in gate_reasons.get(bucket_key) or []:
+                _append(
+                    bucket_key,
+                    str(name),
+                    _lookup_gate_explanation(str(name), explanations or {}),
+                )
+        return buckets
+
+    # Fallback from the verdict list (tri-state preserving).
+    for v in gate_verdicts or []:
+        verdict = str(v.get("verdict") or "").strip().lower()
+        name = v.get("gate") or ""
+        reason = v.get("reason") or ""
+        if verdict == "pass":
+            _append("passed", name, reason)
+        elif verdict == "fail":
+            _append("failed", name, reason)
+        elif verdict == "unknown":
+            _append("unknown", name, reason)
+    return buckets
+
+
+def _derive_deterministic_verdict(candidate: dict[str, Any]) -> str | None:
+    """Re-compute the deterministic verdict label ("go" | "consider" |
+    "caution") from candidate scores using the same formula as
+    ``get_recommendation_report``.
+
+    Returns None when any required score is missing — the caller will then
+    omit ``deterministic_verdict`` from the payload rather than bake in a
+    default. This keeps the LLM anchor truthful: absence of anchor is
+    signaled as absence, not as "caution".
+    """
+    final_score = candidate.get("final_score")
+    economics = candidate.get("economics_score")
+    cannib = candidate.get("cannibalization_score")
+    if (
+        not isinstance(final_score, (int, float))
+        or not isinstance(economics, (int, float))
+        or not isinstance(cannib, (int, float))
+    ):
+        return None
+    if final_score >= 78 and economics >= 70 and cannib <= 55:
+        return "go"
+    if final_score >= 58 and economics >= 45 and cannib <= 75:
+        return "consider"
+    return "caution"
 
 
 def _component_score_value(
@@ -571,10 +738,26 @@ def build_memo_context(
     score_breakdown["weights"] = dict(COMPONENT_WEIGHTS)
     score_breakdown["contributions"] = contributions
 
-    gate_verdicts = _coerce_gate_verdicts(
-        candidate.get("gate_status_json")
-        or candidate.get("gate_reasons_json")
+    # Tri-state-preserving gate verdicts. When the candidate carries both
+    # gate_status_json (flat bool/None) and gate_reasons_json (bucketed),
+    # prefer gate_reasons_json as the authoritative source since its
+    # passed/failed/unknown arrays already encode the correct semantics and
+    # carry human-readable explanations.
+    raw_gate_reasons = candidate.get("gate_reasons_json")
+    raw_gate_status = candidate.get("gate_status_json")
+    if isinstance(raw_gate_reasons, dict) and any(
+        isinstance(raw_gate_reasons.get(k), list) and raw_gate_reasons.get(k)
+        for k in _GATE_REASONS_BUCKET_KEYS
+    ):
+        gate_verdicts = _coerce_gate_verdicts(raw_gate_reasons)
+    else:
+        gate_verdicts = _coerce_gate_verdicts(raw_gate_status or raw_gate_reasons)
+
+    gate_buckets = _build_gate_buckets(
+        raw_gate_reasons if isinstance(raw_gate_reasons, dict) else None,
+        gate_verdicts,
     )
+
     comparable_competitors = _as_list(
         candidate.get("comparable_competitors_json")
     )
@@ -585,6 +768,27 @@ def build_memo_context(
         rank_position = int(rank_raw) if rank_raw is not None else 0
     except (TypeError, ValueError):
         rank_position = 0
+
+    # Anchors the LLM narrative can be held to. The deterministic verdict
+    # is not part of the memo's output schema (it lives on
+    # ``recommendation.verdict`` produced by ``get_recommendation_report``),
+    # but the LLM needs to see it as an input so headline/bottom_line stay
+    # directionally consistent with it.
+    overall_pass = None
+    if isinstance(raw_gate_status, dict) and "overall_pass" in raw_gate_status:
+        overall_pass = raw_gate_status.get("overall_pass")
+    final_rank_raw = candidate.get("final_rank")
+    try:
+        final_rank = int(final_rank_raw) if final_rank_raw is not None else None
+    except (TypeError, ValueError):
+        final_rank = None
+    final_score_raw = candidate.get("final_score")
+    final_score = (
+        float(final_score_raw)
+        if isinstance(final_score_raw, (int, float))
+        else None
+    )
+    deterministic_verdict = _derive_deterministic_verdict(candidate)
 
     brand_profile = _as_dict(brief.get("brand_profile"))
     for k in (
@@ -614,10 +818,15 @@ def build_memo_context(
         feature_snapshot=feature_snapshot,
         score_breakdown=score_breakdown,
         gate_verdicts=gate_verdicts,
+        gate_buckets=gate_buckets,
         comparable_competitors=comparable_competitors,
         realized_demand=realized_demand,
         listing_image_url=listing_image_url,
         locale=locale,
+        overall_pass=overall_pass,
+        final_rank=final_rank,
+        final_score=final_score,
+        deterministic_verdict=deterministic_verdict,
     )
 
 
@@ -630,7 +839,8 @@ You will receive a JSON object describing:
 - the brand profile (category, service model, expansion goal, preferences),
 - the candidate's feature snapshot (area, rent, street width, competitor counts, delivery signals, etc.),
 - the candidate's score_breakdown, including the 9 deterministic component scores, their weights, and each component's contribution (weight × component_score) to the final score,
-- the gate verdicts (pass/fail) applied during screening,
+- the gate buckets (gates.passed / gates.failed / gates.unknown) — each entry is {name, explanation}. Gates are tri-state: 'passed' means the gate evaluated and passed, 'failed' means the gate evaluated and failed, 'unknown' means the gate could not be evaluated from available data (absence of evidence, not a negative signal),
+- deterministic anchors: overall_pass (true/false/null), final_rank, final_score, and — when available — deterministic_verdict ('go' | 'consider' | 'caution'),
 - comparable competitors and (optionally) the next-ranked candidate,
 - optionally, a realized_demand block (actual customer-order growth, not supply proxy).
 
@@ -656,7 +866,23 @@ Hard rules:
 - Write like an analyst who has actually visited the site, not a summarizer.
 - key_evidence must be a non-empty list. risks may be an empty list, but the key must be present.
 - Each key_evidence item MUST include a polarity field. Use 'positive' for facts that favor pursuing the site (strong demand, below-median rent, motivated landlord, etc.), 'negative' for facts that discourage pursuing it (high competition, bad frontage, above-median rent, parking failure, etc.), and 'neutral' for context that is important but neither favorable nor unfavorable. A key_evidence item with `implication` text that describes a concern or drawback MUST be tagged 'negative', not 'neutral'.
-- Return ONLY the JSON object, with no markdown fences, no leading or trailing commentary."""
+- Return ONLY the JSON object, with no markdown fences, no leading or trailing commentary.
+
+GATE LANGUAGE RULES (strict — violations are factual errors, not style preferences):
+- For any gate in gates.unknown, you MUST phrase it as "could not be verified from current data" or "not evaluable from current data". You MUST NOT write "failed", "failing", "decline", "not viable", "cannot compete", "severely limits", "undermines viability", or any synonym that implies the gate is a negative signal. Unknown means absence of evidence, NOT a negative finding.
+- For any gate in gates.failed, "failed"/"fails"/"does not meet" language is appropriate; describe the failure plainly.
+- For any gate in gates.passed, do not manufacture concern about it.
+- Parking, in particular, is frequently unknown for Aqar listings by architectural design, not by listing defect. If parking is in gates.unknown, treat it as a routine data-availability note, not as a site problem; do not downgrade the site on that basis.
+
+HEADLINE AND BOTTOM LINE RULES:
+- headline_recommendation and bottom_line MUST be directionally consistent with (a) overall_pass, (b) final_rank, (c) final_score, and (d) deterministic_verdict when provided.
+- If overall_pass is not false (i.e. true OR null), bottom_line MUST NOT contain "not viable", "decline", "disqualified", "should not proceed", or synonyms.
+- If final_rank == 1 AND final_score >= 70, the headline MUST be broadly affirmative (proceed / recommend / strong candidate, with honest caveats). It MUST NOT open with decline / reject language.
+- You will be told deterministic_verdict (when available). Your headline_recommendation and bottom_line MUST be directionally consistent with it. If deterministic_verdict is 'go' or 'consider', your headline cannot open with 'decline', 'reject', or 'not viable'. If deterministic_verdict is 'caution' or 'avoid', affirmative language is inappropriate. You MAY surface strong concerns in `risks` and `comparison` regardless — but headline and bottom_line must agree with the deterministic verdict's direction.
+- The narrative MAY and SHOULD surface the strongest concern honestly — in `risks` and in `comparison` — but not as the headline or bottom line when the overall direction is positive.
+
+SELF-CONSISTENCY RULE:
+- headline_recommendation, ranking_explanation, and bottom_line must all agree on direction. If the anchors point to 'go'/'consider', the headline and bottom_line cannot read as 'decline'. If the anchors point to 'caution' or a hard failure, the headline must not read as an affirmative recommendation."""
 
 
 _MAX_USER_PAYLOAD_CHARS = 12000
@@ -683,7 +909,14 @@ def _serialize_context_for_user_message(ctx: MemoContext) -> str:
         "brand_profile": ctx.brand_profile,
         "feature_snapshot": snap,
         "score_breakdown": ctx.score_breakdown,
+        # Kept for backward-compat with any downstream consumer. The
+        # authoritative tri-state view for the LLM is ``gates`` below.
         "gate_verdicts": ctx.gate_verdicts,
+        "gates": ctx.gate_buckets or {"passed": [], "failed": [], "unknown": []},
+        "overall_pass": ctx.overall_pass,
+        "final_rank": ctx.final_rank,
+        "final_score": ctx.final_score,
+        "deterministic_verdict": ctx.deterministic_verdict,
         "comparable_competitors": ctx.comparable_competitors[:5],
         "next_candidate_summary": ctx.next_candidate_summary,
         "realized_demand": ctx.realized_demand,
@@ -722,21 +955,38 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
             "supply presence. Cite value_30d, branch_count, and district_median "
             "when available."
         )
-    failed = [
-        g for g in ctx.gate_verdicts
-        if str(g.get("verdict") or "").lower() == "fail"
-    ]
-    if failed:
+    buckets = ctx.gate_buckets or {}
+    failed_entries = [e for e in (buckets.get("failed") or []) if e.get("name")]
+    unknown_entries = [e for e in (buckets.get("unknown") or []) if e.get("name")]
+
+    if failed_entries:
         failure_list = "; ".join(
-            f"{g.get('gate','?')}: {g.get('reason','')}".rstrip(": ")
-            for g in failed
+            f"{e['name']}: {e.get('explanation','')}".rstrip(": ")
+            for e in failed_entries
         )
         addenda.append(
             "GATE FAILURE: One or more gates failed — "
             + failure_list
-            + ". Lead the headline_recommendation with this failure and frame "
-            "the overall recommendation accordingly (likely 'decline' unless the "
-            "failure is borderline and clearly mitigable)."
+            + ". Per GATE LANGUAGE RULES, use 'failed' / 'does not meet' "
+            "language for these gates. Frame the headline_recommendation "
+            "consistent with overall_pass and deterministic_verdict (if the "
+            "failure is blocking and the verdict is 'caution', 'decline' is "
+            "appropriate; otherwise describe the failure honestly but keep "
+            "the direction aligned with the deterministic anchors)."
+        )
+
+    if unknown_entries:
+        unknown_list = "; ".join(
+            f"{e['name']}: {e.get('explanation','')}".rstrip(": ")
+            for e in unknown_entries
+        )
+        addenda.append(
+            "UNKNOWN GATES: The following gates could not be evaluated from "
+            "available data — " + unknown_list + ". Per GATE LANGUAGE RULES, "
+            "phrase these as 'could not be verified from current data' / "
+            "'not evaluable from current data'. Do NOT describe them as "
+            "failures, and do NOT let an unknown gate override an otherwise "
+            "positive overall_pass / deterministic_verdict."
         )
 
     system_content = STRUCTURED_MEMO_SYSTEM_PROMPT

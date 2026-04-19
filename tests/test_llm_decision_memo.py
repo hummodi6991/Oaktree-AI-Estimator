@@ -459,9 +459,15 @@ class TestRenderPromptRealizedDemandPresent:
 
 
 class TestRenderPromptFailedGate:
-    """Step 8, test 6."""
+    """Step 8, test 6.
 
-    def test_failed_gate_triggers_lead_with_failure_instruction(self):
+    After the tri-state fix, a genuinely failed gate still triggers the
+    GATE FAILURE addendum, and the new rule sections are always present in
+    the system prompt so the LLM sees the GATE LANGUAGE / HEADLINE / SELF-
+    CONSISTENCY rules regardless of input.
+    """
+
+    def test_failed_gate_triggers_failure_addendum_and_new_rule_sections(self):
         cand = dict(BASE_STRUCTURED_CANDIDATE)
         cand["gate_status_json"] = [
             {"gate": "zoning_fit_pass", "verdict": "fail", "reason": "C-2 not allowed on this parcel"},
@@ -472,9 +478,15 @@ class TestRenderPromptFailedGate:
         messages = render_structured_memo_prompt(ctx)
         system_content = messages[0]["content"]
 
+        # New rule sections are baked into the base system prompt.
+        assert "GATE LANGUAGE RULES" in system_content
+        assert "HEADLINE AND BOTTOM LINE RULES" in system_content
+        assert "SELF-CONSISTENCY RULE" in system_content
+
+        # Failure-language is still permitted/encouraged for a genuinely
+        # failed gate, so the GATE FAILURE situational addendum fires.
         assert "GATE FAILURE" in system_content
         assert "zoning_fit_pass" in system_content
-        assert "Lead the headline_recommendation with this failure" in system_content
 
 
 class TestRenderPromptArabicLocale:
@@ -913,3 +925,362 @@ class TestStructuredToLegacyShapeEvidencePolarity:
             "rent_context",
         ):
             assert key in memo
+
+
+# ── Tri-state gate fix (parking_pass=null / Aqar listings) ──────────
+
+# Production-shape fixture mirroring the #1-ranked candidate of search
+# 34eda4f9-5704-4645-b408-1cf6a3b8db5e: parking unknown, all other gates
+# pass, overall_pass=null, final_rank=1, final_score=80.
+PRODUCTION_UNKNOWN_PARKING_CANDIDATE = {
+    "id": "aqar-listing-1",
+    "parcel_id": "aqar-listing-1",
+    "final_rank": 1,
+    "final_score": 80,
+    "economics_score": 82,
+    "cannibalization_score": 40,
+    "feature_snapshot_json": {
+        "district": "Al Olaya",
+        "district_display": "العليا",
+        "area_m2": 120,
+        "estimated_annual_rent_sar": 480000,
+        "district_median_rent": 560000,
+    },
+    "score_breakdown_json": {
+        "occupancy_economics": 82,
+        "listing_quality": 75,
+        "brand_fit": 78,
+        "competition_whitespace": 70,
+        "demand_potential": 80,
+        "access_visibility": 72,
+        "landlord_signal": 60,
+        "delivery_demand": 65,
+        "confidence": 70,
+    },
+    "gate_status_json": {
+        "zoning_fit_pass": True,
+        "area_fit_pass": True,
+        "frontage_access_pass": True,
+        "parking_pass": None,
+        "district_pass": True,
+        "cannibalization_pass": True,
+        "delivery_market_pass": True,
+        "economics_pass": True,
+        "overall_pass": None,
+    },
+    "gate_reasons_json": {
+        "passed": [
+            "zoning fit", "area fit", "frontage/access",
+            "district", "cannibalization", "delivery market", "economics",
+        ],
+        "failed": [],
+        "unknown": ["parking"],
+        "thresholds": {},
+        "explanations": {
+            "parking_pass": "Parking context is not available for Aqar listings — cannot evaluate.",
+        },
+    },
+    "top_risks_json": ["Parking could not be verified from current data."],
+    "comparable_competitors_json": [],
+}
+
+
+class TestCoerceGateVerdictsTriState:
+    """Tri-state preservation: gate_status_json.parking_pass = null must
+    produce verdict='unknown', NOT verdict='fail'."""
+
+    def test_flat_gate_status_null_becomes_unknown(self):
+        from app.services.llm_decision_memo import _coerce_gate_verdicts
+        raw = {
+            "zoning_fit_pass": True,
+            "parking_pass": None,
+            "area_fit_pass": False,
+            "overall_pass": None,
+        }
+        out = _coerce_gate_verdicts(raw)
+        by_name = {e["gate"]: e["verdict"] for e in out}
+        assert by_name["parking_pass"] == "unknown"
+        assert by_name["zoning_fit_pass"] == "pass"
+        assert by_name["area_fit_pass"] == "fail"
+        # overall_pass is a roll-up, not a gate — should not appear as a row.
+        assert "overall_pass" not in by_name
+
+    def test_bucketed_gate_reasons_is_authoritative(self):
+        from app.services.llm_decision_memo import _coerce_gate_verdicts
+        raw = {
+            "passed": ["zoning fit", "economics"],
+            "failed": [],
+            "unknown": ["parking"],
+            "explanations": {
+                "parking_pass": "Parking context is not available for Aqar listings — cannot evaluate.",
+            },
+        }
+        out = _coerce_gate_verdicts(raw)
+        by_name = {e["gate"]: e for e in out}
+        # Authoritative bucket arrays drive verdicts; no gibberish from
+        # iterating top-level keys like "passed"/"failed"/"unknown".
+        assert by_name["parking"]["verdict"] == "unknown"
+        assert "could not be verified" in by_name["parking"]["reason"] or \
+               "not available" in by_name["parking"]["reason"]
+        assert by_name["zoning fit"]["verdict"] == "pass"
+        assert "passed" not in by_name and "failed" not in by_name \
+               and "unknown" not in by_name
+
+
+class TestBuildMemoContextTriStateAnchors:
+    """build_memo_context must plumb tri-state buckets + the deterministic
+    anchors (overall_pass, final_rank, final_score, deterministic_verdict)
+    into MemoContext."""
+
+    def test_production_candidate_populates_unknown_bucket_and_anchors(self):
+        ctx = build_memo_context(
+            candidate=PRODUCTION_UNKNOWN_PARKING_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        # Tri-state buckets.
+        unknown_names = [e["name"] for e in ctx.gate_buckets["unknown"]]
+        assert "parking" in unknown_names
+        # Explanation survives plumbing (humanized lookup).
+        parking_entry = next(e for e in ctx.gate_buckets["unknown"] if e["name"] == "parking")
+        assert "not available" in parking_entry["explanation"] \
+               or "cannot evaluate" in parking_entry["explanation"]
+        assert ctx.gate_buckets["failed"] == []
+        assert len(ctx.gate_buckets["passed"]) >= 6
+        # Deterministic anchors.
+        assert ctx.overall_pass is None
+        assert ctx.final_rank == 1
+        assert ctx.final_score == 80
+        # final_score=80, economics=82, cannib=40 → "go".
+        assert ctx.deterministic_verdict == "go"
+
+
+class TestRenderPromptUnknownGateAddendum:
+    """Production case: parking is unknown, no gate failed. The prompt must
+    NOT emit the old 'decline due to failure' instruction, and MUST emit
+    the UNKNOWN GATES situational addendum."""
+
+    def test_unknown_gate_addendum_replaces_failure_addendum(self):
+        ctx = build_memo_context(
+            candidate=PRODUCTION_UNKNOWN_PARKING_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        messages = render_structured_memo_prompt(ctx)
+        system_content = messages[0]["content"]
+
+        # New rule sections present.
+        assert "GATE LANGUAGE RULES" in system_content
+        assert "HEADLINE AND BOTTOM LINE RULES" in system_content
+        assert "SELF-CONSISTENCY RULE" in system_content
+        # Unknown gates surfaced with the right framing.
+        assert "UNKNOWN GATES" in system_content
+        assert "parking" in system_content
+        assert "could not be verified" in system_content \
+               or "not evaluable" in system_content
+        # Old 'GATE FAILURE' addendum must NOT appear (nothing failed).
+        assert "GATE FAILURE" not in system_content
+
+    def test_user_payload_carries_deterministic_anchors(self):
+        ctx = build_memo_context(
+            candidate=PRODUCTION_UNKNOWN_PARKING_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        messages = render_structured_memo_prompt(ctx)
+        user_payload = json.loads(messages[1]["content"])
+        assert user_payload["overall_pass"] is None
+        assert user_payload["final_rank"] == 1
+        assert user_payload["final_score"] == 80
+        assert user_payload["deterministic_verdict"] == "go"
+        assert "gates" in user_payload
+        assert [e["name"] for e in user_payload["gates"]["unknown"]] == ["parking"]
+        assert user_payload["gates"]["failed"] == []
+
+
+# ── Memo-text assertions: prompt-rule compliance against a mock LLM ──
+#
+# These tests mock the OpenAI client to return a memo crafted to respect
+# the new GATE LANGUAGE / HEADLINE / SELF-CONSISTENCY rules, and assert
+# that what the pipeline produces survives _structured_to_legacy_shape and
+# our wording rules for the production fixture (parking=unknown, rank 1,
+# score 80) and for a genuinely failing candidate (over-correction guard).
+
+_DECLINE_RE = r"decline|reject|not viable|disqualif"
+_DECLINE_BOTTOM_RE = r"not viable|decline|should not proceed|disqualif"
+_PARKING_BAD_RE = r"\bfail|\bfailing\b|\bfailed\b|inadequate|insufficient parking"
+_PARKING_UNKNOWN_RE = r"could not be verified|not evaluable|unavailable|not available"
+_CONCERN_LANG_RE = r"concern|caution|risk|weak|decline|not recommend"
+
+
+_PRODUCTION_MEMO_COMPLIANT = {
+    "headline_recommendation": "Recommend pursuing — strong economics and top rank with parking noted as unverifiable.",
+    "ranking_explanation": (
+        "occupancy_economics contributed 24.6 out of 30 and brand_fit 8.6 out of 11, "
+        "driving rank 1 with a final_score of 80."
+    ),
+    "key_evidence": [
+        {"signal": "final_score", "value": "80/100",
+         "implication": "top-ranked candidate in this search", "polarity": "positive"},
+        {"signal": "parking", "value": "unknown",
+         "implication": "could not be verified from current data (Aqar listings do not carry parking signal)",
+         "polarity": "neutral"},
+    ],
+    "risks": [
+        {"risk": "Parking could not be verified from current data.",
+         "mitigation": "Site visit to confirm on-street / building parking."},
+    ],
+    "comparison": "Comfortably ahead of rank 2 on economics.",
+    "bottom_line": "Proceed with a site visit to close the parking data gap.",
+}
+
+
+_OVER_CORRECTION_CANDIDATE = {
+    "id": "weak-cand-1",
+    "parcel_id": "weak-1",
+    "final_rank": 12,
+    "final_score": 45,
+    "economics_score": 40,
+    "cannibalization_score": 80,
+    "feature_snapshot_json": {
+        "district": "Edge District",
+        "area_m2": 60,
+        "estimated_annual_rent_sar": 900000,
+        "district_median_rent": 400000,
+    },
+    "score_breakdown_json": {
+        "occupancy_economics": 30,
+        "listing_quality": 40,
+        "brand_fit": 50,
+        "competition_whitespace": 40,
+        "demand_potential": 45,
+        "access_visibility": 50,
+        "landlord_signal": 30,
+        "delivery_demand": 40,
+        "confidence": 50,
+    },
+    "gate_status_json": {
+        "zoning_fit_pass": True,
+        "area_fit_pass": True,
+        "economics_pass": False,
+        "overall_pass": False,
+    },
+    "gate_reasons_json": {
+        "passed": ["zoning fit", "area fit"],
+        "failed": ["economics"],
+        "unknown": [],
+        "thresholds": {},
+        "explanations": {
+            "economics_pass": "Economics score below minimum threshold.",
+        },
+    },
+    "comparable_competitors_json": [],
+}
+
+
+_OVER_CORRECTION_MEMO_COMPLIANT = {
+    "headline_recommendation": "Decline — economics gate fails and rent sits well above the district median.",
+    "ranking_explanation": (
+        "occupancy_economics contributed only 9.0 out of 30 and landlord_signal 2.4 out of 8, "
+        "driving rank 12 with a final_score of 45."
+    ),
+    "key_evidence": [
+        {"signal": "annual rent", "value": "SAR 900,000/yr",
+         "implication": "125% above district median — a clear economics concern",
+         "polarity": "negative"},
+        {"signal": "economics gate", "value": "failed",
+         "implication": "deterministic threshold not met",
+         "polarity": "negative"},
+    ],
+    "risks": [
+        {"risk": "Economics gate failure indicates the deal is not viable at current rent.",
+         "mitigation": "Renegotiate rent or walk."},
+    ],
+    "comparison": "Worse than every shortlisted peer on economics.",
+    "bottom_line": "Do not proceed without a material rent reduction — current terms are not viable.",
+}
+
+
+class TestMemoWordingComplianceProductionFixture:
+    """Assertions (a), (b), (c) against the production unknown-parking
+    fixture: mock the LLM to return a compliant memo and verify that
+    headline/bottom_line/parking-language rules are satisfied."""
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_compliant_memo_passes_wording_rules(self, mock_get_client, monkeypatch):
+        monkeypatch.setattr(
+            "app.services.llm_decision_memo.settings.EXPANSION_MEMO_STRUCTURED_ENABLED",
+            True,
+            raising=False,
+        )
+        _daily_cost_tracker.clear()
+
+        mock_get_client.return_value = _mock_client_returning(
+            json.dumps(_PRODUCTION_MEMO_COMPLIANT)
+        )
+        ctx = build_memo_context(
+            candidate=PRODUCTION_UNKNOWN_PARKING_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        memo = generate_structured_memo(ctx)
+        assert memo is not None
+
+        import re
+        # (a) headline does NOT decline / reject / disqualify.
+        assert not re.search(_DECLINE_RE, memo["headline_recommendation"], re.I)
+        # (b) bottom_line does NOT contain decline / not viable / disqualify.
+        assert not re.search(_DECLINE_BOTTOM_RE, memo["bottom_line"], re.I)
+        # (c) Any parking sentence uses unknown-language, not failure-language.
+        parking_text = " ".join(
+            s for s in [
+                memo["headline_recommendation"],
+                memo["ranking_explanation"],
+                memo["bottom_line"],
+                memo["comparison"],
+            ] + [e.get("implication", "") for e in memo["key_evidence"]]
+              + [r.get("risk", "") for r in memo["risks"]]
+            if s and "parking" in s.lower()
+        )
+        if parking_text:
+            assert re.search(_PARKING_UNKNOWN_RE, parking_text, re.I)
+            assert not re.search(_PARKING_BAD_RE, parking_text, re.I)
+
+
+class TestMemoWordingOverCorrectionFixture:
+    """Guards against the prompt becoming toothless when a gate genuinely
+    fails — decline / concern language IS permitted for overall_pass=false."""
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_failing_candidate_can_use_decline_language(self, mock_get_client, monkeypatch):
+        monkeypatch.setattr(
+            "app.services.llm_decision_memo.settings.EXPANSION_MEMO_STRUCTURED_ENABLED",
+            True,
+            raising=False,
+        )
+        _daily_cost_tracker.clear()
+
+        mock_get_client.return_value = _mock_client_returning(
+            json.dumps(_OVER_CORRECTION_MEMO_COMPLIANT)
+        )
+        ctx = build_memo_context(
+            candidate=_OVER_CORRECTION_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        memo = generate_structured_memo(ctx)
+        assert memo is not None
+
+        import re
+        # Concern / decline language IS permitted somewhere in the memo.
+        joined = " ".join([
+            memo["headline_recommendation"],
+            memo["ranking_explanation"],
+            memo["bottom_line"],
+            memo["comparison"],
+        ])
+        assert re.search(_CONCERN_LANG_RE, joined, re.I)
+
+        # Anchors reflect the failing case.
+        assert ctx.overall_pass is False
+        assert ctx.deterministic_verdict == "caution"
