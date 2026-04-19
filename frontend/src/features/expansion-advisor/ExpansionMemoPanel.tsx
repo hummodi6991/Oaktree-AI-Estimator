@@ -5,6 +5,7 @@ import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import GateSummary from "./GateSummary";
 import CopySummaryBlock from "./CopySummaryBlock";
+import DecisionLogicCard from "./DecisionLogicCard";
 import DecisionMemoNarrative from "./DecisionMemoNarrative";
 import { fmtScore, fmtMeters, fmtSAR, fmtSARCompact, fmtM2, businessGateLabel, safeDistrictLabel, getDisplayScore } from "./formatHelpers";
 
@@ -176,6 +177,20 @@ export default function ExpansionMemoPanel({
                     <span className="ea-memo-key-numbers__label">{t("decisionMemo.streetWidth")}</span>
                   </div>
                 </div>
+
+                {/* ══ Section 2b: Decision Logic (chunk 3c) — gates, score
+                         contributions, ranking decision. Above the collapsed
+                         score-breakdown disclosure so the card and the details
+                         don't visually compete. ══ */}
+                <DecisionLogicCard
+                  gateReasons={gateReasons}
+                  scoreBreakdown={breakdown}
+                  deterministicRank={cand.deterministic_rank ?? null}
+                  finalRank={cand.final_rank ?? null}
+                  rerankStatus={cand.rerank_status ?? null}
+                  rerankReason={cand.rerank_reason ?? null}
+                  rerankDelta={typeof cand.rerank_delta === "number" ? cand.rerank_delta : 0}
+                />
 
                 {/* ══ Section 3: Full Score Breakdown (collapsed by default) ══ */}
                 <details className="ea-memo-full-breakdown">
