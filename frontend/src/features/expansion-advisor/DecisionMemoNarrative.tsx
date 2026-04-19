@@ -5,6 +5,7 @@ import type {
   LLMDecisionMemo,
   StructuredMemo,
   StructuredMemoEvidence,
+  StructuredMemoRisk,
 } from "../../lib/api/expansionAdvisor";
 import { generateDecisionMemo } from "../../lib/api/expansionAdvisor";
 
@@ -22,6 +23,11 @@ export function isValidStructuredMemo(
     return false;
   }
   if (!Array.isArray(memo.key_evidence)) return false;
+  if (!Array.isArray(memo.risks)) return false;
+  for (const r of memo.risks) {
+    if (r === null || typeof r !== "object") return false;
+    if (typeof (r as StructuredMemoRisk).risk !== "string") return false;
+  }
   return true;
 }
 
@@ -126,9 +132,22 @@ export function StructuredNarrative({ memo, lang }: { memo: StructuredMemo; lang
             {t("expansionAdvisor.risksToWatch")}
           </h5>
           <ul className="ea-memo-structured__risks-list">
-            {risks.map((risk, i) => (
-              <li key={i}>{risk}</li>
-            ))}
+            {risks.map((r: StructuredMemoRisk, i: number) => {
+              const mitigation =
+                typeof r.mitigation === "string" && r.mitigation.trim() !== ""
+                  ? r.mitigation
+                  : null;
+              return (
+                <li key={i} className="ea-memo-structured__risks-item">
+                  <span className="ea-memo-structured__risks-text">{r.risk}</span>
+                  {mitigation && (
+                    <span className="ea-memo-structured__risks-mitigation">
+                      {mitigation}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}

@@ -14,6 +14,7 @@ import type {
   GeneratedDecisionMemo,
   LLMDecisionMemo,
   StructuredMemo,
+  StructuredMemoRisk,
 } from "../../lib/api/expansionAdvisor";
 
 /* ── Fixtures ── */
@@ -43,11 +44,31 @@ function makeStructured(overrides: Partial<StructuredMemo> = {}): StructuredMemo
         polarity: "negative",
       },
     ],
-    risks: ["Nearby branch of competitor brand", "Parking availability untested"],
+    risks: [
+      { risk: "Nearby branch of competitor brand", mitigation: null },
+      { risk: "Parking availability untested" },
+    ],
     comparison: "Beats runner-up #3 on revenue index but trails on visibility.",
     bottom_line: "Proceed to landlord outreach.",
     ...overrides,
   };
+}
+
+function makeStructuredWithObjectRisks(
+  overrides: Partial<StructuredMemo> = {},
+): StructuredMemo {
+  return makeStructured({
+    risks: [
+      {
+        risk: "Insufficient parking may limit customer access.",
+        mitigation:
+          "Exploring alternative parking solutions or locations nearby could be considered.",
+      },
+      { risk: "Dense competitor grid.", mitigation: null },
+      { risk: "Weather exposure on south-facing frontage." },
+    ],
+    ...overrides,
+  });
 }
 
 function makeLegacy(overrides: Partial<LLMDecisionMemo> = {}): LLMDecisionMemo {
@@ -212,6 +233,87 @@ describe("DecisionMemoNarrative malformed structured memo", () => {
       isValidStructuredMemo(makeStructured({ risks: [], comparison: "", key_evidence: [] })),
     ).toBe(true);
   });
+
+  it("isValidStructuredMemo returns true for the production object-risks shape", () => {
+    expect(isValidStructuredMemo(makeStructuredWithObjectRisks())).toBe(true);
+  });
+
+  it("isValidStructuredMemo returns false when any risks item is a plain string", () => {
+    const memo = makeStructured();
+    (memo as unknown as { risks: unknown }).risks = [
+      "plain string risk",
+    ];
+    expect(isValidStructuredMemo(memo)).toBe(false);
+  });
+
+  it("isValidStructuredMemo returns false when a risks item is missing the `risk` field", () => {
+    const memo = makeStructured();
+    (memo as unknown as { risks: unknown }).risks = [
+      { mitigation: "only has mitigation" },
+    ];
+    expect(isValidStructuredMemo(memo)).toBe(false);
+  });
+
+  it("isValidStructuredMemo returns false when risks is not an array", () => {
+    const memo = makeStructured();
+    (memo as unknown as { risks: unknown }).risks = null;
+    expect(isValidStructuredMemo(memo)).toBe(false);
+  });
+});
+
+/* ── 5b. Object-shape risks render ── */
+
+describe("DecisionMemoNarrative object-shape risks render", () => {
+  it("renders each risk's text in the output", () => {
+    const memo = makeStructuredWithObjectRisks();
+    const html = renderToStaticMarkup(<StructuredNarrative memo={memo} lang="en" />);
+    for (const r of memo.risks as StructuredMemoRisk[]) {
+      expect(html).toContain(r.risk);
+    }
+  });
+
+  it("renders the mitigation span when mitigation is present and non-empty", () => {
+    const memo = makeStructuredWithObjectRisks();
+    const html = renderToStaticMarkup(<StructuredNarrative memo={memo} lang="en" />);
+    expect(html).toContain(
+      "Exploring alternative parking solutions or locations nearby could be considered.",
+    );
+    expect(html).toContain("ea-memo-structured__risks-mitigation");
+  });
+
+  it("does NOT render a mitigation span when mitigation is null", () => {
+    const memo = makeStructured({
+      risks: [{ risk: "Solo risk, no mitigation", mitigation: null }],
+    });
+    const html = renderToStaticMarkup(<StructuredNarrative memo={memo} lang="en" />);
+    expect(html).toContain("Solo risk, no mitigation");
+    expect(html).not.toContain("ea-memo-structured__risks-mitigation");
+  });
+
+  it("does NOT render a mitigation span when mitigation is undefined", () => {
+    const memo = makeStructured({
+      risks: [{ risk: "Risk without mitigation key" }],
+    });
+    const html = renderToStaticMarkup(<StructuredNarrative memo={memo} lang="en" />);
+    expect(html).toContain("Risk without mitigation key");
+    expect(html).not.toContain("ea-memo-structured__risks-mitigation");
+  });
+
+  it("does NOT render a mitigation span when mitigation is an empty or whitespace-only string", () => {
+    const memoEmpty = makeStructured({
+      risks: [{ risk: "Empty mitigation", mitigation: "" }],
+    });
+    expect(
+      renderToStaticMarkup(<StructuredNarrative memo={memoEmpty} lang="en" />),
+    ).not.toContain("ea-memo-structured__risks-mitigation");
+
+    const memoWhitespace = makeStructured({
+      risks: [{ risk: "Whitespace mitigation", mitigation: "   " }],
+    });
+    expect(
+      renderToStaticMarkup(<StructuredNarrative memo={memoWhitespace} lang="en" />),
+    ).not.toContain("ea-memo-structured__risks-mitigation");
+  });
 });
 
 /* ── 6. Arabic locale ── */
@@ -230,7 +332,7 @@ describe("DecisionMemoNarrative Arabic locale", () => {
           polarity: "positive",
         },
       ],
-      risks: ["فرع منافس قريب"],
+      risks: [{ risk: "فرع منافس قريب" }],
       comparison: "يتفوق على المرشح الثالث في مؤشر الإيرادات.",
       bottom_line: "الانتقال إلى التفاوض مع المالك.",
     });
