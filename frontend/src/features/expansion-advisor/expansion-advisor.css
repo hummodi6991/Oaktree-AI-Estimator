@@ -4025,6 +4025,14 @@
 
 /* ── Key Numbers Strip ── */
 
+.ea-memo-verdict-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block-end: 12px;
+}
+
 .ea-memo-key-numbers {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
