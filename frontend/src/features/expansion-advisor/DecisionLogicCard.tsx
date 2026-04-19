@@ -7,10 +7,7 @@ import type {
 } from "../../lib/api/expansionAdvisor";
 import { humanGateLabel } from "./formatHelpers";
 
-type GateStatusBool = boolean | null | undefined;
-
 type Props = {
-  gateStatus?: Record<string, GateStatusBool>;
   gateReasons?: CandidateGateReasons;
   scoreBreakdown?: CandidateScoreBreakdown;
   deterministicRank?: number | null;
@@ -302,11 +299,7 @@ function ContributionsSection({
       <div className="ea-decision-logic__subsection-body">
         {components.length > 0 ? (
           <>
-            <div
-              className="ea-decision-logic__bar"
-              role="img"
-              aria-label={t("expansionAdvisor.decisionLogicContributions")}
-            >
+            <div className="ea-decision-logic__bar" aria-hidden="true">
               {components.map((c) => renderSegment(c.key, c.points, c.weight))}
             </div>
             <ul className="ea-decision-logic__legend">
@@ -395,11 +388,20 @@ function RankingDecisionSection({
             final: finRank ?? "—",
           })}
           {delta !== 0 && (
+            // Convention: rerank_delta < 0 means the candidate moved UP the
+            // ranking (numerically smaller rank is better, e.g. #5 → #3 yields
+            // delta = -2).
             <span
               className={`ea-decision-logic__delta ea-decision-logic__delta--${
                 delta < 0 ? "up" : "down"
               }`}
-              aria-label={`rerank delta ${delta > 0 ? "+" : ""}${delta}`}
+              aria-label={t("expansionAdvisor.decisionLogicDeltaAria", {
+                direction:
+                  delta < 0
+                    ? t("expansionAdvisor.decisionLogicDeltaUp")
+                    : t("expansionAdvisor.decisionLogicDeltaDown"),
+                magnitude: Math.abs(delta),
+              })}
             >
               {delta < 0 ? "↑" : "↓"}
               {Math.abs(delta)}
@@ -508,7 +510,6 @@ function RankingDecisionSection({
 /* ─── Root card ─────────────────────────────────────────────────────────── */
 
 export default function DecisionLogicCard({
-  gateStatus: _gateStatus,
   gateReasons,
   scoreBreakdown,
   deterministicRank,
@@ -517,10 +518,6 @@ export default function DecisionLogicCard({
   rerankReason,
   rerankDelta,
 }: Props) {
-  // gateStatus is accepted for future use (e.g. when a gate appears in the
-  // status map but not in any bucket); current rendering sources gates from
-  // the bucketed arrays, which already preserve tri-state semantics.
-  void _gateStatus;
   const { t } = useTranslation();
 
   return (

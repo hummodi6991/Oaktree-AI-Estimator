@@ -183,7 +183,6 @@ export default function ExpansionMemoPanel({
                          score-breakdown disclosure so the card and the details
                          don't visually compete. ══ */}
                 <DecisionLogicCard
-                  gateStatus={cand.gate_status as Record<string, boolean | null | undefined> | undefined}
                   gateReasons={gateReasons}
                   scoreBreakdown={breakdown}
                   deterministicRank={cand.deterministic_rank ?? null}
