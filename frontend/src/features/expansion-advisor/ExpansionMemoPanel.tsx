@@ -137,6 +137,18 @@ export default function ExpansionMemoPanel({
                   />
                 )}
 
+                {/* ══ Section 1b: Verdict + confidence (always visible, compact) ══ */}
+                {(rec.verdict || cand.confidence_grade) && (
+                  <div className="ea-memo-verdict-row">
+                    {rec.verdict && (
+                      <span className={`ea-memo-verdict-badge ea-badge ea-badge--${verdictColor}`}>
+                        {rec.verdict}
+                      </span>
+                    )}
+                    <ConfidenceBadge grade={cand.confidence_grade as string | undefined} />
+                  </div>
+                )}
+
                 {/* ══ Section 2: 4 Key Numbers (always visible) ══ */}
                 <div className="ea-memo-key-numbers">
                   <div className="ea-memo-key-numbers__item">
@@ -168,7 +180,7 @@ export default function ExpansionMemoPanel({
                 {/* ══ Section 3: Full Score Breakdown (collapsed by default) ══ */}
                 <details className="ea-memo-full-breakdown">
                   <summary className="ea-memo-full-breakdown__toggle">
-                    {t("decisionMemo.showFullBreakdown")}
+                    {t("expansionAdvisor.showScoreBreakdown")}
                   </summary>
 
                   <div className="ea-memo-full-breakdown__content">
@@ -178,12 +190,6 @@ export default function ExpansionMemoPanel({
                         <div className="ea-memo-summary-card__score-donut">
                           <ScorePill value={(breakdown?.display_score as number | undefined) ?? (cand.final_score as number | undefined)} large />
                         </div>
-                        {rec.verdict && (
-                          <span className={`ea-memo-verdict-badge ea-badge ea-badge--${verdictColor}`}>
-                            {rec.verdict}
-                          </span>
-                        )}
-                        <ConfidenceBadge grade={cand.confidence_grade as string | undefined} />
                       </div>
                       {rec.headline && <p className="ea-memo-summary-card__headline">{rec.headline}</p>}
                     </div>
