@@ -92,11 +92,16 @@ export interface StructuredMemoEvidence {
   polarity?: "positive" | "negative" | "neutral";
 }
 
+export interface StructuredMemoRisk {
+  risk: string;
+  mitigation?: string | null;
+}
+
 export interface StructuredMemo {
   headline_recommendation: string;
   ranking_explanation: string;
   key_evidence: StructuredMemoEvidence[];
-  risks: string[];
+  risks: StructuredMemoRisk[];
   comparison: string;
   bottom_line: string;
 }

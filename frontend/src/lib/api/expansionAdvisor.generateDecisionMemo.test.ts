@@ -17,7 +17,7 @@ const structuredMemo: StructuredMemo = {
   key_evidence: [
     { signal: "whitespace", value: 82, implication: "low saturation" },
   ],
-  risks: ["parking"],
+  risks: [{ risk: "parking", mitigation: null }],
   comparison: "Edges runner-up.",
   bottom_line: "Recommend proceed.",
 };

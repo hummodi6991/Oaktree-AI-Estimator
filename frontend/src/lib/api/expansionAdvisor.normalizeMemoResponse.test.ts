@@ -12,7 +12,7 @@ const structuredMemo: StructuredMemo = {
     { signal: "whitespace", value: 82, implication: "low saturation", polarity: "positive" },
     { signal: "rent", value: "SAR 1,400/m²/yr", implication: "below district median", polarity: "positive" },
   ],
-  risks: ["Parking confirmation required"],
+  risks: [{ risk: "Parking confirmation required", mitigation: null }],
   comparison: "Edges runner-up on economics.",
   bottom_line: "Recommend proceed.",
 };

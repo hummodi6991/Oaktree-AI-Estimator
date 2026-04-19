@@ -3981,6 +3981,25 @@
   color: var(--oak-text-dark, #333);
 }
 
+.ea-memo-structured__risks-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.ea-memo-structured__risks-text {
+  font-size: var(--oak-fs-sm, 14px);
+  color: var(--oak-text-dark, #333);
+  line-height: 1.5;
+}
+
+.ea-memo-structured__risks-mitigation {
+  font-size: var(--oak-fs-xs, 12px);
+  color: var(--oak-text-light, #6b6b6b);
+  line-height: 1.45;
+}
+
 .ea-memo-structured__comparison {
   font-size: var(--oak-fs-xs, 12px);
   line-height: 1.55;
