@@ -21,3 +21,21 @@
 - location_score.computed_at — DateTime — populated by scorer (app/models/tables.py:536)
 - population_density.observed_at — DateTime — populated by ingest (app/models/tables.py:348)
 - price_quote.observed_at — DateTime — populated by ingest (app/models/tables.py:270)
+
+## 2. Is recency used in scoring?
+
+- app/services/explain.py:29 — `recency_days = (date.today() - r.date).days` used as primary ranking key for sale-comp selection (lower days = better).
+- app/services/explain.py:30 — `recency_score = recency_days / 365.0` folded into comp-ranking score.
+- app/services/explain.py:58 — `days = sorted([(date.today() - c.date).days for c in comps if c.date])`; average comp age surfaced as a "recency" driver on the estimator response.
+- app/services/explain.py:114-115 — second copy of the same recency_days / 365 scoring block in `explain.py` (rent-comps path).
+- app/services/expansion_advisor.py:2045 — `_listing_quality(first_seen_at, ...)`: expansion advisor's freshness sub-score reads `commercial_unit.first_seen_at`.
+- app/services/expansion_advisor.py:2089-2110 — banded freshness: `(datetime.utcnow() - first_seen_at).days` → 100/92/80/65/45/28/15 at 14/30/60/120/240/365 day cutoffs.
+- app/services/expansion_advisor.py:2139 — `freshness * 0.30` is 30% of the listing_quality sub-score.
+- app/services/expansion_advisor.py:4104-4105 — SQL SELECT exposes `cu.first_seen_at AS unit_first_seen_at` and `cu.last_seen_at AS unit_last_seen_at` for downstream scoring.
+- app/services/expansion_advisor.py:5795 — `_listing_quality(first_seen_at=row.get("unit_first_seen_at"), ...)` wires first_seen_at into the preliminary score path.
+- app/services/expansion_advisor.py:6469 — same wiring in the full/second scoring pass.
+- app/services/expansion_advisor.py:2055 — docstring: "Freshness is measured from first_seen_at — the date the listing".
+- app/services/expansion_advisor.py:2070-2071 — docstring: freshness measures "listing age, not scrape recency".
+- app/services/expansion_advisor.py:2079-2080 — docstring: Patch 13 rebalance moved 10 points out of freshness into LLM signals.
+- No `last_seen_at`, `posted`, `listed_at`, `updated_at`, `days_since`, or generic `age_` term is referenced inside ranking/scoring code beyond the hits above.
+- No recency-based scoring on `expansion_candidate.computed_at`, `candidate_location.created_at/updated_at`, `expansion_delivery_market.scraped_at`, `restaurant_poi.observed_at`, or `expansion_rent_comp.listed_at/ingested_at` — those timestamps exist but are not fed into any ranking formula.
