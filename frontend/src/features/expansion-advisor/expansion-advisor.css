@@ -304,6 +304,25 @@
   padding: 1px 6px;
 }
 
+.ea-candidate__why-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-block-start: 4px;
+}
+
+.ea-candidate__why-chip {
+  font-size: 11px;
+  padding-inline: 8px;
+  padding-block: 2px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.ea-candidate__why-chip--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .ea-candidate__insights {
   display: grid;
   gap: 4px;

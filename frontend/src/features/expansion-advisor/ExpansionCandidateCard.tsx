@@ -3,6 +3,7 @@ import type { ExpansionCandidate } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import TierBadge from "./TierBadge";
 import { fmtSARCompact, fmtM2, fmtMeters, candidateDistrictLabel, getDisplayScore } from "./formatHelpers";
+import type { MemoDrawerSection } from "./ExpansionMemoPanel";
 
 type Props = {
   candidate: ExpansionCandidate;
@@ -13,7 +14,7 @@ type Props = {
   localSortActive?: boolean;
   onSelect: () => void;
   onCompareToggle: () => void;
-  onOpenMemo?: () => void;
+  onOpenMemo?: (options?: { section?: MemoDrawerSection }) => void;
   onShowOnMap?: () => void;
   /** Retained for backward compatibility with tests and saved-study restoration;
    *  Patch 16 removed the in-card shortlist button so this is never invoked. */
@@ -72,6 +73,39 @@ export default function ExpansionCandidateCard({
     .filter(Boolean)
     .join(" ");
 
+  // "Why #N" chip — jumps to the Decision Memo's Ranking-logic card.
+  // Rendered only when final_rank is a usable number; a fallback "Why #?"
+  // is worse than no chip.
+  const finalRank = candidate.final_rank;
+  const hasFinalRank = typeof finalRank === "number" && Number.isFinite(finalRank);
+  const rerankDelta = typeof candidate.rerank_delta === "number" ? candidate.rerank_delta : 0;
+  const showDelta =
+    candidate.rerank_applied === true &&
+    candidate.rerank_status === "applied" &&
+    rerankDelta !== 0;
+  const whyChipArrow = showDelta ? (rerankDelta < 0 ? "↑" : "↓") : "";
+  const whyChipMagnitude = showDelta ? Math.abs(rerankDelta) : 0;
+  const whyChipLabel = hasFinalRank
+    ? showDelta
+      ? t("expansionAdvisor.whyRankMoved", {
+          rank: finalRank,
+          arrow: whyChipArrow,
+          delta: whyChipMagnitude,
+        })
+      : t("expansionAdvisor.whyRank", { rank: finalRank })
+    : "";
+  const whyChipTitle = showDelta ? candidate.rerank_reason?.summary || undefined : undefined;
+  const whyChipDisabled = !onOpenMemo;
+  const whyChipClass = [
+    "oak-btn",
+    "oak-btn--xs",
+    "oak-btn--tertiary",
+    "ea-candidate__why-chip",
+    whyChipDisabled && "ea-candidate__why-chip--disabled",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <div className={cls} onClick={onSelect} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onSelect(); }} data-candidate-id={candidate.id}>
       {/* Top row: rank + district + badges */}
@@ -95,6 +129,27 @@ export default function ExpansionCandidateCard({
           )}
         </div>
       </div>
+
+      {/* "Why #N" chip — opens Decision Memo scrolled to Ranking logic. */}
+      {hasFinalRank && (
+        <div className="ea-candidate__why-row" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            className={whyChipClass}
+            title={whyChipTitle}
+            aria-disabled={whyChipDisabled ? "true" : undefined}
+            disabled={whyChipDisabled}
+            onClick={whyChipDisabled
+              ? undefined
+              : (e) => {
+                  e.stopPropagation();
+                  onOpenMemo?.({ section: "decision-logic" });
+                }}
+          >
+            {whyChipLabel}
+          </button>
+        </div>
+      )}
 
       {/* Tier badge + listing link */}
       <TierBadge
@@ -171,7 +226,7 @@ export default function ExpansionCandidateCard({
 
       {/* Actions — icon buttons on hover, memo stays as text */}
       <div className="ea-candidate__actions" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="oak-btn oak-btn--sm oak-btn--primary" onClick={onOpenMemo || onSelect}>
+        <button type="button" className="oak-btn oak-btn--sm oak-btn--primary" onClick={() => (onOpenMemo ? onOpenMemo() : onSelect())}>
           {t("expansionAdvisor.viewDecisionMemo")}
         </button>
         <div className="ea-candidate__icon-actions">

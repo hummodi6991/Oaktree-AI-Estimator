@@ -662,7 +662,7 @@ export default function ExpansionAdvisorPage({
           localSortActive={localSortActive}
           onSelectCandidate={(candidate) => { void handleSelectCandidate(candidate); void trackEvent("ui_expansion_candidate_opened", { meta: { candidate_id: candidate.id } }); }}
           onToggleCompare={(candidateId) => setCompareIds((cur) => getNextCompareIds(cur, candidateId))}
-          onOpenMemo={(candidateId) => void handleOpenMemoById(candidateId)}
+          onOpenMemo={(candidateId, options) => void handleOpenMemoById(candidateId, options)}
           onShowOnMap={(candidate) => {
             onSelectedCandidateChange(candidate);
             setSelectedCandidate(candidate);
