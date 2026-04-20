@@ -160,7 +160,7 @@ export default function ExpansionMemoPanel({
                   </div>
                   <div className="ea-memo-key-numbers__item">
                     <span className="ea-memo-key-numbers__value ea-memo-key-numbers__value--big">
-                      {fmtM2(cand.area_m2 as number | undefined)}
+                      {fmtM2((cand.area_m2 as number | undefined) ?? (cand.unit_area_sqm as number | undefined))}
                     </span>
                     <span className="ea-memo-key-numbers__label">{t("decisionMemo.area")}</span>
                   </div>
