@@ -107,3 +107,76 @@ describe("ExpansionMemoPanel chunk 3b reorganisation", () => {
     expect(html).not.toContain("ea-memo-verdict-row");
   });
 });
+
+/* ─── Backend reshape regression: rank + unit_* fields on candidate ─────── */
+
+describe("ExpansionMemoPanel — memo shape consumers", () => {
+  it("renders 'Deterministic #1' from cand.deterministic_rank (not '#—')", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={{
+          recommendation: { verdict: "go", headline: "GO" },
+          candidate: {
+            final_score: 84,
+            confidence_grade: "A",
+            score_breakdown_json: {
+              final_score: 84,
+              weights: {},
+              inputs: {},
+              weighted_components: { demand_potential: 0.72 },
+            },
+            gate_status: { overall_pass: true },
+            deterministic_rank: 1,
+            final_rank: 1,
+            rerank_status: "flag_off",
+          },
+          market_research: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    expect(html).toContain("Deterministic #1");
+    expect(html).not.toContain("Deterministic #—");
+  });
+
+  it("falls back from area_m2 to unit_area_sqm in the quick-facts row for commercial-unit candidates", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={{
+          recommendation: { verdict: "go", headline: "GO" },
+          candidate: {
+            final_score: 84,
+            confidence_grade: "A",
+            score_breakdown_json: {
+              final_score: 84,
+              weights: {},
+              inputs: {},
+              weighted_components: { demand_potential: 0.72 },
+            },
+            gate_status: { overall_pass: true },
+            // Commercial-unit candidates: area_m2 column is NULL; the area
+            // lives on unit_area_sqm.
+            area_m2: undefined,
+            unit_area_sqm: 165,
+            unit_street_width_m: 18,
+          },
+          market_research: {},
+          brand_profile: {},
+        }}
+      />,
+    );
+    // Locate the 4-cell quick-facts row and confirm Area + Street width are
+    // populated, not "—".
+    const keyNumbersMatch = html.match(
+      /<div class="ea-memo-key-numbers">([\s\S]*?)<\/div>\s*(?:<\/div>|<details)/,
+    );
+    expect(keyNumbersMatch).not.toBeNull();
+    const block = keyNumbersMatch![1];
+    // Area cell: 165 m² (number rendered, not the em-dash placeholder).
+    expect(block).toMatch(/165/);
+    // Street width cell: "18 m" (template literal in ExpansionMemoPanel).
+    expect(block).toContain("18 m");
+  });
+});

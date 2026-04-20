@@ -230,15 +230,108 @@ def test_get_candidate_memo_returns_new_fields():
     db = FakeDB(memo_row=memo_row)
     memo = get_candidate_memo(db, "c1")
     assert memo is not None
-    # Six rerank fields plus the full persisted structured memo.
-    assert memo["deterministic_rank"] == 1
-    assert memo["final_rank"] == 1
-    assert memo["rerank_applied"] is False
-    assert memo["rerank_reason"] is None
-    assert memo["rerank_delta"] == 0
-    assert memo["rerank_status"] == "flag_off"
+    # Six rerank fields are per-candidate properties — they live on the
+    # nested `candidate` object alongside final_score / area_m2 / etc.,
+    # matching the list endpoint's shape and what the frontend reads.
+    cand = memo["candidate"]
+    assert cand["deterministic_rank"] == 1
+    assert cand["final_rank"] == 1
+    assert cand["rerank_applied"] is False
+    assert cand["rerank_reason"] is None
+    assert cand["rerank_delta"] == 0
+    assert cand["rerank_status"] == "flag_off"
+    # Guard against regression: the moved fields must NOT reappear at the
+    # top level. decision_memo / decision_memo_json describe the envelope
+    # and stay there.
+    for moved in (
+        "deterministic_rank", "final_rank", "rerank_applied",
+        "rerank_reason", "rerank_delta", "rerank_status",
+    ):
+        assert moved not in memo, f"{moved} must not be at the top level"
     assert memo["decision_memo"] == "Headline text\n\nBody."
     assert memo["decision_memo_json"] == structured
+
+
+# ---------------------------------------------------------------------------
+# 5b. get_candidate_memo emits the candidate sub-object that DecisionLogicCard
+#     and the memo quick-facts row consume — using a production-shape
+#     commercial-unit candidate at rank #1. Regression test: prior to this
+#     reshape the rank fields lived at the top level (so the card rendered
+#     "Deterministic #—") and the unit_* fields were absent (so Area /
+#     Street width rendered "—").
+# ---------------------------------------------------------------------------
+def test_get_candidate_memo_candidate_shape_matches_frontend_consumers():
+    memo_row = {
+        "candidate_id": "c-rank-1",
+        "search_id": "s-prod",
+        "brand_name": "Brand X",
+        "category": "qsr",
+        "service_model": "qsr",
+        "parcel_id": "p-rank-1",
+        "district": "Olaya",
+        # Commercial-unit candidates may have area_m2 NULL — the area lives
+        # on unit_area_sqm. The memo panel falls back from area_m2 to
+        # unit_area_sqm to mirror the list card.
+        "area_m2": None,
+        "landuse_label": "Commercial",
+        "final_score": 84,
+        "economics_score": 78,
+        "cannibalization_score": 30,
+        "confidence_grade": "A",
+        "rank_position": 1,
+        "deterministic_rank": 1,
+        "final_rank": 1,
+        "rerank_applied": False,
+        "rerank_reason": None,
+        "rerank_delta": 0,
+        "rerank_status": "flag_off",
+        # Listing fields the list endpoint emits and the memo card now needs.
+        "source_type": "commercial_unit",
+        "commercial_unit_id": "cu-42",
+        "listing_url": "https://example.test/cu-42",
+        "image_url": "https://example.test/cu-42.jpg",
+        "unit_price_sar_annual": 220000,
+        "unit_area_sqm": 165,
+        "unit_street_width_m": 18,
+        "unit_neighborhood": "Olaya",
+        "unit_listing_type": "for_rent",
+    }
+    db = FakeDB(memo_row=memo_row)
+    memo = get_candidate_memo(db, "c-rank-1")
+    assert memo is not None
+    cand = memo["candidate"]
+
+    # Rank / rerank fields live on the candidate sub-object — same shape
+    # the list endpoint exposes — so DecisionLogicCard reads them via
+    # `data.candidate.deterministic_rank` and renders "Deterministic #1".
+    assert cand["deterministic_rank"] == 1
+    assert cand["final_rank"] == 1
+    assert cand["rerank_applied"] is False
+    assert cand["rerank_reason"] is None
+    assert cand["rerank_delta"] == 0
+    assert cand["rerank_status"] == "flag_off"
+
+    # Listing / commercial-unit fields the quick-facts row reads.
+    assert cand["source_type"] == "commercial_unit"
+    assert cand["commercial_unit_id"] == "cu-42"
+    assert cand["listing_url"] == "https://example.test/cu-42"
+    assert cand["image_url"] == "https://example.test/cu-42.jpg"
+    assert cand["unit_price_sar_annual"] == 220000
+    assert cand["unit_area_sqm"] == 165
+    assert cand["unit_street_width_m"] == 18
+    # display_annual_rent_sar is computed by _normalize_candidate_payload —
+    # it may be None on this fixture (no estimated_rent_sar_m2_year), but
+    # the key MUST be present so the frontend can read it without
+    # short-circuiting on `undefined`.
+    assert "display_annual_rent_sar" in cand
+
+    # Regression guard: the moved fields must NOT reappear at the top
+    # level of the memo envelope.
+    for moved in (
+        "deterministic_rank", "final_rank", "rerank_applied",
+        "rerank_reason", "rerank_delta", "rerank_status",
+    ):
+        assert moved not in memo, f"{moved} must live on candidate, not the envelope"
 
 
 # ---------------------------------------------------------------------------
@@ -554,29 +647,37 @@ def test_candidate_memo_response_accepts_both_rerank_reason_shapes():
     """CandidateMemoResponse must round-trip rerank_reason=None AND
     rerank_reason=<dict> without a ValidationError. If this fails, the
     Pydantic type on the response model has drifted from the runtime shape
-    produced by _apply_rerank_to_candidates."""
+    produced by _apply_rerank_to_candidates.
+
+    rerank_reason / rerank_status live on the nested candidate object —
+    same shape as the list endpoint — so the frontend reads them from
+    `data.candidate.*` (where DecisionLogicCard expects them).
+    """
     from app.api.expansion_advisor import CandidateMemoResponse
 
-    base = {
-        "candidate_id": "c1",
-        "search_id": "s1",
-        "brand_profile": {},
-        "candidate": {},
-        "recommendation": {
-            "headline": "", "verdict": "", "best_use_case": "",
-            "main_watchout": "", "gate_verdict": "",
-        },
-        "market_research": {
-            "delivery_market_summary": "",
-            "competitive_context": "",
-            "district_fit_summary": "",
-        },
-    }
+    def _make(candidate_extra: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "candidate_id": "c1",
+            "search_id": "s1",
+            "brand_profile": {},
+            "candidate": {**candidate_extra},
+            "recommendation": {
+                "headline": "", "verdict": "", "best_use_case": "",
+                "main_watchout": "", "gate_verdict": "",
+            },
+            "market_research": {
+                "delivery_market_summary": "",
+                "competitive_context": "",
+                "district_fit_summary": "",
+            },
+        }
 
     # Shape A: rerank_reason=None (unchanged / flag-off candidate).
-    payload_none = {**base, "rerank_reason": None, "rerank_status": "flag_off"}
-    m1 = CandidateMemoResponse.model_validate(payload_none)
-    assert m1.rerank_reason is None
+    m1 = CandidateMemoResponse.model_validate(
+        _make({"rerank_reason": None, "rerank_status": "flag_off"})
+    )
+    assert m1.candidate.rerank_reason is None
+    assert m1.candidate.rerank_status == "flag_off"
 
     # Shape B: rerank_reason=<structured dict> (moved candidate).
     reason = {
@@ -585,10 +686,12 @@ def test_candidate_memo_response_accepts_both_rerank_reason_shapes():
         "negatives_cited": [],
         "comparison_to_displaced_candidate": "the displaced candidate has a weaker overall fit",
     }
-    payload_dict = {**base, "rerank_reason": reason, "rerank_status": "applied"}
-    m2 = CandidateMemoResponse.model_validate(payload_dict)
-    assert isinstance(m2.rerank_reason, dict)
-    assert m2.rerank_reason["summary"].startswith("moved")
+    m2 = CandidateMemoResponse.model_validate(
+        _make({"rerank_reason": reason, "rerank_status": "applied"})
+    )
+    assert isinstance(m2.candidate.rerank_reason, dict)
+    assert m2.candidate.rerank_reason["summary"].startswith("moved")
+    assert m2.candidate.rerank_status == "applied"
 
 
 # ---------------------------------------------------------------------------

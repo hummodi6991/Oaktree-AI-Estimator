@@ -277,6 +277,28 @@ class CandidateMemoCandidateResponse(FlexibleResponseModel):
     gate_reasons: CandidateGateReasonsResponse = Field(default_factory=CandidateGateReasonsResponse)
     feature_snapshot: CandidateFeatureSnapshotResponse = Field(default_factory=CandidateFeatureSnapshotResponse)
     comparable_competitors: list[Any] = Field(default_factory=list)
+    # Commercial-unit / listing fields. Same shape the list endpoint emits
+    # via ExpansionCandidateResponse, so the memo's quick-facts row reads
+    # Area / Street width from the same source as the candidate list card.
+    source_type: str | None = None
+    commercial_unit_id: str | None = None
+    listing_url: str | None = None
+    image_url: str | None = None
+    unit_price_sar_annual: float | None = None
+    unit_area_sqm: float | None = None
+    unit_street_width_m: float | None = None
+    display_annual_rent_sar: float | None = None
+    # Rerank metadata persisted on expansion_candidate. Lives on the nested
+    # candidate object — same shape the list endpoint exposes — so
+    # DecisionLogicCard reads it from `data.candidate.*` like every other
+    # candidate-scoped field. With EXPANSION_LLM_RERANK_ENABLED=False (the
+    # default) deterministic_rank == final_rank and rerank_status is "flag_off".
+    deterministic_rank: int | None = None
+    final_rank: int | None = None
+    rerank_applied: bool = False
+    rerank_reason: dict[str, Any] | None = None
+    rerank_delta: int = 0
+    rerank_status: str | None = None
 
 
 class CandidateMemoRecommendationResponse(StrictResponseModel):
@@ -300,17 +322,14 @@ class CandidateMemoResponse(StrictResponseModel):
     candidate: CandidateMemoCandidateResponse
     recommendation: CandidateMemoRecommendationResponse
     market_research: CandidateMemoMarketResearchResponse
-    # Phase 3 chunk 1: rerank metadata + persisted structured memo.
     # ``decision_memo`` is the legacy rendered text; ``decision_memo_json``
     # is the structured object (headline_recommendation, ranking_explanation,
     # key_evidence, risks, comparison, bottom_line) populated by POST
     # /decision-memo or by the pre-warm background task on POST /searches.
-    deterministic_rank: int | None = None
-    final_rank: int | None = None
-    rerank_applied: bool = False
-    rerank_reason: dict[str, Any] | None = None
-    rerank_delta: int = 0
-    rerank_status: str | None = None
+    # Both describe the memo envelope, not a per-candidate property — they
+    # stay at the top level. Per-candidate rerank metadata
+    # (deterministic_rank / final_rank / rerank_*) lives on
+    # CandidateMemoCandidateResponse, matching the list endpoint's shape.
     decision_memo: str | None = None
     decision_memo_json: dict[str, Any] | None = None
 

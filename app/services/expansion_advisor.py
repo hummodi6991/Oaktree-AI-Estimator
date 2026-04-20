@@ -7851,6 +7851,31 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "decision_summary": candidate.get("decision_summary") or "",
             "rank_position": candidate.get("rank_position"),
             "site_fit_context": _derive_site_fit_context(candidate.get("feature_snapshot_json")),
+            # Commercial-unit / listing fields. The list endpoint emits these
+            # via `_normalize_candidate_payload`; the memo endpoint must
+            # expose them on the same nested `candidate` shape so the memo
+            # quick-facts row (Area, Street width) and any listing-card UI
+            # render the same values shown in the candidate list.
+            "source_type": candidate.get("source_type"),
+            "commercial_unit_id": candidate.get("commercial_unit_id"),
+            "listing_url": candidate.get("listing_url"),
+            "image_url": candidate.get("image_url"),
+            "unit_price_sar_annual": candidate.get("unit_price_sar_annual"),
+            "unit_area_sqm": candidate.get("unit_area_sqm"),
+            "unit_street_width_m": candidate.get("unit_street_width_m"),
+            "display_annual_rent_sar": candidate.get("display_annual_rent_sar"),
+            # Rerank metadata. Persisted on expansion_candidate so it survives
+            # a page reload. With EXPANSION_LLM_RERANK_ENABLED=False (the
+            # default) deterministic_rank == final_rank and rerank_status is
+            # "flag_off". Lives on the nested candidate object — same shape
+            # the list endpoint exposes — so DecisionLogicCard reads it from
+            # `data.candidate.*` like every other candidate-scoped field.
+            "deterministic_rank": candidate.get("deterministic_rank"),
+            "final_rank": candidate.get("final_rank"),
+            "rerank_applied": bool(candidate.get("rerank_applied")),
+            "rerank_reason": candidate.get("rerank_reason"),
+            "rerank_delta": _safe_int(candidate.get("rerank_delta"), 0),
+            "rerank_status": candidate.get("rerank_status"),
         },
         "recommendation": {
             "headline": headline,
@@ -7864,18 +7889,11 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "competitive_context": competitive_context,
             "district_fit_summary": district_fit_summary,
         },
-        # Phase 3 chunk 1: rerank metadata + the structured memo JSON written
-        # by POST /decision-memo. Persisted on expansion_candidate so they
-        # survive a page reload. With EXPANSION_LLM_RERANK_ENABLED=False (the
-        # default) deterministic_rank == final_rank and rerank_status is
-        # "flag_off". decision_memo_json is None until POST /decision-memo
-        # (or the pre-warm background task on POST /searches) populates it.
-        "deterministic_rank": candidate.get("deterministic_rank"),
-        "final_rank": candidate.get("final_rank"),
-        "rerank_applied": bool(candidate.get("rerank_applied")),
-        "rerank_reason": candidate.get("rerank_reason"),
-        "rerank_delta": _safe_int(candidate.get("rerank_delta"), 0),
-        "rerank_status": candidate.get("rerank_status"),
+        # decision_memo / decision_memo_json describe THIS memo (the envelope),
+        # not a per-candidate property — they stay at the top level alongside
+        # candidate_id, search_id, brand_profile, recommendation, market_research.
+        # decision_memo_json is None until POST /decision-memo (or the pre-warm
+        # background task on POST /searches) populates it.
         "decision_memo": candidate.get("decision_memo"),
         "decision_memo_json": candidate.get("decision_memo_json"),
     }
