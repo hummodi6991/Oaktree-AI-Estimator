@@ -4348,3 +4348,12 @@
 .ea-decision-logic__reason-sub-label {
   font-weight: var(--oak-fw-semibold, 600);
 }
+
+/* ─ Memo drawer scroll anchor (chunk 3d) ─
+ * Applied only when ExpansionMemoPanel receives an initialSection prop,
+ * so the default-open drawer path is visually unchanged.
+ * 12px is deliberately smaller than --oak-gap (16px) — just enough offset
+ * from the drawer top for a scrolled section header to breathe. */
+.ea-memo-scroll-anchor {
+  scroll-margin-block-start: 12px;
+}

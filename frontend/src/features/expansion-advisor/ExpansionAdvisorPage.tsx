@@ -25,7 +25,7 @@ import type { ExpansionSearchDetailResponse } from "../../lib/api/expansionAdvis
 import ExpansionBriefForm, { defaultBrief } from "./ExpansionBriefForm";
 import ExpansionResultsPanel from "./ExpansionResultsPanel";
 import ExpansionComparePanel from "./ExpansionComparePanel";
-import ExpansionMemoPanel from "./ExpansionMemoPanel";
+import ExpansionMemoPanel, { type MemoDrawerSection } from "./ExpansionMemoPanel";
 import SavedSearchesPanel from "./SavedSearchesPanel";
 import ExpansionReportPanel from "./ExpansionReportPanel";
 import SaveStudyDialog from "./SaveStudyDialog";
@@ -184,6 +184,7 @@ export default function ExpansionAdvisorPage({
   const [mapViewState, setMapViewState] = useState<MapViewState>({});
   const [saveToast, setSaveToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [showSavedWorkspace, setShowSavedWorkspace] = useState(false);
+  const [memoSection, setMemoSection] = useState<MemoDrawerSection | undefined>(undefined);
   const saveToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = useCallback((type: "success" | "error", message: string) => {
@@ -327,7 +328,11 @@ export default function ExpansionAdvisorPage({
     await handleSelectCandidate(target, forceReloadMemo);
   };
 
-  const handleOpenMemoById = async (candidateId: string) => {
+  const handleOpenMemoById = async (
+    candidateId: string,
+    options?: { section?: MemoDrawerSection },
+  ) => {
+    setMemoSection(options?.section);
     await handleSelectCandidateById(candidateId);
     setActiveDrawer("memo");
   };
@@ -743,13 +748,15 @@ export default function ExpansionAdvisorPage({
           candidateRaw={selectedCandidate as unknown as Record<string, unknown>}
           briefRaw={brief as unknown as Record<string, unknown>}
           lang={i18n.language?.startsWith("ar") ? "ar" : "en"}
-          onClose={() => setActiveDrawer("none")}
-          onBackToDetail={() => setActiveDrawer("none")}
-          onBackToCompare={compareResult ? () => setActiveDrawer("compare") : undefined}
+          initialSection={memoSection}
+          onClose={() => { setActiveDrawer("none"); setMemoSection(undefined); }}
+          onBackToDetail={() => { setActiveDrawer("none"); setMemoSection(undefined); }}
+          onBackToCompare={compareResult ? () => { setActiveDrawer("compare"); setMemoSection(undefined); } : undefined}
           onOpenCompare={compareShortlistEnabled ? async () => {
             setCompareIds(shortlistIds.slice(0, 6));
             await loadCompare(searchId, shortlistIds.slice(0, 6));
             setActiveDrawer("compare");
+            setMemoSection(undefined);
           } : undefined}
           hasShortlist={shortlistIds.length >= 2}
           hasCompare={Boolean(compareResult)}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { CandidateMemoResponse, RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
@@ -40,6 +40,17 @@ function humanizeScoreLabel(key: string): string {
 
 type MemoTab = "economics" | "market" | "site" | "risks";
 
+/**
+ * Narrow enum of scrollable anchors inside the memo drawer. DOM order.
+ * Keep in sync with the refs wired below. "score-breakdown" is deliberately
+ * NOT included — it lives inside a closed <details> by default.
+ */
+export type MemoDrawerSection =
+  | "narrative"
+  | "verdict"
+  | "quick-facts"
+  | "decision-logic";
+
 export default function ExpansionMemoPanel({
   memo,
   loading,
@@ -54,6 +65,7 @@ export default function ExpansionMemoPanel({
   onOpenCompare,
   hasShortlist,
   hasCompare,
+  initialSection,
 }: {
   memo: CandidateMemoResponse | null;
   loading: boolean;
@@ -68,10 +80,32 @@ export default function ExpansionMemoPanel({
   onOpenCompare?: () => void;
   hasShortlist?: boolean;
   hasCompare?: boolean;
+  initialSection?: MemoDrawerSection;
 }) {
   const { t } = useTranslation();
   const [presentationMode, setPresentationMode] = useState(false);
   const [activeTab, setActiveTab] = useState<MemoTab>("economics");
+
+  // Scroll anchors for initialSection-driven scrollIntoView. Only attached
+  // when initialSection is set — see conditional className below so the
+  // default open path doesn't render the scroll-margin wrapper class.
+  const narrativeRef = useRef<HTMLDivElement | null>(null);
+  const verdictRowRef = useRef<HTMLDivElement | null>(null);
+  const quickFactsRef = useRef<HTMLDivElement | null>(null);
+  const decisionLogicRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!initialSection) return;
+    if (loading) return;
+    const refMap: Record<MemoDrawerSection, React.RefObject<HTMLDivElement | null>> = {
+      "narrative": narrativeRef,
+      "verdict": verdictRowRef,
+      "quick-facts": quickFactsRef,
+      "decision-logic": decisionLogicRef,
+    };
+    const el = refMap[initialSection]?.current;
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [initialSection, loading]);
 
   if (!memo && !loading) return null;
 
@@ -127,20 +161,32 @@ export default function ExpansionMemoPanel({
             // Verdict color
             const verdictColor = rec.verdict?.toLowerCase() === "go" ? "green" : rec.verdict?.toLowerCase() === "caution" ? "amber" : "red";
 
+            // Scroll-anchor class is only rendered when initialSection is set,
+            // so the default-open drawer path emits identical markup to pre-3d.
+            const anchorCls = initialSection ? " ea-memo-scroll-anchor" : "";
+
             return (
               <>
                 {/* ══ Section 1: LLM Decision Narrative (top, always visible) ══ */}
                 {candidateRaw && briefRaw && (
-                  <DecisionMemoNarrative
-                    candidate={candidateRaw}
-                    brief={briefRaw}
-                    lang={effectiveLang}
-                  />
+                  <div
+                    ref={initialSection ? narrativeRef : undefined}
+                    className={`ea-memo-section-narrative${anchorCls}`}
+                  >
+                    <DecisionMemoNarrative
+                      candidate={candidateRaw}
+                      brief={briefRaw}
+                      lang={effectiveLang}
+                    />
+                  </div>
                 )}
 
                 {/* ══ Section 1b: Verdict + confidence (always visible, compact) ══ */}
                 {(rec.verdict || cand.confidence_grade) && (
-                  <div className="ea-memo-verdict-row">
+                  <div
+                    ref={initialSection ? verdictRowRef : undefined}
+                    className={`ea-memo-verdict-row${anchorCls}`}
+                  >
                     {rec.verdict && (
                       <span className={`ea-memo-verdict-badge ea-badge ea-badge--${verdictColor}`}>
                         {rec.verdict}
@@ -151,7 +197,10 @@ export default function ExpansionMemoPanel({
                 )}
 
                 {/* ══ Section 2: 4 Key Numbers (always visible) ══ */}
-                <div className="ea-memo-key-numbers">
+                <div
+                  ref={initialSection ? quickFactsRef : undefined}
+                  className={`ea-memo-key-numbers${anchorCls}`}
+                >
                   <div className="ea-memo-key-numbers__item">
                     <span className="ea-memo-key-numbers__value">
                       <ScorePill value={(breakdown?.display_score as number | undefined) ?? (cand.final_score as number | undefined)} large />
@@ -182,15 +231,20 @@ export default function ExpansionMemoPanel({
                          contributions, ranking decision. Above the collapsed
                          score-breakdown disclosure so the card and the details
                          don't visually compete. ══ */}
-                <DecisionLogicCard
-                  gateReasons={gateReasons}
-                  scoreBreakdown={breakdown}
-                  deterministicRank={cand.deterministic_rank ?? null}
-                  finalRank={cand.final_rank ?? null}
-                  rerankStatus={cand.rerank_status ?? null}
-                  rerankReason={cand.rerank_reason ?? null}
-                  rerankDelta={typeof cand.rerank_delta === "number" ? cand.rerank_delta : 0}
-                />
+                <div
+                  ref={initialSection ? decisionLogicRef : undefined}
+                  className={`ea-memo-section-decision-logic${anchorCls}`}
+                >
+                  <DecisionLogicCard
+                    gateReasons={gateReasons}
+                    scoreBreakdown={breakdown}
+                    deterministicRank={cand.deterministic_rank ?? null}
+                    finalRank={cand.final_rank ?? null}
+                    rerankStatus={cand.rerank_status ?? null}
+                    rerankReason={cand.rerank_reason ?? null}
+                    rerankDelta={typeof cand.rerank_delta === "number" ? cand.rerank_delta : 0}
+                  />
+                </div>
 
                 {/* ══ Section 3: Full Score Breakdown (collapsed by default) ══ */}
                 <details className="ea-memo-full-breakdown">
