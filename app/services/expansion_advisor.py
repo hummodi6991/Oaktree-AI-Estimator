@@ -7612,8 +7612,21 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "population_reach": row.get("population_reach"),
             "landuse_label": row.get("landuse_label"),
             "rank_position": row.get("rank_position"),
-            "source_type": row.get("source_type"),
-            "commercial_unit_id": row.get("commercial_unit_id"),
+            # Same defensive coercion as get_candidate_memo: commercial_unit_id
+            # is a string identifier per the API contract, but the DB column
+            # may yield an int for numeric Aqar IDs. Keep both emission paths
+            # symmetric so a future consumer declaring either field strictly
+            # doesn't reintroduce the memo-endpoint 500.
+            "source_type": (
+                str(row.get("source_type"))
+                if row.get("source_type") is not None
+                else None
+            ),
+            "commercial_unit_id": (
+                str(row.get("commercial_unit_id"))
+                if row.get("commercial_unit_id") is not None
+                else None
+            ),
             "listing_url": row.get("listing_url"),
             "image_url": row.get("image_url"),
             "unit_price_sar_annual": row.get("unit_price_sar_annual"),
@@ -7856,8 +7869,22 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             # expose them on the same nested `candidate` shape so the memo
             # quick-facts row (Area, Street width) and any listing-card UI
             # render the same values shown in the candidate list.
-            "source_type": candidate.get("source_type"),
-            "commercial_unit_id": candidate.get("commercial_unit_id"),
+            # commercial_unit_id is a string identifier in the API contract, but
+            # the underlying DB column (Text) can hold numeric Aqar IDs that
+            # SQLAlchemy surfaces as int. Coerce here so Pydantic's str | None
+            # validator on CandidateMemoCandidateResponse does not 500 on real
+            # rows. source_type gets the same treatment defensively for any
+            # future ingestion path that writes non-string codes.
+            "source_type": (
+                str(candidate.get("source_type"))
+                if candidate.get("source_type") is not None
+                else None
+            ),
+            "commercial_unit_id": (
+                str(candidate.get("commercial_unit_id"))
+                if candidate.get("commercial_unit_id") is not None
+                else None
+            ),
             "listing_url": candidate.get("listing_url"),
             "image_url": candidate.get("image_url"),
             "unit_price_sar_annual": candidate.get("unit_price_sar_annual"),
