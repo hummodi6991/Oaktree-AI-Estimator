@@ -335,6 +335,71 @@ def test_get_candidate_memo_candidate_shape_matches_frontend_consumers():
 
 
 # ---------------------------------------------------------------------------
+# 5c. Regression for production 500: Aqar listing IDs are numeric in the DB
+#     (the Text column holds strings like "6606767", but SQLAlchemy can
+#     surface them as int when the column was written via an earlier int
+#     path). CandidateMemoCandidateResponse declares commercial_unit_id as
+#     str | None, so an int value blows up Pydantic validation and FastAPI
+#     returns 500. The list endpoint hides this because
+#     ExpansionCandidateResponse does not declare commercial_unit_id — it
+#     sails through as extra="allow". Fix: coerce at the emission boundary.
+# ---------------------------------------------------------------------------
+def test_get_candidate_memo_coerces_int_commercial_unit_id_to_string():
+    from app.api.expansion_advisor import CandidateMemoResponse
+
+    memo_row = {
+        "candidate_id": "c-int-cuid",
+        "search_id": "s-int-cuid",
+        "brand_name": "Brand X",
+        "category": "qsr",
+        "service_model": "qsr",
+        "parcel_id": "p-int-cuid",
+        "district": "Olaya",
+        "area_m2": None,
+        "landuse_label": "Commercial",
+        "final_score": 80,
+        "economics_score": 72,
+        "cannibalization_score": 35,
+        "confidence_grade": "A",
+        "rank_position": 1,
+        "deterministic_rank": 1,
+        "final_rank": 1,
+        "rerank_applied": False,
+        "rerank_reason": None,
+        "rerank_delta": 0,
+        "rerank_status": "flag_off",
+        # Production shape: Aqar listing ID is an integer on the row even
+        # though the column type is Text. Before the coercion fix this
+        # raised ValidationError on CandidateMemoResponse.model_validate.
+        "source_type": "commercial_unit",
+        "commercial_unit_id": 6606767,
+        "listing_url": "https://example.test/listing/6606767",
+        "image_url": "https://example.test/listing/6606767.jpg",
+        "unit_price_sar_annual": 180000,
+        "unit_area_sqm": 140,
+        "unit_street_width_m": 15,
+        "unit_neighborhood": "Olaya",
+        "unit_listing_type": "for_rent",
+    }
+    db = FakeDB(memo_row=memo_row)
+    memo = get_candidate_memo(db, "c-int-cuid")
+    assert memo is not None
+
+    cand = memo["candidate"]
+    # Coerced to string at the emission boundary.
+    assert cand["commercial_unit_id"] == "6606767"
+    assert isinstance(cand["commercial_unit_id"], str)
+    assert cand["source_type"] == "commercial_unit"
+    assert isinstance(cand["source_type"], str)
+
+    # End-to-end Pydantic validation must succeed — this is the actual
+    # production 500 being reproduced. If the coercion is reverted, the
+    # next line raises ValidationError and the test fails.
+    validated = CandidateMemoResponse.model_validate(memo)
+    assert validated.candidate.commercial_unit_id == "6606767"
+
+
+# ---------------------------------------------------------------------------
 # 6. Pre-warm background task — flag off is a no-op.
 # ---------------------------------------------------------------------------
 def test_prewarm_flag_off_is_noop(monkeypatch):
