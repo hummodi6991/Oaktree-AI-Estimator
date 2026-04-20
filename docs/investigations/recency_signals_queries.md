@@ -1,0 +1,23 @@
+## 1. Timestamp fields found
+
+- aqar.listings (raw Aqar table; Postgres schema `aqar`, referenced as `aqar.listings` — no explicit timestamp columns surfaced in any SQL the app issues; ingest uses `today = date.today()` rather than a listing timestamp at `app/ingest/aqar_sale_comps.py:38`, `app/ingest/aqar_rent_comps.py:203`). Columns known to be queried (`city`, `district`, `area_sqm`, `price_sar`, `price_per_sqm`, `property_type`, `title`, `description`, `listing_type`, `price_frequency`, `rent_period`, `ad_type`, `purpose`, `category`) — no timestamp field referenced. nothing found for first_seen/last_seen/posted/listed_at/updated_at on `aqar.listings` in repo code.
+- candidate_location.model_scored_at — DateTime(timezone=True) — populated by profitability model scorer (app/models/tables.py:503)
+- candidate_location.created_at — DateTime(timezone=True), server_default=now() — populated on insert (app/models/tables.py:506)
+- candidate_location.updated_at — DateTime(timezone=True), server_default=now() — populated on insert; not auto-refreshed by trigger (app/models/tables.py:507)
+- expansion_candidate.computed_at — DateTime(timezone=True), server_default=now() — populated on insert (alembic/versions/20260310_exp_adv_v0.py:71-76; INSERT at app/services/expansion_advisor.py:6835)
+- expansion_search.created_at — DateTime(timezone=True), server_default=now() — populated on insert (alembic/versions/20260310_exp_adv_v0.py:24-29)
+- external_feature — no timestamp columns (alembic/versions/0004_external_features.py:16-31; app/models/tables.py:213-222)
+- hungerstation_* tables — table not found. "hungerstation" is a platform value, not a table name. Delivery data lands in `expansion_delivery_market` (below) and `restaurant_poi` with `source='hungerstation'`.
+- expansion_delivery_market.scraped_at — TIMESTAMPTZ NOT NULL DEFAULT now() — populated on insert (alembic/versions/d4e5f6a1b2c3_create_expansion_advisor_tables.py:86)
+- expansion_rent_comp.listed_at — DATE — nullable, populated from source listing date if available (alembic/versions/d4e5f6a1b2c3_create_expansion_advisor_tables.py:115)
+- expansion_rent_comp.ingested_at — TIMESTAMPTZ NOT NULL DEFAULT now() — populated on insert (alembic/versions/d4e5f6a1b2c3_create_expansion_advisor_tables.py:116)
+- expansion_competitor_quality.refreshed_at — TIMESTAMPTZ NOT NULL DEFAULT now() — populated on insert (alembic/versions/d4e5f6a1b2c3_create_expansion_advisor_tables.py:143)
+- commercial_unit.first_seen_at — DateTime, server_default=now() — set on insert; the expansion scoring relies on this (app/models/tables.py:414)
+- commercial_unit.last_seen_at — DateTime, server_default=now() — populated on insert; refreshed by upsert path in Aqar scraper ingest (app/models/tables.py:415)
+- commercial_unit.llm_classified_at — DateTime — populated when LLM classifier runs (app/models/tables.py:411)
+- restaurant_poi.observed_at — DateTime — populated by ingest (app/models/tables.py:323)
+- restaurant_poi.google_fetched_at — DateTime(timezone=True) — populated when Google Places enrichment runs (app/models/tables.py:325)
+- restaurant_heatmap_cache.computed_at — DateTime(timezone=True) — populated on cache write (app/models/tables.py:358)
+- location_score.computed_at — DateTime — populated by scorer (app/models/tables.py:536)
+- population_density.observed_at — DateTime — populated by ingest (app/models/tables.py:348)
+- price_quote.observed_at — DateTime — populated by ingest (app/models/tables.py:270)
