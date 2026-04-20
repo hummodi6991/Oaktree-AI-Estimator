@@ -39,3 +39,7 @@
 - app/services/expansion_advisor.py:2079-2080 — docstring: Patch 13 rebalance moved 10 points out of freshness into LLM signals.
 - No `last_seen_at`, `posted`, `listed_at`, `updated_at`, `days_since`, or generic `age_` term is referenced inside ranking/scoring code beyond the hits above.
 - No recency-based scoring on `expansion_candidate.computed_at`, `candidate_location.created_at/updated_at`, `expansion_delivery_market.scraped_at`, `restaurant_poi.observed_at`, or `expansion_rent_comp.listed_at/ingested_at` — those timestamps exist but are not fed into any ranking formula.
+
+## 3. Sort order in Expansion Advisor endpoint
+
+`GET /v1/expansion/searches/{search_id}/candidates` (app/api/expansion_advisor.py:1032) → `get_candidates()` (app/services/expansion_advisor.py:7177) issues `ORDER BY rank_position ASC NULLS LAST, compare_rank ASC NULLS LAST, final_score DESC, computed_at DESC` on `expansion_candidate` (app/services/expansion_advisor.py:7253). `computed_at` is only a final tiebreaker after the persisted deterministic rank, compare_rank, and final_score.
