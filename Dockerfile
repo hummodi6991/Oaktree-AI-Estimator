@@ -21,6 +21,7 @@ COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini .
 COPY models/ ./models/
+COPY scripts/ ./scripts/
 COPY README.md .
 
 # Bring in the compiled UI (includes public assets)
