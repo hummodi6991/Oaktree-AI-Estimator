@@ -1,0 +1,192 @@
+name: Aqar detail backfill (one-shot)
+
+# One-shot manual trigger that applies the existing K8s Job at
+# k8s/jobs/aqar-detail-backfill.yaml to the SCCC (Alibaba Cloud Riyadh)
+# cluster and streams its logs to the Actions UI.
+#
+# The Job image is pinned to whatever is currently live on the
+# oaktree-estimator Deployment, so this workflow backfills detail
+# fields using the same code that production is serving.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Max listings to process. Leave blank for the full run (~2,295 active listings)."
+        required: false
+        default: ""
+      dry_run:
+        description: "Parse detail pages but do not write DB updates."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  # Only one backfill at a time — the script writes to shared rows and
+  # parallel runs would interleave updates and waste Aqar requests.
+  group: aqar-detail-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      JOB_NAME: aqar-detail-backfill-${{ github.run_id }}
+      LIMIT: ${{ github.event.inputs.limit }}
+      DRY_RUN: ${{ github.event.inputs.dry_run }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kubectl (latest stable)
+        run: |
+          set -euo pipefail
+          STABLE=$(curl -fsSL https://storage.googleapis.com/kubernetes-release/release/stable.txt)
+          echo "Installing kubectl ${STABLE}"
+          curl -fsSL -o kubectl "https://storage.googleapis.com/kubernetes-release/release/${STABLE}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+          kubectl version --client=true
+
+      - name: Install yq (latest release)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o yq "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
+          chmod +x yq
+          sudo mv yq /usr/local/bin/yq
+          yq --version
+
+      - name: Load kubeconfig from SCCC_KUBECONFIG secret
+        env:
+          SCCC_KUBECONFIG: ${{ secrets.SCCC_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SCCC_KUBECONFIG}" ]; then
+            echo "::error::SCCC_KUBECONFIG secret is not set."
+            exit 1
+          fi
+          mkdir -p "${HOME}/.kube"
+          printf '%s' "${SCCC_KUBECONFIG}" > "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+          echo "KUBECONFIG=${HOME}/.kube/config" >> "${GITHUB_ENV}"
+          # Sanity check — do not print kubeconfig contents.
+          kubectl config current-context
+
+      - name: Read current production image from deployment/oaktree-estimator
+        id: img
+        run: |
+          set -euo pipefail
+          IMAGE=$(kubectl get deployment/oaktree-estimator \
+            -o jsonpath='{.spec.template.spec.containers[0].image}')
+          if [ -z "${IMAGE}" ]; then
+            echo "::error::Could not read image from deployment/oaktree-estimator."
+            exit 1
+          fi
+          echo "Current production image: ${IMAGE}"
+          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare Job manifest
+        env:
+          IMAGE: ${{ steps.img.outputs.image }}
+        run: |
+          set -euo pipefail
+          SRC="k8s/jobs/aqar-detail-backfill.yaml"
+          DST="/tmp/job.yaml"
+          cp "${SRC}" "${DST}"
+
+          # Swap IMAGE_PLACEHOLDER or any prior pinned ghcr.io image for
+          # the image currently live in production. The escape of '|' in
+          # the replacement keeps sed happy with slashes in ghcr paths.
+          ESC_IMAGE=$(printf '%s' "${IMAGE}" | sed -e 's/[\/&|]/\\&/g')
+          sed -i -E \
+            -e "s|IMAGE_PLACEHOLDER|${ESC_IMAGE}|g" \
+            -e "s|^([[:space:]]*image:[[:space:]]*)ghcr\.io/.*$|\1${ESC_IMAGE}|g" \
+            "${DST}"
+
+          # Uniquify Job name so concurrent runs cannot collide on the
+          # cluster side even if the concurrency group is bypassed.
+          yq -i '.metadata.name = strenv(JOB_NAME)' "${DST}"
+          yq -i '.spec.template.metadata.labels.app = strenv(JOB_NAME)' "${DST}"
+          yq -i '.metadata.labels.app = strenv(JOB_NAME)' "${DST}"
+
+          # Append optional --limit and --dry-run flags to the command.
+          if [ -n "${LIMIT}" ]; then
+            LIMIT_VAL="${LIMIT}" yq -i \
+              '.spec.template.spec.containers[0].command += ["--limit", strenv(LIMIT_VAL)]' \
+              "${DST}"
+          fi
+          if [ "${DRY_RUN}" = "true" ]; then
+            yq -i \
+              '.spec.template.spec.containers[0].command += ["--dry-run"]' \
+              "${DST}"
+          fi
+
+          echo "=== Rendered Job manifest ==="
+          cat "${DST}"
+
+      - name: Apply Job to cluster
+        run: |
+          set -euo pipefail
+          kubectl apply -f /tmp/job.yaml
+
+      - name: Wait for pod to reach Running or Succeeded
+        run: |
+          set -euo pipefail
+          DEADLINE=$((SECONDS + 300))
+          POD=""
+          while [ ${SECONDS} -lt ${DEADLINE} ]; do
+            POD=$(kubectl get pods -l "job-name=${JOB_NAME}" \
+              -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+            if [ -n "${POD}" ]; then
+              PHASE=$(kubectl get pod "${POD}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+              echo "Pod ${POD} phase=${PHASE}"
+              if [ "${PHASE}" = "Running" ] || [ "${PHASE}" = "Succeeded" ]; then
+                exit 0
+              fi
+              if [ "${PHASE}" = "Failed" ]; then
+                echo "::error::Pod ${POD} entered Failed state before streaming logs."
+                kubectl describe pod "${POD}" || true
+                exit 1
+              fi
+            fi
+            sleep 5
+          done
+          echo "::error::Pod for job/${JOB_NAME} did not reach Running/Succeeded within 5 minutes."
+          kubectl describe job "${JOB_NAME}" || true
+          kubectl get pods -l "job-name=${JOB_NAME}" -o wide || true
+          exit 1
+
+      - name: Stream Job logs
+        run: |
+          set -euo pipefail
+          # -f follows until the pod terminates; --all-containers is a
+          # safety net if future revisions of the Job add sidecars.
+          kubectl logs -f "job/${JOB_NAME}" --all-containers=true --timestamps=true
+
+      - name: Dump Job status and verify success
+        if: always()
+        run: |
+          set -uo pipefail
+          echo "=== Job description ==="
+          kubectl describe job "${JOB_NAME}" || true
+          echo "=== Job status (JSON) ==="
+          kubectl get job "${JOB_NAME}" -o json || true
+          echo "=== Pod list ==="
+          kubectl get pods -l "job-name=${JOB_NAME}" -o wide || true
+
+          SUCCEEDED=$(kubectl get job "${JOB_NAME}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "")
+          echo "job/${JOB_NAME} .status.succeeded=${SUCCEEDED:-<empty>}"
+          if [ "${SUCCEEDED}" != "1" ]; then
+            echo "::error::job/${JOB_NAME} did not report succeeded=1."
+            exit 1
+          fi
+          echo "job/${JOB_NAME} completed successfully."
+          # Intentionally NOT deleting the Job — manifest sets
+          # ttlSecondsAfterFinished (7 days) so logs remain available
+          # for post-run review on the cluster.
