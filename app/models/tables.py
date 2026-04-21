@@ -413,6 +413,18 @@ class CommercialUnit(Base):
     status = Column(String(16), nullable=False, server_default=text("'active'"))
     first_seen_at = Column(DateTime, server_default=text("now()"))
     last_seen_at = Column(DateTime, server_default=text("now()"))
+    # Phase 2 detail-page fields (Info block on Aqar listing detail pages).
+    # Populated by the detail scraper — nullable because existing rows and
+    # newly discovered list-page rows predate the detail-scrape step.
+    aqar_created_at = Column(DateTime(timezone=True))
+    aqar_updated_at = Column(DateTime(timezone=True))
+    aqar_views = Column(Integer)
+    aqar_advertisement_license = Column(Text)
+    aqar_license_expiry = Column(Date)
+    aqar_plan_parcel = Column(Text)
+    aqar_area_deed = Column(Numeric(10, 2))
+    aqar_listing_source = Column(Text)
+    aqar_detail_scraped_at = Column(DateTime(timezone=True))
 
     __table_args__ = (
         Index("ix_commercial_unit_neighborhood", "neighborhood"),
@@ -429,6 +441,19 @@ class CommercialUnit(Base):
         Index(
             "ix_commercial_unit_llm_classified_at",
             "llm_classified_at",
+        ),
+        Index(
+            "idx_commercial_unit_aqar_created_at",
+            aqar_created_at.desc(),
+        ),
+        Index(
+            "idx_commercial_unit_aqar_updated_at",
+            aqar_updated_at.desc(),
+        ),
+        Index(
+            "idx_commercial_unit_detail_unscraped",
+            "aqar_id",
+            postgresql_where=text("aqar_detail_scraped_at IS NULL"),
         ),
     )
 
