@@ -15,13 +15,16 @@ Covers:
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from app.services.expansion_advisor import (
     _arcgis_classification_semantics,
     _area_fit,
     _brand_fit_score,
     _candidate_gate_status,
+    _effective_listing_age_days,
     _estimate_fitout_cost_sar,
     _estimate_revenue_index,
     _gate_verdict_label,
@@ -1033,7 +1036,7 @@ def test_listing_quality_parcel_returns_neutral_50():
     """Parcels (non-listings) should return a neutral 50."""
     score = _listing_quality_score(
         is_listing=False,
-        first_seen_at=None,
+        effective_age_days=None,
         is_furnished=None,
         unit_restaurant_score=None,
         has_image=False,
@@ -1045,7 +1048,7 @@ def test_listing_quality_fresh_full_data_high_score():
     """A fresh listing with full data should score close to 100."""
     score = _listing_quality_score(
         is_listing=True,
-        first_seen_at=datetime.utcnow() - timedelta(days=3),
+        effective_age_days=3,
         is_furnished=True,
         unit_restaurant_score=90.0,
         has_image=True,
@@ -1059,7 +1062,7 @@ def test_listing_quality_stale_no_image_low_score():
     """A very stale listing without image should score below 50."""
     score = _listing_quality_score(
         is_listing=True,
-        first_seen_at=datetime.utcnow() - timedelta(days=400),
+        effective_age_days=400,
         is_furnished=False,
         unit_restaurant_score=None,
         has_image=False,
@@ -1072,7 +1075,7 @@ def test_listing_quality_drive_thru_adds_5():
     """Drive-thru bonus should add exactly 5 points."""
     base = _listing_quality_score(
         is_listing=True,
-        first_seen_at=datetime.utcnow() - timedelta(days=10),
+        effective_age_days=10,
         is_furnished=False,
         unit_restaurant_score=50.0,
         has_image=True,
@@ -1080,13 +1083,169 @@ def test_listing_quality_drive_thru_adds_5():
     )
     with_dt = _listing_quality_score(
         is_listing=True,
-        first_seen_at=datetime.utcnow() - timedelta(days=10),
+        effective_age_days=10,
         is_furnished=False,
         unit_restaurant_score=50.0,
         has_image=True,
         has_drive_thru=True,
     )
     assert abs(with_dt - base - 5.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# Phase 3a: _effective_listing_age_days
+# ---------------------------------------------------------------------------
+
+def test_effective_age_all_three_present_picks_most_recent():
+    """GREATEST semantics: the most recent of the three timestamps wins,
+    regardless of which source it came from."""
+    now = datetime.utcnow()
+    row = {
+        "unit_aqar_created_at": now - timedelta(days=200),
+        "unit_aqar_updated_at": now - timedelta(days=10),
+        "unit_first_seen_at": now - timedelta(days=30),
+    }
+    days, source = _effective_listing_age_days(row)
+    assert days == 10
+    assert source == "aqar_updated"
+
+
+def test_effective_age_created_null_updated_present():
+    """NULL aqar_created_at falls through to aqar_updated_at when present."""
+    now = datetime.utcnow()
+    row = {
+        "unit_aqar_created_at": None,
+        "unit_aqar_updated_at": now - timedelta(days=5),
+        "unit_first_seen_at": now - timedelta(days=60),
+    }
+    days, source = _effective_listing_age_days(row)
+    assert days == 5
+    assert source == "aqar_updated"
+
+
+def test_effective_age_both_aqar_null_uses_first_seen():
+    """Both aqar fields NULL falls through to first_seen_at."""
+    now = datetime.utcnow()
+    row = {
+        "unit_aqar_created_at": None,
+        "unit_aqar_updated_at": None,
+        "unit_first_seen_at": now - timedelta(days=40),
+    }
+    days, source = _effective_listing_age_days(row)
+    assert days == 40
+    assert source == "first_seen"
+
+
+def test_effective_age_all_null_returns_unknown_neutral():
+    """All three NULL resolves to (None, "unknown") and, when threaded
+    through _listing_quality_score, contributes exactly the freshness=50.0
+    share (no penalty, no boost)."""
+    days, source = _effective_listing_age_days({})
+    assert days is None
+    assert source == "unknown"
+
+    # Fixed-neutral inputs to isolate the freshness contribution.
+    common = dict(
+        is_listing=True,
+        is_furnished=False,
+        unit_restaurant_score=None,
+        has_image=False,
+        has_drive_thru=False,
+        llm_suitability_score=None,
+        llm_listing_quality_score=None,
+    )
+    # With these neutral inputs: suitability=50, image_signal=30,
+    # furnished_signal=50. Composite = freshness*0.30 + 50*0.40 +
+    # 30*0.20 + 50*0.10 = freshness*0.30 + 31.
+    expected_with_freshness_50 = 50.0 * 0.30 + 50.0 * 0.40 + 30.0 * 0.20 + 50.0 * 0.10
+    observed = _listing_quality_score(effective_age_days=None, **common)
+    assert abs(observed - expected_with_freshness_50) < 1e-9
+
+
+def test_effective_age_future_updated_at_clamps_to_zero():
+    """An aqar_updated_at only slightly in the future (within the one-day
+    tolerance) is accepted and clamped to days=0, which lands in the
+    freshest <=14 band."""
+    now = datetime.utcnow()
+    row = {
+        "unit_aqar_created_at": None,
+        # Within the future_cutoff tolerance — accepted, clamped to 0.
+        "unit_aqar_updated_at": now + timedelta(hours=6),
+        "unit_first_seen_at": None,
+    }
+    days, source = _effective_listing_age_days(row)
+    assert days == 0
+    assert source == "aqar_updated"
+
+    score = _listing_quality_score(
+        is_listing=True,
+        effective_age_days=days,
+        is_furnished=False,
+        unit_restaurant_score=None,
+        has_image=False,
+        has_drive_thru=False,
+    )
+    # freshness = 100 (days <= 14 band). Composite = 100*0.30 + 50*0.40
+    # + 30*0.20 + 50*0.10 = 61.
+    assert abs(score - 61.0) < 1e-9
+
+
+def test_effective_age_future_only_returns_unknown():
+    """Correction 3 guard: a lone aqar_updated_at more than one day in the
+    future is rejected as parser/clock drift, not clamped. With no other
+    sources, the helper returns (None, "unknown")."""
+    now = datetime.utcnow()
+    row = {
+        "unit_aqar_created_at": None,
+        "unit_aqar_updated_at": now + timedelta(days=30),
+        "unit_first_seen_at": None,
+    }
+    days, source = _effective_listing_age_days(row)
+    assert days is None
+    assert source == "unknown"
+
+
+@pytest.mark.parametrize(
+    "age_days,expected_freshness",
+    [
+        (14, 100.0),
+        (30, 92.0),
+        (60, 80.0),
+        (120, 65.0),
+        (240, 45.0),
+        (365, 28.0),
+        (366, 15.0),
+    ],
+)
+def test_effective_age_band_boundaries(age_days, expected_freshness):
+    """Lock the frozen Phase 3a band cutoffs at 14/30/60/120/240/365 days
+    against silent drift. Composite = freshness*0.30 + 20 + 6 + 5 with the
+    fixed inputs below (suitability=50, image_signal=30, furnished=50)."""
+    score = _listing_quality_score(
+        is_listing=True,
+        effective_age_days=age_days,
+        is_furnished=False,
+        unit_restaurant_score=None,
+        has_image=False,
+        has_drive_thru=False,
+    )
+    expected_composite = expected_freshness * 0.30 + 50.0 * 0.40 + 30.0 * 0.20 + 50.0 * 0.10
+    assert abs(score - expected_composite) < 1e-9
+
+
+def test_effective_age_tzaware_input_normalized():
+    """tz-aware aqar_updated_at mixed with tz-naive first_seen_at must not
+    raise TypeError. Both point to roughly the same moment; the helper
+    should pick the aqar_updated_at (first in the preference order)."""
+    now_naive = datetime.utcnow()
+    row = {
+        "unit_aqar_updated_at": datetime.now(timezone.utc) - timedelta(days=5),
+        "unit_aqar_created_at": None,
+        "unit_first_seen_at": now_naive - timedelta(days=5),
+    }
+    days, source = _effective_listing_age_days(row)
+    assert days == 5
+    assert source == "aqar_updated"
 
 
 # ---------------------------------------------------------------------------
