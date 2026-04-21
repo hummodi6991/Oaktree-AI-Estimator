@@ -41,6 +41,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # Phase 2 detail scrape (Info block: created_at, views, REGA license,
+    # etc.) parses fields from the same HTML the existing detail fetch
+    # already downloads — no additional HTTP requests per listing. The
+    # current 6h ceiling remains appropriate; the incremental CPU cost
+    # of the extra BeautifulSoup pass is negligible.
     timeout-minutes: 360  # 6 hours
 
     steps:

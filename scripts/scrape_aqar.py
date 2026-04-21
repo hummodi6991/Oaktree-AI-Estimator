@@ -8,10 +8,16 @@ import os
 import random
 import re
 import time
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import requests
 from bs4 import BeautifulSoup
+
+from app.ingest.aqar.detail_scraper import (
+    AqarDetailPayload,
+    parse_detail_html,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -920,13 +926,49 @@ def _extract_detail_from_html(html: str) -> dict:
     }
 
 
-def fetch_listing_detail(listing: dict) -> dict:
-    """Fetch a listing's detail page and merge extra fields into the listing dict."""
+def fetch_listing_detail(
+    listing: dict,
+    detail_stats: dict | None = None,
+) -> dict:
+    """Fetch a listing's detail page and merge extra fields into the listing.
+
+    Runs two parsers over the same HTML so we issue a single HTTP request
+    per listing:
+
+    * ``_extract_detail_from_html`` — legacy fields (description, mezzanine,
+      facade, phone, property_type, furnished, apartments, rooms, floors).
+    * ``parse_detail_html`` — Phase 2 Info-block fields (created_at,
+      updated_at, views, REGA license, plan/parcel, deed area, source).
+
+    ``detail_stats`` is an optional dict that accumulates per-run counts
+    (``detail_scraped``, ``detail_failed_4xx``, ``detail_failed_5xx``,
+    ``detail_failed_network``) so the orchestrator can surface a run
+    summary at the end. Passing ``None`` skips stat tracking (used by
+    tests and ad-hoc calls).
+    """
     url = listing["listing_url"]
+    fetched_at = datetime.now(timezone.utc)
     try:
         resp = _get(url)
+    except requests.HTTPError as e:
+        print(f"      WARN: failed to fetch detail {url}: {e}")
+        status = getattr(e.response, "status_code", None)
+        if detail_stats is not None:
+            if status and 400 <= status < 500:
+                detail_stats["detail_failed_4xx"] = detail_stats.get(
+                    "detail_failed_4xx", 0
+                ) + 1
+            else:
+                detail_stats["detail_failed_5xx"] = detail_stats.get(
+                    "detail_failed_5xx", 0
+                ) + 1
+        return listing
     except requests.RequestException as e:
         print(f"      WARN: failed to fetch detail {url}: {e}")
+        if detail_stats is not None:
+            detail_stats["detail_failed_network"] = detail_stats.get(
+                "detail_failed_network", 0
+            ) + 1
         return listing
 
     html = resp.text
@@ -954,7 +996,69 @@ def fetch_listing_detail(listing: dict) -> dict:
     # Extract rooms count (>=6 on a building = multi-room residential/office)
     listing["num_rooms"] = detail["num_rooms"]
 
+    # Phase 2: Info-block fields (Created At, Last Update, Views, REGA
+    # license, plan/parcel, deed area, listing source). Runs on the same
+    # HTML we already have in hand — no additional HTTP load.
+    _merge_detail_info_payload(
+        listing,
+        parse_detail_html(html, fetched_at),
+        detail_stats=detail_stats,
+    )
+
     return listing
+
+
+def _merge_detail_info_payload(
+    listing: dict,
+    payload: AqarDetailPayload | None,
+    detail_stats: dict | None = None,
+) -> None:
+    """Attach Info-block fields from ``parse_detail_html`` onto ``listing``.
+
+    Missing/structure-change result (``payload is None``) is non-fatal;
+    the list-page fields still upsert and the run moves on. The caller
+    already logged the WARNING from ``parse_detail_html``.
+    """
+    if payload is None:
+        if detail_stats is not None:
+            detail_stats["detail_structure_missing"] = detail_stats.get(
+                "detail_structure_missing", 0
+            ) + 1
+        return
+
+    listing["aqar_created_at"] = payload.aqar_created_at
+    listing["aqar_updated_at"] = payload.aqar_updated_at
+    listing["aqar_views"] = payload.aqar_views
+    listing["aqar_advertisement_license"] = payload.aqar_advertisement_license
+    listing["aqar_license_expiry"] = payload.aqar_license_expiry
+    listing["aqar_plan_parcel"] = payload.aqar_plan_parcel
+    listing["aqar_area_deed"] = payload.aqar_area_deed
+    listing["aqar_listing_source"] = payload.aqar_listing_source
+    listing["aqar_detail_scraped_at"] = payload.aqar_detail_scraped_at
+
+    if detail_stats is not None:
+        detail_stats["detail_scraped"] = detail_stats.get("detail_scraped", 0) + 1
+
+
+def _detail_recently_scraped(aqar_id: str, db) -> bool:
+    """Return True if we already detail-scraped this listing in the last 24h.
+
+    Skip gate for incremental runs — prevents re-fetching the detail
+    page twice in a single day, matching the partial-index predicate
+    on ``idx_commercial_unit_detail_unscraped``.
+    """
+    from sqlalchemy import text as sa_text
+
+    result = db.execute(
+        sa_text(
+            "SELECT 1 FROM commercial_unit "
+            "WHERE aqar_id = :id "
+            "AND aqar_detail_scraped_at IS NOT NULL "
+            "AND aqar_detail_scraped_at > now() - interval '24 hours'"
+        ),
+        {"id": aqar_id},
+    ).first()
+    return result is not None
 
 
 # ---------------------------------------------------------------------------
@@ -1343,6 +1447,15 @@ def upsert_listing(db, listing: dict) -> str:
                 "llm_reasoning = COALESCE(:llm_reasoning, commercial_unit.llm_reasoning), "
                 "llm_classified_at = COALESCE(:llm_classified_at, commercial_unit.llm_classified_at), "
                 "llm_classifier_version = COALESCE(:llm_classifier_version, commercial_unit.llm_classifier_version), "
+                "aqar_created_at = COALESCE(:aqar_created_at, commercial_unit.aqar_created_at), "
+                "aqar_updated_at = COALESCE(:aqar_updated_at, commercial_unit.aqar_updated_at), "
+                "aqar_views = COALESCE(:aqar_views, commercial_unit.aqar_views), "
+                "aqar_advertisement_license = COALESCE(:aqar_advertisement_license, commercial_unit.aqar_advertisement_license), "
+                "aqar_license_expiry = COALESCE(:aqar_license_expiry, commercial_unit.aqar_license_expiry), "
+                "aqar_plan_parcel = COALESCE(:aqar_plan_parcel, commercial_unit.aqar_plan_parcel), "
+                "aqar_area_deed = COALESCE(:aqar_area_deed, commercial_unit.aqar_area_deed), "
+                "aqar_listing_source = COALESCE(:aqar_listing_source, commercial_unit.aqar_listing_source), "
+                "aqar_detail_scraped_at = COALESCE(:aqar_detail_scraped_at, commercial_unit.aqar_detail_scraped_at), "
                 "status = 'active', last_seen_at = now() "
                 "WHERE aqar_id = :aqar_id"
             ),
@@ -1361,6 +1474,9 @@ def upsert_listing(db, listing: dict) -> str:
                 "llm_suitability_verdict, llm_suitability_score, "
                 "llm_listing_quality_score, llm_landlord_signal_score, "
                 "llm_reasoning, llm_classified_at, llm_classifier_version, "
+                "aqar_created_at, aqar_updated_at, aqar_views, "
+                "aqar_advertisement_license, aqar_license_expiry, aqar_plan_parcel, "
+                "aqar_area_deed, aqar_listing_source, aqar_detail_scraped_at, "
                 "status, first_seen_at, last_seen_at) "
                 "VALUES (:aqar_id, :title, :description, :neighborhood, :listing_url, :image_url, "
                 ":price_sar_annual, :price_per_sqm, :area_sqm, :street_width_m, "
@@ -1370,6 +1486,9 @@ def upsert_listing(db, listing: dict) -> str:
                 ":llm_suitability_verdict, :llm_suitability_score, "
                 ":llm_listing_quality_score, :llm_landlord_signal_score, "
                 ":llm_reasoning, :llm_classified_at, :llm_classifier_version, "
+                ":aqar_created_at, :aqar_updated_at, :aqar_views, "
+                ":aqar_advertisement_license, :aqar_license_expiry, :aqar_plan_parcel, "
+                ":aqar_area_deed, :aqar_listing_source, :aqar_detail_scraped_at, "
                 "'active', now(), now())"
             ),
             _listing_params(listing),
@@ -1412,6 +1531,15 @@ def _listing_params(listing: dict) -> dict:
         "llm_reasoning": listing.get("llm_reasoning"),
         "llm_classified_at": listing.get("llm_classified_at"),
         "llm_classifier_version": listing.get("llm_classifier_version"),
+        "aqar_created_at": listing.get("aqar_created_at"),
+        "aqar_updated_at": listing.get("aqar_updated_at"),
+        "aqar_views": listing.get("aqar_views"),
+        "aqar_advertisement_license": listing.get("aqar_advertisement_license"),
+        "aqar_license_expiry": listing.get("aqar_license_expiry"),
+        "aqar_plan_parcel": listing.get("aqar_plan_parcel"),
+        "aqar_area_deed": listing.get("aqar_area_deed"),
+        "aqar_listing_source": listing.get("aqar_listing_source"),
+        "aqar_detail_scraped_at": listing.get("aqar_detail_scraped_at"),
     }
 
 
@@ -1538,6 +1666,20 @@ def main():
     else:
         type_keys = [args.listing_type]
 
+    # Phase 2 detail-scrape run summary. Accumulated across all listing
+    # types so the end-of-run line shows the aggregate picture the spec
+    # asks for: discovered / detail-scraped / skipped-fresh / 4xx / 5xx
+    # / structure-missing.
+    detail_stats: dict = {
+        "detail_discovered": 0,
+        "detail_scraped": 0,
+        "detail_skipped_fresh": 0,
+        "detail_failed_4xx": 0,
+        "detail_failed_5xx": 0,
+        "detail_failed_network": 0,
+        "detail_structure_missing": 0,
+    }
+
     try:
         for type_key in type_keys:
             listing_type = LISTING_TYPES[type_key]
@@ -1598,6 +1740,7 @@ def main():
                     for k, listing in enumerate(listings):
                         aqar_id = listing["aqar_id"]
                         seen_aqar_ids.add(aqar_id)
+                        detail_stats["detail_discovered"] += 1
 
                         # Resumability: skip already-persisted listings
                         if args.resume and db and _listing_already_exists(aqar_id, db):
@@ -1607,9 +1750,17 @@ def main():
                             continue
 
                         if not args.no_detail:
-                            time.sleep(random.uniform(2, 3))
-                            print(f"    [{k + 1}/{len(listings)}] fetching detail: {listing['listing_url']}")
-                            fetch_listing_detail(listing)
+                            # 24h detail-fetch gate: skip if we already
+                            # pulled the Info block for this listing in
+                            # the last 24 hours. Protects against same-day
+                            # re-scrapes without blocking the list-page
+                            # refresh path.
+                            if db and _detail_recently_scraped(aqar_id, db):
+                                detail_stats["detail_skipped_fresh"] += 1
+                            else:
+                                time.sleep(random.uniform(2, 3))
+                                print(f"    [{k + 1}/{len(listings)}] fetching detail: {listing['listing_url']}")
+                                fetch_listing_detail(listing, detail_stats=detail_stats)
                         # Attach geocode to each listing
                         if geo:
                             listing["lat"] = geo["lat"]
@@ -1684,6 +1835,7 @@ def main():
                     if aqar_id in seen_aqar_ids:
                         continue  # Already scraped from area pages
                     seen_aqar_ids.add(aqar_id)
+                    detail_stats["detail_discovered"] += 1
 
                     if args.resume and db and _listing_already_exists(aqar_id, db):
                         _touch_last_seen(aqar_id, db)
@@ -1692,8 +1844,11 @@ def main():
                         continue
 
                     if not args.no_detail:
-                        time.sleep(random.uniform(2, 3))
-                        fetch_listing_detail(listing)
+                        if db and _detail_recently_scraped(aqar_id, db):
+                            detail_stats["detail_skipped_fresh"] += 1
+                        else:
+                            time.sleep(random.uniform(2, 3))
+                            fetch_listing_detail(listing, detail_stats=detail_stats)
 
                     listing["listing_type"] = type_key
                     classify_restaurant_suitability(listing)
@@ -1741,6 +1896,22 @@ def main():
         # so we catch it in the next scrape log instead of waiting
         # for a user complaint.
         _log_area_parse_telemetry()
+
+        # Detail-scrape aggregate summary — the shape the Phase 2 spec
+        # asks for. A spike in ``detail_structure_missing`` is the
+        # canary for Aqar changing the Info-block layout.
+        logger.info(
+            "Detail scrape summary: discovered=%d scraped=%d "
+            "skipped_fresh=%d failed_4xx=%d failed_5xx=%d "
+            "failed_network=%d structure_missing=%d",
+            detail_stats["detail_discovered"],
+            detail_stats["detail_scraped"],
+            detail_stats["detail_skipped_fresh"],
+            detail_stats["detail_failed_4xx"],
+            detail_stats["detail_failed_5xx"],
+            detail_stats["detail_failed_network"],
+            detail_stats["detail_structure_missing"],
+        )
 
         print(f"\n=== Done ===")
     finally:
