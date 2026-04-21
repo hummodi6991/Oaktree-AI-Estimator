@@ -7,8 +7,8 @@ import re
 import time
 import os
 import uuid
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timedelta
+from typing import Any, Mapping
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -2039,10 +2039,50 @@ def _confidence_score(
     return min(70.0, _clamp(score))
 
 
+def _effective_listing_age_days(
+    row: Mapping[str, Any],
+) -> tuple[int | None, str]:
+    """Return (days since most-recent Aqar date, source tag).
+
+    Picks GREATEST of ``aqar_updated_at``, ``aqar_created_at``, and
+    ``first_seen_at`` — an unweighted max that treats a recent "updated"
+    timestamp as equally strong as a recent "created" timestamp, per the
+    Phase 3a directive. Returns ``(None, "unknown")`` when all three are
+    NULL or implausible so the caller can resolve to a neutral band without
+    penalty. Tz-aware values are coerced to naive UTC so arithmetic matches
+    the existing first_seen_at path. Timestamps more than one day in the
+    future are rejected as parser/clock drift rather than clamped, so a
+    corrupted source cannot artificially produce a top-band freshness.
+    """
+    now = datetime.utcnow()
+    future_cutoff = now + timedelta(days=1)
+    candidates: list[tuple[datetime, str]] = []
+    for key, tag in (
+        ("unit_aqar_updated_at", "aqar_updated"),
+        ("unit_aqar_created_at", "aqar_created"),
+        ("unit_first_seen_at", "first_seen"),
+    ):
+        value = row.get(key)
+        if value is None:
+            continue
+        if getattr(value, "tzinfo", None) is not None:
+            value = value.replace(tzinfo=None)
+        if value > future_cutoff:
+            continue
+        candidates.append((value, tag))
+    if not candidates:
+        return None, "unknown"
+    picked, tag = max(candidates, key=lambda pair: pair[0])
+    days = (now - picked).days
+    if days < 0:
+        days = 0
+    return days, tag
+
+
 def _listing_quality_score(
     *,
     is_listing: bool,
-    first_seen_at: datetime | None,
+    effective_age_days: int | None,
     is_furnished: bool | None,
     unit_restaurant_score: float | None,
     has_image: bool,
@@ -2052,11 +2092,15 @@ def _listing_quality_score(
 ) -> float:
     """Pure listing-quality score on a 0-100 scale.
 
-    Freshness is measured from first_seen_at — the date the listing
-    first appeared on Aqar. This is the listing's true age, not the
-    last time the scraper confirmed it was still live. A listing that
-    has been on Aqar for 9 months and is still being re-confirmed is
-    exactly the case we want to deprioritize.
+    Freshness is measured as the number of days since the most recent of
+    ``aqar_updated_at``, ``aqar_created_at``, or ``first_seen_at`` (the
+    "effective listing age," computed by ``_effective_listing_age_days``).
+    This implements the directive that both newly uploaded and recently
+    updated listings should be prioritised equally — a nine-month-old
+    listing that the owner refreshed yesterday is treated as fresh, because
+    the refresh signals the opportunity is live. Rows without any known
+    date resolve to a neutral 50.0 rather than a penalty, matching the
+    codebase's tri-state-gate convention for unknowns.
 
     Distinct from _confidence_score (which measures whether the data is
     trustworthy). This measures whether the listing itself is a good
@@ -2067,8 +2111,9 @@ def _listing_quality_score(
     returns a neutral 50.
 
     Components:
-      - Freshness from first_seen_at (30%): how recently the listing
-        first appeared on Aqar (measures listing age, not scrape recency)
+      - Freshness from effective_age_days (30%): how recently the listing
+        was created or updated on Aqar (bands at 14/30/60/120/240/365 —
+        frozen for Phase 3a).
       - Aqar suitability (40%): the classifier's assessment — LLM verdict
         when available, structural restaurant_score fallback otherwise
       - Image / fit-out signal (20%): LLM-derived listing quality when
@@ -2086,14 +2131,13 @@ def _listing_quality_score(
     if not is_listing:
         return 50.0
 
-    # Freshness band (based on listing age from first_seen_at)
-    if first_seen_at is None:
+    # Freshness band (based on effective listing age — see
+    # _effective_listing_age_days: greatest of aqar_updated_at,
+    # aqar_created_at, first_seen_at).
+    if effective_age_days is None:
         freshness = 50.0
     else:
-        try:
-            days = (datetime.utcnow() - first_seen_at).days
-        except Exception:
-            days = 30
+        days = effective_age_days
         if days <= 14:
             freshness = 100.0
         elif days <= 30:
@@ -4103,6 +4147,8 @@ def _query_candidate_location_pool(
                 cu.is_furnished AS unit_is_furnished,
                 cu.first_seen_at AS unit_first_seen_at,
                 cu.last_seen_at AS unit_last_seen_at,
+                cu.aqar_created_at AS unit_aqar_created_at,
+                cu.aqar_updated_at AS unit_aqar_updated_at,
                 cu.restaurant_score AS unit_restaurant_score,
                 cu.has_drive_thru AS unit_has_drive_thru,
                 cu.neighborhood AS unit_neighborhood_raw,
@@ -4182,6 +4228,8 @@ def _query_candidate_location_pool(
             unit_is_furnished,
             unit_first_seen_at,
             unit_last_seen_at,
+            unit_aqar_created_at,
+            unit_aqar_updated_at,
             unit_restaurant_score,
             unit_has_drive_thru,
             unit_neighborhood_raw,
@@ -5790,9 +5838,10 @@ def run_expansion_search(
             + (100.0 - delivery_competition_score) * 0.20
         )
 
+        effective_age_days, _ = _effective_listing_age_days(row)
         listing_quality = _listing_quality_score(
             is_listing=_is_listing,
-            first_seen_at=row.get("unit_first_seen_at"),
+            effective_age_days=effective_age_days,
             is_furnished=row.get("unit_is_furnished"),
             unit_restaurant_score=_safe_float(row.get("unit_restaurant_score")) if row.get("unit_restaurant_score") is not None else None,
             has_image=bool(row.get("image_url")),
@@ -6329,6 +6378,7 @@ def run_expansion_search(
             listing_type=row.get("unit_listing_type"),
             unit_neighborhood_raw=row.get("unit_neighborhood_raw"),
         )
+        effective_age_days, effective_age_source = _effective_listing_age_days(row)
         feature_snapshot_json = _candidate_feature_snapshot(
             db,
             parcel_id=_pid_str,
@@ -6353,6 +6403,10 @@ def run_expansion_search(
             bulk_roads=_bulk_roads.get(_pid_str),
             bulk_parking=_bulk_parking.get(_pid_str),
         )
+        feature_snapshot_json["listing_age"] = {
+            "effective_age_days": effective_age_days,
+            "source": effective_age_source,
+        }
         # Enrich feature snapshot with candidate_location metadata
         if row.get("source_tier") is not None:
             feature_snapshot_json["candidate_location"] = {
@@ -6466,7 +6520,7 @@ def run_expansion_search(
         )
         listing_quality = _listing_quality_score(
             is_listing=_is_listing,
-            first_seen_at=row.get("unit_first_seen_at"),
+            effective_age_days=effective_age_days,
             is_furnished=row.get("unit_is_furnished"),
             unit_restaurant_score=_safe_float(row.get("unit_restaurant_score")) if row.get("unit_restaurant_score") is not None else None,
             has_image=bool(row.get("image_url")),
