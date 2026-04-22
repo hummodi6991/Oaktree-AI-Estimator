@@ -93,6 +93,12 @@ class FakeDB:
         # here).  Return the same three seeded rows for all pool paths.
         if "FROM candidate_base" in sql:
             return _Result(self.candidate_rows)
+        # Phase 3b _district_momentum_score — spatial CTE "WITH
+        # listing_district AS". Match before the generic
+        # "FROM commercial_unit" branch so every candidate resolves to
+        # neutral 50.0 momentum in this fixture.
+        if "WITH listing_district AS" in sql:
+            return _Result([])
         if "FROM commercial_unit" in sql and "INSERT" not in sql:
             return _Result(self.candidate_rows)
         if "COUNT(*)" in sql and "candidate_location" in sql:
