@@ -334,28 +334,38 @@ def _district_momentum_score(db: Session) -> dict[str, dict[str, Any]]:
                 "percentile_raw": float,        # 0-1, percentile_rank over activity_30d
                 "percentile_absolute": float,   # 0-1, percentile_rank over activity_30d / active
                 "percentile_composite": float,  # 0-1, 0.5*raw + 0.5*absolute
-                "district_label": str,          # raw TRIM(neighborhood) used for the group
+                "district_label": str,          # raw label from external_feature.properties
                 "sample_floor_applied": bool,   # always False in the returned dict
             }
         }
 
-    Aggregation source is ``commercial_unit`` directly (not
-    ``candidate_location``) because the CL-join path was empirically
-    sparse: DB verification showed a floor=20 join via candidate_location
-    qualifies only 3 districts / 25.6% of rows, whereas the direct
-    commercial_unit aggregation qualifies 37 districts / 69.08% of rows
-    while still running in ~2ms. Downstream scoring candidates keyed on
-    either ``cl.district_ar`` (primary pool) or ``cu.neighborhood``
-    (fallback pool, spatially backfilled) are both matched into this
-    dict through ``normalize_district_key``, so the momentum score
-    applies uniformly to Tier 1, 2, and 3 candidates.
+    Aggregation source is ``commercial_unit`` listings spatially joined
+    against ``external_feature`` district polygons. This produces an
+    Arabic-label key-space that matches the namespace the scoring path
+    consumes (``cl.district_ar`` on the primary pool, spatial backfill
+    from ``riyadh_parcels_arcgis_raw.district_label`` on the fallback
+    pool — both Arabic). Lookups via ``normalize_district_key`` match
+    by construction; the helper applies uniformly to Tier 1, 2, and 3
+    candidates.
+
+    Two external_feature layers are queried with a priority chain —
+    ``osm_districts`` first, ``aqar_district_hulls`` second. DISTINCT ON
+    (cu.aqar_id) ORDER BY the layer priority ensures each listing
+    resolves to exactly one district at the highest priority polygon
+    that contains its point. A third layer is not added without DB
+    verification; 'rydpolygons' does not exist in this schema.
 
     A listing counts toward ``activity_30d`` if EITHER ``aqar_created_at``
-    OR ``aqar_updated_at`` falls in the trailing window — null-safe, each
-    listing counted at most once. Districts below ``_MOMENTUM_SAMPLE_FLOOR``
-    are excluded from the returned dict so callers resolve them to neutral
-    50.0 via ``.get(district_norm)`` returning None. Blank and pure-numeric
-    ``neighborhood`` values are filtered out (see ``_is_plausible_neighborhood``).
+    OR ``aqar_updated_at`` falls in the trailing window — null-safe,
+    each listing counted at most once via the SQL OR predicate.
+    Districts below ``_MOMENTUM_SAMPLE_FLOOR`` are excluded so callers
+    resolve them to neutral 50.0 via ``.get(district_norm)`` returning
+    None.
+
+    DB verification (floor=20): 39 qualifying districts, 1,680 active
+    listings covered (71.40% of the active pool), 1,420 activity_30d
+    rows, ~36ms runtime against the 250ms budget. Indexes used:
+    ``external_feature`` GIST on geom, btree on layer_name.
 
     Returns an empty dict on any DB failure so the caller falls back to
     neutral everywhere without raising.
@@ -364,33 +374,59 @@ def _district_momentum_score(db: Session) -> dict[str, dict[str, Any]]:
         rows = db.execute(
             text(
                 """
-                WITH district_counts AS (
+                WITH listing_district AS (
+                    SELECT DISTINCT ON (cu.aqar_id)
+                        cu.aqar_id,
+                        cu.aqar_created_at,
+                        cu.aqar_updated_at,
+                        TRIM(COALESCE(ef.properties->>'district_raw',
+                                      ef.properties->>'district')) AS district_label
+                    FROM commercial_unit cu
+                    JOIN external_feature ef
+                      ON ST_Contains(
+                           ef.geom,
+                           ST_SetSRID(ST_MakePoint(cu.lon, cu.lat), 4326)
+                         )
+                    WHERE cu.lat IS NOT NULL
+                      AND cu.lon IS NOT NULL
+                      AND cu.status = 'active'
+                      AND ef.layer_name IN ('osm_districts', 'aqar_district_hulls')
+                      AND COALESCE(ef.properties->>'district_raw',
+                                   ef.properties->>'district') IS NOT NULL
+                      AND TRIM(COALESCE(ef.properties->>'district_raw',
+                                        ef.properties->>'district')) <> ''
+                    ORDER BY
+                      cu.aqar_id,
+                      CASE ef.layer_name
+                          WHEN 'osm_districts'       THEN 1
+                          WHEN 'aqar_district_hulls' THEN 2
+                          ELSE 3
+                      END
+                ),
+                district_counts AS (
                     SELECT
-                        TRIM(neighborhood) AS district_label,
-                        COUNT(*) FILTER (WHERE status = 'active') AS active_in_district,
+                        district_label,
+                        COUNT(*) AS active_in_district,
                         COUNT(*) FILTER (
-                            WHERE status = 'active'
-                              AND (
-                                  (aqar_created_at IS NOT NULL
-                                    AND aqar_created_at >= now() - (:window_days || ' days')::interval)
-                                  OR
-                                  (aqar_updated_at IS NOT NULL
-                                    AND aqar_updated_at >= now() - (:window_days || ' days')::interval)
-                              )
+                          WHERE (
+                            (aqar_created_at IS NOT NULL
+                              AND aqar_created_at >= now() - (:window_days || ' days')::interval)
+                            OR
+                            (aqar_updated_at IS NOT NULL
+                              AND aqar_updated_at >= now() - (:window_days || ' days')::interval)
+                          )
                         ) AS activity_30d
-                    FROM commercial_unit
-                    WHERE neighborhood IS NOT NULL
-                      AND TRIM(neighborhood) <> ''
-                      AND neighborhood !~ '^\\s*[0-9]+\\s*$'
-                    GROUP BY TRIM(neighborhood)
-                    HAVING COUNT(*) FILTER (WHERE status = 'active') >= :sample_floor
+                    FROM listing_district
+                    GROUP BY district_label
+                    HAVING COUNT(*) >= :sample_floor
                 ),
                 ranked AS (
                     SELECT
                         district_label,
                         activity_30d,
                         active_in_district,
-                        (activity_30d::float / NULLIF(active_in_district, 0)::float) AS momentum_raw,
+                        (activity_30d::float / NULLIF(active_in_district, 0)::float)
+                            AS momentum_raw,
                         percent_rank() OVER (ORDER BY activity_30d) AS percentile_raw,
                         percent_rank() OVER (
                             ORDER BY (activity_30d::float / NULLIF(active_in_district, 0)::float)

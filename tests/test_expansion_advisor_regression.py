@@ -565,12 +565,13 @@ class _FakeDB:
             return _Result(self.candidate_rows)
         if "COUNT(*)" in sql and "candidate_location" in sql:
             return _Result([{"count": 0}])
-        # Phase 3b _district_momentum_score — aggregates from
-        # commercial_unit via a distinctive "WITH district_counts AS"
-        # CTE. Match BEFORE the plain "FROM commercial_unit" rule so
-        # the helper gets an empty momentum dict (every candidate then
-        # resolves to neutral 50.0 through the existing contract).
-        if "WITH district_counts AS" in sql:
+        # Phase 3b _district_momentum_score — spatial aggregation
+        # against external_feature with a distinctive "WITH
+        # listing_district AS" CTE. Match BEFORE the plain
+        # "FROM commercial_unit" rule so the helper gets an empty
+        # momentum dict (every candidate then resolves to neutral 50.0
+        # through the existing contract).
+        if "WITH listing_district AS" in sql:
             return _Result([])
         if "FROM commercial_unit" in sql:
             return _Result(self.candidate_rows)
@@ -1496,6 +1497,57 @@ def test_district_momentum_blends_created_and_updated():
     out = _district_momentum_score(db)
     entry = next(iter(out.values()))
     assert entry["activity_30d"] == 10  # not 5 + 8 + 3 = 16, not 5 + 8 = 13
+
+
+def test_district_momentum_uses_external_feature_priority_chain():
+    """When the same listing point is covered by both osm_districts
+    (priority 1) and aqar_district_hulls (priority 2) polygons, the
+    helper must use the osm_districts district. Faithful DISTINCT ON
+    behaviour lives in Postgres, so at the unit level this test asserts
+    two complementary contracts:
+
+    (a) The emitted SQL contains the DISTINCT ON (cu.aqar_id) clause
+        plus the CASE ef.layer_name priority-ordering and the two
+        expected layer names. This documents the priority chain's
+        presence in the query plan.
+
+    (b) Given an already-resolved row (the SQL chose osm_districts),
+        the helper returns that label intact and does not mix in the
+        aqar_district_hulls name for the same listing.
+    """
+    rows = [
+        # SQL has already resolved this listing to the osm_districts
+        # polygon's district. An aqar_district_hulls row with a
+        # DIFFERENT label for the same aqar_id would have been
+        # suppressed by DISTINCT ON. The helper sees one row per
+        # district here (the post-DISTINCT-ON group).
+        {
+            "district_label": "العارض",  # chosen from osm_districts
+            "activity_30d": 8,
+            "active_in_district": 40,
+            "percentile_raw": 0.65,
+            "percentile_absolute": 0.55,
+        },
+    ]
+    db = _fake_db_returning(rows)
+    out = _district_momentum_score(db)
+
+    # Contract (a): SQL shape captured on the mock records the
+    # priority-chain intent.
+    emitted_sql_obj = db.execute.call_args.args[0]
+    emitted_sql = emitted_sql_obj.text if hasattr(emitted_sql_obj, "text") else str(emitted_sql_obj)
+    assert "DISTINCT ON (cu.aqar_id)" in emitted_sql
+    assert "CASE ef.layer_name" in emitted_sql
+    assert "'osm_districts'" in emitted_sql
+    assert "'aqar_district_hulls'" in emitted_sql
+    # osm_districts must sort BEFORE aqar_district_hulls in the CASE.
+    osm_pos = emitted_sql.index("'osm_districts'")
+    aqar_pos = emitted_sql.index("'aqar_district_hulls'")
+    assert osm_pos < aqar_pos
+
+    # Contract (b): the post-DISTINCT-ON label is preserved verbatim.
+    entry = next(iter(out.values()))
+    assert entry["district_label"] == "العارض"
 
 
 def test_listing_quality_scoring_callsite_two_district_delta():
