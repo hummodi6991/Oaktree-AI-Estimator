@@ -407,3 +407,51 @@ def test_forbidden_phrase_case_and_boundary_variants():
     assert _find_forbidden_phrase("high signal leading to approval") == "leading to"
     assert _find_forbidden_phrase("changes AS A RESULT OF the audit") == "as a result of"
     assert _find_forbidden_phrase("latency issues causing churn") == "causing"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — rerank prompt must not gain listing_age / district_momentum
+# visibility. The whitelist split in llm_decision_memo.py is invisible
+# unless we assert the trim output is byte-identical with and without
+# the new Phase 3a/3b keys in the input snapshot.
+# ---------------------------------------------------------------------------
+
+
+def test_rerank_trim_ignores_listing_age_and_district_momentum():
+    """_trim_feature_snapshot output must be byte-identical whether or
+    not the input snapshot carries listing_age / district_momentum.
+    The scalar fallback (isinstance str/int/float/bool) rejects dicts
+    on its own, but the whitelist path is authoritative, so this
+    test double-locks the guarantee."""
+    from app.services.expansion_rerank import _trim_feature_snapshot
+
+    baseline = {
+        "area_m2": 200.0,
+        "estimated_annual_rent_sar": 180000.0,
+        "competitor_count": 4,
+        "population_reach": 15000,
+        "realized_demand_30d": 42.0,
+    }
+
+    enriched = dict(baseline)
+    enriched["listing_age"] = {"effective_age_days": 3, "source": "aqar_created"}
+    enriched["district_momentum"] = {
+        "momentum_score": 82.0,
+        "sample_floor_applied": False,
+        "activity_30d": 120,
+    }
+
+    for whitelist_only in (True, False):
+        out_baseline = _trim_feature_snapshot(
+            baseline, whitelist_only=whitelist_only
+        )
+        out_enriched = _trim_feature_snapshot(
+            enriched, whitelist_only=whitelist_only
+        )
+        assert out_baseline == out_enriched, (
+            f"rerank trim surfaced Phase 4 dict keys "
+            f"(whitelist_only={whitelist_only}): {out_enriched}"
+        )
+        # Explicit: no dict values in the rerank payload from Phase 4 keys.
+        assert "listing_age" not in out_enriched
+        assert "district_momentum" not in out_enriched
