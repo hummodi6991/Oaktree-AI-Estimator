@@ -222,3 +222,227 @@ describe("ExpansionCandidateCard — Why #N chip (chunk 4)", () => {
     }
   });
 });
+
+describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active market)", () => {
+  // Matrix states (spec §1(i)):
+  //   #1 baseline     — no pills
+  //   #2 New          — green "New" only
+  //   #3 Updated      — green "Updated" only
+  //   #5 Active       — amber "Active market" only
+  //   #6 New + Active — both green "New" and amber "Active market"
+  //   #7 Upd + Active — both green "Updated" and amber "Active market"
+  // States #4, #8 are constant-fold impossible (source ∉ {aqar_created,
+  // aqar_updated} ⇒ no freshness pill, by spec locked decision #1).
+
+  function withSnapshot(
+    extras: { listing_age?: unknown; district_momentum?: unknown },
+    base: Partial<ExpansionCandidate> = {},
+  ): ExpansionCandidate {
+    return baseCandidate({
+      ...base,
+      feature_snapshot_json: {
+        context_sources: {},
+        missing_context: [],
+        data_completeness_score: 0,
+        ...extras,
+      } as never,
+    });
+  }
+
+  const NEUTRAL_MOMENTUM = { momentum_score: 50, sample_floor_applied: true };
+  const ACTIVE_MOMENTUM = { momentum_score: 82, sample_floor_applied: false };
+
+  it("state #1 (baseline): renders no Phase 4 pill", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 30, source: "aqar_created" },
+        district_momentum: NEUTRAL_MOMENTUM,
+      }),
+    );
+    expect(html).not.toContain("ea-candidate__freshness-pill");
+    expect(html).not.toContain("ea-candidate__momentum-pill");
+    expect(html).not.toContain(">New<");
+    expect(html).not.toContain(">Updated<");
+    expect(html).not.toContain(">Active market<");
+  });
+
+  it("state #2 (New only): renders the green New pill, not Updated", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 2, source: "aqar_created" },
+        district_momentum: NEUTRAL_MOMENTUM,
+      }),
+    );
+    expect(html).toContain("ea-candidate__freshness-pill");
+    expect(html).toContain("ea-badge--green");
+    expect(html).toContain(">New<");
+    expect(html).not.toContain(">Updated<");
+    expect(html).not.toContain(">Active market<");
+  });
+
+  it("state #3 (Updated only): renders the green Updated pill, not New", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 4, source: "aqar_updated" },
+        district_momentum: NEUTRAL_MOMENTUM,
+      }),
+    );
+    expect(html).toContain("ea-candidate__freshness-pill");
+    expect(html).toContain("ea-badge--green");
+    expect(html).toContain(">Updated<");
+    expect(html).not.toContain(">New<");
+    expect(html).not.toContain(">Active market<");
+  });
+
+  it("state #5 (Active market only): renders the amber pill, no freshness pill", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 120, source: "aqar_updated" },
+        district_momentum: ACTIVE_MOMENTUM,
+      }),
+    );
+    expect(html).toContain("ea-candidate__momentum-pill");
+    expect(html).toContain("ea-badge--amber");
+    expect(html).toContain(">Active market<");
+    expect(html).not.toContain("ea-candidate__freshness-pill");
+    expect(html).not.toContain(">New<");
+    expect(html).not.toContain(">Updated<");
+  });
+
+  it("state #6 (New + Active): renders both green New and amber Active market", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 1, source: "aqar_created" },
+        district_momentum: { momentum_score: 90, sample_floor_applied: false },
+      }),
+    );
+    expect(html).toContain("ea-candidate__freshness-pill");
+    expect(html).toContain("ea-candidate__momentum-pill");
+    expect(html).toContain(">New<");
+    expect(html).toContain(">Active market<");
+    expect(html).not.toContain(">Updated<");
+  });
+
+  it("state #7 (Updated + Active): renders both green Updated and amber Active market", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 6, source: "aqar_updated" },
+        district_momentum: { momentum_score: 75, sample_floor_applied: false },
+      }),
+    );
+    expect(html).toContain("ea-candidate__freshness-pill");
+    expect(html).toContain("ea-candidate__momentum-pill");
+    expect(html).toContain(">Updated<");
+    expect(html).toContain(">Active market<");
+    expect(html).not.toContain(">New<");
+  });
+
+  // ── Negative / boundary cases ──
+
+  it("renders no pill when feature_snapshot_json is missing", () => {
+    const html = renderCard(baseCandidate({ feature_snapshot_json: undefined as never }));
+    expect(html).not.toContain("ea-candidate__freshness-pill");
+    expect(html).not.toContain("ea-candidate__momentum-pill");
+  });
+
+  it("renders no freshness pill when effective_age_days is null and source is unknown", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: null, source: "unknown" },
+        district_momentum: NEUTRAL_MOMENTUM,
+      }),
+    );
+    expect(html).not.toContain("ea-candidate__freshness-pill");
+  });
+
+  it("renders no freshness pill when source is first_seen even within 7 days", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 3, source: "first_seen" },
+        district_momentum: NEUTRAL_MOMENTUM,
+      }),
+    );
+    expect(html).not.toContain("ea-candidate__freshness-pill");
+  });
+
+  it("boundary: effective_age_days === 7 with aqar_created still renders New", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 7, source: "aqar_created" },
+        district_momentum: NEUTRAL_MOMENTUM,
+      }),
+    );
+    expect(html).toContain(">New<");
+  });
+
+  it("boundary: effective_age_days === 8 with aqar_created does NOT render New", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 8, source: "aqar_created" },
+        district_momentum: NEUTRAL_MOMENTUM,
+      }),
+    );
+    expect(html).not.toContain(">New<");
+  });
+
+  it("renders no active-market pill at momentum_score 69.99", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 120, source: "aqar_updated" },
+        district_momentum: { momentum_score: 69.99, sample_floor_applied: false },
+      }),
+    );
+    expect(html).not.toContain("ea-candidate__momentum-pill");
+    expect(html).not.toContain(">Active market<");
+  });
+
+  it("renders the active-market pill at momentum_score 70.00 exactly", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 120, source: "aqar_updated" },
+        district_momentum: { momentum_score: 70.0, sample_floor_applied: false },
+      }),
+    );
+    expect(html).toContain("ea-candidate__momentum-pill");
+    expect(html).toContain(">Active market<");
+  });
+
+  it("renders no active-market pill when sample_floor_applied is true", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 120, source: "aqar_updated" },
+        district_momentum: { momentum_score: 85, sample_floor_applied: true },
+      }),
+    );
+    expect(html).not.toContain("ea-candidate__momentum-pill");
+    expect(html).not.toContain(">Active market<");
+  });
+
+  it("renders Arabic 'جديد' / 'حي نشط' under Arabic locale", async () => {
+    await i18n.changeLanguage("ar");
+    try {
+      const html = renderCard(
+        withSnapshot({
+          listing_age: { effective_age_days: 1, source: "aqar_created" },
+          district_momentum: { momentum_score: 90, sample_floor_applied: false },
+        }),
+      );
+      expect(html).toContain("جديد");
+      expect(html).toContain("حي نشط");
+      expect(html).not.toContain(">New<");
+      expect(html).not.toContain(">Active market<");
+    } finally {
+      await i18n.changeLanguage("en");
+    }
+  });
+
+  it("attaches the English tooltip text via title attribute on the New pill", () => {
+    const html = renderCard(
+      withSnapshot({
+        listing_age: { effective_age_days: 2, source: "aqar_created" },
+        district_momentum: NEUTRAL_MOMENTUM,
+      }),
+    );
+    expect(html).toMatch(/title="Listing newly created on Aqar within the last 7 days"/);
+  });
+});

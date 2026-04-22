@@ -371,7 +371,15 @@ COMPONENT_WEIGHTS: dict[str, float] = {
 
 # Feature-snapshot fields that actually drive a decision. Used to truncate
 # oversized snapshots to a compact LLM-friendly payload.
-_FEATURE_SNAPSHOT_WHITELIST: tuple[str, ...] = (
+#
+# Phase 4 split: the memo LLM and the rerank LLM historically shared a
+# single whitelist. Phase 4 widens the memo's narrative surface to
+# include listing_age and district_momentum (so the memo can cite Phase
+# 3a/3b signals in one sentence) while holding the rerank LLM's signal
+# surface constant. The two whitelists are therefore distinct; rerank
+# keeps the scalar-only set, memo gets the scalar set plus the two
+# Phase-3 dict keys.
+_RERANK_WHITELIST: tuple[str, ...] = (
     "district",
     "district_display",
     "area_m2",
@@ -394,6 +402,19 @@ _FEATURE_SNAPSHOT_WHITELIST: tuple[str, ...] = (
     "parking_score",
     "frontage_score",
 )
+
+_MEMO_WHITELIST: tuple[str, ...] = _RERANK_WHITELIST + (
+    "listing_age",
+    "district_momentum",
+)
+
+# Back-compat alias for existing memo call sites (:730, :901, :932).
+# DO NOT import this name from new code — it resolves to the memo-
+# inflated whitelist and quietly grants any new consumer access to
+# listing_age and district_momentum. New consumers must import either
+# _MEMO_WHITELIST or _RERANK_WHITELIST explicitly so the memo-vs-rerank
+# signal boundary stays visible at the import site.
+_FEATURE_SNAPSHOT_WHITELIST = _MEMO_WHITELIST
 
 
 @dataclass

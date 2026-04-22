@@ -2253,6 +2253,21 @@ _MOMENTUM_WINDOW_DAYS = 30
 # covering 69.08% of active rows.
 _MOMENTUM_SAMPLE_FLOOR = 20
 
+# Phase 4 display-only threshold. A candidate earns the "Active market"
+# surfacing (card tag + rationale line) iff district momentum_score is
+# at or above this cliff AND sample_floor_applied is False. The same
+# constant is mirrored at the frontend call site; the two must match
+# numerically by convention, not by shared config. This is intentionally
+# not wired to env var / settings / feature flag so a future tune-up
+# edits exactly one backend constant and one frontend literal.
+_MOMENTUM_DISPLAY_THRESHOLD = 70.0
+
+# Phase 4 display-only freshness window. A listing earns "New" or
+# "Updated" surfacing iff effective_age_days is at or below this value
+# AND the source tag is an Aqar event (created/updated), not the
+# fallback first_seen/unknown. Mirrored at the frontend call site.
+_LISTING_FRESHNESS_DAYS = 7
+
 
 def _listing_quality_score(
     *,
@@ -2809,6 +2824,46 @@ def _top_positives_and_risks(
         )
     elif competitor_count <= 2 and competitor_count >= 0:
         positives.append("Low same-category competitor density \u2014 potential first-mover advantage.")
+
+    # Phase 4 - listing recency + district momentum callouts.
+    # Mirrors the badge/tag logic on the card so the rationale line matches
+    # what the UI displays. Appended AFTER all other positive-emitting
+    # logic in this function so these Phase 4 strings only claim
+    # positives[0] on cards where no higher-priority rationale fired.
+    # Thresholds mirror the frontend call site by convention; see
+    # _LISTING_FRESHNESS_DAYS and _MOMENTUM_DISPLAY_THRESHOLD. English-only
+    # for this patch - Arabic parity for _top_positives_and_risks is
+    # tracked as a separate 3c item.
+    fs = candidate.get("feature_snapshot_json") or {}
+    listing_age = fs.get("listing_age") or {}
+    momentum = fs.get("district_momentum") or {}
+
+    age_days = listing_age.get("effective_age_days")
+    age_source = listing_age.get("source")
+    is_fresh = (
+        isinstance(age_days, (int, float))
+        and age_days <= _LISTING_FRESHNESS_DAYS
+    )
+    is_new = is_fresh and age_source == "aqar_created"
+    is_updated = is_fresh and age_source == "aqar_updated"
+
+    momentum_score = momentum.get("momentum_score")
+    is_active_market = (
+        isinstance(momentum_score, (int, float))
+        and float(momentum_score) >= _MOMENTUM_DISPLAY_THRESHOLD
+        and momentum.get("sample_floor_applied") is False
+    )
+
+    if is_new and is_active_market:
+        positives.append("Newly listed in an actively trading district.")
+    elif is_updated and is_active_market:
+        positives.append("Recently refreshed listing in an actively trading district.")
+    elif is_new:
+        positives.append("Newly listed within the last week.")
+    elif is_updated:
+        positives.append("Listing refreshed by the owner within the last week.")
+    elif is_active_market:
+        positives.append("District is actively attracting new listings right now.")
 
     return positives[:5], risks[:6]
 

@@ -1953,3 +1953,205 @@ def test_is_plausible_neighborhood_rejects_garbage_accepts_real_names():
     assert _is_plausible_neighborhood("Olaya") is True
     assert _is_plausible_neighborhood("العليا") is True
     assert _is_plausible_neighborhood("An Nadhim") is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — listing recency + district momentum callouts in
+# _top_positives_and_risks.
+#
+# These tests pin the five matrix strings and the threshold boundaries.
+# Scoring is unaffected; the block only appends to positives, and does so
+# after every other positive-emitting call so Phase 4 strings only claim
+# positives[0] on cards with no higher-priority rationale.
+# ---------------------------------------------------------------------------
+
+from app.services.expansion_advisor import _top_positives_and_risks
+
+
+def _phase4_candidate(listing_age=None, district_momentum=None, **extra):
+    """Build a neutral candidate dict that will not trigger any other
+    positive-emitting branch in _top_positives_and_risks. Every numeric
+    score sits in the dead band between positive and risk thresholds so
+    only the Phase 4 block can produce output."""
+    fs = {}
+    if listing_age is not None:
+        fs["listing_age"] = listing_age
+    if district_momentum is not None:
+        fs["district_momentum"] = district_momentum
+    return {
+        "demand_score": 60.0,
+        "whitespace_score": 50.0,
+        "brand_fit_score": 60.0,
+        "economics_score": 60.0,
+        "provider_density_score": 40.0,
+        "provider_whitespace_score": 40.0,
+        "multi_platform_presence_score": 40.0,
+        "delivery_competition_score": 40.0,
+        "cannibalization_score": 55.0,
+        "competitor_count": 5,
+        "distance_to_nearest_branch_m": 3000.0,
+        "area_m2": 150.0,
+        "min_area_m2": 80.0,
+        "max_area_m2": 500.0,
+        "gate_status_json": {"overall_pass": False},
+        "feature_snapshot_json": fs,
+        **extra,
+    }
+
+
+_NEUTRAL_MOMENTUM = {"momentum_score": 50.0, "sample_floor_applied": True}
+_ACTIVE_MOMENTUM = {"momentum_score": 82.0, "sample_floor_applied": False}
+
+
+def test_phase4_state2_new_only_appends_new_string():
+    candidate = _phase4_candidate(
+        listing_age={"effective_age_days": 2, "source": "aqar_created"},
+        district_momentum=_NEUTRAL_MOMENTUM,
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    assert "Newly listed within the last week." in positives
+    assert "Recently refreshed listing in an actively trading district." not in positives
+    assert "District is actively attracting new listings right now." not in positives
+
+
+def test_phase4_state3_updated_only_appends_updated_string():
+    candidate = _phase4_candidate(
+        listing_age={"effective_age_days": 4, "source": "aqar_updated"},
+        district_momentum=_NEUTRAL_MOMENTUM,
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    assert "Listing refreshed by the owner within the last week." in positives
+    assert "Newly listed within the last week." not in positives
+
+
+def test_phase4_state5_active_market_only():
+    candidate = _phase4_candidate(
+        listing_age={"effective_age_days": 120, "source": "aqar_updated"},
+        district_momentum=_ACTIVE_MOMENTUM,
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    assert "District is actively attracting new listings right now." in positives
+    assert "Newly listed within the last week." not in positives
+    assert "Listing refreshed by the owner within the last week." not in positives
+
+
+def test_phase4_state6_new_plus_active_appends_combined_string():
+    candidate = _phase4_candidate(
+        listing_age={"effective_age_days": 1, "source": "aqar_created"},
+        district_momentum={"momentum_score": 90.0, "sample_floor_applied": False},
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    assert "Newly listed in an actively trading district." in positives
+    # The combined string replaces the standalone strings — the function
+    # emits exactly one Phase 4 line.
+    assert "Newly listed within the last week." not in positives
+    assert "District is actively attracting new listings right now." not in positives
+
+
+def test_phase4_state7_updated_plus_active_appends_combined_string():
+    candidate = _phase4_candidate(
+        listing_age={"effective_age_days": 6, "source": "aqar_updated"},
+        district_momentum={"momentum_score": 75.0, "sample_floor_applied": False},
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    assert "Recently refreshed listing in an actively trading district." in positives
+    assert "Listing refreshed by the owner within the last week." not in positives
+    assert "District is actively attracting new listings right now." not in positives
+
+
+def test_phase4_state1_neither_signal_emits_nothing():
+    candidate = _phase4_candidate(
+        listing_age={"effective_age_days": 30, "source": "aqar_created"},
+        district_momentum=_NEUTRAL_MOMENTUM,
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    for phrase in (
+        "Newly listed within the last week.",
+        "Listing refreshed by the owner within the last week.",
+        "Newly listed in an actively trading district.",
+        "Recently refreshed listing in an actively trading district.",
+        "District is actively attracting new listings right now.",
+    ):
+        assert phrase not in positives
+
+
+def test_phase4_momentum_threshold_cliff_69_99_emits_nothing():
+    candidate = _phase4_candidate(
+        listing_age={"effective_age_days": 120, "source": "aqar_updated"},
+        district_momentum={"momentum_score": 69.99, "sample_floor_applied": False},
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    assert "District is actively attracting new listings right now." not in positives
+
+
+def test_phase4_momentum_threshold_cliff_70_00_emits_active_market():
+    candidate = _phase4_candidate(
+        listing_age={"effective_age_days": 120, "source": "aqar_updated"},
+        district_momentum={"momentum_score": 70.0, "sample_floor_applied": False},
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    assert "District is actively attracting new listings right now." in positives
+
+
+def test_phase4_first_seen_source_does_not_trigger_freshness():
+    candidate = _phase4_candidate(
+        listing_age={"effective_age_days": 3, "source": "first_seen"},
+        district_momentum=_NEUTRAL_MOMENTUM,
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    for phrase in (
+        "Newly listed within the last week.",
+        "Listing refreshed by the owner within the last week.",
+    ):
+        assert phrase not in positives
+
+
+def test_phase4_block_runs_after_existing_positives_in_function_order():
+    """Phase 4 strings must only claim positives[0] when no other
+    positive-emitting branch fired. When a stronger positive is present
+    (demand_score >= 70 in this case), it must precede the Phase 4
+    string so the card's positives[0]-only render picks the stronger
+    rationale."""
+    candidate = _phase4_candidate(
+        listing_age={"effective_age_days": 1, "source": "aqar_created"},
+        district_momentum=_NEUTRAL_MOMENTUM,
+        demand_score=85.0,  # triggers "Demand potential is strong..."
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    existing_positive = "Demand potential is strong for this district."
+    phase4_positive = "Newly listed within the last week."
+    assert existing_positive in positives
+    assert phase4_positive in positives
+    assert positives.index(existing_positive) < positives.index(phase4_positive)
+
+
+def test_phase4_missing_feature_snapshot_is_safe():
+    """Candidates without feature_snapshot_json must not crash the
+    function. Common in tests and in a few recovery paths."""
+    candidate = _phase4_candidate()
+    candidate["feature_snapshot_json"] = None
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    # Nothing from Phase 4 should fire; we mainly want no exception.
+    assert isinstance(positives, list)

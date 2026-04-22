@@ -717,3 +717,90 @@ def test_post_expansion_search_with_one_branch(monkeypatch):
     assert len(body["brand_profile"]["existing_branches"]) == 1
     assert body["items"][0]["distance_to_nearest_branch_m"] == 1400.0
     assert db.committed is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — feature_snapshot_json.listing_age and .district_momentum must
+# survive the Pydantic response layer and reach the frontend. The response
+# model CandidateFeatureSnapshotResponse extends FlexibleResponseModel
+# (extra="allow"), so extra keys should pass through — this test pins it.
+# ---------------------------------------------------------------------------
+
+
+def test_feature_snapshot_surfaces_listing_age_and_district_momentum(monkeypatch):
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(expansion_api, "get_search", lambda _db, _search_id: {"id": "search-1"})
+    monkeypatch.setattr(
+        expansion_api,
+        "get_candidates",
+        lambda _db, _search_id: [
+            {
+                "id": "candidate-1",
+                "search_id": "search-1",
+                "parcel_id": "parcel-123",
+                "district": "Olaya",
+                "cannibalization_score": 40.0,
+                "distance_to_nearest_branch_m": 3200.0,
+                "compare_rank": 1,
+                "rank_position": 1,
+                "estimated_rent_sar_m2_year": 980.0,
+                "estimated_annual_rent_sar": 176400.0,
+                "estimated_fitout_cost_sar": 468000.0,
+                "estimated_revenue_index": 73.0,
+                "economics_score": 69.0,
+                "decision_summary": "summary",
+                "key_risks_json": [],
+                "key_strengths_json": [],
+                "confidence_grade": "A",
+                "gate_status_json": {"overall_pass": True},
+                "gate_reasons_json": {"passed": [], "failed": [], "unknown": [], "thresholds": {}, "explanations": {}},
+                "feature_snapshot_json": {
+                    "parcel_area_m2": 180,
+                    "context_sources": {},
+                    "missing_context": [],
+                    "data_completeness_score": 90,
+                    # Phase 4 keys must round-trip unchanged.
+                    "listing_age": {"effective_age_days": 3, "source": "aqar_created"},
+                    "district_momentum": {
+                        "momentum_score": 82.5,
+                        "activity_30d": 120,
+                        "active_in_district": 340,
+                        "percentile_raw": 0.9,
+                        "percentile_absolute": 0.75,
+                        "percentile_composite": 0.825,
+                        "district_label": "العليا",
+                        "sample_floor_applied": False,
+                    },
+                },
+                "score_breakdown_json": {"weights": {}, "inputs": {}, "weighted_components": {}, "final_score": 88.1},
+                "demand_thesis": "",
+                "cost_thesis": "",
+                "top_positives_json": [],
+                "top_risks_json": [],
+                "comparable_competitors_json": [],
+                "final_score": 88.1,
+                "explanation": {},
+            }
+        ],
+    )
+
+    client = _client_with_db(db)
+    try:
+        response = client.get("/v1/expansion-advisor/searches/search-1/candidates")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    body = response.json()
+    snap = body["items"][0]["feature_snapshot_json"]
+    assert "listing_age" in snap
+    assert snap["listing_age"]["effective_age_days"] == 3
+    assert snap["listing_age"]["source"] == "aqar_created"
+    assert "district_momentum" in snap
+    assert snap["district_momentum"]["momentum_score"] == 82.5
+    assert snap["district_momentum"]["sample_floor_applied"] is False
+    # The original context_sources / data_completeness_score contract stays.
+    assert snap["data_completeness_score"] == 90

@@ -20,7 +20,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.services.llm_decision_memo import (
-    _FEATURE_SNAPSHOT_WHITELIST,
+    _RERANK_WHITELIST as _FEATURE_SNAPSHOT_WHITELIST,
     _check_daily_ceiling,
     _get_client,
     _record_cost,

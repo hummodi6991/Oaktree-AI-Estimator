@@ -304,6 +304,17 @@
   padding: 1px 6px;
 }
 
+/* Phase 4 - New / Updated / Active-market pills on the badges row.
+   Sizing mirrors .ea-candidate__nearest-pill so the badges read at
+   one consistent height when several pills coexist. Colors are
+   inherited from .ea-badge--green / .ea-badge--amber so no new
+   palette is introduced. */
+.ea-candidate__freshness-pill,
+.ea-candidate__momentum-pill {
+  font-size: 11px;
+  padding: 1px 6px;
+}
+
 .ea-candidate__why-row {
   display: flex;
   justify-content: flex-end;

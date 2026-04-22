@@ -1284,3 +1284,56 @@ class TestMemoWordingOverCorrectionFixture:
         # Anchors reflect the failing case.
         assert ctx.overall_pass is False
         assert ctx.deterministic_verdict == "caution"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — memo / rerank whitelist split.
+#
+# The whitelist used to be a single tuple imported by both the memo and
+# the rerank LLM call paths. Phase 4 widens the memo's narrative surface
+# with `listing_age` + `district_momentum` while keeping the rerank
+# signal surface constant. These tests pin the split so a future edit
+# cannot quietly hand rerank access to Phase 3a/3b dict keys (which
+# would double-count signals already folded into _listing_quality_score).
+# ---------------------------------------------------------------------------
+
+
+def test_memo_whitelist_includes_listing_age_and_district_momentum():
+    from app.services.llm_decision_memo import _MEMO_WHITELIST
+
+    assert "listing_age" in _MEMO_WHITELIST
+    assert "district_momentum" in _MEMO_WHITELIST
+
+
+def test_rerank_whitelist_excludes_memo_only_keys():
+    from app.services.llm_decision_memo import _RERANK_WHITELIST
+
+    assert "listing_age" not in _RERANK_WHITELIST
+    assert "district_momentum" not in _RERANK_WHITELIST
+
+
+def test_memo_whitelist_is_superset_of_rerank_whitelist():
+    """The memo whitelist is the rerank whitelist plus the two Phase 4
+    keys. Any addition to the rerank set must also appear in the memo
+    set by construction, otherwise a signal the rerank LLM uses would
+    not be visible to the memo LLM."""
+    from app.services.llm_decision_memo import _MEMO_WHITELIST, _RERANK_WHITELIST
+
+    assert set(_RERANK_WHITELIST).issubset(set(_MEMO_WHITELIST))
+    assert set(_MEMO_WHITELIST) - set(_RERANK_WHITELIST) == {
+        "listing_age",
+        "district_momentum",
+    }
+
+
+def test_feature_snapshot_whitelist_alias_points_at_memo_whitelist():
+    """Back-compat alias for existing memo call sites. A future edit
+    that shifts the alias target (e.g. to _RERANK_WHITELIST) would
+    silently strip listing_age / district_momentum from the memo
+    fallback path at _serialize_context_for_user_message — pin it."""
+    from app.services.llm_decision_memo import (
+        _FEATURE_SNAPSHOT_WHITELIST,
+        _MEMO_WHITELIST,
+    )
+
+    assert _FEATURE_SNAPSHOT_WHITELIST is _MEMO_WHITELIST
