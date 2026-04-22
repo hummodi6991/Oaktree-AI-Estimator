@@ -616,7 +616,11 @@ describe("Candidate card renders WhyThisRank section", () => {
         onToggleCompare={() => {}}
       />,
     );
-    expect(html).toContain("ea-why-rank");
+    // Stale `ea-why-rank` assertion removed in Phase 4: WhyThisRank.tsx is
+    // not imported by the live ExpansionCandidateCard, so the class never
+    // appeared in the rendered HTML. The remaining "Olaya" assertion still
+    // pins the district-name render path. Component deletion is a follow-
+    // up cleanup PR, separate from Phase 4.
     expect(html).toContain("Olaya");
   });
 });

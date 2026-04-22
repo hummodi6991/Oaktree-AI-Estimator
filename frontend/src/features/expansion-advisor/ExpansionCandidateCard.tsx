@@ -61,6 +61,29 @@ export default function ExpansionCandidateCard({
   const nearestBranchM = candidate.distance_to_nearest_branch_m;
   const showNearestBranch = nearestBranchM != null && nearestBranchM < 5000;
 
+  // Phase 4 — listing recency + district momentum pills.
+  // Thresholds mirror the backend call site in _top_positives_and_risks;
+  // see _LISTING_FRESHNESS_DAYS and _MOMENTUM_DISPLAY_THRESHOLD in
+  // app/services/expansion_advisor.py. The two must match numerically
+  // by convention, not by shared config.
+  const LISTING_FRESHNESS_DAYS = 7;
+  const MOMENTUM_DISPLAY_THRESHOLD = 70;
+  type ListingAge = { effective_age_days?: number | null; source?: string | null };
+  type DistrictMomentum = { momentum_score?: number | null; sample_floor_applied?: boolean | null };
+  const listingAge = candidate.feature_snapshot_json?.listing_age as ListingAge | undefined;
+  const momentum = candidate.feature_snapshot_json?.district_momentum as DistrictMomentum | undefined;
+  const ageDays = typeof listingAge?.effective_age_days === "number" ? listingAge.effective_age_days : null;
+  const ageSource = listingAge?.source ?? "unknown";
+  const isFresh = ageDays !== null && ageDays <= LISTING_FRESHNESS_DAYS;
+  const freshness: "new" | "updated" | null =
+    isFresh && ageSource === "aqar_created" ? "new"
+    : isFresh && ageSource === "aqar_updated" ? "updated"
+    : null;
+  const showActiveMarket =
+    typeof momentum?.momentum_score === "number"
+    && momentum.momentum_score >= MOMENTUM_DISPLAY_THRESHOLD
+    && momentum.sample_floor_applied === false;
+
   const cls = [
     "ea-candidate",
     selected && "ea-candidate--selected",
@@ -125,6 +148,30 @@ export default function ExpansionCandidateCard({
           {showNearestBranch && (
             <span className="ea-badge ea-badge--neutral ea-candidate__nearest-pill">
               {fmtMeters(nearestBranchM)}
+            </span>
+          )}
+          {freshness === "new" && (
+            <span
+              className="ea-badge ea-badge--green ea-candidate__freshness-pill"
+              title={t("expansionAdvisor.newBadgeTooltip")}
+            >
+              {t("expansionAdvisor.newBadge")}
+            </span>
+          )}
+          {freshness === "updated" && (
+            <span
+              className="ea-badge ea-badge--green ea-candidate__freshness-pill"
+              title={t("expansionAdvisor.updatedBadgeTooltip")}
+            >
+              {t("expansionAdvisor.updatedBadge")}
+            </span>
+          )}
+          {showActiveMarket && (
+            <span
+              className="ea-badge ea-badge--amber ea-candidate__momentum-pill"
+              title={t("expansionAdvisor.activeMarketTooltip")}
+            >
+              {t("expansionAdvisor.activeMarketTag")}
             </span>
           )}
         </div>
