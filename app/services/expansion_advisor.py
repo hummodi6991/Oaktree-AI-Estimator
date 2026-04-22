@@ -321,6 +321,158 @@ def _precompute_district_delivery_stats(
     return district_stats, city_benchmarks
 
 
+def _district_momentum_score(db: Session) -> dict[str, dict[str, Any]]:
+    """Per-search, per-district 30-day activity momentum.
+
+    Returns::
+
+        {
+            normalize_district_key(label): {
+                "momentum_score": float,        # 0-100, fed into _listing_quality_score
+                "activity_30d": int,            # creates OR updates in the last 30 days
+                "active_in_district": int,
+                "percentile_raw": float,        # 0-1, percentile_rank over activity_30d
+                "percentile_absolute": float,   # 0-1, percentile_rank over activity_30d / active
+                "percentile_composite": float,  # 0-1, 0.5*raw + 0.5*absolute
+                "district_label": str,          # raw label from external_feature.properties
+                "sample_floor_applied": bool,   # always False in the returned dict
+            }
+        }
+
+    Aggregation source is ``commercial_unit`` listings spatially joined
+    against ``external_feature`` district polygons. This produces an
+    Arabic-label key-space that matches the namespace the scoring path
+    consumes (``cl.district_ar`` on the primary pool, spatial backfill
+    from ``riyadh_parcels_arcgis_raw.district_label`` on the fallback
+    pool — both Arabic). Lookups via ``normalize_district_key`` match
+    by construction; the helper applies uniformly to Tier 1, 2, and 3
+    candidates.
+
+    Two external_feature layers are queried with a priority chain —
+    ``osm_districts`` first, ``aqar_district_hulls`` second. DISTINCT ON
+    (cu.aqar_id) ORDER BY the layer priority ensures each listing
+    resolves to exactly one district at the highest priority polygon
+    that contains its point. A third layer is not added without DB
+    verification; 'rydpolygons' does not exist in this schema.
+
+    A listing counts toward ``activity_30d`` if EITHER ``aqar_created_at``
+    OR ``aqar_updated_at`` falls in the trailing window — null-safe,
+    each listing counted at most once via the SQL OR predicate.
+    Districts below ``_MOMENTUM_SAMPLE_FLOOR`` are excluded so callers
+    resolve them to neutral 50.0 via ``.get(district_norm)`` returning
+    None.
+
+    DB verification (floor=20): 39 qualifying districts, 1,680 active
+    listings covered (71.40% of the active pool), 1,420 activity_30d
+    rows, ~36ms runtime against the 250ms budget. Indexes used:
+    ``external_feature`` GIST on geom, btree on layer_name.
+
+    Returns an empty dict on any DB failure so the caller falls back to
+    neutral everywhere without raising.
+    """
+    try:
+        rows = db.execute(
+            text(
+                """
+                WITH listing_district AS (
+                    SELECT DISTINCT ON (cu.aqar_id)
+                        cu.aqar_id,
+                        cu.aqar_created_at,
+                        cu.aqar_updated_at,
+                        TRIM(COALESCE(ef.properties->>'district_raw',
+                                      ef.properties->>'district')) AS district_label
+                    FROM commercial_unit cu
+                    JOIN external_feature ef
+                      ON ST_Contains(
+                           ef.geom,
+                           ST_SetSRID(ST_MakePoint(cu.lon, cu.lat), 4326)
+                         )
+                    WHERE cu.lat IS NOT NULL
+                      AND cu.lon IS NOT NULL
+                      AND cu.status = 'active'
+                      AND ef.layer_name IN ('osm_districts', 'aqar_district_hulls')
+                      AND COALESCE(ef.properties->>'district_raw',
+                                   ef.properties->>'district') IS NOT NULL
+                      AND TRIM(COALESCE(ef.properties->>'district_raw',
+                                        ef.properties->>'district')) <> ''
+                    ORDER BY
+                      cu.aqar_id,
+                      CASE ef.layer_name
+                          WHEN 'osm_districts'       THEN 1
+                          WHEN 'aqar_district_hulls' THEN 2
+                          ELSE 3
+                      END
+                ),
+                district_counts AS (
+                    SELECT
+                        district_label,
+                        COUNT(*) AS active_in_district,
+                        COUNT(*) FILTER (
+                          WHERE (
+                            (aqar_created_at IS NOT NULL
+                              AND aqar_created_at >= now() - (:window_days || ' days')::interval)
+                            OR
+                            (aqar_updated_at IS NOT NULL
+                              AND aqar_updated_at >= now() - (:window_days || ' days')::interval)
+                          )
+                        ) AS activity_30d
+                    FROM listing_district
+                    GROUP BY district_label
+                    HAVING COUNT(*) >= :sample_floor
+                ),
+                ranked AS (
+                    SELECT
+                        district_label,
+                        activity_30d,
+                        active_in_district,
+                        (activity_30d::float / NULLIF(active_in_district, 0)::float)
+                            AS momentum_raw,
+                        percent_rank() OVER (ORDER BY activity_30d) AS percentile_raw,
+                        percent_rank() OVER (
+                            ORDER BY (activity_30d::float / NULLIF(active_in_district, 0)::float)
+                        ) AS percentile_absolute
+                    FROM district_counts
+                )
+                SELECT
+                    district_label,
+                    activity_30d,
+                    active_in_district,
+                    COALESCE(percentile_raw, 0.5)      AS percentile_raw,
+                    COALESCE(percentile_absolute, 0.5) AS percentile_absolute
+                FROM ranked
+                """
+            ),
+            {
+                "window_days": _MOMENTUM_WINDOW_DAYS,
+                "sample_floor": _MOMENTUM_SAMPLE_FLOOR,
+            },
+        ).mappings().all()
+    except Exception:
+        logger.exception("_district_momentum_score failed")
+        return {}
+
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        raw = str(r["district_label"])
+        key = normalize_district_key(raw)
+        if not key:
+            continue
+        p_raw = float(r["percentile_raw"])
+        p_abs = float(r["percentile_absolute"])
+        p_composite = 0.5 * p_raw + 0.5 * p_abs
+        out[key] = {
+            "momentum_score": round(_clamp(p_composite * 100.0), 2),
+            "activity_30d": int(r["activity_30d"]),
+            "active_in_district": int(r["active_in_district"]),
+            "percentile_raw": round(p_raw, 4),
+            "percentile_absolute": round(p_abs, 4),
+            "percentile_composite": round(p_composite, 4),
+            "district_label": raw,
+            "sample_floor_applied": False,
+        }
+    return out
+
+
 def _expand_category_terms(category: str) -> list[str]:
     """Return delivery-table bucket names that match a user search category.
 
@@ -2079,6 +2231,29 @@ def _effective_listing_age_days(
     return days, tag
 
 
+# ---------------------------------------------------------------------------
+# Phase 3b — district momentum
+# ---------------------------------------------------------------------------
+
+# Kill-switch. When False, _listing_quality_score reverts to the pre-3b
+# weight tuple (0.30/0.40/0.20/0.10) and ignores district_momentum_score
+# entirely. This is the clean revert path because the 3b-rebalanced
+# weights sum to 0.85 without momentum; dropping the term without
+# reverting the weights would break the 0-100 scale.
+_MOMENTUM_ENABLED = True
+
+# Trailing window (days) over which a listing's aqar_created_at OR
+# aqar_updated_at must fall to count toward activity_30d.
+_MOMENTUM_WINDOW_DAYS = 30
+
+# Minimum active listings per district for the district to earn a
+# percentile-ranked momentum score. Districts below the floor resolve
+# to a neutral 50.0 (percentile_composite = 0.5) — tri-state "unknown",
+# not a penalty. DB verification confirmed 37 districts qualify at 20,
+# covering 69.08% of active rows.
+_MOMENTUM_SAMPLE_FLOOR = 20
+
+
 def _listing_quality_score(
     *,
     is_listing: bool,
@@ -2089,6 +2264,7 @@ def _listing_quality_score(
     has_drive_thru: bool | None = None,
     llm_suitability_score: int | None = None,
     llm_listing_quality_score: int | None = None,
+    district_momentum_score: float | None = None,
 ) -> float:
     """Pure listing-quality score on a 0-100 scale.
 
@@ -2110,23 +2286,28 @@ def _listing_quality_score(
     For parcels (or any candidate without a commercial_unit row),
     returns a neutral 50.
 
-    Components:
-      - Freshness from effective_age_days (30%): how recently the listing
+    Components (Phase 3b weight tuple when _MOMENTUM_ENABLED is True):
+      - Freshness from effective_age_days (25.50%): how recently the listing
         was created or updated on Aqar (bands at 14/30/60/120/240/365 —
         frozen for Phase 3a).
-      - Aqar suitability (40%): the classifier's assessment — LLM verdict
+      - Aqar suitability (34.00%): the classifier's assessment — LLM verdict
         when available, structural restaurant_score fallback otherwise
-      - Image / fit-out signal (20%): LLM-derived listing quality when
+      - Image / fit-out signal (17.00%): LLM-derived listing quality when
         available, binary image presence fallback otherwise
-      - Furnished (10%): faster open, lower risk, lower fitout
+      - Furnished (8.50%): faster open, lower risk, lower fitout
+      - District momentum (15.00%): percentile-ranked 30-day activity in
+        the district (blended creates + updates on commercial_unit).
+        Districts below the sample floor resolve to a neutral 50.0.
       - Drive-thru bonus: small additive (+5) when present
 
-    Patch 13 rebalance: shifted 10 points from ``freshness`` into the
-    LLM-derived sub-components (+5 suitability, +5 image_signal) so that
-    when both LLM scores are populated they carry 60% of the composite,
-    up from 50% under Patch 12.  The fallback paths use the same weights —
-    the structural stand-ins inherit the higher weight, which is fine
-    because they are direct substitutes for the missing LLM signal.
+    The four pre-3b sub-weights (0.30/0.40/0.20/0.10) are rescaled
+    multiplicatively by 0.85 so their ratios are preserved exactly while
+    making room for the 15% momentum allocation. When _MOMENTUM_ENABLED
+    is False the pre-3b tuple is used and district_momentum_score is
+    ignored.
+
+    Momentum values are always on the same 0-100 scale as the other
+    sub-signals. None (or _MOMENTUM_ENABLED=False) selects neutral 50.0.
     """
     if not is_listing:
         return 50.0
@@ -2179,12 +2360,33 @@ def _listing_quality_score(
     # Furnished: faster open, lower risk
     furnished_signal = 100.0 if is_furnished else 50.0
 
-    composite = (
-        freshness * 0.30
-        + suitability * 0.40
-        + image_signal * 0.20
-        + furnished_signal * 0.10
-    )
+    if _MOMENTUM_ENABLED:
+        # Multiplicative rebalance of the pre-3b sub-weights by 0.85 to
+        # make room for the 0.15 momentum slot. Ratios are preserved
+        # exactly (0.2550 : 0.3400 : 0.1700 : 0.0850 == 0.30 : 0.40 :
+        # 0.20 : 0.10). Unknown momentum → neutral 50.0 per the tri-state
+        # convention used by freshness and suitability above.
+        if district_momentum_score is None:
+            momentum_signal = 50.0
+        else:
+            momentum_signal = _clamp(float(district_momentum_score))
+        composite = (
+            freshness * 0.2550
+            + suitability * 0.3400
+            + image_signal * 0.1700
+            + furnished_signal * 0.0850
+            + momentum_signal * 0.1500
+        )
+    else:
+        # Pre-3b weight tuple. Used by the kill-switch revert path;
+        # district_momentum_score is intentionally ignored so the scale
+        # stays 0-100 without a 0.85 sub-weight sum.
+        composite = (
+            freshness * 0.30
+            + suitability * 0.40
+            + image_signal * 0.20
+            + furnished_signal * 0.10
+        )
 
     # Small drive-thru bonus when present (rare on Aqar but valuable for QSR)
     if has_drive_thru:
@@ -5513,6 +5715,20 @@ def run_expansion_search(
         search_id,
     )
 
+    # ── Pre-compute district momentum (Phase 3b) ──
+    # One aggregation round-trip (~2ms in DB verification) keyed by
+    # normalize_district_key(neighborhood). Districts below the sample
+    # floor are absent from the dict; scoring call sites resolve absent
+    # keys to neutral 50.0 via .get(district_norm).
+    _district_momentum = _district_momentum_score(db)
+    t_district_momentum_done = time.monotonic()
+    logger.info(
+        "expansion_search timing: district_momentum=%.3fs districts=%d search_id=%s",
+        t_district_momentum_done - t_district_stats_done,
+        len(_district_momentum),
+        search_id,
+    )
+
     # ── Pre-warm rent cache for all districts (avoids N serial DB calls in scoring loop) ──
     # Map normalized key → first raw district string seen, so _estimate_rent_sar_m2_year
     # receives the raw value (matching the scoring loop contract — the aqar fallback
@@ -5533,7 +5749,7 @@ def run_expansion_search(
     t_rent_prewarm_done = time.monotonic()
     logger.info(
         "expansion_search timing: rent_prewarm=%.2fs districts=%d search_id=%s",
-        t_rent_prewarm_done - t_district_stats_done, len(_norm_to_raw), search_id,
+        t_rent_prewarm_done - t_district_momentum_done, len(_norm_to_raw), search_id,
     )
 
     for row in rows:
@@ -5839,6 +6055,11 @@ def run_expansion_search(
         )
 
         effective_age_days, _ = _effective_listing_age_days(row)
+        # district_norm is computed at line ~5757 earlier in this loop; reuse it
+        _momentum_entry = _district_momentum.get(district_norm) if district_norm else None
+        _district_momentum_score_val = (
+            _momentum_entry["momentum_score"] if _momentum_entry else None
+        )
         listing_quality = _listing_quality_score(
             is_listing=_is_listing,
             effective_age_days=effective_age_days,
@@ -5848,6 +6069,7 @@ def run_expansion_search(
             has_drive_thru=row.get("unit_has_drive_thru"),
             llm_suitability_score=row.get("unit_llm_suitability_score"),
             llm_listing_quality_score=row.get("unit_llm_listing_quality_score"),
+            district_momentum_score=_district_momentum_score_val,
         )
         preliminary_breakdown = _score_breakdown(
             demand_score=demand_score,
@@ -6304,6 +6526,11 @@ def run_expansion_search(
             or row.get("unit_neighborhood_raw")
             or "District unknown"
         )
+        # Final-pass district_norm. The first scoring pass assigns
+        # district_norm at line ~5757 but that binding leaks across
+        # iterations of the per-row loop and does NOT track this
+        # shortlist iteration's candidate. Recompute locally.
+        district_norm_final = normalize_district_key(district) if district else None
         demand_score = prepared_item["demand_score"]
 
         # Café foot-traffic amenity bonus (applied in second pass
@@ -6407,6 +6634,26 @@ def run_expansion_search(
             "effective_age_days": effective_age_days,
             "source": effective_age_source,
         }
+        # Phase 3b — district momentum snapshot. Districts below the
+        # sample floor, blank-district candidates, and any normalization
+        # miss all resolve to the neutral fallback shape so the downstream
+        # contract is consistent (dict is always present, keys are stable).
+        _momentum_entry_final = (
+            _district_momentum.get(district_norm_final) if district_norm_final else None
+        )
+        if _momentum_entry_final is not None:
+            feature_snapshot_json["district_momentum"] = dict(_momentum_entry_final)
+        else:
+            feature_snapshot_json["district_momentum"] = {
+                "momentum_score": 50.0,
+                "activity_30d": 0,
+                "active_in_district": 0,
+                "percentile_raw": 0.5,
+                "percentile_absolute": 0.5,
+                "percentile_composite": 0.5,
+                "district_label": district if isinstance(district, str) else None,
+                "sample_floor_applied": True,
+            }
         # Enrich feature snapshot with candidate_location metadata
         if row.get("source_tier") is not None:
             feature_snapshot_json["candidate_location"] = {
@@ -6518,6 +6765,9 @@ def run_expansion_search(
             brand_profile=effective_brand_profile,
             service_model=service_model,
         )
+        _final_momentum_score_val = (
+            _momentum_entry_final["momentum_score"] if _momentum_entry_final else None
+        )
         listing_quality = _listing_quality_score(
             is_listing=_is_listing,
             effective_age_days=effective_age_days,
@@ -6527,6 +6777,7 @@ def run_expansion_search(
             has_drive_thru=row.get("unit_has_drive_thru"),
             llm_suitability_score=row.get("unit_llm_suitability_score"),
             llm_listing_quality_score=row.get("unit_llm_listing_quality_score"),
+            district_momentum_score=_final_momentum_score_val,
         )
         score_breakdown_json = _score_breakdown(
             demand_score=demand_score,

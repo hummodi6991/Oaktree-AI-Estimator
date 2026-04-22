@@ -69,6 +69,12 @@ class FakeDB:
         # candidate_location count → return 0 so code falls to commercial_unit path
         if "COUNT(*)" in sql and "candidate_location" in sql:
             return _Result([{"count": 0}])
+        # Phase 3b _district_momentum_score — spatial CTE "WITH
+        # listing_district AS". Match before the generic
+        # "FROM commercial_unit" branch so every candidate resolves to
+        # neutral 50.0 momentum in these fixtures.
+        if "WITH listing_district AS" in sql:
+            return _Result([])
         # commercial_unit queries → return candidate rows
         if "FROM commercial_unit" in sql:
             return _Result(self.candidate_rows)
