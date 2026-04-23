@@ -223,14 +223,14 @@ describe("ExpansionCandidateCard — Why #N chip (chunk 4)", () => {
   });
 });
 
-describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active market)", () => {
+describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Top-tier market)", () => {
   // Matrix states (Phase 4.1):
   //   #1 baseline     — no pills
   //   #2 New          — green "New" only
   //   #3 Updated      — green "Updated" only (created > window, updated ≤ window)
-  //   #5 Active       — amber "Active market" only
-  //   #6 New + Active — both green "New" and amber "Active market"
-  //   #7 Upd + Active — both green "Updated" and amber "Active market"
+  //   #5 Top-tier     — amber "Top-tier market" only
+  //   #6 New + Top    — both green "New" and amber "Top-tier market"
+  //   #7 Upd + Top    — both green "Updated" and amber "Top-tier market"
   // Phase 4.1: created_days and updated_days are surfaced as independent
   // fields on listing_age; the pill logic reads them directly instead of
   // branching on the GREATEST()-derived source tag. effective_age_days
@@ -307,7 +307,7 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
     expect(html).not.toContain("ea-candidate__momentum-pill");
     expect(html).not.toContain(">New<");
     expect(html).not.toContain(">Updated<");
-    expect(html).not.toContain(">Active market<");
+    expect(html).not.toContain(">Top-tier market<");
   });
 
   it("state #2 (New only): renders the green New pill, not Updated", () => {
@@ -322,7 +322,7 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
     expect(html).toContain("ea-badge--green");
     expect(html).toContain(">New<");
     expect(html).not.toContain(">Updated<");
-    expect(html).not.toContain(">Active market<");
+    expect(html).not.toContain(">Top-tier market<");
   });
 
   it("state #3 (Updated only): renders the green Updated pill, not New", () => {
@@ -337,10 +337,10 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
     expect(html).toContain("ea-badge--green");
     expect(html).toContain(">Updated<");
     expect(html).not.toContain(">New<");
-    expect(html).not.toContain(">Active market<");
+    expect(html).not.toContain(">Top-tier market<");
   });
 
-  it("state #5 (Active market only): renders the amber pill, no freshness pill", () => {
+  it("state #5 (Top-tier market only): renders the amber pill, no freshness pill", () => {
     const html = renderCard(
       withSnapshot({
         created_days: 120,
@@ -350,13 +350,13 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
     );
     expect(html).toContain("ea-candidate__momentum-pill");
     expect(html).toContain("ea-badge--amber");
-    expect(html).toContain(">Active market<");
+    expect(html).toContain(">Top-tier market<");
     expect(html).not.toContain("ea-candidate__freshness-pill");
     expect(html).not.toContain(">New<");
     expect(html).not.toContain(">Updated<");
   });
 
-  it("state #6 (New + Active): renders both green New and amber Active market", () => {
+  it("state #6 (New + Top-tier): renders both green New and amber Top-tier market", () => {
     const html = renderCard(
       withSnapshot({
         created_days: 1,
@@ -367,11 +367,11 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
     expect(html).toContain("ea-candidate__freshness-pill");
     expect(html).toContain("ea-candidate__momentum-pill");
     expect(html).toContain(">New<");
-    expect(html).toContain(">Active market<");
+    expect(html).toContain(">Top-tier market<");
     expect(html).not.toContain(">Updated<");
   });
 
-  it("state #7 (Updated + Active): renders both green Updated and amber Active market", () => {
+  it("state #7 (Updated + Top-tier): renders both green Updated and amber Top-tier market", () => {
     const html = renderCard(
       withSnapshot({
         created_days: 30,
@@ -382,7 +382,7 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
     expect(html).toContain("ea-candidate__freshness-pill");
     expect(html).toContain("ea-candidate__momentum-pill");
     expect(html).toContain(">Updated<");
-    expect(html).toContain(">Active market<");
+    expect(html).toContain(">Top-tier market<");
     expect(html).not.toContain(">New<");
   });
 
@@ -427,7 +427,7 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
     expect(html).not.toContain(">New<");
   });
 
-  it("renders no active-market pill at momentum_score 69.99", () => {
+  it("renders no top-tier-market pill at momentum_score 69.99", () => {
     const html = renderCard(
       withSnapshot({
         created_days: 120,
@@ -436,10 +436,10 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
       }),
     );
     expect(html).not.toContain("ea-candidate__momentum-pill");
-    expect(html).not.toContain(">Active market<");
+    expect(html).not.toContain(">Top-tier market<");
   });
 
-  it("renders the active-market pill at momentum_score 70.00 exactly", () => {
+  it("renders the top-tier-market pill at momentum_score 70.00 exactly", () => {
     const html = renderCard(
       withSnapshot({
         created_days: 120,
@@ -448,10 +448,10 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
       }),
     );
     expect(html).toContain("ea-candidate__momentum-pill");
-    expect(html).toContain(">Active market<");
+    expect(html).toContain(">Top-tier market<");
   });
 
-  it("renders no active-market pill when sample_floor_applied is true", () => {
+  it("renders no top-tier-market pill when sample_floor_applied is true", () => {
     const html = renderCard(
       withSnapshot({
         created_days: 120,
@@ -460,10 +460,10 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
       }),
     );
     expect(html).not.toContain("ea-candidate__momentum-pill");
-    expect(html).not.toContain(">Active market<");
+    expect(html).not.toContain(">Top-tier market<");
   });
 
-  it("renders Arabic 'جديد' / 'حي نشط' under Arabic locale", async () => {
+  it("renders Arabic 'جديد' / 'حي ضمن الفئة الأعلى' under Arabic locale", async () => {
     await i18n.changeLanguage("ar");
     try {
       const html = renderCard(
@@ -474,9 +474,9 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
         }),
       );
       expect(html).toContain("جديد");
-      expect(html).toContain("حي نشط");
+      expect(html).toContain("حي ضمن الفئة الأعلى");
       expect(html).not.toContain(">New<");
-      expect(html).not.toContain(">Active market<");
+      expect(html).not.toContain(">Top-tier market<");
     } finally {
       await i18n.changeLanguage("en");
     }
@@ -493,7 +493,7 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
     expect(html).toMatch(/title="Listing newly created on Aqar within the last 7 days"/);
   });
 
-  it("attaches the English tooltip text via title attribute on the Active market pill", () => {
+  it("attaches the English tooltip text via title attribute on the Top-tier market pill", () => {
     const html = renderCard(
       withSnapshot({
         created_days: 120,
@@ -502,7 +502,7 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
       }),
     );
     expect(html).toMatch(
-      /title="District with above-average recent listing activity"/,
+      /title="Ranks in the top tier of Riyadh districts by recent listing activity"/,
     );
   });
 

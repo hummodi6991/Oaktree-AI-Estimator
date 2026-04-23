@@ -2253,13 +2253,15 @@ _MOMENTUM_WINDOW_DAYS = 30
 # covering 69.08% of active rows.
 _MOMENTUM_SAMPLE_FLOOR = 20
 
-# Phase 4 display-only threshold. A candidate earns the "Active market"
-# surfacing (card tag + rationale line) iff district momentum_score is
-# at or above this cliff AND sample_floor_applied is False. The same
-# constant is mirrored at the frontend call site; the two must match
-# numerically by convention, not by shared config. This is intentionally
-# not wired to env var / settings / feature flag so a future tune-up
-# edits exactly one backend constant and one frontend literal.
+# Phase 4 display-only threshold. A candidate earns the "Top-tier
+# market" surfacing (card tag + rationale line) iff district
+# momentum_score is at or above this cliff AND sample_floor_applied is
+# False. The same constant is mirrored at the frontend call site; the
+# two must match numerically by convention, not by shared config. This
+# is intentionally not wired to env var / settings / feature flag so a
+# future tune-up edits exactly one backend constant and one frontend
+# literal. Pill renamed from "Active market" in Phase 4.1 — the
+# threshold and math are unchanged.
 _MOMENTUM_DISPLAY_THRESHOLD = 70.0
 
 # Phase 4 display-only freshness window. Phase 4.1: a listing earns
@@ -2864,22 +2866,22 @@ def _top_positives_and_risks(
     )
 
     momentum_score = momentum.get("momentum_score")
-    is_active_market = (
+    is_top_tier_market = (
         isinstance(momentum_score, (int, float))
         and float(momentum_score) >= _MOMENTUM_DISPLAY_THRESHOLD
         and momentum.get("sample_floor_applied") is False
     )
 
-    if is_new and is_active_market:
-        positives.append("Newly listed in an actively trading district.")
-    elif is_updated and is_active_market:
-        positives.append("Recently refreshed listing in an actively trading district.")
+    if is_new and is_top_tier_market:
+        positives.append("Newly listed in a top-tier market.")
+    elif is_updated and is_top_tier_market:
+        positives.append("Recently refreshed listing in a top-tier market.")
     elif is_new:
         positives.append("Newly listed within the last week.")
     elif is_updated:
         positives.append("Listing refreshed by the owner within the last week.")
-    elif is_active_market:
-        positives.append("District is actively attracting new listings right now.")
+    elif is_top_tier_market:
+        positives.append("District ranks in the top tier for recent listing activity.")
 
     return positives[:5], risks[:6]
 

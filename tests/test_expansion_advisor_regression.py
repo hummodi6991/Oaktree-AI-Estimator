@@ -2048,8 +2048,8 @@ def test_phase4_state2_new_only_appends_new_string():
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
     assert "Newly listed within the last week." in positives
-    assert "Recently refreshed listing in an actively trading district." not in positives
-    assert "District is actively attracting new listings right now." not in positives
+    assert "Recently refreshed listing in a top-tier market." not in positives
+    assert "District ranks in the top tier for recent listing activity." not in positives
 
 
 def test_phase4_state3_updated_only_appends_updated_string():
@@ -2074,7 +2074,7 @@ def test_phase4_state5_active_market_only():
     positives, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
-    assert "District is actively attracting new listings right now." in positives
+    assert "District ranks in the top tier for recent listing activity." in positives
     assert "Newly listed within the last week." not in positives
     assert "Listing refreshed by the owner within the last week." not in positives
 
@@ -2088,11 +2088,11 @@ def test_phase4_state6_new_plus_active_appends_combined_string():
     positives, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
-    assert "Newly listed in an actively trading district." in positives
+    assert "Newly listed in a top-tier market." in positives
     # The combined string replaces the standalone strings — the function
     # emits exactly one Phase 4 line.
     assert "Newly listed within the last week." not in positives
-    assert "District is actively attracting new listings right now." not in positives
+    assert "District ranks in the top tier for recent listing activity." not in positives
 
 
 def test_phase4_state7_updated_plus_active_appends_combined_string():
@@ -2104,9 +2104,9 @@ def test_phase4_state7_updated_plus_active_appends_combined_string():
     positives, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
-    assert "Recently refreshed listing in an actively trading district." in positives
+    assert "Recently refreshed listing in a top-tier market." in positives
     assert "Listing refreshed by the owner within the last week." not in positives
-    assert "District is actively attracting new listings right now." not in positives
+    assert "District ranks in the top tier for recent listing activity." not in positives
 
 
 def test_phase4_state1_neither_signal_emits_nothing():
@@ -2121,9 +2121,9 @@ def test_phase4_state1_neither_signal_emits_nothing():
     for phrase in (
         "Newly listed within the last week.",
         "Listing refreshed by the owner within the last week.",
-        "Newly listed in an actively trading district.",
-        "Recently refreshed listing in an actively trading district.",
-        "District is actively attracting new listings right now.",
+        "Newly listed in a top-tier market.",
+        "Recently refreshed listing in a top-tier market.",
+        "District ranks in the top tier for recent listing activity.",
     ):
         assert phrase not in positives
 
@@ -2137,7 +2137,7 @@ def test_phase4_momentum_threshold_cliff_69_99_emits_nothing():
     positives, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
-    assert "District is actively attracting new listings right now." not in positives
+    assert "District ranks in the top tier for recent listing activity." not in positives
 
 
 def test_phase4_momentum_threshold_cliff_70_00_emits_active_market():
@@ -2149,7 +2149,7 @@ def test_phase4_momentum_threshold_cliff_70_00_emits_active_market():
     positives, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
-    assert "District is actively attracting new listings right now." in positives
+    assert "District ranks in the top tier for recent listing activity." in positives
 
 
 def test_phase4_both_days_null_emits_no_freshness():

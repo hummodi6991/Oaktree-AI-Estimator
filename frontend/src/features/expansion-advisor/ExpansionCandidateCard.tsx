@@ -88,7 +88,7 @@ export default function ExpansionCandidateCard({
     createdDays !== null && createdDays <= LISTING_FRESHNESS_DAYS ? "new"
     : updatedDays !== null && updatedDays <= LISTING_FRESHNESS_DAYS ? "updated"
     : null;
-  const showActiveMarket =
+  const showTopTierMarket =
     typeof momentum?.momentum_score === "number"
     && momentum.momentum_score >= MOMENTUM_DISPLAY_THRESHOLD
     && momentum.sample_floor_applied === false;
@@ -175,12 +175,12 @@ export default function ExpansionCandidateCard({
               {t("expansionAdvisor.updatedBadge")}
             </span>
           )}
-          {showActiveMarket && (
+          {showTopTierMarket && (
             <span
               className="ea-badge ea-badge--amber ea-candidate__momentum-pill"
-              title={t("expansionAdvisor.activeMarketTooltip")}
+              title={t("expansionAdvisor.topTierMarketTooltip")}
             >
-              {t("expansionAdvisor.activeMarketTag")}
+              {t("expansionAdvisor.topTierMarketTag")}
             </span>
           )}
         </div>
