@@ -224,27 +224,70 @@ describe("ExpansionCandidateCard — Why #N chip (chunk 4)", () => {
 });
 
 describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active market)", () => {
-  // Matrix states (spec §1(i)):
+  // Matrix states (Phase 4.1):
   //   #1 baseline     — no pills
   //   #2 New          — green "New" only
-  //   #3 Updated      — green "Updated" only
+  //   #3 Updated      — green "Updated" only (created > window, updated ≤ window)
   //   #5 Active       — amber "Active market" only
   //   #6 New + Active — both green "New" and amber "Active market"
   //   #7 Upd + Active — both green "Updated" and amber "Active market"
-  // States #4, #8 are constant-fold impossible (source ∉ {aqar_created,
-  // aqar_updated} ⇒ no freshness pill, by spec locked decision #1).
+  // Phase 4.1: created_days and updated_days are surfaced as independent
+  // fields on listing_age; the pill logic reads them directly instead of
+  // branching on the GREATEST()-derived source tag. effective_age_days
+  // and source are still populated for memo/rerank back-compat.
+
+  function buildListingAge(
+    createdDays: number | null,
+    updatedDays: number | null,
+  ) {
+    // Populate effective_age_days and source for parity with production,
+    // so we can assert the pill logic ignores them.
+    const ageCandidates = [createdDays, updatedDays].filter(
+      (x): x is number => x !== null,
+    );
+    const effective = ageCandidates.length ? Math.min(...ageCandidates) : null;
+    const source =
+      updatedDays !== null && updatedDays === effective
+        ? "aqar_updated"
+        : createdDays !== null && createdDays === effective
+          ? "aqar_created"
+          : "unknown";
+    return {
+      effective_age_days: effective,
+      source,
+      created_days: createdDays,
+      updated_days: updatedDays,
+    };
+  }
 
   function withSnapshot(
-    extras: { listing_age?: unknown; district_momentum?: unknown },
+    extras: {
+      created_days?: number | null;
+      updated_days?: number | null;
+      listing_age?: unknown;
+      district_momentum?: unknown;
+    },
     base: Partial<ExpansionCandidate> = {},
   ): ExpansionCandidate {
+    const { created_days, updated_days, listing_age, district_momentum, ...rest } = extras;
+    const listingAge =
+      listing_age !== undefined
+        ? listing_age
+        : created_days !== undefined || updated_days !== undefined
+          ? buildListingAge(
+              created_days === undefined ? null : created_days,
+              updated_days === undefined ? null : updated_days,
+            )
+          : undefined;
     return baseCandidate({
       ...base,
       feature_snapshot_json: {
         context_sources: {},
         missing_context: [],
         data_completeness_score: 0,
-        ...extras,
+        ...(listingAge !== undefined ? { listing_age: listingAge } : {}),
+        ...(district_momentum !== undefined ? { district_momentum } : {}),
+        ...rest,
       } as never,
     });
   }
@@ -255,7 +298,8 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
   it("state #1 (baseline): renders no Phase 4 pill", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 30, source: "aqar_created" },
+        created_days: 30,
+        updated_days: 30,
         district_momentum: NEUTRAL_MOMENTUM,
       }),
     );
@@ -269,7 +313,8 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
   it("state #2 (New only): renders the green New pill, not Updated", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 2, source: "aqar_created" },
+        created_days: 2,
+        updated_days: 2,
         district_momentum: NEUTRAL_MOMENTUM,
       }),
     );
@@ -283,7 +328,8 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
   it("state #3 (Updated only): renders the green Updated pill, not New", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 4, source: "aqar_updated" },
+        created_days: 30,
+        updated_days: 4,
         district_momentum: NEUTRAL_MOMENTUM,
       }),
     );
@@ -297,7 +343,8 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
   it("state #5 (Active market only): renders the amber pill, no freshness pill", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 120, source: "aqar_updated" },
+        created_days: 120,
+        updated_days: 120,
         district_momentum: ACTIVE_MOMENTUM,
       }),
     );
@@ -312,7 +359,8 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
   it("state #6 (New + Active): renders both green New and amber Active market", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 1, source: "aqar_created" },
+        created_days: 1,
+        updated_days: 1,
         district_momentum: { momentum_score: 90, sample_floor_applied: false },
       }),
     );
@@ -326,7 +374,8 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
   it("state #7 (Updated + Active): renders both green Updated and amber Active market", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 6, source: "aqar_updated" },
+        created_days: 30,
+        updated_days: 6,
         district_momentum: { momentum_score: 75, sample_floor_applied: false },
       }),
     );
@@ -345,40 +394,33 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
     expect(html).not.toContain("ea-candidate__momentum-pill");
   });
 
-  it("renders no freshness pill when effective_age_days is null and source is unknown", () => {
+  it("renders no freshness pill when both created_days and updated_days are null", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: null, source: "unknown" },
+        created_days: null,
+        updated_days: null,
         district_momentum: NEUTRAL_MOMENTUM,
       }),
     );
     expect(html).not.toContain("ea-candidate__freshness-pill");
   });
 
-  it("renders no freshness pill when source is first_seen even within 7 days", () => {
+  it("boundary: created_days === 7 still renders New", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 3, source: "first_seen" },
-        district_momentum: NEUTRAL_MOMENTUM,
-      }),
-    );
-    expect(html).not.toContain("ea-candidate__freshness-pill");
-  });
-
-  it("boundary: effective_age_days === 7 with aqar_created still renders New", () => {
-    const html = renderCard(
-      withSnapshot({
-        listing_age: { effective_age_days: 7, source: "aqar_created" },
+        created_days: 7,
+        updated_days: 7,
         district_momentum: NEUTRAL_MOMENTUM,
       }),
     );
     expect(html).toContain(">New<");
   });
 
-  it("boundary: effective_age_days === 8 with aqar_created does NOT render New", () => {
+  it("boundary: created_days === 8 (and updated_days > window) does NOT render New", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 8, source: "aqar_created" },
+        created_days: 8,
+        updated_days: 8,
         district_momentum: NEUTRAL_MOMENTUM,
       }),
     );
@@ -388,7 +430,8 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
   it("renders no active-market pill at momentum_score 69.99", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 120, source: "aqar_updated" },
+        created_days: 120,
+        updated_days: 120,
         district_momentum: { momentum_score: 69.99, sample_floor_applied: false },
       }),
     );
@@ -399,7 +442,8 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
   it("renders the active-market pill at momentum_score 70.00 exactly", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 120, source: "aqar_updated" },
+        created_days: 120,
+        updated_days: 120,
         district_momentum: { momentum_score: 70.0, sample_floor_applied: false },
       }),
     );
@@ -410,7 +454,8 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
   it("renders no active-market pill when sample_floor_applied is true", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 120, source: "aqar_updated" },
+        created_days: 120,
+        updated_days: 120,
         district_momentum: { momentum_score: 85, sample_floor_applied: true },
       }),
     );
@@ -423,7 +468,8 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
     try {
       const html = renderCard(
         withSnapshot({
-          listing_age: { effective_age_days: 1, source: "aqar_created" },
+          created_days: 1,
+          updated_days: 1,
           district_momentum: { momentum_score: 90, sample_floor_applied: false },
         }),
       );
@@ -439,10 +485,69 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Active marke
   it("attaches the English tooltip text via title attribute on the New pill", () => {
     const html = renderCard(
       withSnapshot({
-        listing_age: { effective_age_days: 2, source: "aqar_created" },
+        created_days: 2,
+        updated_days: 2,
         district_momentum: NEUTRAL_MOMENTUM,
       }),
     );
     expect(html).toMatch(/title="Listing newly created on Aqar within the last 7 days"/);
+  });
+
+  it("attaches the English tooltip text via title attribute on the Active market pill", () => {
+    const html = renderCard(
+      withSnapshot({
+        created_days: 120,
+        updated_days: 120,
+        district_momentum: ACTIVE_MOMENTUM,
+      }),
+    );
+    expect(html).toMatch(
+      /title="District with above-average recent listing activity"/,
+    );
+  });
+
+  // ── Phase 4.1 regression pins ──
+
+  it("state: new wins when both days are fresh (scraper-cadence regression)", () => {
+    // Before 4.1, `source` was set by GREATEST() which the scraper's
+    // daily cadence biased toward aqar_updated on ~93% of rows. That
+    // pushed this row to "Updated" even though it was genuinely new.
+    // After 4.1, created_days within the window wins unconditionally.
+    const html = renderCard(
+      withSnapshot({
+        created_days: 2,
+        updated_days: 2,
+        district_momentum: NEUTRAL_MOMENTUM,
+      }),
+    );
+    expect(html).toContain(">New<");
+    expect(html).not.toContain(">Updated<");
+  });
+
+  it("state: updated fires only when created is older than window", () => {
+    const html = renderCard(
+      withSnapshot({
+        created_days: 30,
+        updated_days: 3,
+        district_momentum: NEUTRAL_MOMENTUM,
+      }),
+    );
+    expect(html).toContain(">Updated<");
+    expect(html).not.toContain(">New<");
+  });
+
+  it("state: new fires even when updated is also fresh", () => {
+    // Pins the scraper-cadence regression: even when updated_days=1
+    // would have won the old GREATEST() tie-break, created_days=3
+    // within the window makes this "New".
+    const html = renderCard(
+      withSnapshot({
+        created_days: 3,
+        updated_days: 1,
+        district_momentum: NEUTRAL_MOMENTUM,
+      }),
+    );
+    expect(html).toContain(">New<");
+    expect(html).not.toContain(">Updated<");
   });
 });

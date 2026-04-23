@@ -434,7 +434,15 @@ def test_rerank_trim_ignores_listing_age_and_district_momentum():
     }
 
     enriched = dict(baseline)
-    enriched["listing_age"] = {"effective_age_days": 3, "source": "aqar_created"}
+    enriched["listing_age"] = {
+        "effective_age_days": 3,
+        "source": "aqar_created",
+        # Phase 4.1 added two derived age fields nested inside
+        # listing_age; the rerank trim must still exclude the whole
+        # listing_age key, regardless of its inner shape.
+        "created_days": 3,
+        "updated_days": 3,
+    }
     enriched["district_momentum"] = {
         "momentum_score": 82.0,
         "sample_floor_applied": False,

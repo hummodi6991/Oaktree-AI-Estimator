@@ -2262,10 +2262,15 @@ _MOMENTUM_SAMPLE_FLOOR = 20
 # edits exactly one backend constant and one frontend literal.
 _MOMENTUM_DISPLAY_THRESHOLD = 70.0
 
-# Phase 4 display-only freshness window. A listing earns "New" or
-# "Updated" surfacing iff effective_age_days is at or below this value
-# AND the source tag is an Aqar event (created/updated), not the
-# fallback first_seen/unknown. Mirrored at the frontend call site.
+# Phase 4 display-only freshness window. Phase 4.1: a listing earns
+# "New" when aqar_created_at is within this window, and "Updated" when
+# it is older than the window but aqar_updated_at is within it.
+# New and Updated are mutually exclusive and are checked directly
+# against the created_days / updated_days fields on
+# feature_snapshot_json.listing_age — NOT against the GREATEST()-derived
+# `source` tag (which the scraper's daily cadence otherwise biases
+# toward aqar_updated on ~93% of rows, making "New" unreachable).
+# Mirrored at the frontend call site.
 _LISTING_FRESHNESS_DAYS = 7
 
 
@@ -2834,18 +2839,29 @@ def _top_positives_and_risks(
     # _LISTING_FRESHNESS_DAYS and _MOMENTUM_DISPLAY_THRESHOLD. English-only
     # for this patch - Arabic parity for _top_positives_and_risks is
     # tracked as a separate 3c item.
+    #
+    # Phase 4.1: read created_days and updated_days independently instead
+    # of branching on the `source` tag from _effective_listing_age_days.
+    # The GREATEST() winner there shadows aqar_created_at in ~93% of rows
+    # due to scraper cadence, which would otherwise make "New" unreachable
+    # even on genuinely new listings that have also been recently refreshed.
+    # `effective_age_days` / `source` are retained in the snapshot for
+    # memo/rerank back-compat but must NOT drive this pill logic.
     fs = candidate.get("feature_snapshot_json") or {}
     listing_age = fs.get("listing_age") or {}
     momentum = fs.get("district_momentum") or {}
 
-    age_days = listing_age.get("effective_age_days")
-    age_source = listing_age.get("source")
-    is_fresh = (
-        isinstance(age_days, (int, float))
-        and age_days <= _LISTING_FRESHNESS_DAYS
+    created_days = listing_age.get("created_days")
+    updated_days = listing_age.get("updated_days")
+    is_new = (
+        isinstance(created_days, (int, float))
+        and created_days <= _LISTING_FRESHNESS_DAYS
     )
-    is_new = is_fresh and age_source == "aqar_created"
-    is_updated = is_fresh and age_source == "aqar_updated"
+    is_updated = (
+        not is_new
+        and isinstance(updated_days, (int, float))
+        and updated_days <= _LISTING_FRESHNESS_DAYS
+    )
 
     momentum_score = momentum.get("momentum_score")
     is_active_market = (
@@ -6685,9 +6701,36 @@ def run_expansion_search(
             bulk_roads=_bulk_roads.get(_pid_str),
             bulk_parking=_bulk_parking.get(_pid_str),
         )
+        # Compute the two raw ages independently so the pill logic on the
+        # frontend and in _top_positives_and_risks can decide "New" vs
+        # "Updated" without relying on which timestamp won the GREATEST()
+        # tie-break inside _effective_listing_age_days. The scraper's daily
+        # cadence makes aqar_updated_at shadow aqar_created_at in ~93% of
+        # rows, which otherwise makes the "New" pill unreachable.
+        _now_for_age = datetime.utcnow()
+        _future_cutoff_for_age = _now_for_age + timedelta(days=1)
+
+        def _raw_age_days(value: Any) -> int | None:
+            if value is None:
+                return None
+            try:
+                if getattr(value, "tzinfo", None) is not None:
+                    value = value.replace(tzinfo=None)
+                if value > _future_cutoff_for_age:
+                    return None
+                delta_days = (_now_for_age - value).days
+            except (TypeError, ValueError):
+                return None
+            return max(0, delta_days)
+
+        _created_days = _raw_age_days(row.get("unit_aqar_created_at"))
+        _updated_days = _raw_age_days(row.get("unit_aqar_updated_at"))
+
         feature_snapshot_json["listing_age"] = {
             "effective_age_days": effective_age_days,
             "source": effective_age_source,
+            "created_days": _created_days,
+            "updated_days": _updated_days,
         }
         # Phase 3b — district momentum snapshot. Districts below the
         # sample floor, blank-district candidates, and any normalization
