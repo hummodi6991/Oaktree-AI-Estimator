@@ -43,16 +43,15 @@ export function classifyCandidateTier(candidate: ExpansionCandidate): CandidateT
     return "exploratory";
   }
 
-  // 2. Premier — grade A + score >= threshold, and the gate verdict is
-  //    not an explicit failure. Null overall_pass does not block Premier:
-  //    Aqar Tier 1 candidates structurally have overall_pass = null because
-  //    parking_pass is always null for them (no parking ground truth in
-  //    Aqar listings). Explicit failure (overall_pass === false) is already
-  //    routed to Exploratory by the precedence rule above, so the only
-  //    values that reach this branch are true and null.
+  // 2. Premier — grade A + score >= threshold. Null overall_pass does not
+  //    block Premier: Aqar Tier 1 candidates structurally have
+  //    overall_pass = null because parking_pass is always null for them
+  //    (no parking ground truth in Aqar listings). Explicit failure
+  //    (overall_pass === false) is already routed to Exploratory by the
+  //    precedence rule above, so the only values that reach this branch
+  //    are true and null — no need to recheck the gate here.
   if (
     grade === PREMIER_CONFIDENCE_GRADE &&
-    overallPass !== false &&
     typeof score === "number" &&
     score >= PREMIER_MIN_SCORE
   ) {
