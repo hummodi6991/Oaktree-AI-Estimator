@@ -191,6 +191,71 @@
   gap: 16px;
 }
 
+/* Tier sections (Premier / Standard / Exploratory). Each section is a
+   sub-grid so the gap between cards inside a section matches the gap
+   between un-sectioned cards (16px). Sections are rendered only when
+   Premier or Exploratory candidates exist — an all-Standard shortlist
+   bypasses the wrapper entirely and renders exactly as pre-patch. */
+.ea-candidate-list__section {
+  display: grid;
+  gap: 16px;
+}
+
+.ea-candidate-list__section-header {
+  margin: 0;
+  padding-block-start: 4px;
+  font-size: var(--oak-fs-sm, 14px);
+  font-weight: var(--oak-fw-semibold, 600);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--oak-text-light, #828282);
+}
+
+.ea-candidate-list__section-header--premier {
+  color: var(--oak-primary, #14312c);
+}
+
+/* ─ Tier 1: Premier ─ */
+/* Premier cards get a thin accent strip on the left edge plus a subtly
+   warmer background. The accent color is the existing primary; no new
+   palette is introduced. The strip sits on the inside of the existing
+   border so the card's rounded corners stay clean. */
+.ea-candidate--premier {
+  background: #fafdfb;
+  border-left: 3px solid var(--oak-primary, #14312c);
+}
+
+[dir="rtl"] .ea-candidate--premier {
+  border-left: 1px solid #E5E7EB;
+  border-right: 3px solid var(--oak-primary, #14312c);
+}
+
+.ea-badge--premier {
+  background: #14312c;
+  color: #fff;
+}
+
+.ea-candidate__premier-pill {
+  font-size: 11px;
+  padding: 1px 8px;
+  letter-spacing: 0.02em;
+}
+
+/* ─ Tier 3: Exploratory ─ */
+/* Muted visual treatment — the card is still fully readable, just
+   clearly deprioritized at a glance. Hovering restores full opacity
+   so the user doesn't lose confidence that the card is interactive. */
+.ea-candidate--exploratory {
+  opacity: 0.75;
+  background: #fafafa;
+}
+
+.ea-candidate--exploratory:hover,
+.ea-candidate--exploratory:focus-within,
+.ea-candidate--exploratory.ea-candidate--selected {
+  opacity: 1;
+}
+
 /* ─ Candidate card ─ */
 .ea-candidate {
   display: grid;

@@ -4,6 +4,7 @@ import ScorePill from "./ScorePill";
 import TierBadge from "./TierBadge";
 import { fmtSARCompact, fmtM2, fmtMeters, candidateDistrictLabel, getDisplayScore } from "./formatHelpers";
 import type { MemoDrawerSection } from "./ExpansionMemoPanel";
+import { classifyCandidateTier, type CandidateTier } from "./tiers";
 
 type Props = {
   candidate: ExpansionCandidate;
@@ -12,6 +13,10 @@ type Props = {
   compared: boolean;
   isLead?: boolean;
   localSortActive?: boolean;
+  /** Visual tier assignment. Derived at render time from candidate fields
+   *  (see tiers.ts). Premier gets an accent treatment + "Premier" pill,
+   *  Exploratory renders muted, Standard is the baseline unchanged. */
+  tier?: CandidateTier;
   onSelect: () => void;
   onCompareToggle: () => void;
   onOpenMemo?: (options?: { section?: MemoDrawerSection }) => void;
@@ -28,6 +33,7 @@ export default function ExpansionCandidateCard({
   compared,
   isLead,
   localSortActive,
+  tier,
   onSelect,
   onCompareToggle,
   onOpenMemo,
@@ -93,6 +99,14 @@ export default function ExpansionCandidateCard({
     && momentum.momentum_score >= MOMENTUM_DISPLAY_THRESHOLD
     && momentum.sample_floor_applied === false;
 
+  // Tier is derived from candidate fields when the parent doesn't pass it
+  // explicitly. The parent (ExpansionResultsPanel) always passes it today,
+  // but keeping the fallback keeps the card usable in isolation (e.g. in
+  // tests and any future caller that renders a single card).
+  const resolvedTier: CandidateTier = tier ?? classifyCandidateTier(candidate);
+  const isPremier = resolvedTier === "premier";
+  const isExploratory = resolvedTier === "exploratory";
+
   const cls = [
     "ea-candidate",
     selected && "ea-candidate--selected",
@@ -101,6 +115,8 @@ export default function ExpansionCandidateCard({
     isLead && "ea-candidate--lead",
     isTop3 && "ea-candidate--top3",
     isCommercialUnit && "ea-candidate--commercial-unit",
+    isPremier && "ea-candidate--premier",
+    isExploratory && "ea-candidate--exploratory",
   ]
     .filter(Boolean)
     .join(" ");
@@ -153,6 +169,14 @@ export default function ExpansionCandidateCard({
           <span className="ea-candidate__district">{candidateDistrictLabel(candidate, t("common.notAvailable"))}</span>
         </div>
         <div className="ea-candidate__badges">
+          {isPremier && (
+            <span
+              className="ea-badge ea-badge--premier ea-candidate__premier-pill"
+              title={t("expansionAdvisor.premierBadgeTooltip")}
+            >
+              {t("expansionAdvisor.premierBadge")}
+            </span>
+          )}
           <ScorePill value={getDisplayScore(candidate)} />
           {showNearestBranch && (
             <span className="ea-badge ea-badge--neutral ea-candidate__nearest-pill">
