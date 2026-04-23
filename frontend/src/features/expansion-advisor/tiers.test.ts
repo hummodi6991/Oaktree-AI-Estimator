@@ -78,15 +78,27 @@ describe("classifyCandidateTier", () => {
     expect(classifyCandidateTier(c)).toBe("standard");
   });
 
-  it("Standard when overall_pass is null (unknown) even with grade A + high score", () => {
-    // Premier requires pass === true. Unknown falls through to Standard,
-    // not demoted to Exploratory.
+  it("Premier when overall_pass is null (unknown) with grade A + high score — unknown does not block", () => {
+    // Aqar Tier 1 candidates structurally have overall_pass = null because
+    // parking_pass is null (no parking ground truth for Aqar listings).
+    // Premier treats null as "not a blocker" so Tier 1 candidates can
+    // qualify. Explicit failure (overall_pass = false) still demotes to
+    // Exploratory via the precedence rule.
     const c = makeCandidate({
       confidence_grade: "A",
       final_score: 80,
       gate_status_json: { overall_pass: null },
     });
-    expect(classifyCandidateTier(c)).toBe("standard");
+    expect(classifyCandidateTier(c)).toBe("premier");
+  });
+
+  it("Premier with explicit overall_pass=true, grade A, high score — canonical path still works", () => {
+    const c = makeCandidate({
+      confidence_grade: "A",
+      final_score: 80,
+      gate_status_json: { overall_pass: true },
+    });
+    expect(classifyCandidateTier(c)).toBe("premier");
   });
 
   it("Standard at the exploratory boundary (score === EXPLORATORY_MAX_SCORE)", () => {
