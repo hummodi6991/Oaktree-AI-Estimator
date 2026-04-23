@@ -13,6 +13,8 @@ from decimal import Decimal
 
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from app.ingest.aqar.detail_scraper import (
     AqarDetailPayload,
@@ -45,10 +47,42 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
 ]
 
+# HTTP resilience for Aqar list/detail pages.
+# ReadTimeout crashed a full scheduled run on 2026-04-23 (workflow run 65814599582);
+# these knobs are the hardening response, tuned to stay well under the 360-min job budget.
+AQAR_CONNECT_TIMEOUT = 10.0
+AQAR_READ_TIMEOUT = 30.0
+AQAR_HTTP_TIMEOUT = (AQAR_CONNECT_TIMEOUT, AQAR_READ_TIMEOUT)
+AQAR_HTTP_TOTAL_RETRIES = 3
+AQAR_HTTP_BACKOFF_FACTOR = 1.5  # sleeps: 0s, 3s, 6s between retries
+
+
+def _build_aqar_session() -> requests.Session:
+    """Shared session with retry on transient network + 429/5xx errors."""
+    retry = Retry(
+        total=AQAR_HTTP_TOTAL_RETRIES,
+        connect=AQAR_HTTP_TOTAL_RETRIES,
+        read=AQAR_HTTP_TOTAL_RETRIES,
+        status=AQAR_HTTP_TOTAL_RETRIES,
+        backoff_factor=AQAR_HTTP_BACKOFF_FACTOR,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["GET", "HEAD"]),
+        raise_on_status=True,
+        respect_retry_after_header=True,
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=4, pool_maxsize=8)
+    session = requests.Session()
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+_AQAR_SESSION = _build_aqar_session()
+
 
 def _get(url: str) -> requests.Response:
     headers = {"User-Agent": random.choice(USER_AGENTS)}
-    resp = requests.get(url, headers=headers, timeout=15)
+    resp = _AQAR_SESSION.get(url, headers=headers, timeout=AQAR_HTTP_TIMEOUT)
     resp.raise_for_status()
     return resp
 
@@ -482,7 +516,15 @@ def fetch_neighborhood_listings(
         if page > 1:
             time.sleep(2)
         print(f"    [page {page}] {url}")
-        resp = _get(url)
+        try:
+            resp = _get(url)
+        except requests.RequestException as e:
+            logger.warning(
+                "Aqar list-page fetch failed after retries (neighborhood=%s, listing_type=%s, page=%d, url=%s): %s; "
+                "returning %d listings collected so far",
+                neighborhood_name, listing_type, page, url, e, len(all_listings),
+            )
+            break
         html = resp.text
 
         listings_on_page = []
@@ -1727,12 +1769,25 @@ def main():
                     if j > 0 or i > 0:
                         time.sleep(2)
                     print(f"\n  --- Crawling: {nbr['neighborhood']} ---")
-                    listings = fetch_neighborhood_listings(
-                        nbr["url"],
-                        nbr["neighborhood"],
-                        max_pages=args.max_pages,
-                        listing_type=type_key,
-                    )
+                    try:
+                        listings = fetch_neighborhood_listings(
+                            nbr["url"],
+                            nbr["neighborhood"],
+                            max_pages=args.max_pages,
+                            listing_type=type_key,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Skipping neighborhood due to unrecoverable error "
+                            "(area=%s, neighborhood=%s, listing_type=%s, url=%s): %s",
+                            area,
+                            nbr.get("neighborhood"),
+                            type_key,
+                            nbr.get("url"),
+                            e,
+                        )
+                        stats["failed"] = stats.get("failed", 0) + 1
+                        continue
                     print(f"  Found {len(listings)} listings")
 
                     geo = geo_cache.get(nbr["neighborhood"])
