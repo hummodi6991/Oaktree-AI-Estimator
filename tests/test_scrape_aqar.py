@@ -282,3 +282,79 @@ class TestParseAreaTelemetryCounters:
         _parse_area_token("14,285 m²", listing_type="store")
         assert _area_parse_stats["attempted"] == 1
         assert _area_parse_stats["rejected_decimal_fallback_too_small"] == 1
+
+
+class _FakeResult:
+    def __init__(self, scalar_value=None, rowcount=0):
+        self._scalar = scalar_value
+        self.rowcount = rowcount
+
+    def scalar(self):
+        return self._scalar
+
+
+class _FakeDB:
+    """Records execute() calls and returns canned results in order."""
+
+    def __init__(self, results):
+        self._results = list(results)
+        self.calls: list[tuple[str, dict]] = []
+
+    def execute(self, stmt, params=None):
+        self.calls.append((str(stmt), dict(params or {})))
+        return self._results.pop(0)
+
+
+class TestMarkUnseenListingsClosed:
+    """Immediate-close sweep: closed aqar listings drop same-day, not in 28."""
+
+    def test_flips_unseen_listings_to_stale_when_coverage_ok(self):
+        from scripts.scrape_aqar import mark_unseen_listings_closed
+
+        db = _FakeDB([_FakeResult(scalar_value=100), _FakeResult(rowcount=7)])
+        seen = {f"id_{i}" for i in range(80)}  # 80/100 = 80% coverage
+
+        closed = mark_unseen_listings_closed(db, "store", seen)
+
+        assert closed == 7
+        assert len(db.calls) == 2
+        count_sql, count_params = db.calls[0]
+        assert "SELECT COUNT(*)" in count_sql
+        assert count_params == {"lt": "store"}
+        update_sql, update_params = db.calls[1]
+        assert "UPDATE commercial_unit SET status = 'stale'" in update_sql
+        assert update_params["lt"] == "store"
+        assert set(update_params["seen_ids"]) == seen
+
+    def test_coverage_guard_skips_sweep_when_crawl_looks_broken(self):
+        from scripts.scrape_aqar import mark_unseen_listings_closed
+
+        db = _FakeDB([_FakeResult(scalar_value=1000)])
+        seen = {f"id_{i}" for i in range(10)}  # 10/1000 = 1% coverage
+
+        closed = mark_unseen_listings_closed(db, "store", seen)
+
+        assert closed == -1
+        assert len(db.calls) == 1  # only the COUNT, no UPDATE issued
+
+    def test_zero_active_pool_is_noop(self):
+        from scripts.scrape_aqar import mark_unseen_listings_closed
+
+        db = _FakeDB([_FakeResult(scalar_value=0)])
+
+        closed = mark_unseen_listings_closed(db, "store", set())
+
+        assert closed == 0
+        assert len(db.calls) == 1
+
+    def test_full_coverage_with_all_unseen_closes_everything(self):
+        from scripts.scrape_aqar import mark_unseen_listings_closed
+
+        # Edge: scrape saw exactly as many listings as are currently active,
+        # but none of them overlap. All 50 active rows should close.
+        db = _FakeDB([_FakeResult(scalar_value=50), _FakeResult(rowcount=50)])
+        seen = {f"new_id_{i}" for i in range(50)}
+
+        closed = mark_unseen_listings_closed(db, "store", seen)
+
+        assert closed == 50
