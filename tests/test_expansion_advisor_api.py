@@ -763,7 +763,12 @@ def test_feature_snapshot_surfaces_listing_age_and_district_momentum(monkeypatch
                     "missing_context": [],
                     "data_completeness_score": 90,
                     # Phase 4 keys must round-trip unchanged.
-                    "listing_age": {"effective_age_days": 3, "source": "aqar_created"},
+                    "listing_age": {
+                        "effective_age_days": 3,
+                        "source": "aqar_created",
+                        "created_days": 3,
+                        "updated_days": 3,
+                    },
                     "district_momentum": {
                         "momentum_score": 82.5,
                         "activity_30d": 120,
@@ -799,6 +804,10 @@ def test_feature_snapshot_surfaces_listing_age_and_district_momentum(monkeypatch
     assert "listing_age" in snap
     assert snap["listing_age"]["effective_age_days"] == 3
     assert snap["listing_age"]["source"] == "aqar_created"
+    # Phase 4.1: created_days and updated_days round-trip through
+    # FlexibleResponseModel(extra="allow") alongside the legacy fields.
+    assert snap["listing_age"]["created_days"] == 3
+    assert snap["listing_age"]["updated_days"] == 3
     assert "district_momentum" in snap
     assert snap["district_momentum"]["momentum_score"] == 82.5
     assert snap["district_momentum"]["sample_floor_applied"] is False

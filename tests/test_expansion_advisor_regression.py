@@ -1968,14 +1968,49 @@ def test_is_plausible_neighborhood_rejects_garbage_accepts_real_names():
 from app.services.expansion_advisor import _top_positives_and_risks
 
 
-def _phase4_candidate(listing_age=None, district_momentum=None, **extra):
+_PHASE4_MISSING = object()
+
+
+def _phase4_candidate(
+    *,
+    created_days=_PHASE4_MISSING,
+    updated_days=_PHASE4_MISSING,
+    district_momentum=None,
+    **extra,
+):
     """Build a neutral candidate dict that will not trigger any other
     positive-emitting branch in _top_positives_and_risks. Every numeric
     score sits in the dead band between positive and risk thresholds so
-    only the Phase 4 block can produce output."""
+    only the Phase 4 block can produce output.
+
+    Phase 4.1: tests now pass ``created_days`` / ``updated_days``
+    independently. ``effective_age_days`` and ``source`` are still
+    populated for memo/rerank back-compat (and to pin the independence
+    of the new pill logic from the GREATEST()-derived fields), but the
+    new rationale logic reads created_days / updated_days directly.
+    The _PHASE4_MISSING sentinel means the test did not specify the
+    field; when BOTH are sentinels, no ``listing_age`` dict is attached
+    at all so we can exercise the "feature_snapshot_json has no
+    listing_age" path. Passing ``None`` explicitly attaches a
+    listing_age dict where the relevant day field is None (unknown).
+    """
     fs = {}
-    if listing_age is not None:
-        fs["listing_age"] = listing_age
+    if created_days is not _PHASE4_MISSING or updated_days is not _PHASE4_MISSING:
+        cd = None if created_days is _PHASE4_MISSING else created_days
+        ud = None if updated_days is _PHASE4_MISSING else updated_days
+        _age_candidates = [x for x in (cd, ud) if x is not None]
+        if _age_candidates:
+            effective = min(_age_candidates)
+            source = "aqar_updated" if ud == effective else "aqar_created"
+        else:
+            effective = None
+            source = "unknown"
+        fs["listing_age"] = {
+            "effective_age_days": effective,
+            "source": source,
+            "created_days": cd,
+            "updated_days": ud,
+        }
     if district_momentum is not None:
         fs["district_momentum"] = district_momentum
     return {
@@ -2005,20 +2040,22 @@ _ACTIVE_MOMENTUM = {"momentum_score": 82.0, "sample_floor_applied": False}
 
 def test_phase4_state2_new_only_appends_new_string():
     candidate = _phase4_candidate(
-        listing_age={"effective_age_days": 2, "source": "aqar_created"},
+        created_days=2,
+        updated_days=2,
         district_momentum=_NEUTRAL_MOMENTUM,
     )
     positives, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
     assert "Newly listed within the last week." in positives
-    assert "Recently refreshed listing in an actively trading district." not in positives
-    assert "District is actively attracting new listings right now." not in positives
+    assert "Recently refreshed listing in a top-tier market." not in positives
+    assert "District ranks in the top tier for recent listing activity." not in positives
 
 
 def test_phase4_state3_updated_only_appends_updated_string():
     candidate = _phase4_candidate(
-        listing_age={"effective_age_days": 4, "source": "aqar_updated"},
+        created_days=30,
+        updated_days=4,
         district_momentum=_NEUTRAL_MOMENTUM,
     )
     positives, _ = _top_positives_and_risks(
@@ -2030,48 +2067,52 @@ def test_phase4_state3_updated_only_appends_updated_string():
 
 def test_phase4_state5_active_market_only():
     candidate = _phase4_candidate(
-        listing_age={"effective_age_days": 120, "source": "aqar_updated"},
+        created_days=120,
+        updated_days=120,
         district_momentum=_ACTIVE_MOMENTUM,
     )
     positives, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
-    assert "District is actively attracting new listings right now." in positives
+    assert "District ranks in the top tier for recent listing activity." in positives
     assert "Newly listed within the last week." not in positives
     assert "Listing refreshed by the owner within the last week." not in positives
 
 
 def test_phase4_state6_new_plus_active_appends_combined_string():
     candidate = _phase4_candidate(
-        listing_age={"effective_age_days": 1, "source": "aqar_created"},
+        created_days=1,
+        updated_days=1,
         district_momentum={"momentum_score": 90.0, "sample_floor_applied": False},
     )
     positives, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
-    assert "Newly listed in an actively trading district." in positives
+    assert "Newly listed in a top-tier market." in positives
     # The combined string replaces the standalone strings — the function
     # emits exactly one Phase 4 line.
     assert "Newly listed within the last week." not in positives
-    assert "District is actively attracting new listings right now." not in positives
+    assert "District ranks in the top tier for recent listing activity." not in positives
 
 
 def test_phase4_state7_updated_plus_active_appends_combined_string():
     candidate = _phase4_candidate(
-        listing_age={"effective_age_days": 6, "source": "aqar_updated"},
+        created_days=30,
+        updated_days=6,
         district_momentum={"momentum_score": 75.0, "sample_floor_applied": False},
     )
     positives, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
-    assert "Recently refreshed listing in an actively trading district." in positives
+    assert "Recently refreshed listing in a top-tier market." in positives
     assert "Listing refreshed by the owner within the last week." not in positives
-    assert "District is actively attracting new listings right now." not in positives
+    assert "District ranks in the top tier for recent listing activity." not in positives
 
 
 def test_phase4_state1_neither_signal_emits_nothing():
     candidate = _phase4_candidate(
-        listing_age={"effective_age_days": 30, "source": "aqar_created"},
+        created_days=30,
+        updated_days=30,
         district_momentum=_NEUTRAL_MOMENTUM,
     )
     positives, _ = _top_positives_and_risks(
@@ -2080,38 +2121,45 @@ def test_phase4_state1_neither_signal_emits_nothing():
     for phrase in (
         "Newly listed within the last week.",
         "Listing refreshed by the owner within the last week.",
-        "Newly listed in an actively trading district.",
-        "Recently refreshed listing in an actively trading district.",
-        "District is actively attracting new listings right now.",
+        "Newly listed in a top-tier market.",
+        "Recently refreshed listing in a top-tier market.",
+        "District ranks in the top tier for recent listing activity.",
     ):
         assert phrase not in positives
 
 
 def test_phase4_momentum_threshold_cliff_69_99_emits_nothing():
     candidate = _phase4_candidate(
-        listing_age={"effective_age_days": 120, "source": "aqar_updated"},
+        created_days=120,
+        updated_days=120,
         district_momentum={"momentum_score": 69.99, "sample_floor_applied": False},
     )
     positives, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
-    assert "District is actively attracting new listings right now." not in positives
+    assert "District ranks in the top tier for recent listing activity." not in positives
 
 
 def test_phase4_momentum_threshold_cliff_70_00_emits_active_market():
     candidate = _phase4_candidate(
-        listing_age={"effective_age_days": 120, "source": "aqar_updated"},
+        created_days=120,
+        updated_days=120,
         district_momentum={"momentum_score": 70.0, "sample_floor_applied": False},
     )
     positives, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
-    assert "District is actively attracting new listings right now." in positives
+    assert "District ranks in the top tier for recent listing activity." in positives
 
 
-def test_phase4_first_seen_source_does_not_trigger_freshness():
+def test_phase4_both_days_null_emits_no_freshness():
+    """Replaces the obsolete first_seen-source test. With the
+    independent-timestamps design, source is no longer consulted by
+    the pill logic; instead, None/None on the two raw day fields
+    must suppress both "New" and "Updated"."""
     candidate = _phase4_candidate(
-        listing_age={"effective_age_days": 3, "source": "first_seen"},
+        created_days=None,
+        updated_days=None,
         district_momentum=_NEUTRAL_MOMENTUM,
     )
     positives, _ = _top_positives_and_risks(
@@ -2122,6 +2170,53 @@ def test_phase4_first_seen_source_does_not_trigger_freshness():
         "Listing refreshed by the owner within the last week.",
     ):
         assert phrase not in positives
+
+
+def test_phase4_new_wins_when_both_days_are_fresh():
+    """Key regression test for the scraper-cadence issue. Before 4.1
+    the GREATEST() winner (aqar_updated) shadowed aqar_created, so a
+    row with both created_days=2 and updated_days=2 emitted "Updated"
+    instead of "New". After 4.1, "New" wins when created_days is within
+    the freshness window, regardless of updated_days."""
+    candidate = _phase4_candidate(
+        created_days=2,
+        updated_days=2,
+        district_momentum=_NEUTRAL_MOMENTUM,
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    assert "Newly listed within the last week." in positives
+    assert "Listing refreshed by the owner within the last week." not in positives
+
+
+def test_phase4_updated_fires_only_when_created_is_older_than_window():
+    candidate = _phase4_candidate(
+        created_days=30,
+        updated_days=3,
+        district_momentum=_NEUTRAL_MOMENTUM,
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    assert "Listing refreshed by the owner within the last week." in positives
+    assert "Newly listed within the last week." not in positives
+
+
+def test_phase4_new_fires_even_when_updated_is_also_fresh():
+    """Pins the scraper-cadence regression: New fires based on
+    created_days alone, even when aqar_updated_at would have won the
+    GREATEST() tie-break."""
+    candidate = _phase4_candidate(
+        created_days=3,
+        updated_days=1,
+        district_momentum=_NEUTRAL_MOMENTUM,
+    )
+    positives, _ = _top_positives_and_risks(
+        candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
+    )
+    assert "Newly listed within the last week." in positives
+    assert "Listing refreshed by the owner within the last week." not in positives
 
 
 def test_phase4_block_runs_after_existing_positives_in_function_order():
@@ -2131,7 +2226,8 @@ def test_phase4_block_runs_after_existing_positives_in_function_order():
     string so the card's positives[0]-only render picks the stronger
     rationale."""
     candidate = _phase4_candidate(
-        listing_age={"effective_age_days": 1, "source": "aqar_created"},
+        created_days=1,
+        updated_days=1,
         district_momentum=_NEUTRAL_MOMENTUM,
         demand_score=85.0,  # triggers "Demand potential is strong..."
     )

@@ -68,18 +68,27 @@ export default function ExpansionCandidateCard({
   // by convention, not by shared config.
   const LISTING_FRESHNESS_DAYS = 7;
   const MOMENTUM_DISPLAY_THRESHOLD = 70;
-  type ListingAge = { effective_age_days?: number | null; source?: string | null };
+  type ListingAge = {
+    effective_age_days?: number | null;
+    source?: string | null;
+    created_days?: number | null;
+    updated_days?: number | null;
+  };
   type DistrictMomentum = { momentum_score?: number | null; sample_floor_applied?: boolean | null };
   const listingAge = candidate.feature_snapshot_json?.listing_age as ListingAge | undefined;
   const momentum = candidate.feature_snapshot_json?.district_momentum as DistrictMomentum | undefined;
-  const ageDays = typeof listingAge?.effective_age_days === "number" ? listingAge.effective_age_days : null;
-  const ageSource = listingAge?.source ?? "unknown";
-  const isFresh = ageDays !== null && ageDays <= LISTING_FRESHNESS_DAYS;
+  // Read created_days and updated_days independently. The GREATEST-based
+  // `source` field is retained for memo/rerank back-compat but must NOT
+  // drive the pill: the scraper's daily cadence makes aqar_updated win
+  // the tie-break on ~93% of rows, which would hide the "New" pill on
+  // genuinely new listings.
+  const createdDays = typeof listingAge?.created_days === "number" ? listingAge.created_days : null;
+  const updatedDays = typeof listingAge?.updated_days === "number" ? listingAge.updated_days : null;
   const freshness: "new" | "updated" | null =
-    isFresh && ageSource === "aqar_created" ? "new"
-    : isFresh && ageSource === "aqar_updated" ? "updated"
+    createdDays !== null && createdDays <= LISTING_FRESHNESS_DAYS ? "new"
+    : updatedDays !== null && updatedDays <= LISTING_FRESHNESS_DAYS ? "updated"
     : null;
-  const showActiveMarket =
+  const showTopTierMarket =
     typeof momentum?.momentum_score === "number"
     && momentum.momentum_score >= MOMENTUM_DISPLAY_THRESHOLD
     && momentum.sample_floor_applied === false;
@@ -166,12 +175,12 @@ export default function ExpansionCandidateCard({
               {t("expansionAdvisor.updatedBadge")}
             </span>
           )}
-          {showActiveMarket && (
+          {showTopTierMarket && (
             <span
               className="ea-badge ea-badge--amber ea-candidate__momentum-pill"
-              title={t("expansionAdvisor.activeMarketTooltip")}
+              title={t("expansionAdvisor.topTierMarketTooltip")}
             >
-              {t("expansionAdvisor.activeMarketTag")}
+              {t("expansionAdvisor.topTierMarketTag")}
             </span>
           )}
         </div>
