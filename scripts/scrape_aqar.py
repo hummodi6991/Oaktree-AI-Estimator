@@ -1616,6 +1616,69 @@ def mark_stale_listings(db, type_keys: list[str] | None = None) -> int:
     return result.rowcount
 
 
+# Coverage floor for the per-run immediate-close sweep: require that the
+# scrape saw at least this fraction of the currently-active pool for the
+# type before we trust a "not seen this run" signal to mean "closed". A
+# broken crawl (e.g. Aqar HTML layout change) that returns only a handful
+# of listings must not be allowed to nuke the whole pool — in that case
+# we fall back to the 28-day ``mark_stale_listings`` safety net.
+_IMMEDIATE_CLOSE_MIN_COVERAGE = 0.5
+
+
+def mark_unseen_listings_closed(
+    db,
+    type_key: str,
+    seen_aqar_ids: set[str],
+    min_coverage: float = _IMMEDIATE_CLOSE_MIN_COVERAGE,
+) -> int:
+    """Flip active listings of ``type_key`` whose ``aqar_id`` was not seen in
+    the current scrape to ``status = 'stale'``. Lets closed listings drop
+    from the downstream shortlist on the same day instead of waiting the
+    28-day stale-marker window.
+
+    Returns the number of rows flipped to ``'stale'``, or ``-1`` when the
+    coverage guard tripped and the sweep was skipped.
+    """
+    from sqlalchemy import text as sa_text
+
+    active_count = db.execute(
+        sa_text(
+            "SELECT COUNT(*) FROM commercial_unit "
+            "WHERE status = 'active' AND listing_type = :lt"
+        ),
+        {"lt": type_key},
+    ).scalar() or 0
+
+    if active_count == 0:
+        return 0
+
+    coverage = len(seen_aqar_ids) / active_count
+    if coverage < min_coverage:
+        logger.warning(
+            "Skipping immediate-close sweep for %s: only %d of %d currently-active "
+            "listings were seen (%.1f%% < %.0f%% coverage floor). Falling back to "
+            "the %d-day stale marker.",
+            type_key,
+            len(seen_aqar_ids),
+            active_count,
+            coverage * 100,
+            min_coverage * 100,
+            _STALE_DAYS,
+        )
+        return -1
+
+    result = db.execute(
+        sa_text(
+            "UPDATE commercial_unit SET status = 'stale' "
+            "WHERE status = 'active' "
+            "  AND listing_type = :lt "
+            "  AND aqar_id <> ALL(:seen_ids)"
+        ),
+        {"lt": type_key, "seen_ids": list(seen_aqar_ids)},
+    )
+    return result.rowcount
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -1931,6 +1994,21 @@ def main():
 
                 if db and not args.dry_run:
                     db.commit()
+
+            # Immediate-close sweep: flip listings of this type that Aqar did
+            # not return in this run to 'stale' right away, so closed listings
+            # drop from the downstream candidate_location rebuild on the same
+            # day rather than lingering for the 28-day stale-marker window.
+            # Coverage-guarded inside mark_unseen_listings_closed() to avoid
+            # a broken crawl wiping the whole pool.
+            if db and not args.dry_run and not args.list_only:
+                closed = mark_unseen_listings_closed(db, type_key, seen_aqar_ids)
+                db.commit()
+                if closed > 0:
+                    print(
+                        f"  Marked {closed} {type_key} listings as closed "
+                        f"(not seen in this run)"
+                    )
 
             logger.info(
                 "Type %s done: scraped=%d, skipped_existing=%d, insert=%d, update=%d",
