@@ -6,6 +6,14 @@ import CategorySelect from "./CategorySelect";
 import DistrictMultiSelect from "./DistrictMultiSelect";
 import BranchLocationPicker from "./BranchLocationPicker";
 
+// Hide the Advanced "GEOGRAPHY" section (preferred/excluded districts).
+// Target districts in the main brief body is the operator's real lever;
+// preferred/excluded contribute only a ~±0.55 overall-score nudge via
+// _brand_fit_score and are redundant with the hard target_districts filter.
+// Backend schema, persistence, and scoring are untouched — defaults to []
+// keep the payload contract intact. Flip to `true` to re-expose.
+const SHOW_ADVANCED_GEOGRAPHY_SECTION = false;
+
 export const defaultBrief: ExpansionBrief = {
   brand_name: "",
   category: "",
@@ -320,33 +328,35 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
           </div>
 
           {/* Preferred / excluded districts */}
-          <div className="ea-form__section">
-            <h4 className="ea-form__section-title">{t("expansionAdvisor.geography")}</h4>
-            <div className="ea-form__row">
-              <div className="ea-form__field">
-                <label className="ea-form__label">{t("expansionAdvisor.preferredDistricts")}</label>
-                <DistrictMultiSelect
-                  options={districtOptions}
-                  selected={brief.brand_profile?.preferred_districts || []}
-                  onChange={(vals) => setProfile("preferred_districts", vals)}
-                  disabled={loading}
-                  placeholder={t("expansionAdvisor.preferredDistricts")}
-                  conflictValues={brief.brand_profile?.excluded_districts || []}
-                />
-              </div>
-              <div className="ea-form__field">
-                <label className="ea-form__label">{t("expansionAdvisor.excludedDistricts")}</label>
-                <DistrictMultiSelect
-                  options={districtOptions}
-                  selected={brief.brand_profile?.excluded_districts || []}
-                  onChange={(vals) => setProfile("excluded_districts", vals)}
-                  disabled={loading}
-                  placeholder={t("expansionAdvisor.excludedDistricts")}
-                  conflictValues={brief.brand_profile?.preferred_districts || []}
-                />
+          {SHOW_ADVANCED_GEOGRAPHY_SECTION && (
+            <div className="ea-form__section">
+              <h4 className="ea-form__section-title">{t("expansionAdvisor.geography")}</h4>
+              <div className="ea-form__row">
+                <div className="ea-form__field">
+                  <label className="ea-form__label">{t("expansionAdvisor.preferredDistricts")}</label>
+                  <DistrictMultiSelect
+                    options={districtOptions}
+                    selected={brief.brand_profile?.preferred_districts || []}
+                    onChange={(vals) => setProfile("preferred_districts", vals)}
+                    disabled={loading}
+                    placeholder={t("expansionAdvisor.preferredDistricts")}
+                    conflictValues={brief.brand_profile?.excluded_districts || []}
+                  />
+                </div>
+                <div className="ea-form__field">
+                  <label className="ea-form__label">{t("expansionAdvisor.excludedDistricts")}</label>
+                  <DistrictMultiSelect
+                    options={districtOptions}
+                    selected={brief.brand_profile?.excluded_districts || []}
+                    onChange={(vals) => setProfile("excluded_districts", vals)}
+                    disabled={loading}
+                    placeholder={t("expansionAdvisor.excludedDistricts")}
+                    conflictValues={brief.brand_profile?.preferred_districts || []}
+                  />
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </>
       )}
 
