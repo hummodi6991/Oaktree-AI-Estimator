@@ -831,6 +831,64 @@ def test_candidate_gate_status_blocking_failure_on_low_fit():
     assert len(reasons["blocking_failures"]) > 0
 
 
+# ---------------------------------------------------------------------------
+# parking_pass trusts derived parking_score (Aqar listings)
+# ---------------------------------------------------------------------------
+
+_PARKING_GATE_KWARGS = dict(
+    fit_score=78.0,
+    area_fit_score=82.0,
+    area_m2=200.0,
+    min_area_m2=100.0,
+    max_area_m2=500.0,
+    zoning_fit_score=88.0,
+    landuse_available=True,
+    frontage_score=70.0,
+    access_score=70.0,
+    district="Al Olaya",
+    distance_to_nearest_branch_m=3200.0,
+    provider_density_score=60.0,
+    multi_platform_presence_score=40.0,
+    economics_score=70.0,
+    brand_profile={"primary_channel": "balanced"},
+    road_context_available=True,
+    parking_context_available=True,
+    is_listing=True,
+    unit_street_width_m=12.0,
+)
+
+
+def test_parking_pass_true_when_score_above_threshold_for_listing():
+    """Aqar listings with parking_score >= 45 now pass the parking gate
+    instead of being stuck at None."""
+    gate_status, reasons = _candidate_gate_status(
+        **_PARKING_GATE_KWARGS, parking_score=60.0,
+    )
+    assert gate_status["parking_pass"] is True
+    assert "parking_pass" in reasons["passed"]
+
+
+def test_parking_pass_false_when_score_below_threshold_for_listing():
+    """Aqar listings with parking_score < 45 fail the parking gate as an
+    advisory failure (not a blocking failure)."""
+    gate_status, reasons = _candidate_gate_status(
+        **_PARKING_GATE_KWARGS, parking_score=30.0,
+    )
+    assert gate_status["parking_pass"] is False
+    assert "parking_pass" in reasons["failed"]
+    assert "parking_pass" in reasons["advisory_failures"]
+    assert "parking_pass" not in reasons["blocking_failures"]
+
+
+def test_parking_pass_none_when_score_missing_for_listing():
+    """When parking_score is None (no context), parking_pass stays None."""
+    gate_status, reasons = _candidate_gate_status(
+        **_PARKING_GATE_KWARGS, parking_score=None,
+    )
+    assert gate_status["parking_pass"] is None
+    assert "parking_pass" in reasons["unknown"]
+
+
 def test_smoke():
     assert True
 

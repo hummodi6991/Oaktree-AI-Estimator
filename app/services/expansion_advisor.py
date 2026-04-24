@@ -2428,7 +2428,7 @@ def _candidate_gate_status(
     landuse_available: bool,
     frontage_score: float,
     access_score: float,
-    parking_score: float,
+    parking_score: float | None,
     district: str | None,
     distance_to_nearest_branch_m: float | None,
     provider_density_score: float,
@@ -2488,16 +2488,21 @@ def _candidate_gate_status(
         frontage_access_pass: bool | None = None
     else:
         frontage_access_pass = (frontage_score >= thresholds["frontage_access_min"]) and (access_score >= thresholds["frontage_access_min"])
-    # Parking gate: tri-state for listings.
-    # Aqar publishes no parking ground truth on units. Bulk OSM parking
-    # enrichment is about the surrounding neighborhood, not the listing
-    # itself, so it cannot substitute. For listings, always mark parking
-    # as unknown — failing a listing on a low parking score is penalizing
-    # operators for data we structurally cannot get.
-    if is_listing:
-        parking_pass: bool | None = None
+    # parking_pass — trust the derived parking_score when it's populated.
+    # For Aqar listings, Aqar doesn't expose a structured parking field
+    # (their template only has Water/Electricity/Drainage), so the verdict
+    # has historically been None. But the scorer already derives a parking
+    # context from nearby OSM parking amenities and street-width signals,
+    # and that score is populated on virtually all candidates. Treating that
+    # score as ground truth for the gate lets overall_pass resolve to a
+    # real true/false verdict instead of being stuck at null.
+    parking_pass: bool | None
+    if parking_score is None:
+        parking_pass = None
+    elif parking_score >= thresholds["parking_min"]:
+        parking_pass = True
     else:
-        parking_pass = parking_score >= thresholds["parking_min"]
+        parking_pass = False
 
     district_norm = normalize_district_key(district) if district else None
     excluded = {
@@ -2605,11 +2610,7 @@ def _candidate_gate_status(
             if frontage_access_pass is None and is_listing
             else "Frontage/access gate depends on road context and road-adjacent signals."
         ),
-        "parking_pass": (
-            "Parking context is not available for Aqar listings — cannot evaluate."
-            if parking_pass is None and is_listing
-            else "Parking gate depends on nearby parking amenity context and parcel suitability."
-        ),
+        "parking_pass": "Parking context is derived from nearby parking amenities and street geometry; passes when derived score meets the minimum threshold.",
         "district_pass": "District gate fails only for explicitly excluded districts.",
         "cannibalization_pass": "Cannibalization gate checks minimum spacing from existing branches.",
         "delivery_market_pass": delivery_explanation,
