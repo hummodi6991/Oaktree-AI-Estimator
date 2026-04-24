@@ -50,6 +50,24 @@ export type CandidateGateReasons = {
   explanations: Record<string, unknown>;
 };
 
+// Per-gate verdicts are tri-state at runtime: true (pass), false (fail),
+// or null (unknown — the gate couldn't be evaluated, e.g. parking_pass
+// for Aqar listings with no parking ground truth). The backend's
+// `_candidate_gate_status` emits all three values, so each field is
+// `boolean | null` rather than the narrower `true | null`.
+export type CandidateGateStatusJson = {
+  overall_pass?: boolean | null;
+  zoning_fit_pass?: boolean | null;
+  area_fit_pass?: boolean | null;
+  frontage_access_pass?: boolean | null;
+  parking_pass?: boolean | null;
+  district_pass?: boolean | null;
+  cannibalization_pass?: boolean | null;
+  delivery_market_pass?: boolean | null;
+  economics_pass?: boolean | null;
+  [key: string]: boolean | null | undefined;
+};
+
 export type CandidateFeatureSnapshot = {
   context_sources: Record<string, unknown>;
   missing_context: string[];
@@ -157,7 +175,7 @@ export type ExpansionCandidate = {
   estimated_fitout_cost_sar?: number;
   estimated_revenue_index?: number;
   decision_summary?: string;
-  gate_status_json?: Record<string, boolean | null | undefined>;
+  gate_status_json?: CandidateGateStatusJson;
   gate_reasons_json?: CandidateGateReasons;
   feature_snapshot_json?: CandidateFeatureSnapshot;
   score_breakdown_json?: CandidateScoreBreakdown;
@@ -244,7 +262,7 @@ export type CompareCandidateItem = {
   final_score?: number;
   confidence_grade?: string;
   gate_verdict?: string;
-  gate_status_json?: Record<string, boolean | null | undefined>;
+  gate_status_json?: CandidateGateStatusJson;
   gate_reasons_json?: CandidateGateReasons;
   feature_snapshot_json?: CandidateFeatureSnapshot;
   score_breakdown_json?: CandidateScoreBreakdown;
