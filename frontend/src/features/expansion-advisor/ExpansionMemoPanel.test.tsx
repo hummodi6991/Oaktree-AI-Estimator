@@ -298,3 +298,335 @@ describe("ExpansionMemoPanel chunk 3d — scroll-to-section plumbing", () => {
     expect(typeof callChunk4).toBe("function");
   });
 });
+
+/* ─── Phase 1A: Breakdown tab ──────────────────────────────────────────── */
+
+import ar from "../../i18n/ar.json";
+
+// renderToStaticMarkup escapes &/</> in text content. Tests that compare
+// against an i18n string containing one of these characters need to use
+// the escaped form. Only & matters for our current strings.
+function escapeHtmlAmp(s: string): string {
+  return s.replace(/&/g, "&amp;");
+}
+
+function richBreakdownMemo() {
+  return {
+    recommendation: { verdict: "go", headline: "GO" },
+    candidate: {
+      final_score: 78,
+      confidence_grade: "B",
+      score_breakdown_json: {
+        final_score: 78,
+        weights: {},
+        inputs: {},
+        weighted_components: { demand_potential: 0.72 },
+      },
+      gate_status: { overall_pass: true },
+      // Site grade scores (direct properties on candidate)
+      parking_score: 64,
+      frontage_score: 72,
+      access_score: 81,
+      access_visibility_score: 70,
+      zoning_fit_score: 88,
+      // Market signals scores
+      provider_density_score: 55,
+      provider_whitespace_score: 60,
+      multi_platform_presence_score: 45,
+      delivery_competition_score: 40,
+      cannibalization_score: 90,
+      feature_snapshot: {
+        context_sources: {
+          road_evidence_band: "moderate",
+          parking_evidence_band: "limited",
+          rent_base_sar_m2_year: 1200,
+          rent_micro_adjustment: { multiplier: 1.052 },
+        },
+        missing_context: [],
+        data_completeness_score: 80,
+        district_momentum: {
+          momentum_score: 72,
+          percentile_composite: 0.78,
+          activity_30d: 14,
+          district_label: "Al Olaya",
+          sample_floor_applied: false,
+        },
+        listing_age: { created_days: 3, updated_days: 1 },
+        realized_demand_30d: 42.7,
+        realized_demand_branches: 5,
+        realized_demand_window_days: 30,
+        candidate_location: {
+          is_vacant: false,
+          current_tenant: "Cafe X",
+          current_category: "cafe",
+        },
+      },
+    },
+    market_research: {},
+    brand_profile: {},
+  };
+}
+
+describe("ExpansionMemoPanel — Breakdown tab presence", () => {
+  it("renders the Breakdown tab button with the resolved English label", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} />,
+    );
+    expect(html).toContain(en.expansionAdvisor.memoTab_breakdown);
+    expect(en.expansionAdvisor.memoTab_breakdown).toBe("Breakdown");
+    expect(html).not.toContain("expansionAdvisor.memoTab_breakdown");
+  });
+
+  it("renders the Breakdown tab button with the resolved Arabic label", async () => {
+    await i18n.changeLanguage("ar");
+    try {
+      const html = renderToStaticMarkup(
+        <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} />,
+      );
+      expect(html).toContain(ar.expansionAdvisor.memoTab_breakdown);
+      expect(ar.expansionAdvisor.memoTab_breakdown).toBe("تفصيل");
+    } finally {
+      await i18n.changeLanguage("en");
+    }
+  });
+
+  it("does not render Breakdown panel content when economics is the active tab (default)", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} />,
+    );
+    expect(html).not.toContain("ea-memo-breakdown");
+    // Site-grade explainer string belongs to the Breakdown tab; must not leak
+    // into the default-active economics panel.
+    expect(html).not.toContain(en.expansionAdvisor.breakdownSiteGradeExplainer);
+  });
+});
+
+describe("ExpansionMemoPanel — Breakdown tab content (initialTab='breakdown')", () => {
+  it("renders all four sub-section headers + explainers when data is rich", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="breakdown" />,
+    );
+    expect(html).toContain("ea-memo-breakdown");
+    expect(html).toContain(en.expansionAdvisor.breakdownSiteGrade);
+    expect(html).toContain(en.expansionAdvisor.breakdownSiteGradeExplainer);
+    expect(html).toContain(en.expansionAdvisor.breakdownMarketSignals);
+    expect(html).toContain(en.expansionAdvisor.breakdownMarketSignalsExplainer);
+    // "Economics & timing" — & becomes &amp; in static markup
+    expect(html).toContain(escapeHtmlAmp(en.expansionAdvisor.breakdownEconomicsTiming));
+    expect(html).toContain(en.expansionAdvisor.breakdownEconomicsTimingExplainer);
+    expect(html).toContain(en.expansionAdvisor.breakdownPropertyStatus);
+    expect(html).toContain(en.expansionAdvisor.breakdownPropertyStatusExplainer);
+  });
+
+  it("renders site-grade ScoreBars with rounded numeric values and labels", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="breakdown" />,
+    );
+    // ScoreBar rounds the displayed value
+    expect(html).toContain("ea-score-bar");
+    expect(html).toContain(en.expansionAdvisor.parkingScore);
+    expect(html).toContain(en.expansionAdvisor.frontageScore);
+    expect(html).toContain(en.expansionAdvisor.accessScore);
+    expect(html).toContain(en.expansionAdvisor.zoningFitScore);
+    // The bar fill uses width:%; the rounded numeric is in the head.
+    expect(html).toMatch(/>72</); // frontage
+    expect(html).toMatch(/>81</); // access
+    expect(html).toMatch(/>88</); // zoning
+  });
+
+  it("renders evidence bands with humanized values", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="breakdown" />,
+    );
+    expect(html).toContain(en.expansionAdvisor.roadEvidenceBandLabel);
+    expect(html).toContain(en.expansionAdvisor.roadEvidenceBand_moderate);
+    expect(html).toContain(en.expansionAdvisor.parkingEvidenceBandLabel);
+    expect(html).toContain(en.expansionAdvisor.parkingEvidenceBand_limited);
+  });
+
+  it("renders district momentum score bar plus percentile/activity/label rows", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="breakdown" />,
+    );
+    expect(html).toContain(en.expansionAdvisor.districtMomentumScore);
+    expect(html).toContain("78th percentile");
+    expect(html).toContain(en.expansionAdvisor.districtActivity30d);
+    expect(html).toContain(">14<"); // activity_30d
+    expect(html).toContain("Al Olaya");
+    // Below-floor note must NOT render when sample_floor_applied is false.
+    expect(html).not.toContain(en.expansionAdvisor.districtMomentumBelowFloor);
+  });
+
+  it("renders the below-floor note (and NO momentum fields) when sample_floor_applied is true", () => {
+    const memo = richBreakdownMemo() as any;
+    memo.candidate.feature_snapshot.district_momentum = {
+      momentum_score: 50,
+      activity_30d: 5,
+      active_in_district: 8,
+      percentile_raw: 0.5,
+      percentile_absolute: 0.5,
+      percentile_composite: 0.5,
+      district_label: "Tiny District",
+      sample_floor_applied: true,
+    };
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo} initialTab="breakdown" />,
+    );
+    expect(html).toContain(en.expansionAdvisor.districtMomentumBelowFloor);
+    // None of the four detail rows should render under sample-floor.
+    expect(html).not.toContain("th percentile");
+    expect(html).not.toContain(en.expansionAdvisor.districtActivity30d);
+    expect(html).not.toContain("Tiny District");
+    // The momentum score bar is also suppressed.
+    const districtMomentumLabelIdx = html.indexOf(en.expansionAdvisor.districtMomentumScore);
+    expect(districtMomentumLabelIdx).toBe(-1);
+  });
+
+  it("renders rent baseline using SAR/m²/year interpolation and a signed micro-adjustment percentage", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="breakdown" />,
+    );
+    expect(html).toContain(en.expansionAdvisor.rentBaseline);
+    expect(html).toContain("1200"); // rounded rent_base_sar_m2_year
+    expect(html).toContain(en.expansionAdvisor.rentMicroAdjustment);
+    expect(html).toContain("+5.2%"); // (1.052 - 1) * 100 = 5.2
+  });
+
+  it("formats negative micro-adjustment with the unicode minus sign", () => {
+    const memo = richBreakdownMemo() as any;
+    memo.candidate.feature_snapshot.context_sources.rent_micro_adjustment = { multiplier: 0.88 };
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo} initialTab="breakdown" />,
+    );
+    expect(html).toContain("−12.0%"); // unicode U+2212
+  });
+
+  it("formats zero micro-adjustment as '0.0%'", () => {
+    const memo = richBreakdownMemo() as any;
+    memo.candidate.feature_snapshot.context_sources.rent_micro_adjustment = { multiplier: 1.0 };
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo} initialTab="breakdown" />,
+    );
+    expect(html).toContain("0.0%");
+  });
+
+  it("renders realized demand at value 0 (not hidden) with branches/window subline", () => {
+    const memo = richBreakdownMemo() as any;
+    memo.candidate.feature_snapshot.realized_demand_30d = 0;
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo} initialTab="breakdown" />,
+    );
+    expect(html).toContain(en.expansionAdvisor.realizedDemand30d);
+    expect(html).toContain("5 branches, 30d window");
+  });
+
+  it("renders both listing-age rows independently when both days are present", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="breakdown" />,
+    );
+    expect(html).toContain(en.expansionAdvisor.listingCreated);
+    expect(html).toContain("3 days ago");
+    expect(html).toContain(en.expansionAdvisor.listingUpdated);
+    expect(html).toContain("1 days ago");
+  });
+
+  it("renders Property status block with all three fields when populated", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="breakdown" />,
+    );
+    expect(html).toContain(en.expansionAdvisor.breakdownPropertyStatus);
+    expect(html).toContain(en.expansionAdvisor.vacancy);
+    expect(html).toContain(en.expansionAdvisor.vacancyOccupied);
+    expect(html).toContain(en.expansionAdvisor.currentTenant);
+    expect(html).toContain("Cafe X");
+    expect(html).toContain(en.expansionAdvisor.currentUse);
+    expect(html).toContain("cafe");
+  });
+
+  it("hides the entire Property status block when candidate_location is missing", () => {
+    const memo = richBreakdownMemo() as any;
+    delete memo.candidate.feature_snapshot.candidate_location;
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo} initialTab="breakdown" />,
+    );
+    expect(html).not.toContain(en.expansionAdvisor.breakdownPropertyStatus);
+    expect(html).not.toContain(en.expansionAdvisor.breakdownPropertyStatusExplainer);
+    expect(html).not.toContain(en.expansionAdvisor.vacancy);
+  });
+
+  it("hides the entire Property status block when all three occupancy fields are null/empty", () => {
+    const memo = richBreakdownMemo() as any;
+    memo.candidate.feature_snapshot.candidate_location = {
+      is_vacant: null,
+      current_tenant: "",
+      current_category: null,
+    };
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo} initialTab="breakdown" />,
+    );
+    expect(html).not.toContain(en.expansionAdvisor.breakdownPropertyStatus);
+  });
+
+  it("hides individual rows cleanly when their values are null/undefined (no '—' fallback in Breakdown tab)", () => {
+    const memo = {
+      recommendation: { verdict: "go", headline: "GO" },
+      candidate: {
+        final_score: 50,
+        confidence_grade: "C",
+        score_breakdown_json: {
+          final_score: 50,
+          weights: {},
+          inputs: {},
+          weighted_components: {},
+        },
+        gate_status: { overall_pass: false },
+        feature_snapshot: {
+          context_sources: {},
+          missing_context: [],
+          data_completeness_score: 0,
+        },
+      },
+      market_research: {},
+      brand_profile: {},
+    };
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo as any} initialTab="breakdown" />,
+    );
+    // Headers/explainers for Site grade, Market, Economics still render
+    // (they are unconditional). Property status hides entirely.
+    expect(html).toContain(en.expansionAdvisor.breakdownSiteGrade);
+    expect(html).toContain(en.expansionAdvisor.breakdownMarketSignals);
+    expect(html).toContain(escapeHtmlAmp(en.expansionAdvisor.breakdownEconomicsTiming));
+    expect(html).not.toContain(en.expansionAdvisor.breakdownPropertyStatus);
+    // No score bar rows render when all numeric values are absent.
+    expect(html).not.toContain("ea-score-bar");
+    // No evidence-band rows.
+    expect(html).not.toContain(en.expansionAdvisor.roadEvidenceBandLabel);
+    expect(html).not.toContain(en.expansionAdvisor.parkingEvidenceBandLabel);
+    // No rent baseline / micro-adjustment / listing-age / realized-demand
+    // rows. Match the label tag context so the explainer prose (which
+    // mentions "rent baseline" in passing) doesn't false-positive.
+    expect(html).not.toContain(`>${en.expansionAdvisor.rentBaseline}<`);
+    expect(html).not.toContain(`>${en.expansionAdvisor.rentMicroAdjustment}<`);
+    expect(html).not.toContain(`>${en.expansionAdvisor.listingCreated}<`);
+    expect(html).not.toContain(`>${en.expansionAdvisor.listingUpdated}<`);
+    expect(html).not.toContain(`>${en.expansionAdvisor.realizedDemand30d}<`);
+  });
+
+  it("ScoreBar renders aria-valuenow for value=0, aria-valuenow for value=50, and clamps width for value=100", () => {
+    const memo = richBreakdownMemo() as any;
+    memo.candidate.parking_score = 0;
+    memo.candidate.frontage_score = 50;
+    memo.candidate.access_score = 100;
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo} initialTab="breakdown" />,
+    );
+    expect(html).toMatch(/aria-valuenow="0"/);
+    expect(html).toMatch(/aria-valuenow="50"/);
+    expect(html).toMatch(/aria-valuenow="100"/);
+    // Fill widths
+    expect(html).toContain("width:0%");
+    expect(html).toContain("width:50%");
+    expect(html).toContain("width:100%");
+  });
+});
