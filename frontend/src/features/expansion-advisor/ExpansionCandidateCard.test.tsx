@@ -4,6 +4,7 @@ import React from "react";
 import "../../i18n";
 import i18n from "../../i18n";
 import ExpansionCandidateCard from "./ExpansionCandidateCard";
+import { normalizeCandidate } from "../../lib/api/expansionAdvisor";
 import type { ExpansionCandidate, RerankStatus } from "../../lib/api/expansionAdvisor";
 
 beforeEach(async () => {
@@ -549,5 +550,30 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Top-tier mar
     );
     expect(html).toContain(">New<");
     expect(html).not.toContain(">Updated<");
+  });
+});
+
+describe("ExpansionCandidateCard — stringified-Decimal coercion at boundary", () => {
+  it("renders area, annual rent and fitout cost as real values when API returns strings", () => {
+    // Mirrors the real backend response shape: SQLAlchemy Numeric columns
+    // come over the wire as strings (e.g. "150.00"). Pre-coercion this
+    // produced "—" placeholders for area / annual-rent / fitout chips.
+    const apiShape = {
+      ...baseCandidate({ final_rank: 1 }),
+      area_m2: "150.00" as unknown as number,
+      display_annual_rent_sar: "210000.00" as unknown as number,
+      estimated_annual_rent_sar: "210000.00" as unknown as number,
+      estimated_fitout_cost_sar: "85000.00" as unknown as number,
+      distance_to_nearest_branch_m: "2300.00" as unknown as number,
+    };
+    const candidate = normalizeCandidate(apiShape);
+    const html = renderCard(candidate);
+    // Area chip
+    expect(html).toContain("150 m²");
+    // Annual rent chip — formatted as compact "SAR 210K"
+    expect(html).toContain("SAR 210K");
+    // Should not show the fallback in the metrics row.
+    const metricsBlock = html.split("ea-candidate__metrics")[1] || "";
+    expect(metricsBlock).not.toMatch(/—\/yr/);
   });
 });

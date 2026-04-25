@@ -1,4 +1,5 @@
 import { buildApiUrl, fetchWithAuth } from "../../api";
+import { CANDIDATE_NUMERIC_FIELDS, coerceCandidateNumerics } from "./coerceNumeric";
 
 export type ExpansionAdvisorMeta = {
   version?: string;
@@ -436,9 +437,16 @@ const DEFAULT_FEATURE_SNAPSHOT: CandidateFeatureSnapshot = { context_sources: {}
 const DEFAULT_SCORE_BREAKDOWN: CandidateScoreBreakdown = { weights: {}, inputs: {}, weighted_components: {}, final_score: 0 };
 
 export function normalizeCandidate(candidate: ExpansionCandidate): ExpansionCandidate {
+  // Backend serializes Numeric columns as strings (e.g. "45.00") for
+  // precision; coerce them to numbers at the boundary so downstream
+  // formatters and arithmetic don't have to defend against mixed types.
+  const coerced = coerceCandidateNumerics(
+    candidate as unknown as Record<string, unknown>,
+    CANDIDATE_NUMERIC_FIELDS,
+  ) as ExpansionCandidate;
   return {
-    ...candidate,
-    rank_position: candidate.rank_position ?? undefined,
+    ...coerced,
+    rank_position: coerced.rank_position ?? undefined,
     confidence_grade: candidate.confidence_grade || "D",
     compare_rank: candidate.compare_rank ?? undefined,
     decision_summary: candidate.decision_summary || "",
@@ -499,13 +507,20 @@ export function normalizeReportResponse(data: RecommendationReportResponse): Rec
   const rec = data.recommendation || {};
   return {
     ...data,
-    top_candidates: (data.top_candidates || []).map((tc) => ({
-      ...tc,
-      top_positives_json: tc.top_positives_json || [],
-      top_risks_json: tc.top_risks_json || [],
-      score_breakdown_json: tc.score_breakdown_json || DEFAULT_SCORE_BREAKDOWN,
-      feature_snapshot_json: tc.feature_snapshot_json || {},
-    })),
+    top_candidates: (data.top_candidates || []).map((rawTc) => {
+      // Coerce stringified-Decimal numeric fields (see normalizeCandidate).
+      const tc = coerceCandidateNumerics(
+        rawTc as unknown as Record<string, unknown>,
+        CANDIDATE_NUMERIC_FIELDS,
+      ) as RecommendationTopCandidate;
+      return {
+        ...tc,
+        top_positives_json: tc.top_positives_json || [],
+        top_risks_json: tc.top_risks_json || [],
+        score_breakdown_json: tc.score_breakdown_json || DEFAULT_SCORE_BREAKDOWN,
+        feature_snapshot_json: tc.feature_snapshot_json || {},
+      };
+    }),
     assumptions: data.assumptions ?? {},
     recommendation: {
       ...rec,
@@ -527,7 +542,12 @@ export function normalizeReportResponse(data: RecommendationReportResponse): Rec
 }
 
 export function normalizeMemoResponse(data: CandidateMemoResponse): CandidateMemoResponse {
-  const cand = data.candidate || ({} as CandidateMemoResponse["candidate"]);
+  const rawCand = data.candidate || ({} as CandidateMemoResponse["candidate"]);
+  // Coerce stringified-Decimal numeric fields (see normalizeCandidate).
+  const cand = coerceCandidateNumerics(
+    rawCand as unknown as Record<string, unknown>,
+    CANDIDATE_NUMERIC_FIELDS,
+  ) as CandidateMemoResponse["candidate"];
   return {
     ...data,
     brand_profile: data.brand_profile || {},
@@ -557,7 +577,13 @@ export function normalizeMemoResponse(data: CandidateMemoResponse): CandidateMem
 export function normalizeCompareResponse(data: CompareCandidatesResponse): CompareCandidatesResponse {
   return {
     ...data,
-    items: (data.items || []).map((item) => ({
+    items: (data.items || []).map((rawItem) => {
+      // Coerce stringified-Decimal numeric fields (see normalizeCandidate).
+      const item = coerceCandidateNumerics(
+        rawItem as unknown as Record<string, unknown>,
+        CANDIDATE_NUMERIC_FIELDS,
+      ) as CompareCandidateItem;
+      return {
       ...item,
       confidence_grade: item.confidence_grade || "D",
       gate_status_json: (typeof item.gate_status_json === "object" && item.gate_status_json !== null) ? item.gate_status_json : {},
@@ -570,7 +596,8 @@ export function normalizeCompareResponse(data: CompareCandidatesResponse): Compa
       decision_summary: item.decision_summary || "",
       demand_thesis: item.demand_thesis || "",
       cost_thesis: item.cost_thesis || "",
-    })),
+      };
+    }),
     summary: data.summary || {},
   };
 }
