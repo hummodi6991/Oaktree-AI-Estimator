@@ -7,6 +7,7 @@ import GateSummary from "./GateSummary";
 import CopySummaryBlock from "./CopySummaryBlock";
 import DecisionLogicCard from "./DecisionLogicCard";
 import DecisionMemoNarrative from "./DecisionMemoNarrative";
+import ScoreBar from "./ScoreBar";
 import { fmtScore, fmtMeters, fmtSAR, fmtSARCompact, fmtM2, businessGateLabel, safeDistrictLabel, getDisplayScore } from "./formatHelpers";
 
 function toList(input: unknown): string[] {
@@ -38,7 +39,7 @@ function humanizeScoreLabel(key: string): string {
   return SCORE_LABEL_MAP[key.replace(/_score$/, "")] || cleaned.replace(/^\w/, (c) => c.toUpperCase());
 }
 
-type MemoTab = "economics" | "market" | "site" | "risks";
+type MemoTab = "economics" | "market" | "site" | "risks" | "breakdown";
 
 /**
  * Narrow enum of scrollable anchors inside the memo drawer. DOM order.
@@ -66,6 +67,7 @@ export default function ExpansionMemoPanel({
   hasShortlist,
   hasCompare,
   initialSection,
+  initialTab,
 }: {
   memo: CandidateMemoResponse | null;
   loading: boolean;
@@ -81,10 +83,13 @@ export default function ExpansionMemoPanel({
   hasShortlist?: boolean;
   hasCompare?: boolean;
   initialSection?: MemoDrawerSection;
+  /** Test affordance: pre-select a tab so SSR snapshots can assert tab content.
+   *  In production no caller passes this; the default ("economics") is unchanged. */
+  initialTab?: MemoTab;
 }) {
   const { t } = useTranslation();
   const [presentationMode, setPresentationMode] = useState(false);
-  const [activeTab, setActiveTab] = useState<MemoTab>("economics");
+  const [activeTab, setActiveTab] = useState<MemoTab>(initialTab ?? "economics");
 
   // Scroll anchors for initialSection-driven scrollIntoView. Only attached
   // when initialSection is set — see conditional className below so the
@@ -266,7 +271,7 @@ export default function ExpansionMemoPanel({
                     {/* ── Tabbed sections ── */}
                     <div className="ea-memo-tabs">
                       <div className="ea-memo-tabs__nav">
-                        {(["economics", "market", "site", "risks"] as MemoTab[]).map((tab) => (
+                        {(["economics", "market", "site", "risks", "breakdown"] as MemoTab[]).map((tab) => (
                           <button
                             key={tab}
                             type="button"
@@ -456,6 +461,220 @@ export default function ExpansionMemoPanel({
                             )}
                           </div>
                         )}
+
+                        {/* Breakdown tab — Phase 1A enrichments grouped into
+                            four sub-sections. Each row hides when its value
+                            is null/undefined/empty (no "—" fallback), so the
+                            tab adapts to data availability per candidate. */}
+                        {activeTab === "breakdown" && (() => {
+                          const ctxSources = (snapshot?.context_sources || {}) as Record<string, unknown>;
+                          const roadBand = typeof ctxSources.road_evidence_band === "string" ? ctxSources.road_evidence_band : null;
+                          const parkingBand = typeof ctxSources.parking_evidence_band === "string" ? ctxSources.parking_evidence_band : null;
+                          const rentBase = typeof ctxSources.rent_base_sar_m2_year === "number" ? ctxSources.rent_base_sar_m2_year : null;
+                          const rentMicroAdj = ctxSources.rent_micro_adjustment as Record<string, unknown> | null | undefined;
+                          const microMultiplier = typeof rentMicroAdj?.multiplier === "number" ? rentMicroAdj.multiplier : null;
+
+                          const snap = snapshot as Record<string, unknown> | undefined;
+                          const districtMomentum = snap?.district_momentum as Record<string, unknown> | undefined;
+                          const dmSampleFloor = districtMomentum?.sample_floor_applied === true;
+                          const dmScore = typeof districtMomentum?.momentum_score === "number" ? (districtMomentum.momentum_score as number) : null;
+                          const dmPercentile = typeof districtMomentum?.percentile_composite === "number" ? (districtMomentum.percentile_composite as number) : null;
+                          const dmActivity = typeof districtMomentum?.activity_30d === "number" ? (districtMomentum.activity_30d as number) : null;
+                          const dmDistrictLabel = typeof districtMomentum?.district_label === "string" && (districtMomentum.district_label as string).length > 0 ? (districtMomentum.district_label as string) : null;
+
+                          const listingAge = snap?.listing_age as Record<string, unknown> | undefined;
+                          const createdDays = typeof listingAge?.created_days === "number" ? (listingAge.created_days as number) : null;
+                          const updatedDays = typeof listingAge?.updated_days === "number" ? (listingAge.updated_days as number) : null;
+
+                          const realizedDemand = typeof snap?.realized_demand_30d === "number" ? (snap.realized_demand_30d as number) : null;
+                          const rdBranches = typeof snap?.realized_demand_branches === "number" ? (snap.realized_demand_branches as number) : null;
+                          const rdWindow = typeof snap?.realized_demand_window_days === "number" ? (snap.realized_demand_window_days as number) : null;
+
+                          const candLoc = snap?.candidate_location as Record<string, unknown> | undefined;
+                          const isVacant = typeof candLoc?.is_vacant === "boolean" ? (candLoc.is_vacant as boolean) : null;
+                          const currentTenant = typeof candLoc?.current_tenant === "string" && (candLoc.current_tenant as string).length > 0 ? (candLoc.current_tenant as string) : null;
+                          const currentCategory = typeof candLoc?.current_category === "string" && (candLoc.current_category as string).length > 0 ? (candLoc.current_category as string) : null;
+                          const showPropertyStatus = isVacant !== null || currentTenant !== null || currentCategory !== null;
+
+                          const ROAD_BAND_LABEL_KEY: Record<string, string> = {
+                            unknown: "expansionAdvisor.roadEvidenceBand_unknown",
+                            direct_frontage: "expansionAdvisor.roadEvidenceBand_directFrontage",
+                            none_found: "expansionAdvisor.roadEvidenceBand_noneFound",
+                            limited: "expansionAdvisor.roadEvidenceBand_limited",
+                            moderate: "expansionAdvisor.roadEvidenceBand_moderate",
+                            strong: "expansionAdvisor.roadEvidenceBand_strong",
+                          };
+                          const PARKING_BAND_LABEL_KEY: Record<string, string> = {
+                            unknown: "expansionAdvisor.parkingEvidenceBand_unknown",
+                            none_found: "expansionAdvisor.parkingEvidenceBand_noneFound",
+                            limited: "expansionAdvisor.parkingEvidenceBand_limited",
+                            moderate: "expansionAdvisor.parkingEvidenceBand_moderate",
+                            strong: "expansionAdvisor.parkingEvidenceBand_strong",
+                          };
+
+                          const fmtSignedPct = (mult: number): string => {
+                            const pct = (mult - 1) * 100;
+                            const rounded = pct.toFixed(1);
+                            if (pct > 0) return `+${rounded}%`;
+                            if (pct < 0) return `−${Math.abs(pct).toFixed(1)}%`;
+                            return `0.0%`;
+                          };
+
+                          const fmtPercentileLabel = (frac: number): string => {
+                            const pct = Math.round(Math.max(0, Math.min(1, frac)) * 100);
+                            return t("expansionAdvisor.percentileValue", { value: pct, defaultValue: `${pct}th percentile` });
+                          };
+
+                          const fmtDaysAgo = (n: number): string => t("expansionAdvisor.daysAgo", { count: n, defaultValue: `${n} days ago` });
+
+                          return (
+                            <div className="ea-memo-tab-panel ea-memo-breakdown">
+                              {/* Site grade */}
+                              <section className="ea-memo-breakdown__section">
+                                <h5 className="ea-detail__section-title">{t("expansionAdvisor.breakdownSiteGrade")}</h5>
+                                <p className="ea-memo-breakdown__explainer" style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", marginTop: 0, marginBottom: 8 }}>{t("expansionAdvisor.breakdownSiteGradeExplainer")}</p>
+                                <div className="ea-memo-breakdown__bars" style={{ display: "grid", gap: 8 }}>
+                                  {typeof cand.parking_score === "number" && <ScoreBar label={t("expansionAdvisor.parkingScore")} value={cand.parking_score as number} />}
+                                  {typeof cand.frontage_score === "number" && <ScoreBar label={t("expansionAdvisor.frontageScore")} value={cand.frontage_score as number} />}
+                                  {typeof cand.access_score === "number" && <ScoreBar label={t("expansionAdvisor.accessScore")} value={cand.access_score as number} />}
+                                  {typeof cand.access_visibility_score === "number" && <ScoreBar label={t("expansionAdvisor.accessVisibility")} value={cand.access_visibility_score as number} />}
+                                  {typeof cand.zoning_fit_score === "number" && <ScoreBar label={t("expansionAdvisor.zoningFitScore")} value={cand.zoning_fit_score as number} />}
+                                </div>
+                                {(roadBand || parkingBand) && (
+                                  <div className="ea-detail__grid" style={{ marginTop: 10 }}>
+                                    {roadBand && ROAD_BAND_LABEL_KEY[roadBand] && (
+                                      <div className="ea-detail__kv">
+                                        <span className="ea-detail__kv-label">{t("expansionAdvisor.roadEvidenceBandLabel")}</span>
+                                        <span className="ea-detail__kv-value">{t(ROAD_BAND_LABEL_KEY[roadBand])}</span>
+                                      </div>
+                                    )}
+                                    {parkingBand && PARKING_BAND_LABEL_KEY[parkingBand] && (
+                                      <div className="ea-detail__kv">
+                                        <span className="ea-detail__kv-label">{t("expansionAdvisor.parkingEvidenceBandLabel")}</span>
+                                        <span className="ea-detail__kv-value">{t(PARKING_BAND_LABEL_KEY[parkingBand])}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </section>
+
+                              {/* Market signals */}
+                              <section className="ea-memo-breakdown__section" style={{ marginTop: 16 }}>
+                                <h5 className="ea-detail__section-title">{t("expansionAdvisor.breakdownMarketSignals")}</h5>
+                                <p className="ea-memo-breakdown__explainer" style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", marginTop: 0, marginBottom: 8 }}>{t("expansionAdvisor.breakdownMarketSignalsExplainer")}</p>
+                                <div className="ea-memo-breakdown__bars" style={{ display: "grid", gap: 8 }}>
+                                  {typeof cand.provider_density_score === "number" && <ScoreBar label={t("expansionAdvisor.providerDensity")} value={cand.provider_density_score as number} />}
+                                  {typeof cand.provider_whitespace_score === "number" && <ScoreBar label={t("expansionAdvisor.providerWhitespace")} value={cand.provider_whitespace_score as number} />}
+                                  {typeof cand.multi_platform_presence_score === "number" && <ScoreBar label={t("expansionAdvisor.multiPlatform")} value={cand.multi_platform_presence_score as number} />}
+                                  {typeof cand.delivery_competition_score === "number" && <ScoreBar label={t("expansionAdvisor.deliveryCompetition")} value={cand.delivery_competition_score as number} />}
+                                  {typeof cand.cannibalization_score === "number" && <ScoreBar label={t("expansionAdvisor.cannibalization")} value={cand.cannibalization_score as number} />}
+                                  {!dmSampleFloor && dmScore !== null && <ScoreBar label={t("expansionAdvisor.districtMomentumScore")} value={dmScore} />}
+                                </div>
+                                {dmSampleFloor ? (
+                                  <p className="ea-memo-breakdown__note" style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", fontStyle: "italic", marginTop: 8 }}>
+                                    {t("expansionAdvisor.districtMomentumBelowFloor")}
+                                  </p>
+                                ) : (
+                                  (dmPercentile !== null || dmActivity !== null || dmDistrictLabel) && (
+                                    <div className="ea-detail__grid" style={{ marginTop: 8 }}>
+                                      {dmPercentile !== null && (
+                                        <div className="ea-detail__kv">
+                                          <span className="ea-detail__kv-label">{t("expansionAdvisor.districtMomentumPercentile")}</span>
+                                          <span className="ea-detail__kv-value">{fmtPercentileLabel(dmPercentile)}</span>
+                                        </div>
+                                      )}
+                                      {dmActivity !== null && (
+                                        <div className="ea-detail__kv">
+                                          <span className="ea-detail__kv-label">{t("expansionAdvisor.districtActivity30d")}</span>
+                                          <span className="ea-detail__kv-value">{dmActivity}</span>
+                                        </div>
+                                      )}
+                                      {dmDistrictLabel && (
+                                        <div className="ea-detail__kv">
+                                          <span className="ea-detail__kv-label">{t("expansionAdvisor.districtLabel")}</span>
+                                          <span className="ea-detail__kv-value">{dmDistrictLabel}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                )}
+                              </section>
+
+                              {/* Economics & timing */}
+                              <section className="ea-memo-breakdown__section" style={{ marginTop: 16 }}>
+                                <h5 className="ea-detail__section-title">{t("expansionAdvisor.breakdownEconomicsTiming")}</h5>
+                                <p className="ea-memo-breakdown__explainer" style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", marginTop: 0, marginBottom: 8 }}>{t("expansionAdvisor.breakdownEconomicsTimingExplainer")}</p>
+                                <div className="ea-detail__grid">
+                                  {realizedDemand !== null && (
+                                    <div className="ea-detail__kv">
+                                      <span className="ea-detail__kv-label">{t("expansionAdvisor.realizedDemand30d")}</span>
+                                      <span className="ea-detail__kv-value">
+                                        {fmtScore(realizedDemand, 1)}
+                                        {rdBranches !== null && rdWindow !== null && (
+                                          <span style={{ display: "block", fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", marginTop: 2 }}>
+                                            {t("expansionAdvisor.realizedDemandSubline", { branches: rdBranches, window: rdWindow, defaultValue: `${rdBranches} branches, ${rdWindow}d window` })}
+                                          </span>
+                                        )}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {rentBase !== null && (
+                                    <div className="ea-detail__kv">
+                                      <span className="ea-detail__kv-label">{t("expansionAdvisor.rentBaseline")}</span>
+                                      <span className="ea-detail__kv-value">{t("expansionAdvisor.sarPerM2Year", { value: Math.round(rentBase as number) })}</span>
+                                    </div>
+                                  )}
+                                  {microMultiplier !== null && (
+                                    <div className="ea-detail__kv">
+                                      <span className="ea-detail__kv-label">{t("expansionAdvisor.rentMicroAdjustment")}</span>
+                                      <span className="ea-detail__kv-value">{fmtSignedPct(microMultiplier)}</span>
+                                    </div>
+                                  )}
+                                  {createdDays !== null && (
+                                    <div className="ea-detail__kv">
+                                      <span className="ea-detail__kv-label">{t("expansionAdvisor.listingCreated")}</span>
+                                      <span className="ea-detail__kv-value">{fmtDaysAgo(createdDays)}</span>
+                                    </div>
+                                  )}
+                                  {updatedDays !== null && (
+                                    <div className="ea-detail__kv">
+                                      <span className="ea-detail__kv-label">{t("expansionAdvisor.listingUpdated")}</span>
+                                      <span className="ea-detail__kv-value">{fmtDaysAgo(updatedDays)}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </section>
+
+                              {/* Property status — whole-block conditional */}
+                              {showPropertyStatus && (
+                                <section className="ea-memo-breakdown__section" style={{ marginTop: 16 }}>
+                                  <h5 className="ea-detail__section-title">{t("expansionAdvisor.breakdownPropertyStatus")}</h5>
+                                  <p className="ea-memo-breakdown__explainer" style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", marginTop: 0, marginBottom: 8 }}>{t("expansionAdvisor.breakdownPropertyStatusExplainer")}</p>
+                                  <div className="ea-detail__grid">
+                                    {isVacant !== null && (
+                                      <div className="ea-detail__kv">
+                                        <span className="ea-detail__kv-label">{t("expansionAdvisor.vacancy")}</span>
+                                        <span className="ea-detail__kv-value">{isVacant ? t("expansionAdvisor.vacancyVacant") : t("expansionAdvisor.vacancyOccupied")}</span>
+                                      </div>
+                                    )}
+                                    {currentTenant && (
+                                      <div className="ea-detail__kv">
+                                        <span className="ea-detail__kv-label">{t("expansionAdvisor.currentTenant")}</span>
+                                        <span className="ea-detail__kv-value">{currentTenant}</span>
+                                      </div>
+                                    )}
+                                    {currentCategory && (
+                                      <div className="ea-detail__kv">
+                                        <span className="ea-detail__kv-label">{t("expansionAdvisor.currentUse")}</span>
+                                        <span className="ea-detail__kv-value">{currentCategory}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </section>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
