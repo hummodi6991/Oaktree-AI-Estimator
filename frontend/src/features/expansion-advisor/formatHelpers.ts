@@ -1,6 +1,11 @@
 import { formatCurrencySAR, formatNumber, formatInteger } from "../../i18n/format";
+import { toNumeric } from "../../lib/api/coerceNumeric";
+
+export { toNumeric };
 
 const FALLBACK = "—";
+
+type NumericLike = number | string | null | undefined;
 
 /** Prefix a formatted value with "Est. ~" when it is estimated, not actual. */
 export function fmtEstimated(value: string, isEstimated: boolean): string {
@@ -13,62 +18,70 @@ export function fmtSAR(value: number | null | undefined): string {
 }
 
 /** Compact SAR formatting: SAR 168K, SAR 1.2M — no "Est. ~" prefix */
-export function fmtSARCompact(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return FALLBACK;
-  const abs = Math.abs(value);
+export function fmtSARCompact(value: NumericLike): string {
+  const n = toNumeric(value);
+  if (n == null) return FALLBACK;
+  const abs = Math.abs(n);
   if (abs >= 1_000_000) {
-    const m = value / 1_000_000;
+    const m = n / 1_000_000;
     return `SAR ${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
   }
   if (abs >= 1_000) {
-    const k = value / 1_000;
+    const k = n / 1_000;
     return `SAR ${k % 1 === 0 ? k.toFixed(0) : k.toFixed(0)}K`;
   }
-  return `SAR ${Math.round(value)}`;
+  return `SAR ${Math.round(n)}`;
 }
 
 export function fmtScore(value: number | null | undefined, digits = 0): string {
   return formatNumber(value, { maximumFractionDigits: digits, minimumFractionDigits: digits }, FALLBACK);
 }
 
-export function fmtM2(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return FALLBACK;
-  return `${formatInteger(Math.round(value), FALLBACK)} m²`;
+export function fmtM2(value: NumericLike): string {
+  const n = toNumeric(value);
+  if (n == null) return FALLBACK;
+  return `${formatInteger(Math.round(n), FALLBACK)} m²`;
 }
 
-export function fmtMeters(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return FALLBACK;
-  if (value >= 1000) {
-    return `${formatNumber(value / 1000, { maximumFractionDigits: 1, minimumFractionDigits: 1 }, FALLBACK)} km`;
+export function fmtMeters(value: NumericLike): string {
+  const n = toNumeric(value);
+  if (n == null) return FALLBACK;
+  if (n >= 1000) {
+    return `${formatNumber(n / 1000, { maximumFractionDigits: 1, minimumFractionDigits: 1 }, FALLBACK)} km`;
   }
-  return `${formatInteger(Math.round(value), FALLBACK)} m`;
+  return `${formatInteger(Math.round(n), FALLBACK)} m`;
 }
 
-export function fmtMonths(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return FALLBACK;
-  return `${Math.round(value)} mo`;
+export function fmtMonths(value: NumericLike): string {
+  const n = toNumeric(value);
+  if (n == null) return FALLBACK;
+  return `${Math.round(n)} mo`;
 }
 
-export function fmtPct(value: number | null | undefined, digits = 0): string {
-  if (value == null || !Number.isFinite(value)) return FALLBACK;
-  return `${formatNumber(value, { maximumFractionDigits: digits, minimumFractionDigits: digits }, FALLBACK)}%`;
+export function fmtPct(value: NumericLike, digits = 0): string {
+  const n = toNumeric(value);
+  if (n == null) return FALLBACK;
+  return `${formatNumber(n, { maximumFractionDigits: digits, minimumFractionDigits: digits }, FALLBACK)}%`;
 }
 
-export function fmtSarPerM2(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return FALLBACK;
-  return `${formatInteger(Math.round(value), FALLBACK)} SAR/m²`;
+export function fmtSarPerM2(value: NumericLike): string {
+  const n = toNumeric(value);
+  if (n == null) return FALLBACK;
+  return `${formatInteger(Math.round(n), FALLBACK)} SAR/m²`;
 }
 
-export function fmtSarPerM2Year(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return FALLBACK;
-  return `${formatInteger(Math.round(value), FALLBACK)} SAR/m²/yr`;
+export function fmtSarPerM2Year(value: NumericLike): string {
+  const n = toNumeric(value);
+  if (n == null) return FALLBACK;
+  return `${formatInteger(Math.round(n), FALLBACK)} SAR/m²/yr`;
 }
 
 /** Color semantic: >=80 dark green, >=70 green, >=60 amber, <60 red */
-export function scoreColor(value: number | null | undefined): "green" | "amber" | "red" | "neutral" {
-  if (value == null || !Number.isFinite(value)) return "neutral";
-  if (value >= 70) return "green";
-  if (value >= 60) return "amber";
+export function scoreColor(value: NumericLike): "green" | "amber" | "red" | "neutral" {
+  const n = toNumeric(value);
+  if (n == null) return "neutral";
+  if (n >= 70) return "green";
+  if (n >= 60) return "amber";
   return "red";
 }
 
