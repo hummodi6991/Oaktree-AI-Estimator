@@ -467,6 +467,27 @@ export default function ExpansionMemoPanel({
                             is null/undefined/empty (no "—" fallback), so the
                             tab adapts to data availability per candidate. */}
                         {activeTab === "breakdown" && (() => {
+                          // Backend serializes SQLAlchemy Numeric columns as strings
+                          // (e.g. "45.00") for precision. Coerce here so the
+                          // typeof-number guard below doesn't silently hide bars.
+                          const toNumber = (v: unknown): number | null => {
+                            if (typeof v === "number" && Number.isFinite(v)) return v;
+                            if (typeof v === "string") {
+                              const n = parseFloat(v);
+                              return Number.isFinite(n) ? n : null;
+                            }
+                            return null;
+                          };
+                          const parkingScore = toNumber(cand.parking_score);
+                          const frontageScore = toNumber(cand.frontage_score);
+                          const accessScore = toNumber(cand.access_score);
+                          const accessVisibilityScore = toNumber(cand.access_visibility_score);
+                          const zoningFitScore = toNumber(cand.zoning_fit_score);
+                          const providerDensityScore = toNumber(cand.provider_density_score);
+                          const providerWhitespaceScore = toNumber(cand.provider_whitespace_score);
+                          const multiPlatformPresenceScore = toNumber(cand.multi_platform_presence_score);
+                          const deliveryCompetitionScore = toNumber(cand.delivery_competition_score);
+                          const cannibalizationScore = toNumber(cand.cannibalization_score);
                           const ctxSources = (snapshot?.context_sources || {}) as Record<string, unknown>;
                           const roadBand = typeof ctxSources.road_evidence_band === "string" ? ctxSources.road_evidence_band : null;
                           const parkingBand = typeof ctxSources.parking_evidence_band === "string" ? ctxSources.parking_evidence_band : null;
@@ -534,11 +555,11 @@ export default function ExpansionMemoPanel({
                                 <h5 className="ea-detail__section-title">{t("expansionAdvisor.breakdownSiteGrade")}</h5>
                                 <p className="ea-memo-breakdown__explainer" style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", marginTop: 0, marginBottom: 8 }}>{t("expansionAdvisor.breakdownSiteGradeExplainer")}</p>
                                 <div className="ea-memo-breakdown__bars" style={{ display: "grid", gap: 8 }}>
-                                  {typeof cand.parking_score === "number" && <ScoreBar label={t("expansionAdvisor.parkingScore")} value={cand.parking_score as number} />}
-                                  {typeof cand.frontage_score === "number" && <ScoreBar label={t("expansionAdvisor.frontageScore")} value={cand.frontage_score as number} />}
-                                  {typeof cand.access_score === "number" && <ScoreBar label={t("expansionAdvisor.accessScore")} value={cand.access_score as number} />}
-                                  {typeof cand.access_visibility_score === "number" && <ScoreBar label={t("expansionAdvisor.accessVisibility")} value={cand.access_visibility_score as number} />}
-                                  {typeof cand.zoning_fit_score === "number" && <ScoreBar label={t("expansionAdvisor.zoningFitScore")} value={cand.zoning_fit_score as number} />}
+                                  {parkingScore !== null && <ScoreBar label={t("expansionAdvisor.parkingScore")} value={parkingScore} />}
+                                  {frontageScore !== null && <ScoreBar label={t("expansionAdvisor.frontageScore")} value={frontageScore} />}
+                                  {accessScore !== null && <ScoreBar label={t("expansionAdvisor.accessScore")} value={accessScore} />}
+                                  {accessVisibilityScore !== null && <ScoreBar label={t("expansionAdvisor.accessVisibility")} value={accessVisibilityScore} />}
+                                  {zoningFitScore !== null && <ScoreBar label={t("expansionAdvisor.zoningFitScore")} value={zoningFitScore} />}
                                 </div>
                                 {(roadBand || parkingBand) && (
                                   <div className="ea-detail__grid" style={{ marginTop: 10 }}>
@@ -563,11 +584,11 @@ export default function ExpansionMemoPanel({
                                 <h5 className="ea-detail__section-title">{t("expansionAdvisor.breakdownMarketSignals")}</h5>
                                 <p className="ea-memo-breakdown__explainer" style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", marginTop: 0, marginBottom: 8 }}>{t("expansionAdvisor.breakdownMarketSignalsExplainer")}</p>
                                 <div className="ea-memo-breakdown__bars" style={{ display: "grid", gap: 8 }}>
-                                  {typeof cand.provider_density_score === "number" && <ScoreBar label={t("expansionAdvisor.providerDensity")} value={cand.provider_density_score as number} />}
-                                  {typeof cand.provider_whitespace_score === "number" && <ScoreBar label={t("expansionAdvisor.providerWhitespace")} value={cand.provider_whitespace_score as number} />}
-                                  {typeof cand.multi_platform_presence_score === "number" && <ScoreBar label={t("expansionAdvisor.multiPlatform")} value={cand.multi_platform_presence_score as number} />}
-                                  {typeof cand.delivery_competition_score === "number" && <ScoreBar label={t("expansionAdvisor.deliveryCompetition")} value={cand.delivery_competition_score as number} />}
-                                  {typeof cand.cannibalization_score === "number" && <ScoreBar label={t("expansionAdvisor.cannibalization")} value={cand.cannibalization_score as number} />}
+                                  {providerDensityScore !== null && <ScoreBar label={t("expansionAdvisor.providerDensity")} value={providerDensityScore} />}
+                                  {providerWhitespaceScore !== null && <ScoreBar label={t("expansionAdvisor.providerWhitespace")} value={providerWhitespaceScore} />}
+                                  {multiPlatformPresenceScore !== null && <ScoreBar label={t("expansionAdvisor.multiPlatform")} value={multiPlatformPresenceScore} />}
+                                  {deliveryCompetitionScore !== null && <ScoreBar label={t("expansionAdvisor.deliveryCompetition")} value={deliveryCompetitionScore} />}
+                                  {cannibalizationScore !== null && <ScoreBar label={t("expansionAdvisor.cannibalization")} value={cannibalizationScore} />}
                                   {!dmSampleFloor && dmScore !== null && <ScoreBar label={t("expansionAdvisor.districtMomentumScore")} value={dmScore} />}
                                 </div>
                                 {dmSampleFloor ? (

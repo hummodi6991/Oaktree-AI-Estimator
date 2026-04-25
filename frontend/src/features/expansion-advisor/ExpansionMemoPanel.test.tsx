@@ -629,4 +629,86 @@ describe("ExpansionMemoPanel — Breakdown tab content (initialTab='breakdown')"
     expect(html).toContain("width:50%");
     expect(html).toContain("width:100%");
   });
+
+  // Backend serializes SQLAlchemy Numeric columns as strings
+  // (e.g. "45.00") for precision. The Breakdown tab must coerce these
+  // strings into numbers before guarding the score bars.
+  it("renders score bars when numeric fields arrive as strings (Decimal-as-string serialization)", () => {
+    const memo = richBreakdownMemo() as any;
+    memo.candidate.parking_score = "45.00";
+    memo.candidate.frontage_score = "94.00";
+    memo.candidate.access_score = "90.00";
+    memo.candidate.access_visibility_score = "70.00";
+    memo.candidate.zoning_fit_score = "88.00";
+    memo.candidate.provider_density_score = "55.00";
+    memo.candidate.provider_whitespace_score = "60.00";
+    memo.candidate.multi_platform_presence_score = "45.00";
+    memo.candidate.delivery_competition_score = "40.00";
+    memo.candidate.cannibalization_score = "90.00";
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo} initialTab="breakdown" />,
+    );
+    expect(html).toContain(en.expansionAdvisor.parkingScore);
+    expect(html).toContain(en.expansionAdvisor.frontageScore);
+    expect(html).toContain(en.expansionAdvisor.accessScore);
+    // The "Access & visibility" label is HTML-encoded by renderToStaticMarkup.
+    expect(html).toContain(en.expansionAdvisor.accessVisibility.replace("&", "&amp;"));
+    expect(html).toContain(en.expansionAdvisor.zoningFitScore);
+    expect(html).toContain(en.expansionAdvisor.providerDensity);
+    expect(html).toContain(en.expansionAdvisor.providerWhitespace);
+    expect(html).toContain(en.expansionAdvisor.multiPlatform);
+    expect(html).toContain(en.expansionAdvisor.deliveryCompetition);
+    expect(html).toContain(en.expansionAdvisor.cannibalization);
+    // Rounded values appear in the bar heads.
+    expect(html).toMatch(/>45</); // parking
+    expect(html).toMatch(/>94</); // frontage
+    expect(html).toMatch(/>90</); // access / cannibalization
+    // aria-valuenow on the progressbar reflects the parsed numeric.
+    expect(html).toMatch(/aria-valuenow="45"/);
+    expect(html).toMatch(/aria-valuenow="94"/);
+  });
+
+  it("hides score bars when numeric fields arrive as unparseable strings", () => {
+    const memo = richBreakdownMemo() as any;
+    memo.candidate.parking_score = "N/A";
+    memo.candidate.frontage_score = "";
+    memo.candidate.access_score = "—";
+    memo.candidate.access_visibility_score = null;
+    memo.candidate.zoning_fit_score = undefined;
+    memo.candidate.provider_density_score = "N/A";
+    memo.candidate.provider_whitespace_score = "";
+    memo.candidate.multi_platform_presence_score = null;
+    memo.candidate.delivery_competition_score = undefined;
+    memo.candidate.cannibalization_score = "—";
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo} initialTab="breakdown" />,
+    );
+    // None of the per-axis score-bar labels should render.
+    expect(html).not.toContain(en.expansionAdvisor.parkingScore);
+    expect(html).not.toContain(en.expansionAdvisor.frontageScore);
+    expect(html).not.toContain(en.expansionAdvisor.accessScore);
+    expect(html).not.toContain(en.expansionAdvisor.accessVisibility.replace("&", "&amp;"));
+    expect(html).not.toContain(en.expansionAdvisor.zoningFitScore);
+    expect(html).not.toContain(en.expansionAdvisor.providerDensity);
+    expect(html).not.toContain(en.expansionAdvisor.providerWhitespace);
+    expect(html).not.toContain(en.expansionAdvisor.multiPlatform);
+    expect(html).not.toContain(en.expansionAdvisor.deliveryCompetition);
+    expect(html).not.toContain(en.expansionAdvisor.cannibalization);
+  });
+
+  it("ScoreBar head visually separates label and value (flex space-between)", () => {
+    const memo = richBreakdownMemo() as any;
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo} initialTab="breakdown" />,
+    );
+    // The head wrapper carries flex+space-between so label and value
+    // never collide visually (no more "District momentum38").
+    const headIdx = html.indexOf("ea-score-bar__head");
+    expect(headIdx).toBeGreaterThan(-1);
+    // Look at the head element's style attribute — it should request
+    // flex layout with space-between.
+    const headSnippet = html.slice(headIdx, headIdx + 400);
+    expect(headSnippet).toMatch(/display:\s*flex/);
+    expect(headSnippet).toMatch(/justify-content:\s*space-between/);
+  });
 });

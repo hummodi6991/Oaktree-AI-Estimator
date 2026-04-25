@@ -13,9 +13,36 @@ export default function ScoreBar({ label, value }: ScoreBarProps) {
   const clamped = numeric == null ? 0 : Math.max(0, Math.min(100, numeric));
   return (
     <div className="ea-score-bar">
-      <div className="ea-score-bar__head">
-        <span className="ea-score-bar__label">{label}</span>
-        <span className="ea-score-bar__value">{numeric == null ? "" : Math.round(numeric)}</span>
+      <div
+        className="ea-score-bar__head"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          gap: 8,
+          marginBottom: 4,
+        }}
+      >
+        <span
+          className="ea-score-bar__label"
+          style={{
+            fontSize: "var(--oak-fs-xs, 12px)",
+            color: "var(--oak-text-light, #828282)",
+            fontWeight: "var(--oak-fw-medium, 500)",
+          }}
+        >
+          {label}
+        </span>
+        <span
+          className="ea-score-bar__value"
+          style={{
+            fontSize: "var(--oak-fs-sm, 14px)",
+            fontWeight: "var(--oak-fw-semibold, 600)",
+            color: "var(--oak-text-dark, #171717)",
+          }}
+        >
+          {numeric == null ? "" : Math.round(numeric)}
+        </span>
       </div>
       <div
         className="ea-score-bar__track"
