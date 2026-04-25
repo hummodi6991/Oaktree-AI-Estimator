@@ -39,6 +39,7 @@ from app.services.expansion_advisor import (
 
 
 from app.services.llm_decision_memo import (
+    MEMO_PROMPT_VERSION,
     build_memo_context,
     generate_decision_memo,
     generate_structured_memo,
@@ -1348,12 +1349,19 @@ def _decision_memo_cache_lookup(
     search_id: str,
     parcel_id: str,
 ) -> tuple[str | None, dict[str, Any] | None] | None:
-    """Return (cached_text, cached_json) if a row exists, else None.
-    Any DB error is swallowed and treated as a cache miss."""
+    """Return (cached_text, cached_json) if a row exists with a memo
+    persisted under the CURRENT ``MEMO_PROMPT_VERSION``, else None.
+
+    A row whose ``decision_memo_prompt_version`` does not match the
+    current version (including NULL — pre-versioning rows) is treated as
+    a cache miss so the caller regenerates against the new prompt. Any
+    DB error is swallowed and treated as a cache miss.
+    """
     try:
         row = db.execute(
             text(
-                "SELECT decision_memo, decision_memo_json "
+                "SELECT decision_memo, decision_memo_json, "
+                "       decision_memo_prompt_version "
                 "FROM expansion_candidate "
                 "WHERE search_id = :sid AND parcel_id = :pid "
                 "LIMIT 1"
@@ -1370,7 +1378,11 @@ def _decision_memo_cache_lookup(
         return None
     cached_text = row[0]
     cached_json = row[1]
+    cached_version = row[2]
     if cached_text is None and cached_json is None:
+        return None
+    if cached_version != MEMO_PROMPT_VERSION:
+        # Stale (different version) or pre-versioning (NULL) — regenerate.
         return None
     return cached_text, cached_json
 
@@ -1397,7 +1409,8 @@ def _decision_memo_cache_write(
             text(
                 "UPDATE expansion_candidate "
                 "SET decision_memo = :txt, "
-                "    decision_memo_json = CAST(:j AS JSONB) "
+                "    decision_memo_json = CAST(:j AS JSONB), "
+                "    decision_memo_prompt_version = :ver "
                 "WHERE search_id = :sid AND parcel_id = :pid"
             ),
             {
@@ -1405,6 +1418,7 @@ def _decision_memo_cache_write(
                 "pid": parcel_id,
                 "txt": memo_text,
                 "j": json.dumps(memo_json, ensure_ascii=False) if memo_json is not None else None,
+                "ver": MEMO_PROMPT_VERSION,
             },
         )
         db.commit()
