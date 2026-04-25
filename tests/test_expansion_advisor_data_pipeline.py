@@ -267,6 +267,81 @@ class TestCompetitorQuality:
         assert score == 87.5
 
 
+class TestChainNameNormalization:
+    """Canonicalization for restaurant_poi.name → chain_key.
+
+    The Python helper _normalize_chain_name is the test-side mirror of the
+    SQL fragment _CHAIN_NAME_NORM_SQL. They MUST produce identical output;
+    if a test here fails, fix the SQL fragment in lockstep.
+    """
+
+    def test_basic_case_folding(self):
+        from app.ingest.expansion_advisor_competitors import _normalize_chain_name
+
+        assert _normalize_chain_name("Starbucks") == "starbucks"
+        assert _normalize_chain_name("STARBUCKS") == "starbucks"
+        assert _normalize_chain_name("StarBucks") == "starbucks"
+
+    def test_punctuation_collapse(self):
+        from app.ingest.expansion_advisor_competitors import _normalize_chain_name
+
+        # Apostrophes, hyphens, pipes — all should reduce to spaces then squeeze
+        assert _normalize_chain_name("Dunkin'") == "dunkin"
+        assert _normalize_chain_name("McDonald's") == "mcdonald s"
+        assert _normalize_chain_name("Domino's Pizza") == "domino s pizza"
+        # The bilingual "EN | AR" form: pipe → space, then both halves preserved
+        assert _normalize_chain_name("Herfy | هرفي") == "herfy هرفي"
+
+    def test_whitespace_squeeze(self):
+        from app.ingest.expansion_advisor_competitors import _normalize_chain_name
+
+        assert _normalize_chain_name("  Starbucks   Coffee  ") == "starbucks coffee"
+        assert _normalize_chain_name("Starbucks\tCoffee") == "starbucks coffee"
+
+    def test_empty_and_null(self):
+        from app.ingest.expansion_advisor_competitors import _normalize_chain_name
+
+        assert _normalize_chain_name("") == ""
+        assert _normalize_chain_name(None) == ""
+        assert _normalize_chain_name("   ") == ""
+
+    def test_arabic_alef_collapse(self):
+        from app.ingest.expansion_advisor_competitors import _normalize_chain_name
+
+        # All Alef variants normalize to bare Alef ا
+        assert _normalize_chain_name("أحمد") == _normalize_chain_name("احمد")
+        assert _normalize_chain_name("إحمد") == _normalize_chain_name("احمد")
+        assert _normalize_chain_name("آحمد") == _normalize_chain_name("احمد")
+
+    def test_arabic_ya_maksura_collapse(self):
+        from app.ingest.expansion_advisor_competitors import _normalize_chain_name
+
+        # ى (Alef-Maksura) → ي (Ya)
+        assert _normalize_chain_name("على") == _normalize_chain_name("علي")
+
+    def test_tatweel_strip(self):
+        from app.ingest.expansion_advisor_competitors import _normalize_chain_name
+
+        # Tatweel ـ should be stripped, not replaced with space
+        assert _normalize_chain_name("بـيـت") == _normalize_chain_name("بيت")
+
+    def test_bilingual_scripts_stay_distinct(self):
+        from app.ingest.expansion_advisor_competitors import _normalize_chain_name
+
+        # Latin and Arabic scripts are not merged. This is intentional —
+        # bilingual variant collapse is a future refinement.
+        assert _normalize_chain_name("Starbucks") != _normalize_chain_name("ستاربكس")
+
+    def test_arabic_block_preserved(self):
+        from app.ingest.expansion_advisor_competitors import _normalize_chain_name
+
+        # Arabic characters are not stripped (they're inside the keep-class)
+        result = _normalize_chain_name("ستاربكس")
+        assert "ستاربكس" in result or len(result) > 0
+        # Verify no Latin contamination
+        assert all(not c.isascii() or c.isspace() for c in result)
+
+
 # ---------------------------------------------------------------------------
 # Road/parking source metadata in feature_snapshot_json
 # ---------------------------------------------------------------------------

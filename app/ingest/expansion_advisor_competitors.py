@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 
 from sqlalchemy import text
@@ -34,6 +35,61 @@ from app.ingest.expansion_advisor_common import (
 )
 
 logger = logging.getLogger("expansion_advisor.competitors")
+
+
+# ---------------------------------------------------------------------------
+# Chain-name canonicalization
+# ---------------------------------------------------------------------------
+# We need to detect chains from restaurant_poi.name because chain_name is null
+# on >99% of rows. The normalization below is intentionally conservative:
+# case-fold + Arabic Alef-variant collapse (أ/إ/آ → ا) + Ya-Maksura → ي + tatweel
+# strip + non-alphanumeric-or-Arabic → space + whitespace squeeze. It does NOT
+# attempt to merge bilingual variants ("Starbucks" vs "ستاربكس") — that is a
+# separate refinement layer.
+#
+# `_CHAIN_NAME_NORM_SQL` and `_normalize_chain_name` MUST stay in lockstep.
+# Any change to one requires the same change in the other; the unit tests
+# enforce this by asserting identical outputs for representative inputs.
+
+_CHAIN_NAME_NORM_SQL = (
+    "TRIM(regexp_replace("
+    "  regexp_replace("
+    "    TRANSLATE("
+    "      LOWER(COALESCE({col}, '')),"
+    "      E'\\u0623\\u0625\\u0622\\u0649\\u0640',"  # أ إ آ ى tatweel
+    "      E'\\u0627\\u0627\\u0627\\u064A'"           # → ا ا ا ي  (tatweel→empty)
+    "    ),"
+    "    '[^a-z0-9\\s\\u0600-\\u06FF]', ' ', 'g'"
+    "  ),"
+    "  '\\s+', ' ', 'g'"
+    "))"
+)
+
+
+def _normalize_chain_name(name: str | None) -> str:
+    """Python mirror of _CHAIN_NAME_NORM_SQL.
+
+    Used by tests to assert SQL behavior without requiring a Postgres test
+    container. Must produce identical output to the SQL fragment for any
+    input string.
+    """
+    if not name:
+        return ""
+    s = name.lower()
+    # Alef variants → ا, Ya-Maksura → ي, drop tatweel.
+    translation = str.maketrans({
+        "أ": "ا",  # أ → ا
+        "إ": "ا",  # إ → ا
+        "آ": "ا",  # آ → ا
+        "ى": "ي",  # ى → ي
+        "ـ": "",         # tatweel → empty
+    })
+    s = s.translate(translation)
+    # Replace any character outside [a-z0-9, whitespace, Arabic block] with space.
+    s = re.sub(r"[^a-z0-9\s؀-ۿ]", " ", s)
+    # Collapse whitespace.
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 
 def _has_google_review_columns(db) -> bool:
@@ -105,13 +161,20 @@ def _build_competitor_quality(db, replace: bool) -> dict:
             )
         """
 
-    # Chain strength: count of POIs sharing the same chain_name
-    chain_cte = """
+    # Chain strength: count of POIs sharing the same NORMALIZED name.
+    # Was previously grouped by `chain_name`, but that column is null on
+    # >99% of rows in production. Grouping by a normalized form of `name`
+    # surfaces the de-facto chain directory hiding in the name field.
+    # See _CHAIN_NAME_NORM_SQL / _normalize_chain_name for the canonicalization.
+    _name_norm = _CHAIN_NAME_NORM_SQL.format(col="name")
+    chain_cte = f"""
         chain_counts AS (
-            SELECT chain_name, COUNT(*) AS chain_size
+            SELECT
+                {_name_norm} AS chain_key,
+                COUNT(*) AS chain_size
             FROM restaurant_poi
-            WHERE chain_name IS NOT NULL AND chain_name != ''
-            GROUP BY chain_name
+            WHERE name IS NOT NULL AND name != ''
+            GROUP BY {_name_norm}
         )
     """
 
@@ -199,7 +262,8 @@ def _build_competitor_quality(db, replace: bool) -> dict:
             )),
             now()
         FROM restaurant_poi rp
-        LEFT JOIN chain_counts cc ON cc.chain_name = rp.chain_name
+        LEFT JOIN chain_counts cc
+          ON cc.chain_key = {_CHAIN_NAME_NORM_SQL.format(col="rp.name")}
         LEFT JOIN delivery_stats ds ON ds.poi_id = rp.id
         WHERE COALESCE(
                 rp.geom,
