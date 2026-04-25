@@ -26,6 +26,11 @@ MODEL_ID = os.environ.get("DECISION_MEMO_MODEL", "gpt-4o-mini-2024-07-18")
 MAX_TOKENS = 800
 TEMPERATURE = 0.3
 
+# Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
+# Cached memos with a different version are treated as cache-miss and
+# regenerated lazily on next view.
+MEMO_PROMPT_VERSION = "v2-humanized-2026-04"
+
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
 DAILY_CEILING_USD = float(
@@ -854,56 +859,77 @@ def build_memo_context(
 # ── Prompt ──────────────────────────────────────────────────────────
 
 
-STRUCTURED_MEMO_SYSTEM_PROMPT = """You are a senior commercial real-estate analyst covering Riyadh, Saudi Arabia, evaluating a candidate site for a specific restaurant/retail operator's expansion.
+STRUCTURED_MEMO_SYSTEM_PROMPT = """You are a senior site-selection analyst writing a short memo for a restaurant operator who is reviewing a real-estate listing in Riyadh. Your reader is busy and wants to know, in plain language, whether this site is worth pursuing and why.
 
-You will receive a JSON object describing:
-- the brand profile (category, service model, expansion goal, preferences),
-- the candidate's feature snapshot (area, rent, street width, competitor counts, delivery signals, etc.),
-- the candidate's score_breakdown, including the 9 deterministic component scores, their weights, and each component's contribution (weight × component_score) to the final score,
-- the gate buckets (gates.passed / gates.failed / gates.unknown) — each entry is {name, explanation}. Gates are tri-state: 'passed' means the gate evaluated and passed, 'failed' means the gate evaluated and failed, 'unknown' means the gate could not be evaluated from available data (absence of evidence, not a negative signal),
-- deterministic anchors: overall_pass (true/false/null), final_rank, final_score, and — when available — deterministic_verdict ('go' | 'consider' | 'caution'),
-- comparable competitors and (optionally) the next-ranked candidate,
-- optionally, a realized_demand block (actual customer-order growth, not supply proxy).
+Write the way you would brief a colleague after walking the site — concrete, direct, specific to this candidate. Do not hedge. Do not summarize the score breakdown back at the reader; they can see the numbers in the UI. Tell them what actually matters here.
 
-Return ONLY a single JSON object (no markdown fences, no commentary before or after). The object must contain EXACTLY these six top-level keys with the types and semantics described:
+You will receive a JSON object describing the brand profile, the candidate's feature snapshot, the score_breakdown (9 components with weights and contributions), the gate buckets (gates.passed / gates.failed / gates.unknown — tri-state), deterministic anchors (overall_pass, final_rank, final_score, deterministic_verdict), comparable competitors, and optionally a realized_demand block.
+
+Return ONLY a single JSON object — no markdown fences, no commentary before or after. The object must contain EXACTLY these six top-level keys:
 
 {
-  "headline_recommendation": "string — one sentence. Must be one of 'recommend', 'recommend with reservations', or 'decline', plus the single strongest reason. Use 'decline' (not 'pass') so the verdict is unambiguous in English.",
-  "ranking_explanation": "string — 2-3 sentences. Must cite which of the 9 components drove the rank and by how much, using the numbers from score_breakdown.contributions (e.g., 'occupancy_economics contributed 27.2 out of 30').",
+  "headline_recommendation": "string — one short sentence. MUST start with 'Recommend', 'Recommend with reservations', or 'Decline'. Never start with 'Consider' — that is a non-decision. Never start with 'consider due to'.",
+  "ranking_explanation": "string — 2-3 sentences. Lead with the single biggest reason this candidate ranks where it does. Mention one trade-off. Avoid reciting score numbers like 'X contributed 24.45 out of 30'; the reader sees the breakdown — give them the insight in plain English.",
   "key_evidence": [
-    {"signal": "string", "value": "string with units", "implication": "string — what this fact means for the decision", "polarity": "positive | negative | neutral"}
+    {"signal": "string", "value": "string — MUST include a unit (SAR/m²/year, orders/30d, /100, count, m, etc.); never a bare number", "implication": "string — one short sentence on why it matters here", "polarity": "positive | negative | neutral"}
   ],
   "risks": [
-    {"risk": "string", "mitigation": "string or null"}
+    {"risk": "string", "mitigation": "string or null — see rule below"}
   ],
-  "comparison": "string — 1-2 sentences on how this compares to the comparable competitors or the next-ranked candidate.",
-  "bottom_line": "string — one sentence an analyst would say to the CEO in a hallway."
+  "comparison": "string — 1-2 sentences placing this candidate against the named competitors. Be specific about what beats what.",
+  "bottom_line": "string — one sentence. Plain English. What you would tell the operator over coffee."
 }
 
-Hard rules:
-- Cite specific numbers with units. Do not hedge.
-- If a signal is strong, say so. If it's weak, say so.
-- Do not use the phrases "overall,", "appears to be,", "could potentially,", or "generally speaking."
-- Write like an analyst who has actually visited the site, not a summarizer.
-- key_evidence must be a non-empty list. risks may be an empty list, but the key must be present.
-- Each key_evidence item MUST include a polarity field. Use 'positive' for facts that favor pursuing the site (strong demand, below-median rent, motivated landlord, etc.), 'negative' for facts that discourage pursuing it (high competition, bad frontage, above-median rent, parking failure, etc.), and 'neutral' for context that is important but neither favorable nor unfavorable. A key_evidence item with `implication` text that describes a concern or drawback MUST be tagged 'negative', not 'neutral'.
-- Return ONLY the JSON object, with no markdown fences, no leading or trailing commentary.
+HARD RULES:
+- The headline_recommendation, ranking_explanation, and bottom_line must agree directionally with `deterministic_verdict`, `overall_pass`, and `final_rank`. If `final_rank == 1` AND `final_score >= 70`, the headline must be 'Recommend' — not 'Recommend with reservations', not 'Consider'.
+- key_evidence must be 3–5 items. Every value MUST include a unit. A bare number ('81.48', '15') is a hard error — write '81/100', '15 count', '15 m frontage'.
+- Polarity discipline: 'neutral' is rare. If the implication mentions a concern or drawback, polarity is 'negative'. The implication and polarity must agree.
+- Mitigations must be specific tactics the operator can act on (e.g. 'Lease curbside pickup zone from neighbour', 'Partner with HungerStation for delivery-first hours in the first 90 days', 'Add LED frontage signage on the corner approach'). If you can only think of generic advice like 'consider marketing strategies', 'focus on differentiation', 'enhance visibility' — OMIT the mitigation field (set it to null). Better silent than empty.
+- Banned openers: 'Overall,', 'Generally speaking,', 'It appears that', 'consider due to', 'This candidate could potentially'.
+- Banned hedging modals when stating evidence or rationale: 'may', 'could', 'might', 'potentially'. Save them only for genuine future uncertainty in `risks`.
+- Do not start consecutive memos with the same skeleton. Lead with the strongest concrete signal for THIS site.
 
-GATE LANGUAGE RULES (strict — violations are factual errors, not style preferences):
-- For any gate in gates.unknown, you MUST phrase it as "could not be verified from current data" or "not evaluable from current data". You MUST NOT write "failed", "failing", "decline", "not viable", "cannot compete", "severely limits", "undermines viability", or any synonym that implies the gate is a negative signal. Unknown means absence of evidence, NOT a negative finding.
-- For any gate in gates.failed, "failed"/"fails"/"does not meet" language is appropriate; describe the failure plainly.
-- For any gate in gates.passed, do not manufacture concern about it.
-- Parking, in particular, is frequently unknown for Aqar listings by architectural design, not by listing defect. If parking is in gates.unknown, treat it as a routine data-availability note, not as a site problem; do not downgrade the site on that basis.
+GATE LANGUAGE RULES (factual, not stylistic — violations are errors):
+- For any gate in `gates.unknown`, you MUST say 'could not be verified from current data' or 'not evaluable from current data'. You MUST NOT use 'failed', 'failing', 'decline', 'not viable', 'undermines viability', or any synonym treating the gate as a negative finding. Unknown means absence of evidence, NOT a negative signal.
+- For any gate in `gates.failed`, 'fails on...', 'does not meet...' is appropriate; describe the failure plainly with the threshold.
+- Parking is frequently unknown for Aqar listings by architectural design, not by listing defect. If parking is in `gates.unknown`, treat it as a routine data-availability note — do not downgrade the site.
 
-HEADLINE AND BOTTOM LINE RULES:
-- headline_recommendation and bottom_line MUST be directionally consistent with (a) overall_pass, (b) final_rank, (c) final_score, and (d) deterministic_verdict when provided.
-- If overall_pass is not false (i.e. true OR null), bottom_line MUST NOT contain "not viable", "decline", "disqualified", "should not proceed", or synonyms.
-- If final_rank == 1 AND final_score >= 70, the headline MUST be broadly affirmative (proceed / recommend / strong candidate, with honest caveats). It MUST NOT open with decline / reject language.
-- You will be told deterministic_verdict (when available). Your headline_recommendation and bottom_line MUST be directionally consistent with it. If deterministic_verdict is 'go' or 'consider', your headline cannot open with 'decline', 'reject', or 'not viable'. If deterministic_verdict is 'caution' or 'avoid', affirmative language is inappropriate. You MAY surface strong concerns in `risks` and `comparison` regardless — but headline and bottom_line must agree with the deterministic verdict's direction.
-- The narrative MAY and SHOULD surface the strongest concern honestly — in `risks` and in `comparison` — but not as the headline or bottom line when the overall direction is positive.
+VOICE EXAMPLES (target tone — match this directness):
 
-SELF-CONSISTENCY RULE:
-- headline_recommendation, ranking_explanation, and bottom_line must all agree on direction. If the anchors point to 'go'/'consider', the headline and bottom_line cannot read as 'decline'. If the anchors point to 'caution' or a hard failure, the headline must not read as an affirmative recommendation."""
+Example A — strong recommend, score 82, rank 1:
+{
+  "headline_recommendation": "Recommend — rent is 18% under median and the corner gives the brand visibility from two arteries.",
+  "ranking_explanation": "This site leads on the two things that matter most for a QSR: cost basis and visibility. Rent is well below the Al Olaya median for restaurant-suitable units, and the corner position on a 22m road means signage works in both directions of traffic. Realized demand in the area is healthy — over 1,400 monthly orders in the surrounding district — so we are not betting on growth that hasn't shown up yet.",
+  "key_evidence": [
+    {"signal": "annual rent", "value": "480,000 SAR/yr", "implication": "18% below Al Olaya median for restaurant-suitable units", "polarity": "positive"},
+    {"signal": "realized demand", "value": "1,420 orders/30d", "implication": "7.8× the district median; demand is real, not projected", "polarity": "positive"},
+    {"signal": "frontage", "value": "22 m corner", "implication": "Signage visible from both directions on a primary artery", "polarity": "positive"},
+    {"signal": "competitors within 500m", "value": "3 count", "implication": "Light competitive pressure for this catchment", "polarity": "positive"}
+  ],
+  "risks": [
+    {"risk": "Parking visibility could not be verified from current data — common for Aqar listings, not a site defect.", "mitigation": null}
+  ],
+  "comparison": "Beats Peer A on rent by ~15% and matches Peer B on visibility, with a stronger demand signal than either.",
+  "bottom_line": "Take this one — the rent alone justifies the deal, and the demand confirms it."
+}
+
+Example B — recommend with reservations, score 71, rank 4:
+{
+  "headline_recommendation": "Recommend with reservations — the economics work but the catchment is competitive.",
+  "ranking_explanation": "Rent and occupancy line up well, which is why this site clears our bar. The catch is competition: 9 burger-category operators within a kilometre, including two with strong delivery presence. The site is workable but won't win on its own — the brand will need to.",
+  "key_evidence": [
+    {"signal": "annual rent", "value": "1,500 SAR/m²/yr", "implication": "Slightly above district median but offset by strong occupancy economics", "polarity": "neutral"},
+    {"signal": "occupancy economics score", "value": "81/100", "implication": "Strong financials for the asking rent", "polarity": "positive"},
+    {"signal": "competitor count (burger, 1km)", "value": "9 count", "implication": "Crowded category; differentiation matters here", "polarity": "negative"}
+  ],
+  "risks": [
+    {"risk": "Burger category is saturated within 1km.", "mitigation": "Lead with delivery-first hours via HungerStation partnership for the first 90 days; lock in the dine-in mix only after order volume validates the catchment."}
+  ],
+  "comparison": "Cheaper than HERFY at 297 al Fawas but in a tighter competitive set; trade-off is rent vs. category density.",
+  "bottom_line": "Worth doing if the brand has a sharp delivery angle — otherwise pass."
+}
+
+Now write the memo for the candidate JSON the user provides. Match the voice in the examples. Be specific to this site, not generic."""
 
 
 _MAX_USER_PAYLOAD_CHARS = 12000
@@ -967,14 +993,20 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
     if ctx.locale == "ar":
         addenda.append(
             "LOCALE: Produce every string value in Modern Standard Arabic "
-            "(فصحى). JSON keys stay in English; all string values in Arabic."
+            "(فصحى) — natural, professional Arabic the way a Saudi "
+            "real-estate analyst would speak to a restaurant operator. "
+            "JSON keys stay in English. Match the directness of the English "
+            "voice examples; do not become more formal or hedged just "
+            "because you are writing in Arabic. The headline must start "
+            "with 'نوصي', 'نوصي مع تحفظات', or 'نرفض'."
         )
     if ctx.realized_demand is not None:
         addenda.append(
-            "EVIDENCE PRIORITY: realized_demand is present. Prioritize it in "
-            "key_evidence because it reflects actual customer orders, not just "
-            "supply presence. Cite value_30d, branch_count, and district_median "
-            "when available."
+            "REALIZED DEMAND: This candidate has actual delivery-order data "
+            "(not a supply proxy). Lead the key_evidence with the realized "
+            "demand figure (orders/30d), cite the district median for "
+            "context, and let it anchor the ranking_explanation if it is "
+            "the strongest signal."
         )
     buckets = ctx.gate_buckets or {}
     failed_entries = [e for e in (buckets.get("failed") or []) if e.get("name")]
@@ -986,14 +1018,12 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
             for e in failed_entries
         )
         addenda.append(
-            "GATE FAILURE: One or more gates failed — "
+            "GATE FAILURE: This candidate fails on "
             + failure_list
-            + ". Per GATE LANGUAGE RULES, use 'failed' / 'does not meet' "
-            "language for these gates. Frame the headline_recommendation "
-            "consistent with overall_pass and deterministic_verdict (if the "
-            "failure is blocking and the verdict is 'caution', 'decline' is "
-            "appropriate; otherwise describe the failure honestly but keep "
-            "the direction aligned with the deterministic anchors)."
+            + ". The headline_recommendation, bottom_line, and overall "
+            "direction MUST be consistent with overall_pass=False and "
+            "deterministic_verdict. You may use 'fails on...' or 'does not "
+            "meet...' for the failed gates — never for unknowns."
         )
 
     if unknown_entries:
@@ -1002,12 +1032,12 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
             for e in unknown_entries
         )
         addenda.append(
-            "UNKNOWN GATES: The following gates could not be evaluated from "
-            "available data — " + unknown_list + ". Per GATE LANGUAGE RULES, "
-            "phrase these as 'could not be verified from current data' / "
-            "'not evaluable from current data'. Do NOT describe them as "
-            "failures, and do NOT let an unknown gate override an otherwise "
-            "positive overall_pass / deterministic_verdict."
+            "UNKNOWN GATES: The following gates could not be verified from "
+            "current data: " + unknown_list + ". Use 'could not be verified "
+            "from current data' or 'not evaluable from current data' for "
+            "these — never 'fails' or 'decline'. An unknown gate must NOT "
+            "flip a positive overall_pass or deterministic_verdict into a "
+            "negative recommendation."
         )
 
     system_content = STRUCTURED_MEMO_SYSTEM_PROMPT
