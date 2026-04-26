@@ -3017,28 +3017,39 @@ def _comparable_competitors(
                     text(f"""
                         WITH candidate_point AS (
                             SELECT ST_SetSRID(ST_MakePoint(:lon, :lat), 4326) AS geom
+                        ),
+                        ranked AS (
+                            SELECT
+                                ecq.restaurant_poi_id AS id,
+                                ecq.brand_name AS name,
+                                ecq.category,
+                                ecq.district,
+                                ecq.review_score / 20.0 AS rating,
+                                ecq.review_count,
+                                'expansion_competitor_quality' AS source,
+                                ecq.overall_quality_score,
+                                ecq.canonical_brand_id,
+                                ecq.display_name_en,
+                                ecq.display_name_ar,
+                                ST_Distance(ecq.geom::geography, cp.geom::geography) AS distance_m,
+                                COALESCE(ecq.canonical_brand_id, 'poi:' || ecq.restaurant_poi_id::text) AS dedup_key
+                            FROM {_EA_COMPETITOR_TABLE} ecq
+                            CROSS JOIN candidate_point cp
+                            WHERE ecq.geom IS NOT NULL
+                              AND lower(COALESCE(ecq.category, '')) = lower(:category)
+                              AND ST_DWithin(ecq.geom::geography, cp.geom::geography, 1500)
                         )
-                        SELECT
-                            ecq.restaurant_poi_id AS id,
-                            ecq.brand_name AS name,
-                            ecq.category,
-                            ecq.district,
-                            ecq.review_score / 20.0 AS rating,
-                            ecq.review_count,
-                            'expansion_competitor_quality' AS source,
-                            ecq.overall_quality_score,
-                            ST_Distance(ecq.geom::geography, cp.geom::geography) AS distance_m
-                        FROM {_EA_COMPETITOR_TABLE} ecq
-                        CROSS JOIN candidate_point cp
-                        WHERE ecq.geom IS NOT NULL
-                          AND lower(COALESCE(ecq.category, '')) = lower(:category)
-                          AND ST_DWithin(ecq.geom::geography, cp.geom::geography, 1500)
-                        ORDER BY distance_m ASC
-                        LIMIT 5
+                        SELECT DISTINCT ON (dedup_key)
+                            id, name, category, district, rating, review_count,
+                            source, overall_quality_score, canonical_brand_id,
+                            display_name_en, display_name_ar, distance_m
+                        FROM ranked
+                        ORDER BY dedup_key, distance_m ASC
                     """),
                     {"lat": lat, "lon": lon, "category": category},
                 ).mappings().all()
             if rows:
+                rows = sorted(rows, key=lambda r: r.get("distance_m") or 0.0)[:5]
                 return [
                     {
                         "id": row.get("id"),
@@ -3050,6 +3061,9 @@ def _comparable_competitors(
                         "distance_m": round(_safe_float(row.get("distance_m"), default=0.0), 2),
                         "source": row.get("source"),
                         "overall_quality_score": _safe_float(row.get("overall_quality_score")),
+                        "canonical_brand_id": row.get("canonical_brand_id"),
+                        "display_name_en": row.get("display_name_en"),
+                        "display_name_ar": row.get("display_name_ar"),
                     }
                     for row in rows
                 ]
@@ -6511,18 +6525,36 @@ def run_expansion_search(
 
                 if ea_competitor_populated:
                     _comp_union_parts.append(f"""
-                        (SELECT :pid_{_ci} AS candidate_pid,
-                               ecq.restaurant_poi_id AS id, ecq.brand_name AS name,
-                               ecq.category, ecq.district,
-                               ecq.review_score / 20.0 AS rating, ecq.review_count,
-                               '{_comp_source}' AS source, ecq.overall_quality_score,
-                               ST_Distance(ecq.geom::geography,
-                                 ST_SetSRID(ST_MakePoint(:lon_{_ci}, :lat_{_ci}), 4326)::geography) AS distance_m
-                        FROM {_EA_COMPETITOR_TABLE} ecq
-                        WHERE ecq.geom IS NOT NULL
-                          AND lower(COALESCE(ecq.category, '')) = lower(:category)
-                          AND ST_DWithin(ecq.geom::geography,
-                                ST_SetSRID(ST_MakePoint(:lon_{_ci}, :lat_{_ci}), 4326)::geography, 1500)
+                        (SELECT * FROM (
+                            SELECT DISTINCT ON (dedup_key)
+                                candidate_pid, id, name, category, district,
+                                rating, review_count, source, overall_quality_score,
+                                canonical_brand_id, display_name_en, display_name_ar,
+                                distance_m
+                            FROM (
+                                SELECT :pid_{_ci} AS candidate_pid,
+                                       ecq.restaurant_poi_id AS id,
+                                       ecq.brand_name AS name,
+                                       ecq.category, ecq.district,
+                                       ecq.review_score / 20.0 AS rating,
+                                       ecq.review_count,
+                                       '{_comp_source}' AS source,
+                                       ecq.overall_quality_score,
+                                       ecq.canonical_brand_id,
+                                       ecq.display_name_en,
+                                       ecq.display_name_ar,
+                                       ST_Distance(ecq.geom::geography,
+                                         ST_SetSRID(ST_MakePoint(:lon_{_ci}, :lat_{_ci}), 4326)::geography) AS distance_m,
+                                       COALESCE(ecq.canonical_brand_id,
+                                                'poi:' || ecq.restaurant_poi_id::text) AS dedup_key
+                                FROM {_EA_COMPETITOR_TABLE} ecq
+                                WHERE ecq.geom IS NOT NULL
+                                  AND lower(COALESCE(ecq.category, '')) = lower(:category)
+                                  AND ST_DWithin(ecq.geom::geography,
+                                        ST_SetSRID(ST_MakePoint(:lon_{_ci}, :lat_{_ci}), 4326)::geography, 1500)
+                            ) raw
+                            ORDER BY dedup_key, distance_m ASC
+                        ) deduped
                         ORDER BY distance_m ASC LIMIT 5)
                     """)
                 else:
@@ -6567,6 +6599,9 @@ def run_expansion_search(
                         "distance_m": round(_safe_float(r.get("distance_m"), default=0.0), 2),
                         "source": r.get("source"),
                         "overall_quality_score": _safe_float(r.get("overall_quality_score")) if r.get("overall_quality_score") is not None else None,
+                        "canonical_brand_id": r.get("canonical_brand_id"),
+                        "display_name_en": r.get("display_name_en"),
+                        "display_name_ar": r.get("display_name_ar"),
                     })
                 logger.info("expansion_search bulk competitors: enriched=%d/%d search_id=%s",
                             len(_bulk_competitors), len(_shortlist_parcel_ids), search_id)
