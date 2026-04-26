@@ -187,25 +187,29 @@ def _build_competitor_quality(db, replace: bool) -> dict:
             )
         """
 
-    # Chain strength: count of POIs sharing the same NORMALIZED name, with
-    # three filters to suppress false positives surfaced after PR #1155:
-    #   (a) drop empty / non-alphanumeric-or-Arabic chain_keys (e.g. "." names)
-    #   (b) drop generic single-word denylist (Restaurant / Sign / Bakery / ...)
-    #   (c) HAVING COUNT(*) >= 5 — must look like a real chain, not coincidence
-    # Real short-name chains (KFC, BRSK, Paul, Kudu) survive: their normalized
-    # keys aren't in the denylist and they have ≥5 branches each.
+    # Chain strength: count of POIs sharing the same canonical brand. Each
+    # POI's name is normalized via _CHAIN_NAME_NORM_SQL, then optionally
+    # collapsed to a canonical_brand_id via brand_alias. Cross-script and
+    # casing variants (Burger King + بيرجر كنج, KFC + Kfc + kfc) share the
+    # same canonical_brand_id and aggregate together. Names not in
+    # brand_alias fall back to their normalized chain_key — they aren't
+    # canonicalized but still get same-form aggregation as before #1157.
     _name_norm = _CHAIN_NAME_NORM_SQL.format(col="name")
     _denylist_sql = ", ".join(f"'{w}'" for w in _CHAIN_KEY_DENYLIST)
     chain_cte = f"""
         chain_counts AS (
             SELECT
-                {_name_norm} AS chain_key,
+                COALESCE(ba.canonical_brand_id, raw.chain_key) AS chain_group,
                 COUNT(*) AS chain_size
-            FROM restaurant_poi
-            WHERE name IS NOT NULL AND name != ''
-              AND {_name_norm} ~ '[a-z0-9\\u0600-\\u06FF]'
-              AND {_name_norm} NOT IN ({_denylist_sql})
-            GROUP BY {_name_norm}
+            FROM (
+                SELECT {_name_norm} AS chain_key
+                FROM restaurant_poi
+                WHERE name IS NOT NULL AND name != ''
+                  AND {_name_norm} ~ '[a-z0-9\\u0600-\\u06FF]'
+                  AND {_name_norm} NOT IN ({_denylist_sql})
+            ) raw
+            LEFT JOIN brand_alias ba ON ba.alias_key = raw.chain_key
+            GROUP BY COALESCE(ba.canonical_brand_id, raw.chain_key)
             HAVING COUNT(*) >= 5
         )
     """
@@ -217,7 +221,9 @@ def _build_competitor_quality(db, replace: bool) -> dict:
             city, restaurant_poi_id, brand_name, category, district, geom,
             chain_strength_score, review_score, review_count,
             delivery_presence_score, multi_platform_score, late_night_score,
-            price_tier, overall_quality_score, refreshed_at
+            price_tier, overall_quality_score,
+            canonical_brand_id, display_name_en, display_name_ar,
+            refreshed_at
         )
         SELECT
             'riyadh',
@@ -292,10 +298,18 @@ def _build_competitor_quality(db, replace: bool) -> dict:
                 + COALESCE(
                     CASE WHEN ds.has_late_night THEN 100.0 ELSE 0.0 END, 0.0) * 0.10
             )),
+            ba_row.canonical_brand_id,
+            ba_row.display_name_en,
+            ba_row.display_name_ar,
             now()
         FROM restaurant_poi rp
+        LEFT JOIN brand_alias ba_row
+          ON ba_row.alias_key = {_CHAIN_NAME_NORM_SQL.format(col="rp.name")}
         LEFT JOIN chain_counts cc
-          ON cc.chain_key = {_CHAIN_NAME_NORM_SQL.format(col="rp.name")}
+          ON cc.chain_group = COALESCE(
+                ba_row.canonical_brand_id,
+                {_CHAIN_NAME_NORM_SQL.format(col="rp.name")}
+             )
         LEFT JOIN delivery_stats ds ON ds.poi_id = rp.id
         WHERE COALESCE(
                 rp.geom,

@@ -1029,7 +1029,21 @@ def _create_expansion_tables(engine):
                 late_night_score DOUBLE PRECISION,
                 price_tier VARCHAR(16),
                 overall_quality_score DOUBLE PRECISION,
+                canonical_brand_id VARCHAR(64),
+                display_name_en VARCHAR(256),
+                display_name_ar VARCHAR(256),
                 refreshed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS brand_alias (
+                alias_key VARCHAR(256) PRIMARY KEY,
+                canonical_brand_id VARCHAR(64) NOT NULL,
+                display_name_en VARCHAR(256),
+                display_name_ar VARCHAR(256),
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
 
