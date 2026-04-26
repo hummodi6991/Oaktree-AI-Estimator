@@ -92,6 +92,32 @@ def _normalize_chain_name(name: str | None) -> str:
     return s
 
 
+# Generic single-word names that should never be treated as chain identifiers.
+# These appear in Google Places as the literal `name` field for unrelated
+# venues ("Restaurant", "Sign", "Bakery"), causing chain_strength inflation.
+# Match on the NORMALIZED key (post _normalize_chain_name) — equality only,
+# not substring — so "Pizza Hut" (key "pizza hut") survives even though
+# "pizza" is in the denylist.
+_CHAIN_KEY_DENYLIST: tuple[str, ...] = (
+    "restaurant",
+    "cafe",
+    "coffee",
+    "bakery",
+    "grill",
+    "kitchen",
+    "food",
+    "pizza",
+    "burger",
+    "shawarma",
+    "mart",
+    "shop",
+    "store",
+    "market",
+    "sign",
+    "pick",
+)
+
+
 def _has_google_review_columns(db) -> bool:
     """Check if restaurant_poi has Google review enrichment columns."""
     try:
@@ -161,12 +187,15 @@ def _build_competitor_quality(db, replace: bool) -> dict:
             )
         """
 
-    # Chain strength: count of POIs sharing the same NORMALIZED name.
-    # Was previously grouped by `chain_name`, but that column is null on
-    # >99% of rows in production. Grouping by a normalized form of `name`
-    # surfaces the de-facto chain directory hiding in the name field.
-    # See _CHAIN_NAME_NORM_SQL / _normalize_chain_name for the canonicalization.
+    # Chain strength: count of POIs sharing the same NORMALIZED name, with
+    # three filters to suppress false positives surfaced after PR #1155:
+    #   (a) drop empty / non-alphanumeric-or-Arabic chain_keys (e.g. "." names)
+    #   (b) drop generic single-word denylist (Restaurant / Sign / Bakery / ...)
+    #   (c) HAVING COUNT(*) >= 5 — must look like a real chain, not coincidence
+    # Real short-name chains (KFC, BRSK, Paul, Kudu) survive: their normalized
+    # keys aren't in the denylist and they have ≥5 branches each.
     _name_norm = _CHAIN_NAME_NORM_SQL.format(col="name")
+    _denylist_sql = ", ".join(f"'{w}'" for w in _CHAIN_KEY_DENYLIST)
     chain_cte = f"""
         chain_counts AS (
             SELECT
@@ -174,7 +203,10 @@ def _build_competitor_quality(db, replace: bool) -> dict:
                 COUNT(*) AS chain_size
             FROM restaurant_poi
             WHERE name IS NOT NULL AND name != ''
+              AND {_name_norm} ~ '[a-z0-9\\u0600-\\u06FF]'
+              AND {_name_norm} NOT IN ({_denylist_sql})
             GROUP BY {_name_norm}
+            HAVING COUNT(*) >= 5
         )
     """
 

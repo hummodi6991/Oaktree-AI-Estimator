@@ -341,6 +341,77 @@ class TestChainNameNormalization:
         # Verify no Latin contamination
         assert all(not c.isascii() or c.isspace() for c in result)
 
+    def test_denylist_constant_includes_known_generics(self):
+        from app.ingest.expansion_advisor_competitors import _CHAIN_KEY_DENYLIST
+
+        # The denylist must contain at minimum these well-known generic nouns
+        # surfaced during PR #1155 validation.
+        for required in ("restaurant", "cafe", "bakery", "sign", "pick"):
+            assert required in _CHAIN_KEY_DENYLIST, (
+                f"{required!r} missing from _CHAIN_KEY_DENYLIST"
+            )
+
+    def test_denylist_matches_normalized_form(self):
+        from app.ingest.expansion_advisor_competitors import (
+            _CHAIN_KEY_DENYLIST,
+            _normalize_chain_name,
+        )
+
+        # All denylist entries must already be in their normalized form,
+        # otherwise the SQL `NOT IN (...)` filter would never match. This
+        # test guards against typos / capitalization in future edits.
+        for word in _CHAIN_KEY_DENYLIST:
+            assert _normalize_chain_name(word) == word, (
+                f"_CHAIN_KEY_DENYLIST entry {word!r} is not in normalized form"
+            )
+
+    def test_denylist_does_not_swallow_real_chains(self):
+        from app.ingest.expansion_advisor_competitors import (
+            _CHAIN_KEY_DENYLIST,
+            _normalize_chain_name,
+        )
+
+        # Real chains whose names contain a denylist word as a SUBSTRING
+        # must NOT be excluded — the filter is equality on the full key.
+        # These should normalize to multi-word keys, not bare denylist entries.
+        survivors = ("Pizza Hut", "Burger King", "Coffee Address",
+                     "Domino's Pizza", "Maestro Pizza")
+        for chain in survivors:
+            key = _normalize_chain_name(chain)
+            assert key not in _CHAIN_KEY_DENYLIST, (
+                f"{chain!r} normalized to {key!r}, which is in the denylist"
+            )
+
+    def test_short_real_chains_survive_normalization(self):
+        from app.ingest.expansion_advisor_competitors import (
+            _CHAIN_KEY_DENYLIST,
+            _normalize_chain_name,
+        )
+
+        # Short Latin chain names that are NOT in the denylist must produce
+        # non-empty keys outside the denylist. Validation surfaced these as
+        # real chains: KFC, BRSK, Paul, Kudu, Kyan.
+        for chain in ("KFC", "BRSK", "Paul", "Kudu", "Kyan"):
+            key = _normalize_chain_name(chain)
+            assert key, f"{chain!r} normalized to empty string"
+            assert key not in _CHAIN_KEY_DENYLIST, (
+                f"{chain!r} unexpectedly normalized to a denylist entry"
+            )
+
+    def test_punctuation_only_names_normalize_to_empty(self):
+        from app.ingest.expansion_advisor_competitors import _normalize_chain_name
+
+        # Names that are purely punctuation become empty/whitespace strings
+        # after normalization. These are filtered out by the SQL CTE's
+        # alphanumeric-or-Arabic regex check.
+        import re as _re
+        for junk in (".", "..", "...", "....", "!", "!!", "..."):
+            key = _normalize_chain_name(junk)
+            # Must be empty OR contain no alphanumeric/Arabic characters.
+            assert not _re.search(r"[a-z0-9؀-ۿ]", key), (
+                f"{junk!r} unexpectedly normalized to {key!r}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Road/parking source metadata in feature_snapshot_json
