@@ -354,13 +354,21 @@ export default function ExpansionMemoPanel({
                                 <table className="ea-comp-table">
                                   <thead><tr><th>{t("expansionAdvisor.branchName")}</th><th>{t("expansionAdvisor.district")}</th><th>{t("expansionAdvisor.nearestBranch")}</th></tr></thead>
                                   <tbody>
-                                    {comps.map((c, i) => (
-                                      <tr key={String(c.id || i)}>
-                                        <td>{String(c.name || "—")}</td>
-                                        <td>{String(c.district_display || c.district || "—")}</td>
-                                        <td>{fmtMeters(c.distance_m as number | undefined)}</td>
-                                      </tr>
-                                    ))}
+                                    {comps.map((c, i) => {
+                                      const isArabic = effectiveLang === "ar";
+                                      const displayName = (
+                                        (isArabic ? (c.display_name_ar as string | null | undefined) : (c.display_name_en as string | null | undefined))
+                                        ?? c.name
+                                        ?? "—"
+                                      );
+                                      return (
+                                        <tr key={String(c.id || i)}>
+                                          <td>{String(displayName)}</td>
+                                          <td>{String(c.district_display || c.district || "—")}</td>
+                                          <td>{fmtMeters(c.distance_m as number | undefined)}</td>
+                                        </tr>
+                                      );
+                                    })}
                                   </tbody>
                                 </table>
                               </>
@@ -620,6 +628,68 @@ export default function ExpansionMemoPanel({
                                   )
                                 )}
                               </section>
+
+                              {/* Brand presence — major chains operating in the candidate's 500m micro-market */}
+                              {(() => {
+                                const brandPresence = snap?.brand_presence as Record<string, unknown> | undefined;
+                                const topChains = brandPresence?.top_chains as Array<Record<string, unknown>> | undefined;
+                                if (!topChains || topChains.length === 0) return null;
+                                const radiusM = typeof brandPresence?.radius_m === "number" ? (brandPresence.radius_m as number) : 500;
+                                const uniqueBrands = typeof brandPresence?.unique_brands === "number" ? (brandPresence.unique_brands as number) : topChains.length;
+                                const totalBranches = typeof brandPresence?.total_branches === "number" ? (brandPresence.total_branches as number) : 0;
+                                const isArabic = effectiveLang === "ar";
+
+                                return (
+                                  <section className="ea-memo-breakdown__section" style={{ marginTop: 16 }}>
+                                    <h5 className="ea-detail__section-title">{t("expansionAdvisor.breakdownBrandPresence")}</h5>
+                                    <p className="ea-memo-breakdown__explainer" style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", marginTop: 0, marginBottom: 8 }}>
+                                      {t("expansionAdvisor.breakdownBrandPresenceExplainer")}
+                                    </p>
+                                    <div style={{ marginTop: 8 }}>
+                                      <p style={{ marginBottom: 4, fontWeight: 500 }}>
+                                        {t("expansionAdvisor.brandPresenceWithinRadius", {
+                                          count: uniqueBrands,
+                                          meters: radiusM,
+                                          defaultValue: `${uniqueBrands} chains within ${radiusM}m`,
+                                        })}
+                                      </p>
+                                      <p style={{ fontSize: "var(--oak-fs-xs)", color: "var(--oak-text-light)", marginBottom: 8 }}>
+                                        {t("expansionAdvisor.brandPresenceUniqueBrandsBranches", {
+                                          brands: uniqueBrands,
+                                          branches: totalBranches,
+                                          defaultValue: `${uniqueBrands} unique brands · ${totalBranches} branches`,
+                                        })}
+                                      </p>
+                                      <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                                        {topChains.map((chain, idx) => {
+                                          const nameEn = chain.display_name_en as string | null | undefined;
+                                          const nameAr = chain.display_name_ar as string | null | undefined;
+                                          const fallbackId = chain.canonical_brand_id as string | null | undefined;
+                                          const displayName = (isArabic ? nameAr : nameEn) ?? nameEn ?? nameAr ?? fallbackId ?? "—";
+                                          const branchCount = typeof chain.branch_count === "number" ? (chain.branch_count as number) : 0;
+                                          return (
+                                            <li
+                                              key={String(fallbackId || idx)}
+                                              style={{
+                                                padding: "4px 10px",
+                                                borderRadius: 12,
+                                                background: "var(--oak-bg-subtle, var(--oak-bg-soft, #f1f5f9))",
+                                                fontSize: "var(--oak-fs-xs)",
+                                              }}
+                                            >
+                                              {t("expansionAdvisor.brandPresenceBrandWithCount", {
+                                                name: displayName,
+                                                count: branchCount,
+                                                defaultValue: `${displayName} (${branchCount})`,
+                                              })}
+                                            </li>
+                                          );
+                                        })}
+                                      </ul>
+                                    </div>
+                                  </section>
+                                );
+                              })()}
 
                               {/* Economics & timing */}
                               <section className="ea-memo-breakdown__section" style={{ marginTop: 16 }}>

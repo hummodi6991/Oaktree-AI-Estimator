@@ -335,6 +335,25 @@ function richBreakdownMemo() {
       multi_platform_presence_score: 45,
       delivery_competition_score: 40,
       cannibalization_score: 90,
+      comparable_competitors: [
+        {
+          id: "comp1",
+          name: "بيرجر كنج",
+          canonical_brand_id: "burger_king",
+          display_name_en: "Burger King",
+          display_name_ar: "بيرجر كنج",
+          district: "Al Olaya",
+          district_display: "Al Olaya",
+          distance_m: 310,
+        },
+        {
+          id: "comp2",
+          name: "Local Diner",
+          district: "Al Olaya",
+          district_display: "Al Olaya",
+          distance_m: 580,
+        },
+      ],
       feature_snapshot: {
         context_sources: {
           road_evidence_band: "moderate",
@@ -359,6 +378,17 @@ function richBreakdownMemo() {
           is_vacant: false,
           current_tenant: "Cafe X",
           current_category: "cafe",
+        },
+        brand_presence: {
+          radius_m: 500,
+          unique_brands: 4,
+          total_branches: 14,
+          top_chains: [
+            { canonical_brand_id: "starbucks", display_name_en: "Starbucks", display_name_ar: "ستاربكس", branch_count: 8, nearest_distance_m: 120 },
+            { canonical_brand_id: "kfc", display_name_en: "KFC", display_name_ar: "كنتاكي", branch_count: 3, nearest_distance_m: 240 },
+            { canonical_brand_id: "burger_king", display_name_en: "Burger King", display_name_ar: "بيرجر كنج", branch_count: 2, nearest_distance_m: 310 },
+            { canonical_brand_id: "dominos", display_name_en: "Domino's Pizza", display_name_ar: "دومينوز بيتزا", branch_count: 1, nearest_distance_m: 460 },
+          ],
         },
       },
     },
@@ -710,5 +740,54 @@ describe("ExpansionMemoPanel — Breakdown tab content (initialTab='breakdown')"
     const headSnippet = html.slice(headIdx, headIdx + 400);
     expect(headSnippet).toMatch(/display:\s*flex/);
     expect(headSnippet).toMatch(/justify-content:\s*space-between/);
+  });
+
+  it("renders the Brand Presence block with top chains and counts", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="breakdown" />,
+    );
+    expect(html).toContain(en.expansionAdvisor.breakdownBrandPresence);
+    expect(html).toContain(en.expansionAdvisor.breakdownBrandPresenceExplainer);
+    // Top chain (Starbucks, 8 branches) renders in EN
+    expect(html).toContain("Starbucks");
+    expect(html).toContain("(8)");
+    // Branch count summary
+    expect(html).toContain("14");
+  });
+
+  it("hides the Brand Presence block when top_chains is empty", () => {
+    const memo = richBreakdownMemo() as any;
+    memo.candidate.feature_snapshot.brand_presence = {
+      radius_m: 500, unique_brands: 0, total_branches: 0, top_chains: [],
+    };
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={memo} initialTab="breakdown" />,
+    );
+    expect(html).not.toContain(en.expansionAdvisor.breakdownBrandPresence);
+  });
+});
+
+describe("ExpansionMemoPanel — Comparable Competitors locale rendering", () => {
+  it("renders display_name_en in EN locale", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="market" lang="en" />,
+    );
+    // Burger King row: display_name_en = "Burger King" should be rendered
+    expect(html).toContain("Burger King");
+  });
+
+  it("renders display_name_ar in AR locale", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="market" lang="ar" />,
+    );
+    expect(html).toContain("بيرجر كنج");
+  });
+
+  it("falls back to c.name when display_name_en/ar are absent", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="market" lang="en" />,
+    );
+    // Local Diner row has no display_name_en — should fall through to c.name
+    expect(html).toContain("Local Diner");
   });
 });

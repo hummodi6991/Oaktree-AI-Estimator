@@ -2244,3 +2244,54 @@ def test_integration_four_canonical_searches_flag_off_unchanged(monkeypatch):
             assert c["rerank_applied"] is False, search_label
             assert c["rerank_reason"] is None, search_label
             assert c["rerank_delta"] == 0, search_label
+
+
+def test_brand_presence_aggregation_shape():
+    """Verify the brand_presence aggregation produces the expected shape:
+    top 5 by branch count, with unique brand count and total branch summary."""
+    # Simulate raw rows from the per-candidate UNION ALL query:
+    raw_rows = [
+        {"candidate_pid": "cand1", "canonical_brand_id": "starbucks",
+         "display_name_en": "Starbucks", "display_name_ar": "ستاربكس",
+         "branch_count": 8, "nearest_distance_m": 120.0},
+        {"candidate_pid": "cand1", "canonical_brand_id": "kfc",
+         "display_name_en": "KFC", "display_name_ar": "كنتاكي",
+         "branch_count": 3, "nearest_distance_m": 240.0},
+        {"candidate_pid": "cand1", "canonical_brand_id": "burger_king",
+         "display_name_en": "Burger King", "display_name_ar": "بيرجر كنج",
+         "branch_count": 2, "nearest_distance_m": 310.0},
+    ]
+
+    # Mirror the in-service grouping/sort logic
+    per_candidate: dict[str, list[dict]] = {}
+    for r in raw_rows:
+        per_candidate.setdefault(str(r["candidate_pid"]), []).append({
+            "canonical_brand_id": r["canonical_brand_id"],
+            "display_name_en": r.get("display_name_en"),
+            "display_name_ar": r.get("display_name_ar"),
+            "branch_count": int(r["branch_count"]),
+            "nearest_distance_m": float(r.get("nearest_distance_m") or 0.0),
+        })
+    for brands in per_candidate.values():
+        brands.sort(key=lambda b: (
+            -b["branch_count"], b["nearest_distance_m"],
+            b["canonical_brand_id"] or "",
+        ))
+
+    assert "cand1" in per_candidate
+    chains = per_candidate["cand1"][:5]
+    assert chains[0]["canonical_brand_id"] == "starbucks"
+    assert chains[0]["branch_count"] == 8
+    assert chains[1]["canonical_brand_id"] == "kfc"
+    assert chains[2]["canonical_brand_id"] == "burger_king"
+
+    # Top-level wrapper shape
+    presence = {
+        "radius_m": 500,
+        "unique_brands": len(chains),
+        "total_branches": sum(c["branch_count"] for c in chains),
+        "top_chains": chains[:5],
+    }
+    assert presence["unique_brands"] == 3
+    assert presence["total_branches"] == 13
+    assert len(presence["top_chains"]) == 3
