@@ -90,10 +90,14 @@ export type ComparableCompetitor = {
   score?: number;
   category?: string;
   district?: string;
+  district_display?: string | null;
   rating?: number;
   review_count?: number;
   distance_m?: number;
   source?: string;
+  canonical_brand_id?: string | null;
+  display_name_en?: string | null;
+  display_name_ar?: string | null;
 };
 
 export type SiteFitContext = {

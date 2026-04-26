@@ -6611,6 +6611,82 @@ def run_expansion_search(
     logger.info("expansion_search timing: bulk_competitors=%.2fs search_id=%s",
                  t_comp_done - t_comp_start, search_id)
 
+    # ───────────────────────────────────────────────────────────────────
+    # Brand presence aggregate (PR C): per candidate, count branches per
+    # canonical brand within 500m. Used by the Breakdown tab's Brand
+    # Presence block to surface "major chains operating in this micro-
+    # market". Distinct from the proximity-competitor query above, which
+    # returns the 5 closest unique chains within 1500m for the Market
+    # tab. The two queries answer different questions and run in parallel.
+    # ───────────────────────────────────────────────────────────────────
+    _bulk_brand_presence: dict[str, list[dict]] = {}
+    if ea_competitor_populated and _shortlist_coords:
+        _bp_union_parts: list[str] = []
+        _bp_params: dict = {"category": category}
+        for _bpi, (_bp_pid, (_bp_lon, _bp_lat)) in enumerate(_shortlist_coords.items()):
+            _bp_params[f"bp_pid_{_bpi}"] = str(_bp_pid)
+            _bp_params[f"bp_lon_{_bpi}"] = _bp_lon
+            _bp_params[f"bp_lat_{_bpi}"] = _bp_lat
+            _bp_union_parts.append(f"""
+                (SELECT :bp_pid_{_bpi} AS candidate_pid,
+                        ecq.canonical_brand_id,
+                        MAX(ecq.display_name_en) AS display_name_en,
+                        MAX(ecq.display_name_ar) AS display_name_ar,
+                        COUNT(*) AS branch_count,
+                        MIN(ST_Distance(
+                            ecq.geom::geography,
+                            ST_SetSRID(ST_MakePoint(:bp_lon_{_bpi}, :bp_lat_{_bpi}), 4326)::geography
+                        )) AS nearest_distance_m
+                 FROM {_EA_COMPETITOR_TABLE} ecq
+                 WHERE ecq.geom IS NOT NULL
+                   AND ecq.canonical_brand_id IS NOT NULL
+                   AND lower(COALESCE(ecq.category, '')) = lower(:category)
+                   AND ST_DWithin(
+                       ecq.geom::geography,
+                       ST_SetSRID(ST_MakePoint(:bp_lon_{_bpi}, :bp_lat_{_bpi}), 4326)::geography,
+                       500
+                   )
+                 GROUP BY ecq.canonical_brand_id)
+            """)
+
+        if _bp_union_parts:
+            _bp_sql = " UNION ALL ".join(_bp_union_parts)
+            try:
+                with db.begin_nested():
+                    _bp_rows = db.execute(text(_bp_sql), _bp_params).mappings().all()
+            except Exception as exc:
+                logger.warning(
+                    "expansion_search bulk brand_presence query failed (continuing): %s",
+                    exc,
+                )
+                _bp_rows = []
+
+            # Group rows by candidate, sort, take top 5
+            _per_candidate_brands: dict[str, list[dict]] = {}
+            for _r in _bp_rows:
+                _key = str(_r["candidate_pid"])
+                _per_candidate_brands.setdefault(_key, []).append({
+                    "canonical_brand_id": _r["canonical_brand_id"],
+                    "display_name_en": _r.get("display_name_en"),
+                    "display_name_ar": _r.get("display_name_ar"),
+                    "branch_count": int(_r["branch_count"] or 0),
+                    "nearest_distance_m": _safe_float(_r.get("nearest_distance_m"), default=0.0),
+                })
+
+            for _key, _brands in _per_candidate_brands.items():
+                # ORDER BY branch_count DESC, nearest_distance_m ASC, canonical_brand_id ASC
+                _brands.sort(key=lambda b: (
+                    -b["branch_count"],
+                    b.get("nearest_distance_m") or 0.0,
+                    b.get("canonical_brand_id") or "",
+                ))
+                _bulk_brand_presence[_key] = _brands
+
+            logger.info(
+                "expansion_search bulk brand_presence: enriched=%d/%d search_id=%s",
+                len(_bulk_brand_presence), len(_shortlist_coords), search_id,
+            )
+
     t_bulk_enrich_done = time.monotonic()
 
     for prepared_item in prepared[:shortlist_size]:
@@ -6789,6 +6865,24 @@ def run_expansion_search(
                 "percentile_composite": 0.5,
                 "district_label": district if isinstance(district, str) else None,
                 "sample_floor_applied": True,
+            }
+        # Brand presence in the candidate's 500m micro-market (PR C).
+        # Top 5 by branch count, with unique brand count and total branch
+        # count summarized for the Breakdown tab header.
+        _bp_brands_for_candidate = _bulk_brand_presence.get(_pid_str, [])
+        if _bp_brands_for_candidate:
+            feature_snapshot_json["brand_presence"] = {
+                "radius_m": 500,
+                "unique_brands": len(_bp_brands_for_candidate),
+                "total_branches": sum(b["branch_count"] for b in _bp_brands_for_candidate),
+                "top_chains": _bp_brands_for_candidate[:5],
+            }
+        else:
+            feature_snapshot_json["brand_presence"] = {
+                "radius_m": 500,
+                "unique_brands": 0,
+                "total_branches": 0,
+                "top_chains": [],
             }
         # Enrich feature snapshot with candidate_location metadata
         if row.get("source_tier") is not None:
