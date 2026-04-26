@@ -6622,7 +6622,7 @@ def run_expansion_search(
     _bulk_brand_presence: dict[str, list[dict]] = {}
     if ea_competitor_populated and _shortlist_coords:
         _bp_union_parts: list[str] = []
-        _bp_params: dict = {"category": category}
+        _bp_params: dict = {}
         for _bpi, (_bp_pid, (_bp_lon, _bp_lat)) in enumerate(_shortlist_coords.items()):
             _bp_params[f"bp_pid_{_bpi}"] = str(_bp_pid)
             _bp_params[f"bp_lon_{_bpi}"] = _bp_lon
@@ -6640,7 +6640,6 @@ def run_expansion_search(
                  FROM {_EA_COMPETITOR_TABLE} ecq
                  WHERE ecq.geom IS NOT NULL
                    AND ecq.canonical_brand_id IS NOT NULL
-                   AND lower(COALESCE(ecq.category, '')) = lower(:category)
                    AND ST_DWithin(
                        ecq.geom::geography,
                        ST_SetSRID(ST_MakePoint(:bp_lon_{_bpi}, :bp_lat_{_bpi}), 4326)::geography,
