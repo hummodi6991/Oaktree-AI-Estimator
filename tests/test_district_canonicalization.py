@@ -12,6 +12,7 @@ import pytest
 from app.services.expansion_advisor import (
     _canonicalize_district_label,
     _normalize_candidate_payload,
+    _resolve_district_to_ar_key,
 )
 from app.services.aqar_district_match import normalize_district_key
 
@@ -228,3 +229,71 @@ class TestTargetDistrictNormalization:
     def test_empty_input_skipped(self):
         norm = normalize_district_key("")
         assert norm == ""
+
+
+# ---------------------------------------------------------------------------
+# _resolve_district_to_ar_key
+# ---------------------------------------------------------------------------
+
+
+class TestResolveDistrictToArKey:
+    """Unit tests for the _resolve_district_to_ar_key helper."""
+
+    @pytest.fixture
+    def lookup(self) -> dict[str, dict[str, str]]:
+        # Synthetic lookup mirroring _build_district_lookup output shape.
+        return {
+            "الياسمين": {"label_ar": "الياسمين", "label_en": "Al Yasmin"},
+            "النخيل": {"label_ar": "النخيل", "label_en": "Al Nakheel"},
+            "الملقا": {"label_ar": "الملقا", "label_en": "Al Malqa"},
+            "العليا": {"label_ar": "العليا", "label_en": "Al Olaya"},
+        }
+
+    def test_empty_input_returns_none(self, lookup):
+        assert _resolve_district_to_ar_key("", lookup) is None
+
+    def test_ar_norm_key_direct_match(self, lookup):
+        assert _resolve_district_to_ar_key("الياسمين", lookup) == "الياسمين"
+
+    def test_ar_with_hayy_prefix_normalizes(self, lookup):
+        # 'حي الياسمين' should normalize through normalize_district_key
+        # to 'الياسمين' and resolve to that AR norm-key.
+        assert _resolve_district_to_ar_key("حي الياسمين", lookup) == "الياسمين"
+
+    def test_en_exact_match(self, lookup):
+        assert _resolve_district_to_ar_key("Al Yasmin", lookup) == "الياسمين"
+
+    def test_en_case_insensitive(self, lookup):
+        assert _resolve_district_to_ar_key("al yasmin", lookup) == "الياسمين"
+        assert _resolve_district_to_ar_key("AL YASMIN", lookup) == "الياسمين"
+
+    def test_en_with_extra_whitespace(self, lookup):
+        assert _resolve_district_to_ar_key("  Al Yasmin  ", lookup) == "الياسمين"
+
+    def test_no_match_returns_none(self, lookup):
+        assert _resolve_district_to_ar_key("Nonexistent District", lookup) is None
+
+    def test_ar_with_alef_variant_normalizes(self, lookup):
+        # Mixed-script / variant Arabic input should normalize via the
+        # Arabic path. 'العلىا' (using ى instead of ي) should still
+        # resolve to 'العليا'.
+        variant = "العلىا"
+        normalized = normalize_district_key(variant)
+        assert normalized in lookup  # sanity
+        assert _resolve_district_to_ar_key(variant, lookup) == normalized
+
+    def test_en_does_not_match_ar_key(self, lookup):
+        # An English string that does not match any label_en should not
+        # accidentally collide with an Arabic key.
+        assert _resolve_district_to_ar_key("Yasmin", lookup) is None
+
+    def test_empty_lookup(self):
+        # With no entries, both AR and EN paths should miss.
+        assert _resolve_district_to_ar_key("Al Yasmin", {}) is None
+        assert _resolve_district_to_ar_key("الياسمين", {}) is None
+
+    def test_lookup_entry_without_label_en(self, lookup):
+        # An entry missing label_en must not blow up the EN scan.
+        lookup_with_missing = dict(lookup)
+        lookup_with_missing["حي بلا"] = {"label_ar": "حي بلا", "label_en": None}
+        assert _resolve_district_to_ar_key("Al Yasmin", lookup_with_missing) == "الياسمين"

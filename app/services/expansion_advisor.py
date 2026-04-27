@@ -682,6 +682,37 @@ def _cached_district_lookup(db: Session) -> dict[str, dict[str, str]]:
     return _district_lookup_cache[key]
 
 
+def _resolve_district_to_ar_key(
+    input_value: str,
+    lookup: dict[str, dict[str, str]],
+) -> str | None:
+    """Resolve a district string (Arabic or English) to its canonical Arabic norm-key.
+
+    - Arabic input (already a key in ``lookup``): returned as-is after
+      ``normalize_district_key``. Because the first step is normalization,
+      raw forms with the ``حي`` prefix or ``أ/إ/آ/ى`` variants resolve to
+      the same canonical key — a beneficial side effect over a direct
+      dict membership check.
+    - English input matching a ``label_en`` in ``lookup`` (case- and
+      whitespace-insensitive): the corresponding norm-key is returned.
+    - No match: returns ``None``. Callers decide whether to fall back,
+      skip, or pass-through the original string.
+    """
+    if not input_value:
+        return None
+    normalized = normalize_district_key(input_value)
+    if normalized and normalized in lookup:
+        return normalized
+    input_lower = input_value.strip().lower()
+    if not input_lower:
+        return None
+    for nk, entry in lookup.items():
+        label_en = (entry.get("label_en") or "").strip()
+        if label_en and label_en.lower() == input_lower:
+            return nk
+    return None
+
+
 def _cached_table_available(db: Session, table_name: str) -> bool:
     """Cache table availability checks per table name within a process."""
     if table_name not in _table_avail_cache:
