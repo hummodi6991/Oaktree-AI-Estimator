@@ -14,7 +14,11 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.services.aqar_district_match import is_mojibake, normalize_district_key
+from app.services.aqar_district_match import (
+    is_mojibake,
+    normalize_district_key,
+    normalize_district_key_sql,
+)
 from app.services.expansion_rerank import generate_rerank
 from app.services.rent import aqar_rent_median
 
@@ -3437,6 +3441,12 @@ def _estimate_rent_from_expansion_table(db: Session, district: str | None) -> tu
 
     Uses commercial/retail rents for F&B location scoring.
     Fallback chain: retail district → commercial district → retail city → commercial city.
+
+    English-bound callers (e.g. commercial_unit candidates whose neighborhood
+    field is the Aqar English label) are translated to the Arabic norm-key
+    via the AR↔EN crosswalk before the join. The SQL WHERE clause additionally
+    applies ``normalize_district_key`` semantics on both sides so حي-prefix
+    and alef/ya variants on the column side don't break the match.
     """
     try:
         with db.begin_nested():
@@ -3446,11 +3456,44 @@ def _estimate_rent_from_expansion_table(db: Session, district: str | None) -> tu
             if not has_rows:
                 return None
 
+            # Resolve EN→AR via the district crosswalk; pass-through on miss
+            # so callers that already supply Arabic keep working.
+            district_normalized: str | None = None
+            if district:
+                lookup = _cached_district_lookup(db)
+                resolved = _resolve_district_to_ar_key(district, lookup)
+                if resolved:
+                    district_normalized = resolved
+                    if normalize_district_key(district) == resolved:
+                        logger.debug("rent_lookup: AR direct match for %s", district)
+                    else:
+                        logger.debug("rent_lookup: EN→AR match %s → %s", district, resolved)
+                else:
+                    district_normalized = normalize_district_key(district) or district
+                    logger.debug(
+                        "rent_lookup: no district resolution for %s, using pass-through",
+                        district,
+                    )
+
+            district_where = (
+                f"AND LOWER({normalize_district_key_sql('district')}) = LOWER(:district_normalized)"
+            )
+
             # Filters to try in priority order: narrowest (retail + district) to broadest (commercial + city)
             filters = []
-            if district:
-                filters.append(("AND lower(district) = lower(:district) AND asset_type = 'commercial' AND unit_type = 'retail'", {"district": district}, 3, "expansion_rent_district_retail"))
-                filters.append(("AND lower(district) = lower(:district) AND asset_type = 'commercial'", {"district": district}, 3, "expansion_rent_district_commercial"))
+            if district and district_normalized:
+                filters.append((
+                    f"{district_where} AND asset_type = 'commercial' AND unit_type = 'retail'",
+                    {"district_normalized": district_normalized},
+                    3,
+                    "expansion_rent_district_retail",
+                ))
+                filters.append((
+                    f"{district_where} AND asset_type = 'commercial'",
+                    {"district_normalized": district_normalized},
+                    3,
+                    "expansion_rent_district_commercial",
+                ))
             filters.append(("AND asset_type = 'commercial' AND unit_type = 'retail'", {}, 0, "expansion_rent_city_retail"))
             filters.append(("AND asset_type = 'commercial'", {}, 0, "expansion_rent_city_commercial"))
 
@@ -4617,17 +4660,9 @@ def _query_commercial_unit_candidates(
             for i, td in enumerate(sorted(target_district_norm)):
                 params[f"td_{i}"] = td
 
-            # TRANSLATE mirrors normalize_district_key(): أ→ا إ→ا آ→ا ى→ي
-            _NORM_SQL = (
-                "TRIM(REGEXP_REPLACE("
-                "TRANSLATE("
-                "COALESCE(p.district_label, ''), "
-                "E'\\u0623\\u0625\\u0622\\u0649\\u0640', "
-                "E'\\u0627\\u0627\\u0627\\u064A'"
-                "), "
-                "E'^\\u062D\\u064A\\\\s+', '', 'g'"
-                "))"
-            )
+            # Mirrors normalize_district_key(): folds alef/ya variants,
+            # strips حي prefix, trims whitespace.
+            _NORM_SQL = normalize_district_key_sql("COALESCE(p.district_label, '')")
 
             centroid_sql = sa_text(f"""
                 SELECT

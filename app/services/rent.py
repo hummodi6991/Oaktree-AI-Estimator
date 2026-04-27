@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
 from math import ceil
 from typing import Iterable, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.ml.name_normalization import norm_city, norm_district
 from app.models.tables import RentComp
+from app.services.aqar_district_match import (
+    normalize_district_key,
+    normalize_district_key_sql,
+)
+
+logger = logging.getLogger(__name__)
 
 
 # Kaggle/Aqar scrapes frequently encode *annual* rents (SAR/year) even when the
@@ -100,6 +107,41 @@ def aqar_rent_median(
 
     district_norm = district_norm or (norm_district(city_norm, district) if district else "")
 
+    # Resolve English district names to their canonical Arabic norm-key via
+    # the AR↔EN crosswalk so callers passing English (e.g. cu.neighborhood)
+    # can hit Arabic-keyed RentComp rows. Lazy import avoids a circular
+    # dependency with expansion_advisor.
+    district_for_match = district_norm
+    if district:
+        try:
+            from app.services.expansion_advisor import (
+                _cached_district_lookup,
+                _resolve_district_to_ar_key,
+            )
+
+            lookup = _cached_district_lookup(db)
+            resolved = _resolve_district_to_ar_key(district, lookup)
+            if resolved:
+                district_for_match = resolved
+                if normalize_district_key(district) == resolved:
+                    logger.debug("rent_lookup: AR direct match for %s", district)
+                else:
+                    logger.debug("rent_lookup: EN→AR match %s → %s", district, resolved)
+            else:
+                logger.debug(
+                    "rent_lookup: no district resolution for %s, using pass-through",
+                    district,
+                )
+        except Exception:
+            logger.debug("rent_lookup: crosswalk unavailable for %s", district, exc_info=True)
+
+    dialect_name = ""
+    try:
+        bind = db.get_bind()
+        dialect_name = getattr(getattr(bind, "dialect", None), "name", "") or ""
+    except Exception:
+        dialect_name = ""
+
     since_date = date.today() - timedelta(days=since_days) if since_days else None
 
     def _values(scope_district: bool, apply_unit: bool = True) -> list[float]:
@@ -114,9 +156,23 @@ def aqar_rent_median(
             q = q.filter(RentComp.date >= since_date)
         if scope_district:
             # If no district was supplied, avoid "faking" a district median by returning city stats.
-            if not district_norm:
+            if not district_for_match:
                 return []
-            q = q.filter(func.lower(RentComp.district) == district_norm.lower())
+            if dialect_name == "postgresql":
+                # Apply normalize_district_key semantics on the column side
+                # so حي-prefix and alef/ya variants in stored data don't
+                # break the join. The bind value is already a norm-key
+                # (resolved above or normalized below), so wrapping it in
+                # the same fragment is a no-op but keeps both sides
+                # symmetric and dialect-friendly.
+                q = q.filter(
+                    text(
+                        f"LOWER({normalize_district_key_sql('rent_comp.district')}) "
+                        f"= LOWER({normalize_district_key_sql(':district_normalized')})"
+                    ).bindparams(district_normalized=district_for_match)
+                )
+            else:
+                q = q.filter(func.lower(RentComp.district) == district_for_match.lower())
         return [
             _normalize_kaggle_rent_per_m2_month(float(rent_per_m2), source, asset_type)
             for rent_per_m2, source in q.all()

@@ -887,6 +887,11 @@ class TestRentEstimationFallback:
         def mock_execute(stmt, params=None):
             sql_str = str(stmt)
             result = MagicMock()
+            if "external_feature" in sql_str:
+                # District AR↔EN lookup invoked by _cached_district_lookup
+                call_sequence.append("district_lookup")
+                result.fetchall.return_value = []
+                return result
             if "EXISTS" in sql_str:
                 call_sequence.append("exists")
                 result.scalar.return_value = True

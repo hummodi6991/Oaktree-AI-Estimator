@@ -110,6 +110,29 @@ def normalize_district_key(s: str | None) -> str:
     return base
 
 
+def normalize_district_key_sql(col_expr: str) -> str:
+    """SQL fragment (PostgreSQL) that mirrors :func:`normalize_district_key`.
+
+    Folds alef variants (أ/إ/آ → ا), alef maksura (ى → ي), strips TATWEEL
+    (ـ), strips a leading ``حي`` prefix, and trims whitespace, so an
+    English-bound caller's ``district`` bind value (resolved to its
+    Arabic norm-key via the crosswalk) compares cleanly against either
+    canonical or raw forms stored on the column side.
+
+    Caller is responsible for adding ``LOWER(...)`` if case-insensitive
+    matching is desired (no-op for Arabic, useful for English fallbacks).
+    """
+    return (
+        "TRIM(REGEXP_REPLACE("
+        f"TRANSLATE({col_expr}, "
+        "E'\\u0623\\u0625\\u0622\\u0649\\u0640', "
+        "E'\\u0627\\u0627\\u0627\\u064A'"
+        "), "
+        "E'^\\u062D\\u064A\\\\s+', '', 'g'"
+        "))"
+    )
+
+
 def _fetch_city_mv_rows(db: Session, city_ar: str, property_type: str | None) -> Iterable[dict]:
     params = {"aqar_city": city_ar}
     query = [
