@@ -30,6 +30,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
+from app.services.aqar_district_match import normalize_district_key_sql
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -379,9 +380,13 @@ def _step3_rent_from_district_median(db: Session) -> int:
     """Fill remaining candidates using district median from expansion_rent_comp.
 
     Matches on district_ar (Arabic name) against expansion_rent_comp.district.
-    Uses the median rent_sar_m2_year from commercial/retail comps.
+    Both sides apply ``normalize_district_key`` semantics in SQL so حي-prefix
+    and alef/ya variants don't break the AR↔AR join. Uses the median
+    rent_sar_m2_year from commercial/retail comps.
     """
-    sql = text("""
+    cl_norm = normalize_district_key_sql("cl.district_ar")
+    sub_norm = normalize_district_key_sql("sub.district")
+    sql = text(f"""
         UPDATE candidate_location cl
         SET rent_sar_m2_month = sub.median_rent_month,
             rent_sar_annual = CASE
@@ -403,7 +408,7 @@ def _step3_rent_from_district_median(db: Session) -> int:
             HAVING COUNT(*) >= 1
         ) sub
         WHERE cl.district_ar IS NOT NULL
-          AND lower(cl.district_ar) = lower(sub.district)
+          AND LOWER({cl_norm}) = LOWER({sub_norm})
           AND (cl.rent_confidence IS NULL OR cl.rent_confidence NOT IN ('actual', 'comp_interpolated'))
           AND cl.is_cluster_primary = TRUE
     """)
