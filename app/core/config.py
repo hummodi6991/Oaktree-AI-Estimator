@@ -103,7 +103,7 @@ class Settings:
     # is false the service falls back to the legacy generic memo path byte-for-byte.
     EXPANSION_MEMO_MODEL: str = os.getenv("EXPANSION_MEMO_MODEL", "gpt-4o-mini")
     EXPANSION_MEMO_MAX_TOKENS: int = int(
-        os.getenv("EXPANSION_MEMO_MAX_TOKENS", "1200")
+        os.getenv("EXPANSION_MEMO_MAX_TOKENS", "2400")
     )
     EXPANSION_MEMO_TEMPERATURE: float = float(
         os.getenv("EXPANSION_MEMO_TEMPERATURE", "0.3")
