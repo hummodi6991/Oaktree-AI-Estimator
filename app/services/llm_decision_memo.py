@@ -29,7 +29,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v4-advisor-2026-04"
+MEMO_PROMPT_VERSION = "v4.1-advisor-2026-04"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -938,10 +938,11 @@ HARD RULES:
 - The headline_recommendation, ranking_explanation, and bottom_line must agree directionally with `deterministic_verdict`, `overall_pass`, and `final_rank`. If `final_rank == 1` AND `final_score >= 70`, the headline must be 'Recommend' — not 'Recommend with reservations', not 'Consider'. If `overall_pass == false`, the headline must be 'Decline'.
 - key_evidence must be 4–6 items. Every value MUST include a unit. A bare number ('81.48', '15') is a hard error — write '81/100', '15 count', '15 m frontage', 'SAR 480,000/yr'.
 - Polarity discipline: 'neutral' is rare. If the implication mentions a concern, drawback, or risk, polarity is 'negative'. If it strengthens the investment case, 'positive'. The implication and polarity must agree.
+- Neutral-case honesty: for the rent-vs-comparables percentile specifically, treat 40th–60th percentile as essentially at-market — neither a discount nor a premium. Do NOT spin a 45th–55th percentile result as "competitive rent" or "favorable pricing." Phrase it plainly: "asking rent of SAR X/yr is at the 52nd percentile vs N comparables — essentially at market." Polarity for an at-market rent signal MUST be 'neutral'. The investment case must rest on other signals (demand, frontage, demographics, competition density), not on rent being something it isn't.
 - Implication phrasing: name the investment consequence in one clause, not a description. Write "the spread justifies the entry rent" — not "rent is below median". Write "signage works in both traffic directions" — not "site is on a corner".
 - risks must be 2–4 distinct items. One-risk memos are a defect. Draw from gates.failed, gates.unknown, listing staleness, parking unknowns, frontage signals, cannibalization, brand saturation. Each item needs a `risk` field; the `mitigation` field is optional.
 - Mitigations must be specific tactics the operator can act on (e.g. 'Lease curbside pickup zone from neighbour', 'Partner with HungerStation for delivery-first hours in the first 90 days', 'Add LED frontage signage on the corner approach'). If you can only think of generic advice like 'consider marketing strategies', 'focus on differentiation', 'enhance visibility' — OMIT the mitigation field (set it to null). Better silent than empty.
-- Comparison MUST reference both a named competitor AND the rank-2 candidate by rank. A comparison field that names neither is a defect.
+- Comparison MUST reference at least one named competitor from comparable_competitors. If next_candidate_summary is present in the payload, the comparison MUST also reference the rank-2 alternative by rank ("rank 2 in this search..."). If next_candidate_summary is null, absent, or empty, OMIT any reference to a rank-2 alternative — do NOT spin its absence as a positive signal ("absence of competition", "best option available", "no alternatives"), and do NOT invent a phantom alternative. A comparison that names neither a real competitor nor a real rank-2 candidate is a defect.
 - Banned openers: 'Overall,', 'Generally speaking,', 'It appears that', 'consider due to', 'This candidate could potentially'.
 - Banned hedging modals when stating evidence or rationale: 'may', 'could', 'might', 'potentially'. Save them only for genuine future uncertainty in `risks`.
 - Do not start consecutive memos with the same skeleton. Lead with the strongest concrete signal for THIS site.
@@ -994,6 +995,25 @@ Example D — decline, score 41, rank 9, gates failed:
   ],
   "comparison": "Peer Chain A in this district closed at roughly SAR 640,000/yr — a 30% discount to this asking — and rank 2 in this search clears the economics gate at the 49th rent percentile with a slightly larger footprint and a stronger access/visibility profile. There is no scenario in which this site is the rational shortlist pick over rank 2.",
   "bottom_line": "Walk this one and redeploy the capital into rank 2 — the math on this listing does not work."
+}
+
+Example E — recommend with reservations, score 68, rank 2, at-market rent (illustrating neutral polarity):
+{
+  "headline_recommendation": "Recommend with reservations — rent is at market and the case rests on access and demand, not pricing.",
+  "ranking_explanation": "This site does not win on rent. Asking SAR 540,000/yr lands at the 51st percentile vs 22 district comparables — essentially at market, neither a discount nor a premium. The investment case rests on the access/visibility score of 88/100 on a primary artery, a 4-named-chain catchment within 500 m suggesting validated demand, and a population reach of 33,000 within walking distance. The trade-off is that without a rent advantage, margin pressure is higher than in a discounted-entry deal.",
+  "key_evidence": [
+    {"signal": "annual rent", "value": "SAR 540,000/yr", "implication": "at-market pricing offers no entry advantage; margin must come from operations", "polarity": "neutral"},
+    {"signal": "rent percentile vs comparables", "value": "51st percentile (vs 22 district comparables)", "implication": "deal pricing is market-clearing, neither premium nor discount", "polarity": "neutral"},
+    {"signal": "access/visibility score", "value": "88/100", "implication": "site quality is the primary thesis here; signage and approach support brand visibility", "polarity": "positive"},
+    {"signal": "named chains within 500 m", "value": "4 count", "implication": "validates the catchment for the category at the cost of competitive intensity", "polarity": "neutral"},
+    {"signal": "population reach", "value": "33,000 within walking catchment", "implication": "demand base supports the dine-in mix at typical capture rates", "polarity": "positive"}
+  ],
+  "risks": [
+    {"risk": "Rent offers no margin cushion — operational missteps will translate directly to P&L.", "mitigation": "Pre-commit a delivery partnership in month one; do not assume dine-in ramp covers fixed cost in the first 90 days."},
+    {"risk": "Four established chains within 500 m means category competition is real and ongoing.", "mitigation": "Position on a single dayparting strength rather than competing on the full menu."}
+  ],
+  "comparison": "Peer Chain A in the same district closed at SAR 510,000/yr — roughly comparable, confirming this is the market-clearing range. Rank 1 in this search has a 22% rent discount on a similar footprint, which makes it the stronger pick on pure economics, but this site has materially better access/visibility (88/100 vs 71/100), so the call depends on whether the operator weights cost basis or street presence more heavily.",
+  "bottom_line": "A working deal, but only if access matters more than rent — otherwise rank 1 is the cleaner trade."
 }
 
 Now write the memo for the candidate JSON the user provides. Match the voice in the examples. Be specific to this site, not generic."""
