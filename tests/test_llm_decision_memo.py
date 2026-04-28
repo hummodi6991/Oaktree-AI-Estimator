@@ -1322,16 +1322,30 @@ def test_rerank_whitelist_excludes_memo_only_keys():
 
 def test_memo_whitelist_is_superset_of_rerank_whitelist():
     """The memo whitelist is the rerank whitelist plus the two Phase 4
-    keys. Any addition to the rerank set must also appear in the memo
-    set by construction, otherwise a signal the rerank LLM uses would
-    not be visible to the memo LLM."""
+    keys and the PR #1 advisory-grade comparable-rent keys. Any
+    addition to the rerank set must also appear in the memo set by
+    construction, otherwise a signal the rerank LLM uses would not be
+    visible to the memo LLM."""
     from app.services.llm_decision_memo import _MEMO_WHITELIST, _RERANK_WHITELIST
 
     assert set(_RERANK_WHITELIST).issubset(set(_MEMO_WHITELIST))
     assert set(_MEMO_WHITELIST) - set(_RERANK_WHITELIST) == {
         "listing_age",
         "district_momentum",
+        "comparable_median_annual_rent_sar",
+        "comparable_n",
+        "comparable_source_label",
     }
+
+
+def test_memo_whitelist_includes_comparable_rent_keys():
+    """PR #1 plumbed comparable-rent context into feature_snapshot_json.
+    Pin the whitelist so the memo LLM can read these new keys."""
+    from app.services.llm_decision_memo import _MEMO_WHITELIST
+
+    assert "comparable_median_annual_rent_sar" in _MEMO_WHITELIST
+    assert "comparable_n" in _MEMO_WHITELIST
+    assert "comparable_source_label" in _MEMO_WHITELIST
 
 
 def test_feature_snapshot_whitelist_alias_points_at_memo_whitelist():

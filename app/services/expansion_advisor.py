@@ -7208,6 +7208,91 @@ def run_expansion_search(
             area_m2=area_m2,
         )
 
+        # ── Advisory-grade snapshot plumbing (PR #1) ──
+        # Copy candidate-level scalars and a few derivations into
+        # feature_snapshot_json so the memo LLM can make grounded
+        # financial / market / risk arguments. Skip None values to
+        # keep the snapshot lean; the memo path tolerates absent keys.
+        if area_m2 is not None:
+            feature_snapshot_json["area_m2"] = area_m2
+        _unit_area_sqm_val = (
+            _safe_float(row.get("unit_area_sqm"))
+            if row.get("unit_area_sqm") is not None
+            else None
+        )
+        if _unit_area_sqm_val is not None:
+            feature_snapshot_json["unit_area_sqm"] = _unit_area_sqm_val
+        if _unit_street_width is not None:
+            feature_snapshot_json["unit_street_width_m"] = _unit_street_width
+        if estimated_annual_rent_sar is not None:
+            feature_snapshot_json["estimated_annual_rent_sar"] = round(
+                estimated_annual_rent_sar, 2
+            )
+        # Replicate display_annual_rent_sar rounding from
+        # _normalize_candidate_payload — that helper runs after persistence
+        # so the persisted snapshot would otherwise miss this key.
+        if (
+            estimated_rent_sar_m2_year is not None
+            and estimated_rent_sar_m2_year > 0
+            and area_m2 is not None
+            and area_m2 > 0
+        ):
+            feature_snapshot_json["display_annual_rent_sar"] = round(
+                round(estimated_rent_sar_m2_year) * area_m2, 2
+            )
+        elif estimated_annual_rent_sar is not None:
+            feature_snapshot_json["display_annual_rent_sar"] = round(
+                estimated_annual_rent_sar, 2
+            )
+        if population_reach is not None:
+            feature_snapshot_json["population_reach"] = population_reach
+        if delivery_listing_count is not None:
+            feature_snapshot_json["delivery_listing_count"] = delivery_listing_count
+        if access_visibility_score is not None:
+            feature_snapshot_json["access_visibility_score"] = round(
+                access_visibility_score, 2
+            )
+        if parking_score is not None:
+            feature_snapshot_json["parking_score"] = round(parking_score, 2)
+        if frontage_score is not None:
+            feature_snapshot_json["frontage_score"] = round(frontage_score, 2)
+        _district_display_val = district_canon.get("district_display")
+        if _district_display_val is not None:
+            feature_snapshot_json["district_display"] = _district_display_val
+
+        # landlord_signal — pull from score_breakdown_json["inputs"] so
+        # the memo LLM sees the same scalar the rerank LLM consumes.
+        _landlord_signal_val = (
+            (score_breakdown_json or {}).get("inputs", {}).get("landlord_signal")
+        )
+        if _landlord_signal_val is not None:
+            feature_snapshot_json["landlord_signal"] = _landlord_signal_val
+
+        # Comparable rent context — derive only when rent_burden ran in
+        # percentile mode. Named comparable_* (not district_*) because
+        # the percentile fallback chain reaches a city-band scope on
+        # ~42% of rows in production; comparable_source_label carries
+        # the actual scope so downstream callers can stay honest.
+        _rent_burden_meta = (
+            (score_breakdown_json or {})
+            .get("economics_detail", {})
+            .get("rent_burden", {})
+        )
+        if isinstance(_rent_burden_meta, dict) and _rent_burden_meta.get("mode") == "percentile":
+            _median_per_m2_month = _rent_burden_meta.get("median_monthly_rent_per_m2")
+            if _median_per_m2_month is not None and area_m2 is not None:
+                feature_snapshot_json["comparable_median_annual_rent_sar"] = round(
+                    float(_median_per_m2_month) * 12.0 * float(area_m2), 2
+                )
+            _n_comparable = _rent_burden_meta.get("n_comparable")
+            if _n_comparable is not None:
+                feature_snapshot_json["comparable_n"] = int(_n_comparable)
+            _comparable_source_label = _rent_burden_meta.get("source_label")
+            if _comparable_source_label is not None:
+                feature_snapshot_json["comparable_source_label"] = str(
+                    _comparable_source_label
+                )
+
         candidates.append(
             {
                 "id": str(uuid.uuid4()),
