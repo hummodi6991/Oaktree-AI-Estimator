@@ -133,8 +133,10 @@ class TestFormatRentVsMedian:
 
 class TestDailyCeilingBlocksCall:
     def test_ceiling_blocks_when_exceeded(self):
+        from app.services.llm_decision_memo import DAILY_CEILING_USD
+
         today = _today_key()
-        _daily_cost_tracker[today] = 1.00
+        _daily_cost_tracker[today] = DAILY_CEILING_USD
 
         with pytest.raises(RuntimeError, match="daily cost ceiling"):
             generate_decision_memo(
