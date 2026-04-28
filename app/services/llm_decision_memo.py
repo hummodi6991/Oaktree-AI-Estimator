@@ -29,7 +29,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v2-humanized-2026-04"
+MEMO_PROMPT_VERSION = "v3-snapshot-2026-04"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -411,6 +411,13 @@ _RERANK_WHITELIST: tuple[str, ...] = (
 _MEMO_WHITELIST: tuple[str, ...] = _RERANK_WHITELIST + (
     "listing_age",
     "district_momentum",
+    # PR #1 — advisory-grade snapshot plumbing. Comparable-rent
+    # context (median, sample size, scope label) is plumbed into
+    # feature_snapshot_json so the memo LLM can ground rent
+    # arguments in observed peer listings rather than hand-wave.
+    "comparable_median_annual_rent_sar",
+    "comparable_n",
+    "comparable_source_label",
 )
 
 # Back-compat alias for existing memo call sites (:730, :901, :932).
