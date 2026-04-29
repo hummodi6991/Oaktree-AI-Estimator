@@ -790,11 +790,26 @@ export async function generateDecisionMemo(
   candidate: Record<string, unknown>,
   brief: Record<string, unknown>,
   lang: string,
+  search_id?: string | null,
+  parcel_id?: string | null,
 ): Promise<GeneratedDecisionMemo> {
+  // search_id is search-level state; the caller must pass it for the backend
+  // cache lookup to activate. parcel_id falls back to candidate.parcel_id so
+  // callers that already hold the candidate dict don't have to extract it.
+  const candidateParcelId =
+    typeof candidate.parcel_id === "string" && candidate.parcel_id
+      ? candidate.parcel_id
+      : null;
+  const resolvedParcelId = parcel_id || candidateParcelId;
+
+  const body: Record<string, unknown> = { candidate, brief, lang };
+  if (search_id) body.search_id = search_id;
+  if (resolvedParcelId) body.parcel_id = resolvedParcelId;
+
   const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/decision-memo"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ candidate, brief, lang }),
+    body: JSON.stringify(body),
   });
   const data = await readJson<{
     memo: LLMDecisionMemo;
