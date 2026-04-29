@@ -14,7 +14,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from app.core.config import settings
 
@@ -29,7 +29,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v4.2-advisor-2026-04"
+MEMO_PROMPT_VERSION = "v5-sectioned-2026-04"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -461,6 +461,83 @@ class MemoContext:
     deterministic_verdict: str | None = None
 
 
+# ── Typed advisory sections (PR #3) ─────────────────────────────────
+#
+# Design 2: backend deterministically assembles numeric / enum fields
+# from MemoContext; LLM only writes ``summary`` (≤20 words, must
+# reference a number from the typed payload) and ``*_thesis`` paragraphs.
+# Numeric absence is signaled by ``None`` — never zero, never a default.
+
+
+@dataclass(frozen=True)
+class MemoPropertyOverview:
+    summary: str = ""  # filled by LLM
+    area_m2: float | None = None
+    frontage_width_m: float | None = None
+    street_type: str | None = None
+    parking_evidence: Literal["direct", "shared", "none_found", "unknown"] | None = None
+    visibility_score: int | None = None
+    listing_age_days: int | None = None
+    vacancy_status: str | None = None
+
+
+@dataclass(frozen=True)
+class MemoFinancialFraming:
+    summary: str = ""  # filled by LLM
+    thesis: str = ""   # filled by LLM
+    annual_rent_sar: float | None = None
+    comparable_median_annual_rent_sar: float | None = None
+    rent_percentile_vs_comparables: float | None = None  # 0-1 fraction
+    comparable_n: int | None = None
+    comparable_scope: Literal["district", "city_band", "city", "unknown"] | None = None
+    spread_to_median_sar: float | None = None  # signed; positive = above median
+
+
+@dataclass(frozen=True)
+class MemoMarketContext:
+    summary: str = ""  # filled by LLM
+    demand_thesis: str = ""  # filled by LLM
+    population_reach: int | None = None
+    district_momentum: Literal["rising", "stable", "declining", "unavailable"] | None = None
+    realized_demand_30d: int | None = None
+    realized_demand_branches: int | None = None
+    delivery_listing_count: int | None = None
+
+
+@dataclass(frozen=True)
+class MemoBrandPresenceItem:
+    display_name_en: str
+    display_name_ar: str | None
+    branch_count: int
+    nearest_distance_m: float | None
+
+
+@dataclass(frozen=True)
+class MemoNamedCompetitor:
+    id: str | None
+    name: str
+    score: float | None
+
+
+@dataclass(frozen=True)
+class MemoNextCandidateRef:
+    rank: int
+    candidate_id: str | None
+    district: str | None
+    annual_rent_sar: float | None
+    rent_percentile_vs_comparables: float | None
+    access_visibility_score: float | None
+
+
+@dataclass(frozen=True)
+class MemoCompetitiveLandscape:
+    summary: str = ""  # filled by LLM
+    saturation_thesis: str = ""  # filled by LLM
+    top_chains: tuple[MemoBrandPresenceItem, ...] = ()
+    comparable_competitors: tuple[MemoNamedCompetitor, ...] = ()
+    next_candidate_summary: MemoNextCandidateRef | None = None
+
+
 # ── Context assembly helpers ────────────────────────────────────────
 
 
@@ -868,6 +945,280 @@ def build_memo_context(
     )
 
 
+# ── Typed advisory-section assembly (PR #3) ─────────────────────────
+
+_ALLOWED_PARKING_EVIDENCE: tuple[str, ...] = ("direct", "shared", "none_found", "unknown")
+_ALLOWED_DISTRICT_MOMENTUM: tuple[str, ...] = ("rising", "stable", "declining", "unavailable")
+
+
+def _safe_float(v: Any) -> float | None:
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _safe_int(v: Any) -> int | None:
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    f = _safe_float(v)
+    if f is None:
+        return None
+    try:
+        return int(f)
+    except (TypeError, ValueError):
+        return None
+
+
+def _scope_from_source_label(label: Any) -> str | None:
+    """Map a comparable_source_label to one of {district, city_band, city}.
+
+    None / unrecognized labels return None — never a default. The caller
+    is responsible for treating None as "absent peer-listing context"
+    rather than "city-wide".
+    """
+    if not isinstance(label, str) or not label.strip():
+        return None
+    s = label.strip().lower()
+    if s.startswith("district_"):
+        return "district"
+    if s.startswith("city_band"):
+        return "city_band"
+    if s.startswith("city"):
+        return "city"
+    return None
+
+
+def _normalize_parking_evidence(raw: Any) -> str | None:
+    """Normalize a parking-evidence band into the typed enum values.
+
+    Bands like ``moderate`` / ``strong`` / ``limited`` collapse to
+    ``shared``; ``direct_frontage`` collapses to ``direct``. Unknown
+    or unmappable values become ``"unknown"`` only when the input is
+    explicitly ``"unknown"``; otherwise None.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    s = raw.strip().lower()
+    if s in _ALLOWED_PARKING_EVIDENCE:
+        return s
+    if s in ("direct_frontage", "direct_access"):
+        return "direct"
+    if s in ("limited", "moderate", "strong"):
+        return "shared"
+    return None
+
+
+def _format_vacancy_status(candidate_loc: dict[str, Any]) -> str | None:
+    if not isinstance(candidate_loc, dict):
+        return None
+    is_vacant = candidate_loc.get("is_vacant")
+    tenant = candidate_loc.get("current_tenant")
+    if isinstance(tenant, str) and tenant.strip():
+        return f"occupied: {tenant.strip()}"
+    if is_vacant is True:
+        return "vacant"
+    if is_vacant is False:
+        return "occupied"
+    return None
+
+
+def _infer_street_type(score_breakdown: dict[str, Any]) -> str | None:
+    """Best-effort street-type label from score_breakdown inputs.
+
+    Prefers a direct ``road_class`` / ``street_type`` field; falls back
+    to the road-evidence band (``primary``/``secondary``/``side``).
+    """
+    inputs = (score_breakdown or {}).get("inputs") if isinstance(score_breakdown, dict) else None
+    if isinstance(inputs, dict):
+        for key in ("street_type", "road_class", "road_type"):
+            v = inputs.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        band = inputs.get("road_evidence_band")
+        if isinstance(band, str) and band.strip():
+            return band.strip()
+    return None
+
+
+def _normalize_district_momentum(raw: Any) -> str | None:
+    """Map the district_momentum payload onto the typed enum.
+
+    The snapshot frequently carries this as a dict (with momentum_score,
+    percentile, etc.) rather than a label. Convert to an enum when
+    possible and return None otherwise — never invent a momentum label.
+    """
+    if isinstance(raw, str):
+        s = raw.strip().lower()
+        if s in _ALLOWED_DISTRICT_MOMENTUM:
+            return s
+        if s in ("up", "increasing"):
+            return "rising"
+        if s in ("down", "decreasing"):
+            return "declining"
+        if s == "flat":
+            return "stable"
+        return None
+    if isinstance(raw, dict):
+        if raw.get("sample_floor_applied") is True:
+            return "unavailable"
+        score = raw.get("momentum_score")
+        if isinstance(score, (int, float)):
+            if score >= 65:
+                return "rising"
+            if score <= 35:
+                return "declining"
+            return "stable"
+    return None
+
+
+def build_memo_advisory_sections(ctx: MemoContext) -> dict[str, Any]:
+    """Build typed advisory sections from MemoContext.
+
+    Numeric fields are populated deterministically from feature_snapshot,
+    score_breakdown, comparable_competitors, and next_candidate_summary.
+    ``summary`` and ``*_thesis`` fields are left empty for the LLM to fill.
+
+    Critical: when source data is absent, fields are set to None — never
+    a default value or zero. The "stands out as top choice" leak from
+    v4.1 is structurally prevented by typing next_candidate_summary as
+    Optional. The financial-framing thin-data path is structurally
+    prevented by typing comparable_* as Optional and returning None
+    when comparable_source_label is absent.
+    """
+    snapshot = ctx.feature_snapshot or {}
+    score_breakdown = ctx.score_breakdown or {}
+
+    # property_overview
+    candidate_loc = snapshot.get("candidate_location") if isinstance(snapshot.get("candidate_location"), dict) else {}
+    listing_age = snapshot.get("listing_age") if isinstance(snapshot.get("listing_age"), dict) else {}
+    inputs = score_breakdown.get("inputs") if isinstance(score_breakdown.get("inputs"), dict) else {}
+    parking_evidence_raw = inputs.get("parking_evidence_band")
+    if parking_evidence_raw is None:
+        ctx_sources = snapshot.get("context_sources") if isinstance(snapshot.get("context_sources"), dict) else {}
+        parking_evidence_raw = ctx_sources.get("parking_evidence_band") if isinstance(ctx_sources, dict) else None
+    parking_evidence = _normalize_parking_evidence(parking_evidence_raw)
+
+    vacancy_status = _format_vacancy_status(candidate_loc)
+
+    property_overview = {
+        "summary": "",  # LLM fills
+        "area_m2": _safe_float(snapshot.get("area_m2") or snapshot.get("unit_area_sqm")),
+        "frontage_width_m": _safe_float(
+            snapshot.get("unit_street_width_m") or snapshot.get("street_width_m")
+        ),
+        "street_type": _infer_street_type(score_breakdown),
+        "parking_evidence": parking_evidence,
+        "visibility_score": _safe_int(snapshot.get("access_visibility_score")),
+        "listing_age_days": _safe_int(listing_age.get("created_days")),
+        "vacancy_status": vacancy_status,
+    }
+
+    # financial_framing
+    annual_rent = _safe_float(
+        snapshot.get("estimated_annual_rent_sar")
+        or snapshot.get("display_annual_rent_sar")
+    )
+    comparable_median = _safe_float(snapshot.get("comparable_median_annual_rent_sar"))
+    economics_detail = score_breakdown.get("economics_detail") if isinstance(score_breakdown.get("economics_detail"), dict) else {}
+    rent_burden = economics_detail.get("rent_burden") if isinstance(economics_detail, dict) and isinstance(economics_detail.get("rent_burden"), dict) else {}
+    rent_percentile = _safe_float(rent_burden.get("percentile"))
+    comparable_n = _safe_int(snapshot.get("comparable_n"))
+    comparable_source_label = snapshot.get("comparable_source_label")
+    comparable_scope = _scope_from_source_label(comparable_source_label)
+
+    spread_to_median: float | None
+    if annual_rent is not None and comparable_median is not None:
+        spread_to_median = round(annual_rent - comparable_median, 2)
+    else:
+        spread_to_median = None
+
+    financial_framing = {
+        "summary": "",   # LLM fills
+        "thesis": "",    # LLM fills
+        "annual_rent_sar": annual_rent,
+        "comparable_median_annual_rent_sar": comparable_median,
+        "rent_percentile_vs_comparables": rent_percentile,
+        "comparable_n": comparable_n,
+        "comparable_scope": comparable_scope,
+        "spread_to_median_sar": spread_to_median,
+    }
+
+    # market_context
+    market_context = {
+        "summary": "",         # LLM fills
+        "demand_thesis": "",   # LLM fills
+        "population_reach": _safe_int(snapshot.get("population_reach")),
+        "district_momentum": _normalize_district_momentum(snapshot.get("district_momentum")),
+        "realized_demand_30d": _safe_int(snapshot.get("realized_demand_30d")),
+        "realized_demand_branches": _safe_int(snapshot.get("realized_demand_branches")),
+        "delivery_listing_count": _safe_int(snapshot.get("delivery_listing_count")),
+    }
+
+    # competitive_landscape
+    brand_presence = snapshot.get("brand_presence") if isinstance(snapshot.get("brand_presence"), dict) else {}
+    top_chains_raw = brand_presence.get("top_chains") if isinstance(brand_presence, dict) else []
+    if not isinstance(top_chains_raw, list):
+        top_chains_raw = []
+    top_chains = [
+        {
+            "display_name_en": chain.get("display_name_en") or "",
+            "display_name_ar": chain.get("display_name_ar"),
+            "branch_count": _safe_int(chain.get("branch_count")) or 0,
+            "nearest_distance_m": _safe_float(chain.get("nearest_distance_m")),
+        }
+        for chain in top_chains_raw
+        if isinstance(chain, dict) and chain.get("display_name_en")
+    ]
+
+    comparable_competitors = [
+        {
+            "id": c.get("id"),
+            "name": c.get("name") or "",
+            "score": _safe_float(c.get("score")),
+        }
+        for c in (ctx.comparable_competitors or [])
+        if isinstance(c, dict) and c.get("name")
+    ]
+
+    next_candidate_summary = None
+    if isinstance(ctx.next_candidate_summary, dict):
+        ncs = ctx.next_candidate_summary
+        next_candidate_summary = {
+            "rank": _safe_int(ncs.get("rank")) or 2,
+            "candidate_id": ncs.get("candidate_id"),
+            "district": ncs.get("district"),
+            "annual_rent_sar": _safe_float(ncs.get("annual_rent_sar")),
+            "rent_percentile_vs_comparables": _safe_float(
+                ncs.get("rent_percentile_vs_comparables")
+            ),
+            "access_visibility_score": _safe_float(ncs.get("access_visibility_score")),
+        }
+
+    competitive_landscape = {
+        "summary": "",              # LLM fills
+        "saturation_thesis": "",    # LLM fills
+        "top_chains": top_chains,
+        "comparable_competitors": comparable_competitors,
+        "next_candidate_summary": next_candidate_summary,
+    }
+
+    return {
+        "property_overview": property_overview,
+        "financial_framing": financial_framing,
+        "market_context": market_context,
+        "competitive_landscape": competitive_landscape,
+    }
+
+
 # ── Prompt ──────────────────────────────────────────────────────────
 
 
@@ -877,7 +1228,7 @@ Write like an advisor, not a junior analyst. Lead with the strongest investment 
 
 You will receive a JSON object describing the brand profile, the candidate's feature snapshot, the score_breakdown (9 components with weights and contributions), the gate buckets (gates.passed / gates.failed / gates.unknown — tri-state), deterministic anchors (overall_pass, final_rank, final_score, deterministic_verdict), comparable competitors, the rank-2 alternative (next_candidate_summary), and optionally a realized_demand block.
 
-Return ONLY a single JSON object — no markdown fences, no commentary before or after. The object must contain EXACTLY these six top-level keys:
+Return ONLY a single JSON object — no markdown fences, no commentary before or after. The object must contain EXACTLY these ten top-level keys:
 
 {
   "headline_recommendation": "string — one short sentence. MUST start with 'Recommend', 'Recommend with reservations', or 'Decline'. Never start with 'Consider' — that is a non-decision. Never start with 'consider due to'.",
@@ -889,7 +1240,43 @@ Return ONLY a single JSON object — no markdown fences, no commentary before or
     {"risk": "string", "mitigation": "string or null — specific tactics only; see rule below"}
   ],
   "comparison": "string — 2 to 3 sentences. MUST reference (a) at least one named competitor from comparable_competitors AND (b) the rank-2 alternative from next_candidate_summary, by rank ('rank 2 in this search...'). Be specific about what beats what.",
-  "bottom_line": "string — one sentence. The 'tell over coffee' closer. MUST NOT repeat the headline."
+  "bottom_line": "string — one sentence. The 'tell over coffee' closer. MUST NOT repeat the headline.",
+  "property_overview": {
+    "summary": "string — ≤20 words, MUST include at least one number with units (area, frontage, listing age)",
+    "area_m2": "number or null (read from typed payload — do not invent)",
+    "frontage_width_m": "number or null (read from typed payload)",
+    "street_type": "string or null (read from typed payload)",
+    "parking_evidence": "one of: 'direct', 'shared', 'none_found', 'unknown', or null",
+    "visibility_score": "integer 0-100 or null (read from typed payload)",
+    "listing_age_days": "integer or null (read from typed payload)",
+    "vacancy_status": "string or null (read from typed payload)"
+  },
+  "financial_framing": {
+    "summary": "string — ≤20 words, MUST include the absolute annual rent in SAR",
+    "thesis": "string — one paragraph, 60-100 words. The investment-frame argument for or against entry at this rent. Must respect the wording rules below.",
+    "annual_rent_sar": "number or null (read from typed payload)",
+    "comparable_median_annual_rent_sar": "number or null",
+    "rent_percentile_vs_comparables": "number 0-1 or null",
+    "comparable_n": "integer or null",
+    "comparable_scope": "one of 'district', 'city_band', 'city', 'unknown', or null",
+    "spread_to_median_sar": "signed number or null"
+  },
+  "market_context": {
+    "summary": "string — ≤20 words, MUST include at least one numeric demand or demographic signal",
+    "demand_thesis": "string — one paragraph, 60-100 words. The demand-side argument for this catchment.",
+    "population_reach": "integer or null",
+    "district_momentum": "one of 'rising', 'stable', 'declining', 'unavailable', or null",
+    "realized_demand_30d": "integer or null",
+    "realized_demand_branches": "integer or null",
+    "delivery_listing_count": "integer or null"
+  },
+  "competitive_landscape": {
+    "summary": "string — ≤20 words, MUST reference at least one named competitor or chain count",
+    "saturation_thesis": "string — one paragraph, 60-100 words. The competitive-density argument and how this site fits the catchment.",
+    "top_chains": "array (read from typed payload — do not invent chains)",
+    "comparable_competitors": "array (read from typed payload)",
+    "next_candidate_summary": "object or null (read from typed payload)"
+  }
 }
 
 LENGTH BUDGET:
@@ -934,6 +1321,30 @@ Risk signals:
 - listing_age.created_days / updated_days: flag stale listings (>90 days).
 - landlord_signal: counterparty / landlord behaviour score.
 
+TYPED ADVISORY SECTIONS — ground truth, do not invent:
+
+You will receive an `advisory_sections` object in the user payload containing
+four typed sections (property_overview, financial_framing, market_context,
+competitive_landscape) with all numeric fields pre-populated from the
+backend's deterministic computation. Your job for these sections is:
+
+1. Copy the typed numeric / enum fields into your output VERBATIM. Do not
+   round, paraphrase, or modify them. If a field is null in the payload,
+   it MUST be null in your output.
+2. Write the `summary` line for each section: ≤20 words, must reference
+   at least one number from the typed payload, no hedging modals
+   (may/could/might/potentially).
+3. Write the `*_thesis` paragraph for sections that have one (financial_framing.thesis,
+   market_context.demand_thesis, competitive_landscape.saturation_thesis):
+   60-100 words, persuasive, follows ALL existing wording rules below.
+   property_overview has no thesis — its summary is sufficient.
+
+Wording rules below apply to ALL prose fields including summary, thesis,
+demand_thesis, saturation_thesis — NOT just headline_recommendation,
+ranking_explanation, comparison, and bottom_line. The advocacy-vocabulary
+ban (`competitive`, `favorable`, `well-positioned` for at-market rent) and
+the rank-2 absence rules apply equally to thesis fields.
+
 HARD RULES:
 - The headline_recommendation, ranking_explanation, and bottom_line must agree directionally with `deterministic_verdict`, `overall_pass`, and `final_rank`. If `final_rank == 1` AND `final_score >= 70`, the headline must be 'Recommend' — not 'Recommend with reservations', not 'Consider'. If `overall_pass == false`, the headline must be 'Decline'.
 - key_evidence must be 4–6 items. Every value MUST include a unit. A bare number ('81.48', '15') is a hard error — write '81/100', '15 count', '15 m frontage', 'SAR 480,000/yr'.
@@ -946,6 +1357,26 @@ HARD RULES:
 - Banned openers: 'Overall,', 'Generally speaking,', 'It appears that', 'consider due to', 'This candidate could potentially'.
 - Banned hedging modals when stating evidence or rationale: 'may', 'could', 'might', 'potentially'. Save them only for genuine future uncertainty in `risks`.
 - Do not start consecutive memos with the same skeleton. Lead with the strongest concrete signal for THIS site.
+- Thin financial framing: if advisory_sections.financial_framing.comparable_n is null
+  (because comparable rent context could not be derived), the financial_framing.thesis
+  MUST plainly state "Comparable rent context not available for this listing — the
+  rent thesis rests on absolute pricing alone" and pivot the investment argument to
+  other signals (demand, frontage, demographics). Do NOT invent a comparable framing.
+  Do NOT spin the absence as a positive ("rent is decisively priced", "no comparable
+  pressure", etc).
+- Thin market context: if advisory_sections.market_context.realized_demand_30d is null,
+  the demand_thesis MUST acknowledge the data gap ("Realized demand data not available
+  for this catchment") and lean on population_reach and delivery_listing_count.
+- Thin competitive landscape: if advisory_sections.competitive_landscape.top_chains is
+  empty AND comparable_competitors is empty AND next_candidate_summary is null, the
+  saturation_thesis MUST state plainly "No named competitors or peer candidates within
+  the data window for this site" and stop. Do NOT invent competitors. Do NOT spin
+  the silence.
+- next_candidate_summary handling: when advisory_sections.competitive_landscape.next_candidate_summary
+  is non-null, the saturation_thesis MUST reference rank-2 by rank and at least one
+  numeric comparison field. When null, the saturation_thesis MUST NOT mention rank-2
+  at all (silence is correct, not awkward — see the existing rule for the comparison
+  field).
 
 GATE LANGUAGE RULES (factual, not stylistic — violations are errors):
 - For any gate in `gates.unknown`, you MUST say 'could not be verified from current data' or 'not evaluable from current data'. You MUST NOT use 'failed', 'failing', 'decline', 'not viable', 'undermines viability', or any synonym treating the gate as a negative finding. Unknown means absence of evidence, NOT a negative signal.
@@ -1018,6 +1449,86 @@ Example E — recommend with reservations, score 68, rank 2, at-market rent (ill
 
 Inline note on missing rank-2 alternatives: when next_candidate_summary is absent (small result set), a correct comparison reads like "Peer Chain A in this district closed at SAR 510,000/yr — roughly comparable, confirming this is the market-clearing range. Burger King operates 1.4 km away with a stronger brand-recall position but a less central frontage, so the trade is between brand pull and street presence." Notice: this references two named competitors, makes a real comparison, and does not mention rank-2 at all. The reader does not need to be told an alternative is absent — saying so spins missing data as a feature.
 
+Example F — strong recommend with the four typed advisory sections fully populated (district-tier comparable, rank-2 present):
+{
+  "headline_recommendation": "Recommend — asking rent sits at the 28th percentile vs district comparables and the corner frontage gives the brand visibility from two arteries.",
+  "ranking_explanation": "The investment case here is rent: SAR 432,000/yr lands at the 28th percentile vs 14 district comparables, a roughly SAR 110,000/yr discount to the median. Site quality reinforces the economics — a 24 m corner on a primary artery with an access/visibility score of 82/100 — and a population reach of 41,000 inside the walking catchment supports the dine-in model. The trade-off is depth of competition: three named chains operate within 500 m, so the brand will need a defensible category position rather than a generic offer.",
+  "key_evidence": [
+    {"signal": "annual rent", "value": "SAR 432,000/yr", "implication": "the spread to the district median justifies the entry — roughly SAR 110k/yr saved vs peer listings", "polarity": "positive"},
+    {"signal": "rent percentile vs comparables", "value": "28th percentile (vs 14 district comparables)", "implication": "deal pricing is genuinely below market, not just below list", "polarity": "positive"},
+    {"signal": "frontage", "value": "24 m corner", "implication": "signage works in both traffic directions on a primary artery", "polarity": "positive"},
+    {"signal": "access/visibility score", "value": "82/100", "implication": "site quality reinforces the rent advantage rather than offsetting it", "polarity": "positive"},
+    {"signal": "population reach", "value": "41,000 within walking catchment", "implication": "dine-in mix is supportable without leaning on delivery to fill seats", "polarity": "positive"},
+    {"signal": "named chains within 500 m", "value": "3 count", "implication": "the catchment validates the category but raises the bar on differentiation", "polarity": "negative"}
+  ],
+  "risks": [
+    {"risk": "Three established chains operate within 500 m, including two with strong delivery presence — undifferentiated entry will compete on price.", "mitigation": "Lead with a single-SKU hero menu and a sharper delivery price point in the first 90 days."},
+    {"risk": "Listing has been live for 64 days, longer than is typical for prime corner units in this district.", "mitigation": "Open negotiation 8–12% below asking and ask the landlord to absorb fit-out contribution."}
+  ],
+  "comparison": "This site beats Peer Chain A on rent by roughly SAR 90k/yr and matches Peer Chain B on visibility, while pulling ahead of rank 2 in this search on rent percentile (28th vs 47th) and access/visibility (82/100 vs 71/100). Rank 2 has a marginally larger footprint but no comparable corner exposure.",
+  "bottom_line": "This is the deal in the shortlist — sign it before the listing turns.",
+  "property_overview": {
+    "summary": "180 m² corner unit on a primary artery, 24 m frontage, listed 64 days ago.",
+    "area_m2": 180,
+    "frontage_width_m": 24,
+    "street_type": "primary",
+    "parking_evidence": "shared",
+    "visibility_score": 82,
+    "listing_age_days": 64,
+    "vacancy_status": "vacant"
+  },
+  "financial_framing": {
+    "summary": "SAR 432,000/yr at the 28th percentile vs 14 district comparables — SAR 110k under median.",
+    "thesis": "Rent is the spine of the case at this site. SAR 432,000/yr is decisively below the SAR 542,000 district median across 14 peer listings — a SAR 110,000/yr cushion that compounds across a five-year lease and absorbs the operator's first-year ramp risk. The 28th percentile reading is district-scoped, not a wider city band, so the comparison sits inside the same demand catchment the operator will trade in. The thesis is straightforward: enter at this basis, run operational margin, and the deal does not need a heroic revenue assumption to clear.",
+    "annual_rent_sar": 432000,
+    "comparable_median_annual_rent_sar": 542000,
+    "rent_percentile_vs_comparables": 0.28,
+    "comparable_n": 14,
+    "comparable_scope": "district",
+    "spread_to_median_sar": -110000
+  },
+  "market_context": {
+    "summary": "41,000 walking-catchment population with rising district momentum and 380 orders/30d realized.",
+    "demand_thesis": "Demand is observable, not modelled. A 41,000 walking-catchment population covers the dine-in mix without leaning on delivery, and realized order velocity in the district is 380 over the trailing 30 days across 6 active branches — meaningful evidence the category trades. District momentum reads rising on the 30-day window, supporting the underwriting on a 36-month horizon. The trade-off: the same momentum is what is bringing competitors into the corridor, which the saturation thesis below has to account for.",
+    "population_reach": 41000,
+    "district_momentum": "rising",
+    "realized_demand_30d": 380,
+    "realized_demand_branches": 6,
+    "delivery_listing_count": 22
+  },
+  "competitive_landscape": {
+    "summary": "3 named chains within 500 m; rank 2 in this search clears at the 47th rent percentile.",
+    "saturation_thesis": "Three named chains operate within 500 m — Peer Chain A, Peer Chain B, and Peer Chain C — confirming the category trades and raising the bar on differentiation. Rank 2 in this search sits at the 47th rent percentile vs comparables and an access/visibility score of 71/100, materially weaker than this site on both axes; the operator is paying SAR 110k less for a stronger street position. The competitive read supports entry, but only with a defensible category position rather than a generic offer.",
+    "top_chains": [
+      {"display_name_en": "Peer Chain A", "display_name_ar": null, "branch_count": 2, "nearest_distance_m": 180},
+      {"display_name_en": "Peer Chain B", "display_name_ar": null, "branch_count": 1, "nearest_distance_m": 320},
+      {"display_name_en": "Peer Chain C", "display_name_ar": null, "branch_count": 1, "nearest_distance_m": 460}
+    ],
+    "comparable_competitors": [
+      {"id": "comp-1", "name": "Peer Chain A", "score": 0.78},
+      {"id": "comp-2", "name": "Peer Chain B", "score": 0.71}
+    ],
+    "next_candidate_summary": {
+      "rank": 2,
+      "candidate_id": "cand-rank-2",
+      "district": "Al Olaya",
+      "annual_rent_sar": 488000,
+      "rent_percentile_vs_comparables": 0.47,
+      "access_visibility_score": 71
+    }
+  }
+}
+
+Inline note on thin-data sections: when a typed section has its key numeric
+fields as null (e.g., financial_framing.comparable_n=null), the corresponding
+thesis MUST acknowledge the data gap explicitly per the HARD RULES above —
+do NOT show a thesis that pretends the data is present. A correct thin
+financial_framing.thesis reads: "Comparable rent context not available for
+this listing — the rent thesis rests on absolute pricing alone. SAR 480,000/yr
+is a meaningful capital commitment, and without peer-listing context the
+operator should rely on demand and frontage signals to underwrite the deal."
+Notice: acknowledges the gap, pivots to other signals, no invented framing.
+
 Now write the memo for the candidate JSON the user provides. Match the voice in the examples. Be specific to this site, not generic."""
 
 
@@ -1037,6 +1548,13 @@ def _serialize_context_for_user_message(ctx: MemoContext) -> str:
             for k in _FEATURE_SNAPSHOT_WHITELIST
             if snap.get(k) is not None
         }
+
+    # PR #3: deterministic typed advisory sections. Computed from the
+    # *full* MemoContext (so brand_presence / candidate_location read
+    # from the raw snapshot, before any whitelist truncation), then
+    # injected into the user payload as ``advisory_sections``. The LLM
+    # treats these as ground truth for the new section keys.
+    advisory_sections = build_memo_advisory_sections(ctx)
 
     body = {
         "candidate_id": ctx.candidate_id,
@@ -1058,10 +1576,12 @@ def _serialize_context_for_user_message(ctx: MemoContext) -> str:
         "realized_demand": ctx.realized_demand,
         "listing_image_url": ctx.listing_image_url,
         "locale": ctx.locale,
+        "advisory_sections": advisory_sections,
     }
     text = json.dumps(body, default=str, ensure_ascii=False)
     if len(text) > _MAX_USER_PAYLOAD_CHARS:
         # Last-resort: drop most competitors and tighten feature_snapshot.
+        # advisory_sections stays — it is small (~1-2KB) and load-bearing.
         body["comparable_competitors"] = body["comparable_competitors"][:2]
         body["feature_snapshot"] = {
             k: snap.get(k)
@@ -1153,7 +1673,45 @@ _STRUCTURED_REQUIRED_KEYS: tuple[str, ...] = (
     "risks",
     "comparison",
     "bottom_line",
+    "property_overview",
+    "financial_framing",
+    "market_context",
+    "competitive_landscape",
 )
+
+
+# PR #3: per-section sub-validators for the four typed advisory sections.
+# Each tuple is (section_key, required_thesis_field_or_None). property_overview
+# has no thesis; the other three do.
+_ADVISORY_SECTION_THESIS_FIELDS: tuple[tuple[str, str | None], ...] = (
+    ("property_overview", None),
+    ("financial_framing", "thesis"),
+    ("market_context", "demand_thesis"),
+    ("competitive_landscape", "saturation_thesis"),
+)
+
+
+def _advisory_section_invalid_reason(parsed: dict[str, Any]) -> str | None:
+    """Return a short reason string when one of the four typed advisory
+    sections is malformed in ``parsed``; None when all four are valid.
+
+    Only the prose fields (``summary`` and the section-specific thesis)
+    are required to be non-empty strings — every other typed field is
+    allowed to be None. Unknown numeric / enum field shapes pass through
+    so the legacy projection layer keeps working.
+    """
+    for key, thesis_field in _ADVISORY_SECTION_THESIS_FIELDS:
+        section = parsed.get(key)
+        if not isinstance(section, dict):
+            return f"{key} not a dict"
+        summary = section.get("summary")
+        if not isinstance(summary, str) or not summary.strip():
+            return f"{key}.summary empty"
+        if thesis_field is not None:
+            thesis = section.get(thesis_field)
+            if not isinstance(thesis, str) or not thesis.strip():
+                return f"{key}.{thesis_field} empty"
+    return None
 
 
 def generate_structured_memo(ctx: MemoContext) -> dict | None:
@@ -1255,6 +1813,14 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
         )
         return None
 
+    advisory_invalid = _advisory_section_invalid_reason(parsed)
+    if advisory_invalid is not None:
+        logger.warning(
+            "Structured memo advisory section invalid for %s: %s",
+            ctx.candidate_id, advisory_invalid,
+        )
+        return None
+
     usage = getattr(response, "usage", None)
     input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
     output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
@@ -1279,6 +1845,10 @@ _TEXT_SECTION_HEADERS_EN: tuple[tuple[str, str], ...] = (
     ("risks", "Risks"),
     ("comparison", "Comparison"),
     ("bottom_line", "Bottom Line"),
+    ("property_overview", "Property Overview"),
+    ("financial_framing", "Financial Framing"),
+    ("market_context", "Market Context"),
+    ("competitive_landscape", "Competitive Landscape"),
 )
 _TEXT_SECTION_HEADERS_AR: tuple[tuple[str, str], ...] = (
     ("headline_recommendation", "التوصية الرئيسية"),
@@ -1287,11 +1857,106 @@ _TEXT_SECTION_HEADERS_AR: tuple[tuple[str, str], ...] = (
     ("risks", "المخاطر"),
     ("comparison", "المقارنة"),
     ("bottom_line", "الخلاصة"),
+    ("property_overview", "نظرة عامة على العقار"),
+    ("financial_framing", "التحليل المالي"),
+    ("market_context", "السياق السوقي"),
+    ("competitive_landscape", "المشهد التنافسي"),
 )
 
 
+# PR #3: section-specific bullet-renderer config for the four new typed
+# sections. ``thesis_field`` is the name of the *_thesis field rendered
+# as a paragraph beneath the summary (None for property_overview).
+# ``bullet_fields`` is the list of typed fields rendered as bullets, in
+# display order. Bullets with None values are skipped.
+_ADVISORY_SECTION_RENDER: dict[str, tuple[str | None, tuple[str, ...]]] = {
+    "property_overview": (
+        None,
+        (
+            "area_m2",
+            "frontage_width_m",
+            "street_type",
+            "parking_evidence",
+            "visibility_score",
+            "listing_age_days",
+            "vacancy_status",
+        ),
+    ),
+    "financial_framing": (
+        "thesis",
+        (
+            "annual_rent_sar",
+            "comparable_median_annual_rent_sar",
+            "rent_percentile_vs_comparables",
+            "comparable_n",
+            "comparable_scope",
+            "spread_to_median_sar",
+        ),
+    ),
+    "market_context": (
+        "demand_thesis",
+        (
+            "population_reach",
+            "district_momentum",
+            "realized_demand_30d",
+            "realized_demand_branches",
+            "delivery_listing_count",
+        ),
+    ),
+    "competitive_landscape": (
+        "saturation_thesis",
+        (
+            "top_chains",
+            "comparable_competitors",
+            "next_candidate_summary",
+        ),
+    ),
+}
+
+
+def _render_advisory_section_lines(
+    section_key: str, value: Any
+) -> list[str]:
+    """Render one of the four typed advisory sections as plain-text bullets.
+
+    Outputs ``summary`` line first, then the section's thesis paragraph
+    (when applicable), then a bullet list of typed fields with non-None
+    values. Missing / malformed sections fall back to a single em-dash.
+    """
+    if not isinstance(value, dict):
+        return ["—"]
+    config = _ADVISORY_SECTION_RENDER.get(section_key)
+    if config is None:
+        return ["—"]
+    thesis_field, bullet_fields = config
+    out: list[str] = []
+    summary = value.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        out.append(summary.strip())
+    if thesis_field is not None:
+        thesis = value.get(thesis_field)
+        if isinstance(thesis, str) and thesis.strip():
+            out.append("")
+            out.append(thesis.strip())
+    bullets: list[str] = []
+    for field_name in bullet_fields:
+        v = value.get(field_name)
+        if v is None:
+            continue
+        if isinstance(v, list) and not v:
+            continue
+        bullets.append(f"- {field_name}: {v}")
+    if bullets:
+        if out:
+            out.append("")
+        out.extend(bullets)
+    if not out:
+        return ["—"]
+    return out
+
+
 def render_structured_memo_as_text(memo_json: dict, locale: str) -> str:
-    """Render the six-section structured memo as a plain-text memo with
+    """Render the ten-section structured memo as a plain-text memo with
     markdown-style headers, suitable for the legacy ``decision_memo`` text
     column so existing consumers keep working unchanged.
     """
@@ -1325,6 +1990,8 @@ def render_structured_memo_as_text(memo_json: dict, locale: str) -> str:
                     lines.append(f"- {risk} (mitigation: {mit})")
                 else:
                     lines.append(f"- {risk}")
+        elif key in _ADVISORY_SECTION_RENDER:
+            lines.extend(_render_advisory_section_lines(key, value))
         else:
             lines.append(str(value) if value else "—")
         lines.append("")

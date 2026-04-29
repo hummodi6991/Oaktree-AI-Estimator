@@ -120,6 +120,72 @@ export interface StructuredMemoRisk {
   mitigation?: string | null;
 }
 
+// PR #3: typed advisory sections. Numeric / enum fields are populated
+// deterministically by the backend; summary and *_thesis are filled by
+// the LLM. All fields tolerate null (graceful-degradation path).
+
+export interface MemoPropertyOverview {
+  summary: string;
+  area_m2: number | null;
+  frontage_width_m: number | null;
+  street_type: string | null;
+  parking_evidence: "direct" | "shared" | "none_found" | "unknown" | null;
+  visibility_score: number | null;
+  listing_age_days: number | null;
+  vacancy_status: string | null;
+}
+
+export interface MemoFinancialFraming {
+  summary: string;
+  thesis: string;
+  annual_rent_sar: number | null;
+  comparable_median_annual_rent_sar: number | null;
+  rent_percentile_vs_comparables: number | null;
+  comparable_n: number | null;
+  comparable_scope: "district" | "city_band" | "city" | "unknown" | null;
+  spread_to_median_sar: number | null;
+}
+
+export interface MemoMarketContext {
+  summary: string;
+  demand_thesis: string;
+  population_reach: number | null;
+  district_momentum: "rising" | "stable" | "declining" | "unavailable" | null;
+  realized_demand_30d: number | null;
+  realized_demand_branches: number | null;
+  delivery_listing_count: number | null;
+}
+
+export interface MemoBrandPresenceItem {
+  display_name_en: string;
+  display_name_ar: string | null;
+  branch_count: number;
+  nearest_distance_m: number | null;
+}
+
+export interface MemoNamedCompetitor {
+  id: string | null;
+  name: string;
+  score: number | null;
+}
+
+export interface MemoNextCandidateRef {
+  rank: number;
+  candidate_id: string | null;
+  district: string | null;
+  annual_rent_sar: number | null;
+  rent_percentile_vs_comparables: number | null;
+  access_visibility_score: number | null;
+}
+
+export interface MemoCompetitiveLandscape {
+  summary: string;
+  saturation_thesis: string;
+  top_chains: MemoBrandPresenceItem[];
+  comparable_competitors: MemoNamedCompetitor[];
+  next_candidate_summary: MemoNextCandidateRef | null;
+}
+
 export interface StructuredMemo {
   headline_recommendation: string;
   ranking_explanation: string;
@@ -127,6 +193,13 @@ export interface StructuredMemo {
   risks: StructuredMemoRisk[];
   comparison: string;
   bottom_line: string;
+  // PR #3: typed advisory sections. Optional for backward-compat with v4.2
+  // cached memos (and with isValidStructuredMemo, which intentionally does
+  // not require them).
+  property_overview?: MemoPropertyOverview | null;
+  financial_framing?: MemoFinancialFraming | null;
+  market_context?: MemoMarketContext | null;
+  competitive_landscape?: MemoCompetitiveLandscape | null;
 }
 
 export type RerankStatus =

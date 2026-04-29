@@ -7,6 +7,7 @@ import GateSummary from "./GateSummary";
 import CopySummaryBlock from "./CopySummaryBlock";
 import DecisionLogicCard from "./DecisionLogicCard";
 import DecisionMemoNarrative from "./DecisionMemoNarrative";
+import AdvisorySectionCards from "./AdvisorySectionCards";
 import ScoreBar from "./ScoreBar";
 import { fmtScore, fmtMeters, fmtSAR, fmtSARCompact, fmtM2, businessGateLabel, safeDistrictLabel, getDisplayScore } from "./formatHelpers";
 
@@ -184,6 +185,17 @@ export default function ExpansionMemoPanel({
                       lang={effectiveLang}
                     />
                   </div>
+                )}
+
+                {/* ══ Section 1a (PR #3): Advisory section cards — collapsed
+                       <details> stack rendered between the narrative and the
+                       verdict row. Falls back to nothing when the cached memo
+                       is a v4.2 memo (no typed sections present). ══ */}
+                {cand.decision_memo_json && (
+                  <AdvisorySectionCards
+                    memo={cand.decision_memo_json}
+                    lang={effectiveLang === "ar" ? "ar" : "en"}
+                  />
                 )}
 
                 {/* ══ Section 1b: Verdict + confidence (always visible, compact) ══ */}

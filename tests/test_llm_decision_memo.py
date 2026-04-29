@@ -283,6 +283,73 @@ VALID_STRUCTURED_RESPONSE = {
     ],
     "comparison": "Matches Peer A on rent and beats Peer B on realized demand by 3x.",
     "bottom_line": "Take it — the rent alone justifies the deal.",
+    # PR #3: typed advisory sections (Design 2 — backend assembles numeric
+    # fields, LLM writes summary + thesis prose). Numeric fields are echoed
+    # from the typed payload; summary / thesis are LLM-authored.
+    "property_overview": {
+        "summary": "120 m² unit on 8 m street; listed 14 days ago in Al Olaya.",
+        "area_m2": 120,
+        "frontage_width_m": 8,
+        "street_type": "secondary",
+        "parking_evidence": "shared",
+        "visibility_score": 65,
+        "listing_age_days": 14,
+        "vacancy_status": "vacant",
+    },
+    "financial_framing": {
+        "summary": "SAR 480,000/yr at the 22nd percentile vs 14 district comparables.",
+        "thesis": (
+            "Rent is the spine of the case at this site. SAR 480,000/yr is decisively "
+            "below the SAR 560,000 district median across 14 peer listings — a SAR 80k/yr "
+            "cushion that compounds across a five-year lease. The 22nd percentile reading "
+            "is district-scoped, supporting the underwriting on a same-catchment basis."
+        ),
+        "annual_rent_sar": 480000,
+        "comparable_median_annual_rent_sar": 560000,
+        "rent_percentile_vs_comparables": 0.22,
+        "comparable_n": 14,
+        "comparable_scope": "district",
+        "spread_to_median_sar": -80000,
+    },
+    "market_context": {
+        "summary": "1,400 orders/30d realized across 6 branches with rising district momentum.",
+        "demand_thesis": (
+            "Demand is observable, not modelled. 1,400 orders over the trailing 30 days "
+            "across 6 active branches in the district is meaningful evidence the category "
+            "trades. District momentum reads rising on the 30-day window, which supports "
+            "the underwriting on a 36-month horizon."
+        ),
+        "population_reach": 35000,
+        "district_momentum": "rising",
+        "realized_demand_30d": 1400,
+        "realized_demand_branches": 6,
+        "delivery_listing_count": 22,
+    },
+    "competitive_landscape": {
+        "summary": "Peer A and Peer B operate within 500 m; rank 2 sits at 47th percentile rent.",
+        "saturation_thesis": (
+            "Two named chains operate within 500 m — Peer A and Peer B — confirming the "
+            "category trades and raising the bar on differentiation. Rank 2 in this search "
+            "sits at the 47th rent percentile vs comparables and an access/visibility score "
+            "of 71/100, materially weaker than this site on both axes."
+        ),
+        "top_chains": [
+            {"display_name_en": "Peer A", "display_name_ar": None, "branch_count": 2, "nearest_distance_m": 180},
+            {"display_name_en": "Peer B", "display_name_ar": None, "branch_count": 1, "nearest_distance_m": 320},
+        ],
+        "comparable_competitors": [
+            {"id": "comp-1", "name": "Peer A", "score": 0.78},
+            {"id": "comp-2", "name": "Peer B", "score": 0.71},
+        ],
+        "next_candidate_summary": {
+            "rank": 2,
+            "candidate_id": "cand-rank-2",
+            "district": "Al Olaya",
+            "annual_rent_sar": 510000,
+            "rent_percentile_vs_comparables": 0.47,
+            "access_visibility_score": 71,
+        },
+    },
 }
 
 
@@ -358,6 +425,208 @@ class TestBuildMemoContextContributionsMath:
         assert contributions["occupancy_economics"] == 27.0
         # Weights sub-dict carried through for the LLM
         assert ctx.score_breakdown["weights"] == dict(COMPONENT_WEIGHTS)
+
+
+# ── PR #3: typed advisory-section assembly ──────────────────────────
+
+
+def _make_full_advisory_candidate() -> dict:
+    """Candidate with every advisory-section input populated."""
+    return {
+        "id": "cand-advisory-1",
+        "parcel_id": "parcel-7",
+        "rank_position": 1,
+        "feature_snapshot_json": {
+            "area_m2": 180,
+            "unit_street_width_m": 24,
+            "access_visibility_score": 82,
+            "estimated_annual_rent_sar": 432000,
+            "comparable_median_annual_rent_sar": 542000,
+            "comparable_n": 14,
+            "comparable_source_label": "district_type",
+            "population_reach": 41000,
+            "district_momentum": {
+                "momentum_score": 72,
+                "sample_floor_applied": False,
+            },
+            "realized_demand_30d": 380,
+            "realized_demand_branches": 6,
+            "delivery_listing_count": 22,
+            "candidate_location": {
+                "is_vacant": True,
+            },
+            "listing_age": {"created_days": 64},
+            "brand_presence": {
+                "top_chains": [
+                    {
+                        "display_name_en": "Peer Chain A",
+                        "display_name_ar": None,
+                        "branch_count": 2,
+                        "nearest_distance_m": 180,
+                    },
+                    {
+                        "display_name_en": "Peer Chain B",
+                        "display_name_ar": None,
+                        "branch_count": 1,
+                        "nearest_distance_m": 320,
+                    },
+                ],
+            },
+        },
+        "score_breakdown_json": {
+            "occupancy_economics": 85,
+            "listing_quality": 70,
+            "brand_fit": 78,
+            "competition_whitespace": 60,
+            "demand_potential": 80,
+            "access_visibility": 82,
+            "landlord_signal": 60,
+            "delivery_demand": 70,
+            "confidence": 80,
+            "economics_detail": {"rent_burden": {"percentile": 0.28}},
+            "inputs": {"parking_evidence_band": "moderate"},
+        },
+        "comparable_competitors_json": [
+            {"id": "comp-1", "name": "Peer Chain A", "score": 0.78},
+            {"id": "comp-2", "name": "Peer Chain B", "score": 0.71},
+        ],
+    }
+
+
+def _make_brief() -> dict:
+    return {
+        "brand_name": "BurgerCo",
+        "category": "QSR",
+        "service_model": "qsr",
+    }
+
+
+class TestBuildMemoAdvisorySections:
+    """PR #3: backend deterministically assembles typed advisory sections."""
+
+    def test_full_data_populates_all_sections(self):
+        from app.services.llm_decision_memo import build_memo_advisory_sections
+        ctx = build_memo_context(
+            candidate=_make_full_advisory_candidate(),
+            brief=_make_brief(),
+            lang="en",
+            next_candidate_summary={
+                "rank": 2,
+                "candidate_id": "cand-rank-2",
+                "district": "Al Olaya",
+                "annual_rent_sar": 488000,
+                "rent_percentile_vs_comparables": 0.47,
+                "access_visibility_score": 71,
+            },
+        )
+        sections = build_memo_advisory_sections(ctx)
+        assert set(sections.keys()) == {
+            "property_overview",
+            "financial_framing",
+            "market_context",
+            "competitive_landscape",
+        }
+        assert sections["property_overview"]["area_m2"] == 180
+        assert sections["property_overview"]["frontage_width_m"] == 24
+        assert sections["property_overview"]["visibility_score"] == 82
+        assert sections["property_overview"]["listing_age_days"] == 64
+        assert sections["property_overview"]["vacancy_status"] == "vacant"
+        # parking_evidence band "moderate" collapses to "shared"
+        assert sections["property_overview"]["parking_evidence"] == "shared"
+        # summary / thesis fields are LEFT EMPTY for the LLM to fill
+        assert sections["property_overview"]["summary"] == ""
+
+        assert sections["financial_framing"]["annual_rent_sar"] == 432000.0
+        assert sections["financial_framing"]["comparable_median_annual_rent_sar"] == 542000.0
+        assert sections["financial_framing"]["rent_percentile_vs_comparables"] == 0.28
+        assert sections["financial_framing"]["comparable_n"] == 14
+        assert sections["financial_framing"]["comparable_scope"] == "district"
+        # spread = 432_000 - 542_000 = -110_000
+        assert sections["financial_framing"]["spread_to_median_sar"] == -110000.0
+        assert sections["financial_framing"]["thesis"] == ""
+
+        assert sections["market_context"]["population_reach"] == 41000
+        assert sections["market_context"]["district_momentum"] == "rising"
+        assert sections["market_context"]["realized_demand_30d"] == 380
+        assert sections["market_context"]["realized_demand_branches"] == 6
+        assert sections["market_context"]["delivery_listing_count"] == 22
+        assert sections["market_context"]["demand_thesis"] == ""
+
+        cl = sections["competitive_landscape"]
+        assert len(cl["top_chains"]) == 2
+        assert cl["top_chains"][0]["display_name_en"] == "Peer Chain A"
+        assert len(cl["comparable_competitors"]) == 2
+        assert cl["next_candidate_summary"] is not None
+        assert cl["next_candidate_summary"]["rank"] == 2
+        assert cl["saturation_thesis"] == ""
+
+    def test_missing_comparable_returns_null_financial_fields(self):
+        from app.services.llm_decision_memo import build_memo_advisory_sections
+        cand = _make_full_advisory_candidate()
+        # Remove comparable rent context (simulates pre-PR-#1 backfill state)
+        cand["feature_snapshot_json"].pop("comparable_median_annual_rent_sar", None)
+        cand["feature_snapshot_json"].pop("comparable_n", None)
+        cand["feature_snapshot_json"].pop("comparable_source_label", None)
+        ctx = build_memo_context(candidate=cand, brief=_make_brief(), lang="en")
+        sections = build_memo_advisory_sections(ctx)
+        ff = sections["financial_framing"]
+        # Annual rent is still populated (it lives on the listing itself)
+        assert ff["annual_rent_sar"] == 432000.0
+        # Comparable-derived fields all collapse to None — never zero,
+        # never a default. This is the structural fix for the v4.1 leak.
+        assert ff["comparable_median_annual_rent_sar"] is None
+        assert ff["comparable_n"] is None
+        assert ff["comparable_scope"] is None
+        assert ff["spread_to_median_sar"] is None
+
+    def test_no_rank_2_returns_null_next_candidate_summary(self):
+        from app.services.llm_decision_memo import build_memo_advisory_sections
+        # next_candidate_summary defaults to None when not passed in
+        ctx = build_memo_context(
+            candidate=_make_full_advisory_candidate(),
+            brief=_make_brief(),
+            lang="en",
+        )
+        sections = build_memo_advisory_sections(ctx)
+        assert sections["competitive_landscape"]["next_candidate_summary"] is None
+
+    def test_empty_brand_presence_returns_empty_top_chains(self):
+        from app.services.llm_decision_memo import build_memo_advisory_sections
+        cand = _make_full_advisory_candidate()
+        cand["feature_snapshot_json"]["brand_presence"] = {"top_chains": []}
+        ctx = build_memo_context(candidate=cand, brief=_make_brief(), lang="en")
+        sections = build_memo_advisory_sections(ctx)
+        assert sections["competitive_landscape"]["top_chains"] == []
+
+    def test_scope_inference_from_source_label(self):
+        from app.services.llm_decision_memo import _scope_from_source_label
+        assert _scope_from_source_label("district_type") == "district"
+        assert _scope_from_source_label("district_band") == "district"
+        assert _scope_from_source_label("city_band_type") == "city_band"
+        assert _scope_from_source_label("city_anything") == "city"
+        assert _scope_from_source_label(None) is None
+        assert _scope_from_source_label("") is None
+        assert _scope_from_source_label("nonsense") is None
+
+    def test_spread_to_median_sign(self):
+        from app.services.llm_decision_memo import build_memo_advisory_sections
+        # Above-median rent — positive spread
+        cand = _make_full_advisory_candidate()
+        cand["feature_snapshot_json"]["estimated_annual_rent_sar"] = 600000
+        cand["feature_snapshot_json"]["comparable_median_annual_rent_sar"] = 542000
+        ctx = build_memo_context(candidate=cand, brief=_make_brief(), lang="en")
+        assert build_memo_advisory_sections(ctx)["financial_framing"]["spread_to_median_sar"] == 58000.0
+
+        # Below-median rent — negative spread
+        cand["feature_snapshot_json"]["estimated_annual_rent_sar"] = 432000
+        cand["feature_snapshot_json"]["comparable_median_annual_rent_sar"] = 542000
+        ctx = build_memo_context(candidate=cand, brief=_make_brief(), lang="en")
+        assert build_memo_advisory_sections(ctx)["financial_framing"]["spread_to_median_sar"] == -110000.0
+
+        # Either input null — spread null
+        cand["feature_snapshot_json"].pop("comparable_median_annual_rent_sar", None)
+        ctx = build_memo_context(candidate=cand, brief=_make_brief(), lang="en")
+        assert build_memo_advisory_sections(ctx)["financial_framing"]["spread_to_median_sar"] is None
 
 
 class TestGenerateStructuredMemoHappyPath:
@@ -762,7 +1031,10 @@ class TestDecisionMemoEndpointMemoIsLegacyShape:
 
 
 class TestRenderStructuredMemoAsTextSmoke:
-    def test_text_renderer_uses_six_section_headers(self):
+    def test_text_renderer_uses_ten_section_headers(self):
+        # PR #3: ten section headers — six legacy + four typed advisory
+        # sections (property_overview / financial_framing / market_context /
+        # competitive_landscape).
         out = render_structured_memo_as_text(VALID_STRUCTURED_RESPONSE, "en")
         for header in (
             "## Headline Recommendation",
@@ -771,6 +1043,10 @@ class TestRenderStructuredMemoAsTextSmoke:
             "## Risks",
             "## Comparison",
             "## Bottom Line",
+            "## Property Overview",
+            "## Financial Framing",
+            "## Market Context",
+            "## Competitive Landscape",
         ):
             assert header in out
 
@@ -1123,6 +1399,51 @@ _PARKING_UNKNOWN_RE = r"could not be verified|not evaluable|unavailable|not avai
 _CONCERN_LANG_RE = r"concern|caution|risk|weak|decline|not recommend"
 
 
+# PR #3: minimal stub for the four typed advisory sections so the
+# validators added in v5 accept these wording-rule fixtures unchanged.
+# The sections are intentionally thin — these tests assert prose
+# behavior, not numeric assembly — so summary/thesis are short,
+# numeric fields are None, and bullets are empty.
+_MINIMAL_ADVISORY_SECTIONS = {
+    "property_overview": {
+        "summary": "Top-ranked candidate; site quality is acceptable for the format.",
+        "area_m2": None,
+        "frontage_width_m": None,
+        "street_type": None,
+        "parking_evidence": None,
+        "visibility_score": None,
+        "listing_age_days": None,
+        "vacancy_status": None,
+    },
+    "financial_framing": {
+        "summary": "Comparable rent context not available for this listing.",
+        "thesis": "Comparable rent context not available for this listing — the rent thesis rests on absolute pricing alone.",
+        "annual_rent_sar": None,
+        "comparable_median_annual_rent_sar": None,
+        "rent_percentile_vs_comparables": None,
+        "comparable_n": None,
+        "comparable_scope": None,
+        "spread_to_median_sar": None,
+    },
+    "market_context": {
+        "summary": "Realized demand data not available for this catchment.",
+        "demand_thesis": "Realized demand data not available for this catchment.",
+        "population_reach": None,
+        "district_momentum": None,
+        "realized_demand_30d": None,
+        "realized_demand_branches": None,
+        "delivery_listing_count": None,
+    },
+    "competitive_landscape": {
+        "summary": "No named competitors or peer candidates within the data window for this site.",
+        "saturation_thesis": "No named competitors or peer candidates within the data window for this site.",
+        "top_chains": [],
+        "comparable_competitors": [],
+        "next_candidate_summary": None,
+    },
+}
+
+
 _PRODUCTION_MEMO_COMPLIANT = {
     "headline_recommendation": "Recommend pursuing — strong economics and top rank with parking noted as unverifiable.",
     "ranking_explanation": (
@@ -1142,6 +1463,7 @@ _PRODUCTION_MEMO_COMPLIANT = {
     ],
     "comparison": "Comfortably ahead of rank 2 on economics.",
     "bottom_line": "Proceed with a site visit to close the parking data gap.",
+    **_MINIMAL_ADVISORY_SECTIONS,
 }
 
 
@@ -1208,6 +1530,7 @@ _OVER_CORRECTION_MEMO_COMPLIANT = {
     ],
     "comparison": "Worse than every shortlisted peer on economics.",
     "bottom_line": "Do not proceed without a material rent reduction — current terms are not viable.",
+    **_MINIMAL_ADVISORY_SECTIONS,
 }
 
 
