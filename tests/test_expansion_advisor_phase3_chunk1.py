@@ -447,6 +447,8 @@ def test_prewarm_respects_top_n(monkeypatch):
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_ENABLED", True)
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_TOP_N", 3)
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_BUDGET_S", 1000.0)
+    # Pin to sequential execution so order assertions hold.
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_CONCURRENCY", 1)
 
     # 5 candidates in a list; only the first 3 should be processed.
     items = [
@@ -484,7 +486,9 @@ def test_prewarm_respects_top_n(monkeypatch):
 
     assert gen_calls == ["p1", "p2", "p3"]
     assert [w[1] for w in writes] == ["p1", "p2", "p3"]
-    session_instance.close.assert_called_once()
+    # Each worker now opens its own session, so close() fires once per
+    # candidate (3 specs → 3 closes; SessionLocal returns the same mock).
+    assert session_instance.close.call_count == 3
 
 
 # ---------------------------------------------------------------------------
@@ -496,6 +500,8 @@ def test_prewarm_per_candidate_error_does_not_abort_batch(monkeypatch):
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_ENABLED", True)
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_TOP_N", 3)
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_BUDGET_S", 1000.0)
+    # Pin to sequential execution so write-order assertions hold.
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_CONCURRENCY", 1)
 
     specs = [
         {"id": "c1", "parcel_id": "p1"},
@@ -536,6 +542,9 @@ def test_prewarm_generous_budget_warms_all(monkeypatch):
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_ENABLED", True)
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_TOP_N", 3)
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_BUDGET_S", 120.0)
+    # Pin to sequential execution so the mocked monotonic clock advances
+    # deterministically.
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_CONCURRENCY", 1)
 
     specs = [{"id": f"c{i}", "parcel_id": f"p{i}"} for i in range(1, 4)]
 
@@ -578,6 +587,9 @@ def test_prewarm_first_attempt_always_runs_then_budget_trips(monkeypatch, caplog
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_ENABLED", True)
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_TOP_N", 3)
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_BUDGET_S", 1.0)
+    # Pin to sequential execution so the mocked monotonic clock advances
+    # deterministically.
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_CONCURRENCY", 1)
 
     specs = [{"id": f"c{i}", "parcel_id": f"p{i}"} for i in range(1, 4)]
 
@@ -628,6 +640,9 @@ def test_prewarm_budget_non_positive_is_unbounded(monkeypatch):
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_ENABLED", True)
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_TOP_N", 3)
     monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_BUDGET_S", 0.0)
+    # Pin to sequential execution so the mocked monotonic clock advances
+    # deterministically.
+    monkeypatch.setattr(_ea_settings, "EXPANSION_MEMO_PREWARM_CONCURRENCY", 1)
 
     specs = [{"id": f"c{i}", "parcel_id": f"p{i}"} for i in range(1, 4)]
 

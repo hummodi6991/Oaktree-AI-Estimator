@@ -158,7 +158,7 @@ class Settings:
         in {"1", "true", "yes", "on"}
     )
     EXPANSION_MEMO_PREWARM_TOP_N: int = int(
-        os.getenv("EXPANSION_MEMO_PREWARM_TOP_N", "10")
+        os.getenv("EXPANSION_MEMO_PREWARM_TOP_N", "15")
     )
     # Wall-clock cap across the whole pre-warm batch. The check runs AFTER
     # each iteration, so the first candidate is ALWAYS attempted regardless
@@ -173,6 +173,14 @@ class Settings:
     #     ``EXPANSION_MEMO_PREWARM_TOP_N=0`` to disable pre-warm.
     EXPANSION_MEMO_PREWARM_BUDGET_S: float = float(
         os.getenv("EXPANSION_MEMO_PREWARM_BUDGET_S", "600")
+    )
+    # Max number of concurrent LLM calls during pre-warm. Each worker
+    # opens its own DB session — no cross-thread session sharing. Setting
+    # this to ``1`` reverts to strict sequential execution (the rollback
+    # path; see ``_prewarm_decision_memos``). Values above 10 risk hitting
+    # OpenAI tier-1 RPM limits on gpt-4o-mini.
+    EXPANSION_MEMO_PREWARM_CONCURRENCY: int = int(
+        os.getenv("EXPANSION_MEMO_PREWARM_CONCURRENCY", "5")
     )
 
 
