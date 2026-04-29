@@ -5,9 +5,15 @@ import "../../i18n";
 import i18n from "../../i18n";
 import en from "../../i18n/en.json";
 import ExpansionMemoPanel, { type MemoDrawerSection } from "./ExpansionMemoPanel";
+import {
+  _seedDecisionMemoCacheForTest,
+  _clearDecisionMemoCacheForTest,
+} from "./DecisionMemoNarrative";
+import type { StructuredMemo } from "../../lib/api/expansionAdvisor";
 
 beforeEach(async () => {
   if (i18n.language !== "en") await i18n.changeLanguage("en");
+  _clearDecisionMemoCacheForTest();
 });
 
 function renderPanel() {
@@ -111,7 +117,54 @@ describe("ExpansionMemoPanel chunk 3b reorganisation", () => {
 /* ─── PR #3: AdvisorySectionCards mount + graceful degradation ───────────── */
 
 describe("ExpansionMemoPanel — PR #3 advisory cards", () => {
-  function memoWithAdvisorySections() {
+  function structuredMemoWithV5Sections(): StructuredMemo {
+    return {
+      headline_recommendation: "Recommend",
+      ranking_explanation: "rx",
+      key_evidence: [],
+      risks: [],
+      comparison: "c",
+      bottom_line: "bl",
+      property_overview: {
+        summary: "180 m² unit on a primary artery.",
+        area_m2: 180,
+        frontage_width_m: 24,
+        street_type: "primary",
+        parking_evidence: "shared",
+        visibility_score: 82,
+        listing_age_days: 64,
+        vacancy_status: "vacant",
+      },
+      financial_framing: {
+        summary: "SAR 432,000/yr below median.",
+        thesis: "Rent is the spine.",
+        annual_rent_sar: 432000,
+        comparable_median_annual_rent_sar: 542000,
+        rent_percentile_vs_comparables: 0.28,
+        comparable_n: 14,
+        comparable_scope: "district",
+        spread_to_median_sar: -110000,
+      },
+      market_context: {
+        summary: "41,000 catchment with rising momentum.",
+        demand_thesis: "Demand is observable.",
+        population_reach: 41000,
+        district_momentum: "rising",
+        realized_demand_30d: 380,
+        realized_demand_branches: 6,
+        delivery_listing_count: 22,
+      },
+      competitive_landscape: {
+        summary: "Three chains within 500 m.",
+        saturation_thesis: "Saturated.",
+        top_chains: [{ display_name_en: "Peer A", display_name_ar: null, branch_count: 2, nearest_distance_m: 180 }],
+        comparable_competitors: [],
+        next_candidate_summary: null,
+      },
+    } as StructuredMemo;
+  }
+
+  function memoFixtureBare() {
     return {
       recommendation: { verdict: "go", headline: "GO" },
       candidate: {
@@ -121,61 +174,33 @@ describe("ExpansionMemoPanel — PR #3 advisory cards", () => {
           final_score: 78, weights: {}, inputs: {}, weighted_components: {},
         },
         gate_status: { overall_pass: true },
-        decision_memo_json: {
-          headline_recommendation: "Recommend",
-          ranking_explanation: "rx",
-          key_evidence: [],
-          risks: [],
-          comparison: "c",
-          bottom_line: "bl",
-          property_overview: {
-            summary: "180 m² unit on a primary artery.",
-            area_m2: 180,
-            frontage_width_m: 24,
-            street_type: "primary",
-            parking_evidence: "shared",
-            visibility_score: 82,
-            listing_age_days: 64,
-            vacancy_status: "vacant",
-          },
-          financial_framing: {
-            summary: "SAR 432,000/yr below median.",
-            thesis: "Rent is the spine.",
-            annual_rent_sar: 432000,
-            comparable_median_annual_rent_sar: 542000,
-            rent_percentile_vs_comparables: 0.28,
-            comparable_n: 14,
-            comparable_scope: "district",
-            spread_to_median_sar: -110000,
-          },
-          market_context: {
-            summary: "41,000 catchment with rising momentum.",
-            demand_thesis: "Demand is observable.",
-            population_reach: 41000,
-            district_momentum: "rising",
-            realized_demand_30d: 380,
-            realized_demand_branches: 6,
-            delivery_listing_count: 22,
-          },
-          competitive_landscape: {
-            summary: "Three chains within 500 m.",
-            saturation_thesis: "Saturated.",
-            top_chains: [{ display_name_en: "Peer A", display_name_ar: null, branch_count: 2, nearest_distance_m: 180 }],
-            comparable_competitors: [],
-            next_candidate_summary: null,
-          },
-        },
       },
       market_research: {},
       brand_profile: {},
     };
   }
 
+  function seedFetchedMemo(candidateId: string, structured: StructuredMemo) {
+    _seedDecisionMemoCacheForTest(candidateId, {
+      memo: {
+        headline: "GO",
+        fit_summary: "",
+        top_reasons_to_pursue: [],
+        top_risks: [],
+        recommended_next_action: "",
+        rent_context: "",
+      },
+      memo_text: null,
+      memo_json: structured,
+    });
+  }
+
   it("mounts AdvisorySectionCards between the narrative and the verdict row", () => {
+    seedFetchedMemo("cand_1", structuredMemoWithV5Sections());
     const html = renderToStaticMarkup(
       <ExpansionMemoPanel
         loading={false}
-        memo={memoWithAdvisorySections() as any}
+        memo={memoFixtureBare() as any}
         candidateRaw={{ id: "cand_1" }}
         briefRaw={{ brand_name: "Test" }}
       />,
@@ -186,16 +211,19 @@ describe("ExpansionMemoPanel — PR #3 advisory cards", () => {
     expect(cardsIdx).toBeGreaterThan(-1);
     expect(verdictIdx).toBeGreaterThan(-1);
     expect(narrativeIdx).toBeGreaterThan(-1);
-    // Order: narrative wrapper, cards, verdict row.
+    // Order: narrative wrapper opens, cards render inside it, verdict row follows.
     expect(narrativeIdx).toBeLessThan(cardsIdx);
     expect(cardsIdx).toBeLessThan(verdictIdx);
   });
 
   it("renders each advisory card as a <details> closed by default", () => {
+    seedFetchedMemo("cand_1", structuredMemoWithV5Sections());
     const html = renderToStaticMarkup(
       <ExpansionMemoPanel
         loading={false}
-        memo={memoWithAdvisorySections() as any}
+        memo={memoFixtureBare() as any}
+        candidateRaw={{ id: "cand_1" }}
+        briefRaw={{ brand_name: "Test" }}
       />,
     );
     const tags = html.match(/<details[^>]*ea-memo-section[^>]*>/g) ?? [];
@@ -203,21 +231,63 @@ describe("ExpansionMemoPanel — PR #3 advisory cards", () => {
     for (const t of tags) expect(t.includes(" open")).toBe(false);
   });
 
-  it("does NOT render advisory cards when decision_memo_json is absent (graceful degradation)", () => {
+  it("does NOT render advisory cards when the fetched memo lacks v5 sections (graceful degradation)", () => {
+    // Seed the cache with a structured memo that has narrative fields but no
+    // v5 advisory sections. AdvisorySectionCards should return null.
+    _seedDecisionMemoCacheForTest("cand_1", {
+      memo: {
+        headline: "GO",
+        fit_summary: "",
+        top_reasons_to_pursue: [],
+        top_risks: [],
+        recommended_next_action: "",
+        rent_context: "",
+      },
+      memo_text: null,
+      memo_json: {
+        headline_recommendation: "Recommend",
+        ranking_explanation: "",
+        key_evidence: [],
+        risks: [],
+        comparison: "",
+        bottom_line: "",
+      } as StructuredMemo,
+    });
     const html = renderToStaticMarkup(
       <ExpansionMemoPanel
         loading={false}
-        memo={{
-          recommendation: { verdict: "go", headline: "GO" },
-          candidate: {
-            final_score: 78,
-            confidence_grade: "B",
-            score_breakdown_json: { final_score: 78, weights: {}, inputs: {}, weighted_components: {} },
-            gate_status: { overall_pass: true },
-          },
-          market_research: {},
-          brand_profile: {},
-        }}
+        memo={memoFixtureBare() as any}
+        candidateRaw={{ id: "cand_1" }}
+        briefRaw={{ brand_name: "Test" }}
+      />,
+    );
+    expect(html).not.toContain("ea-memo-advisory-cards");
+  });
+
+  it("does NOT render advisory cards when the fetched memo hasn't resolved (no cache hit)", () => {
+    // No seed → DecisionMemoNarrative renders null under SSR (useEffect skipped).
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={memoFixtureBare() as any}
+        candidateRaw={{ id: "cand_unfetched" }}
+        briefRaw={{ brand_name: "Test" }}
+      />,
+    );
+    expect(html).not.toContain("ea-memo-advisory-cards");
+  });
+
+  it("ignores cand.decision_memo_json (cards source from the POST /decision-memo response)", () => {
+    // Regression: the previous mount read cand.decision_memo_json. Confirm it's
+    // no longer the source — even when populated, no cache seed → no cards.
+    const memo = memoFixtureBare() as any;
+    memo.candidate.decision_memo_json = structuredMemoWithV5Sections();
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={memo}
+        candidateRaw={{ id: "cand_2" }}
+        briefRaw={{ brand_name: "Test" }}
       />,
     );
     expect(html).not.toContain("ea-memo-advisory-cards");

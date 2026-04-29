@@ -7,7 +7,6 @@ import GateSummary from "./GateSummary";
 import CopySummaryBlock from "./CopySummaryBlock";
 import DecisionLogicCard from "./DecisionLogicCard";
 import DecisionMemoNarrative from "./DecisionMemoNarrative";
-import AdvisorySectionCards from "./AdvisorySectionCards";
 import ScoreBar from "./ScoreBar";
 import { fmtScore, fmtMeters, fmtSAR, fmtSARCompact, fmtM2, businessGateLabel, safeDistrictLabel, getDisplayScore } from "./formatHelpers";
 
@@ -187,16 +186,13 @@ export default function ExpansionMemoPanel({
                   </div>
                 )}
 
-                {/* ══ Section 1a (PR #3): Advisory section cards — collapsed
-                       <details> stack rendered between the narrative and the
-                       verdict row. Falls back to nothing when the cached memo
-                       is a v4.2 memo (no typed sections present). ══ */}
-                {cand.decision_memo_json && (
-                  <AdvisorySectionCards
-                    memo={cand.decision_memo_json}
-                    lang={effectiveLang === "ar" ? "ar" : "en"}
-                  />
-                )}
+                {/* ══ Section 1a (PR #3): Advisory section cards mount inside
+                       StructuredNarrative above — sourced from the fetched
+                       /v1/expansion-advisor/decision-memo response so cards
+                       and narrative read from the same memo_json. The earlier
+                       attempt to source from cand.decision_memo_json failed
+                       in production because that field is null until the
+                       prewarm/cache write completes. ══ */}
 
                 {/* ══ Section 1b: Verdict + confidence (always visible, compact) ══ */}
                 {(rec.verdict || cand.confidence_grade) && (
