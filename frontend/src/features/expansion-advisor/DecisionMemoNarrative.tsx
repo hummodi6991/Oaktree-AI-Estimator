@@ -30,10 +30,6 @@ type Props = {
   candidate: Record<string, unknown>;
   brief: Record<string, unknown>;
   lang: string;
-  // Optional: when provided, plumbed into the POST /decision-memo body so the
-  // backend's (search_id, parcel_id, MEMO_PROMPT_VERSION) cache lookup
-  // activates and the prewarmed memo is served instead of regenerating.
-  searchId?: string | null;
 };
 
 export function isValidStructuredMemo(
@@ -255,11 +251,9 @@ export function LegacyNarrative({ memo, lang }: { memo: LLMDecisionMemo; lang: s
   );
 }
 
-export default function DecisionMemoNarrative({ candidate, brief, lang, searchId }: Props) {
+export default function DecisionMemoNarrative({ candidate, brief, lang }: Props) {
   const { t } = useTranslation();
   const candidateId = String((candidate as Record<string, unknown>).id ?? "");
-  const candidateParcelId =
-    typeof candidate.parcel_id === "string" ? candidate.parcel_id : null;
   // Seed initial state from the module cache so tests (and same-session
   // re-mounts) can render synchronously without re-fetching.
   const [result, setResult] = useState<GeneratedDecisionMemo | null>(
@@ -283,7 +277,7 @@ export default function DecisionMemoNarrative({ candidate, brief, lang, searchId
     setError(null);
     setResult(null);
 
-    generateDecisionMemo(candidate, brief, lang, searchId, candidateParcelId)
+    generateDecisionMemo(candidate, brief, lang)
       .then((fetched) => {
         if (cancelled) return;
         memoModuleCache.set(candidateId, fetched);

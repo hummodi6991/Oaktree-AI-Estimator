@@ -60,7 +60,6 @@ export default function ExpansionMemoPanel({
   candidateRaw,
   briefRaw,
   lang,
-  searchId,
   onClose,
   onBackToDetail,
   onBackToCompare,
@@ -77,10 +76,6 @@ export default function ExpansionMemoPanel({
   candidateRaw?: Record<string, unknown> | null;
   briefRaw?: Record<string, unknown> | null;
   lang?: string;
-  // Optional: forwarded into <DecisionMemoNarrative> so the on-demand
-  // POST /v1/expansion-advisor/decision-memo call is search-keyed and the
-  // backend serves the prewarmed memo instead of regenerating.
-  searchId?: string | null;
   onClose?: () => void;
   onBackToDetail?: () => void;
   onBackToCompare?: () => void;
@@ -187,7 +182,6 @@ export default function ExpansionMemoPanel({
                       candidate={candidateRaw}
                       brief={briefRaw}
                       lang={effectiveLang}
-                      searchId={searchId}
                     />
                   </div>
                 )}

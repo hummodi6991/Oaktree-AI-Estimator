@@ -748,7 +748,6 @@ export default function ExpansionAdvisorPage({
           candidateRaw={selectedCandidate as unknown as Record<string, unknown>}
           briefRaw={brief as unknown as Record<string, unknown>}
           lang={i18n.language?.startsWith("ar") ? "ar" : "en"}
-          searchId={searchId || null}
           initialSection={memoSection}
           onClose={() => { setActiveDrawer("none"); setMemoSection(undefined); }}
           onBackToDetail={() => { setActiveDrawer("none"); setMemoSection(undefined); }}
