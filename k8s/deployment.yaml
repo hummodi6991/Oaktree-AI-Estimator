@@ -28,6 +28,15 @@ spec:
               value: "geom"
             - name: PARCEL_TARGET_SRID
               value: "4326"
+            # Decision Memo prewarm is disabled in production: memos are
+            # regenerated on-demand when the user opens the memo panel
+            # (Ahmed's product decision — prewarmed rows were never read
+            # by the FE after the search_id/parcel_id cache-key revert,
+            # so the background LLM calls were pure cost waste). Flip to
+            # "true" or remove this entry to re-enable. Explicit env
+            # entries override values from the oaktree-app-env secret.
+            - name: EXPANSION_MEMO_PREWARM_ENABLED
+              value: "false"
           envFrom:
             - secretRef:
                 name: oaktree-db-env
