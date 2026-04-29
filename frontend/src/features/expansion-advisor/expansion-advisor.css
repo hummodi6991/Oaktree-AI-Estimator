@@ -4452,3 +4452,89 @@
 .ea-memo-scroll-anchor {
   scroll-margin-block-start: 12px;
 }
+
+/* ─ PR #3: Typed advisory-report sections ─
+ * Card stack rendered between the narrative and the verdict row in the
+ * memo drawer. Each card is a <details> collapsed by default — the
+ * <summary> shows the section title and the LLM-written summary line;
+ * expanding reveals typed numeric fields and the *_thesis paragraph. */
+.ea-memo-advisory-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.ea-memo-section {
+  border: 1px solid var(--oak-border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--oak-bg-surface, #ffffff);
+  padding: 10px 12px;
+  margin: 0;
+}
+
+.ea-memo-section[open] {
+  background: var(--oak-bg-soft, #f8fafc);
+}
+
+.ea-memo-section__summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ea-memo-section__summary::-webkit-details-marker {
+  display: none;
+}
+
+.ea-memo-section__title {
+  font-size: var(--oak-fs-xs, 12px);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--oak-text-light, #6b6b6b);
+  flex: 0 0 auto;
+}
+
+.ea-memo-section__summary-text {
+  font-size: var(--oak-fs-sm, 14px);
+  color: var(--oak-text-dark, #333);
+  line-height: 1.4;
+}
+
+.ea-memo-section__body {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ea-memo-section__thesis {
+  margin: 0;
+  font-size: var(--oak-fs-sm, 14px);
+  line-height: 1.55;
+  color: var(--oak-text-dark, #333);
+}
+
+.ea-memo-section__group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ea-memo-section__group-title {
+  margin: 0;
+  font-size: var(--oak-fs-xs, 12px);
+  font-weight: 600;
+  color: var(--oak-text-light, #6b6b6b);
+}
+
+.ea-memo-section__list {
+  margin: 0;
+  padding-inline-start: 18px;
+  font-size: var(--oak-fs-sm, 14px);
+  color: var(--oak-text-dark, #333);
+}

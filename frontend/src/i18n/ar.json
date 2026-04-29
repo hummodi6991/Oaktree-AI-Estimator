@@ -1009,7 +1009,30 @@
     "keyEvidence": "الأدلة الرئيسية",
     "risksToWatch": "المخاطر التي يجب مراقبتها",
     "howItCompares": "كيف يُقارَن",
-    "bottomLine": "الخلاصة"
+    "bottomLine": "الخلاصة",
+    "advisorySection": {
+      "propertyOverview": { "title": "نظرة عامة على العقار" },
+      "financialFraming": { "title": "التحليل المالي" },
+      "marketContext": { "title": "السياق السوقي" },
+      "competitiveLandscape": { "title": "المشهد التنافسي" },
+      "frontage": "Frontage",
+      "streetType": "Street type",
+      "parkingEvidence": "Parking",
+      "listingAge": "Listing age",
+      "vacancyStatus": "Vacancy",
+      "comparableMedian": "Comparable median",
+      "rentPercentile": "Rent percentile",
+      "comparableN": "Comparable count",
+      "comparableScope": "Comparable scope",
+      "spreadToMedian": "Spread to median",
+      "populationReach": "Population reach",
+      "districtMomentum": "District momentum",
+      "realizedDemandBranches": "Realized demand branches",
+      "deliveryListingCount": "Delivery listings",
+      "topChains": "Top chains within 500 m",
+      "comparableCompetitors": "Comparable competitors",
+      "nextCandidate": "Rank {{rank}} alternative"
+    }
   },
   "decisionMemo": {
     "loading": "جارٍ إنشاء مذكرة القرار...",

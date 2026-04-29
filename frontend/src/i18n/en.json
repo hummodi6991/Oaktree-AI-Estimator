@@ -1062,7 +1062,30 @@
     "keyEvidence": "Key evidence",
     "risksToWatch": "Risks to watch",
     "howItCompares": "How it compares",
-    "bottomLine": "Bottom line"
+    "bottomLine": "Bottom line",
+    "advisorySection": {
+      "propertyOverview": { "title": "Property Overview" },
+      "financialFraming": { "title": "Financial Framing" },
+      "marketContext": { "title": "Market Context" },
+      "competitiveLandscape": { "title": "Competitive Landscape" },
+      "frontage": "Frontage",
+      "streetType": "Street type",
+      "parkingEvidence": "Parking",
+      "listingAge": "Listing age",
+      "vacancyStatus": "Vacancy",
+      "comparableMedian": "Comparable median",
+      "rentPercentile": "Rent percentile",
+      "comparableN": "Comparable count",
+      "comparableScope": "Comparable scope",
+      "spreadToMedian": "Spread to median",
+      "populationReach": "Population reach",
+      "districtMomentum": "District momentum",
+      "realizedDemandBranches": "Realized demand branches",
+      "deliveryListingCount": "Delivery listings",
+      "topChains": "Top chains within 500 m",
+      "comparableCompetitors": "Comparable competitors",
+      "nextCandidate": "Rank {{rank}} alternative"
+    }
   },
   "decisionMemo": {
     "loading": "Generating decision memo...",
