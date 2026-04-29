@@ -172,7 +172,7 @@ class Settings:
     #     ``EXPANSION_MEMO_PREWARM_ENABLED=false`` or
     #     ``EXPANSION_MEMO_PREWARM_TOP_N=0`` to disable pre-warm.
     EXPANSION_MEMO_PREWARM_BUDGET_S: float = float(
-        os.getenv("EXPANSION_MEMO_PREWARM_BUDGET_S", "120")
+        os.getenv("EXPANSION_MEMO_PREWARM_BUDGET_S", "600")
     )
 
 
