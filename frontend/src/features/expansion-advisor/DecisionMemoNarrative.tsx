@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   GeneratedDecisionMemo,
@@ -8,6 +8,23 @@ import type {
   StructuredMemoRisk,
 } from "../../lib/api/expansionAdvisor";
 import { generateDecisionMemo } from "../../lib/api/expansionAdvisor";
+import AdvisorySectionCards from "./AdvisorySectionCards";
+
+// Module-level cache shared across all DecisionMemoNarrative instances. Lets
+// callers (and tests) read the fetched memo synchronously after it has
+// resolved once for a given candidate id.
+const memoModuleCache = new Map<string, GeneratedDecisionMemo>();
+
+export function _seedDecisionMemoCacheForTest(
+  candidateId: string,
+  value: GeneratedDecisionMemo,
+): void {
+  memoModuleCache.set(candidateId, value);
+}
+
+export function _clearDecisionMemoCacheForTest(): void {
+  memoModuleCache.clear();
+}
 
 type Props = {
   candidate: Record<string, unknown>;
@@ -169,6 +186,13 @@ export function StructuredNarrative({ memo, lang }: { memo: StructuredMemo; lang
           <p className="ea-memo-structured__bottom-line-text">{bottomLine}</p>
         </section>
       )}
+
+      {/* PR #3: v5 advisory section cards. Sourced from the same fetched
+          structured memo as the narrative above — the candidate-list shape
+          intentionally excludes decision_memo_json, and the GET memo endpoint
+          may return it null until the prewarm cache is written. Renders
+          nothing when none of the four v5 sections are populated. */}
+      <AdvisorySectionCards memo={memo} lang={lang === "ar" ? "ar" : "en"} />
     </div>
   );
 }
@@ -229,20 +253,19 @@ export function LegacyNarrative({ memo, lang }: { memo: LLMDecisionMemo; lang: s
 
 export default function DecisionMemoNarrative({ candidate, brief, lang }: Props) {
   const { t } = useTranslation();
-  const [result, setResult] = useState<GeneratedDecisionMemo | null>(null);
+  const candidateId = String((candidate as Record<string, unknown>).id ?? "");
+  // Seed initial state from the module cache so tests (and same-session
+  // re-mounts) can render synchronously without re-fetching.
+  const [result, setResult] = useState<GeneratedDecisionMemo | null>(
+    () => (candidateId ? memoModuleCache.get(candidateId) ?? null : null),
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Cache by candidate id so re-renders don't re-fetch. The cache stores the
-  // full GeneratedDecisionMemo wrapper so both structured and legacy shapes
-  // survive candidate switching.
-  const cacheRef = useRef<Map<string, GeneratedDecisionMemo>>(new Map());
-  const candidateId = String((candidate as Record<string, unknown>).id ?? "");
 
   useEffect(() => {
     if (!candidateId) return;
 
-    const cached = cacheRef.current.get(candidateId);
+    const cached = memoModuleCache.get(candidateId);
     if (cached) {
       setResult(cached);
       setError(null);
@@ -257,7 +280,7 @@ export default function DecisionMemoNarrative({ candidate, brief, lang }: Props)
     generateDecisionMemo(candidate, brief, lang)
       .then((fetched) => {
         if (cancelled) return;
-        cacheRef.current.set(candidateId, fetched);
+        memoModuleCache.set(candidateId, fetched);
         setResult(fetched);
       })
       .catch(() => {
