@@ -1141,6 +1141,14 @@ def build_memo_advisory_sections(ctx: MemoContext) -> dict[str, Any]:
     else:
         spread_to_median = None
 
+    # Derived "value" chip surfaced from economics_detail. The LLM
+    # references these when explaining the badge in plain language; the
+    # prompt instructs it to cite value_score only when the band is
+    # "best_value" or "above_market", and to skip it when neutral or null.
+    _ed_value = economics_detail if isinstance(economics_detail, dict) else {}
+    _vs = _ed_value.get("value_score")
+    _vb = _ed_value.get("value_band")
+
     financial_framing = {
         "summary": "",   # LLM fills
         "thesis": "",    # LLM fills
@@ -1150,6 +1158,8 @@ def build_memo_advisory_sections(ctx: MemoContext) -> dict[str, Any]:
         "comparable_n": comparable_n,
         "comparable_scope": comparable_scope,
         "spread_to_median_sar": spread_to_median,
+        "value_score": float(_vs) if isinstance(_vs, (int, float)) else None,
+        "value_band": _vb if _vb in ("best_value", "neutral", "above_market") else None,
     }
 
     # market_context
@@ -1294,6 +1304,12 @@ Financial framing:
   honesty about scope is non-negotiable.
 - score_breakdown.economics_detail.rent_burden.percentile: a 0–1 fraction.
   Multiply by 100 to phrase ("at the 69th percentile vs comparables").
+- value_score (0–100) + value_band ("best_value" | "neutral" | "above_market"):
+  the derived "strong location at a fair price" chip. When value_band is
+  "best_value" or "above_market", financial_framing.thesis MUST cite it in
+  one sentence (e.g., "Listing reads as best-value: revenue index 78 with
+  rent at the 22nd percentile of district peers"). When value_band is
+  "neutral" or null, do not mention value_score by name.
 
 Property overview:
 - area_m2 / unit_area_sqm: site area in m².

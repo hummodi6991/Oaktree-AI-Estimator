@@ -255,6 +255,7 @@ def test_compare_endpoint_happy_path(monkeypatch):
         "strongest_delivery_market_candidate_id",
         "strongest_whitespace_candidate_id",
         "lowest_rent_burden_candidate_id",
+        "best_value_candidate_id",
         "most_confident_candidate_id",
         "best_gate_pass_candidate_id",
     }

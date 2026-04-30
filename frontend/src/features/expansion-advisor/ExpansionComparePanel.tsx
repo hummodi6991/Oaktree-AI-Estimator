@@ -5,9 +5,15 @@ import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import { fmtScore, fmtSAR, fmtMonths, fmtSarPerM2Year, gateColor, candidateDistrictLabel } from "./formatHelpers";
 
+// Note: hard-coded English labels match the file's existing pattern.
+// i18n debt for this panel is tracked separately and out of scope here.
+// "Lowest Rent Burden" continues to mean "smallest absolute annual rent"
+// across the compared set; "Best Value" is a new, independent peer that
+// surfaces the value_score-aware winner. Both are populated server-side.
 const SUMMARY_KEY_ORDER = [
   "best_overall_candidate_id",
   "best_gate_pass_candidate_id",
+  "best_value_candidate_id",
   "best_economics_candidate_id",
   "lowest_rent_burden_candidate_id",
   "best_brand_fit_candidate_id",
@@ -21,6 +27,7 @@ const SUMMARY_KEY_ORDER = [
 const SUMMARY_LABELS: Record<string, string> = {
   best_overall_candidate_id: "Best Overall",
   best_gate_pass_candidate_id: "Best Gate Pass",
+  best_value_candidate_id: "Best Value",
   best_economics_candidate_id: "Best Economics",
   lowest_rent_burden_candidate_id: "Lowest Rent Burden",
   best_brand_fit_candidate_id: "Best Brand Fit",

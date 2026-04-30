@@ -124,6 +124,7 @@ export default function ExpansionReportPanel({
                 {(() => {
                   const dimensionWinners: Array<{ label: string; id: string | undefined | null }> = [
                     { label: t("expansionAdvisor.compareWinnerBestOverall"), id: rec.best_candidate_id },
+                    { label: t("expansionAdvisor.compareWinnerBestValue"), id: rec.best_value_candidate_id },
                     { label: t("expansionAdvisor.compareWinnerHighestDemand"), id: rec.highest_demand_candidate_id },
                     { label: t("expansionAdvisor.compareWinnerBestEconomics"), id: rec.best_economics_candidate_id },
                     { label: t("expansionAdvisor.compareWinnerBestBrandFit"), id: rec.best_brand_fit_candidate_id },

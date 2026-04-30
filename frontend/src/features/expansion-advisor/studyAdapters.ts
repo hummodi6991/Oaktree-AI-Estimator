@@ -139,6 +139,7 @@ export function normalizeBriefPayload(raw: ExpansionBrief): ExpansionBrief {
 
 export type SortKey =
   | "rank"
+  | "best_value"
   | "economics"
   | "brand_fit"
   | "cannibalization"
@@ -148,6 +149,7 @@ export type SortKey =
 export type FilterKey =
   | "all"
   | "pass_only"
+  | "best_value_only"
   | "strongest_economics"
   | "strongest_brand_fit"
   | "lowest_cannibalization"
@@ -168,6 +170,8 @@ export function filterCandidates(
   switch (filter) {
     case "pass_only":
       return result.filter((c) => c.gate_status_json?.overall_pass === true);
+    case "best_value_only":
+      return result.filter((c) => c.value_band === "best_value");
     case "strongest_economics":
       return [...result].sort((a, b) => (b.economics_score ?? 0) - (a.economics_score ?? 0));
     case "strongest_brand_fit":
@@ -193,6 +197,16 @@ export function sortCandidates(candidates: ExpansionCandidate[], sortKey: SortKe
   switch (sortKey) {
     case "rank":
       return sorted.sort((a, b) => (a.rank_position ?? 999) - (b.rank_position ?? 999));
+    case "best_value":
+      // Sort by value_score DESC; null/undefined sink to the bottom.
+      // Tiebreak by final_score so two equally-valued candidates keep a
+      // sensible relative order.
+      return sorted.sort((a, b) => {
+        const av = typeof a.value_score === "number" ? a.value_score : -1;
+        const bv = typeof b.value_score === "number" ? b.value_score : -1;
+        if (av !== bv) return bv - av;
+        return (b.final_score ?? 0) - (a.final_score ?? 0);
+      });
     case "economics":
       return sorted.sort((a, b) => (b.economics_score ?? 0) - (a.economics_score ?? 0));
     case "brand_fit":
@@ -381,7 +395,7 @@ export function restoreSortFilter(
 ): { activeFilter: FilterKey; activeSort: SortKey; districtFilter: string } {
   const raw = (uiState || {}) as Record<string, unknown>;
   const validFilters: FilterKey[] = ["all", "pass_only", "strongest_economics", "strongest_brand_fit", "lowest_cannibalization", "strongest_delivery"];
-  const validSorts: SortKey[] = ["rank", "economics", "brand_fit", "cannibalization", "delivery", "district"];
+  const validSorts: SortKey[] = ["rank", "best_value", "economics", "brand_fit", "cannibalization", "delivery", "district"];
   const f = typeof raw.active_filter === "string" && validFilters.includes(raw.active_filter as FilterKey) ? (raw.active_filter as FilterKey) : "all";
   const s = typeof raw.active_sort === "string" && validSorts.includes(raw.active_sort as SortKey) ? (raw.active_sort as SortKey) : "rank";
   const d = typeof raw.district_filter === "string" ? raw.district_filter : "";
