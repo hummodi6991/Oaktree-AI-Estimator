@@ -814,3 +814,57 @@ def test_feature_snapshot_surfaces_listing_age_and_district_momentum(monkeypatch
     assert snap["district_momentum"]["sample_floor_applied"] is False
     # The original context_sources / data_completeness_score contract stays.
     assert snap["data_completeness_score"] == 90
+
+
+# ---------------------------------------------------------------------------
+# P0 hotfix for PR #1178 — score_breakdown_json carries a JSONB blob whose
+# shape is intentionally loose. _record_value_pass_marker writes a
+# ``value_pass`` key into it; production was 500'ing because the response
+# model rejected the unknown key. The fix is extra="allow" via
+# FlexibleResponseModel. These tests pin the contract so a future tightening
+# of the model is caught at test time, not in production.
+# ---------------------------------------------------------------------------
+def test_score_breakdown_response_allows_value_pass_and_unknown_keys():
+    from app.api.expansion_advisor import (
+        CandidateScoreBreakdownResponse,
+        ExpansionCandidateResponse,
+    )
+
+    breakdown = CandidateScoreBreakdownResponse.model_validate(
+        {
+            "weights": {"demand": 0.4},
+            "inputs": {"demand": 70},
+            "weighted_components": {"demand": 28.0},
+            "display": {},
+            "final_score": 82.5,
+            "value_pass": {"value_uprank_applied": True, "value_uprank_delta": 3},
+            "some_future_key": {"nested": [1, 2, 3]},
+        }
+    )
+
+    dumped = breakdown.model_dump()
+    assert dumped["value_pass"] == {
+        "value_uprank_applied": True,
+        "value_uprank_delta": 3,
+    }
+    assert dumped["some_future_key"] == {"nested": [1, 2, 3]}
+
+    # And the same blob round-trips through the candidate-level response
+    # model (which is what /searches actually serializes).
+    candidate = ExpansionCandidateResponse.model_validate(
+        {
+            "id": "cand-12",
+            "rank_position": 12,
+            "score_breakdown_json": {
+                "final_score": 73.4,
+                "value_pass": {
+                    "value_uprank_applied": True,
+                    "value_uprank_delta": 3,
+                },
+            },
+            "value_uprank_applied": True,
+            "value_uprank_delta": 3,
+        }
+    )
+    cand_dump = candidate.model_dump()
+    assert cand_dump["score_breakdown_json"]["value_pass"]["value_uprank_delta"] == 3

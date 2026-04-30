@@ -173,7 +173,13 @@ class CandidateGateReasonsResponse(StrictResponseModel):
     explanations: dict[str, Any] = Field(default_factory=dict)
 
 
-class CandidateScoreBreakdownResponse(StrictResponseModel):
+class CandidateScoreBreakdownResponse(FlexibleResponseModel):
+    # score_breakdown_json is a JSONB blob in the DB and intentionally
+    # loose-shaped — service code adds keys like ``value_pass`` (PR #1178)
+    # without a corresponding response-model change. Strict response
+    # validation here is a recurring bug magnet, so this model allows
+    # extra keys to flow through. Request validation does not use this
+    # model, so loosening it has no incoming-payload impact.
     weights: dict[str, Any] = Field(default_factory=dict)
     inputs: dict[str, Any] = Field(default_factory=dict)
     weighted_components: dict[str, Any] = Field(default_factory=dict)
