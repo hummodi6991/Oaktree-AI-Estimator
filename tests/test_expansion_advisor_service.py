@@ -2472,6 +2472,225 @@ def test_value_band_pass_no_op_when_flag_disabled(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# CEO directive #1 (2-of-3): market viability conjunction pass.
+# Tests the rent_pct + population_reach soft positional demotion.
+# ---------------------------------------------------------------------------
+
+from app.services.expansion_advisor import _apply_market_viability_pass
+
+
+def _make_viability_candidate(
+    *,
+    id_: str,
+    final_score: float,
+    rent_pct: float | None = None,
+    rent_scope: str | None = "district_band_type",
+    pop_reach: float | None = None,
+    value_band: str | None = None,
+    low_conf: bool = False,
+) -> dict:
+    sb: dict = {}
+    if rent_pct is not None:
+        sb["economics_detail"] = {
+            "rent_burden": {
+                "percentile": rent_pct,
+                "source_label": rent_scope,
+            }
+        }
+    if value_band is not None:
+        sb.setdefault("economics_detail", {})["value_band"] = value_band
+        sb["economics_detail"]["value_band_low_confidence"] = low_conf
+    fs: dict = {}
+    if pop_reach is not None:
+        fs["population_reach"] = pop_reach
+    return {
+        "id": id_,
+        "parcel_id": id_,
+        "final_score": final_score,
+        "score_breakdown_json": sb,
+        "feature_snapshot_json": fs,
+    }
+
+
+def _viability_cohort(target_pop_reach: float, target_rent_pct: float = 0.85,
+                      target_rent_scope: str = "district_band_type") -> list[dict]:
+    """Build a cohort with a stable p25 around 7000 plus one target row."""
+    pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
+    cohort = [
+        _make_viability_candidate(
+            id_=f"bg{i}",
+            final_score=80.0 - i,
+            rent_pct=0.40,
+            rent_scope="district_band_type",
+            pop_reach=p,
+        )
+        for i, p in enumerate(pops)
+    ]
+    target = _make_viability_candidate(
+        id_="target",
+        final_score=78.5,
+        rent_pct=target_rent_pct,
+        rent_scope=target_rent_scope,
+        pop_reach=target_pop_reach,
+    )
+    cohort.insert(2, target)
+    return cohort
+
+
+def test_viability_pass_fires_when_pop_below_p25():
+    # Explicit cohort: pops [5k,6k,7k,8k,50k,60k,70k,80k] + target pop=4500
+    # p25 of {4500,5k,6k,7k,8k,50k,60k,70k,80k} sits between 5k-6k; 4500<thr.
+    cohort = _viability_cohort(target_pop_reach=4500.0, target_rent_pct=0.85)
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    # Position must have moved down by demotion_steps (default 6), capped.
+    new_idx = next(i for i, c in enumerate(out) if c["id"] == "target")
+    assert new_idx > 2
+
+
+def test_viability_pass_skips_when_pop_above_threshold():
+    cohort = _viability_cohort(target_pop_reach=80000.0, target_rent_pct=0.85)
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    assert "market_viability_flag" not in target["score_breakdown_json"]
+
+
+def test_viability_pass_skips_low_confidence_rent_scope():
+    # rent_scope = "city_band_type" → citywide fallback, not confident.
+    cohort = _viability_cohort(
+        target_pop_reach=4500.0,
+        target_rent_pct=0.85,
+        target_rent_scope="city_band_type",
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    assert "market_viability_flag" not in target["score_breakdown_json"]
+
+
+def test_viability_pass_skips_when_pop_reach_missing():
+    cohort = _viability_cohort(target_pop_reach=4500.0, target_rent_pct=0.85)
+    # Wipe population_reach from the target.
+    target_in = next(c for c in cohort if c["id"] == "target")
+    target_in["feature_snapshot_json"].pop("population_reach", None)
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target_out = next(c for c in out if c["id"] == "target")
+    assert "market_viability_flag" not in target_out["score_breakdown_json"]
+
+
+def test_viability_pass_demotion_capped_at_end():
+    # Background has confident rent_scope but low rent_pct, plus the last
+    # row is the flagged target with target_pop_reach=4500.
+    pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
+    cohort = [
+        _make_viability_candidate(
+            id_=f"bg{i}",
+            final_score=80.0 - i,
+            rent_pct=0.40,
+            pop_reach=p,
+        )
+        for i, p in enumerate(pops)
+    ]
+    cohort.append(
+        _make_viability_candidate(
+            id_="last",
+            final_score=10.0,
+            rent_pct=0.90,
+            pop_reach=4500.0,
+        )
+    )
+    n = len(cohort)
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    assert len(out) == n
+    last = next(c for c in out if c["id"] == "last")
+    assert out.index(last) == n - 1  # capped at list end, no IndexError
+    flag = last["score_breakdown_json"]["market_viability_flag"]
+    assert flag["demoted"] is True
+
+
+def test_viability_pass_cohort_too_small():
+    cohort = [
+        _make_viability_candidate(
+            id_=f"c{i}",
+            final_score=80.0 - i,
+            rent_pct=0.85,
+            pop_reach=4500.0,
+        )
+        for i in range(3)
+    ]
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    for c in out:
+        assert "market_viability_flag" not in c["score_breakdown_json"]
+
+
+def test_viability_pass_p25_correctness():
+    # Cohort: pops [5k, 6k, 7k, 8k, 50k, 60k, 70k, 80k]. With this exact
+    # set, statistics.quantiles inclusive p25 lands near 6750. Candidates
+    # with pop < ~6750 + high rent must be flagged; those above must not.
+    pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
+    cohort = [
+        _make_viability_candidate(
+            id_=f"c{i}",
+            final_score=80.0 - i,
+            rent_pct=0.85,
+            pop_reach=p,
+        )
+        for i, p in enumerate(pops)
+    ]
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    flagged = {c["id"]: ("market_viability_flag" in c["score_breakdown_json"])
+               for c in out}
+    # 5k and 6k must be flagged (below ~6750 threshold).
+    assert flagged["c0"] is True
+    assert flagged["c1"] is True
+    # 8k and above must NOT be flagged.
+    assert flagged["c3"] is False
+    assert flagged["c4"] is False
+    assert flagged["c7"] is False
+
+
+def test_viability_pass_stacks_with_value_band_pass():
+    # A candidate that is BOTH above_market (value_band) and high-rent +
+    # low-pop should accumulate both nudges and end up further down than
+    # either pass alone. Mirrors how the orchestration sequences them.
+    pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
+    cohort = [
+        _make_viability_candidate(
+            id_=f"bg{i}",
+            final_score=80.0 - i,
+            rent_pct=0.40,
+            pop_reach=p,
+        )
+        for i, p in enumerate(pops)
+    ]
+    # Insert a candidate at position 2 that triggers BOTH passes.
+    target = _make_viability_candidate(
+        id_="dual",
+        final_score=78.0,
+        rent_pct=0.90,
+        rent_scope="district_band_type",
+        pop_reach=4500.0,
+        value_band="above_market",
+    )
+    cohort.insert(2, target)
+    starting_idx = next(i for i, c in enumerate(cohort) if c["id"] == "dual")
+
+    after_band = _apply_value_band_pass(list(cohort), search_id="t")
+    after_viab = _apply_market_viability_pass(after_band, search_id="t")
+
+    final_idx = next(i for i, c in enumerate(after_viab) if c["id"] == "dual")
+    # Both passes pushed the row down further than either alone.
+    band_idx = next(i for i, c in enumerate(after_band) if c["id"] == "dual")
+    assert band_idx > starting_idx, "value_band pass should have demoted"
+    assert final_idx > band_idx, "viability pass should have demoted further"
+    flag = after_viab[final_idx]["score_breakdown_json"]["market_viability_flag"]
+    assert flag["demoted"] is True
+    # value_band pass writes its own marker; both must coexist.
+    assert "value_pass" in after_viab[final_idx]["score_breakdown_json"]
+
+
+# ---------------------------------------------------------------------------
 # Bug A & Bug B regression coverage.
 # ---------------------------------------------------------------------------
 

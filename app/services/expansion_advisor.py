@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import re
+import statistics
 import time
 import os
 import uuid
@@ -4421,6 +4422,139 @@ def _apply_value_band_pass(
     return out
 
 
+def _apply_market_viability_pass(
+    candidates: list[dict[str, Any]],
+    *,
+    search_id: str | None = None,
+    rent_pct_threshold: float | None = None,
+    pop_percentile_threshold: float | None = None,
+    demotion_steps: int | None = None,
+) -> list[dict[str, Any]]:
+    """Demote candidates that are confidently bad on both CEO-directive legs
+    we currently measure: high rent percentile AND low population reach.
+
+    Conservative: only fires when each leg has CONFIDENT signal. Mirrors
+    _apply_value_band_pass — positional reorder only, does not mutate
+    final_score. Writes 'market_viability_flag' to score_breakdown_json.
+
+    The directive's third leg (market growth potential) is not enforced here
+    because the repo has no honest growth signal as of 2026-04-30. When one
+    lands, add it as a third condition; the rest of this function is stable.
+    """
+    if not candidates or len(candidates) < 4:
+        return candidates
+
+    rent_pct_threshold = (
+        rent_pct_threshold
+        if rent_pct_threshold is not None
+        else settings.EXPANSION_VIABILITY_RENT_PCT_THRESHOLD
+    )
+    pop_percentile_threshold = (
+        pop_percentile_threshold
+        if pop_percentile_threshold is not None
+        else settings.EXPANSION_VIABILITY_POP_PERCENTILE
+    )
+    demotion_steps = (
+        demotion_steps
+        if demotion_steps is not None
+        else settings.EXPANSION_VIABILITY_DEMOTION_STEPS
+    )
+
+    out = list(candidates)
+    n = len(out)
+
+    # Collect populated, positive population_reach values across the cohort
+    # to compute the per-search bottom-quartile threshold.
+    pop_values: list[float] = []
+    for c in out:
+        fs = c.get("feature_snapshot_json")
+        if not isinstance(fs, dict):
+            continue
+        raw = fs.get("population_reach")
+        if raw is None:
+            continue
+        v = _safe_float(raw, default=-1.0)
+        if v > 0:
+            pop_values.append(v)
+
+    if len(pop_values) < 4:
+        return out
+
+    # statistics.quantiles with n=100 + index gives a percentile cut. Use
+    # method="inclusive" so endpoints behave as expected on small samples.
+    pct_index = max(1, min(99, int(round(pop_percentile_threshold * 100))))
+    try:
+        cutoffs = statistics.quantiles(pop_values, n=100, method="inclusive")
+        pop_threshold = float(cutoffs[pct_index - 1])
+    except Exception:
+        return out
+
+    def _flag_inputs(c: dict[str, Any]) -> tuple[bool, float, str | None, float]:
+        sb = c.get("score_breakdown_json")
+        ed = sb.get("economics_detail") if isinstance(sb, dict) else None
+        rb = ed.get("rent_burden") if isinstance(ed, dict) else None
+        if not isinstance(rb, dict):
+            return False, 0.0, None, 0.0
+        rent_scope = rb.get("source_label")
+        rent_pct_val = rb.get("percentile")
+        if rent_pct_val is None:
+            return False, 0.0, rent_scope, 0.0
+        rent_pct = _safe_float(rent_pct_val, default=-1.0)
+
+        fs = c.get("feature_snapshot_json")
+        if not isinstance(fs, dict):
+            return False, rent_pct, rent_scope, 0.0
+        pop_raw = fs.get("population_reach")
+        if pop_raw is None:
+            return False, rent_pct, rent_scope, 0.0
+        pop_reach = _safe_float(pop_raw, default=-1.0)
+
+        rent_confident = rent_scope not in ("city_band_type", "city")
+        pop_confident = pop_reach > 0
+        rent_high = rent_pct >= rent_pct_threshold
+        pop_low = pop_reach < pop_threshold
+        flagged = bool(
+            rent_confident and pop_confident and rent_high and pop_low
+        )
+        return flagged, rent_pct, rent_scope, pop_reach
+
+    pre_eval = [_flag_inputs(c) for c in out]
+    demote_indices = [i for i in range(n) if pre_eval[i][0]]
+
+    demoted = 0
+    for i in reversed(demote_indices):
+        target = min(i + demotion_steps, n - 1)
+        c = out[i]
+        _, rent_pct, rent_scope, pop_reach = pre_eval[i]
+        sb = c.get("score_breakdown_json")
+        if not isinstance(sb, dict):
+            sb = {}
+            c["score_breakdown_json"] = sb
+        sb["market_viability_flag"] = {
+            "demoted": True,
+            "demotion_steps": int(demotion_steps),
+            "rent_percentile": float(rent_pct),
+            "rent_source_label": rent_scope,
+            "population_reach": float(pop_reach),
+            "population_threshold": float(pop_threshold),
+            "reason": "high_rent_low_population",
+        }
+        if target > i:
+            out.pop(i)
+            out.insert(target, c)
+        demoted += 1
+
+    if demoted:
+        logger.info(
+            "expansion_market_viability_pass: search_id=%s demoted=%d "
+            "rent_pct_threshold=%.2f pop_percentile=%.2f pop_threshold=%.0f "
+            "demotion_steps=%d cohort_n=%d",
+            search_id, demoted, rent_pct_threshold, pop_percentile_threshold,
+            pop_threshold, demotion_steps, len(pop_values),
+        )
+    return out
+
+
 def _build_strengths_and_risks(
     *,
     demand_score: float,
@@ -7763,6 +7897,12 @@ def run_expansion_search(
     # rerank validator's ±max_move bound is unchanged and remains
     # authoritative.
     candidates = _apply_value_band_pass(candidates, search_id=search_id)
+
+    # CEO directive #1 (2-of-3): demote candidates that are confidently bad on
+    # both rent and population. Soft positional pass; runs after value_band so
+    # demotions stack when the same row is both above-market and high-rent +
+    # low-pop, and before truncation/rerank so the LLM sees post-pass order.
+    candidates = _apply_market_viability_pass(candidates, search_id=search_id)
 
     candidates = candidates[:limit]
 
