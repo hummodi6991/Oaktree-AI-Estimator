@@ -215,6 +215,21 @@ class ExpansionCandidateResponse(FlexibleResponseModel):
     # enable the "View decision memo" affordance without fetching the full
     # multi-KB memo for every list item.
     decision_memo_present: bool = False
+    # value_score chip — derived "strong location at a fair price" signal.
+    # Geometric mean of estimated_revenue_index and rent_burden_score; see
+    # app/services/expansion_advisor.py:_value_score. Null on rows where
+    # rent_burden ran in absolute_legacy / absolute_fallback / envelope
+    # modes (no peer-relative comparison defensible). value_band is one of
+    # "best_value" | "neutral" | "above_market" or null. The
+    # *_low_confidence flag is True when the comp pool is citywide rather
+    # than district-scoped — the badge is amber rather than green/red.
+    value_score: float | None = None
+    value_band: str | None = None
+    value_band_low_confidence: bool = False
+    value_downrank_applied: bool = False
+    value_downrank_delta: int = 0
+    value_uprank_applied: bool = False
+    value_uprank_delta: int = 0
 
 
 
@@ -262,7 +277,15 @@ class CompareSummaryResponse(StrictResponseModel):
     best_brand_fit_candidate_id: str | None = None
     strongest_delivery_market_candidate_id: str | None = None
     strongest_whitespace_candidate_id: str | None = None
+    # lowest_rent_burden_candidate_id: smallest absolute annual rent across
+    # the compared set. Intentionally distinct from
+    # best_value_candidate_id; the Compare panel's "Lowest Rent Burden"
+    # tile keeps its existing semantics.
     lowest_rent_burden_candidate_id: str | None = None
+    # best_value_candidate_id: highest derived value_score (geometric mean
+    # of estimated_revenue_index and rent_burden_score). Independent peer
+    # of lowest_rent_burden_candidate_id.
+    best_value_candidate_id: str | None = None
     most_confident_candidate_id: str | None = None
     best_gate_pass_candidate_id: str | None = None
 
@@ -303,6 +326,16 @@ class CandidateMemoCandidateResponse(FlexibleResponseModel):
     rerank_reason: dict[str, Any] | None = None
     rerank_delta: int = 0
     rerank_status: str | None = None
+    # value_score chip (see ExpansionCandidateResponse for semantics). Lives
+    # on the nested candidate object so the memo endpoint exposes the same
+    # shape as the list endpoint.
+    value_score: float | None = None
+    value_band: str | None = None
+    value_band_low_confidence: bool = False
+    value_downrank_applied: bool = False
+    value_downrank_delta: int = 0
+    value_uprank_applied: bool = False
+    value_uprank_delta: int = 0
 
 
 class CandidateMemoRecommendationResponse(StrictResponseModel):
@@ -353,6 +386,10 @@ class RecommendationTopCandidateResponse(StrictResponseModel):
     top_risks_json: list[Any] = Field(default_factory=list)
     feature_snapshot_json: dict[str, Any] = Field(default_factory=dict)
     score_breakdown_json: CandidateScoreBreakdownResponse = Field(default_factory=CandidateScoreBreakdownResponse)
+    # value_score chip surfaced on the report panel's top-3 cards.
+    value_score: float | None = None
+    value_band: str | None = None
+    value_band_low_confidence: bool = False
 
 
 class RecommendationSummaryResponse(StrictResponseModel):
@@ -360,6 +397,15 @@ class RecommendationSummaryResponse(StrictResponseModel):
     runner_up_candidate_id: str | None = None
     best_pass_candidate_id: str | None = None
     best_confidence_candidate_id: str | None = None
+    # Dimension Winners — populated server-side as of this PR (Bug B fix).
+    # The frontend ExpansionReportPanel.tsx was already reading these and
+    # rendering nothing. best_value_candidate_id is a new peer.
+    highest_demand_candidate_id: str | None = None
+    best_economics_candidate_id: str | None = None
+    best_brand_fit_candidate_id: str | None = None
+    strongest_whitespace_candidate_id: str | None = None
+    most_confident_candidate_id: str | None = None
+    best_value_candidate_id: str | None = None
     pass_count: int = 0
     validation_clear_count: int = 0
     why_best: str = ""

@@ -840,6 +840,7 @@ def test_compare_candidates_returns_full_summary_contract_for_empty_list():
         "strongest_delivery_market_candidate_id",
         "strongest_whitespace_candidate_id",
         "lowest_rent_burden_candidate_id",
+        "best_value_candidate_id",
         "most_confident_candidate_id",
         "best_gate_pass_candidate_id",
     }
@@ -860,6 +861,12 @@ def test_get_recommendation_report_empty_state_is_deterministic(monkeypatch):
         "runner_up_candidate_id",
         "best_pass_candidate_id",
         "best_confidence_candidate_id",
+        "highest_demand_candidate_id",
+        "best_economics_candidate_id",
+        "best_brand_fit_candidate_id",
+        "strongest_whitespace_candidate_id",
+        "most_confident_candidate_id",
+        "best_value_candidate_id",
         "why_best",
         "main_risk",
         "best_format",
@@ -2295,3 +2302,354 @@ def test_brand_presence_aggregation_shape():
     assert presence["unique_brands"] == 3
     assert presence["total_branches"] == 13
     assert len(presence["top_chains"]) == 3
+
+
+# ---------------------------------------------------------------------------
+# value_score chip — geometric mean of revenue_index and rent_burden_score.
+# ---------------------------------------------------------------------------
+
+import math
+
+from app.services.expansion_advisor import (
+    _value_score,
+    _classify_value_band,
+    _value_band_is_low_confidence,
+    _apply_value_band_pass,
+    _VALUE_DOWNRANK_MAX_POSITIONS,
+    _VALUE_UPRANK_MAX_POSITIONS,
+    _VALUE_BAND_BEST_VALUE_MIN,
+    _VALUE_BAND_ABOVE_MARKET_MAX,
+    _FUZZY_TIE_WINDOW,
+)
+from app.core.config import settings as _ea_settings
+
+
+def test_value_score_geometric_mean_basic():
+    # Symmetric extremes
+    assert _value_score(0, 0) == _value_score(0.0, 0.0)
+    # Both inputs at the eps floor → sqrt(1*1) = 1.0
+    assert abs(_value_score(0, 0) - 1.0) < 1e-9
+    # Both 100 → 100
+    assert abs(_value_score(100, 100) - 100.0) < 1e-9
+    # Symmetric mid-points
+    assert abs(_value_score(50, 50) - 50.0) < 1e-9
+    # Geometric mean property: sqrt(x*y)
+    assert abs(_value_score(80, 20) - math.sqrt(80 * 20)) < 1e-9
+    assert abs(_value_score(20, 80) - math.sqrt(80 * 20)) < 1e-9
+
+
+def test_value_score_dead_corner_pulled_low():
+    # Cheap dead corner: weak revenue, very cheap rent. Geometric mean
+    # punishes this directly — a candidate near zero on either axis
+    # cannot be "best value" by construction.
+    cheap_dead = _value_score(20, 95)  # ≈ 43.6
+    strong_pricey = _value_score(85, 78)  # ≈ 81.4
+    assert cheap_dead < _VALUE_BAND_BEST_VALUE_MIN
+    assert strong_pricey >= _VALUE_BAND_BEST_VALUE_MIN
+
+
+def test_value_score_clamped_to_unit_interval():
+    # NaN / negative / oversized inputs must clamp into [0, 100].
+    assert 0.0 <= _value_score(-50, 50) <= 100.0
+    assert 0.0 <= _value_score(200, 50) <= 100.0
+    assert 0.0 <= _value_score(float("nan"), 50) <= 100.0
+
+
+def test_classify_value_band_cutoffs():
+    # Band cutoffs (per Faisal's directive):
+    #   >= 75 → "best_value"
+    #   25 <= x < 75 → "neutral"
+    #   < 25 → "above_market"
+    assert _classify_value_band(None) is None
+    assert _classify_value_band(0) == "above_market"
+    assert _classify_value_band(24.99) == "above_market"
+    assert _classify_value_band(25.0) == "neutral"
+    assert _classify_value_band(50) == "neutral"
+    assert _classify_value_band(74.99) == "neutral"
+    assert _classify_value_band(75.0) == "best_value"
+    assert _classify_value_band(100) == "best_value"
+
+
+def test_value_band_low_confidence_gating():
+    # Citywide pools → low confidence regardless of N.
+    assert _value_band_is_low_confidence("city_band_type", 12) is True
+    assert _value_band_is_low_confidence("city", 20) is True
+    assert _value_band_is_low_confidence("city_band_type", 200) is True
+    # District-scoped pools → high confidence.
+    assert _value_band_is_low_confidence("district_band_type", 8) is False
+    assert _value_band_is_low_confidence("district_type", 8) is False
+    assert _value_band_is_low_confidence("district", 8) is False
+    # Unknown / envelope / None → not low-confidence (preserves no-badge).
+    assert _value_band_is_low_confidence(None, 0) is False
+    assert _value_band_is_low_confidence("listing_above_envelope", 0) is False
+
+
+def _make_candidate(*, id_, final_score, value_band=None, low_conf=False):
+    return {
+        "id": id_,
+        "parcel_id": id_,
+        "final_score": final_score,
+        "value_band": value_band,
+        "value_band_low_confidence": low_conf,
+    }
+
+
+def test_value_band_pass_downrank_within_rerank_max_move():
+    # All EXPANSION_LLM_RERANK_MAX_MOVE checks must hold strictly.
+    rerank_max = _ea_settings.EXPANSION_LLM_RERANK_MAX_MOVE
+    assert _VALUE_DOWNRANK_MAX_POSITIONS < rerank_max
+    assert _VALUE_UPRANK_MAX_POSITIONS < rerank_max
+
+    candidates = [
+        _make_candidate(id_=f"c{i}", final_score=80 - i)
+        for i in range(20)
+    ]
+    candidates[3]["value_band"] = "above_market"
+    candidates[7]["value_band"] = "above_market"
+    candidates[11]["value_band"] = "above_market"
+    # Low-confidence above_market: must NOT move.
+    candidates[15]["value_band"] = "above_market"
+    candidates[15]["value_band_low_confidence"] = True
+
+    out = _apply_value_band_pass(list(candidates), search_id="t")
+    # Low-confidence above_market candidate did NOT receive a downrank.
+    # Its absolute index may shift slightly because other candidates were
+    # demoted around it; what we guarantee is no positional nudge applied
+    # to this specific row.
+    c15_out = next(c for c in out if c["id"] == "c15")
+    assert c15_out.get("value_downrank_applied") is not True
+
+    # High-confidence above_market candidates moved by AT MOST
+    # _VALUE_DOWNRANK_MAX_POSITIONS, never further.
+    for cid in ("c3", "c7", "c11"):
+        c = next(item for item in out if item["id"] == cid)
+        delta = c.get("value_downrank_delta", 0)
+        assert 0 < delta <= _VALUE_DOWNRANK_MAX_POSITIONS
+        assert c.get("value_downrank_applied") is True
+
+
+def test_value_band_pass_uprank_respects_fuzzy_window():
+    # Two cases: tight gap (uprank allowed) vs. wide gap (no uprank past the peer).
+    # Tight gap: peer ahead by 1 point → less than _FUZZY_TIE_WINDOW (1.5),
+    # uprank should swap.
+    tight = [
+        _make_candidate(id_="c0", final_score=80.0),  # peer
+        _make_candidate(id_="c1", final_score=79.0, value_band="best_value"),
+    ]
+    out_tight = _apply_value_band_pass(list(tight), search_id="t")
+    assert out_tight[0]["id"] == "c1"
+    assert out_tight[0].get("value_uprank_applied") is True
+
+    # Wide gap: peer ahead by 6 points → outside fuzzy window, no uprank.
+    wide = [
+        _make_candidate(id_="c0", final_score=80.0),  # peer (well clear)
+        _make_candidate(id_="c1", final_score=74.0, value_band="best_value"),
+    ]
+    out_wide = _apply_value_band_pass(list(wide), search_id="t")
+    assert out_wide[0]["id"] == "c0"
+    assert out_wide[1]["id"] == "c1"
+    assert not out_wide[1].get("value_uprank_applied")
+
+
+def test_value_band_pass_skips_low_confidence_best_value():
+    candidates = [
+        _make_candidate(id_="c0", final_score=80.0),
+        _make_candidate(id_="c1", final_score=79.5, value_band="best_value", low_conf=True),
+    ]
+    out = _apply_value_band_pass(list(candidates), search_id="t")
+    # Order unchanged because low-confidence best_value is skipped.
+    assert [c["id"] for c in out] == ["c0", "c1"]
+
+
+def test_value_band_pass_no_op_when_flag_disabled(monkeypatch):
+    monkeypatch.setattr(_ea_settings, "EXPANSION_VALUE_SCORE_ENABLED", False)
+    candidates = [
+        _make_candidate(id_="c0", final_score=80.0, value_band="above_market"),
+        _make_candidate(id_="c1", final_score=79.0),
+    ]
+    out = _apply_value_band_pass(list(candidates), search_id="t")
+    assert [c["id"] for c in out] == ["c0", "c1"]
+
+
+# ---------------------------------------------------------------------------
+# Bug A & Bug B regression coverage.
+# ---------------------------------------------------------------------------
+
+def test_compare_candidates_lowest_rent_burden_remains_smallest_absolute_rent():
+    """Path 3: lowest_rent_burden_candidate_id keeps its existing semantics
+    (smallest absolute annual rent across the compared set) and is
+    INDEPENDENT of best_value_candidate_id. Both fields are populated."""
+    rows = [
+        {
+            "id": "small-cheap-weak",
+            "parcel_id": "p1",
+            "district": "Olaya",
+            "area_m2": 80.0,
+            "final_score": 50.0,
+            "demand_score": 40.0,
+            "whitespace_score": 40.0,
+            "fit_score": 40.0,
+            "estimated_annual_rent_sar": 60_000.0,
+            "estimated_revenue_index": 30.0,
+            "economics_score": 50.0,
+            "brand_fit_score": 50.0,
+            "score_breakdown_json": {
+                "economics_detail": {
+                    "value_score": 35.0,
+                    "value_band": "neutral",
+                    "value_band_low_confidence": False,
+                },
+            },
+            "gate_status_json": {"overall_pass": True},
+            "confidence_grade": "B",
+            "confidence_score": 60.0,
+        },
+        {
+            "id": "large-fair-strong",
+            "parcel_id": "p2",
+            "district": "Olaya",
+            "area_m2": 240.0,
+            "final_score": 80.0,
+            "demand_score": 80.0,
+            "whitespace_score": 70.0,
+            "fit_score": 80.0,
+            "estimated_annual_rent_sar": 480_000.0,
+            "estimated_revenue_index": 85.0,
+            "economics_score": 75.0,
+            "brand_fit_score": 80.0,
+            "score_breakdown_json": {
+                "economics_detail": {
+                    "value_score": 82.0,
+                    "value_band": "best_value",
+                    "value_band_low_confidence": False,
+                },
+            },
+            "gate_status_json": {"overall_pass": True},
+            "confidence_grade": "A",
+            "confidence_score": 85.0,
+        },
+    ]
+    db = FakeDB(compare_rows=rows)
+    result = compare_candidates(db, "search-1", ["small-cheap-weak", "large-fair-strong"])
+    summary = result["summary"]
+    # Lowest rent burden = literally smallest absolute rent. No change to
+    # this field's meaning.
+    assert summary["lowest_rent_burden_candidate_id"] == "small-cheap-weak"
+    # Best value = highest published value_score.
+    assert summary["best_value_candidate_id"] == "large-fair-strong"
+
+
+def test_compare_candidates_summary_contract_includes_best_value():
+    """Empty-list path must surface every key in _COMPARE_SUMMARY_KEYS,
+    including the new best_value_candidate_id."""
+    db = FakeDB(compare_rows=[])
+    result = compare_candidates(db, "search-1", [])
+    summary = result["summary"]
+    assert "best_value_candidate_id" in summary
+    assert summary["best_value_candidate_id"] is None
+    # Legacy field still present and unchanged.
+    assert "lowest_rent_burden_candidate_id" in summary
+    assert summary["lowest_rent_burden_candidate_id"] is None
+
+
+def test_get_recommendation_report_populates_dimension_winner_ids(monkeypatch):
+    """Bug B: the frontend ExpansionReportPanel.tsx reads five
+    *_candidate_id keys off rec.* that the backend never populated. After
+    this PR they are populated, plus a new best_value_candidate_id."""
+    candidates = [
+        {
+            "id": "cand-demand",
+            "parcel_id": "p1",
+            "rank_position": 2,
+            "final_score": 70.0,
+            "demand_score": 95.0,    # winner here
+            "economics_score": 60.0,
+            "brand_fit_score": 60.0,
+            "provider_whitespace_score": 50.0,
+            "confidence_grade": "B",
+            "confidence_score": 60.0,
+            "value_score": 55.0,
+            "value_band": "neutral",
+            "gate_status_json": {"overall_pass": False},
+            "gate_reasons_json": {"blocking_failures": [{"k": "v"}]},
+            "feature_snapshot_json": {},
+            "score_breakdown_json": {"economics_detail": {"value_score": 55.0, "value_band": "neutral"}},
+        },
+        {
+            "id": "cand-value",
+            "parcel_id": "p2",
+            "rank_position": 1,
+            "final_score": 80.0,
+            "demand_score": 60.0,
+            "economics_score": 75.0,  # winner here
+            "brand_fit_score": 60.0,
+            "provider_whitespace_score": 50.0,
+            "confidence_grade": "A",   # winner here
+            "confidence_score": 90.0,
+            "value_score": 88.0,       # winner here
+            "value_band": "best_value",
+            "gate_status_json": {"overall_pass": True},
+            "gate_reasons_json": {},
+            "feature_snapshot_json": {},
+            "score_breakdown_json": {"economics_detail": {"value_score": 88.0, "value_band": "best_value"}},
+        },
+        {
+            "id": "cand-brand",
+            "parcel_id": "p3",
+            "rank_position": 3,
+            "final_score": 65.0,
+            "demand_score": 50.0,
+            "economics_score": 55.0,
+            "brand_fit_score": 92.0,  # winner here
+            "provider_whitespace_score": 88.0,  # winner here
+            "confidence_grade": "C",
+            "confidence_score": 50.0,
+            "value_score": 40.0,
+            "value_band": "neutral",
+            "gate_status_json": {"overall_pass": True},
+            "gate_reasons_json": {},
+            "feature_snapshot_json": {},
+            "score_breakdown_json": {"economics_detail": {"value_score": 40.0, "value_band": "neutral"}},
+        },
+    ]
+    monkeypatch.setattr(expansion_service, "get_search", lambda *_a, **_kw: {"id": "search-1", "brand_profile": {}})
+    monkeypatch.setattr(expansion_service, "get_candidates", lambda *_a, **_kw: candidates)
+
+    report = get_recommendation_report(FakeDB(), "search-1")
+    assert report is not None
+    rec = report["recommendation"]
+    assert rec["highest_demand_candidate_id"] == "cand-demand"
+    assert rec["best_economics_candidate_id"] == "cand-value"
+    assert rec["best_brand_fit_candidate_id"] == "cand-brand"
+    assert rec["strongest_whitespace_candidate_id"] == "cand-brand"
+    assert rec["most_confident_candidate_id"] == "cand-value"
+    assert rec["best_value_candidate_id"] == "cand-value"
+
+
+def test_get_recommendation_report_best_value_none_when_no_value_score(monkeypatch):
+    candidates = [
+        {
+            "id": "cand-1",
+            "parcel_id": "p1",
+            "rank_position": 1,
+            "final_score": 60.0,
+            "demand_score": 50.0,
+            "economics_score": 50.0,
+            "brand_fit_score": 50.0,
+            "provider_whitespace_score": 50.0,
+            "confidence_grade": "C",
+            "confidence_score": 50.0,
+            "value_score": None,   # absolute_legacy / fallback row
+            "value_band": None,
+            "gate_status_json": {"overall_pass": True},
+            "gate_reasons_json": {},
+            "feature_snapshot_json": {},
+            "score_breakdown_json": {},
+        },
+    ]
+    monkeypatch.setattr(expansion_service, "get_search", lambda *_a, **_kw: {"id": "search-1", "brand_profile": {}})
+    monkeypatch.setattr(expansion_service, "get_candidates", lambda *_a, **_kw: candidates)
+
+    report = get_recommendation_report(FakeDB(), "search-1")
+    assert report is not None
+    assert report["recommendation"]["best_value_candidate_id"] is None

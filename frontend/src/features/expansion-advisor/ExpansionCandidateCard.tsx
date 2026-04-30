@@ -178,6 +178,49 @@ export default function ExpansionCandidateCard({
             </span>
           )}
           <ScorePill value={getDisplayScore(candidate)} />
+          {/* value_band chip — derived "strong location at a fair price"
+            * signal. Three states render:
+            *   best_value (high conf)        → green
+            *   best_value (low conf)         → green + ⓘ mark
+            *   above_market (high conf)      → red
+            *   above_market (low conf)       → amber (override 2): the comp
+            *     pool is citywide, so the directional signal is preserved
+            *     but the visual penalty is muted.
+            * neutral / null bands render no badge. */}
+          {candidate.value_band === "best_value" && (
+            <span
+              className="ea-badge ea-badge--green ea-candidate__value-pill"
+              title={candidate.value_band_low_confidence
+                ? t("expansionAdvisor.bestValueBadgeLowConfTooltip")
+                : t("expansionAdvisor.bestValueBadgeTooltip")}
+            >
+              {t("expansionAdvisor.bestValueBadge")}
+              {candidate.value_band_low_confidence && (
+                <span
+                  className="ea-badge__low-conf-mark"
+                  aria-label={t("expansionAdvisor.lowConfidenceMark")}
+                >
+                  {" ⓘ"}
+                </span>
+              )}
+            </span>
+          )}
+          {candidate.value_band === "above_market" && !candidate.value_band_low_confidence && (
+            <span
+              className="ea-badge ea-badge--red ea-candidate__value-pill"
+              title={t("expansionAdvisor.aboveMarketBadgeTooltip")}
+            >
+              {t("expansionAdvisor.aboveMarketBadge")}
+            </span>
+          )}
+          {candidate.value_band === "above_market" && candidate.value_band_low_confidence && (
+            <span
+              className="ea-badge ea-badge--amber ea-candidate__value-pill"
+              title={t("expansionAdvisor.aboveMarketLowConfTooltip")}
+            >
+              {t("expansionAdvisor.aboveMarketLowConfBadge")}
+            </span>
+          )}
           {showNearestBranch && (
             <span className="ea-badge ea-badge--neutral ea-candidate__nearest-pill">
               {fmtMeters(nearestBranchM)}

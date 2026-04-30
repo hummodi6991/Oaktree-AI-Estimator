@@ -146,6 +146,20 @@ class Settings:
         os.getenv("EXPANSION_LLM_RERANK_MIN_SHORTLIST", "3")
     )
 
+    # --- Expansion Advisor "best price-to-value" chip ---
+    # Derived 0–100 value_score from estimated_revenue_index (location strength)
+    # and rent_burden_score (rent vs. comparable peers). When enabled, populates
+    # value_score / value_band on every candidate, applies a soft up/downrank
+    # pass strictly inside the LLM rerank ±max_move envelope, and surfaces the
+    # badge in the candidate card and report panel. Default ON: the feature
+    # implements a product directive, not an experimental ML capability.
+    # Setting EXPANSION_VALUE_SCORE_ENABLED=false skips the score, the
+    # ordering pass, and (via the null value_band) the frontend badges.
+    EXPANSION_VALUE_SCORE_ENABLED: bool = (
+        os.getenv("EXPANSION_VALUE_SCORE_ENABLED", "true").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
     # --- Expansion Advisor decision-memo pre-warm (Phase 3) ---
     # After POST /searches returns, schedule a background task that
     # generates structured decision memos for the top-N candidates so the

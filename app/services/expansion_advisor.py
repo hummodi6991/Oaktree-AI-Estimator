@@ -1250,6 +1250,13 @@ def _normalize_score_breakdown(value: Any, final_score: Any) -> dict[str, Any]:
     raw["weighted_components"] = raw.get("weighted_components") or {}
     raw["display"] = raw.get("display") or {}
     raw["final_score"] = _safe_float(raw.get("final_score"), _safe_float(final_score))
+    # NOTE: economics_detail does not seed rent_burden defaults here. A
+    # candidate that arrives with score_breakdown_json but without
+    # economics_detail.rent_burden silently surfaces value_score=None even
+    # when the upstream _economics_score did compute one. This shouldn't
+    # happen in production paths (the compute path merges via the call site
+    # in expansion_search), but it's a fragile contract. Tracked separately;
+    # do not fix in this PR (per spec §9.5 / §10).
     raw["economics_detail"] = raw.get("economics_detail") or {}
     return raw
 
@@ -1282,6 +1289,26 @@ def _normalize_candidate_payload(
     payload["unit_street_width_m"] = _safe_float(payload.get("unit_street_width_m")) if payload.get("unit_street_width_m") is not None else None
     payload["unit_neighborhood"] = payload.get("unit_neighborhood")
     payload["unit_listing_type"] = payload.get("unit_listing_type")
+
+    # ── value_score / value_band (derived chip) ──
+    # Read from score_breakdown_json["economics_detail"] which is the
+    # single source of truth (persisted on the candidate row). Top-level
+    # emission is for frontend convenience and OpenAPI discoverability.
+    _ed = (payload.get("score_breakdown_json") or {}).get("economics_detail") or {}
+    _vs = _ed.get("value_score") if isinstance(_ed, dict) else None
+    payload["value_score"] = float(_vs) if isinstance(_vs, (int, float)) else None
+    _vb = _ed.get("value_band") if isinstance(_ed, dict) else None
+    payload["value_band"] = _vb if _vb in ("best_value", "neutral", "above_market") else None
+    payload["value_band_low_confidence"] = bool(
+        _ed.get("value_band_low_confidence") if isinstance(_ed, dict) else False
+    )
+    # Per-search ordering metadata (set by _apply_value_band_pass; absent
+    # on rows that didn't move). Default to False/0 so the response shape
+    # is stable.
+    payload["value_downrank_applied"] = bool(payload.get("value_downrank_applied", False))
+    payload["value_downrank_delta"] = _safe_int(payload.get("value_downrank_delta"), 0)
+    payload["value_uprank_applied"] = bool(payload.get("value_uprank_applied", False))
+    payload["value_uprank_delta"] = _safe_int(payload.get("value_uprank_delta"), 0)
 
     # ── Display-consistent annual rent (presentation only) ──
     # The UI rounds rent/m² to whole SAR for display.  Compute a matching
@@ -4137,6 +4164,33 @@ def _economics_score(
         + cannibalization_component * 0.13
         + fit_score * 0.15
     )
+
+    # Derived "best price-to-value" chip. Computed inside _economics_score so
+    # the inputs (revenue_index, rent_burden_score, source_label,
+    # n_comparable) are all in scope without re-reading score_breakdown_json.
+    # Only published when rent_burden ran in percentile mode — the
+    # absolute_legacy / absolute_fallback / envelope paths produce a
+    # rent_burden_score that isn't peer-relative, so a value_score derived
+    # from them would mis-classify candidates and the UI would badge them
+    # incorrectly. value_score == None propagates as "value not available".
+    value_score: float | None
+    value_band: str | None
+    value_band_low_confidence = False
+    if (
+        settings.EXPANSION_VALUE_SCORE_ENABLED
+        and isinstance(rent_burden_meta, dict)
+        and rent_burden_meta.get("mode") == "percentile"
+    ):
+        value_score = _value_score(estimated_revenue_index, rent_burden_score)
+        value_band = _classify_value_band(value_score)
+        value_band_low_confidence = _value_band_is_low_confidence(
+            rent_burden_meta.get("source_label"),
+            rent_burden_meta.get("n_comparable"),
+        )
+    else:
+        value_score = None
+        value_band = None
+
     return score, {
         "rent_burden_score": round(rent_burden_score, 2),
         "rent_burden": rent_burden_meta,
@@ -4145,7 +4199,149 @@ def _economics_score(
         "revenue_weight": round(revenue_weight, 4),
         "fitout_burden_score": round(fitout_burden_score, 2),
         "monthly_rent_per_m2": round(monthly_rent_per_m2, 2),
+        "value_score": round(value_score, 2) if value_score is not None else None,
+        "value_band": value_band,
+        "value_band_low_confidence": value_band_low_confidence,
     }
+
+
+# ---------------------------------------------------------------------------
+# value_score: "strong location at a fair price" derived chip.
+# ---------------------------------------------------------------------------
+
+# Bands per Faisal's directive (locked):
+#   value_score >= 75   → "best_value"   (green badge, eligible for soft uprank)
+#   25 <= value_score < 75 → "neutral"   (no badge)
+#   value_score < 25    → "above_market" (red/amber badge, soft downrank)
+_VALUE_BAND_BEST_VALUE_MIN: float = 75.0
+_VALUE_BAND_ABOVE_MARKET_MAX: float = 25.0
+
+# Soft up/downrank caps. Both strictly less than EXPANSION_LLM_RERANK_MAX_MOVE
+# (default 5) so the LLM reranker keeps full authority to undo a value-band
+# nudge if it disagrees. Asymmetric on purpose: above_market is an
+# unambiguously worse signal for the buyer than best_value is a positive one.
+_VALUE_DOWNRANK_MAX_POSITIONS: int = 4
+_VALUE_UPRANK_MAX_POSITIONS: int = 3
+
+
+def _value_score(revenue_index: float, rent_burden_score: float) -> float:
+    """Geometric mean of revenue_index and rent_burden_score, clamped 0-100.
+
+    Both inputs are pre-clamped to [0,100] by their producers
+    (_estimate_revenue_index returns through _clamp; _percentile_rent_burden
+    burden_score is _clamp'd). The eps=1.0 floor avoids a single zero
+    collapsing the score and keeps the function defensible against transient
+    zeros from downstream callers.
+
+    Monotonic in both inputs by construction: d/dx of sqrt(x*y) > 0 when y > 0.
+    """
+    eps = 1.0
+    rev = max(_safe_float(revenue_index), eps)
+    rb = max(_safe_float(rent_burden_score), eps)
+    return _clamp(math.sqrt(rev * rb))
+
+
+def _classify_value_band(value_score: float | None) -> str | None:
+    if value_score is None:
+        return None
+    if value_score >= _VALUE_BAND_BEST_VALUE_MIN:
+        return "best_value"
+    if value_score < _VALUE_BAND_ABOVE_MARKET_MAX:
+        return "above_market"
+    return "neutral"
+
+
+def _value_band_is_low_confidence(source_label: Any, n_comparable: Any) -> bool:
+    """True when the comp pool backing this score is citywide rather than
+    district-scoped. The percentile fallback chain self-enforces min_n=12 for
+    city_band_type and min_n=20 for city, so any production row with one of
+    these labels is by definition citywide and therefore low-confidence for
+    UI promotion purposes. Defensive against future relaxation of those
+    thresholds.
+    """
+    if not isinstance(source_label, str):
+        return False
+    return source_label in {"city_band_type", "city"}
+
+
+def _apply_value_band_pass(
+    candidates: list[dict[str, Any]],
+    *,
+    search_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Soft positional nudge: above_market down, best_value up. Operates by
+    list reorder only — does NOT mutate final_score or any persisted score.
+    Stays strictly inside ±EXPANSION_LLM_RERANK_MAX_MOVE so the LLM rerank
+    that runs later retains full authority to undo a nudge it disagrees with.
+
+    Skips low-confidence above_market candidates: the badge is amber (per
+    product override 2) and the ordering signal is intentionally muted to
+    match. Skips low-confidence best_value too — same principle, the badge
+    carries an "low confidence" mark and we don't promote thin-pool comparisons.
+    """
+    if not candidates:
+        return candidates
+    if not settings.EXPANSION_VALUE_SCORE_ENABLED:
+        return candidates
+
+    out = list(candidates)
+    n = len(out)
+
+    # Pass 1: downrank above_market (high-confidence only). Process from
+    # bottom up so earlier pops don't shift later indices.
+    demote_indices = [
+        i for i, c in enumerate(out)
+        if c.get("value_band") == "above_market"
+        and not c.get("value_band_low_confidence")
+    ]
+    demoted = 0
+    for i in reversed(demote_indices):
+        target = min(i + _VALUE_DOWNRANK_MAX_POSITIONS, n - 1)
+        if target > i:
+            c = out.pop(i)
+            out.insert(target, c)
+            c["value_downrank_applied"] = True
+            c["value_downrank_delta"] = target - i
+            demoted += 1
+
+    # Pass 2: uprank best_value (high-confidence only). Promote up to
+    # _VALUE_UPRANK_MAX_POSITIONS but never past a peer whose final_score is
+    # more than _FUZZY_TIE_WINDOW points higher.
+    promote_indices = [
+        i for i, c in enumerate(out)
+        if c.get("value_band") == "best_value"
+        and not c.get("value_band_low_confidence")
+    ]
+    promoted = 0
+    fuzzy_window = _FUZZY_TIE_WINDOW
+    for i in promote_indices:
+        c = out[i]
+        c_final = _safe_float(c.get("final_score"))
+        max_steps = _VALUE_UPRANK_MAX_POSITIONS
+        new_idx = i
+        for _step in range(1, max_steps + 1):
+            j = new_idx - 1
+            if j < 0:
+                break
+            j_final = _safe_float(out[j].get("final_score"))
+            if j_final - c_final > fuzzy_window:
+                break
+            new_idx = j
+        if new_idx < i:
+            c = out.pop(i)
+            out.insert(new_idx, c)
+            c["value_uprank_applied"] = True
+            c["value_uprank_delta"] = i - new_idx
+            promoted += 1
+
+    if demoted or promoted:
+        logger.info(
+            "expansion_value_band_pass: search_id=%s demoted=%d promoted=%d "
+            "downrank_cap=%d uprank_cap=%d",
+            search_id, demoted, promoted,
+            _VALUE_DOWNRANK_MAX_POSITIONS, _VALUE_UPRANK_MAX_POSITIONS,
+        )
+    return out
 
 
 def _build_strengths_and_risks(
@@ -7482,6 +7678,15 @@ def run_expansion_search(
 
         candidates = _balanced
 
+    # Soft value-band ordering pass. Runs AFTER district balancing (so we
+    # don't sabotage the multi-district guarantee) and BEFORE truncation +
+    # rerank (so positional changes propagate through `:limit` cleanly and
+    # the LLM rerank's deterministic_rank reflects the post-nudge position).
+    # Stays within ±EXPANSION_LLM_RERANK_MAX_MOVE-1 by construction; the
+    # rerank validator's ±max_move bound is unchanged and remains
+    # authoritative.
+    candidates = _apply_value_band_pass(candidates, search_id=search_id)
+
     candidates = candidates[:limit]
 
     # Phase 2: bounded LLM shortlist reranking. Annotates every candidate
@@ -8150,7 +8355,15 @@ _COMPARE_SUMMARY_KEYS = [
     "best_brand_fit_candidate_id",
     "strongest_delivery_market_candidate_id",
     "strongest_whitespace_candidate_id",
+    # lowest_rent_burden_candidate_id: smallest absolute annual rent across
+    # the compared set. Intentionally distinct from best_value_candidate_id;
+    # this field stays as-is to preserve the Compare panel's existing
+    # "Lowest Rent Burden" tile semantics.
     "lowest_rent_burden_candidate_id",
+    # best_value_candidate_id: highest derived value_score (geometric mean
+    # of estimated_revenue_index and rent_burden_score). Independent peer
+    # of lowest_rent_burden_candidate_id — both are populated.
+    "best_value_candidate_id",
     "most_confident_candidate_id",
     "best_gate_pass_candidate_id",
 ]
@@ -8297,6 +8510,11 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "population_reach": row.get("population_reach"),
             "landuse_label": row.get("landuse_label"),
             "rank_position": row.get("rank_position"),
+            # value_score / value_band are extracted from
+            # score_breakdown_json["economics_detail"] inside
+            # _normalize_candidate_payload — the empty string lookups here
+            # rely on that path. Keep the keys present so the Pydantic
+            # model surfaces them on every item.
             # Same defensive coercion as get_candidate_memo: commercial_unit_id
             # is a string identifier per the API contract, but the DB column
             # may yield an int for numeric Aqar IDs. Keep both emission paths
@@ -8334,7 +8552,19 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
         best_brand_fit = max(items, key=lambda item: _safe_float(item.get("brand_fit_score")))["candidate_id"]
         strongest_delivery_market = max(items, key=lambda item: _safe_float(item.get("provider_density_score")) + _safe_float(item.get("multi_platform_presence_score")))["candidate_id"]
         strongest_whitespace = max(items, key=lambda item: _safe_float(item.get("provider_whitespace_score")))["candidate_id"]
+        # "Lowest rent burden" = smallest absolute annual rent across the
+        # compared set. NOT the value-score winner; that's
+        # best_value_candidate_id below. Two independent fields; both
+        # surface in the Compare panel as their own tiles.
         lowest_rent_burden = min(items, key=lambda item: _safe_float(item.get("estimated_annual_rent_sar"), 10**12))["candidate_id"]
+        # best_value: highest published value_score. Items with no
+        # value_score (absolute_legacy / fallback rows) sink to the
+        # bottom; if no item has a value_score, the field is None.
+        def _value_or_neg(item: dict[str, Any]) -> float:
+            v = item.get("value_score")
+            return float(v) if isinstance(v, (int, float)) else -1.0
+        _bv = max(items, key=_value_or_neg)
+        best_value = _bv["candidate_id"] if _value_or_neg(_bv) >= 0 else None
         grade_order = {"A": 4, "B": 3, "C": 2, "D": 1}
         most_confident = max(
             items,
@@ -8356,6 +8586,7 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "strongest_delivery_market_candidate_id": strongest_delivery_market,
             "strongest_whitespace_candidate_id": strongest_whitespace,
             "lowest_rent_burden_candidate_id": lowest_rent_burden,
+            "best_value_candidate_id": best_value,
             "most_confident_candidate_id": most_confident,
             "best_gate_pass_candidate_id": best_gate_pass,
         })
@@ -8652,6 +8883,12 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
                 "runner_up_candidate_id": None,
                 "best_pass_candidate_id": None,
                 "best_confidence_candidate_id": None,
+                "highest_demand_candidate_id": None,
+                "best_economics_candidate_id": None,
+                "best_brand_fit_candidate_id": None,
+                "strongest_whitespace_candidate_id": None,
+                "most_confident_candidate_id": None,
+                "best_value_candidate_id": None,
                 "why_best": "",
                 "main_risk": "",
                 "best_format": "",
@@ -8695,6 +8932,42 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     pass_count = len(pass_candidates)
     validation_clear_count = len(unknown_candidates)
 
+    # Dimension winners. The frontend report panel reads each *_candidate_id
+    # off the recommendation block and renders a tile per populated id; if
+    # the field is null the tile collapses. Five of these were declared on
+    # the frontend type but never populated server-side (Bug B in the
+    # investigation report). Compute them across the full normalized
+    # candidate list (not just `top`, which is pre-truncated to 3).
+    def _max_id_by(items: list[dict[str, Any]], key) -> str | None:
+        valid = [i for i in items if isinstance(key(i), (int, float))]
+        if not valid:
+            return None
+        return max(valid, key=key).get("id")
+
+    highest_demand_id = _max_id_by(normalized_candidates, lambda i: _safe_float(i.get("demand_score")))
+    best_economics_id = _max_id_by(normalized_candidates, lambda i: _safe_float(i.get("economics_score")))
+    best_brand_fit_id = _max_id_by(normalized_candidates, lambda i: _safe_float(i.get("brand_fit_score")))
+    strongest_whitespace_id = _max_id_by(normalized_candidates, lambda i: _safe_float(i.get("provider_whitespace_score")))
+    most_confident_item = max(
+        normalized_candidates,
+        key=lambda i: (
+            grade_order.get(str(i.get("confidence_grade") or "D"), 0),
+            _safe_float(i.get("confidence_score")),
+        ),
+    )
+    most_confident_id = most_confident_item.get("id")
+
+    # best_value: highest published value_score across the full result set.
+    # Independent peer of lowest_rent_burden_candidate_id (which is not
+    # exposed on this endpoint today, but if/when it's added it stays
+    # semantically distinct: smallest absolute rent vs. value-score winner).
+    def _value_or_neg_report(item: dict[str, Any]) -> float:
+        v = item.get("value_score")
+        return float(v) if isinstance(v, (int, float)) else -1.0
+
+    _bv_item = max(normalized_candidates, key=_value_or_neg_report)
+    best_value_id = _bv_item.get("id") if _value_or_neg_report(_bv_item) >= 0 else None
+
     top_payload: list[dict[str, Any]] = []
     for item in top:
         snapshot = item.get("feature_snapshot_json") or {}
@@ -8731,6 +9004,12 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
                     "display": score_breakdown.get("display") or {},
                     "final_score": _safe_float(score_breakdown.get("final_score"), _safe_float(item.get("final_score"))),
                 },
+                # value_score / value_band lifted from the normalized
+                # candidate so the report panel's top-3 cards can render
+                # the same chip the candidate list shows.
+                "value_score": item.get("value_score"),
+                "value_band": item.get("value_band"),
+                "value_band_low_confidence": bool(item.get("value_band_low_confidence")),
             }
         )
 
@@ -8787,6 +9066,19 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
             "runner_up_candidate_id": runner_item.get("id") if runner_item else None,
             "best_pass_candidate_id": best_pass.get("id") if best_pass else None,
             "best_confidence_candidate_id": best_confidence.get("id"),
+            # Dimension Winners — populated server-side as of this PR.
+            # Frontend (ExpansionReportPanel.tsx) was reading these and
+            # rendering nothing; the panel's Dimension Winners tile now
+            # surfaces them. best_value_candidate_id is a new peer of the
+            # rest — derived from value_score, independent of
+            # lowest_rent_burden_candidate_id (which remains "smallest
+            # absolute annual rent" in compare_candidates).
+            "highest_demand_candidate_id": highest_demand_id,
+            "best_economics_candidate_id": best_economics_id,
+            "best_brand_fit_candidate_id": best_brand_fit_id,
+            "strongest_whitespace_candidate_id": strongest_whitespace_id,
+            "most_confident_candidate_id": most_confident_id,
+            "best_value_candidate_id": best_value_id,
             "pass_count": pass_count,
             "validation_clear_count": validation_clear_count,
             "why_best": why_best,

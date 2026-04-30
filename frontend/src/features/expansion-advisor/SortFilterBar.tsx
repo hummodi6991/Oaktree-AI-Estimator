@@ -16,6 +16,7 @@ type Props = {
 const FILTERS: { key: FilterKey; labelKey: string }[] = [
   { key: "all", labelKey: "expansionAdvisor.filterAll" },
   { key: "pass_only", labelKey: "expansionAdvisor.filterPassOnly" },
+  { key: "best_value_only", labelKey: "expansionAdvisor.filterBestValueOnly" },
   { key: "strongest_economics", labelKey: "expansionAdvisor.filterStrongestEconomics" },
   { key: "strongest_brand_fit", labelKey: "expansionAdvisor.filterStrongestBrandFit" },
   { key: "lowest_cannibalization", labelKey: "expansionAdvisor.filterLowestCannibalization" },
@@ -24,6 +25,7 @@ const FILTERS: { key: FilterKey; labelKey: string }[] = [
 
 const SORTS: { key: SortKey; labelKey: string }[] = [
   { key: "rank", labelKey: "expansionAdvisor.sortRank" },
+  { key: "best_value", labelKey: "expansionAdvisor.sortBestValue" },
   { key: "economics", labelKey: "expansionAdvisor.sortEconomics" },
   { key: "brand_fit", labelKey: "expansionAdvisor.sortBrandFit" },
   { key: "cannibalization", labelKey: "expansionAdvisor.sortCannibalization" },

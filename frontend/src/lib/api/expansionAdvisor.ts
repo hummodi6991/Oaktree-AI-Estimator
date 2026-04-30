@@ -289,6 +289,15 @@ export type ExpansionCandidate = {
   rerank_delta?: number;
   rerank_status?: RerankStatus | null;
   decision_memo_present?: boolean;
+  // value_score chip — derived "strong location at a fair price" signal.
+  // Null on rows where rent_burden ran in non-percentile mode.
+  value_score?: number | null;
+  value_band?: "best_value" | "neutral" | "above_market" | null;
+  value_band_low_confidence?: boolean;
+  value_downrank_applied?: boolean;
+  value_downrank_delta?: number;
+  value_uprank_applied?: boolean;
+  value_uprank_delta?: number;
 };
 
 export type ExpansionSearchResponse = {
@@ -436,6 +445,9 @@ export type RecommendationTopCandidate = {
   top_risks_json?: string[];
   feature_snapshot_json?: Record<string, unknown>;
   score_breakdown_json?: CandidateScoreBreakdown;
+  value_score?: number | null;
+  value_band?: "best_value" | "neutral" | "above_market" | null;
+  value_band_low_confidence?: boolean;
 };
 
 export type RecommendationReportResponse = {
@@ -453,6 +465,7 @@ export type RecommendationReportResponse = {
     strongest_whitespace_candidate_id?: string;
     lowest_cannibalization_candidate_id?: string;
     most_confident_candidate_id?: string;
+    best_value_candidate_id?: string;
     pass_count?: number;
     validation_clear_count?: number;
     why_best?: string;

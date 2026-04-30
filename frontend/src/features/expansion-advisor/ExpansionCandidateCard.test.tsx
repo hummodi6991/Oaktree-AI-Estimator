@@ -577,3 +577,71 @@ describe("ExpansionCandidateCard — stringified-Decimal coercion at boundary", 
     expect(metricsBlock).not.toMatch(/—\/yr/);
   });
 });
+
+describe("ExpansionCandidateCard — value_score badge", () => {
+  it("renders the green Best value badge when value_band is best_value (high confidence)", () => {
+    const html = renderCard(
+      baseCandidate({
+        value_band: "best_value",
+        value_band_low_confidence: false,
+        value_score: 82,
+      }),
+    );
+    expect(html).toContain("ea-candidate__value-pill");
+    expect(html).toContain("ea-badge--green");
+    expect(html).toContain(">Best value");
+    expect(html).not.toContain("ⓘ");
+  });
+
+  it("renders the green Best value badge with an ⓘ mark when value_band_low_confidence is true", () => {
+    const html = renderCard(
+      baseCandidate({
+        value_band: "best_value",
+        value_band_low_confidence: true,
+        value_score: 78,
+      }),
+    );
+    expect(html).toContain("ea-candidate__value-pill");
+    expect(html).toContain("ea-badge--green");
+    expect(html).toContain("ⓘ");
+  });
+
+  it("renders the red Above market badge when value_band is above_market and high confidence", () => {
+    const html = renderCard(
+      baseCandidate({
+        value_band: "above_market",
+        value_band_low_confidence: false,
+        value_score: 18,
+      }),
+    );
+    expect(html).toContain("ea-candidate__value-pill");
+    expect(html).toContain("ea-badge--red");
+    expect(html).toContain(">Above market<");
+  });
+
+  it("renders the AMBER (not red) Above market badge when value_band is above_market and low confidence", () => {
+    // Per product override 2: low-confidence above_market keeps the badge
+    // visible but with amber styling — the directional signal is preserved
+    // while the visual penalty is muted.
+    const html = renderCard(
+      baseCandidate({
+        value_band: "above_market",
+        value_band_low_confidence: true,
+        value_score: 22,
+      }),
+    );
+    expect(html).toContain("ea-candidate__value-pill");
+    expect(html).toContain("ea-badge--amber");
+    expect(html).not.toContain("ea-badge--red");
+    expect(html).toContain("Above market (citywide est.)");
+  });
+
+  it("renders no value badge when value_band is neutral or null", () => {
+    const htmlNeutral = renderCard(
+      baseCandidate({ value_band: "neutral", value_score: 55 }),
+    );
+    expect(htmlNeutral).not.toContain("ea-candidate__value-pill");
+    const htmlNull = renderCard(baseCandidate());
+    expect(htmlNull).not.toContain("ea-candidate__value-pill");
+  });
+});
