@@ -160,6 +160,22 @@ class Settings:
         in {"1", "true", "yes", "on"}
     )
 
+    # --- Expansion Advisor market-viability conjunction pass (CEO directive #1) ---
+    # Soft positional demotion for candidates that are confidently bad on BOTH
+    # currently-measured legs of the directive: high rent percentile AND low
+    # population reach. Mirrors _apply_value_band_pass mechanics (positional
+    # reorder only, no final_score mutation). The third leg (growth) is not
+    # enforced because the repo has no honest growth signal as of this patch.
+    EXPANSION_VIABILITY_RENT_PCT_THRESHOLD: float = float(
+        os.getenv("EXPANSION_VIABILITY_RENT_PCT_THRESHOLD", "0.70")
+    )
+    EXPANSION_VIABILITY_POP_PERCENTILE: float = float(
+        os.getenv("EXPANSION_VIABILITY_POP_PERCENTILE", "0.25")
+    )
+    EXPANSION_VIABILITY_DEMOTION_STEPS: int = int(
+        os.getenv("EXPANSION_VIABILITY_DEMOTION_STEPS", "6")
+    )
+
     # --- Expansion Advisor decision-memo pre-warm (Phase 3) ---
     # After POST /searches returns, schedule a background task that
     # generates structured decision memos for the top-N candidates so the
