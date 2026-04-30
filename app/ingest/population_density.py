@@ -11,12 +11,15 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.connectors.population import load_hdx_population_raster
 from app.models.tables import PopulationDensity
 
 logger = logging.getLogger(__name__)
+
+SOURCE_NAME = "hdx_meta"
 
 
 def ingest_population_hdx(db: Session, geotiff_path: str | Path) -> int:
@@ -25,6 +28,16 @@ def ingest_population_hdx(db: Session, geotiff_path: str | Path) -> int:
 
     Returns the number of H3 cells upserted.
     """
+    # Purge any existing rows from the same source before re-ingesting.
+    # Without this, an H3 resolution change leaves stale rows from the prior
+    # resolution alongside the new ones (different h3_index values do not
+    # collide on the unique key), and catchment SUMs would double-count.
+    deleted = db.execute(
+        text("DELETE FROM population_density WHERE source = :src"),
+        {"src": SOURCE_NAME},
+    ).rowcount
+    logger.info("Purged %s existing rows for source=%s", deleted, SOURCE_NAME)
+
     n = 0
     for cell in load_hdx_population_raster(geotiff_path):
         row = db.query(PopulationDensity).filter_by(h3_index=cell["h3_index"]).first()

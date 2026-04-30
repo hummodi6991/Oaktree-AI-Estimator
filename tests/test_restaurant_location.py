@@ -1,5 +1,7 @@
 """Tests for restaurant location scoring engine."""
 
+import inspect
+
 from app.services.restaurant_location import (
     chain_gap_score,
     competition_score,
@@ -18,6 +20,26 @@ from app.services.restaurant_location import (
     _rent_data_quality,
 )
 from app.services.traffic_proxy import road_class_score
+
+
+class TestPopulationScoreH3Resolution:
+    """Guard against silent regressions of the res-8 → res-9 upgrade.
+
+    The earlier code hardcoded ``8`` as the H3 resolution and ``460`` as the
+    edge length divisor, which broke when the population_density table was
+    re-ingested at res-9. These tests assert the resolution constant is wired
+    through and the literals are gone.
+    """
+
+    def test_population_score_uses_h3_resolution_constant(self):
+        from app.services import restaurant_location as mod
+        from app.connectors.population import H3_RESOLUTION
+
+        src = inspect.getsource(mod.population_score)
+        assert "H3_RESOLUTION" in src, "population_score must reference H3_RESOLUTION"
+        assert ", 8)" not in src, "literal res-8 must not remain in population_score"
+        assert "/ 460" not in src, "literal 460m edge length must not remain"
+        assert H3_RESOLUTION == 9
 
 
 class TestCompetitionScore:
