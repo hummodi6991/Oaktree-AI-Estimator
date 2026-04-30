@@ -30,6 +30,7 @@ from typing import Any
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from app.connectors.population import H3_RESOLUTION
 from app.models.tables import PopulationDensity, RestaurantPOI
 from app.services.restaurant_categories import CATEGORIES
 from app.services.rent import RentMedianResult, aqar_rent_median
@@ -210,8 +211,10 @@ def population_score(db: Session, lat: float, lon: float, radius_m: float = 2000
     """Score based on H3-indexed population density."""
     try:
         import h3
-        center_h3 = h3.latlng_to_cell(lat, lon, 8)
-        ring = h3.grid_disk(center_h3, int(radius_m / 460))
+        center_h3 = h3.latlng_to_cell(lat, lon, H3_RESOLUTION)
+        edge_m = h3.average_hexagon_edge_length(H3_RESOLUTION, unit="m")
+        k = max(1, int(round(radius_m / edge_m)))
+        ring = h3.grid_disk(center_h3, k)
         pop_rows = (
             db.query(func.sum(PopulationDensity.population))
             .filter(PopulationDensity.h3_index.in_(list(ring)))

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # Riyadh metro bounding box
 RIYADH_BBOX = (46.20, 24.20, 47.30, 25.10)
 
-H3_RESOLUTION = 8  # ~460m edge length
+H3_RESOLUTION = 9  # ~174m edge length
 
 
 def load_hdx_population_raster(

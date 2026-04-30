@@ -391,6 +391,10 @@ def generate_opportunity_heatmap(
     category: str,
     radius_m: int = 1200,
     min_confidence: float = 0.3,
+    # Fixed cell budget for response/render cost regardless of H3 resolution.
+    # At res-9 (~21k Riyadh cells) this samples the prefix of the population
+    # rows query rather than scoring every cell; coverage is intentionally
+    # capped to keep payload size and scoring time bounded.
     limit_cells: int = 5000,
     cache_bust: bool = False,
 ) -> dict[str, Any]:

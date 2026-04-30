@@ -37,17 +37,17 @@ def generate_heatmap(
     db: Session,
     category: str,
     bbox: tuple[float, float, float, float],
-    resolution: int = 8,
+    resolution: int = 9,
     use_cache: bool = True,
 ) -> dict[str, Any]:
     """
-    Generate a GeoJSON FeatureCollection of H3 hex cells with scores.
+    Generate a GeoJSON FeatureCollection of H3 hex cells with scores at H3 res-9 (~174m edge).
 
     Args:
         db: database session
         category: restaurant category (e.g. 'burger')
         bbox: (min_lon, min_lat, max_lon, max_lat)
-        resolution: H3 resolution (7=~1.2km, 8=~460m, 9=~175m)
+        resolution: H3 resolution (7=~1.2km, 8=~460m, 9=~174m)
         use_cache: if True, use cached scores from location_score table
 
     Returns:

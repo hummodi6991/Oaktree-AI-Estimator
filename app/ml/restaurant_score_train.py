@@ -39,6 +39,7 @@ from sklearn.model_selection import train_test_split
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from app.connectors.population import H3_RESOLUTION
 from app.db.session import SessionLocal
 from app.models.tables import LocationScore, PopulationDensity, RestaurantPOI
 from app.services.restaurant_categories import CATEGORIES
@@ -117,7 +118,7 @@ def _build_training_df(db: Session) -> pd.DataFrame:
             row[5], row[6], row[7], row[8],
         )
         lat_f, lon_f = float(lat), float(lon)
-        h3_idx = h3.latlng_to_cell(lat_f, lon_f, 8)
+        h3_idx = h3.latlng_to_cell(lat_f, lon_f, H3_RESOLUTION)
         key = (h3_idx, category)
 
         if key not in h3_data:
@@ -180,8 +181,11 @@ def _build_training_df(db: Session) -> pd.DataFrame:
         )
         population = float(pop_row[0]) if pop_row and pop_row[0] else 0.0
 
-        # Compute neighboring cell stats
-        neighbors = h3.grid_disk(h3_idx, 1)
+        # Compute neighboring cell stats.
+        # Ring size 3 at res-9 preserves the ~1.5km neighborhood footprint that
+        # ring size 1 gave at res-8. Without this, the resolution upgrade
+        # silently shrinks neighbor-category features ~3x.
+        neighbors = h3.grid_disk(h3_idx, 3)
         neighbor_same_cat = sum(
             h3_data.get((n, category), {}).get("count", 0)
             for n in neighbors
