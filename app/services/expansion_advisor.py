@@ -1304,11 +1304,25 @@ def _normalize_candidate_payload(
     )
     # Per-search ordering metadata (set by _apply_value_band_pass; absent
     # on rows that didn't move). Default to False/0 so the response shape
-    # is stable.
-    payload["value_downrank_applied"] = bool(payload.get("value_downrank_applied", False))
-    payload["value_downrank_delta"] = _safe_int(payload.get("value_downrank_delta"), 0)
-    payload["value_uprank_applied"] = bool(payload.get("value_uprank_applied", False))
-    payload["value_uprank_delta"] = _safe_int(payload.get("value_uprank_delta"), 0)
+    # is stable. The markers persist inside score_breakdown_json["value_pass"]
+    # because expansion_candidate has no dedicated columns for them; read
+    # from the nested location and fall back to top-level (set in-memory
+    # during the pass before persistence).
+    _vp = (payload.get("score_breakdown_json") or {}).get("value_pass") or {}
+    if not isinstance(_vp, dict):
+        _vp = {}
+    payload["value_downrank_applied"] = bool(
+        payload.get("value_downrank_applied") or _vp.get("value_downrank_applied", False)
+    )
+    payload["value_downrank_delta"] = _safe_int(
+        payload.get("value_downrank_delta") or _vp.get("value_downrank_delta"), 0
+    )
+    payload["value_uprank_applied"] = bool(
+        payload.get("value_uprank_applied") or _vp.get("value_uprank_applied", False)
+    )
+    payload["value_uprank_delta"] = _safe_int(
+        payload.get("value_uprank_delta") or _vp.get("value_uprank_delta"), 0
+    )
 
     # ── Display-consistent annual rent (presentation only) ──
     # The UI rounds rent/m² to whole SAR for display.  Compute a matching
@@ -4264,6 +4278,53 @@ def _value_band_is_low_confidence(source_label: Any, n_comparable: Any) -> bool:
     return source_label in {"city_band_type", "city"}
 
 
+def _candidate_value_band(c: dict[str, Any]) -> tuple[str | None, bool]:
+    """Read (value_band, low_confidence) for a candidate.
+
+    Production candidates carry the band inside
+    ``score_breakdown_json["economics_detail"]`` (the persisted source of
+    truth). The top-level keys are only set after _normalize_candidate_payload
+    runs, which is post-persistence and post-pass. Read from the nested
+    location first, then fall back to top-level so synthetic test fixtures
+    that set value_band directly continue to work.
+    """
+    sb = c.get("score_breakdown_json")
+    ed = sb.get("economics_detail") if isinstance(sb, dict) else None
+    if isinstance(ed, dict):
+        band = ed.get("value_band")
+        low_conf = bool(ed.get("value_band_low_confidence"))
+        if band is not None:
+            return band, low_conf
+    return c.get("value_band"), bool(c.get("value_band_low_confidence"))
+
+
+def _record_value_pass_marker(
+    c: dict[str, Any],
+    *,
+    direction: str,
+    delta: int,
+) -> None:
+    """Stash the uprank/downrank marker on the candidate dict AND inside
+    ``score_breakdown_json`` so the flag survives DB round-trips. The
+    expansion_candidate table has no dedicated columns for these markers;
+    score_breakdown_json is JSONB and is already persisted.
+    """
+    applied_key = f"value_{direction}_applied"
+    delta_key = f"value_{direction}_delta"
+    c[applied_key] = True
+    c[delta_key] = int(delta)
+    sb = c.get("score_breakdown_json")
+    if not isinstance(sb, dict):
+        sb = {}
+        c["score_breakdown_json"] = sb
+    vp = sb.get("value_pass")
+    if not isinstance(vp, dict):
+        vp = {}
+        sb["value_pass"] = vp
+    vp[applied_key] = True
+    vp[delta_key] = int(delta)
+
+
 def _apply_value_band_pass(
     candidates: list[dict[str, Any]],
     *,
@@ -4287,12 +4348,28 @@ def _apply_value_band_pass(
     out = list(candidates)
     n = len(out)
 
+    bands = [_candidate_value_band(c) for c in out]
+
+    # Diagnostic pre-trace: log every row that carries a value_band so
+    # production triage can confirm the pass saw the same picture the
+    # response reports. INFO level is intentional — this fires once per
+    # search and the volume is bounded.
+    flagged = [
+        (i, _safe_float(out[i].get("final_score")), bands[i][0], bands[i][1])
+        for i in range(n)
+        if bands[i][0] is not None
+    ]
+    if flagged:
+        logger.info(
+            "expansion_value_band_pass entry: search_id=%s n=%d flagged=%s",
+            search_id, n, flagged,
+        )
+
     # Pass 1: downrank above_market (high-confidence only). Process from
     # bottom up so earlier pops don't shift later indices.
     demote_indices = [
-        i for i, c in enumerate(out)
-        if c.get("value_band") == "above_market"
-        and not c.get("value_band_low_confidence")
+        i for i in range(n)
+        if bands[i][0] == "above_market" and not bands[i][1]
     ]
     demoted = 0
     for i in reversed(demote_indices):
@@ -4300,17 +4377,18 @@ def _apply_value_band_pass(
         if target > i:
             c = out.pop(i)
             out.insert(target, c)
-            c["value_downrank_applied"] = True
-            c["value_downrank_delta"] = target - i
+            _record_value_pass_marker(c, direction="downrank", delta=target - i)
             demoted += 1
+
+    # Re-index after demotions so promote_indices reference current positions.
+    bands = [_candidate_value_band(c) for c in out]
 
     # Pass 2: uprank best_value (high-confidence only). Promote up to
     # _VALUE_UPRANK_MAX_POSITIONS but never past a peer whose final_score is
     # more than _FUZZY_TIE_WINDOW points higher.
     promote_indices = [
-        i for i, c in enumerate(out)
-        if c.get("value_band") == "best_value"
-        and not c.get("value_band_low_confidence")
+        i for i in range(len(out))
+        if bands[i][0] == "best_value" and not bands[i][1]
     ]
     promoted = 0
     fuzzy_window = _FUZZY_TIE_WINDOW
@@ -4330,8 +4408,7 @@ def _apply_value_band_pass(
         if new_idx < i:
             c = out.pop(i)
             out.insert(new_idx, c)
-            c["value_uprank_applied"] = True
-            c["value_uprank_delta"] = i - new_idx
+            _record_value_pass_marker(c, direction="uprank", delta=i - new_idx)
             promoted += 1
 
     if demoted or promoted:
@@ -9003,6 +9080,11 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
                     "weighted_components": score_breakdown.get("weighted_components") or {},
                     "display": score_breakdown.get("display") or {},
                     "final_score": _safe_float(score_breakdown.get("final_score"), _safe_float(item.get("final_score"))),
+                    # economics_detail carries rent_burden / value_score /
+                    # value_band — the report panel renders these on the
+                    # top-3 cards, so projecting them is required for parity
+                    # with /candidates.
+                    "economics_detail": score_breakdown.get("economics_detail") or {},
                 },
                 # value_score / value_band lifted from the normalized
                 # candidate so the report panel's top-3 cards can render

@@ -2653,3 +2653,103 @@ def test_get_recommendation_report_best_value_none_when_no_value_score(monkeypat
     report = get_recommendation_report(FakeDB(), "search-1")
     assert report is not None
     assert report["recommendation"]["best_value_candidate_id"] is None
+
+
+def test_value_band_pass_uprank_reads_band_from_score_breakdown_json():
+    """Regression for the production bug where value_uprank_applied is always
+    False. In production the candidate dict carries value_band inside
+    score_breakdown_json["economics_detail"], not at the top level. The pass
+    must consult that nested location, otherwise the promote_indices set is
+    empty and no row is ever upranked."""
+    # Index 4: peer with final_score equal to the best_value below it.
+    # Index 5: high-confidence best_value, value_band only inside
+    # score_breakdown_json["economics_detail"] (the persisted layout).
+    candidates = [
+        {"id": f"c{i}", "parcel_id": f"c{i}", "final_score": 80.0 - i, "score_breakdown_json": {}}
+        for i in range(5)
+    ]
+    candidates.append({
+        "id": "c5-best-value",
+        "parcel_id": "c5-best-value",
+        "final_score": 75.98,
+        "score_breakdown_json": {
+            "economics_detail": {
+                "value_score": 80.0,
+                "value_band": "best_value",
+                "value_band_low_confidence": False,
+            },
+        },
+    })
+    # Tighten the gap between index 4 and the best_value so the swap is
+    # within the fuzzy window.
+    candidates[4]["final_score"] = 75.98
+
+    out = _apply_value_band_pass(list(candidates), search_id="t")
+    moved = next(c for c in out if c["id"] == "c5-best-value")
+    new_idx = out.index(moved)
+    assert new_idx < 5, f"best_value did not move (still at {new_idx})"
+    assert moved.get("value_uprank_applied") is True
+    assert moved.get("value_uprank_delta", 0) >= 1
+    # Marker must also be persisted inside score_breakdown_json so it
+    # survives the DB round-trip (no dedicated column for these fields).
+    vp = moved.get("score_breakdown_json", {}).get("value_pass") or {}
+    assert vp.get("value_uprank_applied") is True
+    assert vp.get("value_uprank_delta", 0) >= 1
+
+
+def test_recommendation_report_top_payload_preserves_economics_detail(monkeypatch):
+    """Regression for Bug 2: top_candidates[0].score_breakdown_json
+    .economics_detail was empty because get_recommendation_report's
+    top_payload projection forgot to copy economics_detail from the source
+    candidate's score_breakdown_json."""
+    economics_detail = {
+        "rent_burden": {
+            "mode": "percentile",
+            "percentile_rank": 35.0,
+            "n_comparable": 24,
+            "source_label": "district_band_type",
+        },
+        "value_score": 82.5,
+        "value_band": "best_value",
+        "value_band_low_confidence": False,
+    }
+    candidates = [
+        {
+            "id": "cand-1",
+            "parcel_id": "p1",
+            "rank_position": 1,
+            "final_score": 80.0,
+            "demand_score": 70.0,
+            "economics_score": 75.0,
+            "brand_fit_score": 70.0,
+            "provider_whitespace_score": 60.0,
+            "confidence_grade": "A",
+            "confidence_score": 90.0,
+            "value_score": 82.5,
+            "value_band": "best_value",
+            "gate_status_json": {"overall_pass": True},
+            "gate_reasons_json": {},
+            "feature_snapshot_json": {},
+            "score_breakdown_json": {
+                "weights": {"demand": 0.3},
+                "inputs": {},
+                "weighted_components": {},
+                "display": {},
+                "final_score": 80.0,
+                "economics_detail": economics_detail,
+            },
+        },
+    ]
+    monkeypatch.setattr(expansion_service, "get_search", lambda *_a, **_kw: {"id": "search-1", "brand_profile": {}})
+    monkeypatch.setattr(expansion_service, "get_candidates", lambda *_a, **_kw: candidates)
+
+    report = get_recommendation_report(FakeDB(), "search-1")
+    assert report is not None
+    top = report["top_candidates"]
+    assert len(top) == 1
+    sb = top[0]["score_breakdown_json"]
+    assert sb.get("economics_detail") == economics_detail
+    # Sanity: rent_burden / value_score / value_band specifically must round-trip.
+    assert sb["economics_detail"]["rent_burden"]["mode"] == "percentile"
+    assert sb["economics_detail"]["value_score"] == 82.5
+    assert sb["economics_detail"]["value_band"] == "best_value"
