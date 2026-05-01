@@ -331,6 +331,13 @@ def _precompute_district_delivery_stats(
 def _district_momentum_score(db: Session) -> dict[str, dict[str, Any]]:
     """Per-search, per-district 30-day activity momentum.
 
+    Joins ``commercial_unit`` against ``external_feature_polygons_mat`` —
+    a materialized view of pre-parsed district polygons (osm_districts +
+    aqar_district_hulls), refreshed on demand via the "Refresh
+    external_feature_polygons_mat" GitHub Actions workflow. The matview
+    avoids re-parsing 158 GeoJSON polygons on every expansion_search
+    request and provides a GIST-indexed ``geom`` column for ``ST_Contains``.
+
     Returns::
 
         {
@@ -346,21 +353,18 @@ def _district_momentum_score(db: Session) -> dict[str, dict[str, Any]]:
             }
         }
 
-    Aggregation source is ``commercial_unit`` listings spatially joined
-    against ``external_feature`` district polygons. This produces an
-    Arabic-label key-space that matches the namespace the scoring path
-    consumes (``cl.district_ar`` on the primary pool, spatial backfill
-    from ``riyadh_parcels_arcgis_raw.district_label`` on the fallback
-    pool — both Arabic). Lookups via ``normalize_district_key`` match
-    by construction; the helper applies uniformly to Tier 1, 2, and 3
+    The Arabic-label key-space matches what the scoring path consumes
+    (``cl.district_ar`` on the primary pool, spatial backfill from
+    ``riyadh_parcels_arcgis_raw.district_label`` on the fallback pool —
+    both Arabic). Lookups via ``normalize_district_key`` match by
+    construction; the helper applies uniformly to Tier 1, 2, and 3
     candidates.
 
-    Two external_feature layers are queried with a priority chain —
-    ``osm_districts`` first, ``aqar_district_hulls`` second. DISTINCT ON
-    (cu.aqar_id) ORDER BY the layer priority ensures each listing
-    resolves to exactly one district at the highest priority polygon
-    that contains its point. A third layer is not added without DB
-    verification; 'rydpolygons' does not exist in this schema.
+    Two layers are queried with a priority chain — ``osm_districts``
+    first, ``aqar_district_hulls`` second. DISTINCT ON (cu.aqar_id)
+    ORDER BY the layer priority ensures each listing resolves to
+    exactly one district at the highest priority polygon that contains
+    its point.
 
     A listing counts toward ``activity_30d`` if EITHER ``aqar_created_at``
     OR ``aqar_updated_at`` falls in the trailing window — null-safe,
@@ -368,11 +372,6 @@ def _district_momentum_score(db: Session) -> dict[str, dict[str, Any]]:
     Districts below ``_MOMENTUM_SAMPLE_FLOOR`` are excluded so callers
     resolve them to neutral 50.0 via ``.get(district_norm)`` returning
     None.
-
-    DB verification (floor=20): 39 qualifying districts, 1,680 active
-    listings covered (71.40% of the active pool), 1,420 activity_30d
-    rows, ~36ms runtime against the 250ms budget. Indexes used:
-    ``external_feature`` GIST on geom, btree on layer_name.
 
     Returns an empty dict on any DB failure so the caller falls back to
     neutral everywhere without raising.
@@ -386,25 +385,20 @@ def _district_momentum_score(db: Session) -> dict[str, dict[str, Any]]:
                         cu.aqar_id,
                         cu.aqar_created_at,
                         cu.aqar_updated_at,
-                        TRIM(COALESCE(ef.properties->>'district_raw',
-                                      ef.properties->>'district')) AS district_label
+                        dp.district_label
                     FROM commercial_unit cu
-                    JOIN external_feature ef
+                    JOIN external_feature_polygons_mat dp
                       ON ST_Contains(
-                           ef.geom,
+                           dp.geom,
                            ST_SetSRID(ST_MakePoint(cu.lon, cu.lat), 4326)
                          )
                     WHERE cu.lat IS NOT NULL
                       AND cu.lon IS NOT NULL
                       AND cu.status = 'active'
-                      AND ef.layer_name IN ('osm_districts', 'aqar_district_hulls')
-                      AND COALESCE(ef.properties->>'district_raw',
-                                   ef.properties->>'district') IS NOT NULL
-                      AND TRIM(COALESCE(ef.properties->>'district_raw',
-                                        ef.properties->>'district')) <> ''
+                      AND dp.district_label IS NOT NULL
                     ORDER BY
                       cu.aqar_id,
-                      CASE ef.layer_name
+                      CASE dp.layer_name
                           WHEN 'osm_districts'       THEN 1
                           WHEN 'aqar_district_hulls' THEN 2
                           ELSE 3
