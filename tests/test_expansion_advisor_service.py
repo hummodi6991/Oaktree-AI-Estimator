@@ -3077,3 +3077,90 @@ def test_recommendation_report_top_payload_preserves_economics_detail(monkeypatc
     assert sb["economics_detail"]["rent_burden"]["mode"] == "percentile"
     assert sb["economics_detail"]["value_score"] == 82.5
     assert sb["economics_detail"]["value_band"] == "best_value"
+
+
+# ---------------------------------------------------------------------------
+# _district_momentum_score: now joins external_feature_polygons_mat (PR fix).
+# These tests mock the DB at the SQL boundary so we exercise the Python-side
+# normalization (percentile composite, normalize_district_key, return shape)
+# without needing a live PostGIS instance.
+# ---------------------------------------------------------------------------
+
+
+def test_district_momentum_score_normalizes_polygon_join_results():
+    """After the matview rewrite, the function joins
+    external_feature_polygons_mat instead of parsing JSONB on every call.
+    Verify the Python-side aggregation works against rows shaped like the
+    new SQL output (district_label + activity_30d + active_in_district +
+    percentile_raw + percentile_absolute, mapped per row).
+    """
+    from unittest.mock import MagicMock
+
+    from app.services.expansion_advisor import _district_momentum_score
+    from app.services.expansion_advisor import normalize_district_key
+
+    fake_rows = [
+        {
+            "district_label": "حي العليا",
+            "activity_30d": 80,
+            "active_in_district": 100,
+            "percentile_raw": 1.0,
+            "percentile_absolute": 1.0,
+        },
+        {
+            "district_label": "الملقا",
+            "activity_30d": 20,
+            "active_in_district": 100,
+            "percentile_raw": 0.5,
+            "percentile_absolute": 0.5,
+        },
+        {
+            "district_label": "السليمانية",
+            "activity_30d": 5,
+            "active_in_district": 100,
+            "percentile_raw": 0.0,
+            "percentile_absolute": 0.0,
+        },
+    ]
+
+    mappings_proxy = MagicMock()
+    mappings_proxy.all.return_value = fake_rows
+    exec_proxy = MagicMock()
+    exec_proxy.mappings.return_value = mappings_proxy
+    db = MagicMock()
+    db.execute.return_value = exec_proxy
+
+    out = _district_momentum_score(db)
+
+    assert isinstance(out, dict)
+    assert len(out) == 3
+
+    olaya_key = normalize_district_key("حي العليا")
+    assert olaya_key in out
+    olaya = out[olaya_key]
+    # composite = 0.5*1.0 + 0.5*1.0 = 1.0 → 100.0
+    assert olaya["momentum_score"] == 100.0
+    assert olaya["activity_30d"] == 80
+    assert olaya["active_in_district"] == 100
+    assert olaya["percentile_raw"] == 1.0
+    assert olaya["percentile_absolute"] == 1.0
+    assert olaya["percentile_composite"] == 1.0
+    assert olaya["district_label"] == "حي العليا"
+    assert olaya["sample_floor_applied"] is False
+
+    bottom_key = normalize_district_key("السليمانية")
+    assert out[bottom_key]["momentum_score"] == 0.0
+
+
+def test_district_momentum_score_returns_empty_on_db_error():
+    """The try/except envelope must keep returning {} on failure so callers
+    can apply the neutral 50.0 fallback without the request blowing up."""
+    from unittest.mock import MagicMock
+
+    from app.services.expansion_advisor import _district_momentum_score
+
+    db = MagicMock()
+    db.execute.side_effect = RuntimeError("simulated postgres error")
+
+    out = _district_momentum_score(db)
+    assert out == {}
