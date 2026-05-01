@@ -122,24 +122,37 @@ def _load_district_polygons(db: Session) -> list[dict[str, Any]]:
 
     sql = text(
         """
+        WITH parsed AS (
+            SELECT
+                ef.layer_name,
+                TRIM(COALESCE(ef.properties->>'district_raw',
+                              ef.properties->>'district')) AS district_label,
+                ST_SetSRID(
+                    ST_GeomFromGeoJSON(ef.geometry::text),
+                    4326
+                ) AS geom_4326
+            FROM external_feature ef
+            WHERE ef.layer_name IN ('osm_districts', 'aqar_district_hulls')
+              AND ef.geometry IS NOT NULL
+              AND jsonb_typeof(ef.geometry) = 'object'
+              AND COALESCE(ef.properties->>'district_raw',
+                           ef.properties->>'district') IS NOT NULL
+              AND TRIM(COALESCE(ef.properties->>'district_raw',
+                                ef.properties->>'district')) <> ''
+        )
         SELECT DISTINCT ON (district_label)
-            TRIM(COALESCE(ef.properties->>'district_raw',
-                          ef.properties->>'district')) AS district_label,
-            ST_AsBinary(ef.geom) AS geom_wkb
-        FROM external_feature ef
-        WHERE ef.layer_name IN ('osm_districts', 'aqar_district_hulls')
-          AND ef.geom IS NOT NULL
-          AND COALESCE(ef.properties->>'district_raw',
-                       ef.properties->>'district') IS NOT NULL
-          AND TRIM(COALESCE(ef.properties->>'district_raw',
-                            ef.properties->>'district')) <> ''
+            district_label,
+            ST_AsBinary(geom_4326) AS geom_wkb
+        FROM parsed
+        WHERE geom_4326 IS NOT NULL
+          AND ST_IsValid(geom_4326)
           AND ST_Intersects(
-                ef.geom,
+                geom_4326,
                 ST_MakeEnvelope(:west, :south, :east, :north, 4326)
               )
         ORDER BY
             district_label,
-            CASE ef.layer_name
+            CASE layer_name
                 WHEN 'osm_districts'       THEN 1
                 WHEN 'aqar_district_hulls' THEN 2
                 ELSE 3
