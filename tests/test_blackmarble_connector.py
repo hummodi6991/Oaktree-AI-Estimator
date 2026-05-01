@@ -21,15 +21,17 @@ def test_download_h5_real():
 def test_discover_h5_url_constructs_correct_path():
     from app.connectors import blackmarble
 
-    # Mock LAADS directory listing JSON for 2026-03 (DOY 60 for first-of-month).
-    fake_entries = [
-        {"name": "VNP46A3.A2026060.h22v06.002.2026105050000.h5", "size": 80_000_000},
-        {"name": "VNP46A3.A2026060.h21v06.002.2026105050000.h5", "size": 80_000_000},
-    ]
+    # Real LAADS .json listing shape: {"content": [{"name": ..., ...}, ...]}
+    fake_payload = {
+        "content": [
+            {"name": "VNP46A3.A2026060.h22v06.002.2026105050000.h5", "size": 80_000_000},
+            {"name": "VNP46A3.A2026060.h21v06.002.2026105050000.h5", "size": 80_000_000},
+        ]
+    }
 
     fake_resp = MagicMock()
     fake_resp.status_code = 200
-    fake_resp.json.return_value = fake_entries
+    fake_resp.json.return_value = fake_payload
     fake_resp.raise_for_status.return_value = None
 
     fake_session = MagicMock()
@@ -45,6 +47,50 @@ def test_discover_h5_url_constructs_correct_path():
     # Listing URL passed to GET should be the .json variant for that DOY.
     listing_url = fake_session.get.call_args[0][0]
     assert listing_url.endswith("/2026/060.json")
+
+
+def test_discover_h5_url_accepts_bare_list_fallback():
+    """Defensive: if a LAADS endpoint variant returns a flat list, the parser
+    should still find the tile. Production hits the wrapper shape (see
+    test_discover_h5_url_constructs_correct_path), but the parser supports
+    either."""
+    from app.connectors import blackmarble
+
+    fake_payload = [
+        {"name": "VNP46A3.A2026060.h22v06.002.2026105050000.h5", "size": 80_000_000},
+    ]
+
+    fake_resp = MagicMock()
+    fake_resp.status_code = 200
+    fake_resp.json.return_value = fake_payload
+    fake_resp.raise_for_status.return_value = None
+
+    fake_session = MagicMock()
+    fake_session.get.return_value = fake_resp
+
+    with patch.object(blackmarble, "_LAADSSession", return_value=fake_session):
+        url = blackmarble.discover_h5_url(date(2026, 3, 1), token="dummy")
+
+    assert "h22v06" in url
+    assert "/2026/060/" in url
+
+
+def test_discover_h5_url_raises_when_content_empty():
+    """Empty content list should raise BlackMarbleNotAvailableError, same as a
+    listing that legitimately has no h22v06 entry."""
+    from app.connectors import blackmarble
+
+    fake_resp = MagicMock()
+    fake_resp.status_code = 200
+    fake_resp.json.return_value = {"content": []}
+    fake_resp.raise_for_status.return_value = None
+
+    fake_session = MagicMock()
+    fake_session.get.return_value = fake_resp
+
+    with patch.object(blackmarble, "_LAADSSession", return_value=fake_session):
+        with pytest.raises(blackmarble.BlackMarbleNotAvailableError):
+            blackmarble.discover_h5_url(date(2026, 3, 1), token="dummy")
 
 
 def test_discover_h5_url_raises_when_not_published():

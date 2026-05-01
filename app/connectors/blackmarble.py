@@ -102,11 +102,22 @@ def discover_h5_url(year_month: date, token: str) -> str:
     resp.raise_for_status()
 
     try:
-        entries = resp.json()
+        payload = resp.json()
     except ValueError as exc:
         raise BlackMarbleError(
             f"LAADS listing for {ym.isoformat()} did not return JSON"
         ) from exc
+
+    # LAADS .json listings are wrapped: {"content": [{"name": ..., ...}, ...]}
+    # Defensive: also accept a bare list in case any LAADS endpoint variant
+    # returns one. See LAADS DAAC's official bash download script
+    # (jq '.content | .[] | .name') for the canonical wrapper shape.
+    if isinstance(payload, dict):
+        entries = payload.get("content") or []
+    elif isinstance(payload, list):
+        entries = payload
+    else:
+        entries = []
 
     for entry in entries:
         name = entry.get("name") if isinstance(entry, dict) else None
