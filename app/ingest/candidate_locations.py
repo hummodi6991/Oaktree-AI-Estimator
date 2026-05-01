@@ -335,12 +335,11 @@ def _run_deduplication(db: Session, run_id: str) -> int:
 def _resolve_districts(db: Session, run_id: str) -> int:
     """Resolve Arabic/English district names from external_feature polygons.
 
-    Uses the same priority as the expansion advisor: osm_districts first,
-    then aqar_district_hulls, then rydpolygons.
+    Uses the same priority as the expansion advisor: aqar_district_hulls
+    first, then rydpolygons.
     """
     updated = 0
     for layer, name_field_ar, name_field_en in [
-        ("osm_districts", "name", "name:en"),
         ("aqar_district_hulls", "district", "district_en"),
         ("rydpolygons", "DISTRICTNA", "DISTRICTEN"),
     ]:

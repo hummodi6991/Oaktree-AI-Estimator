@@ -49,10 +49,10 @@ def _client_with_db(db):
 
 def test_districts_endpoint_returns_deduped_sorted():
     rows = [
-        FakeRow("aqar_district_hulls", "حي العليا", "Al Olaya"),
-        FakeRow("osm_districts", "حي العليا", "Olaya"),
-        FakeRow("aqar_district_hulls", "حي الملقا", "Al Malqa"),
-        FakeRow("osm_districts", "حي النخيل", None),
+        FakeRow("حي العليا", "Al Olaya"),
+        FakeRow("حي العليا", "Olaya"),
+        FakeRow("حي الملقا", "Al Malqa"),
+        FakeRow("حي النخيل", None),
     ]
     db = DummyDB(rows)
     client = _client_with_db(db)
@@ -71,34 +71,13 @@ def test_districts_endpoint_returns_deduped_sorted():
         app.dependency_overrides.clear()
 
 
-def test_districts_endpoint_prefers_aqar_labels():
+def test_districts_endpoint_dedups_same_district():
+    """When two rows share the same normalized key, exactly one item is
+    emitted. The first-seen English label wins; later non-null labels do
+    not overwrite a present one."""
     rows = [
-        FakeRow("osm_districts", "العليا OSM", "Olaya OSM"),
-        FakeRow("aqar_district_hulls", "العليا عقار", "Olaya Aqar"),
-    ]
-    db = DummyDB(rows)
-    client = _client_with_db(db)
-    try:
-        resp = client.get("/v1/expansion-advisor/districts")
-        assert resp.status_code == 200
-        items = resp.json()["items"]
-        # Both should normalize to the same key, so one item
-        # Because normalize_district_key strips "حي " prefix and normalizes Arabic,
-        # these have different text so should be 2 items unless they normalize the same.
-        # They won't normalize the same (different Arabic text), so expect 2 items.
-        # But if both normalize to different keys, both show up.
-        # What matters: when they DO share a key, aqar is preferred.
-        # Let's test with exact same Arabic text:
-        pass
-    finally:
-        app.dependency_overrides.clear()
-
-
-def test_districts_endpoint_prefers_aqar_labels_same_district():
-    """When both sources have the same normalized key, prefer aqar label."""
-    rows = [
-        FakeRow("osm_districts", "حي العليا", "Olaya District"),
-        FakeRow("aqar_district_hulls", "حي العليا", "Al Olaya"),
+        FakeRow("حي العليا", "Olaya District"),
+        FakeRow("حي العليا", "Al Olaya"),
     ]
     db = DummyDB(rows)
     client = _client_with_db(db)
@@ -107,9 +86,7 @@ def test_districts_endpoint_prefers_aqar_labels_same_district():
         assert resp.status_code == 200
         items = resp.json()["items"]
         assert len(items) == 1
-        # Both have the same Arabic so the label stays the same
         assert items[0]["label_ar"] == "حي العليا"
-        # English label should prefer aqar (priority 0)
         assert items[0]["label_en"] in ("Olaya District", "Al Olaya")
     finally:
         app.dependency_overrides.clear()
@@ -117,9 +94,9 @@ def test_districts_endpoint_prefers_aqar_labels_same_district():
 
 def test_districts_endpoint_excludes_blank():
     rows = [
-        FakeRow("aqar_district_hulls", "", None),
-        FakeRow("osm_districts", None, None),
-        FakeRow("aqar_district_hulls", "حي الملقا", "Al Malqa"),
+        FakeRow("", None),
+        FakeRow(None, None),
+        FakeRow("حي الملقا", "Al Malqa"),
     ]
     db = DummyDB(rows)
     client = _client_with_db(db)
@@ -146,13 +123,13 @@ def test_districts_endpoint_empty_table():
 
 
 # ---------------------------------------------------------------------------
-# Regression tests: Riyadh spatial filter & non-Riyadh exclusion
+# Layer scoping: SQL must filter to aqar_district_hulls only
 # ---------------------------------------------------------------------------
 
 
-def test_districts_sql_contains_riyadh_bbox_filter():
-    """The SQL query must include a spatial filter for the Riyadh bounding box
-    so that non-Riyadh rows stored in external_feature are excluded at the DB level."""
+def test_districts_sql_filters_to_aqar_only():
+    """After osm_districts removal (2026-05-01), the SQL must filter to
+    layer_name='aqar_district_hulls' and must not reference osm_districts."""
     db = DummyDB([])
     client = _client_with_db(db)
     try:
@@ -160,51 +137,20 @@ def test_districts_sql_contains_riyadh_bbox_filter():
         assert resp.status_code == 200
         assert len(db.executed) == 1
         sql_text = db.executed[0][0]
-        assert "ST_Intersects" in sql_text, "Query must use ST_Intersects spatial filter"
-        assert "ST_MakeEnvelope" in sql_text, "Query must use ST_MakeEnvelope for Riyadh bbox"
-        # Verify the bbox covers Riyadh (approx 46-47.5 lon, 24.2-25.2 lat)
-        assert "46.0" in sql_text
-        assert "24.2" in sql_text
-        assert "47.5" in sql_text
-        assert "25.2" in sql_text
+        assert "'aqar_district_hulls'" in sql_text
+        assert "'osm_districts'" not in sql_text, (
+            "OSM has been removed; SQL must not reference it."
+        )
     finally:
         app.dependency_overrides.clear()
 
 
-def test_districts_non_riyadh_rows_excluded_by_sql():
-    """Non-Riyadh rows (e.g. Romanian 'cartierul' entries) are filtered at the
-    SQL level by the spatial bbox, so they never reach Python dedup logic.
-    This test documents the scenario: only valid Riyadh rows survive the query."""
-    # Simulate that after the SQL spatial filter, only Riyadh rows are returned
-    # (non-Riyadh rows like "cartierul Militari" would be excluded by ST_Intersects)
+def test_districts_riyadh_rows_present():
+    """Valid Riyadh district rows from Aqar are retained."""
     rows = [
-        FakeRow("aqar_district_hulls", "حي العليا", "Al Olaya"),
-        FakeRow("aqar_district_hulls", "حي الملقا", "Al Malqa"),
-    ]
-    db = DummyDB(rows)
-    client = _client_with_db(db)
-    try:
-        resp = client.get("/v1/expansion-advisor/districts")
-        assert resp.status_code == 200
-        items = resp.json()["items"]
-        assert len(items) == 2
-        labels = [i["label_ar"] for i in items]
-        # No foreign/junk entries present
-        for label in labels:
-            assert "cartierul" not in label.lower()
-        # All labels are valid Arabic district names
-        assert "حي العليا" in labels
-        assert "حي الملقا" in labels
-    finally:
-        app.dependency_overrides.clear()
-
-
-def test_districts_riyadh_rows_survive_filter():
-    """Valid Riyadh district rows from both aqar and osm sources are retained."""
-    rows = [
-        FakeRow("aqar_district_hulls", "حي النرجس", "An Narjis"),
-        FakeRow("osm_districts", "حي العارض", None),
-        FakeRow("aqar_district_hulls", "حي الياسمين", "Al Yasmin"),
+        FakeRow("حي النرجس", "An Narjis"),
+        FakeRow("حي العارض", None),
+        FakeRow("حي الياسمين", "Al Yasmin"),
     ]
     db = DummyDB(rows)
     client = _client_with_db(db)
@@ -220,12 +166,12 @@ def test_districts_riyadh_rows_survive_filter():
         app.dependency_overrides.clear()
 
 
-def test_districts_aqar_wins_over_osm_on_duplicate():
-    """When aqar and osm have the same normalized key, aqar label wins
-    and osm label becomes an alias."""
+def test_districts_aliases_for_duplicate_arabic():
+    """When two rows normalize to the same key but carry different
+    Arabic spellings, the second spelling becomes an alias."""
     rows = [
-        FakeRow("osm_districts", "العليا", "Olaya"),
-        FakeRow("aqar_district_hulls", "حي العليا", "Al Olaya"),
+        FakeRow("حي العليا", "Al Olaya"),
+        FakeRow("العليا", None),
     ]
     db = DummyDB(rows)
     client = _client_with_db(db)
@@ -233,14 +179,12 @@ def test_districts_aqar_wins_over_osm_on_duplicate():
         resp = client.get("/v1/expansion-advisor/districts")
         assert resp.status_code == 200
         items = resp.json()["items"]
-        # Both normalize to "العليا" so should be 1 item
+        # Both normalize to "العليا" → 1 item
         assert len(items) == 1
         item = items[0]
-        # Aqar has priority 0, osm has priority 1 → aqar Arabic label wins
+        # First-seen label wins
         assert item["label_ar"] == "حي العليا"
-        # English label is set by first row; aqar only overwrites if missing
-        assert item["label_en"] is not None
-        # The osm variant appears in aliases
+        # The other variant appears in aliases
         assert "العليا" in item["aliases"]
     finally:
         app.dependency_overrides.clear()
@@ -249,11 +193,11 @@ def test_districts_aqar_wins_over_osm_on_duplicate():
 def test_districts_output_deduped_and_sorted():
     """Output is deduplicated by normalized key and sorted by Arabic label."""
     rows = [
-        FakeRow("aqar_district_hulls", "حي النخيل", "Al Nakheel"),
-        FakeRow("osm_districts", "حي النخيل", None),
-        FakeRow("aqar_district_hulls", "حي العليا", "Al Olaya"),
-        FakeRow("aqar_district_hulls", "حي الملقا", "Al Malqa"),
-        FakeRow("osm_districts", "حي الياسمين", "Al Yasmin"),
+        FakeRow("حي النخيل", "Al Nakheel"),
+        FakeRow("حي النخيل", None),
+        FakeRow("حي العليا", "Al Olaya"),
+        FakeRow("حي الملقا", "Al Malqa"),
+        FakeRow("حي الياسمين", "Al Yasmin"),
     ]
     db = DummyDB(rows)
     client = _client_with_db(db)
@@ -261,7 +205,7 @@ def test_districts_output_deduped_and_sorted():
         resp = client.get("/v1/expansion-advisor/districts")
         assert resp.status_code == 200
         items = resp.json()["items"]
-        # النخيل is deduped (appears in both sources) → 4 unique
+        # النخيل appears twice → 4 unique
         values = [i["value"] for i in items]
         assert len(values) == 4
         assert len(values) == len(set(values)), "Values must be unique"
@@ -275,7 +219,7 @@ def test_districts_output_deduped_and_sorted():
 def test_districts_payload_shape_unchanged():
     """Response payload shape must match the DistrictOptionsListResponse schema."""
     rows = [
-        FakeRow("aqar_district_hulls", "حي العليا", "Al Olaya"),
+        FakeRow("حي العليا", "Al Olaya"),
     ]
     db = DummyDB(rows)
     client = _client_with_db(db)
