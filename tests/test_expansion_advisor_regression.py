@@ -1507,9 +1507,11 @@ def test_district_momentum_uses_external_feature_priority_chain():
     two complementary contracts:
 
     (a) The emitted SQL contains the DISTINCT ON (cu.aqar_id) clause
-        plus the CASE ef.layer_name priority-ordering and the two
+        plus the CASE dp.layer_name priority-ordering and the two
         expected layer names. This documents the priority chain's
-        presence in the query plan.
+        presence in the query plan. (The join is against
+        external_feature_polygons_mat aliased ``dp``; see the
+        matview docs at docs/external_feature_polygons_mat.md.)
 
     (b) Given an already-resolved row (the SQL chose osm_districts),
         the helper returns that label intact and does not mix in the
@@ -1537,7 +1539,8 @@ def test_district_momentum_uses_external_feature_priority_chain():
     emitted_sql_obj = db.execute.call_args.args[0]
     emitted_sql = emitted_sql_obj.text if hasattr(emitted_sql_obj, "text") else str(emitted_sql_obj)
     assert "DISTINCT ON (cu.aqar_id)" in emitted_sql
-    assert "CASE ef.layer_name" in emitted_sql
+    assert "CASE dp.layer_name" in emitted_sql
+    assert "external_feature_polygons_mat" in emitted_sql
     assert "'osm_districts'" in emitted_sql
     assert "'aqar_district_hulls'" in emitted_sql
     # osm_districts must sort BEFORE aqar_district_hulls in the CASE.
