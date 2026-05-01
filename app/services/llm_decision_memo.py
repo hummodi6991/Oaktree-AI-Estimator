@@ -411,6 +411,7 @@ _RERANK_WHITELIST: tuple[str, ...] = (
     "zoning_fit",
     "parking_score",
     "frontage_score",
+    "radiance_growth",
 )
 
 _MEMO_WHITELIST: tuple[str, ...] = _RERANK_WHITELIST + (

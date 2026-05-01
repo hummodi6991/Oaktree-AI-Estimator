@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.ml.name_normalization import norm_district
 from app.services.aqar_district_match import (
     is_mojibake,
     normalize_district_key,
@@ -60,6 +61,7 @@ _GATE_HUMAN_LABELS: dict[str, str] = {
     "cannibalization_pass": "cannibalization",
     "delivery_market_pass": "delivery market",
     "economics_pass": "economics",
+    "radiance_growth_pass": "Market growth signal",
 }
 
 
@@ -2517,6 +2519,8 @@ def _candidate_gate_status(
     is_listing: bool = False,
     unit_street_width_m: float | None = None,
     zoning_verdict_hint: str | None = None,
+    radiance_growth: dict[str, Any] | None = None,
+    radiance_yoy_threshold: float | None = None,
 ) -> tuple[dict[str, bool | None], dict[str, Any]]:
     thresholds = {
         "area_fit_min": 55.0,
@@ -2605,6 +2609,22 @@ def _candidate_gate_status(
 
     economics_pass = economics_score >= thresholds["economics_min"]
 
+    # Radiance growth gate (advisory only). True/False when the signal is
+    # confident; None when no radiance data is available for the district.
+    _radiance_threshold = (
+        radiance_yoy_threshold
+        if radiance_yoy_threshold is not None
+        else getattr(settings, "EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD", 0.0)
+    )
+    radiance_growth_pass: bool | None = None
+    if isinstance(radiance_growth, dict) and radiance_growth.get("confident"):
+        _yoy = radiance_growth.get("value_yoy_pct")
+        if _yoy is not None:
+            try:
+                radiance_growth_pass = float(_yoy) >= float(_radiance_threshold)
+            except (TypeError, ValueError):
+                radiance_growth_pass = None
+
     gate_states: dict[str, bool | None] = {
         "zoning_fit_pass": zoning_fit_pass,
         "area_fit_pass": area_fit_pass,
@@ -2614,6 +2634,7 @@ def _candidate_gate_status(
         "cannibalization_pass": cannibalization_pass,
         "delivery_market_pass": delivery_market_pass,
         "economics_pass": economics_pass,
+        "radiance_growth_pass": radiance_growth_pass,
     }
     failed = [k for k, v in gate_states.items() if v is False]
     passed = [k for k, v in gate_states.items() if v is True]
@@ -2624,6 +2645,14 @@ def _candidate_gate_status(
         "zoning_fit_pass",
         "area_fit_pass",
     }
+
+    # Advisory-only gates: presence/absence of signal must NOT collapse the
+    # overall verdict to indeterminate (None). They surface in gate_status
+    # for the UI but are excluded from the unknown count used by overall_pass.
+    advisory_only_gates = {
+        "radiance_growth_pass",
+    }
+    unknown_for_overall = [g for g in unknown if g not in advisory_only_gates]
 
     # Surface advisory failures separately so the frontend can render
     # caution/attention states without labeling the site as a hard FAIL.
@@ -2636,7 +2665,7 @@ def _candidate_gate_status(
     #   None  – no blocking failures, but some gates are unknown/indeterminate
     if len(blocking_failures) > 0:
         overall_pass: bool | None = False
-    elif len(unknown) > 0:
+    elif len(unknown_for_overall) > 0:
         overall_pass = None
     else:
         overall_pass = True
@@ -2652,6 +2681,7 @@ def _candidate_gate_status(
         "cannibalization_pass": cannibalization_pass,
         "delivery_market_pass": delivery_market_pass,
         "economics_pass": economics_pass,
+        "radiance_growth_pass": radiance_growth_pass,
         "overall_pass": overall_pass,
     }
     # Determine delivery observation status for honest gate explanations.
@@ -2692,6 +2722,12 @@ def _candidate_gate_status(
         "cannibalization_pass": "Cannibalization gate checks minimum spacing from existing branches.",
         "delivery_market_pass": delivery_explanation,
         "economics_pass": "Economics gate requires minimum economics score.",
+        "radiance_growth_pass": (
+            "Advisory market-growth signal from NASA Black Marble VNP46A3 "
+            "monthly nighttime radiance (district YoY). Confident positive "
+            "growth rescues a candidate from the market-viability conjunction; "
+            "this gate is not a hard fail."
+        ),
     }
     reasons = {
         "passed": passed,
@@ -4429,17 +4465,19 @@ def _apply_market_viability_pass(
     rent_pct_threshold: float | None = None,
     pop_percentile_threshold: float | None = None,
     demotion_steps: int | None = None,
+    radiance_yoy_threshold: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Demote candidates that are confidently bad on both CEO-directive legs
-    we currently measure: high rent percentile AND low population reach.
+    """Demote candidates that are confidently bad on the CEO-directive legs.
 
-    Conservative: only fires when each leg has CONFIDENT signal. Mirrors
-    _apply_value_band_pass — positional reorder only, does not mutate
-    final_score. Writes 'market_viability_flag' to score_breakdown_json.
+    3-of-3 form: high rent percentile AND low population reach AND no positive
+    growth signal. The third leg ("market growth") reads
+    ``feature_snapshot_json["radiance_growth"]`` (NASA Black Marble VNP46A3).
+    When that signal is confident and YoY growth meets the threshold, the
+    candidate is rescued from the conjunction (not flagged at all).
 
-    The directive's third leg (market growth potential) is not enforced here
-    because the repo has no honest growth signal as of 2026-04-30. When one
-    lands, add it as a third condition; the rest of this function is stable.
+    Conservative: each leg requires CONFIDENT signal. Positional reorder only,
+    does not mutate final_score. Writes 'market_viability_flag' to
+    score_breakdown_json (with radiance fields included for observability).
     """
     if not candidates or len(candidates) < 4:
         return candidates
@@ -4458,6 +4496,11 @@ def _apply_market_viability_pass(
         demotion_steps
         if demotion_steps is not None
         else settings.EXPANSION_VIABILITY_DEMOTION_STEPS
+    )
+    radiance_yoy_threshold = (
+        radiance_yoy_threshold
+        if radiance_yoy_threshold is not None
+        else settings.EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD
     )
 
     out = list(candidates)
@@ -4489,34 +4532,73 @@ def _apply_market_viability_pass(
     except Exception:
         return out
 
-    def _flag_inputs(c: dict[str, Any]) -> tuple[bool, float, str | None, float]:
+    def _flag_inputs(
+        c: dict[str, Any]
+    ) -> tuple[bool, float, str | None, float, dict[str, Any]]:
         sb = c.get("score_breakdown_json")
         ed = sb.get("economics_detail") if isinstance(sb, dict) else None
         rb = ed.get("rent_burden") if isinstance(ed, dict) else None
+        radiance_meta: dict[str, Any] = {
+            "radiance_growth_pct": None,
+            "radiance_confident": None,
+            "radiance_pixel_count": None,
+            "radiance_year_month": None,
+        }
         if not isinstance(rb, dict):
-            return False, 0.0, None, 0.0
+            return False, 0.0, None, 0.0, radiance_meta
         rent_scope = rb.get("source_label")
         rent_pct_val = rb.get("percentile")
         if rent_pct_val is None:
-            return False, 0.0, rent_scope, 0.0
+            return False, 0.0, rent_scope, 0.0, radiance_meta
         rent_pct = _safe_float(rent_pct_val, default=-1.0)
 
         fs = c.get("feature_snapshot_json")
         if not isinstance(fs, dict):
-            return False, rent_pct, rent_scope, 0.0
+            return False, rent_pct, rent_scope, 0.0, radiance_meta
         pop_raw = fs.get("population_reach")
         if pop_raw is None:
-            return False, rent_pct, rent_scope, 0.0
+            return False, rent_pct, rent_scope, 0.0, radiance_meta
         pop_reach = _safe_float(pop_raw, default=-1.0)
+
+        # Third leg: NASA Black Marble VNP46A3 YoY radiance growth.
+        rad = fs.get("radiance_growth") if isinstance(fs, dict) else None
+        rad_confident = False
+        rad_yoy_pct: float | None = None
+        if isinstance(rad, dict):
+            rad_confident = bool(rad.get("confident"))
+            yoy_raw = rad.get("value_yoy_pct")
+            if yoy_raw is not None:
+                try:
+                    candidate_yoy = float(yoy_raw)
+                    if not (math.isnan(candidate_yoy) or math.isinf(candidate_yoy)):
+                        rad_yoy_pct = candidate_yoy
+                except (TypeError, ValueError):
+                    rad_yoy_pct = None
+            radiance_meta = {
+                "radiance_growth_pct": rad_yoy_pct,
+                "radiance_confident": rad_confident,
+                "radiance_pixel_count": rad.get("pixel_count"),
+                "radiance_year_month": rad.get("year_month"),
+            }
+
+        growth_rescue = bool(
+            rad_confident
+            and rad_yoy_pct is not None
+            and rad_yoy_pct >= radiance_yoy_threshold
+        )
 
         rent_confident = rent_scope not in ("city_band_type", "city")
         pop_confident = pop_reach > 0
         rent_high = rent_pct >= rent_pct_threshold
         pop_low = pop_reach < pop_threshold
         flagged = bool(
-            rent_confident and pop_confident and rent_high and pop_low
+            rent_confident
+            and pop_confident
+            and rent_high
+            and pop_low
+            and not growth_rescue
         )
-        return flagged, rent_pct, rent_scope, pop_reach
+        return flagged, rent_pct, rent_scope, pop_reach, radiance_meta
 
     pre_eval = [_flag_inputs(c) for c in out]
     demote_indices = [i for i in range(n) if pre_eval[i][0]]
@@ -4525,7 +4607,7 @@ def _apply_market_viability_pass(
     for i in reversed(demote_indices):
         target = min(i + demotion_steps, n - 1)
         c = out[i]
-        _, rent_pct, rent_scope, pop_reach = pre_eval[i]
+        _, rent_pct, rent_scope, pop_reach, radiance_meta = pre_eval[i]
         sb = c.get("score_breakdown_json")
         if not isinstance(sb, dict):
             sb = {}
@@ -4538,6 +4620,10 @@ def _apply_market_viability_pass(
             "population_reach": float(pop_reach),
             "population_threshold": float(pop_threshold),
             "reason": "high_rent_low_population",
+            "radiance_growth_pct": radiance_meta["radiance_growth_pct"],
+            "radiance_confident": radiance_meta["radiance_confident"],
+            "radiance_pixel_count": radiance_meta["radiance_pixel_count"],
+            "radiance_year_month": radiance_meta["radiance_year_month"],
         }
         if target > i:
             out.pop(i)
@@ -6313,6 +6399,64 @@ def run_expansion_search(
         t_rent_prewarm_done - t_district_momentum_done, len(_norm_to_raw), search_id,
     )
 
+    # ── Pre-compute Black Marble VNP46A3 radiance YoY signal per district ──
+    # Latest available month vs. same calendar month one year earlier (simple
+    # YoY). Pre-loaded in one query before the candidate loop to avoid N+1.
+    # Keyed by norm_district("riyadh", district_label) — matches the key used
+    # at ingest time in app.ingest.black_marble_radiance.
+    _radiance_lookup: dict[str, dict[str, Any]] = {}
+    try:
+        _radiance_rows = db.execute(text("""
+            WITH latest_month AS (
+                SELECT MAX(year_month) AS ym
+                FROM district_radiance_monthly
+                WHERE source = :src
+            ),
+            prev_year AS (
+                SELECT (SELECT ym FROM latest_month) - INTERVAL '1 year' AS ym_prev
+            )
+            SELECT
+                cur.district_key,
+                cur.radiance_mean AS rad_cur,
+                cur.pixel_count_valid AS pixels_cur,
+                cur.year_month AS ym_cur,
+                prev.radiance_mean AS rad_prev,
+                prev.pixel_count_valid AS pixels_prev
+            FROM district_radiance_monthly cur
+            LEFT JOIN district_radiance_monthly prev
+              ON prev.district_key = cur.district_key
+             AND prev.source = cur.source
+             AND prev.year_month = (SELECT ym_prev FROM prev_year)::date
+            WHERE cur.year_month = (SELECT ym FROM latest_month)
+              AND cur.source = :src
+        """), {"src": "nasa_blackmarble_vnp46a3_c2"}).mappings().all()
+    except Exception:
+        # Table may not exist yet (migration not applied) — degrade silently.
+        logger.debug("district_radiance_monthly lookup failed", exc_info=True)
+        _radiance_rows = []
+
+    for _r in _radiance_rows:
+        _dk = _r["district_key"]
+        _pixels_cur = int(_r["pixels_cur"] or 0)
+        _pixels_prev = int(_r["pixels_prev"] or 0)
+        _confident = _pixels_cur >= 10 and _pixels_prev >= 10
+        _yoy_pct: float | None = None
+        if _confident and _r["rad_prev"] and float(_r["rad_prev"]) > 0:
+            _yoy_pct = (
+                float(_r["rad_cur"]) - float(_r["rad_prev"])
+            ) / float(_r["rad_prev"]) * 100.0
+        _radiance_lookup[_dk] = {
+            "value_yoy_pct": round(_yoy_pct, 2) if _yoy_pct is not None else None,
+            "source_label": "blackmarble_district_yoy_simple",
+            "confident": _confident and _yoy_pct is not None,
+            "pixel_count": _pixels_cur,
+            "year_month": str(_r["ym_cur"]),
+        }
+    logger.info(
+        "expansion_search radiance lookup: districts=%d search_id=%s",
+        len(_radiance_lookup), search_id,
+    )
+
     for row in rows:
       try:
         area_m2 = _safe_float(row.get("area_m2"))
@@ -7338,6 +7482,17 @@ def run_expansion_search(
                 "district_label": district if isinstance(district, str) else None,
                 "sample_floor_applied": True,
             }
+        # Black Marble VNP46A3 radiance growth (third leg of market viability).
+        # Key produced via norm_district mirrors the ingest path (see
+        # app/ingest/black_marble_radiance.py). Width mismatch note for the
+        # underlying join: expansion_candidate.parcel_id is varchar(128) and
+        # commercial_unit.aqar_id is varchar(64); the lookup is keyed by
+        # district string here, not id, so widths don't apply at this site.
+        if _radiance_lookup and isinstance(district, str) and district:
+            _district_key_for_radiance = norm_district("riyadh", district)
+            _radiance_signal = _radiance_lookup.get(_district_key_for_radiance)
+            if _radiance_signal is not None:
+                feature_snapshot_json["radiance_growth"] = dict(_radiance_signal)
         # Brand presence in the candidate's 500m micro-market (PR C).
         # Top 5 by branch count, with unique brand count and total branch
         # count summarized for the Breakdown tab header.
@@ -7533,6 +7688,7 @@ def run_expansion_search(
             is_listing=_is_listing,
             unit_street_width_m=_unit_street_width,
             zoning_verdict_hint=zoning_hint,
+            radiance_growth=feature_snapshot_json.get("radiance_growth"),
         )
         confidence_grade = _confidence_grade(
             confidence_score=confidence_score,

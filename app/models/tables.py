@@ -348,6 +348,25 @@ class PopulationDensity(Base):
     observed_at = Column(DateTime)
 
 
+class DistrictRadianceMonthly(Base):
+    """Monthly NASA Black Marble VNP46A3 radiance aggregates per district."""
+
+    __tablename__ = "district_radiance_monthly"
+
+    district_key = Column(Text, primary_key=True, nullable=False)
+    year_month = Column(Date, primary_key=True, nullable=False)
+    source = Column(String(64), primary_key=True, nullable=False)
+    radiance_mean = Column(Numeric(12, 4))
+    radiance_median = Column(Numeric(12, 4))
+    radiance_sum = Column(Numeric(14, 4))
+    radiance_p90 = Column(Numeric(12, 4))
+    pixel_count_total = Column(Integer, nullable=False)
+    pixel_count_valid = Column(Integer, nullable=False)
+    quality_filter = Column(String(32), nullable=False)
+    tile = Column(String(16), nullable=False)
+    ingested_at = Column(DateTime(timezone=True), server_default=text("NOW()"), nullable=False)
+
+
 class RestaurantHeatmapCache(Base):
     """Cached city-wide opportunity heatmap payload per category + radius."""
 

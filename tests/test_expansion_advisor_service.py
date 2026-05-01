@@ -2691,6 +2691,111 @@ def test_viability_pass_stacks_with_value_band_pass():
 
 
 # ---------------------------------------------------------------------------
+# CEO directive #1 (3-of-3): Black Marble VNP46A3 third (growth) leg.
+# Tests that confident positive YoY radiance growth rescues a candidate that
+# would otherwise be flagged 2-of-2 (high rent + low population).
+# ---------------------------------------------------------------------------
+
+
+def _make_viability_candidate_with_radiance(
+    *,
+    id_: str,
+    final_score: float,
+    rent_pct: float,
+    pop_reach: float,
+    radiance_confident: bool,
+    radiance_yoy_pct: float | None,
+    rent_scope: str = "district_band_type",
+) -> dict:
+    c = _make_viability_candidate(
+        id_=id_,
+        final_score=final_score,
+        rent_pct=rent_pct,
+        rent_scope=rent_scope,
+        pop_reach=pop_reach,
+    )
+    c["feature_snapshot_json"]["radiance_growth"] = {
+        "value_yoy_pct": radiance_yoy_pct,
+        "source_label": "blackmarble_district_yoy_simple",
+        "confident": radiance_confident,
+        "pixel_count": 132 if radiance_confident else 5,
+        "year_month": "2026-03",
+    }
+    return c
+
+
+def _viability_cohort_with_radiance_target(
+    target_radiance_confident: bool,
+    target_radiance_yoy_pct: float | None,
+) -> list[dict]:
+    """Build a cohort like _viability_cohort but the target carries a radiance signal."""
+    pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
+    cohort = [
+        _make_viability_candidate(
+            id_=f"bg{i}",
+            final_score=80.0 - i,
+            rent_pct=0.40,
+            rent_scope="district_band_type",
+            pop_reach=p,
+        )
+        for i, p in enumerate(pops)
+    ]
+    target = _make_viability_candidate_with_radiance(
+        id_="target",
+        final_score=78.5,
+        rent_pct=0.85,
+        pop_reach=4500.0,
+        radiance_confident=target_radiance_confident,
+        radiance_yoy_pct=target_radiance_yoy_pct,
+    )
+    cohort.insert(2, target)
+    return cohort
+
+
+def test_market_viability_third_leg_rescue():
+    # Confident, positive growth >= threshold (default 0.0) → not flagged.
+    cohort = _viability_cohort_with_radiance_target(
+        target_radiance_confident=True,
+        target_radiance_yoy_pct=4.2,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    assert "market_viability_flag" not in target["score_breakdown_json"]
+
+
+def test_market_viability_third_leg_no_rescue_when_not_confident():
+    # Below pixel-count floor → confident=False → leg falls through, still flagged.
+    cohort = _viability_cohort_with_radiance_target(
+        target_radiance_confident=False,
+        target_radiance_yoy_pct=8.0,  # ignored when not confident
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["radiance_confident"] is False
+    assert flag["radiance_pixel_count"] == 5
+    assert flag["radiance_year_month"] == "2026-03"
+
+
+def test_market_viability_third_leg_no_rescue_when_growth_below_threshold():
+    # Confident but YoY < threshold → still flagged. Use threshold=5.0 with
+    # actual yoy=2.0 to exercise the comparison.
+    cohort = _viability_cohort_with_radiance_target(
+        target_radiance_confident=True,
+        target_radiance_yoy_pct=2.0,
+    )
+    out = _apply_market_viability_pass(
+        list(cohort), search_id="t", radiance_yoy_threshold=5.0
+    )
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["radiance_confident"] is True
+    assert flag["radiance_growth_pct"] == 2.0
+
+
+# ---------------------------------------------------------------------------
 # Bug A & Bug B regression coverage.
 # ---------------------------------------------------------------------------
 
