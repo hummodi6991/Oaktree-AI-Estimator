@@ -175,6 +175,13 @@ class Settings:
     EXPANSION_VIABILITY_DEMOTION_STEPS: int = int(
         os.getenv("EXPANSION_VIABILITY_DEMOTION_STEPS", "6")
     )
+    # Minimum YoY radiance growth pct (0-100 scale) for the third leg (NASA
+    # Black Marble VNP46A3) to rescue a candidate from market-viability
+    # flagging. Default 0 means any positive growth rescues; raise to e.g.
+    # 5.0 to require meaningful growth before granting a rescue.
+    EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD: float = float(
+        os.getenv("EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD", "0.0")
+    )
 
     # --- Expansion Advisor decision-memo pre-warm (Phase 3) ---
     # After POST /searches returns, schedule a background task that

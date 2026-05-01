@@ -1,0 +1,72 @@
+# Ingest NASA Black Marble VNP46A3 monthly nighttime radiance (single h22v06
+# tile, all of Riyadh) into district_radiance_monthly. Used as the third
+# (growth) leg of the Expansion Advisor's market-viability conjunction.
+#
+# Requires *.nasa.gov egress allowlist on Actions runners. Specifically
+# ladsweb.modaps.eosdis.nasa.gov and urs.earthdata.nasa.gov. Without that
+# allowlist the ingest step will fail; the workflow itself can still merge
+# and the schedule can still fire (it will simply error until allowlist
+# is in place).
+
+name: Ingest Black Marble VNP46A3
+
+on:
+  schedule:
+    - cron: "0 5 15 * *"  # 15th of each month at 05:00 UTC
+  workflow_dispatch:
+    inputs:
+      year_month:
+        description: "YYYY-MM (e.g. 2026-03). If empty, ingests latest available month."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install h5py rasterio numpy shapely
+
+      - name: Configure DB env
+        env:
+          PGHOST_S: ${{ secrets.POSTGRES_HOST }}
+          PGPORT_S: ${{ secrets.POSTGRES_PORT }}
+          PGDB_S:   ${{ secrets.POSTGRES_DB }}
+          PGUSER_S: ${{ secrets.POSTGRES_USER }}
+          PGPASS_S: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          {
+            echo "POSTGRES_HOST=${PGHOST_S}"
+            echo "POSTGRES_PORT=${PGPORT_S}"
+            echo "POSTGRES_DB=${PGDB_S}"
+            echo "POSTGRES_USER=${PGUSER_S}"
+            echo "POSTGRES_PASSWORD=${PGPASS_S}"
+            echo "POSTGRES_SSLMODE=require"
+          } >> "$GITHUB_ENV"
+
+      - name: Run Alembic migrations
+        run: alembic upgrade heads
+
+      - name: Ingest Black Marble month
+        env:
+          EDL_TOKEN: ${{ secrets.EDL_TOKEN }}
+        run: |
+          YM="${{ inputs.year_month }}"
+          if [ -z "$YM" ]; then
+            # Default: 2 months ago (Black Marble has ~6-8 week production lag)
+            YM=$(date -d "2 months ago" +%Y-%m)
+          fi
+          echo "Ingesting Black Marble VNP46A3 for $YM"
+          python -m app.ingest.black_marble_radiance --year-month "$YM"
