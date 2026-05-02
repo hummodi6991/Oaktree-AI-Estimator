@@ -1684,3 +1684,415 @@ def test_feature_snapshot_whitelist_alias_points_at_memo_whitelist():
     )
 
     assert _FEATURE_SNAPSHOT_WHITELIST is _MEMO_WHITELIST
+
+
+# ---------------------------------------------------------------------------
+# Headline-validity post-validate-and-retry layer (Bugs 1, 2, 3 fix).
+# ---------------------------------------------------------------------------
+
+# Imported lazily inside tests where they're used so the module stays
+# importable even if these helpers are renamed in the future. These
+# fixtures intentionally piggyback on the existing _MINIMAL_ADVISORY_SECTIONS
+# block so the shape passes _advisory_section_invalid_reason.
+
+_HEADLINE_RETRY_BASE_BODY = {
+    "ranking_explanation": (
+        "occupancy_economics contributed 24.6 out of 30 and brand_fit 8.6 out of 11, "
+        "driving rank 1 with a final_score of 80."
+    ),
+    "key_evidence": [
+        {"signal": "final_score", "value": "80/100",
+         "implication": "top-ranked candidate in this search", "polarity": "positive"},
+    ],
+    "risks": [
+        {"risk": "Market growth signal weak.", "mitigation": "Monitor district momentum quarterly."},
+    ],
+    "comparison": "Comfortably ahead of rank 2 on economics.",
+    "bottom_line": "Proceed with a site visit to confirm on-the-ground conditions.",
+    **_MINIMAL_ADVISORY_SECTIONS,
+}
+
+
+def _memo_with_headline(headline: str) -> dict:
+    return {"headline_recommendation": headline, **_HEADLINE_RETRY_BASE_BODY}
+
+
+_RANK1_ADVISORY_FAILURE_CANDIDATE = {
+    "id": "advisory-rank1",
+    "parcel_id": "advisory-rank1",
+    "final_rank": 1,
+    "final_score": 80.0,
+    "economics_score": 75,
+    "cannibalization_score": 40,
+    "feature_snapshot_json": {
+        "district": "Al Olaya",
+        "area_m2": 120,
+        "estimated_annual_rent_sar": 480000,
+        "district_median_rent": 560000,
+    },
+    "score_breakdown_json": {
+        "occupancy_economics": 80,
+        "listing_quality": 70,
+        "brand_fit": 78,
+        "competition_whitespace": 65,
+        "demand_potential": 80,
+        "access_visibility": 72,
+        "landlord_signal": 60,
+        "delivery_demand": 65,
+        "confidence": 70,
+    },
+    "gate_status_json": {
+        "zoning_fit_pass": True,
+        "area_fit_pass": True,
+        "frontage_access_pass": True,
+        "parking_pass": True,
+        "district_pass": True,
+        "cannibalization_pass": True,
+        "delivery_market_pass": True,
+        "economics_pass": True,
+        "radiance_growth_pass": False,
+        "overall_pass": True,
+    },
+    "gate_reasons_json": {
+        "passed": [
+            "zoning_fit_pass", "area_fit_pass", "frontage_access_pass",
+            "parking_pass", "district_pass", "cannibalization_pass",
+            "delivery_market_pass", "economics_pass",
+        ],
+        "failed": ["radiance_growth_pass"],
+        "unknown": [],
+        "blocking_failures": [],
+        "advisory_failures": ["radiance_growth_pass"],
+        "thresholds": {},
+        "explanations": {
+            "radiance_growth_pass": "Advisory market-growth signal — does not block.",
+        },
+    },
+    "comparable_competitors_json": [],
+}
+
+
+_RANK1_ALL_PASS_CANDIDATE = {
+    "id": "rank1-all-pass",
+    "parcel_id": "rank1-all-pass",
+    "final_rank": 1,
+    "final_score": 80.0,
+    "economics_score": 75,
+    "cannibalization_score": 40,
+    "feature_snapshot_json": {
+        "district": "Al Olaya",
+        "area_m2": 120,
+        "estimated_annual_rent_sar": 480000,
+        "district_median_rent": 560000,
+    },
+    "score_breakdown_json": _RANK1_ADVISORY_FAILURE_CANDIDATE["score_breakdown_json"],
+    "gate_status_json": {
+        "zoning_fit_pass": True,
+        "area_fit_pass": True,
+        "frontage_access_pass": True,
+        "parking_pass": True,
+        "district_pass": True,
+        "cannibalization_pass": True,
+        "delivery_market_pass": True,
+        "economics_pass": True,
+        "overall_pass": True,
+    },
+    "gate_reasons_json": {
+        "passed": [
+            "zoning_fit_pass", "area_fit_pass", "frontage_access_pass",
+            "parking_pass", "district_pass", "cannibalization_pass",
+            "delivery_market_pass", "economics_pass",
+        ],
+        "failed": [],
+        "unknown": [],
+        "blocking_failures": [],
+        "advisory_failures": [],
+        "thresholds": {},
+        "explanations": {},
+    },
+    "comparable_competitors_json": [],
+}
+
+
+_CONSIDER_BAND_CANDIDATE = {
+    "id": "consider-band",
+    "parcel_id": "consider-band",
+    "final_rank": 4,
+    "final_score": 65.0,
+    "economics_score": 50,
+    "cannibalization_score": 60,
+    "feature_snapshot_json": {
+        "district": "Al Naseem",
+        "area_m2": 110,
+        "estimated_annual_rent_sar": 420000,
+        "district_median_rent": 420000,
+    },
+    "score_breakdown_json": {
+        "occupancy_economics": 60,
+        "listing_quality": 55,
+        "brand_fit": 60,
+        "competition_whitespace": 50,
+        "demand_potential": 65,
+        "access_visibility": 60,
+        "landlord_signal": 50,
+        "delivery_demand": 50,
+        "confidence": 60,
+    },
+    "gate_status_json": {
+        "zoning_fit_pass": True,
+        "area_fit_pass": True,
+        "economics_pass": True,
+        "overall_pass": True,
+    },
+    "gate_reasons_json": {
+        "passed": ["zoning_fit_pass", "area_fit_pass", "economics_pass"],
+        "failed": [],
+        "unknown": [],
+        "blocking_failures": [],
+        "advisory_failures": [],
+        "thresholds": {},
+        "explanations": {},
+    },
+    "comparable_competitors_json": [],
+}
+
+
+_BLOCKING_FAILURE_CANDIDATE = {
+    "id": "blocking-fail",
+    "parcel_id": "blocking-fail",
+    "final_rank": 8,
+    "final_score": 50.0,
+    "economics_score": 35,
+    "cannibalization_score": 70,
+    "feature_snapshot_json": {
+        "district": "Edge District",
+        "area_m2": 60,
+        "estimated_annual_rent_sar": 900000,
+        "district_median_rent": 400000,
+    },
+    "score_breakdown_json": {
+        "occupancy_economics": 30,
+        "listing_quality": 40,
+        "brand_fit": 50,
+        "competition_whitespace": 40,
+        "demand_potential": 45,
+        "access_visibility": 50,
+        "landlord_signal": 30,
+        "delivery_demand": 40,
+        "confidence": 50,
+    },
+    "gate_status_json": {
+        "zoning_fit_pass": False,
+        "area_fit_pass": True,
+        "economics_pass": False,
+        "overall_pass": False,
+    },
+    "gate_reasons_json": {
+        "passed": ["area_fit_pass"],
+        "failed": ["zoning_fit_pass", "economics_pass"],
+        "unknown": [],
+        "blocking_failures": ["zoning_fit_pass"],
+        "advisory_failures": ["economics_pass"],
+        "thresholds": {},
+        "explanations": {
+            "zoning_fit_pass": "Zoning class disallows F&B.",
+            "economics_pass": "Economics score below minimum threshold.",
+        },
+    },
+    "comparable_competitors_json": [],
+}
+
+
+def _enable_structured_memo(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.llm_decision_memo.settings.EXPANSION_MEMO_STRUCTURED_ENABLED",
+        True,
+        raising=False,
+    )
+    _daily_cost_tracker.clear()
+
+
+def _two_response_client(first_content, second_content):
+    """Mock client whose first .create() returns ``first_content`` and
+    whose second returns ``second_content``. Both are dicts (will be
+    JSON-encoded by _make_mock_response)."""
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [
+        _make_mock_response(first_content),
+        _make_mock_response(second_content),
+    ]
+    return client
+
+
+class TestHeadlineRetryAdvisoryFailureNotDecline:
+    """Bug 1 — advisory-only gate failure must not produce a Decline.
+
+    LLM returns "Decline ..." on both attempts; the post-validate layer
+    rewrites the headline locally so the user never sees a contradicting
+    recommendation."""
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_decline_on_advisory_failure_is_rewritten(self, mock_get_client, monkeypatch, caplog):
+        _enable_structured_memo(monkeypatch)
+        bad_first = _memo_with_headline("Decline — market growth signal fails")
+        bad_second = _memo_with_headline("Decline — market growth gate did not pass")
+        mock_get_client.return_value = _two_response_client(bad_first, bad_second)
+
+        ctx = build_memo_context(
+            candidate=_RANK1_ADVISORY_FAILURE_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        with caplog.at_level("WARNING"):
+            memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        # Final headline starts with "Recommend" (rank-1, score >= 70, no
+        # blocking failures → guaranteed Recommend).
+        assert memo["headline_recommendation"].lower().startswith("recommend")
+        assert not memo["headline_recommendation"].lower().startswith("recommend with reservations")
+        # The retry was attempted (client called twice).
+        assert mock_get_client.return_value.chat.completions.create.call_count == 2
+
+
+class TestHeadlineRetryRank1ConfabulatedGateFailure:
+    """Bug 3 — rank-1 with empty failed_gates must not Decline citing
+    fabricated failures (e.g., "decline due to failed parking access")."""
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_confabulated_decline_is_rewritten(self, mock_get_client, monkeypatch, caplog):
+        _enable_structured_memo(monkeypatch)
+        bad_first = _memo_with_headline("Decline due to failed parking access")
+        bad_second = _memo_with_headline("Decline — parking fails on-site")
+        mock_get_client.return_value = _two_response_client(bad_first, bad_second)
+
+        ctx = build_memo_context(
+            candidate=_RANK1_ALL_PASS_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        with caplog.at_level("WARNING"):
+            memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        assert memo["headline_recommendation"].lower().startswith("recommend")
+        assert not memo["headline_recommendation"].lower().startswith("recommend with reservations")
+        assert mock_get_client.return_value.chat.completions.create.call_count == 2
+
+
+class TestHeadlineRetryConsiderPrefixBanned:
+    """Bug 2 — headlines starting with "consider " violate the format rule
+    and must be rewritten to start with one of the three allowed prefixes."""
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_consider_prefix_is_rewritten(self, mock_get_client, monkeypatch, caplog):
+        _enable_structured_memo(monkeypatch)
+        bad_first = _memo_with_headline(
+            "consider due to moderate competition and acceptable economics"
+        )
+        bad_second = _memo_with_headline(
+            "Consider — moderate competition and acceptable economics"
+        )
+        mock_get_client.return_value = _two_response_client(bad_first, bad_second)
+
+        ctx = build_memo_context(
+            candidate=_CONSIDER_BAND_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        with caplog.at_level("WARNING"):
+            memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        headline_lower = memo["headline_recommendation"].lower()
+        # Not rank-1 high-score, not overall_pass=False — falls through to
+        # the soft-yes safety-net rewrite.
+        assert headline_lower.startswith("recommend with reservations")
+        assert mock_get_client.return_value.chat.completions.create.call_count == 2
+
+
+class TestHeadlineNoRetryWhenOverallPassFalseDecline:
+    """A genuine "Decline" headline on an overall_pass=False candidate
+    passes the validity check on the first try; no retry occurs."""
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_valid_decline_passes_through_no_retry(self, mock_get_client, monkeypatch):
+        _enable_structured_memo(monkeypatch)
+        good = _memo_with_headline(
+            "Decline — zoning gate fails for this listing's land-use class."
+        )
+        client = MagicMock()
+        client.chat.completions.create.return_value = _make_mock_response(good)
+        mock_get_client.return_value = client
+
+        ctx = build_memo_context(
+            candidate=_BLOCKING_FAILURE_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        assert memo["headline_recommendation"].lower().startswith("decline")
+        assert client.chat.completions.create.call_count == 1
+
+
+class TestHeadlineNoRetryWhenAllGatesPassRecommend:
+    """A valid "Recommend" headline on a clean candidate passes through
+    unchanged with a single LLM call."""
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_valid_recommend_passes_through_no_retry(self, mock_get_client, monkeypatch):
+        _enable_structured_memo(monkeypatch)
+        good = _memo_with_headline(
+            "Recommend — strong economics in a stable district with manageable competition."
+        )
+        client = MagicMock()
+        client.chat.completions.create.return_value = _make_mock_response(good)
+        mock_get_client.return_value = client
+
+        ctx = build_memo_context(
+            candidate=_RANK1_ALL_PASS_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        assert memo["headline_recommendation"].lower().startswith("recommend")
+        assert client.chat.completions.create.call_count == 1
+
+
+class TestRenderPromptAdvisoryFailureNoGateFailureAddendum:
+    """Bug 1 prompt-side fix — an advisory-only gate failure must NOT
+    inject the "GATE FAILURE ... overall_pass=False" addendum."""
+
+    def test_advisory_failure_uses_softer_addendum(self):
+        ctx = build_memo_context(
+            candidate=_RANK1_ADVISORY_FAILURE_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        messages = render_structured_memo_prompt(ctx)
+        system_content = messages[0]["content"]
+
+        assert "GATE FAILURE" not in system_content
+        assert "ADVISORY GATE NOTE" in system_content
+        assert "radiance_growth_pass" in system_content
+
+
+class TestRenderPromptBlockingFailureKeepsGateFailureAddendum:
+    """Bug 1 prompt-side fix — a blocking gate failure (zoning) must
+    still inject the strong "GATE FAILURE" addendum."""
+
+    def test_blocking_failure_triggers_gate_failure_addendum(self):
+        ctx = build_memo_context(
+            candidate=_BLOCKING_FAILURE_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        messages = render_structured_memo_prompt(ctx)
+        system_content = messages[0]["content"]
+
+        assert "GATE FAILURE" in system_content
+        assert "zoning_fit_pass" in system_content
