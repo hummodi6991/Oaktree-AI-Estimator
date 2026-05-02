@@ -8,7 +8,6 @@ import type {
   StructuredMemoRisk,
 } from "../../lib/api/expansionAdvisor";
 import { generateDecisionMemo } from "../../lib/api/expansionAdvisor";
-import AdvisorySectionCards from "./AdvisorySectionCards";
 
 // Module-level cache shared across all DecisionMemoNarrative instances. Lets
 // callers (and tests) read the fetched memo synchronously after it has
@@ -94,7 +93,10 @@ function PolarityMarker({ polarity }: { polarity?: "positive" | "negative" | "ne
 export function StructuredNarrative({ memo, lang }: { memo: StructuredMemo; lang: string }) {
   const { t } = useTranslation();
   const dir = lang === "ar" ? "rtl" : "ltr";
-  const risks = Array.isArray(memo.risks) ? memo.risks : [];
+  // Trim at render time: top 4 evidence, top 3 risks. The LLM may produce
+  // more; we display only the highest-priority items by position.
+  const evidenceItems = (Array.isArray(memo.key_evidence) ? memo.key_evidence : []).slice(0, 4);
+  const risks = (Array.isArray(memo.risks) ? memo.risks : []).slice(0, 3);
   const comparison = typeof memo.comparison === "string" ? memo.comparison.trim() : "";
   const bottomLine = typeof memo.bottom_line === "string" ? memo.bottom_line.trim() : "";
   const rankingExplanation =
@@ -113,13 +115,13 @@ export function StructuredNarrative({ memo, lang }: { memo: StructuredMemo; lang
         <p className="ea-memo-structured__ranking">{rankingExplanation}</p>
       )}
 
-      {memo.key_evidence.length > 0 && (
+      {evidenceItems.length > 0 && (
         <section className="ea-memo-structured__section ea-memo-structured__section--evidence">
           <h5 className="ea-memo-structured__section-title">
             {t("expansionAdvisor.keyEvidence")}
           </h5>
           <ul className="ea-memo-structured__evidence-list">
-            {memo.key_evidence.map((item: StructuredMemoEvidence, i: number) => (
+            {evidenceItems.map((item: StructuredMemoEvidence, i: number) => (
               <li key={i} className="ea-memo-structured__evidence-item">
                 <PolarityMarker polarity={item.polarity} />
                 <div className="ea-memo-structured__evidence-body">
@@ -186,13 +188,6 @@ export function StructuredNarrative({ memo, lang }: { memo: StructuredMemo; lang
           <p className="ea-memo-structured__bottom-line-text">{bottomLine}</p>
         </section>
       )}
-
-      {/* PR #3: v5 advisory section cards. Sourced from the same fetched
-          structured memo as the narrative above — the candidate-list shape
-          intentionally excludes decision_memo_json, and the GET memo endpoint
-          may return it null until the prewarm cache is written. Renders
-          nothing when none of the four v5 sections are populated. */}
-      <AdvisorySectionCards memo={memo} lang={lang === "ar" ? "ar" : "en"} />
     </div>
   );
 }

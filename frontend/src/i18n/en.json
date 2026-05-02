@@ -997,6 +997,16 @@
     "memoTab_site": "Site",
     "memoTab_risks": "Risks & Validation",
     "memoTab_breakdown": "Breakdown",
+    "drawerTab": {
+      "memo": "Memo",
+      "diagnostics": "Diagnostics"
+    },
+    "memoFacts": {
+      "frontage": "{{width}} m frontage",
+      "rentPerYear": "{{rent}}/yr",
+      "vacantDays": "vacant {{days}} days",
+      "currentlyVacant": "currently vacant"
+    },
     "breakdownSiteGrade": "Site grade",
     "breakdownSiteGradeExplainer": "How well this listing performs on physical site fundamentals — access, frontage, parking, and zoning fit.",
     "breakdownMarketSignals": "Market signals",

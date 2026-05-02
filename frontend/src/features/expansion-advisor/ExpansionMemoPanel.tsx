@@ -3,12 +3,12 @@ import { useTranslation } from "react-i18next";
 import type { CandidateMemoResponse, RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
-import GateSummary from "./GateSummary";
 import CopySummaryBlock from "./CopySummaryBlock";
 import DecisionLogicCard from "./DecisionLogicCard";
 import DecisionMemoNarrative from "./DecisionMemoNarrative";
+import MemoPropertyFactsRow from "./MemoPropertyFactsRow";
 import ScoreBar from "./ScoreBar";
-import { fmtScore, fmtMeters, fmtSAR, fmtSARCompact, fmtM2, businessGateLabel, safeDistrictLabel, getDisplayScore } from "./formatHelpers";
+import { fmtScore, fmtMeters, fmtSAR, fmtM2 } from "./formatHelpers";
 
 function toList(input: unknown): string[] {
   return Array.isArray(input) ? input.map(String) : [];
@@ -40,6 +40,7 @@ function humanizeScoreLabel(key: string): string {
 }
 
 type MemoTab = "economics" | "market" | "site" | "risks" | "breakdown";
+type DrawerTab = "memo" | "diagnostics";
 
 /**
  * Narrow enum of scrollable anchors inside the memo drawer. DOM order.
@@ -90,6 +91,10 @@ export default function ExpansionMemoPanel({
   const { t } = useTranslation();
   const [presentationMode, setPresentationMode] = useState(false);
   const [activeTab, setActiveTab] = useState<MemoTab>(initialTab ?? "economics");
+  // When a test passes initialTab, default the top-level drawer tab to
+  // Diagnostics so the inner-tab assertions resolve. Production callers
+  // (none of which pass initialTab) get Memo by default.
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>(initialTab ? "diagnostics" : "memo");
 
   // Scroll anchors for initialSection-driven scrollIntoView. Only attached
   // when initialSection is set — see conditional className below so the
@@ -142,9 +147,11 @@ export default function ExpansionMemoPanel({
                 {t("expansionAdvisor.memoOpenCompare")}
               </button>
             )}
-            <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={() => setPresentationMode((m) => !m)}>
-              {presentationMode ? t("expansionAdvisor.exitPresentation") : t("expansionAdvisor.presentationMode")}
-            </button>
+            {drawerTab === "memo" && (
+              <button className="oak-btn oak-btn--xs oak-btn--tertiary" onClick={() => setPresentationMode((m) => !m)}>
+                {presentationMode ? t("expansionAdvisor.exitPresentation") : t("expansionAdvisor.presentationMode")}
+              </button>
+            )}
             <button className="ea-drawer__close" onClick={() => onClose?.()}>{t("expansionAdvisor.close")}</button>
           </div>
         </div>
@@ -153,9 +160,7 @@ export default function ExpansionMemoPanel({
 
           {memo && (() => {
             const rec = memo.recommendation || {};
-            const mr = memo.market_research || {};
             const cand = memo.candidate || {};
-            const gates = (cand.gate_status || {}) as Record<string, boolean | null | undefined>;
             const gateReasons = cand.gate_reasons;
             const snapshot = cand.feature_snapshot;
             const breakdown = cand.score_breakdown_json;
@@ -170,111 +175,122 @@ export default function ExpansionMemoPanel({
             // so the default-open drawer path emits identical markup to pre-3d.
             const anchorCls = initialSection ? " ea-memo-scroll-anchor" : "";
 
+            const displayScore = (breakdown?.display_score as number | undefined) ?? (cand.final_score as number | undefined);
+
             return (
               <>
-                {/* ══ Section 1: LLM Decision Narrative (top, always visible) ══ */}
-                {candidateRaw && briefRaw && (
-                  <div
-                    ref={initialSection ? narrativeRef : undefined}
-                    className={`ea-memo-section-narrative${anchorCls}`}
+                {/* Top-level drawer tabs: Memo (default) and Diagnostics */}
+                <nav className="ea-drawer-tabs__nav" role="tablist" aria-label={t("expansionAdvisor.decisionMemo")}>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={drawerTab === "memo"}
+                    className={`ea-drawer-tabs__tab${drawerTab === "memo" ? " ea-drawer-tabs__tab--active" : ""}`}
+                    onClick={() => setDrawerTab("memo")}
                   >
-                    <DecisionMemoNarrative
-                      candidate={candidateRaw}
-                      brief={briefRaw}
-                      lang={effectiveLang}
-                    />
-                  </div>
-                )}
-
-                {/* ══ Section 1a (PR #3): Advisory section cards mount inside
-                       StructuredNarrative above — sourced from the fetched
-                       /v1/expansion-advisor/decision-memo response so cards
-                       and narrative read from the same memo_json. The earlier
-                       attempt to source from cand.decision_memo_json failed
-                       in production because that field is null until the
-                       prewarm/cache write completes. ══ */}
-
-                {/* ══ Section 1b: Verdict + confidence (always visible, compact) ══ */}
-                {(rec.verdict || cand.confidence_grade) && (
-                  <div
-                    ref={initialSection ? verdictRowRef : undefined}
-                    className={`ea-memo-verdict-row${anchorCls}`}
+                    {t("expansionAdvisor.drawerTab.memo")}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={drawerTab === "diagnostics"}
+                    className={`ea-drawer-tabs__tab${drawerTab === "diagnostics" ? " ea-drawer-tabs__tab--active" : ""}`}
+                    onClick={() => { setDrawerTab("diagnostics"); setPresentationMode(false); }}
                   >
-                    {rec.verdict && (
-                      <span className={`ea-memo-verdict-badge ea-badge ea-badge--${verdictColor}`}>
-                        {rec.verdict}
-                      </span>
-                    )}
-                    <ConfidenceBadge grade={cand.confidence_grade as string | undefined} />
-                  </div>
-                )}
+                    {t("expansionAdvisor.drawerTab.diagnostics")}
+                  </button>
+                </nav>
 
-                {/* ══ Section 2: 4 Key Numbers (always visible) ══ */}
-                <div
-                  ref={initialSection ? quickFactsRef : undefined}
-                  className={`ea-memo-key-numbers${anchorCls}`}
-                >
-                  <div className="ea-memo-key-numbers__item">
-                    <span className="ea-memo-key-numbers__value">
-                      <ScorePill value={(breakdown?.display_score as number | undefined) ?? (cand.final_score as number | undefined)} large />
-                    </span>
-                    <span className="ea-memo-key-numbers__label">{t("decisionMemo.finalScore")}</span>
-                  </div>
-                  <div className="ea-memo-key-numbers__item">
-                    <span className="ea-memo-key-numbers__value ea-memo-key-numbers__value--big">
-                      {fmtM2((cand.area_m2 as number | undefined) ?? (cand.unit_area_sqm as number | undefined))}
-                    </span>
-                    <span className="ea-memo-key-numbers__label">{t("decisionMemo.area")}</span>
-                  </div>
-                  <div className="ea-memo-key-numbers__item">
-                    <span className="ea-memo-key-numbers__value ea-memo-key-numbers__value--big">
-                      {fmtSAR(cand.estimated_annual_rent_sar as number | undefined)}
-                    </span>
-                    <span className="ea-memo-key-numbers__label">{t("decisionMemo.annualRent")}</span>
-                  </div>
-                  <div className="ea-memo-key-numbers__item">
-                    <span className="ea-memo-key-numbers__value ea-memo-key-numbers__value--big">
-                      {cand.unit_street_width_m != null ? `${cand.unit_street_width_m} m` : "—"}
-                    </span>
-                    <span className="ea-memo-key-numbers__label">{t("decisionMemo.streetWidth")}</span>
-                  </div>
-                </div>
-
-                {/* ══ Section 2b: Decision Logic (chunk 3c) — gates, score
-                         contributions, ranking decision. Above the collapsed
-                         score-breakdown disclosure so the card and the details
-                         don't visually compete. ══ */}
-                <div
-                  ref={initialSection ? decisionLogicRef : undefined}
-                  className={`ea-memo-section-decision-logic${anchorCls}`}
-                >
-                  <DecisionLogicCard
-                    gateReasons={gateReasons}
-                    scoreBreakdown={breakdown}
-                    deterministicRank={cand.deterministic_rank ?? null}
-                    finalRank={cand.final_rank ?? null}
-                    rerankStatus={cand.rerank_status ?? null}
-                    rerankReason={cand.rerank_reason ?? null}
-                    rerankDelta={typeof cand.rerank_delta === "number" ? cand.rerank_delta : 0}
-                  />
-                </div>
-
-                {/* ══ Section 3: Full Score Breakdown (collapsed by default) ══ */}
-                <details className="ea-memo-full-breakdown">
-                  <summary className="ea-memo-full-breakdown__toggle">
-                    {t("expansionAdvisor.showScoreBreakdown")}
-                  </summary>
-
-                  <div className="ea-memo-full-breakdown__content">
-                    {/* ── Summary card ── */}
-                    <div className="ea-memo-summary-card">
-                      <div className="ea-memo-summary-card__top">
-                        <div className="ea-memo-summary-card__score-donut">
-                          <ScorePill value={(breakdown?.display_score as number | undefined) ?? (cand.final_score as number | undefined)} large />
-                        </div>
+                {drawerTab === "memo" && (
+                  <>
+                    {/* Verdict + confidence + score (1-decimal) */}
+                    {(rec.verdict || cand.confidence_grade) && (
+                      <div
+                        ref={initialSection ? verdictRowRef : undefined}
+                        className={`ea-memo-verdict-row${anchorCls}`}
+                      >
+                        {rec.verdict && (
+                          <span className={`ea-memo-verdict-badge ea-badge ea-badge--${verdictColor}`}>
+                            {rec.verdict}
+                          </span>
+                        )}
+                        <ConfidenceBadge grade={cand.confidence_grade as string | undefined} />
+                        {displayScore != null && (
+                          <span className="ea-memo-verdict-score">{fmtScore(displayScore, 1)}</span>
+                        )}
                       </div>
-                      {rec.headline && <p className="ea-memo-summary-card__headline">{rec.headline}</p>}
+                    )}
+
+                    {/* One-line property facts */}
+                    <MemoPropertyFactsRow
+                      candidate={{
+                        area_m2: cand.area_m2 as number | undefined,
+                        unit_area_sqm: cand.unit_area_sqm as number | undefined,
+                        unit_street_width_m: cand.unit_street_width_m as number | undefined,
+                        estimated_annual_rent_sar: cand.estimated_annual_rent_sar as number | undefined,
+                        listing_age_days:
+                          (() => {
+                            const snap = (cand.feature_snapshot || {}) as Record<string, unknown>;
+                            const la = (snap.listing_age || {}) as Record<string, unknown>;
+                            const v = la.created_days ?? la.updated_days ?? null;
+                            return typeof v === "number" ? v : null;
+                          })(),
+                        is_vacant:
+                          (() => {
+                            const snap = (cand.feature_snapshot || {}) as Record<string, unknown>;
+                            const loc = (snap.candidate_location || {}) as Record<string, unknown>;
+                            return typeof loc.is_vacant === "boolean" ? (loc.is_vacant as boolean) : null;
+                          })(),
+                      }}
+                      lang={effectiveLang === "ar" ? "ar" : "en"}
+                    />
+
+                    {/* LLM Decision Narrative */}
+                    {candidateRaw && briefRaw && (
+                      <div
+                        ref={initialSection ? narrativeRef : undefined}
+                        className={`ea-memo-section-narrative${anchorCls}`}
+                      >
+                        <DecisionMemoNarrative
+                          candidate={candidateRaw}
+                          brief={briefRaw}
+                          lang={effectiveLang}
+                        />
+                      </div>
+                    )}
+
+                    {/* Copy-ready summary block (lead candidates only) */}
+                    {isLeadCandidate && (
+                      <CopySummaryBlock
+                        candidate={null}
+                        report={report || null}
+                        memo={memo}
+                      />
+                    )}
+                  </>
+                )}
+
+                {drawerTab === "diagnostics" && (
+                  <>
+                    {/* Decision Logic — gates, score contributions, ranking decision */}
+                    <div
+                      ref={initialSection ? decisionLogicRef : undefined}
+                      className={`ea-memo-section-decision-logic${anchorCls}`}
+                    >
+                      <DecisionLogicCard
+                        gateReasons={gateReasons}
+                        scoreBreakdown={breakdown}
+                        deterministicRank={cand.deterministic_rank ?? null}
+                        finalRank={cand.final_rank ?? null}
+                        rerankStatus={cand.rerank_status ?? null}
+                        rerankReason={cand.rerank_reason ?? null}
+                        rerankDelta={typeof cand.rerank_delta === "number" ? cand.rerank_delta : 0}
+                      />
                     </div>
+
+                    {/* Score breakdown — operator-debug detail (lives on Diagnostics) */}
+                    <section className="ea-memo-full-breakdown ea-memo-full-breakdown--in-tab">
+                      <div className="ea-memo-full-breakdown__content">
 
                     {/* ── Tabbed sections ── */}
                     <div className="ea-memo-tabs">
@@ -320,42 +336,12 @@ export default function ExpansionMemoPanel({
                                 <span className="ea-detail__kv-value">{fmtScore(cand.brand_fit_score as number | undefined)}</span>
                               </div>
                             </div>
-                            {cand.cost_thesis && (
-                              <div className="ea-memo-callout ea-memo-callout--neutral" style={{ marginTop: 12 }}>
-                                <span className="ea-memo-callout__label">{t("expansionAdvisor.costThesis")}</span>
-                                <p className="ea-detail__text">{String(cand.cost_thesis)}</p>
-                              </div>
-                            )}
                           </div>
                         )}
 
                         {/* Market tab */}
                         {activeTab === "market" && (
                           <div className="ea-memo-tab-panel">
-                            {cand.demand_thesis && (
-                              <div className="ea-memo-callout ea-memo-callout--neutral">
-                                <span className="ea-memo-callout__label">{t("expansionAdvisor.demandThesis")}</span>
-                                <p className="ea-detail__text">{String(cand.demand_thesis)}</p>
-                              </div>
-                            )}
-                            {mr.delivery_market_summary && (
-                              <div className="ea-memo-callout ea-memo-callout--neutral">
-                                <span className="ea-memo-callout__label">{t("expansionAdvisor.deliveryMarket")}</span>
-                                <p className="ea-detail__text">{mr.delivery_market_summary}</p>
-                              </div>
-                            )}
-                            {mr.competitive_context && (
-                              <div className="ea-memo-callout ea-memo-callout--neutral">
-                                <span className="ea-memo-callout__label">{t("expansionAdvisor.competitiveContext")}</span>
-                                <p className="ea-detail__text">{mr.competitive_context}</p>
-                              </div>
-                            )}
-                            {mr.district_fit_summary && (
-                              <div className="ea-memo-callout ea-memo-callout--neutral">
-                                <span className="ea-memo-callout__label">{t("expansionAdvisor.districtFit")}</span>
-                                <p className="ea-detail__text">{mr.district_fit_summary}</p>
-                              </div>
-                            )}
                             {comps.length > 0 && (
                               <>
                                 <h5 className="ea-detail__section-title">{t("expansionAdvisor.comparableCompetitors")}</h5>
@@ -402,14 +388,6 @@ export default function ExpansionMemoPanel({
                               </div>
                             </div>
                             {rec.gate_verdict && <p className="ea-detail__text" style={{ fontStyle: "italic", marginTop: 8 }}>{rec.gate_verdict}</p>}
-                            <GateSummary gates={gates} unknownGates={toList(gateReasons?.unknown)} />
-                            {gateReasons && (
-                              <div style={{ fontSize: "var(--oak-fs-xs)", marginTop: 6, display: "grid", gap: 4 }}>
-                                {toList(gateReasons.passed).length > 0 && <div><span className="ea-badge ea-badge--green">{t("expansionAdvisor.gatesPassed")}</span> {toList(gateReasons.passed).map(businessGateLabel).join(", ")}</div>}
-                                {toList(gateReasons.failed).length > 0 && <div><span className="ea-badge ea-badge--red">{t("expansionAdvisor.gatesFailed")}</span> {toList(gateReasons.failed).map(businessGateLabel).join(", ")}</div>}
-                                {toList(gateReasons.unknown).length > 0 && <div><span className="ea-badge ea-badge--amber">{t("expansionAdvisor.gatesNeedVerification")}</span> {toList(gateReasons.unknown).map(businessGateLabel).join(", ")}</div>}
-                              </div>
-                            )}
                           </div>
                         )}
 
@@ -446,35 +424,6 @@ export default function ExpansionMemoPanel({
                               </div>
                             </div>
 
-                            {/* Validation plan — 2-column layout */}
-                            {(toList(gateReasons?.unknown).length > 0 || toList(gateReasons?.passed).length > 0) && (
-                              <div className="ea-memo-validation-grid">
-                                <div className="ea-memo-validation-col">
-                                  <h6 className="ea-memo-validation-col__title ea-memo-validation-col__title--must">{t("expansionAdvisor.vpMustVerify")}</h6>
-                                  {toList(gateReasons?.unknown).map((item, i) => (
-                                    <div key={i} className="ea-memo-validation-item ea-memo-validation-item--must">
-                                      <span className="ea-memo-validation-dot ea-memo-validation-dot--must" />
-                                      <span>{businessGateLabel(item)}</span>
-                                    </div>
-                                  ))}
-                                  {toList(gateReasons?.failed).map((item, i) => (
-                                    <div key={`f-${i}`} className="ea-memo-validation-item ea-memo-validation-item--must">
-                                      <span className="ea-memo-validation-dot ea-memo-validation-dot--fail" />
-                                      <span>{businessGateLabel(item)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                                <div className="ea-memo-validation-col">
-                                  <h6 className="ea-memo-validation-col__title ea-memo-validation-col__title--confirmed">{t("expansionAdvisor.vpAlreadyStrong")}</h6>
-                                  {toList(gateReasons?.passed).map((item, i) => (
-                                    <div key={i} className="ea-memo-validation-item ea-memo-validation-item--confirmed">
-                                      <span className="ea-memo-validation-check">&#10003;</span>
-                                      <span>{businessGateLabel(item)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
                           </div>
                         )}
 
@@ -817,16 +766,9 @@ export default function ExpansionMemoPanel({
                         </div>
                       </details>
                     )}
-                  </div>
-                </details>
-
-                {/* Copy-ready summary block */}
-                {isLeadCandidate && (
-                  <CopySummaryBlock
-                    candidate={null}
-                    report={report || null}
-                    memo={memo}
-                  />
+                      </div>
+                    </section>
+                  </>
                 )}
               </>
             );
