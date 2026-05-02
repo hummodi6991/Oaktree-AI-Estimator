@@ -40,62 +40,33 @@ function renderPanel() {
   );
 }
 
-describe("ExpansionMemoPanel chunk 3b reorganisation", () => {
-  it("renders the verdict row above the score-breakdown disclosure", () => {
+describe("ExpansionMemoPanel decision-drawer tabs (Memo / Diagnostics)", () => {
+  it("defaults to the Memo tab and renders verdict + property facts row", () => {
     const html = renderPanel();
-    const verdictRowIdx = html.indexOf("ea-memo-verdict-row");
-    const breakdownIdx = html.indexOf("ea-memo-full-breakdown");
-    expect(verdictRowIdx).toBeGreaterThan(-1);
-    expect(breakdownIdx).toBeGreaterThan(-1);
-    expect(verdictRowIdx).toBeLessThan(breakdownIdx);
+    expect(html).toContain("ea-drawer-tabs__nav");
+    // Memo tab is active by default
+    expect(html).toMatch(/ea-drawer-tabs__tab ea-drawer-tabs__tab--active[^>]*>Memo</);
+    // Verdict row renders on Memo tab
+    expect(html).toContain("ea-memo-verdict-row");
   });
 
-  it("keeps the quick-facts row above the score-breakdown disclosure", () => {
+  it("does NOT render Diagnostics-only content on the default Memo tab", () => {
     const html = renderPanel();
-    const keyNumbersIdx = html.indexOf("ea-memo-key-numbers");
-    const breakdownIdx = html.indexOf("ea-memo-full-breakdown");
-    expect(keyNumbersIdx).toBeGreaterThan(-1);
-    expect(breakdownIdx).toBeGreaterThan(-1);
-    expect(keyNumbersIdx).toBeLessThan(breakdownIdx);
+    // The 5-sub-tab inner strip (Breakdown label) lives on Diagnostics
+    expect(html).not.toContain(en.expansionAdvisor.memoTab_breakdown);
+    // The score breakdown wrapper is gated on Diagnostics
+    expect(html).not.toContain("ea-memo-full-breakdown");
+    // The DecisionLogicCard is gated on Diagnostics
+    expect(html).not.toContain("ea-memo-section-decision-logic");
+    // The 4-stat strip is removed entirely
+    expect(html).not.toContain("ea-memo-key-numbers");
   });
 
-  it("renders the score-breakdown details closed by default (no `open` attribute)", () => {
+  it("renders score with 1 decimal next to the verdict chip on Memo tab", () => {
     const html = renderPanel();
-    // Extract the opening tag of the ea-memo-full-breakdown <details>.
-    const match = html.match(/<details[^>]*ea-memo-full-breakdown[^>]*>/);
-    expect(match).not.toBeNull();
-    const openingTag = match![0];
-    expect(openingTag.includes(" open")).toBe(false);
-  });
-
-  it("uses the resolved i18n text (not the raw key) in the disclosure <summary>", () => {
-    const html = renderPanel();
-    const expected = en.expansionAdvisor.showScoreBreakdown;
-    expect(expected).toBe("Show score breakdown");
-    expect(html).toContain(expected);
-    // And make sure the legacy "Show full score breakdown" label is gone.
-    expect(html).not.toContain(en.decisionMemo.showFullBreakdown);
-    // And make sure we didn't accidentally emit the raw key.
-    expect(html).not.toContain("expansionAdvisor.showScoreBreakdown");
-  });
-
-  it("promotes verdict badge and confidence badge out of the summary card", () => {
-    const html = renderPanel();
-    const verdictRowIdx = html.indexOf("ea-memo-verdict-row");
-    const summaryCardIdx = html.indexOf("ea-memo-summary-card");
-    // Verdict row sits above the fold — i.e. before the summary card, which
-    // now lives inside the collapsed <details>.
-    expect(verdictRowIdx).toBeGreaterThan(-1);
-    expect(summaryCardIdx).toBeGreaterThan(-1);
-    expect(verdictRowIdx).toBeLessThan(summaryCardIdx);
-
-    // Verdict badge renders inside the promoted row, not the summary card.
-    const rowMatch = html.match(
-      /<div class="ea-memo-verdict-row">([\s\S]*?)<\/div>\s*<div class="ea-memo-key-numbers">/,
-    );
-    expect(rowMatch).not.toBeNull();
-    expect(rowMatch![1]).toContain("ea-memo-verdict-badge");
-    expect(rowMatch![1]).toContain("ea-badge");
+    expect(html).toContain("ea-memo-verdict-score");
+    // 78 → "78.0" with 1 decimal
+    expect(html).toMatch(/ea-memo-verdict-score">78\.0</);
   });
 
   it("hides the verdict row entirely when verdict and confidence grade are both absent", () => {
@@ -195,7 +166,7 @@ describe("ExpansionMemoPanel — PR #3 advisory cards", () => {
     });
   }
 
-  it("mounts AdvisorySectionCards between the narrative and the verdict row", () => {
+  it("does NOT mount AdvisorySectionCards even when the fetched memo has v5 sections (cut by directive)", () => {
     seedFetchedMemo("cand_1", structuredMemoWithV5Sections());
     const html = renderToStaticMarkup(
       <ExpansionMemoPanel
@@ -205,18 +176,10 @@ describe("ExpansionMemoPanel — PR #3 advisory cards", () => {
         briefRaw={{ brand_name: "Test" }}
       />,
     );
-    const cardsIdx = html.indexOf("ea-memo-advisory-cards");
-    const verdictIdx = html.indexOf("ea-memo-verdict-row");
-    const narrativeIdx = html.indexOf("ea-memo-section-narrative");
-    expect(cardsIdx).toBeGreaterThan(-1);
-    expect(verdictIdx).toBeGreaterThan(-1);
-    expect(narrativeIdx).toBeGreaterThan(-1);
-    // Order: narrative wrapper opens, cards render inside it, verdict row follows.
-    expect(narrativeIdx).toBeLessThan(cardsIdx);
-    expect(cardsIdx).toBeLessThan(verdictIdx);
+    expect(html).not.toContain("ea-memo-advisory-cards");
   });
 
-  it("renders each advisory card as a <details> closed by default", () => {
+  it("renders no advisory <details> sections (cards removed)", () => {
     seedFetchedMemo("cand_1", structuredMemoWithV5Sections());
     const html = renderToStaticMarkup(
       <ExpansionMemoPanel
@@ -227,8 +190,7 @@ describe("ExpansionMemoPanel — PR #3 advisory cards", () => {
       />,
     );
     const tags = html.match(/<details[^>]*ea-memo-section[^>]*>/g) ?? [];
-    expect(tags.length).toBe(4);
-    for (const t of tags) expect(t.includes(" open")).toBe(false);
+    expect(tags.length).toBe(0);
   });
 
   it("does NOT render advisory cards when the fetched memo lacks v5 sections (graceful degradation)", () => {
@@ -297,10 +259,13 @@ describe("ExpansionMemoPanel — PR #3 advisory cards", () => {
 /* ─── Backend reshape regression: rank + unit_* fields on candidate ─────── */
 
 describe("ExpansionMemoPanel — memo shape consumers", () => {
-  it("renders 'Deterministic #1' from cand.deterministic_rank (not '#—')", () => {
+  it("renders 'Deterministic #1' from cand.deterministic_rank when on Diagnostics tab", () => {
+    // DecisionLogicCard moved to the Diagnostics tab; pass initialTab to flip
+    // the drawer-tab selector into Diagnostics so the card renders.
     const html = renderToStaticMarkup(
       <ExpansionMemoPanel
         loading={false}
+        initialTab="economics"
         memo={{
           recommendation: { verdict: "go", headline: "GO" },
           candidate: {
@@ -326,7 +291,7 @@ describe("ExpansionMemoPanel — memo shape consumers", () => {
     expect(html).not.toContain("Deterministic #—");
   });
 
-  it("falls back from area_m2 to unit_area_sqm in the quick-facts row for commercial-unit candidates", () => {
+  it("falls back from area_m2 to unit_area_sqm in the property-facts row for commercial-unit candidates", () => {
     const html = renderToStaticMarkup(
       <ExpansionMemoPanel
         loading={false}
@@ -342,8 +307,6 @@ describe("ExpansionMemoPanel — memo shape consumers", () => {
               weighted_components: { demand_potential: 0.72 },
             },
             gate_status: { overall_pass: true },
-            // Commercial-unit candidates: area_m2 column is NULL; the area
-            // lives on unit_area_sqm.
             area_m2: undefined,
             unit_area_sqm: 165,
             unit_street_width_m: 18,
@@ -353,17 +316,12 @@ describe("ExpansionMemoPanel — memo shape consumers", () => {
         }}
       />,
     );
-    // Locate the 4-cell quick-facts row and confirm Area + Street width are
-    // populated, not "—".
-    const keyNumbersMatch = html.match(
-      /<div class="ea-memo-key-numbers">([\s\S]*?)<\/div>\s*(?:<\/div>|<details)/,
-    );
-    expect(keyNumbersMatch).not.toBeNull();
-    const block = keyNumbersMatch![1];
-    // Area cell: 165 m² (number rendered, not the em-dash placeholder).
-    expect(block).toMatch(/165/);
-    // Street width cell: "18 m" (template literal in ExpansionMemoPanel).
-    expect(block).toContain("18 m");
+    // The new property-facts row carries area, frontage, rent, vacancy on the
+    // Memo tab. Validate area falls back to unit_area_sqm and frontage shows.
+    expect(html).toContain("ea-memo-property-facts");
+    expect(html).toMatch(/165 m²/);
+    // Frontage formatted as "{w} m frontage" via i18n.
+    expect(html).toContain("18 m frontage");
   });
 });
 
@@ -397,12 +355,22 @@ describe("ExpansionMemoPanel chunk 3d — scroll-to-section plumbing", () => {
     expect(html).not.toContain("ea-memo-scroll-anchor");
   });
 
-  it("renders each of the four sections with an identifiable class a ref can target", () => {
-    // candidateRaw + briefRaw are required for the narrative wrapper to
-    // render; supply minimal objects. The fetched decision memo itself won't
-    // resolve under renderToStaticMarkup (useEffect doesn't run on SSR), so
-    // the wrapper renders with null content — that's fine, we're asserting
-    // the wrapper exists.
+  it("renders the Memo-tab section anchors when initialSection is set", () => {
+    const html = renderToStaticMarkup(
+      <ExpansionMemoPanel
+        loading={false}
+        memo={memoFixture()}
+        candidateRaw={{ id: "cand_1" }}
+        briefRaw={{ brand_name: "Test" }}
+        initialSection="narrative"
+      />,
+    );
+    // narrative + verdict-row live on the default Memo tab.
+    expect(html).toContain("ea-memo-section-narrative");
+    expect(html).toContain("ea-memo-verdict-row");
+  });
+
+  it("renders the Diagnostics-tab anchor (decision-logic) when initialTab flips drawer to diagnostics", () => {
     const html = renderToStaticMarkup(
       <ExpansionMemoPanel
         loading={false}
@@ -410,32 +378,27 @@ describe("ExpansionMemoPanel chunk 3d — scroll-to-section plumbing", () => {
         candidateRaw={{ id: "cand_1" }}
         briefRaw={{ brand_name: "Test" }}
         initialSection="decision-logic"
+        initialTab="economics"
       />,
     );
-    expect(html).toContain("ea-memo-section-narrative");
-    expect(html).toContain("ea-memo-verdict-row");
-    expect(html).toContain("ea-memo-key-numbers");
     expect(html).toContain("ea-memo-section-decision-logic");
   });
 
-  it("applies the scroll-anchor class to each section when initialSection is set", () => {
+  it("applies the scroll-anchor class to Memo-tab sections when initialSection is set", () => {
     const html = renderToStaticMarkup(
       <ExpansionMemoPanel
         loading={false}
         memo={memoFixture()}
         candidateRaw={{ id: "cand_1" }}
         briefRaw={{ brand_name: "Test" }}
-        initialSection="decision-logic"
+        initialSection="narrative"
       />,
     );
-    // All four anchors carry the scroll-margin class.
     expect(html).toMatch(/ea-memo-section-narrative ea-memo-scroll-anchor/);
     expect(html).toMatch(/ea-memo-verdict-row ea-memo-scroll-anchor/);
-    expect(html).toMatch(/ea-memo-key-numbers ea-memo-scroll-anchor/);
-    expect(html).toMatch(/ea-memo-section-decision-logic ea-memo-scroll-anchor/);
   });
 
-  it("keeps rendering the DecisionLogicCard inside the scroll-anchored wrapper", () => {
+  it("keeps rendering the DecisionLogicCard inside the scroll-anchored wrapper on Diagnostics", () => {
     const html = renderToStaticMarkup(
       <ExpansionMemoPanel
         loading={false}
@@ -443,6 +406,7 @@ describe("ExpansionMemoPanel chunk 3d — scroll-to-section plumbing", () => {
         candidateRaw={{ id: "cand_1" }}
         briefRaw={{ brand_name: "Test" }}
         initialSection="decision-logic"
+        initialTab="economics"
       />,
     );
     const wrapperIdx = html.indexOf("ea-memo-section-decision-logic");
@@ -584,20 +548,22 @@ function richBreakdownMemo() {
 }
 
 describe("ExpansionMemoPanel — Breakdown tab presence", () => {
-  it("renders the Breakdown tab button with the resolved English label", () => {
+  it("renders the Breakdown tab button with the resolved English label (Diagnostics drawer-tab)", () => {
+    // Inner sub-tabs live on the Diagnostics drawer tab. Pass initialTab to
+    // flip the drawer to Diagnostics so the inner-tab nav renders.
     const html = renderToStaticMarkup(
-      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} />,
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="economics" />,
     );
     expect(html).toContain(en.expansionAdvisor.memoTab_breakdown);
     expect(en.expansionAdvisor.memoTab_breakdown).toBe("Breakdown");
     expect(html).not.toContain("expansionAdvisor.memoTab_breakdown");
   });
 
-  it("renders the Breakdown tab button with the resolved Arabic label", async () => {
+  it("renders the Breakdown tab button with the resolved Arabic label (Diagnostics drawer-tab)", async () => {
     await i18n.changeLanguage("ar");
     try {
       const html = renderToStaticMarkup(
-        <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} />,
+        <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="economics" />,
       );
       expect(html).toContain(ar.expansionAdvisor.memoTab_breakdown);
       expect(ar.expansionAdvisor.memoTab_breakdown).toBe("تفصيل");
@@ -606,9 +572,9 @@ describe("ExpansionMemoPanel — Breakdown tab presence", () => {
     }
   });
 
-  it("does not render Breakdown panel content when economics is the active tab (default)", () => {
+  it("does not render Breakdown panel content when economics is the active inner tab (default)", () => {
     const html = renderToStaticMarkup(
-      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} />,
+      <ExpansionMemoPanel loading={false} memo={richBreakdownMemo() as any} initialTab="economics" />,
     );
     expect(html).not.toContain("ea-memo-breakdown");
     // Site-grade explainer string belongs to the Breakdown tab; must not leak

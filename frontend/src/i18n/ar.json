@@ -925,6 +925,16 @@
     "memoTab_site": "الموقع",
     "memoTab_risks": "المخاطر والتحقق",
     "memoTab_breakdown": "تفصيل",
+    "drawerTab": {
+      "memo": "المذكرة",
+      "diagnostics": "التشخيص"
+    },
+    "memoFacts": {
+      "frontage": "{{width}} م واجهة",
+      "rentPerYear": "{{rent}}/سنة",
+      "vacantDays": "شاغر منذ {{days}} يومًا",
+      "currentlyVacant": "شاغر حاليًا"
+    },
     "breakdownSiteGrade": "تقييم الموقع",
     "breakdownSiteGradeExplainer": "أداء هذا العقار في الأساسيات المادية للموقع — الوصول والواجهة والمواقف والتوافق مع الاستخدام.",
     "breakdownMarketSignals": "إشارات السوق",

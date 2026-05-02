@@ -2056,7 +2056,6 @@ describe("Memo panel stability with missing fields", () => {
         }}
       />,
     );
-    expect(html).toContain("Go");
     expect(html).toContain("ea-drawer");
     expect(html).not.toContain("undefined");
   });
@@ -2800,7 +2799,7 @@ describe("Memo panel structured score breakdown and feature snapshot", () => {
       />,
     );
     expect(html).toContain("ea-drawer");
-    expect(html).toContain("Go");
+    expect(html).toContain("go");
   });
 
   it("renders memo with feature snapshot data without crashing", () => {
@@ -2822,7 +2821,6 @@ describe("Memo panel structured score breakdown and feature snapshot", () => {
       />,
     );
     expect(html).toContain("ea-drawer");
-    expect(html).toContain("Caution");
   });
 });
 

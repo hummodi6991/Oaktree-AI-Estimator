@@ -4198,6 +4198,87 @@
   }
 }
 
+/* ── Top-level drawer tabs (Memo / Diagnostics) ── */
+.ea-drawer-tabs__nav {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid #E5E7EB;
+  margin-bottom: 16px;
+  background: transparent;
+}
+
+.ea-drawer-tabs__tab {
+  padding: 10px 18px;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--oak-text-light, #828282);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 150ms, border-color 150ms;
+  border-bottom: 3px solid transparent;
+  font-family: var(--oak-font);
+  margin-bottom: -1px;
+}
+
+.ea-drawer-tabs__tab:hover {
+  color: var(--oak-text-dark, #171717);
+}
+
+.ea-drawer-tabs__tab--active {
+  color: var(--oak-primary, #14312c);
+  border-bottom-color: var(--oak-primary, #14312c);
+}
+
+/* ── Memo property facts row (one-line summary) ── */
+.ea-memo-property-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: var(--oak-fs-xs, 12px);
+  color: var(--oak-text-light, #6b7280);
+  margin: 4px 0 12px;
+  line-height: 1.5;
+}
+
+.ea-memo-property-facts__segment {
+  display: inline-block;
+}
+
+.ea-memo-property-facts__segment + .ea-memo-property-facts__segment::before {
+  content: "·";
+  margin: 0 8px;
+  color: var(--oak-text-light, #9ca3af);
+}
+
+@media (max-width: 640px) {
+  .ea-memo-property-facts {
+    line-height: 1.7;
+  }
+}
+
+/* ── Score next to verdict chip on Memo tab ── */
+.ea-memo-verdict-score {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--oak-text-dark, #171717);
+  margin-inline-start: 4px;
+}
+
+/* ── Score breakdown wrapper when nested inside Diagnostics tab.
+       Drops the disclosure border/padding the original <details> applied. ── */
+.ea-memo-full-breakdown--in-tab {
+  border: none;
+  margin-bottom: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.ea-memo-full-breakdown--in-tab > .ea-memo-full-breakdown__content {
+  padding: 0;
+}
+
 /* ── Global transitions ── */
 .ea-candidate,
 .ea-card,

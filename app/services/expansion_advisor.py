@@ -9048,30 +9048,6 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
     main_watchout = risks[0] if risks else "Validate lease and capex assumptions before commitment"
     district = candidate.get("district_display") or candidate.get("district") or "Riyadh"
     headline = f"{verdict.upper()}: {district} parcel shows {economics_score:.1f}/100 economics for {best_use_case}"
-    expansion_goal = (brand_profile.get("expansion_goal") or "balanced").replace("_", " ")
-    provider_density = _safe_float(candidate.get("provider_density_score"))
-    multi_plat = _safe_float(candidate.get("multi_platform_presence_score"))
-    delivery_comp = _safe_float(candidate.get("delivery_competition_score"))
-    delivery_observed = provider_density > 0 or multi_plat > 0 or delivery_comp > 0
-    if not delivery_observed:
-        delivery_market_summary = (
-            f"For a {expansion_goal} strategy, no delivery activity was observed near this site. "
-            f"Delivery scores are inferred/fallback and should not be treated as observed market strength."
-        )
-    else:
-        density_label = "strong" if provider_density >= 65 else "moderate" if provider_density >= 30 else "limited"
-        delivery_market_summary = (
-            f"For a {expansion_goal} strategy, observed delivery activity is {density_label} "
-            f"with platform breadth score {multi_plat:.1f}/100."
-        )
-    competitive_context = (
-        f"Provider whitespace is {_safe_float(candidate.get('provider_whitespace_score')):.1f}/100 while delivery competition is "
-        f"{_safe_float(candidate.get('delivery_competition_score')):.1f}/100."
-    )
-    district_fit_summary = (
-        f"District fit is driven by brand fit {_safe_float(candidate.get('brand_fit_score')):.1f}/100 and {('delivery-led' if (brand_profile.get('primary_channel')=='delivery') else 'balanced')} channel posture."
-    )
-
     logger.info(
         "expansion_memo timing: total=%.2fs candidate_id=%s search_id=%s verdict=%s",
         time.monotonic() - t_start, candidate_id,
@@ -9180,11 +9156,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             "main_watchout": main_watchout,
             "gate_verdict": _gate_verdict_label((candidate.get("gate_status_json") or {}).get("overall_pass")),
         },
-        "market_research": {
-            "delivery_market_summary": delivery_market_summary,
-            "competitive_context": competitive_context,
-            "district_fit_summary": district_fit_summary,
-        },
+        "market_research": {},
         # decision_memo / decision_memo_json describe THIS memo (the envelope),
         # not a per-candidate property — they stay at the top level alongside
         # candidate_id, search_id, brand_profile, recommendation, market_research.
