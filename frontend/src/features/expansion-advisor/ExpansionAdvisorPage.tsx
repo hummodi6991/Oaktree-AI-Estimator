@@ -23,7 +23,6 @@ import {
 } from "../../lib/api/expansionAdvisor";
 import type { ExpansionSearchDetailResponse } from "../../lib/api/expansionAdvisor";
 import ExpansionBriefForm, { defaultBrief } from "./ExpansionBriefForm";
-import ExpansionLeadHero from "./ExpansionLeadHero";
 import ExpansionResultsPanel from "./ExpansionResultsPanel";
 import ExpansionComparePanel from "./ExpansionComparePanel";
 import ExpansionMemoPanel, { type MemoDrawerSection } from "./ExpansionMemoPanel";
@@ -309,13 +308,6 @@ export default function ExpansionAdvisorPage({
     return result;
   }, []);
 
-  // Hero memo state — separate from the drawer's memo state so the hero
-  // can stay anchored on rank-1 (or the pinned lead) while the user has
-  // the drawer open on a different candidate. Both share memoCacheRef,
-  // so opening the drawer for the same candidate is a cache hit.
-  const [heroMemo, setHeroMemo] = useState<CandidateMemoResponse | null>(null);
-  const [heroMemoLoading, setHeroMemoLoading] = useState(false);
-
   const handleSelectCandidate = async (candidate: ExpansionCandidate, forceReloadMemo = false) => {
     if (sameCandidateId(candidate, selectedCandidate) && !forceReloadMemo) return;
     setSelectedCandidate(candidate);
@@ -515,36 +507,7 @@ export default function ExpansionAdvisorPage({
 
   const title = useMemo(() => generateStudyTitle(brief), [brief]);
   const bestCandidate = candidates[0] || null;
-  const heroCandidateId = leadCandidateId ?? bestCandidate?.id ?? null;
-  const heroCandidate =
-    candidates.find((c) => c.id === heroCandidateId) ?? bestCandidate ?? null;
   const hasResults = candidates.length > 0;
-
-  // Prefetch the hero candidate's memo when the hero target changes.
-  useEffect(() => {
-    const heroId = heroCandidate?.id;
-    if (!heroId) {
-      setHeroMemo(null);
-      setHeroMemoLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setHeroMemoLoading(true);
-    loadMemoForCandidate(heroId)
-      .then((result) => {
-        if (!cancelled) setHeroMemo(result);
-      })
-      .catch(() => {
-        if (!cancelled) setHeroMemo(null);
-      })
-      .finally(() => {
-        if (!cancelled) setHeroMemoLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [heroCandidate?.id, loadMemoForCandidate]);
-
   const districts = useMemo(() => extractDistricts(candidates), [candidates]);
 
   // Compute filtered/sorted candidates
@@ -690,40 +653,21 @@ export default function ExpansionAdvisorPage({
 
       {/* Candidate list */}
       {hasResults ? (
-        <>
-          {heroCandidate && (
-            <ExpansionLeadHero
-              candidate={heroCandidate}
-              memo={heroMemo}
-              loading={heroMemoLoading}
-              onOpenMemo={() => {
-                void handleSelectCandidate(heroCandidate, heroMemo === null);
-                setActiveDrawer("memo");
-              }}
-              onShowOnMap={() => {
-                onSelectedCandidateChange(heroCandidate);
-                setSelectedCandidate(heroCandidate);
-              }}
-              lang={i18n.language?.startsWith("ar") ? "ar" : "en"}
-            />
-          )}
-          <ExpansionResultsPanel
-            items={displayCandidates}
-            selectedCandidateId={selectedCandidate?.id || null}
-            shortlistIds={shortlistIds}
-            compareIds={compareIds}
-            leadCandidateId={leadCandidateId}
-            localSortActive={localSortActive}
-            heroPresent={Boolean(heroCandidate)}
-            onSelectCandidate={(candidate) => { void handleSelectCandidate(candidate); void trackEvent("ui_expansion_candidate_opened", { meta: { candidate_id: candidate.id } }); }}
-            onToggleCompare={(candidateId) => setCompareIds((cur) => getNextCompareIds(cur, candidateId))}
-            onOpenMemo={(candidateId, options) => void handleOpenMemoById(candidateId, options)}
-            onShowOnMap={(candidate) => {
-              onSelectedCandidateChange(candidate);
-              setSelectedCandidate(candidate);
-            }}
-          />
-        </>
+        <ExpansionResultsPanel
+          items={displayCandidates}
+          selectedCandidateId={selectedCandidate?.id || null}
+          shortlistIds={shortlistIds}
+          compareIds={compareIds}
+          leadCandidateId={leadCandidateId}
+          localSortActive={localSortActive}
+          onSelectCandidate={(candidate) => { void handleSelectCandidate(candidate); void trackEvent("ui_expansion_candidate_opened", { meta: { candidate_id: candidate.id } }); }}
+          onToggleCompare={(candidateId) => setCompareIds((cur) => getNextCompareIds(cur, candidateId))}
+          onOpenMemo={(candidateId, options) => void handleOpenMemoById(candidateId, options)}
+          onShowOnMap={(candidate) => {
+            onSelectedCandidateChange(candidate);
+            setSelectedCandidate(candidate);
+          }}
+        />
       ) : loadingSearch ? (
         <>
           {searchStartTime && searchElapsedMs === null && (

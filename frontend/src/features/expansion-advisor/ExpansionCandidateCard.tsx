@@ -17,9 +17,6 @@ type Props = {
    *  (see tiers.ts). Premier gets an accent treatment + "Premier" pill,
    *  Exploratory renders muted, Standard is the baseline unchanged. */
   tier?: CandidateTier;
-  /** When true, the in-card "Lead Site" chip is hidden so the hero card
-   *  above the results grid is the only place the tag appears. */
-  suppressLeadChip?: boolean;
   onSelect: () => void;
   onCompareToggle: () => void;
   onOpenMemo?: (options?: { section?: MemoDrawerSection }) => void;
@@ -37,7 +34,6 @@ export default function ExpansionCandidateCard({
   isLead,
   localSortActive,
   tier,
-  suppressLeadChip,
   onSelect,
   onCompareToggle,
   onOpenMemo,
@@ -48,7 +44,7 @@ export default function ExpansionCandidateCard({
   const gateVerdict: "pass" | "fail" | "unknown" =
     gateOverall === true ? "pass" : gateOverall === false ? "fail" : "unknown";
   const allGatesPass = gateVerdict === "pass";
-  const showLeadTag = isLead && allGatesPass && !suppressLeadChip;
+  const showLeadTag = isLead && allGatesPass;
   const showExploratoryTag = isLead && !allGatesPass;
   const positives = (candidate.top_positives_json || []).slice(0, 1);
   const risks = (candidate.top_risks_json || []).slice(0, 1);
