@@ -1084,6 +1084,12 @@
     "risksToWatch": "Risks to watch",
     "howItCompares": "How it compares",
     "bottomLine": "Bottom line",
+    "heroReadFullMemo": "Read full memo",
+    "heroShowOnMap": "Show on map",
+    "heroGenerateMemo": "Generate investment memo",
+    "heroFallbackHeadline": "Top candidate in {{district}}: score {{score}}{{rentClause}}",
+    "heroFallbackRentClause": ", rent {{rent}}/yr",
+    "heroReadMore": "Read more",
     "advisorySection": {
       "propertyOverview": { "title": "Property Overview" },
       "financialFraming": { "title": "Financial Framing" },
