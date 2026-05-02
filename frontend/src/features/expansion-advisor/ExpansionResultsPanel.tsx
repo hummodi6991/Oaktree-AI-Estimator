@@ -11,7 +11,6 @@ type Props = {
   compareIds: string[];
   leadCandidateId?: string | null;
   localSortActive?: boolean;
-  heroPresent?: boolean;
   onSelectCandidate: (candidate: ExpansionCandidate) => void;
   onToggleCompare: (candidateId: string) => void;
   onOpenMemo?: (candidateId: string, options?: { section?: MemoDrawerSection }) => void;
@@ -35,7 +34,6 @@ export default function ExpansionResultsPanel(props: Props) {
       isLead={item.id === props.leadCandidateId}
       localSortActive={props.localSortActive}
       tier={tier}
-      suppressLeadChip={Boolean(props.heroPresent) && item.id === props.leadCandidateId}
       onSelect={() => props.onSelectCandidate(item)}
       onCompareToggle={() => props.onToggleCompare(item.id)}
       onOpenMemo={props.onOpenMemo ? (options) => props.onOpenMemo!(item.id, options) : undefined}
