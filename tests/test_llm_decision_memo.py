@@ -2011,6 +2011,61 @@ class TestHeadlineRetryConsiderPrefixBanned:
         assert mock_get_client.return_value.chat.completions.create.call_count == 2
 
 
+class TestHeadlineLocalRewriteNullsBody:
+    """Bug-fix invariant — when the local-rewrite safety net fires
+    (both LLM attempts violate the format rules), the body fields
+    must be cleared so they cannot contradict the rewritten headline."""
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_local_rewrite_empties_body_fields(self, mock_get_client, monkeypatch):
+        _enable_structured_memo(monkeypatch)
+        bad_first = _memo_with_headline("Decline — market growth signal fails")
+        bad_second = _memo_with_headline("Decline — market growth gate did not pass")
+        mock_get_client.return_value = _two_response_client(bad_first, bad_second)
+
+        ctx = build_memo_context(
+            candidate=_RANK1_ADVISORY_FAILURE_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        assert memo["headline_recommendation"].lower().startswith("recommend")
+        # Body fields must be cleared so they cannot contradict the
+        # rewritten headline.
+        assert memo["ranking_explanation"] == ""
+        assert memo["key_evidence"] == []
+        assert memo["risks"] == []
+        assert memo["comparison"] == ""
+        assert memo["bottom_line"] == ""
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_happy_path_retry_keeps_body(self, mock_get_client, monkeypatch):
+        """Control: when the retry succeeds, the body is preserved
+        from the retry response (not nulled). Null-out only happens
+        on the local-rewrite path."""
+        _enable_structured_memo(monkeypatch)
+        bad_first = _memo_with_headline("consider due to moderate signals")
+        good_second = _memo_with_headline(
+            "Recommend — strong economics in a stable district."
+        )
+        mock_get_client.return_value = _two_response_client(bad_first, good_second)
+
+        ctx = build_memo_context(
+            candidate=_RANK1_ALL_PASS_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        assert memo["headline_recommendation"].lower().startswith("recommend")
+        # Retry succeeded → body from retry is preserved.
+        assert memo["ranking_explanation"] != ""
+        assert memo["key_evidence"]
+
+
 class TestHeadlineNoRetryWhenOverallPassFalseDecline:
     """A genuine "Decline" headline on an overall_pass=False candidate
     passes the validity check on the first try; no retry occurs."""

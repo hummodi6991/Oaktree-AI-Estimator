@@ -2213,6 +2213,17 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
                 headline_reason,
             )
             parsed["headline_recommendation"] = rewritten
+            # The body fields were generated under the failing rule-violation
+            # state and would contradict the rewritten headline. Empty them so
+            # the frontend renders verdict + headline only on the safety-net
+            # path. This is intentional graceful degradation, not data loss —
+            # the next view-time regeneration (after the v6 prompt-version bump
+            # invalidates the cache) will repopulate everything.
+            parsed["ranking_explanation"] = ""
+            parsed["key_evidence"] = []
+            parsed["risks"] = []
+            parsed["comparison"] = ""
+            parsed["bottom_line"] = ""
 
     cost = _record_cost(input_tokens, output_tokens)
 
