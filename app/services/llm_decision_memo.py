@@ -18,6 +18,15 @@ from typing import Any, Literal
 
 from app.core.config import settings
 
+# Hard-fail gate keys. Must stay in sync with
+# ``app.services.expansion_advisor.HARD_FAIL_GATES`` (the canonical source of
+# truth). Redefined here instead of imported to keep this module's import
+# graph independent of expansion_advisor's heavy SQLAlchemy/PostGIS surface.
+HARD_FAIL_GATE_KEYS: frozenset[str] = frozenset({
+    "zoning_fit_pass",
+    "area_fit_pass",
+})
+
 logger = logging.getLogger(__name__)
 
 # ── Model & cost configuration ──────────────────────────────────────
@@ -29,7 +38,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v5-sectioned-2026-04"
+MEMO_PROMPT_VERSION = "v6-headline-rules-2026-05"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -1546,7 +1555,77 @@ is a meaningful capital commitment, and without peer-listing context the
 operator should rely on demand and frontage signals to underwrite the deal."
 Notice: acknowledges the gap, pivots to other signals, no invented framing.
 
-Now write the memo for the candidate JSON the user provides. Match the voice in the examples. Be specific to this site, not generic."""
+Now write the memo for the candidate JSON the user provides. Match the voice in the examples. Be specific to this site, not generic.
+
+══════════════════════════════════════════════════════════════════════
+CRITICAL OUTPUT FORMAT RULES — these are the most important rules in
+this prompt. Other instructions are subordinate to these.
+
+1. The `headline_recommendation` field MUST begin with exactly one of:
+   - "Recommend"
+   - "Recommend with reservations"
+   - "Decline"
+
+   Never begin with: "Consider", "Caution", "Strong", "Solid",
+   "Decent", or any descriptive adjective. Even when the candidate
+   has weak signals or mixed evidence, you MUST choose one of the
+   three allowed prefixes.
+
+2. Map the deterministic_verdict to the headline prefix as follows:
+   - deterministic_verdict == "go"
+       → "Recommend" (default)
+       → "Recommend with reservations" only if blocking gates failed
+   - deterministic_verdict == "consider"
+       → "Recommend with reservations" (default)
+       → "Decline" only if blocking gates failed AND the case for
+         the candidate is materially weaker than rank-2
+   - deterministic_verdict == "caution"
+       → "Decline" (default)
+       → "Recommend with reservations" only if there is a strong,
+         specific positive case that outweighs the deterministic
+         caution
+
+3. If `final_rank == 1` AND `final_score >= 70` AND no blocking gates
+   failed: the headline MUST be "Recommend". This is non-negotiable.
+   Do not invoke soft scores (parking, frontage, visibility) as
+   reasons to Decline a rank-1 candidate that meets these criteria.
+   Soft component scores below 50 are inputs to the deterministic
+   ranking, not standalone disqualifiers.
+
+4. If `overall_pass == false`: the headline MUST be "Decline".
+
+5. Never confabulate gate failures. The list of failed gates is
+   provided in the `gates.failed` field. If `gates.failed` is empty,
+   do not write "decline due to failed [anything]". A low soft
+   component score is not a gate failure.
+
+EXAMPLES of correct headlines:
+
+  rank=1, score=80.5, gates.failed=[]:
+    "Recommend — strong economics in a stable district with
+     manageable competition."
+
+  rank=1, score=80.5, gates.failed=[radiance_growth_pass] (advisory):
+    "Recommend — strong economics; market growth signal is weak but
+     does not block the case."
+
+  rank=2, score=72.0, gates.failed=[economics_pass] (blocking):
+    "Decline — economics gate fails; the rent burden exceeds the
+     viability threshold for this brand."
+
+  rank=4, score=65.0, gates.failed=[]:
+    "Recommend with reservations — moderate economics with high
+     competitor density; viable but not the strongest pick."
+
+EXAMPLES of incorrect headlines that violate these rules:
+
+  WRONG: "consider due to strong demand signals despite high competition"
+         (begins with "consider" — banned)
+  WRONG: "decline due to failed parking access"
+         (when gates.failed=[] — confabulated gate failure)
+  WRONG: "Decline — market growth signal fails"
+         (when overall_pass=true and final_rank=1 with score>=70)
+══════════════════════════════════════════════════════════════════════"""
 
 
 _MAX_USER_PAYLOAD_CHARS = 12000
@@ -1638,10 +1717,21 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
     failed_entries = [e for e in (buckets.get("failed") or []) if e.get("name")]
     unknown_entries = [e for e in (buckets.get("unknown") or []) if e.get("name")]
 
-    if failed_entries:
+    # Split failures into blocking vs advisory. Only blocking failures
+    # justify a "Decline" instruction — advisory-only failures (e.g.,
+    # ``radiance_growth_pass``) leave ``overall_pass`` at True and must
+    # NOT push the LLM toward a Decline headline.
+    blocking_failed = [
+        e for e in failed_entries if str(e.get("name")) in HARD_FAIL_GATE_KEYS
+    ]
+    advisory_failed = [
+        e for e in failed_entries if str(e.get("name")) not in HARD_FAIL_GATE_KEYS
+    ]
+
+    if blocking_failed:
         failure_list = "; ".join(
             f"{e['name']}: {e.get('explanation','')}".rstrip(": ")
-            for e in failed_entries
+            for e in blocking_failed
         )
         addenda.append(
             "GATE FAILURE: This candidate fails on "
@@ -1650,6 +1740,21 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
             "direction MUST be consistent with overall_pass=False and "
             "deterministic_verdict. You may use 'fails on...' or 'does not "
             "meet...' for the failed gates — never for unknowns."
+        )
+
+    if advisory_failed:
+        advisory_list = "; ".join(
+            f"{e['name']}: {e.get('explanation','')}".rstrip(": ")
+            for e in advisory_failed
+        )
+        addenda.append(
+            "ADVISORY GATE NOTE: This candidate has advisory-only gate "
+            "failures on " + advisory_list + ". These are informational "
+            "and do NOT flip overall_pass or deterministic_verdict. "
+            "Reflect them as risks if material to the investment thesis, "
+            "but the headline_recommendation must still follow the rules "
+            "above (rank-1 with score >= 70 must remain 'Recommend'; "
+            "overall_pass=True candidates must not be 'Decline')."
         )
 
     if unknown_entries:
@@ -1681,6 +1786,133 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
 
 
 # ── Generation with graceful fallback ───────────────────────────────
+
+
+# Allowed prefixes for ``headline_recommendation``. Order matters: the
+# more specific "Recommend with reservations" must precede "Recommend"
+# so prefix-detection logic distinguishes the two correctly.
+_ALLOWED_HEADLINE_PREFIXES: tuple[str, ...] = (
+    "Recommend with reservations",
+    "Recommend",
+    "Decline",
+)
+
+
+def _headline_validity_reason(
+    headline: str | None,
+    *,
+    final_rank: int | None,
+    final_score: float | None,
+    overall_pass: bool | None,
+    blocking_failed: list,
+) -> str | None:
+    """Return None when ``headline`` satisfies the format rules; otherwise
+    a short reason string suitable for logging and retry-prompt context.
+
+    Catches the three failure modes observed in production:
+      1. Headlines that don't begin with an allowed prefix (e.g.,
+         "consider due to ...").
+      2. Rank-1 high-score Decline headlines with no blocking failures.
+      3. Confabulated gate failures (Decline citing "failed [X]" when
+         ``gates.failed`` is empty).
+    """
+    if not isinstance(headline, str) or not headline.strip():
+        return "headline missing or empty"
+
+    stripped = headline.strip()
+    lowered = stripped.lower()
+
+    if not any(
+        lowered.startswith(prefix.lower()) for prefix in _ALLOWED_HEADLINE_PREFIXES
+    ):
+        return f"headline does not start with an allowed prefix: {stripped[:60]!r}"
+
+    starts_with_decline = lowered.startswith("decline")
+    starts_with_recommend_with_reservations = lowered.startswith(
+        "recommend with reservations"
+    )
+    starts_with_recommend_only = (
+        lowered.startswith("recommend") and not starts_with_recommend_with_reservations
+    )
+
+    # Rank-1 high-score guarantee.
+    if (
+        final_rank == 1
+        and isinstance(final_score, (int, float))
+        and final_score >= 70
+        and not blocking_failed
+        and starts_with_decline
+    ):
+        return (
+            f"rank-1 with score={float(final_score):.1f} and no blocking "
+            f"failures must not have a Decline headline"
+        )
+
+    # overall_pass=False guarantee.
+    if overall_pass is False and (
+        starts_with_recommend_only or starts_with_recommend_with_reservations
+    ):
+        return (
+            "overall_pass=False candidate must have a Decline headline, "
+            "not Recommend"
+        )
+
+    # Confabulation guard: a Decline headline citing failed gates when
+    # no blocking gate actually failed is a fabrication.
+    if starts_with_decline and not blocking_failed:
+        if "failed " in lowered or "fails on" in lowered:
+            return "headline cites failed gates but no blocking gates failed"
+
+    return None
+
+
+def _rewrite_headline_locally(
+    original: dict[str, Any],
+    *,
+    final_rank: int | None,
+    final_score: float | None,
+    overall_pass: bool | None,
+    blocking_failed: list,
+) -> str:
+    """Safety-net rewrite when both LLM attempts fail validation.
+
+    Produces an awkward but format-compliant headline so a
+    contradicting recommendation never reaches the user.
+    """
+    body = ""
+    raw_explanation = original.get("ranking_explanation")
+    if isinstance(raw_explanation, str):
+        body = raw_explanation.strip()[:80].rstrip(" ,.;:—-")
+
+    if (
+        final_rank == 1
+        and isinstance(final_score, (int, float))
+        and final_score >= 70
+        and not blocking_failed
+    ):
+        return f"Recommend — {body}" if body else "Recommend"
+    if overall_pass is False:
+        return f"Decline — {body}" if body else "Decline"
+    # Fallback: strip any leading banned word and prepend the soft-yes prefix.
+    raw_headline = original.get("headline_recommendation")
+    tail = body
+    if isinstance(raw_headline, str) and raw_headline.strip():
+        cleaned = raw_headline.strip()
+        # Prefer dropping a connector phrase (e.g., "consider due to ...");
+        # otherwise drop just the leading banned word so the rest reads.
+        connector_split = None
+        for connector in (" due to ", " — ", " - ", ": "):
+            if connector in cleaned:
+                connector_split = cleaned.split(connector, 1)[1]
+                break
+        if connector_split is not None:
+            cleaned = connector_split
+        else:
+            parts = cleaned.split(" ", 1)
+            if len(parts) == 2:
+                cleaned = parts[1]
+        tail = cleaned[:80].rstrip(" ,.;:—-") or body
+    return f"Recommend with reservations — {tail}" if tail else "Recommend with reservations"
 
 
 _STRUCTURED_REQUIRED_KEYS: tuple[str, ...] = (
@@ -1731,11 +1963,102 @@ def _advisory_section_invalid_reason(parsed: dict[str, Any]) -> str | None:
     return None
 
 
+def _parse_and_validate_memo_shape(
+    response: Any, candidate_id: str
+) -> dict | None:
+    """Pull the JSON content out of an OpenAI chat-completion response and
+    enforce the structural / required-key checks. Returns the parsed dict
+    on success, or ``None`` (with a warning logged) on any shape failure.
+    """
+    try:
+        content = (response.choices[0].message.content or "").strip()
+    except Exception as exc:
+        logger.warning(
+            "Structured memo response malformed for %s: %s",
+            candidate_id, exc,
+        )
+        return None
+
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError) as exc:
+        # TypeError guards against a client returning a non-string for
+        # ``content`` (real OpenAI always returns str; defensive only).
+        logger.warning(
+            "Structured memo JSON parse failed for %s: %s | raw=%s",
+            candidate_id, exc, str(content)[:500],
+        )
+        return None
+
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "Structured memo returned non-object JSON for %s",
+            candidate_id,
+        )
+        return None
+
+    missing = [k for k in _STRUCTURED_REQUIRED_KEYS if k not in parsed]
+    if missing:
+        logger.warning(
+            "Structured memo missing keys for %s: %s",
+            candidate_id, missing,
+        )
+        return None
+
+    if not isinstance(parsed.get("key_evidence"), list) or not parsed["key_evidence"]:
+        logger.warning(
+            "Structured memo key_evidence invalid/empty for %s",
+            candidate_id,
+        )
+        return None
+
+    if not isinstance(parsed.get("risks"), list):
+        logger.warning(
+            "Structured memo risks not a list for %s",
+            candidate_id,
+        )
+        return None
+
+    advisory_invalid = _advisory_section_invalid_reason(parsed)
+    if advisory_invalid is not None:
+        logger.warning(
+            "Structured memo advisory section invalid for %s: %s",
+            candidate_id, advisory_invalid,
+        )
+        return None
+
+    return parsed
+
+
+def _blocking_failed_from_buckets(buckets: dict | None) -> list[dict]:
+    """Return the subset of ``buckets["failed"]`` whose gate name is in
+    HARD_FAIL_GATE_KEYS — i.e., failures that flipped overall_pass to False.
+    Mirrors the same split used in render_structured_memo_prompt so the
+    retry layer's view of "blocking" stays consistent with what the LLM
+    saw in the prompt addendum.
+    """
+    if not isinstance(buckets, dict):
+        return []
+    failed = buckets.get("failed") or []
+    return [
+        e for e in failed
+        if isinstance(e, dict) and str(e.get("name")) in HARD_FAIL_GATE_KEYS
+    ]
+
+
 def generate_structured_memo(ctx: MemoContext) -> dict | None:
     """Call the LLM for a structured memo, or return None on any failure.
 
     Never raises — logs a warning and returns None so the caller can fall
     back to the legacy ``generate_decision_memo`` path.
+
+    On a successful shape-validated response, run an additional headline-
+    validity check. If the headline violates the format / consistency
+    rules (banned prefix, rank-1 high-score Decline, overall_pass=False
+    Recommend, or confabulated gate failure), retry the call once with a
+    corrective preamble. If the retry also fails, log an error and rewrite
+    the headline locally so a contradicting recommendation never reaches
+    the user.
 
     Returns the parsed JSON dict on success. Token usage is recorded against
     the same ``_daily_cost_tracker`` as the legacy path so the $/day ceiling
@@ -1781,66 +2104,127 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
         )
         return None
 
-    try:
-        content = (response.choices[0].message.content or "").strip()
-    except Exception as exc:
-        logger.warning(
-            "Structured memo response malformed for %s: %s",
-            ctx.candidate_id, exc,
-        )
+    parsed = _parse_and_validate_memo_shape(response, ctx.candidate_id)
+    if parsed is None:
         return None
 
-    try:
-        parsed = json.loads(content)
-    except (json.JSONDecodeError, TypeError) as exc:
-        # TypeError guards against a client returning a non-string for
-        # ``content`` (real OpenAI always returns str; defensive only).
-        logger.warning(
-            "Structured memo JSON parse failed for %s: %s | raw=%s",
-            ctx.candidate_id, exc, str(content)[:500],
-        )
-        return None
+    blocking_failed = _blocking_failed_from_buckets(ctx.gate_buckets)
 
-    if not isinstance(parsed, dict):
-        logger.warning(
-            "Structured memo returned non-object JSON for %s",
-            ctx.candidate_id,
-        )
-        return None
-
-    missing = [k for k in _STRUCTURED_REQUIRED_KEYS if k not in parsed]
-    if missing:
-        logger.warning(
-            "Structured memo missing keys for %s: %s",
-            ctx.candidate_id, missing,
-        )
-        return None
-
-    if not isinstance(parsed.get("key_evidence"), list) or not parsed["key_evidence"]:
-        logger.warning(
-            "Structured memo key_evidence invalid/empty for %s",
-            ctx.candidate_id,
-        )
-        return None
-
-    if not isinstance(parsed.get("risks"), list):
-        logger.warning(
-            "Structured memo risks not a list for %s",
-            ctx.candidate_id,
-        )
-        return None
-
-    advisory_invalid = _advisory_section_invalid_reason(parsed)
-    if advisory_invalid is not None:
-        logger.warning(
-            "Structured memo advisory section invalid for %s: %s",
-            ctx.candidate_id, advisory_invalid,
-        )
-        return None
+    headline_reason = _headline_validity_reason(
+        parsed.get("headline_recommendation"),
+        final_rank=ctx.final_rank,
+        final_score=ctx.final_score,
+        overall_pass=ctx.overall_pass,
+        blocking_failed=blocking_failed,
+    )
 
     usage = getattr(response, "usage", None)
     input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
     output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+
+    if headline_reason is not None:
+        logger.warning(
+            "Structured memo headline rejected for %s: %s | headline=%r",
+            ctx.candidate_id,
+            headline_reason,
+            parsed.get("headline_recommendation"),
+        )
+        retry_messages = [
+            messages[0],
+            {
+                "role": "user",
+                "content": (
+                    "PREVIOUS RESPONSE WAS REJECTED. Reason: "
+                    f"{headline_reason}.\n\n"
+                    "The headline_recommendation field must follow the format "
+                    "rules exactly. Do not begin with \"Consider\" or any "
+                    "other word outside the three allowed prefixes "
+                    "(\"Recommend\", \"Recommend with reservations\", "
+                    "\"Decline\"). Do not cite gate failures unless they "
+                    "appear in gates.failed. Re-emit the full structured "
+                    "memo with a corrected headline."
+                ),
+            },
+            messages[1],
+        ]
+
+        try:
+            retry_response = client.chat.completions.create(
+                model=settings.EXPANSION_MEMO_MODEL,
+                messages=retry_messages,
+                temperature=settings.EXPANSION_MEMO_TEMPERATURE,
+                max_tokens=settings.EXPANSION_MEMO_MAX_TOKENS,
+                response_format={"type": "json_object"},
+            )
+        except Exception as exc:
+            logger.warning(
+                "Structured memo retry call failed for %s: %s",
+                ctx.candidate_id, exc,
+            )
+            retry_response = None
+
+        if retry_response is not None:
+            retry_parsed = _parse_and_validate_memo_shape(
+                retry_response, ctx.candidate_id
+            )
+            if retry_parsed is not None:
+                retry_reason = _headline_validity_reason(
+                    retry_parsed.get("headline_recommendation"),
+                    final_rank=ctx.final_rank,
+                    final_score=ctx.final_score,
+                    overall_pass=ctx.overall_pass,
+                    blocking_failed=blocking_failed,
+                )
+                retry_usage = getattr(retry_response, "usage", None)
+                input_tokens += int(
+                    getattr(retry_usage, "prompt_tokens", 0) or 0
+                )
+                output_tokens += int(
+                    getattr(retry_usage, "completion_tokens", 0) or 0
+                )
+                if retry_reason is None:
+                    parsed = retry_parsed
+                    headline_reason = None
+                else:
+                    logger.error(
+                        "Structured memo retry headline still invalid for "
+                        "%s: %s | headline=%r — applying local rewrite",
+                        ctx.candidate_id,
+                        retry_reason,
+                        retry_parsed.get("headline_recommendation"),
+                    )
+                    # Use the retry's body but rewrite the headline locally.
+                    parsed = retry_parsed
+
+        if headline_reason is not None:
+            rewritten = _rewrite_headline_locally(
+                parsed,
+                final_rank=ctx.final_rank,
+                final_score=ctx.final_score,
+                overall_pass=ctx.overall_pass,
+                blocking_failed=blocking_failed,
+            )
+            logger.error(
+                "Structured memo headline locally rewritten for %s: "
+                "old=%r new=%r reason=%s",
+                ctx.candidate_id,
+                parsed.get("headline_recommendation"),
+                rewritten,
+                headline_reason,
+            )
+            parsed["headline_recommendation"] = rewritten
+            # The body fields were generated under the failing rule-violation
+            # state and would contradict the rewritten headline. Empty them so
+            # the frontend renders verdict + headline only on the safety-net
+            # path. This is intentional graceful degradation, not data loss —
+            # the next view-time regeneration (after the v6 prompt-version bump
+            # invalidates the cache) will repopulate everything.
+            parsed["ranking_explanation"] = ""
+            parsed["key_evidence"] = []
+            parsed["risks"] = []
+            parsed["comparison"] = ""
+            parsed["bottom_line"] = ""
+
     cost = _record_cost(input_tokens, output_tokens)
 
     logger.info(

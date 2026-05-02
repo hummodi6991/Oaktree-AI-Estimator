@@ -65,6 +65,24 @@ _GATE_HUMAN_LABELS: dict[str, str] = {
 }
 
 
+# Hard-fail gates: only failures of these gates flip ``overall_pass`` to
+# False. Other gate failures are advisory and must not be used by downstream
+# consumers (e.g., the LLM decision-memo generator) to instruct a "Decline"
+# headline. Kept module-level so other modules can import a single source of
+# truth instead of redefining the set.
+HARD_FAIL_GATES: frozenset[str] = frozenset({
+    "zoning_fit_pass",
+    "area_fit_pass",
+})
+
+# Advisory-only gates: presence/absence of signal must NOT collapse the
+# overall verdict to indeterminate (None). Surfaced in gate_status for the
+# UI but excluded from the unknown count used by ``overall_pass``.
+ADVISORY_ONLY_GATES: frozenset[str] = frozenset({
+    "radiance_growth_pass",
+})
+
+
 def _humanize_gate_list(values: list[Any] | None) -> list[str]:
     labels: list[str] = []
     seen: set[str] = set()
@@ -2620,18 +2638,11 @@ def _candidate_gate_status(
     passed = [k for k, v in gate_states.items() if v is True]
     unknown = [k for k, v in gate_states.items() if v is None]
 
-    # Only these should hard-fail the site.
-    hard_fail_gates = {
-        "zoning_fit_pass",
-        "area_fit_pass",
-    }
-
-    # Advisory-only gates: presence/absence of signal must NOT collapse the
-    # overall verdict to indeterminate (None). They surface in gate_status
-    # for the UI but are excluded from the unknown count used by overall_pass.
-    advisory_only_gates = {
-        "radiance_growth_pass",
-    }
+    # Source of truth for hard-fail / advisory-only gates lives at module
+    # scope (HARD_FAIL_GATES / ADVISORY_ONLY_GATES) so other modules can
+    # import the same set instead of redefining it locally.
+    hard_fail_gates = HARD_FAIL_GATES
+    advisory_only_gates = ADVISORY_ONLY_GATES
     unknown_for_overall = [g for g in unknown if g not in advisory_only_gates]
 
     # Surface advisory failures separately so the frontend can render
