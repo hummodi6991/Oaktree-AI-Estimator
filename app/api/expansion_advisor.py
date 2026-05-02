@@ -478,14 +478,10 @@ class SavedSearchPatchRequest(BaseModel):
 @router.get("/districts", response_model=DistrictOptionsListResponse)
 def list_districts(db: Session = Depends(get_db)) -> dict[str, Any]:
     """Return deduplicated, sorted list of Riyadh districts from external_feature polygons."""
-    # Riyadh metropolitan bounding box (generous to include suburbs).
-    # Used to spatially filter out non-Riyadh rows that leaked in via
-    # the global OSM ingest.
     rows = db.execute(
         text(
             """
             SELECT
-                ef.layer_name,
                 COALESCE(
                     NULLIF(ef.properties->>'district', ''),
                     NULLIF(ef.properties->>'district_raw', ''),
@@ -493,29 +489,21 @@ def list_districts(db: Session = Depends(get_db)) -> dict[str, Any]:
                 ) AS label_ar,
                 NULLIF(ef.properties->>'district_en', '') AS label_en
             FROM external_feature ef
-            WHERE ef.layer_name IN ('aqar_district_hulls', 'osm_districts')
+            WHERE ef.layer_name = 'aqar_district_hulls'
               AND COALESCE(
                     NULLIF(ef.properties->>'district', ''),
                     NULLIF(ef.properties->>'district_raw', ''),
                     NULLIF(ef.properties->>'name', '')
               ) IS NOT NULL
-              AND ST_Intersects(
-                    ST_GeomFromGeoJSON(ef.geometry::text),
-                    ST_MakeEnvelope(46.0, 24.2, 47.5, 25.2, 4326)
-              )
             """
         )
     ).fetchall()
 
-    # Build a map keyed by normalized district value.
-    # Prefer aqar_district_hulls labels when both sources exist.
-    LAYER_PRIORITY = {"aqar_district_hulls": 0, "osm_districts": 1}
     district_map: dict[str, dict[str, Any]] = {}
 
     for row in rows:
-        layer_name = row[0]
-        label_ar = (row[1] or "").strip()
-        label_en = (row[2] or "").strip() or None
+        label_ar = (row[0] or "").strip()
+        label_en = (row[1] or "").strip() or None
         if not label_ar:
             continue
 
@@ -531,27 +519,14 @@ def list_districts(db: Session = Depends(get_db)) -> dict[str, Any]:
                 "label_ar": label_ar,
                 "label_en": label_en,
                 "aliases": [],
-                "_priority": LAYER_PRIORITY.get(layer_name, 99),
             }
         else:
-            current_priority = LAYER_PRIORITY.get(layer_name, 99)
-            # Track aliases
             if label_ar != existing["label_ar"] and label_ar not in existing["aliases"]:
                 existing["aliases"].append(label_ar)
             if label_en and not existing["label_en"]:
                 existing["label_en"] = label_en
-            # Prefer higher-priority (lower number) layer labels
-            if current_priority < existing["_priority"]:
-                if label_ar != existing["label_ar"]:
-                    existing["aliases"].append(existing["label_ar"])
-                existing["label"] = label_ar
-                existing["label_ar"] = label_ar
-                existing["_priority"] = current_priority
 
-    # Sort by Arabic label and strip internal _priority field
     items = sorted(district_map.values(), key=lambda d: d["label_ar"])
-    for item in items:
-        item.pop("_priority", None)
 
     return {"items": items}
 

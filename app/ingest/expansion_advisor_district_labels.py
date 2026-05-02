@@ -1,8 +1,8 @@
 """Expansion Advisor — Pre-materialize district labels on ArcGIS parcels.
 
 Runs a single bulk UPDATE that resolves each parcel's district from
-external_feature polygons (osm_districts, aqar_district_hulls, rydpolygons)
-using the same priority order as the expansion advisor candidate query.
+external_feature polygons (aqar_district_hulls, rydpolygons) using the
+same priority order as the expansion advisor candidate query.
 
 This eliminates the expensive per-row correlated ST_Contains subquery at
 search time.
@@ -51,7 +51,7 @@ def populate_district_labels(db, batch_size: int = _DEFAULT_BATCH_SIZE) -> dict:
 
     Uses LATERAL join against external_feature district polygons with the
     same layer priority as the expansion advisor candidate query:
-    osm_districts (1) > aqar_district_hulls (2) > rydpolygons (3).
+    aqar_district_hulls (1) > rydpolygons (2).
 
     Only updates rows where district_label IS NULL, making this safe to
     re-run (idempotent on already-labeled parcels).
@@ -90,7 +90,7 @@ def populate_district_labels(db, batch_size: int = _DEFAULT_BATCH_SIZE) -> dict:
                         NULLIF(ef.properties->>'district_en', '')
                     ) AS district_name
                 FROM external_feature ef
-                WHERE ef.layer_name IN ('osm_districts', 'aqar_district_hulls', 'rydpolygons')
+                WHERE ef.layer_name IN ('aqar_district_hulls', 'rydpolygons')
                   AND ef.geometry IS NOT NULL
                   AND ef.geometry ? 'type'
                   AND ef.geometry ? 'coordinates'
@@ -100,8 +100,8 @@ def populate_district_labels(db, batch_size: int = _DEFAULT_BATCH_SIZE) -> dict:
                       ST_Centroid(b.geom)
                   )
                 ORDER BY CASE ef.layer_name
-                    WHEN 'osm_districts' THEN 1
-                    WHEN 'aqar_district_hulls' THEN 2
+                    WHEN 'aqar_district_hulls' THEN 1
+                    WHEN 'rydpolygons' THEN 2
                     ELSE 3
                 END
                 LIMIT 1

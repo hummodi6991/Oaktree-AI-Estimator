@@ -1182,7 +1182,7 @@ _DISTRICT_EXTERNAL_SQL = text(
             ) AS point_count,
             ST_SetSRID(ST_GeomFromGeoJSON(geometry::text), 4326) AS geom
         FROM external_feature
-        WHERE layer_name IN ('osm_districts', 'aqar_district_hulls')
+        WHERE layer_name = 'aqar_district_hulls'
           AND (
             (
               -- Add trigram operator for typo tolerance with LIKE fallback for short queries.

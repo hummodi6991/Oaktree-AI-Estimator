@@ -17,7 +17,7 @@ class DistrictResolution:
     city_norm: str
     district_raw: Optional[str]
     district_norm: Optional[str]
-    method: str  # provided | aqar_hull | osm_polygon | aqar_nn | none
+    method: str  # provided | aqar_hull | aqar_nn | none
     confidence: float
     distance_m: Optional[float] = None
     evidence_count: int = 0
@@ -37,7 +37,7 @@ def resolve_district(
     """
     Resolve district using polygon-first approach:
       1) provided district
-      2) ExternalFeature polygons (default prefer: aqar_district_hulls, then osm_districts)
+      2) ExternalFeature polygons (default prefer: aqar_district_hulls)
       3) Aqar/Kaggle nearest neighbor fallback
     Returns DistrictResolution with method + confidence + evidence.
     """
@@ -67,7 +67,7 @@ def resolve_district(
         except Exception:
             geom = None
 
-    layers = prefer_layers or ["aqar_district_hulls", "osm_districts"]
+    layers = prefer_layers or ["aqar_district_hulls"]
     if geom is not None:
         for layer in layers:
             try:
@@ -77,7 +77,7 @@ def resolve_district(
             if district_raw:
                 district_norm = norm_district(city_norm, district_raw) if city_norm else None
                 method = (
-                    "aqar_hull" if layer == "aqar_district_hulls" else "osm_polygon" if layer == "osm_districts" else "external_feature"
+                    "aqar_hull" if layer == "aqar_district_hulls" else "external_feature"
                 )
                 return DistrictResolution(
                     city_norm=city_norm,

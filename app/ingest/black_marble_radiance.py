@@ -132,7 +132,7 @@ def _load_district_polygons(db: Session) -> list[dict[str, Any]]:
                     4326
                 ) AS geom_4326
             FROM external_feature ef
-            WHERE ef.layer_name IN ('osm_districts', 'aqar_district_hulls')
+            WHERE ef.layer_name = 'aqar_district_hulls'
               AND ef.geometry IS NOT NULL
               AND jsonb_typeof(ef.geometry) = 'object'
               AND COALESCE(ef.properties->>'district_raw',
@@ -150,13 +150,7 @@ def _load_district_polygons(db: Session) -> list[dict[str, Any]]:
                 geom_4326,
                 ST_MakeEnvelope(:west, :south, :east, :north, 4326)
               )
-        ORDER BY
-            district_label,
-            CASE layer_name
-                WHEN 'osm_districts'       THEN 1
-                WHEN 'aqar_district_hulls' THEN 2
-                ELSE 3
-            END
+        ORDER BY district_label
         """
     )
 

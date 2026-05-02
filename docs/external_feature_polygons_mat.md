@@ -5,23 +5,27 @@ Materialized view of pre-parsed district polygons from `external_feature`.
 ## Source
 
 `external_feature` rows where:
-- `layer_name IN ('osm_districts', 'aqar_district_hulls')`
+- `layer_name = 'aqar_district_hulls'`
 - `geometry` is a valid GeoJSON Polygon or MultiPolygon
 - `district_raw` or `district` property is non-empty
 
-Geometry is stored as `geometry JSONB` (raw GeoJSON) in `external_feature` —
-the bare `geom` PostGIS column on that table is populated only on a small
-out-of-band subset of rows (~12 OSM polygons; zero Aqar hulls). The
-matview parses GeoJSON via `ST_SetSRID(ST_GeomFromGeoJSON(...), 4326)` once
-at refresh time, so consumers can join on a real `geometry` column without
-incurring per-request parse cost.
+Geometry is stored as `geometry JSONB` (raw GeoJSON) in `external_feature`.
+The matview parses GeoJSON via `ST_SetSRID(ST_GeomFromGeoJSON(...), 4326)`
+once at refresh time, so consumers can join on a real `geometry` column
+without incurring per-request parse cost.
+
+> **History**: prior to 2026-05-01 the matview also included
+> `osm_districts`. That layer was dropped because of non-Riyadh data
+> contamination — see `docs/osm_districts_removal.md`. `layer_name` is
+> retained on the matview for forward-compatibility if it is ever extended
+> to other layers.
 
 ## Columns
 
 | column | type | notes |
 |---|---|---|
 | `feature_id` | text | PK; references `external_feature.id` |
-| `layer_name` | text | `'osm_districts'` or `'aqar_district_hulls'` |
+| `layer_name` | text | always `'aqar_district_hulls'` (kept for forward-compat) |
 | `district_label` | text | `TRIM(COALESCE(district_raw, district))` |
 | `geom` | geometry(Geometry,4326) | parsed at refresh time |
 
@@ -31,8 +35,8 @@ incurring per-request parse cost.
   CONCURRENT refresh
 - `ix_external_feature_polygons_mat_geom` (GIST) — used by `ST_Contains` /
   `ST_Intersects` joins
-- `ix_external_feature_polygons_mat_layer_name` (btree) — for
-  OSM-first DISTINCT ON queries
+- `ix_external_feature_polygons_mat_layer_name` (btree) — kept for
+  forward-compatibility; currently degenerate (single value)
 
 ## Refresh
 

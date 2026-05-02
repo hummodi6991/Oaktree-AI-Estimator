@@ -310,10 +310,9 @@ _DISTRICT_LABEL_TILE_SQL = text(
         ST_Transform(
           ST_PointOnSurface(ST_SetSRID(ST_GeomFromGeoJSON(geometry::text), 4326)),
           3857
-        ) AS geom3857,
-        CASE WHEN layer_name = 'osm_districts' THEN 0 ELSE 1 END AS src_rank
+        ) AS geom3857
       FROM public.external_feature
-      WHERE layer_name IN ('osm_districts', 'aqar_district_hulls')
+      WHERE layer_name = 'aqar_district_hulls'
         AND geometry IS NOT NULL
         AND id IS NOT NULL
     ),
@@ -322,16 +321,15 @@ _DISTRICT_LABEL_TILE_SQL = text(
         id,
         label,
         geom3857,
-        point_count,
-        src_rank
+        point_count
       FROM candidates
       WHERE geom3857 IS NOT NULL
-      ORDER BY lower(label), src_rank ASC, point_count DESC
+      ORDER BY lower(label), point_count DESC
     ),
     capped AS (
       SELECT id, label, geom3857
       FROM dedup
-      ORDER BY point_count DESC, src_rank ASC, label ASC
+      ORDER BY point_count DESC, label ASC
       LIMIT 300
     ),
     mvtgeom AS (

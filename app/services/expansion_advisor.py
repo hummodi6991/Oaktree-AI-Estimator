@@ -332,11 +332,12 @@ def _district_momentum_score(db: Session) -> dict[str, dict[str, Any]]:
     """Per-search, per-district 30-day activity momentum.
 
     Joins ``commercial_unit`` against ``external_feature_polygons_mat`` —
-    a materialized view of pre-parsed district polygons (osm_districts +
-    aqar_district_hulls), refreshed on demand via the "Refresh
-    external_feature_polygons_mat" GitHub Actions workflow. The matview
-    avoids re-parsing 158 GeoJSON polygons on every expansion_search
-    request and provides a GIST-indexed ``geom`` column for ``ST_Contains``.
+    a materialized view of pre-parsed district polygons scoped to
+    ``aqar_district_hulls`` (146 Riyadh districts), refreshed on demand
+    via the "Refresh external_feature_polygons_mat" GitHub Actions
+    workflow. The matview avoids re-parsing GeoJSON polygons on every
+    expansion_search request and provides a GIST-indexed ``geom`` column
+    for ``ST_Contains``.
 
     Returns::
 
@@ -360,11 +361,12 @@ def _district_momentum_score(db: Session) -> dict[str, dict[str, Any]]:
     construction; the helper applies uniformly to Tier 1, 2, and 3
     candidates.
 
-    Two layers are queried with a priority chain — ``osm_districts``
-    first, ``aqar_district_hulls`` second. DISTINCT ON (cu.aqar_id)
-    ORDER BY the layer priority ensures each listing resolves to
-    exactly one district at the highest priority polygon that contains
-    its point.
+    The matview is scoped to ``aqar_district_hulls`` only. The
+    ``osm_districts`` layer was dropped after investigation found it
+    contaminated with non-Riyadh data; see the cleanup note at
+    ``docs/osm_districts_removal.md``. DISTINCT ON (cu.aqar_id)
+    ORDER BY cu.aqar_id, dp.feature_id ensures each listing resolves
+    to exactly one district deterministically.
 
     A listing counts toward ``activity_30d`` if EITHER ``aqar_created_at``
     OR ``aqar_updated_at`` falls in the trailing window — null-safe,
@@ -398,11 +400,7 @@ def _district_momentum_score(db: Session) -> dict[str, dict[str, Any]]:
                       AND dp.district_label IS NOT NULL
                     ORDER BY
                       cu.aqar_id,
-                      CASE dp.layer_name
-                          WHEN 'osm_districts'       THEN 1
-                          WHEN 'aqar_district_hulls' THEN 2
-                          ELSE 3
-                      END
+                      dp.feature_id
                 ),
                 district_counts AS (
                     SELECT
@@ -621,10 +619,9 @@ def _build_district_lookup(db: Session) -> dict[str, dict[str, str]]:
                             NULLIF(ef.properties->>'district_raw', ''),
                             NULLIF(ef.properties->>'name', '')
                         ) AS label_ar,
-                        NULLIF(ef.properties->>'district_en', '') AS label_en,
-                        ef.layer_name
+                        NULLIF(ef.properties->>'district_en', '') AS label_en
                     FROM external_feature ef
-                    WHERE ef.layer_name IN ('aqar_district_hulls', 'osm_districts')
+                    WHERE ef.layer_name = 'aqar_district_hulls'
                       AND COALESCE(
                             NULLIF(ef.properties->>'district', ''),
                             NULLIF(ef.properties->>'district_raw', ''),
@@ -637,12 +634,10 @@ def _build_district_lookup(db: Session) -> dict[str, dict[str, str]]:
         logger.debug("_build_district_lookup query failed", exc_info=True)
         return {}
 
-    LAYER_PRIORITY = {"aqar_district_hulls": 0, "osm_districts": 1}
     lookup: dict[str, dict[str, str]] = {}
     for row in rows:
         label_ar = (row[0] or "").strip()
         label_en = (row[1] or "").strip() or None
-        layer = row[2]
         if not label_ar:
             continue
         nk = normalize_district_key(label_ar)
@@ -653,18 +648,9 @@ def _build_district_lookup(db: Session) -> dict[str, dict[str, str]]:
             lookup[nk] = {
                 "label_ar": label_ar,
                 "label_en": label_en,
-                "_priority": LAYER_PRIORITY.get(layer, 99),
             }
-        else:
-            cur_priority = LAYER_PRIORITY.get(layer, 99)
-            if label_en and not existing.get("label_en"):
-                existing["label_en"] = label_en
-            if cur_priority < existing.get("_priority", 99):
-                existing["label_ar"] = label_ar
-                existing["_priority"] = cur_priority
-    # Strip internal priority field
-    for entry in lookup.values():
-        entry.pop("_priority", None)
+        elif label_en and not existing.get("label_en"):
+            existing["label_en"] = label_en
     return lookup
 
 
