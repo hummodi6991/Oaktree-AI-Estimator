@@ -28,10 +28,12 @@ def _reset_parcel_tile_table() -> None:
 def disable_market_viability_floors(monkeypatch):
     """Opt-in fixture to disable the production market-viability hard floors.
 
-    Production sets EXPANSION_VIABILITY_POPULATION_HARD_FLOOR=20000 and
-    EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR=1, which would drop
+    Production sets EXPANSION_VIABILITY_POPULATION_HARD_FLOOR=20000,
+    EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR=1, and
+    EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M=75.0, which would drop
     regression-test cohorts that use population_reach values well below
-    20k for compactness. Tests that pre-date the new gates and don't
+    20k for compactness or that happen to share coordinates with OSM
+    construction polygons. Tests that pre-date the new gates and don't
     care about them should request this fixture; tests that explicitly
     cover the hard floors must NOT use this fixture.
 
@@ -58,6 +60,10 @@ def disable_market_viability_floors(monkeypatch):
         seen_ids.add(id(candidate))
         monkeypatch.setattr(candidate, "EXPANSION_VIABILITY_POPULATION_HARD_FLOOR", 0)
         monkeypatch.setattr(candidate, "EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", 0)
+        if hasattr(candidate, "EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M"):
+            monkeypatch.setattr(candidate, "EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M", 0)
     if id(config.settings) not in seen_ids:
         monkeypatch.setattr(config.settings, "EXPANSION_VIABILITY_POPULATION_HARD_FLOOR", 0)
         monkeypatch.setattr(config.settings, "EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", 0)
+        if hasattr(config.settings, "EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M"):
+            monkeypatch.setattr(config.settings, "EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M", 0)

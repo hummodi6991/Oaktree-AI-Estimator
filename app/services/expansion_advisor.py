@@ -65,6 +65,7 @@ _GATE_HUMAN_LABELS: dict[str, str] = {
     "radiance_growth_pass": "Market growth signal",
     "population_floor_pass": "Population reach floor",
     "commercial_floor_pass": "Commercial activity floor",
+    "construction_proximity_pass": "Construction proximity floor",
 }
 
 
@@ -88,6 +89,8 @@ if int(getattr(settings, "EXPANSION_VIABILITY_POPULATION_HARD_FLOOR", 0) or 0) >
     _OPTIONAL_HARD_GATES.add("population_floor_pass")
 if int(getattr(settings, "EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", 0) or 0) > 0:
     _OPTIONAL_HARD_GATES.add("commercial_floor_pass")
+if float(getattr(settings, "EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M", 0) or 0) > 0:
+    _OPTIONAL_HARD_GATES.add("construction_proximity_pass")
 HARD_FAIL_GATES: frozenset[str] = _HARD_FAIL_GATES_BASE | frozenset(_OPTIONAL_HARD_GATES)
 
 # Advisory-only gates: presence/absence of signal must NOT collapse the
@@ -4474,6 +4477,7 @@ def _apply_market_viability_pass(
     radiance_yoy_threshold: float | None = None,
     population_hard_floor: int | None = None,
     commercial_hard_floor: int | None = None,
+    construction_buffer_m: float | None = None,
 ) -> list[dict[str, Any]]:
     """Demote candidates that are confidently bad on the CEO-directive legs.
 
@@ -4526,10 +4530,16 @@ def _apply_market_viability_pass(
         if commercial_hard_floor is not None
         else int(getattr(settings, "EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", 0) or 0)
     )
+    cp_buffer_m = (
+        float(construction_buffer_m)
+        if construction_buffer_m is not None
+        else float(getattr(settings, "EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M", 0) or 0)
+    )
 
     survivors: list[dict[str, Any]] = []
     dropped_population = 0
     dropped_commercial = 0
+    dropped_construction = 0
     for c in candidates:
         fs = c.get("feature_snapshot_json") if isinstance(c, dict) else None
 
@@ -4566,12 +4576,30 @@ def _apply_market_viability_pass(
                 unique_brands = 0
             commercial_floor_pass = unique_brands >= bp_floor
 
+        # Construction-proximity floor: pass when disabled, when the
+        # construction_proximity block is missing/malformed (defensive —
+        # backfill cliff cohort, OSM table absent, bulk query failed), or
+        # when zero polygons were observed within the buffer. Otherwise
+        # fail (drop the candidate).
+        cp_block = fs.get("construction_proximity") if isinstance(fs, dict) else None
+        if cp_buffer_m <= 0:
+            construction_proximity_pass = True
+        elif not isinstance(cp_block, dict) or "polygon_count" not in cp_block:
+            construction_proximity_pass = True
+        else:
+            try:
+                cp_count = int(cp_block.get("polygon_count") or 0)
+            except (TypeError, ValueError):
+                cp_count = 0
+            construction_proximity_pass = cp_count <= 0
+
         gate_status = c.get("gate_status_json")
         if not isinstance(gate_status, dict):
             gate_status = {}
             c["gate_status_json"] = gate_status
         gate_status["population_floor_pass"] = population_floor_pass
         gate_status["commercial_floor_pass"] = commercial_floor_pass
+        gate_status["construction_proximity_pass"] = construction_proximity_pass
 
         if not population_floor_pass:
             dropped_population += 1
@@ -4579,18 +4607,23 @@ def _apply_market_viability_pass(
         if not commercial_floor_pass:
             dropped_commercial += 1
             continue
+        if not construction_proximity_pass:
+            dropped_construction += 1
+            continue
         survivors.append(c)
 
-    if dropped_population or dropped_commercial:
+    if dropped_population or dropped_commercial or dropped_construction:
         logger.info(
             "market_viability_hard_floors",
             extra={
                 "search_id": search_id,
                 "dropped_population": dropped_population,
                 "dropped_commercial": dropped_commercial,
+                "dropped_construction": dropped_construction,
                 "remaining": len(survivors),
                 "pop_floor": pop_floor,
                 "bp_floor": bp_floor,
+                "construction_buffer_m": cp_buffer_m,
             },
         )
 
@@ -7413,6 +7446,79 @@ def run_expansion_search(
                 len(_bulk_brand_presence), len(_shortlist_coords), search_id,
             )
 
+    # ───────────────────────────────────────────────────────────────────
+    # Construction proximity (CEO directive — exclude areas with heavy
+    # construction). For each shortlisted candidate count the number of
+    # ``planet_osm_polygon`` rows tagged ``landuse='construction'`` OR
+    # ``building='construction'`` within ``buffer_m`` meters of the
+    # candidate point, and capture the nearest distance. Result is
+    # written to ``feature_snapshot_json["construction_proximity"]`` and
+    # consumed by the gate in ``_apply_market_viability_pass``.
+    #
+    # SRID note: ``planet_osm_polygon.way`` is SRID 3857 (Web Mercator)
+    # — every geography cast must be preceded by ST_Transform(way, 4326).
+    # Mirrors the brand-presence Shape A pattern above.
+    # ───────────────────────────────────────────────────────────────────
+    _construction_buffer_m = float(
+        getattr(settings, "EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M", 0) or 0
+    )
+    _bulk_construction_proximity: dict[str, dict[str, Any]] = {}
+    if (
+        _construction_buffer_m > 0
+        and _shortlist_coords
+        and _cached_table_available(db, "planet_osm_polygon")
+    ):
+        _cp_union_parts: list[str] = []
+        _cp_params: dict = {"buffer_m": _construction_buffer_m}
+        for _cpi, (_cp_pid, (_cp_lon, _cp_lat)) in enumerate(_shortlist_coords.items()):
+            _cp_params[f"cp_pid_{_cpi}"] = str(_cp_pid)
+            _cp_params[f"cp_lon_{_cpi}"] = _cp_lon
+            _cp_params[f"cp_lat_{_cpi}"] = _cp_lat
+            _cp_union_parts.append(f"""
+                (SELECT :cp_pid_{_cpi} AS candidate_pid,
+                        COUNT(*) AS polygon_count,
+                        COALESCE(MIN(
+                            ST_Distance(
+                                ST_Transform(p.way, 4326)::geography,
+                                ST_SetSRID(ST_MakePoint(:cp_lon_{_cpi}, :cp_lat_{_cpi}), 4326)::geography
+                            )
+                        ), -1) AS nearest_distance_m
+                 FROM planet_osm_polygon p
+                 WHERE (p.landuse = 'construction' OR p.building = 'construction')
+                   AND ST_DWithin(
+                       ST_Transform(p.way, 4326)::geography,
+                       ST_SetSRID(ST_MakePoint(:cp_lon_{_cpi}, :cp_lat_{_cpi}), 4326)::geography,
+                       :buffer_m
+                   ))
+            """)
+
+        if _cp_union_parts:
+            _cp_sql = " UNION ALL ".join(_cp_union_parts)
+            try:
+                with db.begin_nested():
+                    _cp_rows = db.execute(text(_cp_sql), _cp_params).mappings().all()
+                for _r in _cp_rows:
+                    _key = str(_r["candidate_pid"])
+                    _nd_raw = _r.get("nearest_distance_m")
+                    try:
+                        _nd_val = float(_nd_raw) if _nd_raw is not None else -1.0
+                    except (TypeError, ValueError):
+                        _nd_val = -1.0
+                    _bulk_construction_proximity[_key] = {
+                        "polygon_count": int(_r.get("polygon_count") or 0),
+                        "nearest_distance_m": _nd_val if _nd_val >= 0 else None,
+                    }
+                logger.info(
+                    "expansion_search bulk construction_proximity: enriched=%d/%d search_id=%s",
+                    len(_bulk_construction_proximity), len(_shortlist_coords), search_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "expansion_search bulk construction_proximity query failed (continuing): %s",
+                    exc,
+                )
+                _bulk_construction_proximity = {}
+
     t_bulk_enrich_done = time.monotonic()
 
     for prepared_item in prepared[:shortlist_size]:
@@ -7620,6 +7726,29 @@ def run_expansion_search(
                 "unique_brands": 0,
                 "total_branches": 0,
                 "top_chains": [],
+            }
+        # Construction proximity (CEO directive — exclude areas with heavy
+        # construction). Every persisted candidate must have this key set,
+        # mirroring the brand_presence pattern above. When the bulk query
+        # was skipped (buffer disabled, table missing) the candidate falls
+        # through to the zero-block branch and the gate later passes it on
+        # the "field absent / zero polygons" semantics.
+        _cp_data = _bulk_construction_proximity.get(_pid_str)
+        if _cp_data is not None:
+            feature_snapshot_json["construction_proximity"] = {
+                "buffer_m": int(_construction_buffer_m),
+                "polygon_count": int(_cp_data["polygon_count"]),
+                "nearest_distance_m": (
+                    float(_cp_data["nearest_distance_m"])
+                    if _cp_data["nearest_distance_m"] is not None
+                    else None
+                ),
+            }
+        else:
+            feature_snapshot_json["construction_proximity"] = {
+                "buffer_m": int(_construction_buffer_m),
+                "polygon_count": 0,
+                "nearest_distance_m": None,
             }
         # Enrich feature snapshot with candidate_location metadata
         if row.get("source_tier") is not None:
