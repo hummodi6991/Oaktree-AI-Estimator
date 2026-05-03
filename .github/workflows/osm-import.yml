@@ -162,6 +162,12 @@ jobs:
           done < data/osm/tiles.list
 
       - name: Enable PostGIS + hstore + helper function (id extractor)
+        # Note: the previously-defined planet_osm_member_ids helper functions
+        # were removed because they conflicted with osm2pgsql v1.11's own
+        # internal function with the same name (parameter renaming is not
+        # supported by CREATE OR REPLACE FUNCTION). osm2pgsql creates its
+        # own version during the import; downstream queries that need the
+        # function should use the osm2pgsql-provided one.
         run: |
           set -eu
           PGMODE="sslmode=require"
@@ -173,12 +179,6 @@ jobs:
 
           # Ensure we can create in public (some managed PGs restrict this)
           psql "$PGURL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS ( SELECT 1 FROM information_schema.role_table_grants WHERE grantee = current_user ) THEN RAISE NOTICE 'Ensure CREATE on schema public for %', current_user; END IF; END \$\$;"
-
-          # Helper that extracts member ids from planet_osm_rels.members (jsonb)
-          psql "$PGURL" -v ON_ERROR_STOP=1 -c "CREATE OR REPLACE FUNCTION public.planet_osm_member_ids(members jsonb, t text) RETURNS bigint[] LANGUAGE sql IMMUTABLE PARALLEL SAFE AS \$\$ SELECT coalesce(array_agg( (e->>'ref')::bigint ORDER BY (e->>'ref')::bigint ), '{}') FROM jsonb_array_elements(members) e WHERE CASE upper(t) WHEN 'N' THEN e->>'type'='node' WHEN 'W' THEN e->>'type'='way' WHEN 'R' THEN e->>'type'='relation' ELSE false END; \$\$;"
-
-          # Wrapper so calls like 'N'::character work too
-          psql "$PGURL" -v ON_ERROR_STOP=1 -c "CREATE OR REPLACE FUNCTION public.planet_osm_member_ids(members jsonb, t character) RETURNS bigint[] LANGUAGE sql IMMUTABLE PARALLEL SAFE AS \$\$ SELECT public.planet_osm_member_ids(members, t::text); \$\$;"
 
       - name: Decide mode (create vs append)
         id: mode
