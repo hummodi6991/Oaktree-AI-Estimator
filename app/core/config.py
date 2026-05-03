@@ -182,6 +182,26 @@ class Settings:
     EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD: float = float(
         os.getenv("EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD", "0.0")
     )
+    # Hard floors (CEO directive — broader data + filter low-potential
+    # locations). Unlike the soft demotion legs above, these are absolute
+    # drops applied before the 3-of-3 conjunction. A value of 0 disables
+    # the corresponding gate entirely (no candidate is dropped on that
+    # leg). See ``_apply_market_viability_pass`` for evaluation order and
+    # the "missing field → pass" semantics that protect historical rows.
+    EXPANSION_VIABILITY_POPULATION_HARD_FLOOR: int = int(
+        os.getenv("EXPANSION_VIABILITY_POPULATION_HARD_FLOOR", "20000")
+    )
+    EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR: int = int(
+        os.getenv("EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", "1")
+    )
+    # Centroid clip radius (km) used by ``_query_commercial_unit_candidates``
+    # when a target district is named. 0 disables the clip entirely,
+    # letting the search reach all of Riyadh. When no target district is
+    # passed to the query, the clip is never applied regardless of this
+    # value.
+    EXPANSION_CENTROID_CLIP_KM: float = float(
+        os.getenv("EXPANSION_CENTROID_CLIP_KM", "10.0")
+    )
 
     # --- Expansion Advisor decision-memo pre-warm (Phase 3) ---
     # After POST /searches returns, schedule a background task that
