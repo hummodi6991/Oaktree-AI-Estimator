@@ -4472,6 +4472,8 @@ def _apply_market_viability_pass(
     pop_percentile_threshold: float | None = None,
     demotion_steps: int | None = None,
     radiance_yoy_threshold: float | None = None,
+    population_hard_floor: int | None = None,
+    commercial_hard_floor: int | None = None,
 ) -> list[dict[str, Any]]:
     """Demote candidates that are confidently bad on the CEO-directive legs.
 
@@ -4514,8 +4516,16 @@ def _apply_market_viability_pass(
     # are read once at function entry; 0 disables the corresponding gate
     # entirely. Missing fields → pass (defensive: protects the pre-2026-04-26
     # backfill cohort and any candidates whose pop_reach is unmeasured).
-    pop_floor = int(getattr(settings, "EXPANSION_VIABILITY_POPULATION_HARD_FLOOR", 0) or 0)
-    bp_floor = int(getattr(settings, "EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", 0) or 0)
+    pop_floor = (
+        int(population_hard_floor)
+        if population_hard_floor is not None
+        else int(getattr(settings, "EXPANSION_VIABILITY_POPULATION_HARD_FLOOR", 0) or 0)
+    )
+    bp_floor = (
+        int(commercial_hard_floor)
+        if commercial_hard_floor is not None
+        else int(getattr(settings, "EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", 0) or 0)
+    )
 
     survivors: list[dict[str, Any]] = []
     dropped_population = 0
