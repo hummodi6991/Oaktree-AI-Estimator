@@ -142,7 +142,7 @@ def _reset_expansion_caches():
 # ────────────────────────────────────────────────────────────────────────
 
 
-def test_realized_demand_is_per_candidate_not_broadcast(monkeypatch):
+def test_realized_demand_is_per_candidate_not_broadcast(monkeypatch, disable_market_viability_floors):
     """Three geographically distinct parcels must each surface their own
     realized-demand value.  Before the fix the shortlist loop read from
     outer-scope variables set by the first scoring pass, so every

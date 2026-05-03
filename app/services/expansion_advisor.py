@@ -14,6 +14,7 @@ from typing import Any, Mapping
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.connectors.blackmarble import QUALITY_FILTER_LABEL
 from app.core.config import settings
 from app.ml.name_normalization import norm_district
 from app.services.aqar_district_match import (
@@ -62,6 +63,8 @@ _GATE_HUMAN_LABELS: dict[str, str] = {
     "delivery_market_pass": "delivery market",
     "economics_pass": "economics",
     "radiance_growth_pass": "Market growth signal",
+    "population_floor_pass": "Population reach floor",
+    "commercial_floor_pass": "Commercial activity floor",
 }
 
 
@@ -70,10 +73,22 @@ _GATE_HUMAN_LABELS: dict[str, str] = {
 # consumers (e.g., the LLM decision-memo generator) to instruct a "Decline"
 # headline. Kept module-level so other modules can import a single source of
 # truth instead of redefining the set.
-HARD_FAIL_GATES: frozenset[str] = frozenset({
+# Build HARD_FAIL_GATES at module load. The two structural gates always
+# block; the new hard-floor gates (population, commercial activity) are
+# only registered as blocking when their settings knob is non-zero, so
+# disabling a gate via env-var disables it everywhere — including the
+# hard-fail set consumed by ``_candidate_gate_status`` and downstream
+# explanation modules. Idempotent across reloads.
+_HARD_FAIL_GATES_BASE: frozenset[str] = frozenset({
     "zoning_fit_pass",
     "area_fit_pass",
 })
+_OPTIONAL_HARD_GATES: set[str] = set()
+if int(getattr(settings, "EXPANSION_VIABILITY_POPULATION_HARD_FLOOR", 0) or 0) > 0:
+    _OPTIONAL_HARD_GATES.add("population_floor_pass")
+if int(getattr(settings, "EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", 0) or 0) > 0:
+    _OPTIONAL_HARD_GATES.add("commercial_floor_pass")
+HARD_FAIL_GATES: frozenset[str] = _HARD_FAIL_GATES_BASE | frozenset(_OPTIONAL_HARD_GATES)
 
 # Advisory-only gates: presence/absence of signal must NOT collapse the
 # overall verdict to indeterminate (None). Surfaced in gate_status for the
@@ -4457,6 +4472,8 @@ def _apply_market_viability_pass(
     pop_percentile_threshold: float | None = None,
     demotion_steps: int | None = None,
     radiance_yoy_threshold: float | None = None,
+    population_hard_floor: int | None = None,
+    commercial_hard_floor: int | None = None,
 ) -> list[dict[str, Any]]:
     """Demote candidates that are confidently bad on the CEO-directive legs.
 
@@ -4470,7 +4487,7 @@ def _apply_market_viability_pass(
     does not mutate final_score. Writes 'market_viability_flag' to
     score_breakdown_json (with radiance fields included for observability).
     """
-    if not candidates or len(candidates) < 4:
+    if not candidates:
         return candidates
 
     rent_pct_threshold = (
@@ -4493,6 +4510,93 @@ def _apply_market_viability_pass(
         if radiance_yoy_threshold is not None
         else settings.EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD
     )
+
+    # ── CEO directive: hard floors (broader data + filter low-potential) ──
+    # Two absolute drops applied BEFORE the 3-of-3 conjunction below. Keys
+    # are read once at function entry; 0 disables the corresponding gate
+    # entirely. Missing fields → pass (defensive: protects the pre-2026-04-26
+    # backfill cohort and any candidates whose pop_reach is unmeasured).
+    pop_floor = (
+        int(population_hard_floor)
+        if population_hard_floor is not None
+        else int(getattr(settings, "EXPANSION_VIABILITY_POPULATION_HARD_FLOOR", 0) or 0)
+    )
+    bp_floor = (
+        int(commercial_hard_floor)
+        if commercial_hard_floor is not None
+        else int(getattr(settings, "EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", 0) or 0)
+    )
+
+    survivors: list[dict[str, Any]] = []
+    dropped_population = 0
+    dropped_commercial = 0
+    for c in candidates:
+        fs = c.get("feature_snapshot_json") if isinstance(c, dict) else None
+
+        # Population floor: pass when disabled, when value is missing/zero
+        # (don't drop on absent data — the soft pop leg below already
+        # handles low-population demotion), or when value meets the floor.
+        pop_raw = fs.get("population_reach") if isinstance(fs, dict) else None
+        if pop_floor <= 0:
+            population_floor_pass = True
+        elif pop_raw is None:
+            population_floor_pass = True
+        else:
+            try:
+                pop_val = float(pop_raw)
+            except (TypeError, ValueError):
+                pop_val = 0.0
+            if pop_val <= 0:
+                population_floor_pass = True
+            else:
+                population_floor_pass = pop_val >= pop_floor
+
+        # Commercial-activity floor: pass when disabled, or when
+        # brand_presence is absent (defensive — backfill cliff cohort), or
+        # when unique_brands within 500 m meets the floor.
+        bp_block = fs.get("brand_presence") if isinstance(fs, dict) else None
+        if bp_floor <= 0:
+            commercial_floor_pass = True
+        elif not isinstance(bp_block, dict) or "unique_brands" not in bp_block:
+            commercial_floor_pass = True
+        else:
+            try:
+                unique_brands = int(bp_block.get("unique_brands") or 0)
+            except (TypeError, ValueError):
+                unique_brands = 0
+            commercial_floor_pass = unique_brands >= bp_floor
+
+        gate_status = c.get("gate_status_json")
+        if not isinstance(gate_status, dict):
+            gate_status = {}
+            c["gate_status_json"] = gate_status
+        gate_status["population_floor_pass"] = population_floor_pass
+        gate_status["commercial_floor_pass"] = commercial_floor_pass
+
+        if not population_floor_pass:
+            dropped_population += 1
+            continue
+        if not commercial_floor_pass:
+            dropped_commercial += 1
+            continue
+        survivors.append(c)
+
+    if dropped_population or dropped_commercial:
+        logger.info(
+            "market_viability_hard_floors",
+            extra={
+                "search_id": search_id,
+                "dropped_population": dropped_population,
+                "dropped_commercial": dropped_commercial,
+                "remaining": len(survivors),
+                "pop_floor": pop_floor,
+                "bp_floor": bp_floor,
+            },
+        )
+
+    candidates = survivors
+    if not candidates or len(candidates) < 4:
+        return candidates
 
     out = list(candidates)
     n = len(out)
@@ -5162,16 +5266,25 @@ def _query_commercial_unit_candidates(
                 centroid_row = db.execute(centroid_sql, params).mappings().first()
 
             if centroid_row and centroid_row["clon"] is not None and centroid_row["clat"] is not None:
-                params["district_clon"] = float(centroid_row["clon"])
-                params["district_clat"] = float(centroid_row["clat"])
-                filters.append(
-                    "ST_DWithin("
-                    "  ST_SetSRID(ST_MakePoint(cu.lon::float, cu.lat::float), 4326)::geography,"
-                    "  ST_SetSRID(ST_MakePoint(:district_clon, :district_clat), 4326)::geography,"
-                    "  3000"  # 3 km radius
-                    ")"
-                )
-                district_filter_mode = "spatial"
+                # Centroid clip radius is configurable. 0 disables the clip
+                # entirely (no spatial restriction). Default 10 km — wide
+                # enough to capture micro-markets on the periphery of the
+                # named district while still anchoring the search.
+                _clip_km = float(getattr(settings, "EXPANSION_CENTROID_CLIP_KM", 10.0) or 0.0)
+                if _clip_km > 0:
+                    params["district_clon"] = float(centroid_row["clon"])
+                    params["district_clat"] = float(centroid_row["clat"])
+                    params["district_clip_m"] = _clip_km * 1000.0
+                    filters.append(
+                        "ST_DWithin("
+                        "  ST_SetSRID(ST_MakePoint(cu.lon::float, cu.lat::float), 4326)::geography,"
+                        "  ST_SetSRID(ST_MakePoint(:district_clon, :district_clat), 4326)::geography,"
+                        "  :district_clip_m"
+                        ")"
+                    )
+                    district_filter_mode = "spatial"
+                else:
+                    district_filter_mode = "spatial_disabled"
             else:
                 # Centroid lookup returned no rows – skip district filtering;
                 # the scoring layer will still prefer the target district.
@@ -6402,6 +6515,7 @@ def run_expansion_search(
                 SELECT MAX(year_month) AS ym
                 FROM district_radiance_monthly
                 WHERE source = :src
+                  AND quality_filter = :ql
             ),
             prev_year AS (
                 SELECT (SELECT ym FROM latest_month) - INTERVAL '1 year' AS ym_prev
@@ -6417,10 +6531,15 @@ def run_expansion_search(
             LEFT JOIN district_radiance_monthly prev
               ON prev.district_key = cur.district_key
              AND prev.source = cur.source
+             AND prev.quality_filter = cur.quality_filter
              AND prev.year_month = (SELECT ym_prev FROM prev_year)::date
             WHERE cur.year_month = (SELECT ym FROM latest_month)
               AND cur.source = :src
-        """), {"src": "nasa_blackmarble_vnp46a3_c2"}).mappings().all()
+              AND cur.quality_filter = :ql
+        """), {
+            "src": "nasa_blackmarble_vnp46a3_c2",
+            "ql": QUALITY_FILTER_LABEL,
+        }).mappings().all()
     except Exception:
         # Table may not exist yet (migration not applied) — degrade silently.
         logger.debug("district_radiance_monthly lookup failed", exc_info=True)
