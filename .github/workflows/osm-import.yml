@@ -222,6 +222,26 @@ jobs:
             psql -v ON_ERROR_STOP=1 -c "UPDATE public.osm_import_state SET bbox='${BBOX}', tile_deg='${TILE_DEG}', last_tile=0, updated_at=now() WHERE id=1;"
           fi
 
+          # Auto-reset stale state. If LAST_IMPORTED equals the total tile
+          # count (i.e. the previous run completed) AND the state row is
+          # older than 6 days, treat the previous import as "done and stale"
+          # and reset last_tile=0 so this run actually re-imports. Without
+          # this guard the weekly cron would silently skip every tile after
+          # the first successful run and never refresh OSM data again.
+          # Threshold is 1 day below the cron interval so a slightly-late
+          # cron firing doesn't accidentally fall under it.
+          TOTAL_TILES=$(wc -l < data/osm/tiles.list)
+          STATE_AGE_HOURS=$(psql -Atc "SELECT EXTRACT(EPOCH FROM (now() - updated_at))/3600 FROM public.osm_import_state WHERE id=1;")
+          if [ -n "$LAST_IMPORTED" ] && [ -n "$TOTAL_TILES" ] && [ -n "$STATE_AGE_HOURS" ]; then
+            # Bash arithmetic doesn't handle floats; truncate to int.
+            STATE_AGE_HOURS_INT=${STATE_AGE_HOURS%.*}
+            if [ "$LAST_IMPORTED" -ge "$TOTAL_TILES" ] && [ "$STATE_AGE_HOURS_INT" -ge 144 ]; then
+              echo "Previous import completed (last_tile=$LAST_IMPORTED, total=$TOTAL_TILES) and state is stale (${STATE_AGE_HOURS_INT}h old, threshold=144h). Resetting last_tile=0 to force fresh import."
+              psql -v ON_ERROR_STOP=1 -c "UPDATE public.osm_import_state SET last_tile=0, updated_at=now() WHERE id=1;"
+              LAST_IMPORTED=0
+            fi
+          fi
+
           TILE_IDX=0
           while IFS= read -r TILE_BBOX; do
             TILE_IDX=$((TILE_IDX+1))
