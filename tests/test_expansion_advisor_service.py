@@ -92,7 +92,7 @@ class FakeDB:
         return _Result([])
 
 
-def test_district_filtering_narrows_results_and_sets_economics_fields():
+def test_district_filtering_narrows_results_and_sets_economics_fields(disable_market_viability_floors):
     db = FakeDB(
         candidate_rows=[
             {
@@ -329,7 +329,7 @@ def test_get_candidate_memo_returns_recommendation_shape():
     assert memo["candidate"]["comparable_competitors"][0]["id"] == "r1"
 
 
-def test_run_expansion_search_caches_rent_resolution_by_district(monkeypatch):
+def test_run_expansion_search_caches_rent_resolution_by_district(monkeypatch, disable_market_viability_floors):
     db = FakeDB(
         candidate_rows=[
             {
@@ -409,7 +409,7 @@ def test_report_happy_path_returns_best_and_runner_up():
     assert report["meta"]["version"] == "expansion_advisor_v7"
 
 
-def test_brand_provider_scores_bounded():
+def test_brand_provider_scores_bounded(disable_market_viability_floors):
     db = FakeDB(candidate_rows=[{
         "parcel_id": "p1", "landuse_label": "Commercial", "landuse_code": "C", "area_m2": 180, "lon": 46.7, "lat": 24.7, "district": "Olaya",
         "population_reach": 15000, "competitor_count": 20, "delivery_listing_count": 200, "provider_listing_count": 200, "provider_platform_count": 10, "delivery_competition_count": 400
@@ -543,7 +543,7 @@ def test_gate_status_uses_v6_scores_for_failure():
     assert "parking_pass" in reasons["failed"]
 
 
-def test_missing_road_context_uses_neutral_scores_and_unknown_gate(monkeypatch):
+def test_missing_road_context_uses_neutral_scores_and_unknown_gate(monkeypatch, disable_market_viability_floors):
     db = FakeDB(candidate_rows=[{
         "parcel_id": "p1", "landuse_label": "Commercial", "landuse_code": "C", "area_m2": 180, "lon": 46.7, "lat": 24.7, "district": "Olaya",
         "population_reach": 15000, "competitor_count": 5, "delivery_listing_count": 12
@@ -561,7 +561,7 @@ def test_missing_road_context_uses_neutral_scores_and_unknown_gate(monkeypatch):
     assert item["gate_status_json"]["overall_pass"] is None
 
 
-def test_missing_parking_context_uses_neutral_score_and_unknown_gate(monkeypatch):
+def test_missing_parking_context_uses_neutral_score_and_unknown_gate(monkeypatch, disable_market_viability_floors):
     db = FakeDB(candidate_rows=[{
         "parcel_id": "p1", "landuse_label": "Commercial", "landuse_code": "C", "area_m2": 180, "lon": 46.7, "lat": 24.7, "district": "Olaya",
         "population_reach": 15000, "competitor_count": 5, "delivery_listing_count": 12
@@ -633,7 +633,7 @@ def test_compare_includes_v61_fields():
     assert result["items"][0]["score_breakdown_json"]["weights"] == {}
 
 
-def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch):
+def test_search_caches_context_table_checks_and_limits_snapshot_work(monkeypatch, disable_market_viability_floors):
     expansion_service.clear_expansion_caches()
     candidate_rows = []
     for idx in range(120):
@@ -880,7 +880,7 @@ def test_get_recommendation_report_empty_state_is_deterministic(monkeypatch):
 # Regression: full payload with brand_profile + existing_branches + districts
 # ---------------------------------------------------------------------------
 
-def test_run_expansion_search_with_brand_profile_and_branches():
+def test_run_expansion_search_with_brand_profile_and_branches(disable_market_viability_floors):
     """Regression test: the exact payload shape that triggered the 500.
 
     Ensures the scoring pipeline handles brand_profile, existing_branches,
@@ -982,7 +982,7 @@ def test_comparable_competitors_returns_empty_on_db_error():
 # ---------------------------------------------------------------------------
 
 
-def test_run_expansion_search_empty_existing_branches():
+def test_run_expansion_search_empty_existing_branches(disable_market_viability_floors):
     """Regression: empty existing_branches list must score candidates without crash."""
     db = FakeDB(
         candidate_rows=[
@@ -1026,7 +1026,7 @@ def test_run_expansion_search_empty_existing_branches():
     assert "estimated_payback_months" not in item
 
 
-def test_run_expansion_search_preferred_districts_typo_no_crash():
+def test_run_expansion_search_preferred_districts_typo_no_crash(disable_market_viability_floors):
     """Regression: misspelled preferred_districts must not crash; they simply have no effect."""
     db = FakeDB(
         candidate_rows=[
@@ -1103,7 +1103,7 @@ def test_run_expansion_search_unmatched_target_districts_returns_empty():
     assert items == []
 
 
-def test_run_expansion_search_exact_production_payload():
+def test_run_expansion_search_exact_production_payload(disable_market_viability_floors):
     """Regression: exact payload shape that triggered the production 500."""
     db = FakeDB(
         candidate_rows=[
@@ -1180,7 +1180,7 @@ class FailingQueryDB(FakeDB):
         return super().execute(stmt, params)
 
 
-def test_snapshot_db_failure_does_not_poison_session(monkeypatch):
+def test_snapshot_db_failure_does_not_poison_session(monkeypatch, disable_market_viability_floors):
     """Regression: when _candidate_feature_snapshot sub-queries fail,
     the session must remain usable and candidates still get persisted."""
     db = FakeDB(candidate_rows=[{
@@ -1233,7 +1233,7 @@ def test_snapshot_db_failure_does_not_poison_session(monkeypatch):
     assert items[0]["access_score"] == 50.0
 
 
-def test_candidate_insert_failure_skips_candidate_gracefully(monkeypatch):
+def test_candidate_insert_failure_skips_candidate_gracefully(monkeypatch, disable_market_viability_floors):
     """Bulk insert fails, row-wise fallback saves p2 but p1 fails individually."""
     insert_call = 0
 
@@ -1293,7 +1293,7 @@ def test_district_mismatch_returns_empty_result_not_500(monkeypatch):
     assert items == []
 
 
-def test_rent_lookup_failure_falls_back_to_default(monkeypatch):
+def test_rent_lookup_failure_falls_back_to_default(monkeypatch, disable_market_viability_floors):
     """When aqar_rent_median raises, rent falls back to conservative_default."""
     db = FakeDB(candidate_rows=[{
         "parcel_id": "p1", "landuse_label": "Commercial", "landuse_code": "C",
@@ -2537,7 +2537,7 @@ def _viability_cohort(target_pop_reach: float, target_rent_pct: float = 0.85,
     return cohort
 
 
-def test_viability_pass_fires_when_pop_below_p25():
+def test_viability_pass_fires_when_pop_below_p25(disable_market_viability_floors):
     # Explicit cohort: pops [5k,6k,7k,8k,50k,60k,70k,80k] + target pop=4500
     # p25 of {4500,5k,6k,7k,8k,50k,60k,70k,80k} sits between 5k-6k; 4500<thr.
     cohort = _viability_cohort(target_pop_reach=4500.0, target_rent_pct=0.85)
@@ -2557,7 +2557,7 @@ def test_viability_pass_skips_when_pop_above_threshold():
     assert "market_viability_flag" not in target["score_breakdown_json"]
 
 
-def test_viability_pass_skips_low_confidence_rent_scope():
+def test_viability_pass_skips_low_confidence_rent_scope(disable_market_viability_floors):
     # rent_scope = "city_band_type" → citywide fallback, not confident.
     cohort = _viability_cohort(
         target_pop_reach=4500.0,
@@ -2579,7 +2579,7 @@ def test_viability_pass_skips_when_pop_reach_missing():
     assert "market_viability_flag" not in target_out["score_breakdown_json"]
 
 
-def test_viability_pass_demotion_capped_at_end():
+def test_viability_pass_demotion_capped_at_end(disable_market_viability_floors):
     # Background has confident rent_scope but low rent_pct, plus the last
     # row is the flagged target with target_pop_reach=4500.
     pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
@@ -2624,7 +2624,7 @@ def test_viability_pass_cohort_too_small():
         assert "market_viability_flag" not in c["score_breakdown_json"]
 
 
-def test_viability_pass_p25_correctness():
+def test_viability_pass_p25_correctness(disable_market_viability_floors):
     # Cohort: pops [5k, 6k, 7k, 8k, 50k, 60k, 70k, 80k]. With this exact
     # set, statistics.quantiles inclusive p25 lands near 6750. Candidates
     # with pop < ~6750 + high rent must be flagged; those above must not.
@@ -2650,7 +2650,7 @@ def test_viability_pass_p25_correctness():
     assert flagged["c7"] is False
 
 
-def test_viability_pass_stacks_with_value_band_pass():
+def test_viability_pass_stacks_with_value_band_pass(disable_market_viability_floors):
     # A candidate that is BOTH above_market (value_band) and high-rent +
     # low-pop should accumulate both nudges and end up further down than
     # either pass alone. Mirrors how the orchestration sequences them.
@@ -2752,7 +2752,7 @@ def _viability_cohort_with_radiance_target(
     return cohort
 
 
-def test_market_viability_third_leg_rescue():
+def test_market_viability_third_leg_rescue(disable_market_viability_floors):
     # Confident, positive growth >= threshold (default 0.0) → not flagged.
     cohort = _viability_cohort_with_radiance_target(
         target_radiance_confident=True,
@@ -2763,7 +2763,7 @@ def test_market_viability_third_leg_rescue():
     assert "market_viability_flag" not in target["score_breakdown_json"]
 
 
-def test_market_viability_third_leg_no_rescue_when_not_confident():
+def test_market_viability_third_leg_no_rescue_when_not_confident(disable_market_viability_floors):
     # Below pixel-count floor → confident=False → leg falls through, still flagged.
     cohort = _viability_cohort_with_radiance_target(
         target_radiance_confident=False,
@@ -2778,7 +2778,7 @@ def test_market_viability_third_leg_no_rescue_when_not_confident():
     assert flag["radiance_year_month"] == "2026-03"
 
 
-def test_market_viability_third_leg_no_rescue_when_growth_below_threshold():
+def test_market_viability_third_leg_no_rescue_when_growth_below_threshold(disable_market_viability_floors):
     # Confident but YoY < threshold → still flagged. Use threshold=5.0 with
     # actual yoy=2.0 to exercise the comparison.
     cohort = _viability_cohort_with_radiance_target(

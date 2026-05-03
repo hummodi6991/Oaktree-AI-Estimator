@@ -47,7 +47,7 @@ def _run(*args, **kwargs):
 # ---------------------------------------------------------------------------
 # 1. INSERT persists all six rerank fields.
 # ---------------------------------------------------------------------------
-def test_insert_persists_rerank_metadata_from_candidate_dict(monkeypatch):
+def test_insert_persists_rerank_metadata_from_candidate_dict(monkeypatch, disable_market_viability_floors):
     """With the rerank flag off (the default), every candidate gets
     deterministic_rank == final_rank, rerank_applied=False, rerank_delta=0,
     rerank_status='flag_off' — and those values land in the INSERT params."""

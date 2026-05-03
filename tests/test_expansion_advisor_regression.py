@@ -596,7 +596,7 @@ def _make_candidate_row(parcel_id, landuse_code, landuse_label=None, district=No
     }
 
 
-def test_non_numeric_landuse_codes_do_not_crash():
+def test_non_numeric_landuse_codes_do_not_crash(disable_market_viability_floors):
     """Blank, whitespace, non-numeric, and mixed landuse_code values must not crash."""
     bad_codes = ["", " 2000 ", "N/A", "mixed", None]
     district_names = ["District_A", "District_B", "District_C", "District_D", "District_E"]
@@ -618,7 +618,7 @@ def test_non_numeric_landuse_codes_do_not_crash():
     assert len(items) == len(rows)
 
 
-def test_normal_numeric_landuse_codes_still_rank_correctly():
+def test_normal_numeric_landuse_codes_still_rank_correctly(disable_market_viability_floors):
     """Normal numeric ArcGIS codes (1000, 2000, 7500) still produce correct scoring."""
     rows = [
         _make_candidate_row("commercial", "2000", district="Commercial_District"),
@@ -665,7 +665,7 @@ def test_zoning_fit_score_non_numeric_values_safe():
 # District SQL pushdown fallback on failure
 # ---------------------------------------------------------------------------
 
-def test_district_sql_fallback_retries_without_filter():
+def test_district_sql_fallback_retries_without_filter(disable_market_viability_floors):
     """When candidate_location has no Tier 1 rows, the search falls back to
     the direct commercial_unit query and still returns results."""
     rows = [
@@ -759,7 +759,7 @@ def test_all_candidates_filtered_returns_empty_list():
 # do not crash the candidate SQL (safe regex-guarded casts)
 # ---------------------------------------------------------------------------
 
-def test_dirty_dsr_coords_do_not_crash_search():
+def test_dirty_dsr_coords_do_not_crash_search(disable_market_viability_floors):
     """Dirty delivery_source_record coordinate values (blank, 'N/A', comma-
     formatted, alphabetic, None) must not crash run_expansion_search.
     The FakeDB bypasses real SQL execution but the function still exercises
@@ -784,7 +784,7 @@ def test_dirty_dsr_coords_do_not_crash_search():
     assert len(items) == 2
 
 
-def test_dirty_pd_coords_do_not_crash_search():
+def test_dirty_pd_coords_do_not_crash_search(disable_market_viability_floors):
     """Dirty population_density coordinate values must not crash the search."""
     rows = [_make_candidate_row("p1", "2000")]
     db = _FakeDB(candidate_rows=rows)
@@ -803,7 +803,7 @@ def test_dirty_pd_coords_do_not_crash_search():
     assert len(items) == 1
 
 
-def test_valid_numeric_coords_still_work():
+def test_valid_numeric_coords_still_work(disable_market_viability_floors):
     """Valid numeric coordinates still produce normal results."""
     rows = [
         _make_candidate_row("p1", "2000", district="District_A"),
@@ -827,7 +827,7 @@ def test_valid_numeric_coords_still_work():
         assert item["final_score"] >= 0
 
 
-def test_candidate_sql_uses_safe_coord_regex():
+def test_candidate_sql_uses_safe_coord_regex(disable_market_viability_floors):
     """The generated candidate SQL must use regex-guarded coordinate casts
     instead of raw ::float casts for dsr and pd tables.
 
@@ -862,7 +862,7 @@ def test_candidate_sql_uses_safe_coord_regex():
     assert len(items) == 1
 
 
-def test_search_returns_results_not_error_with_dirty_rows():
+def test_search_returns_results_not_error_with_dirty_rows(disable_market_viability_floors):
     """Even with rows that would have dirty coords in the DB, the search
     returns a normal list (not an exception)."""
     dirty_values = ["", " ", "N/A", "24,713", "abc", None]
@@ -925,7 +925,7 @@ def test_last_resort_fallback_returns_results():
     assert isinstance(items, list)
 
 
-def test_last_resort_fallback_no_districts_returns_candidates():
+def test_last_resort_fallback_no_districts_returns_candidates(disable_market_viability_floors):
     """Without target_districts, commercial_unit fallback returns all candidates
     even though they have NULL district."""
     rows = [
@@ -969,7 +969,7 @@ class _FailOnSpecificParcelDB(_FakeDB):
         return super().execute(stmt, params)
 
 
-def test_candidate_sql_uses_district_label_column():
+def test_candidate_sql_uses_district_label_column(disable_market_viability_floors):
     """v7 (listings-only): search uses candidate_location/commercial_unit,
     not the ArcGIS candidate_base SQL. Verify search completes normally."""
     db = _FakeDB(candidate_rows=[_make_candidate_row("p1", "2000")])
@@ -1020,7 +1020,7 @@ def test_candidate_sql_landuse_ordering_semantics_unchanged():
 # Numeric-backed coord columns: BTRIM must wrap CAST to text first
 # ---------------------------------------------------------------------------
 
-def test_candidate_sql_coord_btrim_wraps_cast_to_text():
+def test_candidate_sql_coord_btrim_wraps_cast_to_text(disable_market_viability_floors):
     """v7 (listings-only): the ArcGIS candidate_base SQL with BTRIM/CAST
     patterns is no longer in the search path. Verify search still completes."""
     db = _FakeDB(candidate_rows=[_make_candidate_row("p1", "2000")])
