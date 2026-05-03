@@ -15,6 +15,8 @@ on:
         description: "Tile size in degrees (smaller = more Overpass calls)"
         required: false
         default: "0.10"
+  schedule:
+    - cron: '0 4 * * 0'  # Sundays at 04:00 UTC — low-traffic window for SCCC pipeline
 
 env:
   # south,west,north,east (Overpass ordering) — Riyadh metro

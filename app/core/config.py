@@ -194,6 +194,18 @@ class Settings:
     EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR: int = int(
         os.getenv("EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", "1")
     )
+    # Construction-proximity hard floor (CEO directive — exclude areas with
+    # heavy construction). Drops any candidate that has at least one
+    # ``planet_osm_polygon`` row tagged ``landuse='construction'`` or
+    # ``building='construction'`` within this radius (meters). 0 disables
+    # the gate entirely (every candidate emits
+    # ``construction_proximity_pass=True``). Same "missing field → pass"
+    # semantics as the population/commercial floors above: when the OSM
+    # bulk pre-compute is skipped (table missing, buffer disabled) or
+    # the snapshot block is absent, the candidate passes defensively.
+    EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M: float = float(
+        os.getenv("EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M", "75.0")
+    )
     # Centroid clip radius (km) used by ``_query_commercial_unit_candidates``
     # when a target district is named. 0 disables the clip entirely,
     # letting the search reach all of Riyadh. When no target district is
