@@ -2543,7 +2543,7 @@ def _candidate_gate_status(
         "zoning_fit_min": 60.0,
         "frontage_access_min": 55.0,
         "parking_min": 45.0,
-        "economics_min": 50.0,
+        "economics_min": settings.EXPANSION_VIABILITY_ECONOMICS_MIN,
         "delivery_provider_density_min": 45.0,
         "delivery_platform_presence_min": 35.0,
         "cannibalization_min_distance_m": _safe_float(brand_profile.get("cannibalization_tolerance_m"), 1800.0),
@@ -4481,15 +4481,32 @@ def _apply_market_viability_pass(
 ) -> list[dict[str, Any]]:
     """Demote candidates that are confidently bad on the CEO-directive legs.
 
-    3-of-3 form: high rent percentile AND low population reach AND no positive
-    growth signal. The third leg ("market growth") reads
-    ``feature_snapshot_json["radiance_growth"]`` (NASA Black Marble VNP46A3).
-    When that signal is confident and YoY growth meets the threshold, the
-    candidate is rescued from the conjunction (not flagged at all).
+    Three independent legs, soft-demote on any (single demote, never compounded):
 
-    Conservative: each leg requires CONFIDENT signal. Positional reorder only,
-    does not mutate final_score. Writes 'market_viability_flag' to
-    score_breakdown_json (with radiance fields included for observability).
+      * Population leg (clause 1, "high population density") — fires when the
+        per-search bottom-quartile gate fails AND the radiance growth signal
+        does not rescue the candidate. Mirrors the original 2-of-2 pop half.
+      * Rent leg (clause 2, "reasonable or affordable pricing") — fires when
+        the rent percentile is confidently high AND growth does not rescue.
+        Decoupled from population: a high-rent candidate in low-growth area
+        is demoted on its own merit, not only when population is also low.
+      * Economics leg (clause 3, "strong potential for profitability") —
+        fires when ``economics_score < EXPANSION_VIABILITY_ECONOMICS_MIN``.
+        No growth rescue: economics_score is a current-quality composite,
+        not a forward-looking signal; rescuing it on growth would conflate
+        clause 3 with future-looking signals already covered by the other
+        legs.
+
+    The third leg's growth signal reads ``feature_snapshot_json["radiance_growth"]``
+    (NASA Black Marble VNP46A3). When that signal is confident and YoY growth
+    meets the threshold, the candidate is rescued from the population and rent
+    legs (not from the economics leg).
+
+    Conservative: each measured leg requires its underlying signal to be
+    CONFIDENT (rent scope not citywide; pop reach > 0; economics_score
+    populated). Positional reorder only, does not mutate final_score. Writes
+    ``market_viability_flag`` to score_breakdown_json with the legs that fired
+    encoded as a stable ``_and_``-joined string in the ``reason`` field.
     """
     if not candidates:
         return candidates
@@ -4660,35 +4677,40 @@ def _apply_market_viability_pass(
     except Exception:
         return out
 
+    economics_min = float(settings.EXPANSION_VIABILITY_ECONOMICS_MIN)
+
     def _flag_inputs(
         c: dict[str, Any]
-    ) -> tuple[bool, float, str | None, float, dict[str, Any]]:
-        sb = c.get("score_breakdown_json")
-        ed = sb.get("economics_detail") if isinstance(sb, dict) else None
-        rb = ed.get("rent_burden") if isinstance(ed, dict) else None
+    ) -> tuple[
+        bool, bool, bool, float, str | None, float, float | None, dict[str, Any]
+    ]:
+        # Returns:
+        #   (pop_demote, rent_demote, econ_demote,
+        #    rent_pct, rent_scope, pop_reach, economics_score, radiance_meta)
         radiance_meta: dict[str, Any] = {
             "radiance_growth_pct": None,
             "radiance_confident": None,
             "radiance_pixel_count": None,
             "radiance_year_month": None,
         }
-        if not isinstance(rb, dict):
-            return False, 0.0, None, 0.0, radiance_meta
-        rent_scope = rb.get("source_label")
-        rent_pct_val = rb.get("percentile")
-        if rent_pct_val is None:
-            return False, 0.0, rent_scope, 0.0, radiance_meta
-        rent_pct = _safe_float(rent_pct_val, default=-1.0)
 
+        # ── Clause 3 (economics) — independent of rent/pop signal availability.
+        econ_raw = c.get("economics_score") if isinstance(c, dict) else None
+        economics_score: float | None
+        if econ_raw is None:
+            economics_score = None
+        else:
+            try:
+                ev = float(econ_raw)
+                economics_score = ev if not (math.isnan(ev) or math.isinf(ev)) else None
+            except (TypeError, ValueError):
+                economics_score = None
+        econ_demote = economics_score is not None and economics_score < economics_min
+
+        # ── Growth signal: NASA Black Marble VNP46A3 YoY radiance growth.
+        # Rescues the population and rent legs when confident & growing.
+        # Independent of rent/pop data presence.
         fs = c.get("feature_snapshot_json")
-        if not isinstance(fs, dict):
-            return False, rent_pct, rent_scope, 0.0, radiance_meta
-        pop_raw = fs.get("population_reach")
-        if pop_raw is None:
-            return False, rent_pct, rent_scope, 0.0, radiance_meta
-        pop_reach = _safe_float(pop_raw, default=-1.0)
-
-        # Third leg: NASA Black Marble VNP46A3 YoY radiance growth.
         rad = fs.get("radiance_growth") if isinstance(fs, dict) else None
         rad_confident = False
         rad_yoy_pct: float | None = None
@@ -4708,34 +4730,74 @@ def _apply_market_viability_pass(
                 "radiance_pixel_count": rad.get("pixel_count"),
                 "radiance_year_month": rad.get("year_month"),
             }
-
         growth_rescue = bool(
             rad_confident
             and rad_yoy_pct is not None
             and rad_yoy_pct >= radiance_yoy_threshold
         )
 
-        rent_confident = rent_scope not in ("city_band_type", "city")
-        pop_confident = pop_reach > 0
-        rent_high = rent_pct >= rent_pct_threshold
-        pop_low = pop_reach < pop_threshold
-        flagged = bool(
-            rent_confident
-            and pop_confident
-            and rent_high
-            and pop_low
-            and not growth_rescue
+        # ── Clause 2 (rent) — evaluate independently against rent_burden block.
+        # Missing rent data → rent_demote stays False (defensive: don't penalize
+        # candidates whose rent percentile we can't measure).
+        sb = c.get("score_breakdown_json")
+        ed = sb.get("economics_detail") if isinstance(sb, dict) else None
+        rb = ed.get("rent_burden") if isinstance(ed, dict) else None
+        rent_scope: str | None = None
+        rent_pct: float = 0.0
+        rent_demote = False
+        if isinstance(rb, dict):
+            rent_scope = rb.get("source_label")
+            rent_pct_val = rb.get("percentile")
+            if rent_pct_val is not None:
+                rent_pct = _safe_float(rent_pct_val, default=-1.0)
+                rent_confident = rent_scope not in ("city_band_type", "city")
+                rent_high = rent_pct >= rent_pct_threshold
+                rent_demote = bool(
+                    rent_confident and rent_high and not growth_rescue
+                )
+
+        # ── Clause 1 (population) — evaluate independently against feature_snapshot.
+        # Missing population_reach → pop_demote stays False (defensive: don't
+        # penalize candidates whose population we couldn't measure).
+        pop_reach: float = 0.0
+        pop_demote = False
+        if isinstance(fs, dict):
+            pop_raw = fs.get("population_reach")
+            if pop_raw is not None:
+                pop_reach = _safe_float(pop_raw, default=-1.0)
+                pop_confident = pop_reach > 0
+                pop_low = pop_reach < pop_threshold
+                pop_demote = bool(
+                    pop_confident and pop_low and not growth_rescue
+                )
+
+        return (
+            pop_demote, rent_demote, econ_demote,
+            rent_pct, rent_scope, pop_reach, economics_score, radiance_meta,
         )
-        return flagged, rent_pct, rent_scope, pop_reach, radiance_meta
 
     pre_eval = [_flag_inputs(c) for c in out]
-    demote_indices = [i for i in range(n) if pre_eval[i][0]]
+    demote_indices = [
+        i for i in range(n)
+        if pre_eval[i][0] or pre_eval[i][1] or pre_eval[i][2]
+    ]
 
     demoted = 0
     for i in reversed(demote_indices):
         target = min(i + demotion_steps, n - 1)
         c = out[i]
-        _, rent_pct, rent_scope, pop_reach, radiance_meta = pre_eval[i]
+        (
+            pop_demote, rent_demote, econ_demote,
+            rent_pct, rent_scope, pop_reach, economics_score, radiance_meta,
+        ) = pre_eval[i]
+        # Stable-order annotation: clause 1, clause 2, clause 3.
+        reasons: list[str] = []
+        if pop_demote:
+            reasons.append("population_below_quartile")
+        if rent_demote:
+            reasons.append("rent_high")
+        if econ_demote:
+            reasons.append("economics_below_threshold")
         sb = c.get("score_breakdown_json")
         if not isinstance(sb, dict):
             sb = {}
@@ -4747,7 +4809,14 @@ def _apply_market_viability_pass(
             "rent_source_label": rent_scope,
             "population_reach": float(pop_reach),
             "population_threshold": float(pop_threshold),
-            "reason": "high_rent_low_population",
+            "economics_score": (
+                float(economics_score) if economics_score is not None else None
+            ),
+            "economics_threshold": float(economics_min),
+            "population_demote": pop_demote,
+            "rent_demote": rent_demote,
+            "economics_demote": econ_demote,
+            "reason": "_and_".join(reasons),
             "radiance_growth_pct": radiance_meta["radiance_growth_pct"],
             "radiance_confident": radiance_meta["radiance_confident"],
             "radiance_pixel_count": radiance_meta["radiance_pixel_count"],
@@ -4759,12 +4828,17 @@ def _apply_market_viability_pass(
         demoted += 1
 
     if demoted:
+        pop_demoted = sum(1 for pe in pre_eval if pe[0])
+        rent_demoted = sum(1 for pe in pre_eval if pe[1])
+        econ_demoted = sum(1 for pe in pre_eval if pe[2])
         logger.info(
             "expansion_market_viability_pass: search_id=%s demoted=%d "
+            "pop_leg=%d rent_leg=%d econ_leg=%d "
             "rent_pct_threshold=%.2f pop_percentile=%.2f pop_threshold=%.0f "
-            "demotion_steps=%d cohort_n=%d",
-            search_id, demoted, rent_pct_threshold, pop_percentile_threshold,
-            pop_threshold, demotion_steps, len(pop_values),
+            "economics_min=%.2f demotion_steps=%d cohort_n=%d",
+            search_id, demoted, pop_demoted, rent_demoted, econ_demoted,
+            rent_pct_threshold, pop_percentile_threshold, pop_threshold,
+            economics_min, demotion_steps, len(pop_values),
         )
     return out
 

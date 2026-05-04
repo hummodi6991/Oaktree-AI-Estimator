@@ -2550,15 +2550,26 @@ def test_viability_pass_fires_when_pop_below_p25(disable_market_viability_floors
     assert new_idx > 2
 
 
-def test_viability_pass_skips_when_pop_above_threshold():
+def test_viability_pass_high_rent_high_pop_fires_rent_leg(disable_market_viability_floors):
+    # Decoupled rent leg (clause 2): high rent_pct on a confident scope is
+    # demoted on its own merit, even when population is high. Pre-decouple,
+    # this case was NOT demoted because the 3-of-3 conjunction required
+    # pop_low. Now the rent leg fires alone with reason="rent_high".
     cohort = _viability_cohort(target_pop_reach=80000.0, target_rent_pct=0.85)
     out = _apply_market_viability_pass(list(cohort), search_id="t")
     target = next(c for c in out if c["id"] == "target")
-    assert "market_viability_flag" not in target["score_breakdown_json"]
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["rent_demote"] is True
+    assert flag["population_demote"] is False
+    assert flag["reason"] == "rent_high"
 
 
 def test_viability_pass_skips_low_confidence_rent_scope(disable_market_viability_floors):
-    # rent_scope = "city_band_type" → citywide fallback, not confident.
+    # rent_scope = "city_band_type" → citywide fallback, not confident, so
+    # the rent leg does NOT fire. But pop=4500 is below p25, so the pop leg
+    # fires alone. Pre-decouple this case was not demoted; now the pop leg
+    # fires with reason="population_below_quartile".
     cohort = _viability_cohort(
         target_pop_reach=4500.0,
         target_rent_pct=0.85,
@@ -2566,17 +2577,28 @@ def test_viability_pass_skips_low_confidence_rent_scope(disable_market_viability
     )
     out = _apply_market_viability_pass(list(cohort), search_id="t")
     target = next(c for c in out if c["id"] == "target")
-    assert "market_viability_flag" not in target["score_breakdown_json"]
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["rent_demote"] is False
+    assert flag["population_demote"] is True
+    assert flag["reason"] == "population_below_quartile"
 
 
-def test_viability_pass_skips_when_pop_reach_missing():
+def test_viability_pass_pop_missing_still_fires_rent_leg(disable_market_viability_floors):
+    # Missing population_reach disables the pop leg defensively, but the
+    # rent leg is decoupled and still fires when rent_pct is high on a
+    # confident scope. Pre-decouple this case was not demoted at all; now
+    # rent leg fires alone.
     cohort = _viability_cohort(target_pop_reach=4500.0, target_rent_pct=0.85)
-    # Wipe population_reach from the target.
     target_in = next(c for c in cohort if c["id"] == "target")
     target_in["feature_snapshot_json"].pop("population_reach", None)
     out = _apply_market_viability_pass(list(cohort), search_id="t")
     target_out = next(c for c in out if c["id"] == "target")
-    assert "market_viability_flag" not in target_out["score_breakdown_json"]
+    flag = target_out["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["rent_demote"] is True
+    assert flag["population_demote"] is False
+    assert flag["reason"] == "rent_high"
 
 
 def test_viability_pass_demotion_capped_at_end(disable_market_viability_floors):
@@ -2626,14 +2648,16 @@ def test_viability_pass_cohort_too_small():
 
 def test_viability_pass_p25_correctness(disable_market_viability_floors):
     # Cohort: pops [5k, 6k, 7k, 8k, 50k, 60k, 70k, 80k]. With this exact
-    # set, statistics.quantiles inclusive p25 lands near 6750. Candidates
-    # with pop < ~6750 + high rent must be flagged; those above must not.
+    # set, statistics.quantiles inclusive p25 lands near 6750. Use low rent
+    # (0.40) on every row to isolate the pop leg — under the decoupled rent
+    # leg, a high rent_pct on every row would flag every row regardless of
+    # pop. With low rent, only candidates whose pop_reach < ~6750 are flagged.
     pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
     cohort = [
         _make_viability_candidate(
             id_=f"c{i}",
             final_score=80.0 - i,
-            rent_pct=0.85,
+            rent_pct=0.40,
             pop_reach=p,
         )
         for i, p in enumerate(pops)
@@ -2793,6 +2817,163 @@ def test_market_viability_third_leg_no_rescue_when_growth_below_threshold(disabl
     assert flag is not None and flag["demoted"] is True
     assert flag["radiance_confident"] is True
     assert flag["radiance_growth_pct"] == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Decoupled three-leg market-viability pass (Faisal directive). Each leg —
+# population (clause 1), rent (clause 2), economics (clause 3) — is an
+# independent soft demote. The economics leg has no growth rescue; the pop
+# and rent legs do. Reasons concatenate with "_and_" in the order pop, rent,
+# economics. See _apply_market_viability_pass docstring.
+# ---------------------------------------------------------------------------
+
+
+def _viability_cohort_with_econ_target(
+    *,
+    target_economics: float | None,
+    target_pop_reach: float = 80000.0,
+    target_rent_pct: float = 0.40,
+    target_rent_scope: str = "district_band_type",
+) -> list[dict]:
+    """Like _viability_cohort but lets the target carry an economics_score.
+
+    Background rows leave economics_score unset (econ leg cannot fire on them).
+    Background rent is low (0.40) and pop spans both sides of p25.
+    """
+    pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
+    cohort = [
+        _make_viability_candidate(
+            id_=f"bg{i}",
+            final_score=80.0 - i,
+            rent_pct=0.40,
+            rent_scope="district_band_type",
+            pop_reach=p,
+        )
+        for i, p in enumerate(pops)
+    ]
+    target = _make_viability_candidate(
+        id_="target",
+        final_score=78.5,
+        rent_pct=target_rent_pct,
+        rent_scope=target_rent_scope,
+        pop_reach=target_pop_reach,
+    )
+    if target_economics is not None:
+        target["economics_score"] = target_economics
+    cohort.insert(2, target)
+    return cohort
+
+
+def test_viability_pop_only_leg_fires(disable_market_viability_floors):
+    # Pop leg alone: rent low, pop below p25, no growth, economics healthy.
+    # Expected: demote with reason="population_below_quartile".
+    cohort = _viability_cohort_with_econ_target(
+        target_economics=80.0,
+        target_pop_reach=4500.0,
+        target_rent_pct=0.40,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["population_demote"] is True
+    assert flag["rent_demote"] is False
+    assert flag["economics_demote"] is False
+    assert flag["reason"] == "population_below_quartile"
+
+
+def test_viability_rent_only_leg_fires(disable_market_viability_floors):
+    # Rent leg alone: high rent on confident scope, pop above p25, no growth,
+    # economics healthy. Pre-decouple this row was NOT demoted (3-of-3 needed
+    # pop_low). Now rent leg fires alone with reason="rent_high".
+    cohort = _viability_cohort_with_econ_target(
+        target_economics=80.0,
+        target_pop_reach=80000.0,
+        target_rent_pct=0.85,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["population_demote"] is False
+    assert flag["rent_demote"] is True
+    assert flag["economics_demote"] is False
+    assert flag["reason"] == "rent_high"
+
+
+def test_viability_economics_only_leg_fires(disable_market_viability_floors):
+    # Economics leg alone: rent low, pop above p25, no growth, but
+    # economics_score=60 < 65 default threshold. Pre-decouple this row was
+    # not demoted at all. Now econ leg fires with reason="economics_below_threshold".
+    cohort = _viability_cohort_with_econ_target(
+        target_economics=60.0,
+        target_pop_reach=80000.0,
+        target_rent_pct=0.40,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["population_demote"] is False
+    assert flag["rent_demote"] is False
+    assert flag["economics_demote"] is True
+    assert flag["economics_score"] == 60.0
+    assert flag["reason"] == "economics_below_threshold"
+
+
+def test_viability_all_three_legs_fire_with_compound_annotation(disable_market_viability_floors):
+    # Every leg fires: pop below p25, rent high on confident scope, no growth,
+    # economics_score=60 < 65. Reason concatenates in stable order:
+    # population, rent, economics.
+    cohort = _viability_cohort_with_econ_target(
+        target_economics=60.0,
+        target_pop_reach=4500.0,
+        target_rent_pct=0.85,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["population_demote"] is True
+    assert flag["rent_demote"] is True
+    assert flag["economics_demote"] is True
+    assert flag["reason"] == (
+        "population_below_quartile_and_rent_high_and_economics_below_threshold"
+    )
+
+
+def test_viability_growth_rescue_saves_pop_and_rent_legs_not_econ(disable_market_viability_floors):
+    # Confident positive radiance growth rescues the pop and rent legs.
+    # economics_score=80 keeps econ leg quiet, so the candidate is NOT demoted.
+    cohort = _viability_cohort_with_radiance_target(
+        target_radiance_confident=True,
+        target_radiance_yoy_pct=4.2,
+    )
+    target_in = next(c for c in cohort if c["id"] == "target")
+    target_in["economics_score"] = 80.0
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    assert "market_viability_flag" not in target["score_breakdown_json"]
+
+
+def test_viability_growth_rescue_does_not_save_economics_leg(disable_market_viability_floors):
+    # Growth rescue applies to pop+rent only. With low pop & high rent
+    # rescued by growth but economics_score=60, the econ leg STILL fires
+    # alone. reason="economics_below_threshold".
+    cohort = _viability_cohort_with_radiance_target(
+        target_radiance_confident=True,
+        target_radiance_yoy_pct=4.2,
+    )
+    target_in = next(c for c in cohort if c["id"] == "target")
+    target_in["economics_score"] = 60.0
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["population_demote"] is False, "growth should rescue pop leg"
+    assert flag["rent_demote"] is False, "growth should rescue rent leg"
+    assert flag["economics_demote"] is True
+    assert flag["reason"] == "economics_below_threshold"
 
 
 # ---------------------------------------------------------------------------
