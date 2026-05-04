@@ -175,6 +175,16 @@ class Settings:
     EXPANSION_VIABILITY_DEMOTION_STEPS: int = int(
         os.getenv("EXPANSION_VIABILITY_DEMOTION_STEPS", "6")
     )
+    # Threshold for the economics-quality leg of _apply_market_viability_pass
+    # (CEO directive clause 3 — "strong potential for profitability"). Candidates
+    # with economics_score < this threshold are soft-demoted by the same
+    # positional mechanism as the rent and population legs. Calibrated against
+    # the 30-day production cohort 2026-04-04 → 2026-05-04: 6.0% of candidates
+    # would fail at 65.0; raise to tighten, lower to loosen. Setting this to
+    # 999 effectively disables the leg (no candidate scores 999+).
+    EXPANSION_VIABILITY_ECONOMICS_MIN: float = float(
+        os.getenv("EXPANSION_VIABILITY_ECONOMICS_MIN", "65.0")
+    )
     # Minimum YoY radiance growth pct (0-100 scale) for the third leg (NASA
     # Black Marble VNP46A3) to rescue a candidate from market-viability
     # flagging. Default 0 means any positive growth rescues; raise to e.g.
