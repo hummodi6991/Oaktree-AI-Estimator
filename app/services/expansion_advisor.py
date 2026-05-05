@@ -6775,31 +6775,77 @@ def run_expansion_search(
     _radiance_lookup: dict[str, dict[str, Any]] = {}
     try:
         _radiance_rows = db.execute(text("""
-            WITH latest_month AS (
-                SELECT MAX(year_month) AS ym
+            WITH ordered AS (
+                SELECT
+                    district_key,
+                    year_month,
+                    radiance_mean,
+                    pixel_count_valid,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY district_key ORDER BY year_month
+                    ) AS rn
                 FROM district_radiance_monthly
-                WHERE source = :src
-                  AND quality_filter = :ql
+                WHERE source = :src AND quality_filter = :ql
             ),
-            prev_year AS (
-                SELECT (SELECT ym FROM latest_month) - INTERVAL '1 year' AS ym_prev
+            windowed AS (
+                SELECT
+                    district_key,
+                    year_month,
+                    rn,
+                    pixel_count_valid,
+                    -- Pixel-weighted mean over the latest 6 months [rn-5, rn]
+                    SUM(radiance_mean * pixel_count_valid)
+                        FILTER (WHERE radiance_mean IS NOT NULL AND pixel_count_valid > 0)
+                        OVER w_cur
+                    / NULLIF(
+                        SUM(pixel_count_valid)
+                            FILTER (WHERE radiance_mean IS NOT NULL AND pixel_count_valid > 0)
+                            OVER w_cur,
+                        0
+                    ) AS rad_cur6,
+                    -- Pixel-weighted mean over same 6 calendar positions a year ago [rn-17, rn-12]
+                    SUM(radiance_mean * pixel_count_valid)
+                        FILTER (WHERE radiance_mean IS NOT NULL AND pixel_count_valid > 0)
+                        OVER w_prev
+                    / NULLIF(
+                        SUM(pixel_count_valid)
+                            FILTER (WHERE radiance_mean IS NOT NULL AND pixel_count_valid > 0)
+                            OVER w_prev,
+                        0
+                    ) AS rad_prev6,
+                    -- Confidence gate: worst-case pixel count across each 6-month window
+                    MIN(pixel_count_valid) OVER w_cur  AS min_pixels_cur6,
+                    MIN(pixel_count_valid) OVER w_prev AS min_pixels_prev6,
+                    -- Row counts must be 6 (guards districts added mid-backfill)
+                    COUNT(*) OVER w_cur  AS rows_cur6,
+                    COUNT(*) OVER w_prev AS rows_prev6
+                FROM ordered
+                WINDOW
+                    w_cur  AS (PARTITION BY district_key ORDER BY year_month
+                               ROWS BETWEEN 5 PRECEDING AND CURRENT ROW),
+                    w_prev AS (PARTITION BY district_key ORDER BY year_month
+                               ROWS BETWEEN 17 PRECEDING AND 12 PRECEDING)
+            ),
+            latest_per_district AS (
+                SELECT *
+                FROM windowed
+                WHERE (district_key, rn) IN (
+                    SELECT district_key, MAX(rn) FROM windowed GROUP BY district_key
+                )
             )
             SELECT
-                cur.district_key,
-                cur.radiance_mean AS rad_cur,
-                cur.pixel_count_valid AS pixels_cur,
-                cur.year_month AS ym_cur,
-                prev.radiance_mean AS rad_prev,
-                prev.pixel_count_valid AS pixels_prev
-            FROM district_radiance_monthly cur
-            LEFT JOIN district_radiance_monthly prev
-              ON prev.district_key = cur.district_key
-             AND prev.source = cur.source
-             AND prev.quality_filter = cur.quality_filter
-             AND prev.year_month = (SELECT ym_prev FROM prev_year)::date
-            WHERE cur.year_month = (SELECT ym FROM latest_month)
-              AND cur.source = :src
-              AND cur.quality_filter = :ql
+                district_key,
+                rad_cur6                    AS rad_cur,
+                min_pixels_cur6             AS pixels_cur,
+                year_month                  AS ym_cur,
+                rad_prev6                   AS rad_prev,
+                min_pixels_prev6            AS pixels_prev,
+                rows_cur6, rows_prev6
+            FROM latest_per_district
+            WHERE rad_cur6  IS NOT NULL
+              AND rad_prev6  IS NOT NULL
+              AND rows_cur6  = 6
+              AND rows_prev6 = 6
         """), {
             "src": "nasa_blackmarble_vnp46a3_c2",
             "ql": QUALITY_FILTER_LABEL,
@@ -6827,7 +6873,7 @@ def run_expansion_search(
             ) / float(_r["rad_prev"]) * 100.0
         _radiance_lookup[_dk] = {
             "value_yoy_pct": round(_yoy_pct, 2) if _yoy_pct is not None else None,
-            "source_label": "blackmarble_district_yoy_simple",
+            "source_label": "blackmarble_district_yoy_rolling6",
             "confident": _confident and _yoy_pct is not None,
             "confidence_reason": _confidence_reason,
             "pixel_count": _pixels_cur,

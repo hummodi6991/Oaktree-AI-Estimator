@@ -56,6 +56,13 @@ def evaluate_confidence(
     one of ``"pixel_floor"``, ``"small_district"``, ``"large_district"``, or
     ``None`` (confident).
 
+    ``pixels_cur`` and ``pixels_prev`` may represent either a single-month
+    pixel count (legacy point-vs-point callers, if any) or the **minimum
+    pixel count across a multi-month window** (the rolling-6 caller in
+    ``expansion_advisor.py``). The semantic is "worst-case pixel coverage
+    across the comparison period." The ``PIXEL_COUNT_FLOOR=10`` rule applies
+    regardless: if either input is < 10, the gate fails with ``"pixel_floor"``.
+
     ``area_km2 is None`` (district missing from the polygon source) falls
     back to the pixel-count rule alone — mirrors the missing-field-passes
     pattern in ``_apply_market_viability_pass``.
