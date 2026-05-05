@@ -2746,7 +2746,7 @@ def _make_viability_candidate_with_radiance(
     )
     c["feature_snapshot_json"]["radiance_growth"] = {
         "value_yoy_pct": radiance_yoy_pct,
-        "source_label": "blackmarble_district_yoy_simple",
+        "source_label": "blackmarble_district_yoy_rolling6",
         "confident": radiance_confident,
         "pixel_count": 132 if radiance_confident else 5,
         "year_month": "2026-03",
@@ -3114,7 +3114,7 @@ def test_viability_demand_leg_no_growth_rescue(disable_market_viability_floors):
     target_in = next(c for c in cohort if c["id"] == "target")
     target_in["feature_snapshot_json"]["radiance_growth"] = {
         "value_yoy_pct": 4.2,
-        "source_label": "blackmarble_district_yoy_simple",
+        "source_label": "blackmarble_district_yoy_rolling6",
         "confident": True,
         "pixel_count": 132,
         "year_month": "2026-03",

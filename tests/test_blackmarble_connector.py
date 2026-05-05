@@ -368,3 +368,49 @@ def test_large_district_does_not_log_when_below_threshold(caplog):
         r for r in caplog.records
         if r.getMessage() == "blackmarble.large_district_outlier"
     ]
+
+
+# ---------------------------------------------------------------------------
+# B1.5 — rolling-6 window minimum pixel gate (evaluate_confidence reuse).
+# The rolling-6 caller passes MIN(pixel_count_valid) over the 6-month window
+# as pixels_cur / pixels_prev. These tests confirm the gate still fires
+# correctly when the input represents a window minimum rather than a single
+# month's count.
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_confidence_window_minimum_input_below_floor():
+    """When the windowed MIN pixel count is below PIXEL_COUNT_FLOOR, the gate must fail.
+
+    Mirrors the per-point pixel_floor branch but is reachable via window
+    callers (B1.5): MIN over 6 months = 8 means one cloudy month slipped
+    through, so the 6-window is not fully confident.
+    """
+    from app.connectors import blackmarble
+
+    confident, reason = blackmarble.evaluate_confidence(
+        pixels_cur=8,   # window min, below floor
+        pixels_prev=20,
+        area_km2=10.0,
+        district_key="cur_window_dropped_one_cloudy_month",
+    )
+    assert confident is False
+    assert reason == "pixel_floor"
+
+
+def test_evaluate_confidence_window_minimum_input_above_floor():
+    """When both windowed MIN pixel counts are at/above the floor, gate passes.
+
+    MIN=10 means every month in the 6-window independently satisfied the
+    PIXEL_COUNT_FLOOR=10 requirement.
+    """
+    from app.connectors import blackmarble
+
+    confident, reason = blackmarble.evaluate_confidence(
+        pixels_cur=10,  # window min, exactly at floor
+        pixels_prev=15,
+        area_km2=10.0,
+        district_key="all_months_confident",
+    )
+    assert confident is True
+    assert reason is None
