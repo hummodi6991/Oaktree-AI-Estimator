@@ -2488,6 +2488,8 @@ def _make_viability_candidate(
     pop_reach: float | None = None,
     value_band: str | None = None,
     low_conf: bool = False,
+    realized_demand_30d: float | None = None,
+    realized_demand_branches: int | None = None,
 ) -> dict:
     sb: dict = {}
     if rent_pct is not None:
@@ -2503,6 +2505,10 @@ def _make_viability_candidate(
     fs: dict = {}
     if pop_reach is not None:
         fs["population_reach"] = pop_reach
+    if realized_demand_30d is not None:
+        fs["realized_demand_30d"] = realized_demand_30d
+    if realized_demand_branches is not None:
+        fs["realized_demand_branches"] = realized_demand_branches
     return {
         "id": id_,
         "parcel_id": id_,
@@ -2974,6 +2980,256 @@ def test_viability_growth_rescue_does_not_save_economics_leg(disable_market_viab
     assert flag["rent_demote"] is False, "growth should rescue rent leg"
     assert flag["economics_demote"] is True
     assert flag["reason"] == "economics_below_threshold"
+
+
+# ---------------------------------------------------------------------------
+# Realized-demand soft-demote leg (B3, "strong potential for sales"). Mirrors
+# the pop/rent/economics leg-isolation pattern. The leg fires on confident
+# bottom-quartile realized_demand_30d, gated by a minimum branch count, and
+# has no growth_rescue (mirrors the economics leg).
+# ---------------------------------------------------------------------------
+
+
+def _viability_cohort_with_demand_target(
+    *,
+    target_demand: float | None,
+    target_demand_branches: int | None = 5,
+    target_pop_reach: float = 80000.0,
+    target_rent_pct: float = 0.40,
+    target_rent_scope: str = "district_band_type",
+    target_economics: float | None = 80.0,
+) -> list[dict]:
+    """Background carries confident realized_demand_30d well above any p25.
+
+    Background demand spans 600..2200 (8 rows) so p25 lands near 750 with
+    ``method="inclusive"``. Background pop_reach also spans both sides of
+    its own p25 to keep the pop leg quiet on the target. Background rent
+    is low (0.40) so the rent leg stays quiet. Background economics is
+    unset so the econ leg cannot fire on background rows.
+    """
+    pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
+    demands = [600.0, 800.0, 1000.0, 1200.0, 1500.0, 1800.0, 2000.0, 2200.0]
+    cohort = [
+        _make_viability_candidate(
+            id_=f"bg{i}",
+            final_score=80.0 - i,
+            rent_pct=0.40,
+            rent_scope="district_band_type",
+            pop_reach=p,
+            realized_demand_30d=d,
+            realized_demand_branches=5,
+        )
+        for i, (p, d) in enumerate(zip(pops, demands))
+    ]
+    target = _make_viability_candidate(
+        id_="target",
+        final_score=78.5,
+        rent_pct=target_rent_pct,
+        rent_scope=target_rent_scope,
+        pop_reach=target_pop_reach,
+        realized_demand_30d=target_demand,
+        realized_demand_branches=target_demand_branches,
+    )
+    if target_economics is not None:
+        target["economics_score"] = target_economics
+    cohort.insert(2, target)
+    return cohort
+
+
+def test_viability_demand_only_leg_fires(disable_market_viability_floors):
+    # Demand leg alone: rent low, pop above p25, economics healthy, no growth.
+    # target realized_demand_30d=400 sits in the bottom quartile of the
+    # cohort (p25 ≈ 750). target carries 5 branches (>= min 3).
+    # Expected: demote with reason="demand_low".
+    cohort = _viability_cohort_with_demand_target(
+        target_demand=400.0,
+        target_demand_branches=5,
+    )
+    starting_idx = next(i for i, c in enumerate(cohort) if c["id"] == "target")
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["population_demote"] is False
+    assert flag["rent_demote"] is False
+    assert flag["economics_demote"] is False
+    assert flag["demand_demote"] is True
+    assert flag["realized_demand_30d"] == 400.0
+    assert flag["realized_demand_branches"] == 5
+    assert flag["realized_demand_threshold"] is not None
+    assert flag["reason"] == "demand_low"
+    new_idx = next(i for i, c in enumerate(out) if c["id"] == "target")
+    # Default demotion is 6 steps, capped at the end of the list.
+    assert new_idx == min(
+        starting_idx + 6, len(out) - 1
+    ), "candidate should move down by EXPANSION_VIABILITY_DEMOTION_STEPS"
+
+
+def test_viability_demand_leg_skipped_when_branches_below_min(
+    disable_market_viability_floors,
+):
+    # Bottom-quartile realized_demand_30d but only 2 contributing branches
+    # → confidence gate fails → leg does NOT fire on the target. Position
+    # is not asserted: the cohort's bg0 / bg1 pop_reach (5k, 6k) sit below
+    # the pop-leg p25, so they shift around the target legitimately. The
+    # absence of market_viability_flag on the target alone proves the
+    # demand leg did not fire here.
+    cohort = _viability_cohort_with_demand_target(
+        target_demand=400.0,
+        target_demand_branches=2,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is None, "demand leg must not fire when branches < min"
+
+
+def test_viability_demand_leg_skipped_when_field_absent(
+    disable_market_viability_floors,
+):
+    # Both realized_demand_30d AND realized_demand_branches absent on the
+    # target (the flag-OFF / history_unavailable shape from the snapshot
+    # writer). Background still carries demand so the cohort cutoff is
+    # well-defined. The target's leg must NOT fire.
+    cohort = _viability_cohort_with_demand_target(
+        target_demand=None,
+        target_demand_branches=None,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is None, "demand leg must not fire when fields absent"
+
+
+def test_viability_demand_leg_no_growth_rescue(disable_market_viability_floors):
+    # Confidently low realized demand AND confidently positive radiance YoY
+    # at/above the default threshold. Mirrors
+    # test_viability_growth_rescue_does_not_save_economics_leg: the demand
+    # leg STILL fires because sales potential is a present-state signal,
+    # not a forward-state signal that growth can redeem.
+    cohort = _viability_cohort_with_demand_target(
+        target_demand=400.0,
+        target_demand_branches=5,
+    )
+    target_in = next(c for c in cohort if c["id"] == "target")
+    target_in["feature_snapshot_json"]["radiance_growth"] = {
+        "value_yoy_pct": 4.2,
+        "source_label": "blackmarble_district_yoy_simple",
+        "confident": True,
+        "pixel_count": 132,
+        "year_month": "2026-03",
+    }
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["demand_demote"] is True
+    assert "demand_low" in flag["reason"]
+    assert flag["radiance_confident"] is True
+    assert flag["radiance_growth_pct"] == 4.2
+
+
+def test_viability_demand_leg_skipped_when_cohort_too_small(
+    disable_market_viability_floors,
+):
+    # Fewer than 4 candidates have realized_demand_30d → demand_threshold
+    # is None and the leg is silent regardless of value. Use a cohort big
+    # enough to clear the outer pop-cohort guard (>=4 confident pop_reach
+    # values), but where only 2 rows carry realized_demand_30d.
+    pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
+    cohort = [
+        _make_viability_candidate(
+            id_=f"bg{i}",
+            final_score=80.0 - i,
+            rent_pct=0.40,
+            rent_scope="district_band_type",
+            pop_reach=p,
+        )
+        for i, p in enumerate(pops)
+    ]
+    # Only 2 rows have realized_demand_30d; one of them is in the bottom of
+    # that 2-element set but the leg should still be silent.
+    cohort[0]["feature_snapshot_json"]["realized_demand_30d"] = 100.0
+    cohort[0]["feature_snapshot_json"]["realized_demand_branches"] = 5
+    cohort[1]["feature_snapshot_json"]["realized_demand_30d"] = 5000.0
+    cohort[1]["feature_snapshot_json"]["realized_demand_branches"] = 5
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    for c in out:
+        flag = c["score_breakdown_json"].get("market_viability_flag")
+        if flag is not None:
+            assert flag.get("demand_demote") is False
+            assert flag.get("realized_demand_threshold") is None
+
+
+def test_viability_demand_leg_skipped_when_kill_switch_off(
+    disable_market_viability_floors, monkeypatch,
+):
+    # EXPANSION_VIABILITY_DEMAND_LEG_ENABLED=False → leg silent even with
+    # otherwise-firing inputs. Patch every live ``settings`` reference the
+    # same way ``disable_market_viability_floors`` does, so this test is
+    # robust to test-order dependence on importlib.reload.
+    import sys
+
+    import app.core.config as config
+
+    seen_ids: set[int] = set()
+    for module in list(sys.modules.values()):
+        if module is None:
+            continue
+        candidate = getattr(module, "settings", None)
+        if candidate is None or id(candidate) in seen_ids:
+            continue
+        if not hasattr(candidate, "EXPANSION_VIABILITY_DEMAND_LEG_ENABLED"):
+            continue
+        seen_ids.add(id(candidate))
+        monkeypatch.setattr(
+            candidate, "EXPANSION_VIABILITY_DEMAND_LEG_ENABLED", False
+        )
+    if id(config.settings) not in seen_ids:
+        monkeypatch.setattr(
+            config.settings, "EXPANSION_VIABILITY_DEMAND_LEG_ENABLED", False
+        )
+
+    cohort = _viability_cohort_with_demand_target(
+        target_demand=400.0,
+        target_demand_branches=5,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is None, "kill switch must suppress the demand_demote decision"
+    # Snapshot fields remain on feature_snapshot_json — pipeline untouched.
+    fs = target["feature_snapshot_json"]
+    assert fs.get("realized_demand_30d") == 400.0
+    assert fs.get("realized_demand_branches") == 5
+
+
+def test_viability_all_four_legs_fire_with_compound_annotation(
+    disable_market_viability_floors,
+):
+    # Four-leg variant of test_viability_all_three_legs_fire_with_compound_annotation:
+    # pop below p25, rent high on confident scope, economics_score=60 < 65,
+    # realized_demand_30d=400 in the bottom quartile with 5 branches, no
+    # growth. Reason concatenates in stable order: pop, rent, econ, demand.
+    cohort = _viability_cohort_with_demand_target(
+        target_demand=400.0,
+        target_demand_branches=5,
+        target_pop_reach=4500.0,
+        target_rent_pct=0.85,
+        target_economics=60.0,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["population_demote"] is True
+    assert flag["rent_demote"] is True
+    assert flag["economics_demote"] is True
+    assert flag["demand_demote"] is True
+    assert flag["reason"] == (
+        "population_below_quartile_and_rent_high_and_economics_below_threshold"
+        "_and_demand_low"
+    )
 
 
 # ---------------------------------------------------------------------------
