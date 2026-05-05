@@ -69,12 +69,20 @@ class _CapProbeDB:
 
     Pre-cap probes (column_exists, information_schema lookups) return
     empty/false results so the function can progress to the cap block.
+    The candidate_location count probe (now run before the cap calc to
+    let the city-wide branch detect the active retrieval path) returns 0
+    so the legacy fallback path is taken — equivalent to the prior test
+    behaviour where _cl_count was never read at this point.
     The first post-cap execute() raises _StopAfterCap to short-circuit.
     """
 
     _PRE_CAP_SQL_MARKERS = (
         "information_schema.columns",
     )
+    _CANDIDATE_LOCATION_COUNT_MARKER = "FROM candidate_location"
+
+    def __init__(self, *, cl_count: int = 0):
+        self._cl_count = cl_count
 
     def begin_nested(self):
         return _Nested()
@@ -85,6 +93,11 @@ class _CapProbeDB:
             if marker in sql:
                 # Return "column not found" so _cached_column_exists → False.
                 return _Result([])
+        if (
+            self._CANDIDATE_LOCATION_COUNT_MARKER in sql
+            and "is_cluster_primary" in sql
+        ):
+            return _Result([self._cl_count])
         raise _StopAfterCap()
 
 
@@ -239,3 +252,97 @@ def test_city_wide_branch_unchanged(caplog: pytest.LogCaptureFixture) -> None:
 def test_headroom_multiplier_constant_value() -> None:
     # Locks the multiplier so future tweaks cause a visible test break.
     assert expansion_service._PER_DISTRICT_HEADROOM_MULTIPLIER == 3
+
+
+_CL_LOG_RE = re.compile(
+    r"expansion_search city-wide candidate_location mode: "
+    r"cl_count=(\d+) per_district_cap=(\d+) search_id="
+)
+
+
+def test_per_district_cap_uses_max_cap_for_candidate_location_path(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Confirms the city-wide candidate_location branch uses
+    _PER_DISTRICT_MAX_CAP unconditionally.
+
+    Regression for the silent 36-row cap that occurred when
+    per_district_cap was derived from arcgis_raw's ~148-district count
+    (2000 // 148 ≈ 13, clamped to MIN_CAP=5) instead of the
+    candidate_location universe. The structural ceiling for
+    restaurant-suitable Tier-1 primaries in Riyadh under default search
+    params is 58; raising the cap from 5 to MAX_CAP unblocks rows 37-58.
+    See app/services/expansion_advisor.py: city-wide candidate_location
+    branch in run_expansion_search.
+    """
+    clear_expansion_caches()
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger="app.services.expansion_advisor")
+
+    # _cl_count >= 10 forces the candidate_location retrieval path.
+    with pytest.raises(_StopAfterCap):
+        run_expansion_search(
+            _CapProbeDB(cl_count=83),
+            search_id="search-test",
+            brand_name="Brand",
+            category="burger",
+            service_model="qsr",
+            min_area_m2=80,
+            max_area_m2=500,
+            target_area_m2=200,
+            limit=100,
+            target_districts=None,  # city-wide
+        )
+
+    cap_used: int | None = None
+    for record in caplog.records:
+        match = _CL_LOG_RE.search(record.getMessage())
+        if match:
+            assert int(match.group(1)) == 83
+            cap_used = int(match.group(2))
+            break
+
+    assert cap_used == expansion_service._PER_DISTRICT_MAX_CAP, (
+        "city-wide candidate_location path must use _PER_DISTRICT_MAX_CAP "
+        "(=200) so the structural pool ceiling — not an arcgis_raw-derived "
+        "denominator — bounds the result. Got cap=%r." % cap_used
+    )
+
+    # The arcgis_raw branch must NOT fire when candidate_location is used.
+    assert not any(
+        "stratified mode: district_count=" in r.getMessage()
+        for r in caplog.records
+    ), (
+        "arcgis_raw district-count branch must be skipped when "
+        "use_candidate_location=True"
+    )
+
+
+def test_city_wide_legacy_branch_runs_when_candidate_location_unavailable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When candidate_location has <10 Tier-1 primaries the city-wide
+    branch falls back to the arcgis_raw district-count formula
+    (unchanged from the pre-patch behaviour)."""
+    clear_expansion_caches()
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger="app.services.expansion_advisor")
+
+    with pytest.raises(_StopAfterCap):
+        run_expansion_search(
+            _CapProbeDB(cl_count=0),  # legacy path
+            search_id="search-test",
+            brand_name="Brand",
+            category="burger",
+            service_model="qsr",
+            min_area_m2=80,
+            max_area_m2=500,
+            target_area_m2=200,
+            limit=50,
+            target_districts=None,
+        )
+
+    # The candidate_location info-log must NOT fire for the legacy path.
+    assert not any(
+        _CL_LOG_RE.search(r.getMessage()) for r in caplog.records
+    ), "legacy path must not log the candidate_location cap message"
