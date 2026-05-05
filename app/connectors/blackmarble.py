@@ -53,15 +53,19 @@ def evaluate_confidence(
     """Decide whether a district's YoY radiance signal is confident.
 
     Returns ``(confident, confidence_reason)`` where ``confidence_reason`` is
-    one of ``"pixel_floor"``, ``"small_district"``, or ``None`` (confident).
+    one of ``"pixel_floor"``, ``"small_district"``, ``"large_district"``, or
+    ``None`` (confident).
 
     ``area_km2 is None`` (district missing from the polygon source) falls
     back to the pixel-count rule alone — mirrors the missing-field-passes
     pattern in ``_apply_market_viability_pass``.
 
     As a side effect, emits a structured WARNING when ``area_km2`` exceeds
-    ``LARGE_DISTRICT_OUTLIER_KM2`` so polygon-merge errors are surfaced.
-    Outlier districts remain confident; this is observability only.
+    ``LARGE_DISTRICT_OUTLIER_KM2`` so polygon-merge errors and very large
+    districts (e.g. KKIA, Hayit, Ash Sharq, An Nadhim, Banban) are surfaced
+    for diagnostic review. The radiance YoY signal for those districts is
+    not used for ranking because it averages over too large an area to be
+    meaningful at a candidate's micro-location.
     """
     if pixels_cur < PIXEL_COUNT_FLOOR or pixels_prev < PIXEL_COUNT_FLOOR:
         return False, "pixel_floor"
@@ -72,6 +76,7 @@ def evaluate_confidence(
             "blackmarble.large_district_outlier",
             extra={"district_key": district_key, "area_km2": round(area_km2, 2)},
         )
+        return False, "large_district"
     return True, None
 
 RADIANCE_BAND_PATH = (

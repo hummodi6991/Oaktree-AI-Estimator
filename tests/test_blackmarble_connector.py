@@ -303,9 +303,11 @@ def test_large_district_logs_outlier(caplog):
         district_key="huge_merged_district",
     )
 
-    # Outlier flag is observability-only: confidence is unchanged.
-    assert confident is True
-    assert reason is None
+    # Large-district outliers are unconfident: their district-wide radiance
+    # YoY averages over too much empty land to be meaningful at a candidate's
+    # micro-location. The WARNING log is retained for observability.
+    assert confident is False
+    assert reason == "large_district"
 
     outlier_records = [
         r for r in caplog.records
@@ -316,6 +318,33 @@ def test_large_district_logs_outlier(caplog):
     assert rec.levelno == logging.WARNING
     assert getattr(rec, "district_key", None) == "huge_merged_district"
     assert getattr(rec, "area_km2", None) == 750.0
+
+
+def test_large_district_at_threshold_is_confident(caplog):
+    """Boundary: area exactly at LARGE_DISTRICT_OUTLIER_KM2 is allowed.
+
+    The rule fires strictly above the threshold; equality stays confident
+    and emits no WARNING.
+    """
+    import logging
+
+    from app.connectors import blackmarble
+
+    caplog.set_level(logging.WARNING, logger="app.connectors.blackmarble")
+
+    confident, reason = blackmarble.evaluate_confidence(
+        pixels_cur=25,
+        pixels_prev=30,
+        area_km2=blackmarble.LARGE_DISTRICT_OUTLIER_KM2,
+        district_key="threshold_district",
+    )
+
+    assert confident is True
+    assert reason is None
+    assert not [
+        r for r in caplog.records
+        if r.getMessage() == "blackmarble.large_district_outlier"
+    ]
 
 
 def test_large_district_does_not_log_when_below_threshold(caplog):
