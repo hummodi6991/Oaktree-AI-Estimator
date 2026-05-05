@@ -34,6 +34,46 @@ SOURCE_LABEL = "nasa_blackmarble_vnp46a3_c2"
 # falls through (no growth_rescue).
 PIXEL_COUNT_FLOOR = 10
 
+# Area guards (Patch A1). A district whose polygon is below
+# SMALL_DISTRICT_FLOOR_KM2 is too small for VNP46A3 (~500 m pixel) to
+# produce a stable signal even when the pixel-count floor passes; mark
+# unconfident. A polygon larger than LARGE_DISTRICT_OUTLIER_KM2 is almost
+# always a polygon-merge error swallowing siblings; emit an observability
+# WARNING but do not change confidence.
+SMALL_DISTRICT_FLOOR_KM2 = 0.5
+LARGE_DISTRICT_OUTLIER_KM2 = 500.0
+
+
+def evaluate_confidence(
+    pixels_cur: int,
+    pixels_prev: int,
+    area_km2: float | None,
+    district_key: str,
+) -> tuple[bool, str | None]:
+    """Decide whether a district's YoY radiance signal is confident.
+
+    Returns ``(confident, confidence_reason)`` where ``confidence_reason`` is
+    one of ``"pixel_floor"``, ``"small_district"``, or ``None`` (confident).
+
+    ``area_km2 is None`` (district missing from the polygon source) falls
+    back to the pixel-count rule alone — mirrors the missing-field-passes
+    pattern in ``_apply_market_viability_pass``.
+
+    As a side effect, emits a structured WARNING when ``area_km2`` exceeds
+    ``LARGE_DISTRICT_OUTLIER_KM2`` so polygon-merge errors are surfaced.
+    Outlier districts remain confident; this is observability only.
+    """
+    if pixels_cur < PIXEL_COUNT_FLOOR or pixels_prev < PIXEL_COUNT_FLOOR:
+        return False, "pixel_floor"
+    if area_km2 is not None and area_km2 < SMALL_DISTRICT_FLOOR_KM2:
+        return False, "small_district"
+    if area_km2 is not None and area_km2 > LARGE_DISTRICT_OUTLIER_KM2:
+        logger.warning(
+            "blackmarble.large_district_outlier",
+            extra={"district_key": district_key, "area_km2": round(area_km2, 2)},
+        )
+    return True, None
+
 RADIANCE_BAND_PATH = (
     "HDFEOS/GRIDS/VIIRS_Grid_DNB_2d/Data Fields/NearNadir_Composite_Snow_Free"
 )
