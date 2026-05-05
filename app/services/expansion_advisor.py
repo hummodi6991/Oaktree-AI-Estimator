@@ -6230,6 +6230,23 @@ def run_expansion_search(
     is_city_wide = not target_district_norm
     use_stratified = is_city_wide or len(target_district_norm) >= 2
 
+    # ── Probe candidate_location availability up front ──
+    # The active retrieval path is candidate_location when ≥10 Tier-1
+    # cluster primaries exist. The per-district cap denominator must match
+    # the retrieval universe; the arcgis_raw district count (~148) is the
+    # wrong denominator when listings live in candidate_location (only ~26
+    # districts have qualifying listings under default search params).
+    _cl_count = 0
+    try:
+        _cl_count = int(db.execute(text(
+            "SELECT COUNT(*) FROM candidate_location "
+            "WHERE is_cluster_primary = TRUE AND source_tier = 1 AND geom IS NOT NULL"
+        )).scalar() or 0)
+    except Exception as exc:
+        logger.warning("candidate_location count query failed, falling back to legacy: %s", exc)
+
+    use_candidate_location = _cl_count >= 10
+
     # Compute per-district cap dynamically.
     # Goal: spread _CANDIDATE_POOL_LIMIT slots across districts.
     # We estimate the district count from external_feature to set the cap,
@@ -6252,6 +6269,20 @@ def run_expansion_search(
         logger.info(
             "expansion_search stratified multi-district mode: target_count=%d per_district_cap=%d search_id=%s",
             len(target_district_norm), per_district_cap, search_id,
+        )
+    elif is_city_wide and use_candidate_location:
+        # candidate_location path: the retrieval universe is Tier-1 cluster
+        # primaries (~83 districts; only ~26 with qualifying listings under
+        # default params). Deriving the cap from arcgis_raw's ~148 districts
+        # silently collapses the pool — e.g. 2000 // 148 ≈ 13, clamped by
+        # _PER_DISTRICT_MIN_CAP to 5, gave a 36-row cap on the production
+        # QSR/store-showroom/80–500m² combination whose structural ceiling
+        # is 58. At current inventory no district has more than ~14
+        # qualifying listings, so MAX_CAP is functionally unbounded.
+        per_district_cap = _PER_DISTRICT_MAX_CAP
+        logger.info(
+            "expansion_search city-wide candidate_location mode: cl_count=%d per_district_cap=%d search_id=%s",
+            _cl_count, per_district_cap, search_id,
         )
     elif is_city_wide:
         try:
@@ -6312,18 +6343,17 @@ def run_expansion_search(
         except Exception:
             pass
 
-    # ── Check if candidate_location table is available (preferred path) ──
-    _cl_count = 0
-    try:
-        _cl_count = int(db.execute(text(
-            "SELECT COUNT(*) FROM candidate_location "
-            "WHERE is_cluster_primary = TRUE AND source_tier = 1 AND geom IS NOT NULL"
-        )).scalar() or 0)
-    except Exception as exc:
-        logger.warning("candidate_location count query failed, falling back to legacy: %s", exc)
-
-    use_candidate_location = _cl_count >= 10
+    # candidate_location availability (_cl_count, use_candidate_location)
+    # was probed earlier so the per-district cap could match the active
+    # retrieval universe.
     use_commercial_units = False
+
+    logger.info(
+        "expansion_advisor.candidate_pool_cap search_id=%s is_city_wide=%s "
+        "use_candidate_location=%s per_district_cap=%d candidate_pool_limit=%d cl_count=%d",
+        search_id, is_city_wide, use_candidate_location,
+        per_district_cap, _CANDIDATE_POOL_LIMIT, _cl_count,
+    )
 
     if use_candidate_location:
         rows = _query_candidate_location_pool(

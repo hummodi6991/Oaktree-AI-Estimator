@@ -139,6 +139,10 @@ class ExpansionAdvisorMeta(StrictResponseModel):
     excluded_sources: list[str] = Field(default_factory=list)
     degraded: bool = False
     error_class: str | None = None
+    # Pool diagnostics: explain why limit may be unsaturated.
+    pool_size: int | None = None
+    limit_requested: int | None = None
+    rows_returned: int | None = None
 
 
 class ExpansionAdvisorBrandProfileResponse(StrictResponseModel):
@@ -1075,6 +1079,11 @@ def create_expansion_search(
             "version": "expansion_advisor_v7",
             "parcel_source": "listings_only",
             "excluded_sources": ["arcgis_parcels", "hungerstation_poi", "suhail", "inferred_parcels"],
+            # Pool diagnostics: surface why limit may not be saturated. Matches
+            # `notes.coverage.candidates_evaluated` from the service layer.
+            "pool_size": (search_notes.get("coverage") or {}).get("candidates_evaluated"),
+            "limit_requested": req.limit,
+            "rows_returned": len(items),
         },
     }
 
