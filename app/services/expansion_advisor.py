@@ -14,7 +14,10 @@ from typing import Any, Mapping
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.connectors.blackmarble import QUALITY_FILTER_LABEL
+from app.connectors.blackmarble import (
+    QUALITY_FILTER_LABEL,
+    evaluate_confidence as _blackmarble_evaluate_confidence,
+)
 from app.core.config import settings
 from app.ml.name_normalization import norm_district
 from app.services.aqar_district_match import (
@@ -6615,6 +6618,50 @@ def run_expansion_search(
     # YoY). Pre-loaded in one query before the candidate loop to avoid N+1.
     # Keyed by norm_district("riyadh", district_label) — matches the key used
     # at ingest time in app.ingest.black_marble_radiance.
+    #
+    # District areas (Patch A1). One per-search query against the same
+    # polygon source the radiance ingest uses (external_feature, layer
+    # 'aqar_district_hulls'); normalized in Python via norm_district to
+    # mirror ingest semantics exactly. Used by evaluate_confidence to
+    # apply the small-district floor / large-district outlier WARNING.
+    _district_area_km2: dict[str, float] = {}
+    try:
+        _area_rows = db.execute(text("""
+            SELECT
+                TRIM(COALESCE(ef.properties->>'district_raw',
+                              ef.properties->>'district')) AS district_label,
+                ST_Area(
+                    ST_SetSRID(ST_GeomFromGeoJSON(ef.geometry::text), 4326)::geography
+                ) / 1e6 AS area_km2
+            FROM external_feature ef
+            WHERE ef.layer_name = 'aqar_district_hulls'
+              AND ef.geometry IS NOT NULL
+              AND jsonb_typeof(ef.geometry) = 'object'
+              AND COALESCE(ef.properties->>'district_raw',
+                           ef.properties->>'district') IS NOT NULL
+              AND TRIM(COALESCE(ef.properties->>'district_raw',
+                                ef.properties->>'district')) <> ''
+        """)).mappings().all()
+        for _ar in _area_rows:
+            _label = _ar["district_label"]
+            _area = _ar["area_km2"]
+            if not _label or _area is None:
+                continue
+            _key = norm_district("riyadh", str(_label).strip())
+            if not _key:
+                continue
+            # Duplicate district_label rows occasionally exist in
+            # external_feature; keep the largest polygon to be safe (a
+            # merged sibling would still be flagged by the outlier rule).
+            _area_f = float(_area)
+            if _key not in _district_area_km2 or _area_f > _district_area_km2[_key]:
+                _district_area_km2[_key] = _area_f
+    except Exception:
+        # Polygon table missing / schema mismatch — degrade silently. The
+        # confidence helper treats area_km2 is None as "unknown, don't
+        # penalize", so the legacy pixel-only rule applies.
+        logger.debug("district area lookup failed", exc_info=True)
+
     _radiance_lookup: dict[str, dict[str, Any]] = {}
     try:
         _radiance_rows = db.execute(text("""
@@ -6656,7 +6703,13 @@ def run_expansion_search(
         _dk = _r["district_key"]
         _pixels_cur = int(_r["pixels_cur"] or 0)
         _pixels_prev = int(_r["pixels_prev"] or 0)
-        _confident = _pixels_cur >= 10 and _pixels_prev >= 10
+        _area_km2 = _district_area_km2.get(_dk)
+        _confident, _confidence_reason = _blackmarble_evaluate_confidence(
+            pixels_cur=_pixels_cur,
+            pixels_prev=_pixels_prev,
+            area_km2=_area_km2,
+            district_key=_dk,
+        )
         _yoy_pct: float | None = None
         if _confident and _r["rad_prev"] and float(_r["rad_prev"]) > 0:
             _yoy_pct = (
@@ -6666,6 +6719,7 @@ def run_expansion_search(
             "value_yoy_pct": round(_yoy_pct, 2) if _yoy_pct is not None else None,
             "source_label": "blackmarble_district_yoy_simple",
             "confident": _confident and _yoy_pct is not None,
+            "confidence_reason": _confidence_reason,
             "pixel_count": _pixels_cur,
             "year_month": str(_r["ym_cur"]),
         }

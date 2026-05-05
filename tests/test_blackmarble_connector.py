@@ -220,3 +220,122 @@ def test_aggregate_per_district_pixel_count_floor():
     # Below the consume-time floor of 10, but we still report it.
     assert r["pixel_count_valid"] == 1
     assert r["pixel_count_valid"] < blackmarble.PIXEL_COUNT_FLOOR
+
+
+# ── Patch A1: area-based confidence guards ──────────────────────────────
+
+
+def test_small_district_below_floor_is_unconfident():
+    from app.connectors import blackmarble
+
+    confident, reason = blackmarble.evaluate_confidence(
+        pixels_cur=25,
+        pixels_prev=30,
+        area_km2=0.3,
+        district_key="tiny_district",
+    )
+    assert confident is False
+    assert reason == "small_district"
+
+
+def test_small_district_at_floor_is_confident():
+    """Boundary: area exactly at SMALL_DISTRICT_FLOOR_KM2 is allowed."""
+    from app.connectors import blackmarble
+
+    confident, reason = blackmarble.evaluate_confidence(
+        pixels_cur=25,
+        pixels_prev=30,
+        area_km2=blackmarble.SMALL_DISTRICT_FLOOR_KM2,
+        district_key="boundary_district",
+    )
+    assert confident is True
+    assert reason is None
+
+
+def test_pixel_floor_takes_precedence_over_area():
+    from app.connectors import blackmarble
+
+    confident, reason = blackmarble.evaluate_confidence(
+        pixels_cur=5,  # below floor
+        pixels_prev=30,
+        area_km2=10.0,  # ample area
+        district_key="thin_pixel_district",
+    )
+    assert confident is False
+    assert reason == "pixel_floor"
+
+
+def test_missing_area_falls_back_to_pixel_only():
+    from app.connectors import blackmarble
+
+    # Pixels above floor + unknown area → confident.
+    confident, reason = blackmarble.evaluate_confidence(
+        pixels_cur=25,
+        pixels_prev=30,
+        area_km2=None,
+        district_key="unknown_area_district",
+    )
+    assert confident is True
+    assert reason is None
+
+    # Pixels below floor + unknown area → unconfident with pixel_floor.
+    confident, reason = blackmarble.evaluate_confidence(
+        pixels_cur=5,
+        pixels_prev=30,
+        area_km2=None,
+        district_key="unknown_area_district",
+    )
+    assert confident is False
+    assert reason == "pixel_floor"
+
+
+def test_large_district_logs_outlier(caplog):
+    import logging
+
+    from app.connectors import blackmarble
+
+    caplog.set_level(logging.WARNING, logger="app.connectors.blackmarble")
+
+    confident, reason = blackmarble.evaluate_confidence(
+        pixels_cur=25,
+        pixels_prev=30,
+        area_km2=750.0,
+        district_key="huge_merged_district",
+    )
+
+    # Outlier flag is observability-only: confidence is unchanged.
+    assert confident is True
+    assert reason is None
+
+    outlier_records = [
+        r for r in caplog.records
+        if r.getMessage() == "blackmarble.large_district_outlier"
+    ]
+    assert len(outlier_records) == 1
+    rec = outlier_records[0]
+    assert rec.levelno == logging.WARNING
+    assert getattr(rec, "district_key", None) == "huge_merged_district"
+    assert getattr(rec, "area_km2", None) == 750.0
+
+
+def test_large_district_does_not_log_when_below_threshold(caplog):
+    """Boundary: area = 499 km² is below the 500 km² outlier threshold."""
+    import logging
+
+    from app.connectors import blackmarble
+
+    caplog.set_level(logging.WARNING, logger="app.connectors.blackmarble")
+
+    confident, reason = blackmarble.evaluate_confidence(
+        pixels_cur=25,
+        pixels_prev=30,
+        area_km2=499.0,
+        district_key="just_under_outlier",
+    )
+
+    assert confident is True
+    assert reason is None
+    assert not [
+        r for r in caplog.records
+        if r.getMessage() == "blackmarble.large_district_outlier"
+    ]
