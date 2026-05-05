@@ -77,12 +77,21 @@ class Settings:
 
     # --- Realized demand (rating_count Δ) signal ---
     # When enabled AND the ``expansion_delivery_rating_history`` table has
-    # ≥2 snapshots for the candidate's catchment, the service layer blends a
-    # realized-demand score (rating_count growth per category per radius over
-    # the last N days) into the supply-based _delivery_score().  Default OFF
-    # so behavior is unchanged until history has accumulated.
+    # ≥3 contributing branches in the candidate's catchment, the snapshot
+    # writer publishes ``realized_demand_30d`` / ``realized_demand_branches``
+    # to feature_snapshot_json and the service layer blends a realized-demand
+    # score (rating_count growth per category per radius over the last N
+    # days) into the supply-based _delivery_score().
+    #
+    # Default flipped ON (B3): the production coverage check confirmed
+    # 100% of recent candidates carry ≥3 branches in the 1200 m catchment
+    # (median realized_demand_30d ≈ 797, p90 ≈ 2,293 — well above the
+    # _delivery_score calibration reference of 200). The signal is now
+    # first-class, not opt-in. Set EXPANSION_REALIZED_DEMAND_ENABLED=false
+    # to restore the legacy behavior (snapshot fields suppressed and
+    # realized_demand_source reported as ``history_unavailable``).
     EXPANSION_REALIZED_DEMAND_ENABLED: bool = (
-        os.getenv("EXPANSION_REALIZED_DEMAND_ENABLED", "").strip().lower()
+        os.getenv("EXPANSION_REALIZED_DEMAND_ENABLED", "true").strip().lower()
         in {"1", "true", "yes", "on"}
     )
     EXPANSION_REALIZED_DEMAND_WINDOW_DAYS: int = int(
@@ -171,6 +180,29 @@ class Settings:
     )
     EXPANSION_VIABILITY_POP_PERCENTILE: float = float(
         os.getenv("EXPANSION_VIABILITY_POP_PERCENTILE", "0.25")
+    )
+    # Bottom-quartile cutoff for the realized-demand soft-demote leg
+    # (clause 2 "strong potential for sales"). Mirrors
+    # EXPANSION_VIABILITY_POP_PERCENTILE.
+    EXPANSION_VIABILITY_DEMAND_PERCENTILE: float = float(
+        os.getenv("EXPANSION_VIABILITY_DEMAND_PERCENTILE", "0.25")
+    )
+    # Minimum number of distinct delivery-platform branches with rating-
+    # count delta capability inside the candidate's catchment for the
+    # demand leg to consider the signal confident. Mirrors the snapshot-
+    # writer gate at app/services/expansion_advisor.py:7933 and lets us
+    # tighten/loosen the leg without touching the snapshot path.
+    EXPANSION_VIABILITY_DEMAND_MIN_BRANCHES: int = int(
+        os.getenv("EXPANSION_VIABILITY_DEMAND_MIN_BRANCHES", "3")
+    )
+    # Kill switch for the demand_demote leg only. Disabling this leaves
+    # the realized-demand data pipeline (snapshots, memo phrasing, rerank
+    # emission) fully intact — only the soft-demote behavior is suppressed.
+    # Use when production ranking moves are problematic but the data is
+    # still wanted for audit / observability.
+    EXPANSION_VIABILITY_DEMAND_LEG_ENABLED: bool = (
+        os.getenv("EXPANSION_VIABILITY_DEMAND_LEG_ENABLED", "true").strip().lower()
+        in {"1", "true", "yes", "on"}
     )
     EXPANSION_VIABILITY_DEMOTION_STEPS: int = int(
         os.getenv("EXPANSION_VIABILITY_DEMOTION_STEPS", "6")
