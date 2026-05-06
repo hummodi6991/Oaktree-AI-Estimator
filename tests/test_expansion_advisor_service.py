@@ -3294,8 +3294,8 @@ def _viability_cohort_with_radiance_growth_target(
 
 def test_viability_radiance_growth_only_leg_fires(disable_market_viability_floors):
     # Radiance leg alone: pop above p25, rent low, economics healthy, demand
-    # mid-cohort. Confident negative YoY (-2.0%) at the default 0.0 demote
-    # threshold ⇒ leg fires alone with reason="radiance_growth_low".
+    # mid-cohort. Confident negative YoY (-2.0%) below the calibrated 2.0
+    # demote threshold ⇒ leg fires alone with reason="radiance_growth_low".
     cohort = _viability_cohort_with_radiance_growth_target(
         target_yoy_pct=-2.0,
         target_confident=True,
@@ -3312,7 +3312,7 @@ def test_viability_radiance_growth_only_leg_fires(disable_market_viability_floor
     assert flag["radiance_growth_demote"] is True
     assert flag["radiance_growth_pct"] == -2.0
     assert flag["radiance_confident"] is True
-    assert flag["radiance_yoy_demote_threshold"] == 0.0
+    assert flag["radiance_yoy_demote_threshold"] == 2.0
     assert flag["reason"] == "radiance_growth_low"
     new_idx = next(i for i, c in enumerate(out) if c["id"] == "target")
     assert new_idx == min(
@@ -3422,10 +3422,12 @@ def test_viability_radiance_growth_leg_threshold_boundary(
     disable_market_viability_floors,
 ):
     # Operator is strict ``<``: at value_yoy_pct == threshold exactly, the
-    # leg must NOT fire. With default threshold=0.0 and yoy=0.0, the leg
-    # is silent and the candidate carries no flag (no other leg fires).
+    # leg must NOT fire. Tests against whatever the env default is so
+    # threshold recalibrations don't break this assertion.
+    from app.core.config import settings
+    threshold = float(settings.EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD)
     cohort = _viability_cohort_with_radiance_growth_target(
-        target_yoy_pct=0.0,
+        target_yoy_pct=threshold,
         target_confident=True,
     )
     out = _apply_market_viability_pass(list(cohort), search_id="t")
@@ -3442,7 +3444,7 @@ def test_viability_all_five_legs_fire_with_compound_annotation(
     # Five-leg variant of test_viability_all_four_legs_fire_with_compound_annotation:
     # pop below p25, rent high on confident scope, economics_score=60 < 65,
     # realized_demand_30d=400 in the bottom quartile with 5 branches,
-    # confident negative radiance YoY (-1.5%) below the 0.0 demote threshold.
+    # confident negative radiance YoY (-1.5%) below the 2.0 demote threshold.
     # Reason concatenates in stable order: pop, rent, econ, demand, radiance.
     cohort = _viability_cohort_with_demand_target(
         target_demand=400.0,
@@ -3518,7 +3520,7 @@ def test_viability_diagnostics_demote_legs_block_written(
         "radiance_yoy_demote_threshold",
     }
     assert set(thresholds.keys()) == expected_threshold_keys
-    assert thresholds["radiance_yoy_demote_threshold"] == 0.0
+    assert thresholds["radiance_yoy_demote_threshold"] == 2.0
 
     leg_enabled = diagnostics["demote_legs"]["leg_enabled"]
     assert leg_enabled["demand"] is True
