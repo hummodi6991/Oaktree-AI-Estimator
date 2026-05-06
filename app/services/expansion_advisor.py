@@ -4481,6 +4481,7 @@ def _apply_market_viability_pass(
     population_hard_floor: int | None = None,
     commercial_hard_floor: int | None = None,
     construction_buffer_m: float | None = None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Demote candidates that are confidently bad on the CEO-directive legs.
 
@@ -4669,6 +4670,25 @@ def _apply_market_viability_pass(
                 "construction_buffer_m": cp_buffer_m,
             },
         )
+
+    # Surface the per-leg drop counts and the thresholds in effect to the
+    # caller so the API meta can explain unsaturated-limit responses without
+    # needing kubectl logs. Always populated when ``diagnostics`` is provided
+    # — even when nothing was dropped, so the response shape stays stable.
+    if diagnostics is not None:
+        diagnostics["hard_floors"] = {
+            "drops": {
+                "dropped_population": dropped_population,
+                "dropped_commercial": dropped_commercial,
+                "dropped_construction": dropped_construction,
+                "remaining": len(survivors),
+            },
+            "thresholds": {
+                "hard_floor_pop_threshold": pop_floor,
+                "hard_floor_brand_threshold": bp_floor,
+                "hard_floor_construction_buffer_m": cp_buffer_m,
+            },
+        }
 
     candidates = survivors
     if not candidates or len(candidates) < 4:
@@ -8611,7 +8631,12 @@ def run_expansion_search(
     # both rent and population. Soft positional pass; runs after value_band so
     # demotions stack when the same row is both above-market and high-rent +
     # low-pop, and before truncation/rerank so the LLM sees post-pass order.
-    candidates = _apply_market_viability_pass(candidates, search_id=search_id)
+    viability_diagnostics: dict[str, Any] = {}
+    candidates = _apply_market_viability_pass(
+        candidates,
+        search_id=search_id,
+        diagnostics=viability_diagnostics,
+    )
 
     candidates = candidates[:limit]
 
@@ -8904,6 +8929,12 @@ def run_expansion_search(
             ) if _districts_with_no_candidates else None,
         }
         search_notes: dict[str, Any] = {"coverage": coverage_meta}
+        # Surface the hard-floor pre-pass diagnostics — per-leg drop counts
+        # and the thresholds in effect — so the API meta can explain why the
+        # requested limit may not be saturated. Operators otherwise have no
+        # signal beyond pool_size/rows_returned.
+        if viability_diagnostics:
+            search_notes["viability"] = viability_diagnostics
         db.execute(
             text(
                 "UPDATE expansion_search "

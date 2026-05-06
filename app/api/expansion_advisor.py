@@ -143,6 +143,12 @@ class ExpansionAdvisorMeta(StrictResponseModel):
     pool_size: int | None = None
     limit_requested: int | None = None
     rows_returned: int | None = None
+    # Hard-floor pre-pass diagnostics: per-leg drop counts and the thresholds
+    # in effect, so operators can interpret unsaturated searches without
+    # consulting application logs. Populated when the directive's hard floors
+    # fired during `_apply_market_viability_pass`.
+    hard_floor_drops: dict[str, int] | None = None
+    hard_floor_thresholds: dict[str, float] | None = None
 
 
 class ExpansionAdvisorBrandProfileResponse(StrictResponseModel):
@@ -1084,6 +1090,16 @@ def create_expansion_search(
             "pool_size": (search_notes.get("coverage") or {}).get("candidates_evaluated"),
             "limit_requested": req.limit,
             "rows_returned": len(items),
+            # Hard-floor pre-pass diagnostics. None when the pre-pass dropped
+            # nothing (so the response stays unchanged for searches where no
+            # gate fired). Sourced from `notes.viability.hard_floors` written
+            # by `_apply_market_viability_pass`.
+            "hard_floor_drops": (
+                ((search_notes.get("viability") or {}).get("hard_floors") or {}).get("drops")
+            ),
+            "hard_floor_thresholds": (
+                ((search_notes.get("viability") or {}).get("hard_floors") or {}).get("thresholds")
+            ),
         },
     }
 
