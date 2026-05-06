@@ -950,6 +950,7 @@ def _full_demote_legs_block():
             "dropped_economics": 0,
             "dropped_demand": 3,
             "dropped_radiance_growth": 1,
+            "dropped_rent_per_capita": 2,
         },
         "thresholds": {
             "rent_pct_threshold": 0.85,
@@ -960,10 +961,15 @@ def _full_demote_legs_block():
             "demand_threshold": None,
             "demand_min_branches": 5,
             "radiance_yoy_demote_threshold": 2.0,
+            "rpc_percentile": 0.75,
+            "rpc_threshold": 1500.0,
+            "rpc_min_cohort": 10,
+            "rpc_cohort_n": 12,
         },
         "leg_enabled": {
             "demand": True,
             "radiance_growth": True,
+            "rent_per_capita": True,
         },
     }
 
@@ -979,6 +985,7 @@ def test_meta_includes_demote_leg_drops(monkeypatch):
         "dropped_economics",
         "dropped_demand",
         "dropped_radiance_growth",
+        "dropped_rent_per_capita",
     }
     for value in drops.values():
         assert isinstance(value, int)
@@ -999,6 +1006,10 @@ def test_meta_includes_demote_leg_thresholds(monkeypatch):
         "demand_threshold",
         "demand_min_branches",
         "radiance_yoy_demote_threshold",
+        "rpc_percentile",
+        "rpc_threshold",
+        "rpc_min_cohort",
+        "rpc_cohort_n",
     }
     assert isinstance(thresholds["rent_pct_threshold"], float)
     assert isinstance(thresholds["pop_percentile"], float)
@@ -1008,6 +1019,10 @@ def test_meta_includes_demote_leg_thresholds(monkeypatch):
     assert thresholds["demand_threshold"] is None
     assert isinstance(thresholds["demand_min_branches"], int)
     assert isinstance(thresholds["radiance_yoy_demote_threshold"], float)
+    assert isinstance(thresholds["rpc_percentile"], float)
+    assert isinstance(thresholds["rpc_threshold"], float)
+    assert isinstance(thresholds["rpc_min_cohort"], int)
+    assert isinstance(thresholds["rpc_cohort_n"], int)
 
 
 def test_meta_includes_demote_leg_enabled(monkeypatch):
@@ -1017,8 +1032,10 @@ def test_meta_includes_demote_leg_enabled(monkeypatch):
     leg_enabled = body["meta"]["demote_leg_enabled"]
     assert "demand" in leg_enabled
     assert "radiance_growth" in leg_enabled
+    assert "rent_per_capita" in leg_enabled
     assert isinstance(leg_enabled["demand"], bool)
     assert isinstance(leg_enabled["radiance_growth"], bool)
+    assert isinstance(leg_enabled["rent_per_capita"], bool)
 
 
 def test_meta_demote_leg_fields_default_none_when_block_absent(monkeypatch):

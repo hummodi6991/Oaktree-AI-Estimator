@@ -207,6 +207,20 @@ class Settings:
     EXPANSION_VIABILITY_DEMOTION_STEPS: int = int(
         os.getenv("EXPANSION_VIABILITY_DEMOTION_STEPS", "6")
     )
+    # rent_per_capita demote leg: catches the "low-pop + high-rent" anti-pattern
+    # via a cohort percentile on estimated_annual_rent_sar / population_reach.
+    # Mirrors EXPANSION_VIABILITY_POP_PERCENTILE (per-search cohort cutoff,
+    # positional reorder, no final_score mutation). Top-quartile of cohort
+    # gets demoted at the default 0.75.
+    EXPANSION_VIABILITY_RPC_PERCENTILE: float = float(
+        os.getenv("EXPANSION_VIABILITY_RPC_PERCENTILE", "0.75")
+    )
+    # Below this cohort size, the rpc leg is skipped entirely (avoids noisy
+    # percentile cutoffs on tiny samples). No demotions and no flag writes
+    # below this floor.
+    EXPANSION_VIABILITY_RPC_MIN_COHORT: int = int(
+        os.getenv("EXPANSION_VIABILITY_RPC_MIN_COHORT", "10")
+    )
     # Threshold for the economics-quality leg of _apply_market_viability_pass
     # (CEO directive clause 3 — "strong potential for profitability"). Candidates
     # with economics_score < this threshold are soft-demoted by the same
