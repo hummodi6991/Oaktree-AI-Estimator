@@ -4485,7 +4485,7 @@ def _apply_market_viability_pass(
 ) -> list[dict[str, Any]]:
     """Demote candidates that are confidently bad on the CEO-directive legs.
 
-    Four independent legs, soft-demote on any (single demote, never compounded):
+    Five independent legs, soft-demote on any (single demote, never compounded):
 
       * Population leg (clause 1, "high population density") — fires when the
         per-search bottom-quartile gate fails AND the radiance growth signal
@@ -4512,6 +4512,21 @@ def _apply_market_viability_pass(
         isolation via ``EXPANSION_VIABILITY_DEMAND_LEG_ENABLED=false``;
         the snapshot pipeline (and the ``realized_demand_30d`` /
         ``realized_demand_branches`` annotation) remain fully populated.
+      * Radiance-growth leg (Pillar 3 of Faisal's directive, "strong
+        potential for business growth", B1+B2) — fires when
+        ``feature_snapshot_json["radiance_growth"].confident`` is True
+        AND ``value_yoy_pct`` < ``EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD``
+        (operator strict ``<``). NO growth rescue: a leg whose own signal
+        is forward-looking cannot self-rescue; mirrors the economics and
+        demand legs. Distinct from
+        ``EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD`` which drives the
+        rescue side (operator ``>=``) for the population and rent legs;
+        splitting the knobs prevents calibrating one from silently
+        affecting the other. Disable in isolation via
+        ``EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED=false``; the
+        advisory ``radiance_growth_pass`` gate emission remains intact —
+        only the soft-demote behavior is suppressed. Ships at threshold
+        ``0.0`` (inert by default).
 
     The growth-rescue signal reads ``feature_snapshot_json["radiance_growth"]``
     (NASA Black Marble VNP46A3). When that signal is confident and YoY growth
@@ -4524,7 +4539,7 @@ def _apply_market_viability_pass(
     minimum). Positional reorder only, does not mutate final_score. Writes
     ``market_viability_flag`` to score_breakdown_json with the legs that fired
     encoded as a stable ``_and_``-joined string in the ``reason`` field
-    (stable order: population, rent, economics, demand).
+    (stable order: population, rent, economics, demand, radiance_growth).
     """
     if not candidates:
         return candidates
@@ -4557,6 +4572,12 @@ def _apply_market_viability_pass(
     ))
     demand_leg_enabled = bool(getattr(
         settings, "EXPANSION_VIABILITY_DEMAND_LEG_ENABLED", True
+    ))
+    radiance_yoy_demote_threshold = float(getattr(
+        settings, "EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD", 0.0
+    ))
+    radiance_growth_leg_enabled = bool(getattr(
+        settings, "EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED", True
     ))
 
     # ── CEO directive: hard floors (broader data + filter low-potential) ──
@@ -4763,12 +4784,13 @@ def _apply_market_viability_pass(
     def _flag_inputs(
         c: dict[str, Any]
     ) -> tuple[
-        bool, bool, bool, bool,
+        bool, bool, bool, bool, bool,
         float, str | None, float, float | None, dict[str, Any],
         float | None, int | None,
     ]:
         # Returns:
         #   (pop_demote, rent_demote, econ_demote, demand_demote,
+        #    radiance_growth_demote,
         #    rent_pct, rent_scope, pop_reach, economics_score, radiance_meta,
         #    demand_value, demand_branches)
         radiance_meta: dict[str, Any] = {
@@ -4886,8 +4908,23 @@ def _apply_market_viability_pass(
         )
         demand_demote = bool(demand_confident and demand_low)
 
+        # ── Pillar 3 (radiance growth) — NASA Black Marble VNP46A3 YoY
+        # demote leg. Fires when ``radiance_growth.confident`` is True AND
+        # ``value_yoy_pct`` < the demote threshold (operator strict ``<``).
+        # NO growth-rescue (mirrors the economics and demand legs): a leg
+        # whose own signal is forward-looking cannot self-rescue. Defensive
+        # silent-pass when the kill switch is off, the block is missing,
+        # the signal is not confident, or the value is None.
+        radiance_growth_demote = False
+        if radiance_growth_leg_enabled and isinstance(rad, dict):
+            if rad_confident and rad_yoy_pct is not None:
+                radiance_growth_demote = bool(
+                    rad_yoy_pct < radiance_yoy_demote_threshold
+                )
+
         return (
             pop_demote, rent_demote, econ_demote, demand_demote,
+            radiance_growth_demote,
             rent_pct, rent_scope, pop_reach, economics_score, radiance_meta,
             demand_value, demand_branches,
         )
@@ -4895,7 +4932,10 @@ def _apply_market_viability_pass(
     pre_eval = [_flag_inputs(c) for c in out]
     demote_indices = [
         i for i in range(n)
-        if pre_eval[i][0] or pre_eval[i][1] or pre_eval[i][2] or pre_eval[i][3]
+        if (
+            pre_eval[i][0] or pre_eval[i][1] or pre_eval[i][2]
+            or pre_eval[i][3] or pre_eval[i][4]
+        )
     ]
 
     demoted = 0
@@ -4904,11 +4944,13 @@ def _apply_market_viability_pass(
         c = out[i]
         (
             pop_demote, rent_demote, econ_demote, demand_demote,
+            radiance_growth_demote,
             rent_pct, rent_scope, pop_reach, economics_score, radiance_meta,
             demand_value, demand_branches,
         ) = pre_eval[i]
         # Stable-order annotation: clause 1 (pop), clause 2 (rent),
-        # clause 3 (economics), clause "sales potential" (demand).
+        # clause 3 (economics), clause "sales potential" (demand),
+        # clause "growth potential" (radiance growth).
         reasons: list[str] = []
         if pop_demote:
             reasons.append("population_below_quartile")
@@ -4918,6 +4960,8 @@ def _apply_market_viability_pass(
             reasons.append("economics_below_threshold")
         if demand_demote:
             reasons.append("demand_low")
+        if radiance_growth_demote:
+            reasons.append("radiance_growth_low")
         sb = c.get("score_breakdown_json")
         if not isinstance(sb, dict):
             sb = {}
@@ -4944,6 +4988,8 @@ def _apply_market_viability_pass(
                 float(demand_threshold) if demand_threshold is not None else None
             ),
             "demand_demote": demand_demote,
+            "radiance_growth_demote": radiance_growth_demote,
+            "radiance_yoy_demote_threshold": float(radiance_yoy_demote_threshold),
             "reason": "_and_".join(reasons),
             "radiance_growth_pct": radiance_meta["radiance_growth_pct"],
             "radiance_confident": radiance_meta["radiance_confident"],
@@ -4955,24 +5001,62 @@ def _apply_market_viability_pass(
             out.insert(target, c)
         demoted += 1
 
+    pop_demoted = sum(1 for pe in pre_eval if pe[0])
+    rent_demoted = sum(1 for pe in pre_eval if pe[1])
+    econ_demoted = sum(1 for pe in pre_eval if pe[2])
+    demand_demoted = sum(1 for pe in pre_eval if pe[3])
+    radiance_demoted = sum(1 for pe in pre_eval if pe[4])
     if demoted:
-        pop_demoted = sum(1 for pe in pre_eval if pe[0])
-        rent_demoted = sum(1 for pe in pre_eval if pe[1])
-        econ_demoted = sum(1 for pe in pre_eval if pe[2])
-        demand_demoted = sum(1 for pe in pre_eval if pe[3])
         logger.info(
             "expansion_market_viability_pass: search_id=%s demoted=%d "
             "pop_leg=%d rent_leg=%d econ_leg=%d demand_leg=%d "
+            "radiance_growth_leg=%d "
             "rent_pct_threshold=%.2f pop_percentile=%.2f pop_threshold=%.0f "
             "economics_min=%.2f demand_percentile=%.2f demand_threshold=%s "
+            "radiance_yoy_demote_threshold=%.2f "
             "demotion_steps=%d cohort_n=%d demand_cohort_n=%d",
             search_id, demoted, pop_demoted, rent_demoted, econ_demoted,
-            demand_demoted,
+            demand_demoted, radiance_demoted,
             rent_pct_threshold, pop_percentile_threshold, pop_threshold,
             economics_min, demand_percentile_threshold,
             ("%.2f" % demand_threshold) if demand_threshold is not None else "None",
+            radiance_yoy_demote_threshold,
             demotion_steps, len(pop_values), len(demand_values),
         )
+
+    # Per-leg diagnostics: parallel block to ``hard_floors`` (written
+    # earlier in this function before the soft-demote loop). Placed AFTER
+    # the pre_eval loop so the per-leg counters are populated. Always
+    # written when ``diagnostics`` is provided so the response shape stays
+    # stable even when no leg fired.
+    if diagnostics is not None:
+        diagnostics["demote_legs"] = {
+            "drops": {
+                "dropped_population": pop_demoted,
+                "dropped_rent": rent_demoted,
+                "dropped_economics": econ_demoted,
+                "dropped_demand": demand_demoted,
+                "dropped_radiance_growth": radiance_demoted,
+            },
+            "thresholds": {
+                "rent_pct_threshold": float(rent_pct_threshold),
+                "pop_percentile": float(pop_percentile_threshold),
+                "pop_threshold": (
+                    float(pop_threshold) if pop_threshold is not None else None
+                ),
+                "economics_min": float(economics_min),
+                "demand_percentile": float(demand_percentile_threshold),
+                "demand_threshold": (
+                    float(demand_threshold) if demand_threshold is not None else None
+                ),
+                "demand_min_branches": int(demand_min_branches),
+                "radiance_yoy_demote_threshold": float(radiance_yoy_demote_threshold),
+            },
+            "leg_enabled": {
+                "demand": demand_leg_enabled,
+                "radiance_growth": radiance_growth_leg_enabled,
+            },
+        }
     return out
 
 

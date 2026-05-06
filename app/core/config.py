@@ -224,6 +224,32 @@ class Settings:
     EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD: float = float(
         os.getenv("EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD", "0.0")
     )
+    # Demote threshold for the radiance-growth leg of
+    # _apply_market_viability_pass (CEO directive pillar 3 — "strong
+    # potential for business growth"). When ``radiance_growth.confident``
+    # is True and ``value_yoy_pct`` < this threshold, the candidate is
+    # soft-demoted by the same positional mechanism as the population /
+    # rent / economics / demand legs. Operator is strict ``<``. Ships at
+    # 0.0 (inert: with the post-B1.5 distribution, zero confident
+    # districts sit below 0% YoY) — calibration is a separate follow-up
+    # patch once the 1.46% modal cluster is characterized. Distinct from
+    # ``EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD`` above (which drives
+    # the rescue side, operator ``>=``); splitting the knobs prevents
+    # calibrating one from silently affecting the other.
+    EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD: float = float(
+        os.getenv("EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD", "0.0")
+    )
+    # Kill switch for the radiance-growth demote leg. Setting this to
+    # ``false`` suppresses the leg's demote decision while leaving the
+    # ``radiance_growth`` snapshot field (and the advisory
+    # ``radiance_growth_pass`` gate emission) fully intact — only the
+    # soft-demote behavior is suppressed. The ``GROWTH`` disambiguator
+    # is intentional: multiple Black Marble metrics may land later, and
+    # the env var is the operator-facing name.
+    EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED: bool = (
+        os.getenv("EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED", "true").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
     # Hard floors (CEO directive — broader data + filter low-potential
     # locations). Unlike the soft demotion legs above, these are absolute
     # drops applied before the 3-of-3 conjunction. A value of 0 disables
