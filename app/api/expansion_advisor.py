@@ -149,6 +149,12 @@ class ExpansionAdvisorMeta(StrictResponseModel):
     # fired during `_apply_market_viability_pass`.
     hard_floor_drops: dict[str, int] | None = None
     hard_floor_thresholds: dict[str, float] | None = None
+    # Soft-demote leg diagnostics: per-leg drop counts, thresholds in effect,
+    # and per-leg kill-switch state. Populated when ``demote_legs`` was
+    # written to ``notes.viability`` by `_apply_market_viability_pass`.
+    demote_leg_drops: dict[str, int] | None = None
+    demote_leg_thresholds: dict[str, float | int | None] | None = None
+    demote_leg_enabled: dict[str, bool] | None = None
 
 
 class ExpansionAdvisorBrandProfileResponse(StrictResponseModel):
@@ -1099,6 +1105,17 @@ def create_expansion_search(
             ),
             "hard_floor_thresholds": (
                 ((search_notes.get("viability") or {}).get("hard_floors") or {}).get("thresholds")
+            ),
+            # Soft-demote leg diagnostics (Pillar 1/2/3 cohort-level drops + thresholds).
+            # Sourced from `notes.viability.demote_legs` written by _apply_market_viability_pass.
+            "demote_leg_drops": (
+                ((search_notes.get("viability") or {}).get("demote_legs") or {}).get("drops")
+            ),
+            "demote_leg_thresholds": (
+                ((search_notes.get("viability") or {}).get("demote_legs") or {}).get("thresholds")
+            ),
+            "demote_leg_enabled": (
+                ((search_notes.get("viability") or {}).get("demote_legs") or {}).get("leg_enabled")
             ),
         },
     }
