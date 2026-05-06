@@ -3233,6 +3233,299 @@ def test_viability_all_four_legs_fire_with_compound_annotation(
 
 
 # ---------------------------------------------------------------------------
+# Radiance-growth soft-demote leg (B1+B2, "strong potential for business
+# growth"). Mirrors the demand-leg isolation pattern. The leg fires on
+# confident YoY radiance growth strictly below threshold, with NO growth
+# rescue (mirrors the economics and demand legs).
+# ---------------------------------------------------------------------------
+
+
+def _viability_cohort_with_radiance_growth_target(
+    *,
+    target_yoy_pct: float | None,
+    target_confident: bool = True,
+    target_pop_reach: float = 80000.0,
+    target_rent_pct: float = 0.40,
+    target_rent_scope: str = "district_band_type",
+    target_economics: float | None = 80.0,
+    include_radiance_block: bool = True,
+) -> list[dict]:
+    """Background carries no radiance_growth so the leg cannot fire on bg rows.
+
+    Background pop/rent/demand/economics are set so only the radiance leg
+    (or the explicitly-tested leg) can fire on the target.
+    """
+    pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
+    demands = [600.0, 800.0, 1000.0, 1200.0, 1500.0, 1800.0, 2000.0, 2200.0]
+    cohort = [
+        _make_viability_candidate(
+            id_=f"bg{i}",
+            final_score=80.0 - i,
+            rent_pct=0.40,
+            rent_scope="district_band_type",
+            pop_reach=p,
+            realized_demand_30d=d,
+            realized_demand_branches=5,
+        )
+        for i, (p, d) in enumerate(zip(pops, demands))
+    ]
+    target = _make_viability_candidate(
+        id_="target",
+        final_score=78.5,
+        rent_pct=target_rent_pct,
+        rent_scope=target_rent_scope,
+        pop_reach=target_pop_reach,
+        realized_demand_30d=1500.0,
+        realized_demand_branches=5,
+    )
+    if target_economics is not None:
+        target["economics_score"] = target_economics
+    if include_radiance_block:
+        target["feature_snapshot_json"]["radiance_growth"] = {
+            "value_yoy_pct": target_yoy_pct,
+            "source_label": "blackmarble_district_yoy_rolling6",
+            "confident": target_confident,
+            "pixel_count": 132 if target_confident else 5,
+            "year_month": "2026-03",
+        }
+    cohort.insert(2, target)
+    return cohort
+
+
+def test_viability_radiance_growth_only_leg_fires(disable_market_viability_floors):
+    # Radiance leg alone: pop above p25, rent low, economics healthy, demand
+    # mid-cohort. Confident negative YoY (-2.0%) at the default 0.0 demote
+    # threshold ⇒ leg fires alone with reason="radiance_growth_low".
+    cohort = _viability_cohort_with_radiance_growth_target(
+        target_yoy_pct=-2.0,
+        target_confident=True,
+    )
+    starting_idx = next(i for i, c in enumerate(cohort) if c["id"] == "target")
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["population_demote"] is False
+    assert flag["rent_demote"] is False
+    assert flag["economics_demote"] is False
+    assert flag["demand_demote"] is False
+    assert flag["radiance_growth_demote"] is True
+    assert flag["radiance_growth_pct"] == -2.0
+    assert flag["radiance_confident"] is True
+    assert flag["radiance_yoy_demote_threshold"] == 0.0
+    assert flag["reason"] == "radiance_growth_low"
+    new_idx = next(i for i, c in enumerate(out) if c["id"] == "target")
+    assert new_idx == min(
+        starting_idx + 6, len(out) - 1
+    ), "candidate should move down by EXPANSION_VIABILITY_DEMOTION_STEPS"
+
+
+def test_viability_radiance_growth_leg_skipped_when_not_confident(
+    disable_market_viability_floors,
+):
+    # Confident=False → confidence gate fails → leg silent regardless of
+    # value. Mirrors the demand-leg branches-below-min precedent: low-
+    # confidence signals are not allowed to drive demote decisions.
+    cohort = _viability_cohort_with_radiance_growth_target(
+        target_yoy_pct=-5.0,
+        target_confident=False,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is None, "radiance leg must not fire when not confident"
+
+
+def test_viability_radiance_growth_leg_skipped_when_field_absent(
+    disable_market_viability_floors,
+):
+    # No radiance_growth key in feature_snapshot_json (history_unavailable
+    # shape from the snapshot writer). The target's leg must NOT fire.
+    cohort = _viability_cohort_with_radiance_growth_target(
+        target_yoy_pct=None,
+        include_radiance_block=False,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is None, "radiance leg must not fire when field absent"
+
+
+def test_viability_radiance_growth_leg_no_growth_rescue(
+    disable_market_viability_floors,
+):
+    # Confident negative YoY drives the radiance leg, AND the same row
+    # carries the same negative YoY (which can't self-rescue anyway —
+    # rescue requires yoy >= radiance_yoy_threshold, default 0.0). Mirrors
+    # the economics/demand precedent: the leg whose own forward-looking
+    # signal triggered the demote cannot self-rescue.
+    cohort = _viability_cohort_with_radiance_growth_target(
+        target_yoy_pct=-3.0,
+        target_confident=True,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["radiance_growth_demote"] is True
+    assert "radiance_growth_low" in flag["reason"]
+    assert flag["radiance_confident"] is True
+
+
+def test_viability_radiance_growth_leg_skipped_when_kill_switch_off(
+    disable_market_viability_floors, monkeypatch,
+):
+    # EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED=False → leg silent
+    # even when conditions otherwise met. Patch every live ``settings``
+    # reference (mirrors the demand-leg kill-switch test).
+    import sys
+
+    import app.core.config as config
+
+    seen_ids: set[int] = set()
+    for module in list(sys.modules.values()):
+        if module is None:
+            continue
+        candidate = getattr(module, "settings", None)
+        if candidate is None or id(candidate) in seen_ids:
+            continue
+        if not hasattr(
+            candidate, "EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED"
+        ):
+            continue
+        seen_ids.add(id(candidate))
+        monkeypatch.setattr(
+            candidate, "EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED", False
+        )
+    if id(config.settings) not in seen_ids:
+        monkeypatch.setattr(
+            config.settings,
+            "EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED",
+            False,
+        )
+
+    cohort = _viability_cohort_with_radiance_growth_target(
+        target_yoy_pct=-2.0,
+        target_confident=True,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is None, "kill switch must suppress the radiance_growth_demote decision"
+    # Snapshot field remains on feature_snapshot_json — pipeline untouched.
+    fs = target["feature_snapshot_json"]
+    assert fs.get("radiance_growth", {}).get("value_yoy_pct") == -2.0
+    assert fs.get("radiance_growth", {}).get("confident") is True
+
+
+def test_viability_radiance_growth_leg_threshold_boundary(
+    disable_market_viability_floors,
+):
+    # Operator is strict ``<``: at value_yoy_pct == threshold exactly, the
+    # leg must NOT fire. With default threshold=0.0 and yoy=0.0, the leg
+    # is silent and the candidate carries no flag (no other leg fires).
+    cohort = _viability_cohort_with_radiance_growth_target(
+        target_yoy_pct=0.0,
+        target_confident=True,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is None, (
+        "radiance leg must not fire when yoy == threshold (operator is strict <)"
+    )
+
+
+def test_viability_all_five_legs_fire_with_compound_annotation(
+    disable_market_viability_floors,
+):
+    # Five-leg variant of test_viability_all_four_legs_fire_with_compound_annotation:
+    # pop below p25, rent high on confident scope, economics_score=60 < 65,
+    # realized_demand_30d=400 in the bottom quartile with 5 branches,
+    # confident negative radiance YoY (-1.5%) below the 0.0 demote threshold.
+    # Reason concatenates in stable order: pop, rent, econ, demand, radiance.
+    cohort = _viability_cohort_with_demand_target(
+        target_demand=400.0,
+        target_demand_branches=5,
+        target_pop_reach=4500.0,
+        target_rent_pct=0.85,
+        target_economics=60.0,
+    )
+    target_in = next(c for c in cohort if c["id"] == "target")
+    target_in["feature_snapshot_json"]["radiance_growth"] = {
+        "value_yoy_pct": -1.5,
+        "source_label": "blackmarble_district_yoy_rolling6",
+        "confident": True,
+        "pixel_count": 132,
+        "year_month": "2026-03",
+    }
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["population_demote"] is True
+    assert flag["rent_demote"] is True
+    assert flag["economics_demote"] is True
+    assert flag["demand_demote"] is True
+    assert flag["radiance_growth_demote"] is True
+    assert flag["reason"] == (
+        "population_below_quartile_and_rent_high_and_economics_below_threshold"
+        "_and_demand_low_and_radiance_growth_low"
+    )
+
+
+def test_viability_diagnostics_demote_legs_block_written(
+    disable_market_viability_floors,
+):
+    # When ``diagnostics`` is passed and at least one leg fires, the
+    # ``demote_legs`` block is populated with all five drop counters and
+    # all expected threshold keys. Mirrors the existing
+    # test_viability_pass_diagnostics_records_hard_floor_drops_per_leg
+    # but for the soft-demote pass.
+    cohort = _viability_cohort_with_radiance_growth_target(
+        target_yoy_pct=-2.0,
+        target_confident=True,
+    )
+    diagnostics: dict = {}
+    _apply_market_viability_pass(
+        list(cohort), search_id="t", diagnostics=diagnostics
+    )
+    assert "demote_legs" in diagnostics
+    drops = diagnostics["demote_legs"]["drops"]
+    expected_drop_keys = {
+        "dropped_population",
+        "dropped_rent",
+        "dropped_economics",
+        "dropped_demand",
+        "dropped_radiance_growth",
+    }
+    assert set(drops.keys()) == expected_drop_keys
+    for key in expected_drop_keys:
+        assert isinstance(drops[key], int)
+        assert drops[key] >= 0
+    # The radiance leg must have caught at least the target.
+    assert drops["dropped_radiance_growth"] >= 1
+
+    thresholds = diagnostics["demote_legs"]["thresholds"]
+    expected_threshold_keys = {
+        "rent_pct_threshold",
+        "pop_percentile",
+        "pop_threshold",
+        "economics_min",
+        "demand_percentile",
+        "demand_threshold",
+        "demand_min_branches",
+        "radiance_yoy_demote_threshold",
+    }
+    assert set(thresholds.keys()) == expected_threshold_keys
+    assert thresholds["radiance_yoy_demote_threshold"] == 0.0
+
+    leg_enabled = diagnostics["demote_legs"]["leg_enabled"]
+    assert leg_enabled["demand"] is True
+    assert leg_enabled["radiance_growth"] is True
+
+
+# ---------------------------------------------------------------------------
 # Hard-floor diagnostics: surface per-leg drop counts to the caller so the
 # API meta can explain unsaturated-limit responses.
 # ---------------------------------------------------------------------------
