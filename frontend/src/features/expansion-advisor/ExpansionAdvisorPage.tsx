@@ -21,7 +21,10 @@ import {
   type RecommendationReportResponse,
   type SavedExpansionSearch,
 } from "../../lib/api/expansionAdvisor";
-import type { ExpansionSearchDetailResponse } from "../../lib/api/expansionAdvisor";
+import type {
+  ExpansionAdvisorMeta,
+  ExpansionSearchDetailResponse,
+} from "../../lib/api/expansionAdvisor";
 import ExpansionBriefForm, { defaultBrief } from "./ExpansionBriefForm";
 import ExpansionResultsPanel from "./ExpansionResultsPanel";
 import ExpansionComparePanel from "./ExpansionComparePanel";
@@ -30,6 +33,7 @@ import SavedSearchesPanel from "./SavedSearchesPanel";
 import ExpansionReportPanel from "./ExpansionReportPanel";
 import SaveStudyDialog from "./SaveStudyDialog";
 import SortFilterBar from "./SortFilterBar";
+import { PillarSummaryStrip } from "./PillarSummaryStrip";
 import {
   normalizeBriefPayload,
   filterCandidates,
@@ -177,7 +181,7 @@ export default function ExpansionAdvisorPage({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [activeDrawer, setActiveDrawer] = useState<DrawerKey>("none");
-  const [searchMeta, setSearchMeta] = useState<Record<string, unknown>>({});
+  const [searchMeta, setSearchMeta] = useState<ExpansionAdvisorMeta>({});
   const [searchNotes, setSearchNotes] = useState<Record<string, unknown>>({});
   const [activeSavedId, setActiveSavedId] = useState<string | null>(null);
   const [activeSavedStatus, setActiveSavedStatus] = useState<"draft" | "final">("draft");
@@ -635,6 +639,9 @@ export default function ExpansionAdvisorPage({
           onDistrictFilterChange={setDistrictFilter}
         />
       )}
+
+      {/* Pillar summary strip — surfaces the three-pillar directive */}
+      <PillarSummaryStrip meta={searchMeta} />
 
       {/* Missing districts banner */}
       {hasResults && Array.isArray(searchNotes.districts_with_no_candidates) && (searchNotes.districts_with_no_candidates as string[]).length > 0 && (

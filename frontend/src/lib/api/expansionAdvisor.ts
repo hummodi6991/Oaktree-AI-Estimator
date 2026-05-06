@@ -1,9 +1,51 @@
 import { buildApiUrl, fetchWithAuth } from "../../api";
 import { CANDIDATE_NUMERIC_FIELDS, coerceCandidateNumerics } from "./coerceNumeric";
 
+export type ExpansionAdvisorHardFloorDrops = {
+  dropped_population?: number;
+  dropped_commercial?: number;
+  dropped_construction?: number;
+  remaining?: number;
+};
+
+export type ExpansionAdvisorHardFloorThresholds = {
+  hard_floor_pop_threshold?: number;
+  hard_floor_brand_threshold?: number;
+  hard_floor_construction_buffer_m?: number;
+};
+
+export type ExpansionAdvisorDemoteLegDrops = {
+  dropped_population?: number;
+  dropped_rent?: number;
+  dropped_economics?: number;
+  dropped_demand?: number;
+  dropped_radiance_growth?: number;
+};
+
+export type ExpansionAdvisorDemoteLegThresholds = {
+  rent_pct_threshold?: number;
+  pop_percentile?: number;
+  pop_threshold?: number | null;
+  economics_min?: number;
+  demand_percentile?: number;
+  demand_threshold?: number | null;
+  demand_min_branches?: number;
+  radiance_yoy_demote_threshold?: number;
+};
+
+export type ExpansionAdvisorDemoteLegEnabled = {
+  demand?: boolean;
+  radiance_growth?: boolean;
+};
+
 export type ExpansionAdvisorMeta = {
   version?: string;
   generated_at?: string;
+  hard_floor_drops?: ExpansionAdvisorHardFloorDrops | null;
+  hard_floor_thresholds?: ExpansionAdvisorHardFloorThresholds | null;
+  demote_leg_drops?: ExpansionAdvisorDemoteLegDrops | null;
+  demote_leg_thresholds?: ExpansionAdvisorDemoteLegThresholds | null;
+  demote_leg_enabled?: ExpansionAdvisorDemoteLegEnabled | null;
   [key: string]: unknown;
 };
 
