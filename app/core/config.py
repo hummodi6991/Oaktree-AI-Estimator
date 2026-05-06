@@ -229,15 +229,20 @@ class Settings:
     # potential for business growth"). When ``radiance_growth.confident``
     # is True and ``value_yoy_pct`` < this threshold, the candidate is
     # soft-demoted by the same positional mechanism as the population /
-    # rent / economics / demand legs. Operator is strict ``<``. Ships at
-    # 0.0 (inert: with the post-B1.5 distribution, zero confident
-    # districts sit below 0% YoY) — calibration is a separate follow-up
-    # patch once the 1.46% modal cluster is characterized. Distinct from
+    # rent / economics / demand legs. Operator is strict ``<``.
+    # Calibrated 2026-05-06 against the candidate-side distribution from
+    # the last 24h of production searches (515 confident rolling-6
+    # candidates). Distribution is bimodal with an empty gap between
+    # 1.5% and 3.0% YoY; 2.0 sits inside that gap and demotes 234 of
+    # 515 confident candidates (~45%) — concentrated in two single
+    # districts (~0.01% and ~1.46% YoY). Above-typical citywide growth
+    # is ~5%, so below 2% is not "strong growth" per Faisal's directive
+    # (Pillar 3). Distinct from
     # ``EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD`` above (which drives
     # the rescue side, operator ``>=``); splitting the knobs prevents
     # calibrating one from silently affecting the other.
     EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD: float = float(
-        os.getenv("EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD", "0.0")
+        os.getenv("EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD", "2.0")
     )
     # Kill switch for the radiance-growth demote leg. Setting this to
     # ``false`` suppresses the leg's demote decision while leaving the

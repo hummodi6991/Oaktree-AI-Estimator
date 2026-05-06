@@ -4525,8 +4525,11 @@ def _apply_market_viability_pass(
         affecting the other. Disable in isolation via
         ``EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED=false``; the
         advisory ``radiance_growth_pass`` gate emission remains intact —
-        only the soft-demote behavior is suppressed. Ships at threshold
-        ``0.0`` (inert by default).
+        only the soft-demote behavior is suppressed. Ships at the
+        calibrated default ``2.0`` (2026-05-06 calibration: sits in the
+        empirical 1.5–3.0% YoY gap and demotes ~45% of confident
+        candidates, matching Faisal's "below 2% is not strong growth"
+        directive against ~5% typical citywide growth).
 
     The growth-rescue signal reads ``feature_snapshot_json["radiance_growth"]``
     (NASA Black Marble VNP46A3). When that signal is confident and YoY growth
@@ -4574,7 +4577,7 @@ def _apply_market_viability_pass(
         settings, "EXPANSION_VIABILITY_DEMAND_LEG_ENABLED", True
     ))
     radiance_yoy_demote_threshold = float(getattr(
-        settings, "EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD", 0.0
+        settings, "EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD", 2.0
     ))
     radiance_growth_leg_enabled = bool(getattr(
         settings, "EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED", True
