@@ -868,3 +868,195 @@ def test_score_breakdown_response_allows_value_pass_and_unknown_keys():
     )
     cand_dump = candidate.model_dump()
     assert cand_dump["score_breakdown_json"]["value_pass"]["value_uprank_delta"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Soft-demote leg diagnostics: surface the `demote_legs` block written by
+# `_apply_market_viability_pass` through the API meta. Mirrors the existing
+# `hard_floor_*` flat-key surfacing pattern.
+# ---------------------------------------------------------------------------
+
+
+def _post_search_with_demote_legs_notes(monkeypatch, demote_legs_block):
+    """Helper: stub `run_expansion_search` to return a dict whose
+    ``notes.viability.demote_legs`` mirrors the service-layer diagnostics
+    contract, then issue a single POST and return the parsed body."""
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(
+        expansion_api, "persist_existing_branches", lambda *_a, **_kw: None
+    )
+    monkeypatch.setattr(
+        expansion_api, "persist_brand_profile", lambda *_a, **_kw: None
+    )
+    monkeypatch.setattr(
+        expansion_api,
+        "run_expansion_search",
+        lambda **kwargs: {
+            "items": [
+                {
+                    "id": "candidate-1",
+                    "search_id": kwargs["search_id"],
+                    "parcel_id": "parcel-123",
+                    "district": "Olaya",
+                    "lat": 24.7,
+                    "lon": 46.7,
+                    "cannibalization_score": 55.0,
+                    "distance_to_nearest_branch_m": 1400.0,
+                    "compare_rank": 1,
+                    "final_score": 86.6,
+                    "explanation": {
+                        "summary": "ok",
+                        "positives": [],
+                        "risks": [],
+                        "inputs": {},
+                    },
+                }
+            ],
+            "notes": {
+                "viability": {"demote_legs": demote_legs_block},
+            },
+        },
+    )
+
+    client = _client_with_db(db)
+    try:
+        payload = {
+            "brand_name": "Brand X",
+            "category": "burger",
+            "service_model": "qsr",
+            "min_area_m2": 100,
+            "max_area_m2": 350,
+        }
+        response = client.post("/v1/expansion-advisor/searches", json=payload)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    return response.json()
+
+
+def _full_demote_legs_block():
+    """Realistic demote_legs diagnostics shape, matching the contract verified
+    in tests/test_expansion_advisor_service.py::
+    test_viability_diagnostics_demote_legs_block_written.
+    """
+    return {
+        "drops": {
+            "dropped_population": 2,
+            "dropped_rent": 1,
+            "dropped_economics": 0,
+            "dropped_demand": 3,
+            "dropped_radiance_growth": 1,
+        },
+        "thresholds": {
+            "rent_pct_threshold": 0.85,
+            "pop_percentile": 0.25,
+            "pop_threshold": 5000.0,
+            "economics_min": 35.0,
+            "demand_percentile": 0.25,
+            "demand_threshold": None,
+            "demand_min_branches": 5,
+            "radiance_yoy_demote_threshold": 2.0,
+        },
+        "leg_enabled": {
+            "demand": True,
+            "radiance_growth": True,
+        },
+    }
+
+
+def test_meta_includes_demote_leg_drops(monkeypatch):
+    body = _post_search_with_demote_legs_notes(
+        monkeypatch, _full_demote_legs_block()
+    )
+    drops = body["meta"]["demote_leg_drops"]
+    assert set(drops.keys()) == {
+        "dropped_population",
+        "dropped_rent",
+        "dropped_economics",
+        "dropped_demand",
+        "dropped_radiance_growth",
+    }
+    for value in drops.values():
+        assert isinstance(value, int)
+        assert value >= 0
+
+
+def test_meta_includes_demote_leg_thresholds(monkeypatch):
+    body = _post_search_with_demote_legs_notes(
+        monkeypatch, _full_demote_legs_block()
+    )
+    thresholds = body["meta"]["demote_leg_thresholds"]
+    assert set(thresholds.keys()) == {
+        "rent_pct_threshold",
+        "pop_percentile",
+        "pop_threshold",
+        "economics_min",
+        "demand_percentile",
+        "demand_threshold",
+        "demand_min_branches",
+        "radiance_yoy_demote_threshold",
+    }
+    assert isinstance(thresholds["rent_pct_threshold"], float)
+    assert isinstance(thresholds["pop_percentile"], float)
+    assert isinstance(thresholds["pop_threshold"], float)
+    assert isinstance(thresholds["economics_min"], float)
+    assert isinstance(thresholds["demand_percentile"], float)
+    assert thresholds["demand_threshold"] is None
+    assert isinstance(thresholds["demand_min_branches"], int)
+    assert isinstance(thresholds["radiance_yoy_demote_threshold"], float)
+
+
+def test_meta_includes_demote_leg_enabled(monkeypatch):
+    body = _post_search_with_demote_legs_notes(
+        monkeypatch, _full_demote_legs_block()
+    )
+    leg_enabled = body["meta"]["demote_leg_enabled"]
+    assert "demand" in leg_enabled
+    assert "radiance_growth" in leg_enabled
+    assert isinstance(leg_enabled["demand"], bool)
+    assert isinstance(leg_enabled["radiance_growth"], bool)
+
+
+def test_meta_demote_leg_fields_default_none_when_block_absent(monkeypatch):
+    """When the viability pass writes no demote_legs diagnostics (e.g. an
+    empty cohort), the three new meta fields must be absent / None — matching
+    the `hard_floor_drops` precedent so the response is unchanged for
+    searches where no soft-demote leg fired."""
+    db = DummyDB()
+
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(
+        expansion_api, "persist_existing_branches", lambda *_a, **_kw: None
+    )
+    monkeypatch.setattr(
+        expansion_api, "persist_brand_profile", lambda *_a, **_kw: None
+    )
+    monkeypatch.setattr(
+        expansion_api,
+        "run_expansion_search",
+        lambda **kwargs: {"items": [], "notes": {}},
+    )
+
+    client = _client_with_db(db)
+    try:
+        payload = {
+            "brand_name": "Brand X",
+            "category": "burger",
+            "service_model": "qsr",
+            "min_area_m2": 100,
+            "max_area_m2": 350,
+        }
+        response = client.post("/v1/expansion-advisor/searches", json=payload)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    meta = response.json()["meta"]
+    assert meta["demote_leg_drops"] is None
+    assert meta["demote_leg_thresholds"] is None
+    assert meta["demote_leg_enabled"] is None
