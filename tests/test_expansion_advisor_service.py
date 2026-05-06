@@ -3233,6 +3233,116 @@ def test_viability_all_four_legs_fire_with_compound_annotation(
 
 
 # ---------------------------------------------------------------------------
+# Hard-floor diagnostics: surface per-leg drop counts to the caller so the
+# API meta can explain unsaturated-limit responses.
+# ---------------------------------------------------------------------------
+
+
+def test_viability_pass_diagnostics_records_hard_floor_drops_per_leg(monkeypatch):
+    """Regression: when the directive's hard-floor pre-pass drops candidates,
+    the optional ``diagnostics`` dict captures per-leg drop counts and the
+    thresholds in effect. Without this, operators receive
+    ``pool_size: N, rows_returned: M`` with no signal as to which gate
+    filtered which candidates — they would have to consult kubectl logs to
+    interpret the gap.
+    """
+    # Production thresholds, set explicitly so the test is independent of
+    # whatever defaults are configured at the moment.
+    import app.services.expansion_advisor as svc
+
+    monkeypatch.setattr(svc.settings, "EXPANSION_VIABILITY_POPULATION_HARD_FLOOR", 20000)
+    monkeypatch.setattr(svc.settings, "EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", 1)
+    monkeypatch.setattr(svc.settings, "EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M", 75.0)
+
+    # Synthetic cohort spanning all four hard-floor outcomes:
+    #   * one survivor that clears every floor
+    #   * one drop on population (below 20k)
+    #   * one drop on commercial floor (zero unique brands)
+    #   * one drop on construction proximity (polygon within buffer)
+    cohort = [
+        {
+            "id": "ok",
+            "parcel_id": "ok",
+            "final_score": 80.0,
+            "score_breakdown_json": {},
+            "feature_snapshot_json": {
+                "population_reach": 50000.0,
+                "brand_presence": {"unique_brands": 5},
+                "construction_proximity": {"polygon_count": 0},
+            },
+        },
+        {
+            "id": "drop_pop",
+            "parcel_id": "drop_pop",
+            "final_score": 79.0,
+            "score_breakdown_json": {},
+            "feature_snapshot_json": {
+                "population_reach": 5000.0,
+                "brand_presence": {"unique_brands": 5},
+                "construction_proximity": {"polygon_count": 0},
+            },
+        },
+        {
+            "id": "drop_brand",
+            "parcel_id": "drop_brand",
+            "final_score": 78.0,
+            "score_breakdown_json": {},
+            "feature_snapshot_json": {
+                "population_reach": 50000.0,
+                "brand_presence": {"unique_brands": 0},
+                "construction_proximity": {"polygon_count": 0},
+            },
+        },
+        {
+            "id": "drop_constr",
+            "parcel_id": "drop_constr",
+            "final_score": 77.0,
+            "score_breakdown_json": {},
+            "feature_snapshot_json": {
+                "population_reach": 50000.0,
+                "brand_presence": {"unique_brands": 5},
+                "construction_proximity": {"polygon_count": 3},
+            },
+        },
+    ]
+
+    diagnostics: dict = {}
+    out = _apply_market_viability_pass(
+        list(cohort), search_id="t", diagnostics=diagnostics
+    )
+
+    survivor_ids = {c["id"] for c in out}
+    assert survivor_ids == {"ok"}
+
+    assert "hard_floors" in diagnostics
+    drops = diagnostics["hard_floors"]["drops"]
+    assert drops == {
+        "dropped_population": 1,
+        "dropped_commercial": 1,
+        "dropped_construction": 1,
+        "remaining": 1,
+    }
+
+    thresholds = diagnostics["hard_floors"]["thresholds"]
+    assert thresholds == {
+        "hard_floor_pop_threshold": 20000,
+        "hard_floor_brand_threshold": 1,
+        "hard_floor_construction_buffer_m": 75.0,
+    }
+
+
+def test_viability_pass_diagnostics_unchanged_when_caller_omits_kwarg(
+    disable_market_viability_floors,
+):
+    """Backwards-compat: existing callers that don't pass ``diagnostics`` must
+    see no behavior change. Return type stays a list of candidates only."""
+    cohort = _viability_cohort(target_pop_reach=4500.0, target_rent_pct=0.85)
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    assert isinstance(out, list)
+    assert all(isinstance(c, dict) for c in out)
+
+
+# ---------------------------------------------------------------------------
 # Bug A & Bug B regression coverage.
 # ---------------------------------------------------------------------------
 
