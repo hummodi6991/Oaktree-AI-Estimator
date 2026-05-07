@@ -76,7 +76,10 @@ class FakeDB:
         if "WITH listing_district AS" in sql:
             return _Result([])
         # commercial_unit queries → return candidate rows
-        if "FROM commercial_unit" in sql:
+        # Scope to top-level reads — the serve queries (compare/memo)
+        # also reference commercial_unit inside an EXISTS guard subquery,
+        # which we want routed to the expansion_candidate branches below.
+        if "FROM commercial_unit" in sql and "FROM expansion_candidate" not in sql:
             return _Result(self.candidate_rows)
         if "INSERT INTO expansion_candidate" in sql:
             self.inserted.append(params)
