@@ -421,8 +421,10 @@ class TestBuildMemoContextContributionsMath:
         for comp, weight in COMPONENT_WEIGHTS.items():
             expected = round(weight * scores[comp], 3)
             assert contributions[comp] == expected, f"{comp}: got {contributions[comp]}, want {expected}"
-        # Spot-check the headline number the prompt expects to see
-        assert contributions["occupancy_economics"] == 27.0
+        # Spot-check the headline number the prompt expects to see.
+        # 2026-05-07 rebalance: occupancy_economics weight 0.30 → 0.262924,
+        # so contribution at score=90 = round(90 * 0.262924, 3) = 23.663.
+        assert contributions["occupancy_economics"] == 23.663
         # Weights sub-dict carried through for the LLM
         assert ctx.score_breakdown["weights"] == dict(COMPONENT_WEIGHTS)
 

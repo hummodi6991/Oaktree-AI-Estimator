@@ -113,7 +113,9 @@ def test_score_breakdown_weights_sum_to_100():
         confidence_score=50.0,
         listing_quality_score=50.0,
     )
-    assert sum(bd["weights"].values()) == 100
+    # 2026-05-07 rebalance moved weights to 4-decimal floats; tolerance
+    # accommodates IEEE-754 rounding.
+    assert abs(sum(bd["weights"].values()) - 100) < 1e-3
 
 
 def test_score_breakdown_weighted_points_never_exceed_100():
@@ -1056,7 +1058,7 @@ def test_listing_quality_parcel_returns_neutral_50():
 
 
 def test_listing_quality_fresh_full_data_high_score():
-    """A fresh listing with full data should score close to 100."""
+    """A fresh listing with full data should score well above neutral."""
     score = _listing_quality_score(
         is_listing=True,
         effective_age_days=3,
@@ -1065,11 +1067,14 @@ def test_listing_quality_fresh_full_data_high_score():
         has_image=True,
         has_drive_thru=True,
     )
-    # Phase 3b: momentum defaults to neutral 50.0 when not passed.
-    # freshness=100, suitability=180→clamped 100, image=100, furnished=100,
-    # momentum=50. Composite ≈ 100*0.2550 + 100*0.3400 + 100*0.1700 +
-    # 100*0.0850 + 50*0.15 + 5 (drive-thru) = 25.5+34+17+8.5+7.5+5 = 97.5.
-    assert score > 90.0
+    # Post-2026-05-07 sub-weights (0.30/0.20/0.10/0.05/0.35) — momentum
+    # defaults to neutral 50.0 when not passed. freshness=100,
+    # suitability=180→clamped 100, image=100, furnished=100, momentum=50.
+    # Composite = 100*0.30 + 100*0.20 + 100*0.10 + 100*0.05 + 50*0.35 +
+    # 5 (drive-thru) = 30+20+10+5+17.5+5 = 87.5. The lower ceiling here
+    # (vs the prior 97.5) is the intended cost of letting unknown
+    # momentum pull the composite toward 50.
+    assert score > 80.0
 
 
 def test_listing_quality_stale_no_image_low_score():
@@ -1081,9 +1086,10 @@ def test_listing_quality_stale_no_image_low_score():
         unit_restaurant_score=None,
         has_image=False,
     )
-    # Phase 3b: momentum defaults to neutral 50.0 when not passed.
-    # composite = 15*0.2550 + 50*0.3400 + 30*0.1700 + 50*0.0850 + 50*0.15
-    #           = 3.825 + 17.00 + 5.10 + 4.25 + 7.50 = 37.675 < 50.
+    # Post-2026-05-07 sub-weights (0.30/0.20/0.10/0.05/0.35) — momentum
+    # defaults to neutral 50.0 when not passed.
+    # composite = 15*0.30 + 50*0.20 + 30*0.10 + 50*0.05 + 50*0.35
+    #           = 4.5 + 10.0 + 3.0 + 2.5 + 17.5 = 37.5 < 50.
     assert score < 50.0
 
 
@@ -1161,7 +1167,7 @@ def test_effective_age_all_null_returns_unknown_neutral():
     assert source == "unknown"
 
     # Fixed-neutral inputs to isolate the freshness contribution.
-    # Phase 3b: sub-weights are (0.2550, 0.3400, 0.1700, 0.0850, 0.15).
+    # Post-2026-05-07 sub-weights (0.30, 0.20, 0.10, 0.05, 0.35).
     # district_momentum_score=None → momentum resolves to neutral 50.0.
     common = dict(
         is_listing=True,
@@ -1174,14 +1180,14 @@ def test_effective_age_all_null_returns_unknown_neutral():
         district_momentum_score=None,
     )
     # suitability=50, image_signal=30, furnished_signal=50, momentum=50.
-    # Composite = freshness*0.2550 + 50*0.3400 + 30*0.1700 + 50*0.0850
-    #           + 50*0.15 = freshness*0.2550 + 33.85.
+    # Composite = freshness*0.30 + 50*0.20 + 30*0.10 + 50*0.05 + 50*0.35
+    #           = freshness*0.30 + 33.0.
     expected_with_freshness_50 = (
-        50.0 * 0.2550
-        + 50.0 * 0.3400
-        + 30.0 * 0.1700
-        + 50.0 * 0.0850
-        + 50.0 * 0.15
+        50.0 * 0.30
+        + 50.0 * 0.20
+        + 30.0 * 0.10
+        + 50.0 * 0.05
+        + 50.0 * 0.35
     )
     observed = _listing_quality_score(effective_age_days=None, **common)
     assert abs(observed - expected_with_freshness_50) < 1e-9
@@ -1211,11 +1217,11 @@ def test_effective_age_future_updated_at_clamps_to_zero():
         has_drive_thru=False,
         district_momentum_score=None,
     )
-    # Phase 3b weights (0.2550, 0.3400, 0.1700, 0.0850, 0.15). freshness
-    # = 100 (days <= 14 band), suitability=50, image_signal=30,
+    # Post-2026-05-07 sub-weights (0.30, 0.20, 0.10, 0.05, 0.35).
+    # freshness = 100 (days <= 14 band), suitability=50, image_signal=30,
     # furnished=50, momentum=50 (None → neutral). Composite =
-    # 100*0.2550 + 50*0.3400 + 30*0.1700 + 50*0.0850 + 50*0.15 = 59.35.
-    assert abs(score - 59.35) < 1e-9
+    # 100*0.30 + 50*0.20 + 30*0.10 + 50*0.05 + 50*0.35 = 63.0.
+    assert abs(score - 63.0) < 1e-9
 
 
 def test_effective_age_future_only_returns_unknown():
@@ -1247,9 +1253,9 @@ def test_effective_age_future_only_returns_unknown():
 )
 def test_effective_age_band_boundaries(age_days, expected_freshness):
     """Lock the frozen Phase 3a band cutoffs at 14/30/60/120/240/365 days
-    against silent drift. Phase 3b sub-weights (0.2550, 0.3400, 0.1700,
-    0.0850, 0.15); fixed inputs make suitability=50, image_signal=30,
-    furnished=50, momentum=50 (None)."""
+    against silent drift. Post-2026-05-07 sub-weights
+    (0.30, 0.20, 0.10, 0.05, 0.35); fixed inputs make suitability=50,
+    image_signal=30, furnished=50, momentum=50 (None)."""
     score = _listing_quality_score(
         is_listing=True,
         effective_age_days=age_days,
@@ -1260,11 +1266,11 @@ def test_effective_age_band_boundaries(age_days, expected_freshness):
         district_momentum_score=None,
     )
     expected_composite = (
-        expected_freshness * 0.2550
-        + 50.0 * 0.3400
-        + 30.0 * 0.1700
-        + 50.0 * 0.0850
-        + 50.0 * 0.15
+        expected_freshness * 0.30
+        + 50.0 * 0.20
+        + 30.0 * 0.10
+        + 50.0 * 0.05
+        + 50.0 * 0.35
     )
     assert abs(score - expected_composite) < 1e-9
 
@@ -1323,32 +1329,32 @@ def _fake_db_raising(exc: Exception):
 
 
 def test_listing_quality_score_momentum_high_raises_composite():
-    """Momentum sub-weight is 0.15. A 100 vs 0 momentum swing must raise
-    the composite by exactly (100 - 0) * 0.15 = 15.0 points, with all
-    other sub-signals held at their neutral values and the drive-thru
-    bonus disabled."""
+    """Momentum sub-weight is 0.35 post-2026-05-07. A 100 vs 0 momentum
+    swing must raise the composite by exactly (100 - 0) * 0.35 = 35.0
+    points, with all other sub-signals held at their neutral values and
+    the drive-thru bonus disabled."""
     common = _lq_neutral_kwargs(effective_age_days=30)
     high = _listing_quality_score(district_momentum_score=100.0, **common)
     low = _listing_quality_score(district_momentum_score=0.0, **common)
-    assert abs((high - low) - 15.0) < 1e-9
+    assert abs((high - low) - 35.0) < 1e-9
 
 
 def test_listing_quality_score_momentum_none_neutral():
     """district_momentum_score=None resolves to neutral 50.0. With
     fully-neutral other inputs (freshness=50, suitability=50,
-    image_signal=30, furnished=50) and Phase 3b sub-weights, composite
-    = 50*0.2550 + 50*0.3400 + 30*0.1700 + 50*0.0850 + 50*0.15 = 46.60."""
+    image_signal=30, furnished=50) and post-2026-05-07 sub-weights,
+    composite = 50*0.30 + 50*0.20 + 30*0.10 + 50*0.05 + 50*0.35 = 48.0."""
     common = _lq_neutral_kwargs(effective_age_days=None)
     observed = _listing_quality_score(district_momentum_score=None, **common)
     expected = (
-        50.0 * 0.2550
-        + 50.0 * 0.3400
-        + 30.0 * 0.1700
-        + 50.0 * 0.0850
-        + 50.0 * 0.15
+        50.0 * 0.30
+        + 50.0 * 0.20
+        + 30.0 * 0.10
+        + 50.0 * 0.05
+        + 50.0 * 0.35
     )
     assert abs(observed - expected) < 1e-9
-    assert abs(observed - 46.60) < 1e-9
+    assert abs(observed - 48.0) < 1e-9
 
 
 def test_listing_quality_score_momentum_below_floor_neutral():
@@ -1367,10 +1373,10 @@ def test_listing_quality_score_momentum_below_floor_neutral():
 
 
 def test_listing_quality_score_sub_weights_sum_to_one():
-    """Regression guard against silent sub-weight drift. Post-3b weights
-    must sum to 1.0 exactly under math.isclose."""
+    """Regression guard against silent sub-weight drift. Post-2026-05-07
+    sub-weights must sum to 1.0 exactly under math.isclose."""
     import math
-    assert math.isclose(0.2550 + 0.3400 + 0.1700 + 0.0850 + 0.15, 1.0)
+    assert math.isclose(0.30 + 0.20 + 0.10 + 0.05 + 0.35, 1.0)
 
 
 def test_district_momentum_score_composite_math():
@@ -1551,7 +1557,8 @@ def test_listing_quality_scoring_callsite_two_district_delta():
     """Integration guard at the _listing_quality_score call-site contract.
     Two synthetic candidates share all inputs except their district's
     momentum score (80 vs absent → neutral 50). The composite must
-    differ by exactly (80 - 50) * 0.15 = 4.50 points."""
+    differ by exactly (80 - 50) * 0.35 = 10.50 points (post-2026-05-07
+    momentum sub-weight 0.35)."""
     momentum_dict = {
         "high_district": {"momentum_score": 80.0},
         # "low_district" intentionally absent → .get returns None → neutral.
@@ -1572,7 +1579,7 @@ def test_listing_quality_scoring_callsite_two_district_delta():
         district_momentum_score=low_val, **common
     )
 
-    assert abs((high_score - low_score) - 4.5) < 1e-9
+    assert abs((high_score - low_score) - 10.5) < 1e-9
 
 
 # ---------------------------------------------------------------------------
@@ -1880,10 +1887,11 @@ def test_economics_score_damps_rent_burden_on_city_fallback():
 # ---------------------------------------------------------------------------
 
 def test_score_breakdown_economics_weight_is_30():
-    """occupancy_economics should still be weighted at 30%.
+    """Top-level weights post-2026-05-07 rebalance.
 
-    Patch 13 moved 4 points of listing_quality weight into a new
-    landlord_signal component, so listing_quality is now 11% not 15%.
+    listing_quality lifted 11 → 22 to elevate CEO-directive recency and
+    momentum signals; every other component rescaled by 78/89 = 0.8764045
+    so the total still sums to 100.
     """
     bd = _score_breakdown(
         demand_score=50.0,
@@ -1895,18 +1903,19 @@ def test_score_breakdown_economics_weight_is_30():
         confidence_score=50.0,
         listing_quality_score=50.0,
     )
-    assert bd["weights"]["occupancy_economics"] == 30
-    assert bd["weights"]["listing_quality"] == 11
-    assert bd["weights"]["landlord_signal"] == 8
-    # Weight total invariant: everything must sum to 100.
-    assert sum(bd["weights"].values()) == 100
+    assert abs(bd["weights"]["occupancy_economics"] - 26.2924) < 1e-6
+    assert bd["weights"]["listing_quality"] == 22.0
+    assert abs(bd["weights"]["landlord_signal"] - 7.0112) < 1e-6
+    # Weight total invariant: everything must sum to 100 (within FP tolerance).
+    assert abs(sum(bd["weights"].values()) - 100) < 1e-3
 
 
 def test_score_breakdown_listing_quality_contributes():
     """A high listing_quality should raise final_score vs a low one.
 
-    Patch 13 rebalance: listing_quality now carries 11% weight (down
-    from 15%) because 4 points moved to the new landlord_signal slot.
+    2026-05-07 rebalance: listing_quality now carries 22% weight (up
+    from 11%) so CEO-directive recency and momentum signals materially
+    move ranking.
     """
     high = _score_breakdown(
         demand_score=60.0,
@@ -1929,9 +1938,9 @@ def test_score_breakdown_listing_quality_contributes():
         listing_quality_score=20.0,
     )
     assert high["final_score"] > low["final_score"]
-    # With 11% weight, the difference should be (95-20)*0.11 = 8.25 points
+    # With 22% weight, the difference should be (95-20)*0.22 = 16.5 points.
     diff = high["final_score"] - low["final_score"]
-    assert abs(diff - 8.25) < 0.1
+    assert abs(diff - 16.5) < 0.1
 
 
 # ---------------------------------------------------------------------------
