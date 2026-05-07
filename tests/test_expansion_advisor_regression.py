@@ -1557,7 +1557,8 @@ def test_listing_quality_scoring_callsite_two_district_delta():
     """Integration guard at the _listing_quality_score call-site contract.
     Two synthetic candidates share all inputs except their district's
     momentum score (80 vs absent → neutral 50). The composite must
-    differ by exactly (80 - 50) * 0.15 = 4.50 points."""
+    differ by exactly (80 - 50) * 0.35 = 10.50 points (post-2026-05-07
+    momentum sub-weight 0.35)."""
     momentum_dict = {
         "high_district": {"momentum_score": 80.0},
         # "low_district" intentionally absent → .get returns None → neutral.
@@ -1578,7 +1579,7 @@ def test_listing_quality_scoring_callsite_two_district_delta():
         district_momentum_score=low_val, **common
     )
 
-    assert abs((high_score - low_score) - 4.5) < 1e-9
+    assert abs((high_score - low_score) - 10.5) < 1e-9
 
 
 # ---------------------------------------------------------------------------
