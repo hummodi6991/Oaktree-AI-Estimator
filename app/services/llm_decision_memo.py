@@ -375,18 +375,21 @@ def generate_decision_memo(
 # to the legacy ``generate_decision_memo`` output byte-for-byte.
 
 # Deterministic scorer weights — kept in sync with the 9-component weights
-# in ``app.services.expansion_advisor``. Editing these here does NOT change
-# scoring; these are used only to compute memo-display contributions.
+# in ``app.services.expansion_advisor`` (see _score_breakdown). Editing
+# these here does NOT change scoring; these are used only to compute
+# memo-display contributions. 2026-05-07 rebalance: listing_quality lifted
+# 0.11 → 0.22 to elevate CEO-directive recency and momentum signals; every
+# other component rescaled by 78/89 = 0.8764045.
 COMPONENT_WEIGHTS: dict[str, float] = {
-    "occupancy_economics": 0.30,
-    "listing_quality": 0.11,
-    "brand_fit": 0.11,
-    "competition_whitespace": 0.10,
-    "demand_potential": 0.10,
-    "access_visibility": 0.10,
-    "landlord_signal": 0.08,
-    "delivery_demand": 0.05,
-    "confidence": 0.05,
+    "occupancy_economics": 0.262924,
+    "listing_quality": 0.22,
+    "brand_fit": 0.096404,
+    "competition_whitespace": 0.087640,
+    "demand_potential": 0.087640,
+    "access_visibility": 0.087640,
+    "landlord_signal": 0.070112,
+    "delivery_demand": 0.043820,
+    "confidence": 0.043820,
 }
 
 # Feature-snapshot fields that actually drive a decision. Used to truncate

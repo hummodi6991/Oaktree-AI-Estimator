@@ -2411,24 +2411,24 @@ def _listing_quality_score(
     For parcels (or any candidate without a commercial_unit row),
     returns a neutral 50.
 
-    Components (Phase 3b weight tuple when _MOMENTUM_ENABLED is True):
-      - Freshness from effective_age_days (25.50%): how recently the listing
+    Components (post-2026-05-07 sub-weights when _MOMENTUM_ENABLED is True):
+      - Freshness from effective_age_days (30.00%): how recently the listing
         was created or updated on Aqar (bands at 14/30/60/120/240/365 —
         frozen for Phase 3a).
-      - Aqar suitability (34.00%): the classifier's assessment — LLM verdict
+      - Aqar suitability (20.00%): the classifier's assessment — LLM verdict
         when available, structural restaurant_score fallback otherwise
-      - Image / fit-out signal (17.00%): LLM-derived listing quality when
+      - Image / fit-out signal (10.00%): LLM-derived listing quality when
         available, binary image presence fallback otherwise
-      - Furnished (8.50%): faster open, lower risk, lower fitout
-      - District momentum (15.00%): percentile-ranked 30-day activity in
+      - Furnished (5.00%): faster open, lower risk, lower fitout
+      - District momentum (35.00%): percentile-ranked 30-day activity in
         the district (blended creates + updates on commercial_unit).
         Districts below the sample floor resolve to a neutral 50.0.
       - Drive-thru bonus: small additive (+5) when present
 
-    The four pre-3b sub-weights (0.30/0.40/0.20/0.10) are rescaled
-    multiplicatively by 0.85 so their ratios are preserved exactly while
-    making room for the 15% momentum allocation. When _MOMENTUM_ENABLED
-    is False the pre-3b tuple is used and district_momentum_score is
+    The 2026-05-07 rebalance lifted freshness (0.2550 → 0.30) and momentum
+    (0.1500 → 0.35) and rescaled the remaining sub-weights by
+    0.35 / 0.595 = 0.5882353. When _MOMENTUM_ENABLED is False the pre-3b
+    tuple (0.30/0.40/0.20/0.10) is used and district_momentum_score is
     ignored.
 
     Momentum values are always on the same 0-100 scale as the other
@@ -2486,21 +2486,31 @@ def _listing_quality_score(
     furnished_signal = 100.0 if is_furnished else 50.0
 
     if _MOMENTUM_ENABLED:
-        # Multiplicative rebalance of the pre-3b sub-weights by 0.85 to
-        # make room for the 0.15 momentum slot. Ratios are preserved
-        # exactly (0.2550 : 0.3400 : 0.1700 : 0.0850 == 0.30 : 0.40 :
-        # 0.20 : 0.10). Unknown momentum → neutral 50.0 per the tri-state
-        # convention used by freshness and suitability above.
+        # Sub-weight rebalance — 2026-05-07 (CEO directive elevation).
+        # Audit (branch claude/audit-advisor-ranking-4prR3) found momentum
+        # contributing only ~1.65% and freshness only ~2.81% of final_score,
+        # below the noise threshold for any real rank movement. Lifted
+        # freshness 0.2550→0.30 and momentum 0.1500→0.35; the remaining
+        # sub-weights (suitability, image, furnished) were rescaled by
+        # 0.35 / 0.595 = 0.5882353 so the tuple still sums to 1.0:
+        #   suitability       0.3400 → 0.20
+        #   image_signal      0.1700 → 0.10
+        #   furnished_signal  0.0850 → 0.05
+        # Combined with the listing_quality top-level lift in
+        # _score_breakdown (0.11 → 0.22), momentum's share of final_score
+        # rises from ~1.65% to ~7.7% and freshness from ~2.81% to ~6.6%.
+        # Unknown momentum → neutral 50.0 per the tri-state convention
+        # used by freshness and suitability above.
         if district_momentum_score is None:
             momentum_signal = 50.0
         else:
             momentum_signal = _clamp(float(district_momentum_score))
         composite = (
-            freshness * 0.2550
-            + suitability * 0.3400
-            + image_signal * 0.1700
-            + furnished_signal * 0.0850
-            + momentum_signal * 0.1500
+            freshness * 0.30
+            + suitability * 0.20
+            + image_signal * 0.10
+            + furnished_signal * 0.05
+            + momentum_signal * 0.35
         )
     else:
         # Pre-3b weight tuple. Used by the kill-switch revert path;
@@ -2787,37 +2797,61 @@ def _score_breakdown(
 ) -> dict[str, Any]:
     """Listings-first weight distribution.
 
-    55% of weight is on listing-specific components:
-      - occupancy_economics (30%): rent burden, fitout, area, cannibalization
-      - listing_quality (11%): freshness, suitability, furnished, image
-      - landlord_signal (8%):  LLM read of landlord intent / listing copy
-      - access_visibility (10%): measured street width
-    41% on district context:
-      - brand_fit (11%): district preference + format fit
-      - competition_whitespace (10%)
-      - demand_potential (10%)
-      - delivery_demand (5%)
-      - confidence (5%): data trust signal
+    Post-2026-05-07 weights (CEO directive elevation; see comment block
+    on ``component_weights`` below):
+      - occupancy_economics (26.2924%): rent burden, fitout, area, cannibalization
+      - listing_quality (22%): freshness, momentum, suitability, furnished, image
+      - landlord_signal (7.0112%):  LLM read of landlord intent / listing copy
+      - access_visibility (8.7640%): measured street width
+      - brand_fit (9.6404%): district preference + format fit
+      - competition_whitespace (8.7640%)
+      - demand_potential (8.7640%)
+      - delivery_demand (4.3820%)
+      - confidence (4.3820%): data trust signal
 
-    Patch 13 promoted ``landlord_signal`` to its own first-class 8% component,
-    taking 4 points each from ``brand_fit`` and ``listing_quality`` so total
-    weights still sum to 100. Combined with the Patch 13 sub-component
-    rebalance inside ``_listing_quality_score``, the LLM-influenced share of
-    ``final_score`` rises from roughly 9% to roughly 18%.
+    Patch 13 promoted ``landlord_signal`` to its own first-class component,
+    taking points from ``brand_fit`` and ``listing_quality``. The
+    2026-05-07 rebalance then lifted ``listing_quality`` from 11 to 22 to
+    materially elevate the recency and district-momentum signals; every
+    other component was rescaled by 78/89 = 0.8764045 so weights still
+    sum to 100.
     """
+    # Top-level weight rebalance — 2026-05-07 (CEO directive elevation).
+    # Audit (branch claude/audit-advisor-ranking-4prR3) found that even
+    # after raising the momentum/freshness sub-weights inside
+    # _listing_quality_score, listing_quality at 11% of final_score kept
+    # both directives below the noise threshold. Lifted listing_quality
+    # 11 → 22; the remaining components were rescaled proportionally by
+    # (100 - 22) / (100 - 11) = 78 / 89 = 0.8764045, with the rounding
+    # residual absorbed into the largest remaining weight
+    # (occupancy_economics):
+    #   occupancy_economics    30 → 26.2924  (residual +0.0003 absorbed)
+    #   brand_fit              11 →  9.6404
+    #   landlord_signal         8 →  7.0112
+    #   competition_whitespace 10 →  8.7640
+    #   demand_potential       10 →  8.7640
+    #   access_visibility      10 →  8.7640
+    #   delivery_demand         5 →  4.3820
+    #   confidence              5 →  4.3820
+    # Net effect: momentum lifts to ~7.7% and freshness to ~6.6% of
+    # final_score (up from ~1.65% and ~2.81%). All other listing_quality
+    # sub-components also lift proportionally — listing-quality writ
+    # large (recency, momentum, suitability, image, furnished) is the
+    # CEO-aligned axis.
     component_weights = {
-        "occupancy_economics": 30,
-        "listing_quality": 11,
-        "brand_fit": 11,
-        "landlord_signal": 8,
-        "competition_whitespace": 10,
-        "demand_potential": 10,
-        "access_visibility": 10,
-        "delivery_demand": 5,
-        "confidence": 5,
+        "occupancy_economics": 26.2924,
+        "listing_quality": 22.0,
+        "brand_fit": 9.6404,
+        "landlord_signal": 7.0112,
+        "competition_whitespace": 8.7640,
+        "demand_potential": 8.7640,
+        "access_visibility": 8.7640,
+        "delivery_demand": 4.3820,
+        "confidence": 4.3820,
     }
     # Invariant: weights must sum to 100 so final_score stays on a 0-100 scale.
-    assert sum(component_weights.values()) == 100, (
+    # Tolerance accommodates IEEE-754 rounding of 4-decimal float weights.
+    assert abs(sum(component_weights.values()) - 100) < 1e-3, (
         f"_score_breakdown component weights must sum to 100, "
         f"got {sum(component_weights.values())}"
     )
@@ -2834,15 +2868,15 @@ def _score_breakdown(
         "confidence": round(_safe_float(confidence_score), 2),
     }
     weighted_components = {
-        "occupancy_economics": round(_safe_float(economics_score) * 0.30, 2),
-        "listing_quality": round(_safe_float(listing_quality_score) * 0.11, 2),
-        "brand_fit": round(_safe_float(brand_fit_score) * 0.11, 2),
-        "landlord_signal": round(landlord_input * 0.08, 2),
-        "competition_whitespace": round(_safe_float(whitespace_score) * 0.10, 2),
-        "demand_potential": round(_safe_float(demand_score) * 0.10, 2),
-        "access_visibility": round(_safe_float(access_visibility_score) * 0.10, 2),
-        "delivery_demand": round(_safe_float(provider_intelligence_composite) * 0.05, 2),
-        "confidence": round(_safe_float(confidence_score) * 0.05, 2),
+        "occupancy_economics": round(_safe_float(economics_score) * 0.262924, 2),
+        "listing_quality": round(_safe_float(listing_quality_score) * 0.22, 2),
+        "brand_fit": round(_safe_float(brand_fit_score) * 0.096404, 2),
+        "landlord_signal": round(landlord_input * 0.070112, 2),
+        "competition_whitespace": round(_safe_float(whitespace_score) * 0.087640, 2),
+        "demand_potential": round(_safe_float(demand_score) * 0.087640, 2),
+        "access_visibility": round(_safe_float(access_visibility_score) * 0.087640, 2),
+        "delivery_demand": round(_safe_float(provider_intelligence_composite) * 0.043820, 2),
+        "confidence": round(_safe_float(confidence_score) * 0.043820, 2),
     }
     final_score = round(sum(weighted_components.values()), 2)
     display = {
