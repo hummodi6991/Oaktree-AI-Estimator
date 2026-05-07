@@ -20,6 +20,10 @@ from app.connectors.blackmarble import (
     evaluate_confidence as _blackmarble_evaluate_confidence,
 )
 from app.core.config import settings
+from app.ingest.expansion_advisor_competitors import (
+    _CHAIN_KEY_DENYLIST,
+    _CHAIN_NAME_NORM_SQL,
+)
 from app.ml.name_normalization import norm_district
 from app.services.aqar_district_match import (
     is_mojibake,
@@ -7911,14 +7915,25 @@ def run_expansion_search(
 
     # ───────────────────────────────────────────────────────────────────
     # Brand presence aggregate (PR C): per candidate, count branches per
-    # canonical brand within 500m. Used by the Breakdown tab's Brand
-    # Presence block to surface "major chains operating in this micro-
-    # market". Distinct from the proximity-competitor query above, which
-    # returns the 5 closest unique chains within 1500m for the Market
-    # tab. The two queries answer different questions and run in parallel.
+    # brand within 500m. Used by the Breakdown tab's Brand Presence block
+    # to surface "major chains operating in this micro-market". Distinct
+    # from the proximity-competitor query above (5 closest unique chains
+    # within 1500m for the Market tab). The two run in parallel.
+    #
+    # Two-tier counting (Patch 02): canonical_brand_id covers ~19% of
+    # ECQ rows in production. Filtering to canonical-only made ~81% of
+    # competitor rows invisible to unique_brands / top_chains. Each
+    # candidate's per-paren block now UNION ALLs:
+    #   • canonical rows grouped by canonical_brand_id, AND
+    #   • non-canonical rows grouped by a normalized name key (the same
+    #     _CHAIN_NAME_NORM_SQL that brand_alias.alias_key is keyed on),
+    #     excluding keys that already match a canonical alias and the
+    #     ingest-time generic-word denylist (cafe, restaurant, …).
     # ───────────────────────────────────────────────────────────────────
     _bulk_brand_presence: dict[str, list[dict]] = {}
     if ea_competitor_populated and _shortlist_coords:
+        _bp_norm_sql = _CHAIN_NAME_NORM_SQL.format(col="ecq.brand_name")
+        _bp_denylist_sql = "(" + ", ".join(f"'{k}'" for k in _CHAIN_KEY_DENYLIST) + ")"
         _bp_union_parts: list[str] = []
         _bp_params: dict = {}
         for _bpi, (_bp_pid, (_bp_lon, _bp_lat)) in enumerate(_shortlist_coords.items()):
@@ -7928,6 +7943,7 @@ def run_expansion_search(
             _bp_union_parts.append(f"""
                 (SELECT :bp_pid_{_bpi} AS candidate_pid,
                         ecq.canonical_brand_id,
+                        NULL::text AS norm_name_key,
                         MAX(ecq.display_name_en) AS display_name_en,
                         MAX(ecq.display_name_ar) AS display_name_ar,
                         COUNT(*) AS branch_count,
@@ -7944,6 +7960,38 @@ def run_expansion_search(
                        500
                    )
                  GROUP BY ecq.canonical_brand_id)
+                UNION ALL
+                (SELECT candidate_pid,
+                        NULL::varchar AS canonical_brand_id,
+                        norm_name_key,
+                        MAX(brand_name_repr) AS display_name_en,
+                        NULL::varchar AS display_name_ar,
+                        COUNT(*) AS branch_count,
+                        MIN(distance_m) AS nearest_distance_m
+                 FROM (
+                     SELECT :bp_pid_{_bpi} AS candidate_pid,
+                            ecq.brand_name AS brand_name_repr,
+                            {_bp_norm_sql} AS norm_name_key,
+                            ST_Distance(
+                                ecq.geom::geography,
+                                ST_SetSRID(ST_MakePoint(:bp_lon_{_bpi}, :bp_lat_{_bpi}), 4326)::geography
+                            ) AS distance_m
+                     FROM {_EA_COMPETITOR_TABLE} ecq
+                     WHERE ecq.geom IS NOT NULL
+                       AND ecq.canonical_brand_id IS NULL
+                       AND ST_DWithin(
+                           ecq.geom::geography,
+                           ST_SetSRID(ST_MakePoint(:bp_lon_{_bpi}, :bp_lat_{_bpi}), 4326)::geography,
+                           500
+                       )
+                 ) raw
+                 WHERE raw.norm_name_key <> ''
+                   AND raw.norm_name_key NOT IN {_bp_denylist_sql}
+                   AND NOT EXISTS (
+                       SELECT 1 FROM brand_alias ba
+                       WHERE ba.alias_key = raw.norm_name_key
+                   )
+                 GROUP BY candidate_pid, norm_name_key)
             """)
 
         if _bp_union_parts:
@@ -7958,12 +8006,15 @@ def run_expansion_search(
                 )
                 _bp_rows = []
 
-            # Group rows by candidate, sort, take top 5
+            # Group rows by candidate, sort, take top 5. Canonical entries
+            # sort first (so memo top_chains is biased toward known chains),
+            # then by branch_count DESC, nearest_distance_m ASC, key ASC.
             _per_candidate_brands: dict[str, list[dict]] = {}
             for _r in _bp_rows:
                 _key = str(_r["candidate_pid"])
                 _per_candidate_brands.setdefault(_key, []).append({
                     "canonical_brand_id": _r["canonical_brand_id"],
+                    "norm_name_key": _r.get("norm_name_key"),
                     "display_name_en": _r.get("display_name_en"),
                     "display_name_ar": _r.get("display_name_ar"),
                     "branch_count": int(_r["branch_count"] or 0),
@@ -7971,11 +8022,11 @@ def run_expansion_search(
                 })
 
             for _key, _brands in _per_candidate_brands.items():
-                # ORDER BY branch_count DESC, nearest_distance_m ASC, canonical_brand_id ASC
                 _brands.sort(key=lambda b: (
+                    b.get("canonical_brand_id") is None,  # False (canonical) sorts first
                     -b["branch_count"],
                     b.get("nearest_distance_m") or 0.0,
-                    b.get("canonical_brand_id") or "",
+                    b.get("canonical_brand_id") or b.get("norm_name_key") or "",
                 ))
                 _bulk_brand_presence[_key] = _brands
 
@@ -8252,9 +8303,19 @@ def run_expansion_search(
         # count summarized for the Breakdown tab header.
         _bp_brands_for_candidate = _bulk_brand_presence.get(_pid_str, [])
         if _bp_brands_for_candidate:
+            _bp_canonical_count = sum(
+                1 for b in _bp_brands_for_candidate
+                if b.get("canonical_brand_id") is not None
+            )
             feature_snapshot_json["brand_presence"] = {
                 "radius_m": 500,
+                # unique_brands stays the field commercial_floor_pass reads;
+                # post Patch 02 it is the union of canonical and name-deduped
+                # non-canonical brands. unique_brands_canonical preserves the
+                # pre-patch number for diagnostic comparison.
                 "unique_brands": len(_bp_brands_for_candidate),
+                "unique_brands_canonical": _bp_canonical_count,
+                "unique_brands_total": len(_bp_brands_for_candidate),
                 "total_branches": sum(b["branch_count"] for b in _bp_brands_for_candidate),
                 "top_chains": _bp_brands_for_candidate[:5],
             }
@@ -8262,6 +8323,8 @@ def run_expansion_search(
             feature_snapshot_json["brand_presence"] = {
                 "radius_m": 500,
                 "unique_brands": 0,
+                "unique_brands_canonical": 0,
+                "unique_brands_total": 0,
                 "total_branches": 0,
                 "top_chains": [],
             }
