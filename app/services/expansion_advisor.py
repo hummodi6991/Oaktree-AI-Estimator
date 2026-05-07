@@ -9398,6 +9398,14 @@ def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[
                 (decision_memo_json IS NOT NULL OR decision_memo IS NOT NULL) AS decision_memo_present
             FROM expansion_candidate
             WHERE search_id = :search_id
+              AND (
+                source_type != 'commercial_unit'
+                OR EXISTS (
+                  SELECT 1 FROM commercial_unit cu
+                  WHERE cu.aqar_id = expansion_candidate.parcel_id
+                    AND cu.status = 'active'
+                )
+              )
             ORDER BY rank_position ASC NULLS LAST, compare_rank ASC NULLS LAST, final_score DESC, computed_at DESC
             """
         ),
@@ -9699,6 +9707,14 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             FROM expansion_candidate
             WHERE search_id = :search_id
               AND id = ANY(:candidate_ids)
+              AND (
+                source_type != 'commercial_unit'
+                OR EXISTS (
+                  SELECT 1 FROM commercial_unit cu
+                  WHERE cu.aqar_id = expansion_candidate.parcel_id
+                    AND cu.status = 'active'
+                )
+              )
             """
         ),
         {"search_id": search_id, "candidate_ids": candidate_ids},
@@ -9923,6 +9939,14 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
             FROM expansion_candidate c
             JOIN expansion_search s ON s.id = c.search_id
             WHERE c.id = :candidate_id
+              AND (
+                c.source_type != 'commercial_unit'
+                OR EXISTS (
+                  SELECT 1 FROM commercial_unit cu
+                  WHERE cu.aqar_id = c.parcel_id
+                    AND cu.status = 'active'
+                )
+              )
             """
         ),
         {"candidate_id": candidate_id},
