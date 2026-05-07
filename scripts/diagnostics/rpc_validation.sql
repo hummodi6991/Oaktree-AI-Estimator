@@ -83,7 +83,7 @@ LIMIT 50;
 SELECT
   id,
   feature_snapshot_json->>'district_display'                         AS district,
-  (feature_snapshot_json->>'population_reach')::int                  AS pop_reach,
+  ROUND((feature_snapshot_json->>'population_reach')::numeric)::int  AS pop_reach,
   (feature_snapshot_json->>'estimated_annual_rent_sar')::float       AS annual_rent_sar,
   ROUND((score_breakdown_json->'market_viability_flag'->>'rent_per_capita_sar')::numeric, 2) AS rpc_sar,
   ROUND((score_breakdown_json->'market_viability_flag'->>'rent_per_capita_pct')::numeric, 4) AS rpc_pct,
