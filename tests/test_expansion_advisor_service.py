@@ -3500,6 +3500,7 @@ def test_viability_diagnostics_demote_legs_block_written(
         "dropped_economics",
         "dropped_demand",
         "dropped_radiance_growth",
+        "dropped_rent_per_capita",
     }
     assert set(drops.keys()) == expected_drop_keys
     for key in expected_drop_keys:
@@ -3518,6 +3519,10 @@ def test_viability_diagnostics_demote_legs_block_written(
         "demand_threshold",
         "demand_min_branches",
         "radiance_yoy_demote_threshold",
+        "rpc_percentile",
+        "rpc_threshold",
+        "rpc_min_cohort",
+        "rpc_cohort_n",
     }
     assert set(thresholds.keys()) == expected_threshold_keys
     assert thresholds["radiance_yoy_demote_threshold"] == 2.0
@@ -3525,6 +3530,153 @@ def test_viability_diagnostics_demote_legs_block_written(
     leg_enabled = diagnostics["demote_legs"]["leg_enabled"]
     assert leg_enabled["demand"] is True
     assert leg_enabled["radiance_growth"] is True
+    # rpc leg is inactive in this cohort (no estimated_annual_rent_sar
+    # supplied by the helper) so leg_enabled["rent_per_capita"] is False.
+    assert leg_enabled["rent_per_capita"] is False
+
+
+# ---------------------------------------------------------------------------
+# rent_per_capita demote leg — catches the CEO "low-pop + high-rent"
+# anti-pattern via cohort percentile on rent / population_reach.
+# ---------------------------------------------------------------------------
+
+
+def _rpc_candidate(
+    *, id_: str, final_score: float, rent_sar: float | None,
+    pop_reach: float | None,
+) -> dict:
+    fs: dict = {}
+    if rent_sar is not None:
+        fs["estimated_annual_rent_sar"] = rent_sar
+    if pop_reach is not None:
+        fs["population_reach"] = pop_reach
+    return {
+        "id": id_,
+        "parcel_id": id_,
+        "final_score": final_score,
+        "score_breakdown_json": {},
+        "feature_snapshot_json": fs,
+    }
+
+
+def test_viability_rpc_leg_demotes_top_quartile(disable_market_viability_floors):
+    # Cohort of 12 candidates: rpc values 1, 2, ..., 11 SAR/person plus an
+    # outlier "target" with rpc = 1000 (200K rent / 200 pop). Default
+    # percentile is 0.75; the target sits at the top of the cohort and
+    # must be demoted by the rpc leg, with telemetry written.
+    cohort = [
+        _rpc_candidate(
+            id_=f"c{i}", final_score=80.0 - i,
+            rent_sar=float(i * 1000), pop_reach=1000.0,
+        )
+        for i in range(1, 12)
+    ]
+    target = _rpc_candidate(
+        id_="target", final_score=78.5,
+        rent_sar=200_000.0, pop_reach=200.0,  # rpc = 1000
+    )
+    cohort.insert(2, target)
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target_out = next(c for c in out if c["id"] == "target")
+    flag = target_out["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None
+    assert flag["rent_per_capita_demote"] is True
+    assert flag["rent_per_capita_sar"] == 1000.0
+    assert flag["rent_per_capita_pct"] == 1.0
+    assert flag["demoted"] is True
+    assert "rent_per_capita_high" in flag["reason"].split("_and_")
+    # Position must have moved down.
+    assert next(i for i, c in enumerate(out) if c["id"] == "target") > 2
+
+
+def test_viability_rpc_leg_skipped_below_min_cohort(
+    disable_market_viability_floors,
+):
+    # Only 6 candidates have valid rpc inputs (< default min cohort 10);
+    # rpc leg is silent, no flag writes, no demotions.
+    cohort = [
+        _rpc_candidate(
+            id_=f"c{i}", final_score=80.0 - i,
+            rent_sar=float(i * 1000), pop_reach=1000.0,
+        )
+        for i in range(1, 7)
+    ]
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    for c in out:
+        assert "market_viability_flag" not in c["score_breakdown_json"]
+
+
+def test_viability_rpc_leg_writes_null_for_missing_inputs(
+    disable_market_viability_floors,
+):
+    # Cohort exceeds min_cohort with valid rpc, but one candidate is
+    # missing population_reach. That candidate gets null telemetry; the
+    # leg is otherwise active.
+    cohort = [
+        _rpc_candidate(
+            id_=f"c{i}", final_score=80.0 - i,
+            rent_sar=float(i * 1000), pop_reach=1000.0,
+        )
+        for i in range(1, 12)
+    ]
+    missing = _rpc_candidate(
+        id_="missing", final_score=78.5,
+        rent_sar=144_000.0, pop_reach=None,
+    )
+    cohort.insert(2, missing)
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    miss_out = next(c for c in out if c["id"] == "missing")
+    flag = miss_out["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None
+    assert flag["rent_per_capita_sar"] is None
+    assert flag["rent_per_capita_pct"] is None
+    assert flag["rent_per_capita_demote"] is None
+
+
+def test_viability_rpc_leg_handles_zero_population_safely(
+    disable_market_viability_floors,
+):
+    # population_reach == 0 must not raise; treated as missing (null
+    # telemetry) and no demotion.
+    cohort = [
+        _rpc_candidate(
+            id_=f"c{i}", final_score=80.0 - i,
+            rent_sar=float(i * 1000), pop_reach=1000.0,
+        )
+        for i in range(1, 12)
+    ]
+    zero_pop = _rpc_candidate(
+        id_="zero", final_score=78.5,
+        rent_sar=200_000.0, pop_reach=0.0,
+    )
+    cohort.insert(2, zero_pop)
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    zero_out = next(c for c in out if c["id"] == "zero")
+    flag = zero_out["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None
+    assert flag["rent_per_capita_sar"] is None
+    assert flag["rent_per_capita_demote"] is None
+
+
+def test_viability_rpc_leg_writes_telemetry_on_non_demoted(
+    disable_market_viability_floors,
+):
+    # Below-threshold candidates still get the three rpc keys written
+    # (telemetry, not just demote events).
+    cohort = [
+        _rpc_candidate(
+            id_=f"c{i}", final_score=80.0 - i,
+            rent_sar=float(i * 1000), pop_reach=1000.0,
+        )
+        for i in range(1, 12)
+    ]
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    low = next(c for c in out if c["id"] == "c1")  # rpc = 1.0, lowest
+    flag = low["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None
+    assert flag["rent_per_capita_sar"] == 1.0
+    assert flag["rent_per_capita_demote"] is False
+    assert 0.0 < flag["rent_per_capita_pct"] <= 1.0
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ import statistics
 import time
 import os
 import uuid
+from bisect import bisect_right
 from datetime import datetime, timedelta
 from typing import Any, Mapping
 
@@ -4784,6 +4785,78 @@ def _apply_market_viability_pass(
         except Exception:
             demand_threshold = None
 
+    # ── rent_per_capita demote leg (CEO "low-pop + high-rent" anti-pattern) ──
+    # Evaluated BEFORE the existing legs. Cohort percentile on
+    # estimated_annual_rent_sar / population_reach, mirroring the
+    # pop_demote percentile pattern (statistics.quantiles, inclusive).
+    # Below ``EXPANSION_VIABILITY_RPC_MIN_COHORT`` valid candidates the leg
+    # is skipped entirely (no demotions, no flag writes). Independent of
+    # the rent_burden / population_reach legs above: this catches the
+    # joint pattern (~30K pop with ~200K SAR rent) that those independent
+    # legs only catch when both happen to fire on the same candidate.
+    rpc_percentile_threshold = float(getattr(
+        settings, "EXPANSION_VIABILITY_RPC_PERCENTILE", 0.75
+    ))
+    rpc_min_cohort = int(getattr(
+        settings, "EXPANSION_VIABILITY_RPC_MIN_COHORT", 10
+    ))
+    rpc_per_candidate_id: dict[int, float | None] = {}
+    for c in out:
+        fs = c.get("feature_snapshot_json")
+        rpc: float | None = None
+        if isinstance(fs, dict):
+            rent_raw = fs.get("estimated_annual_rent_sar")
+            pop_raw = fs.get("population_reach")
+            if rent_raw is not None and pop_raw is not None:
+                rent_v = _safe_float(rent_raw, default=-1.0)
+                pop_v = _safe_float(pop_raw, default=-1.0)
+                if rent_v > 0 and pop_v > 0:
+                    rpc = rent_v / pop_v
+        rpc_per_candidate_id[id(c)] = rpc
+
+    valid_rpc = sorted(v for v in rpc_per_candidate_id.values() if v is not None)
+    rpc_active = len(valid_rpc) >= rpc_min_cohort
+    rpc_threshold: float | None = None
+    if rpc_active:
+        rpc_pct_index = max(1, min(99, int(round(rpc_percentile_threshold * 100))))
+        try:
+            rpc_cutoffs = statistics.quantiles(
+                valid_rpc, n=100, method="inclusive"
+            )
+            rpc_threshold = float(rpc_cutoffs[rpc_pct_index - 1])
+        except Exception:
+            rpc_threshold = None
+            rpc_active = False
+
+    rpc_telemetry_by_id: dict[int, dict[str, Any]] = {}
+    rpc_demote_by_id: dict[int, bool] = {}
+    if rpc_active and rpc_threshold is not None:
+        cohort_size = len(valid_rpc)
+        for c in out:
+            cid = id(c)
+            rpc = rpc_per_candidate_id[cid]
+            if rpc is None:
+                rpc_telemetry_by_id[cid] = {
+                    "rent_per_capita_sar": None,
+                    "rent_per_capita_pct": None,
+                    "rent_per_capita_demote": None,
+                }
+                rpc_demote_by_id[cid] = False
+            else:
+                rank = bisect_right(valid_rpc, rpc)
+                pct = rank / cohort_size if cohort_size else 0.0
+                # At-most-once demote: ``rpc`` runs first, so the
+                # already-demoted check is a defensive no-op (the existing
+                # demote loop applies a single positional swap per
+                # candidate regardless of how many legs fire).
+                do_demote = rpc >= rpc_threshold
+                rpc_telemetry_by_id[cid] = {
+                    "rent_per_capita_sar": round(rpc, 4),
+                    "rent_per_capita_pct": float(pct),
+                    "rent_per_capita_demote": bool(do_demote),
+                }
+                rpc_demote_by_id[cid] = do_demote
+
     def _flag_inputs(
         c: dict[str, Any]
     ) -> tuple[
@@ -4936,7 +5009,8 @@ def _apply_market_viability_pass(
     demote_indices = [
         i for i in range(n)
         if (
-            pre_eval[i][0] or pre_eval[i][1] or pre_eval[i][2]
+            rpc_demote_by_id.get(id(out[i]), False)
+            or pre_eval[i][0] or pre_eval[i][1] or pre_eval[i][2]
             or pre_eval[i][3] or pre_eval[i][4]
         )
     ]
@@ -4951,10 +5025,13 @@ def _apply_market_viability_pass(
             rent_pct, rent_scope, pop_reach, economics_score, radiance_meta,
             demand_value, demand_branches,
         ) = pre_eval[i]
-        # Stable-order annotation: clause 1 (pop), clause 2 (rent),
-        # clause 3 (economics), clause "sales potential" (demand),
-        # clause "growth potential" (radiance growth).
+        rpc_demote = rpc_demote_by_id.get(id(c), False)
+        # Stable-order annotation: rpc (rent_per_capita), clause 1 (pop),
+        # clause 2 (rent), clause 3 (economics), clause "sales potential"
+        # (demand), clause "growth potential" (radiance growth).
         reasons: list[str] = []
+        if rpc_demote:
+            reasons.append("rent_per_capita_high")
         if pop_demote:
             reasons.append("population_below_quartile")
         if rent_demote:
@@ -4969,7 +5046,7 @@ def _apply_market_viability_pass(
         if not isinstance(sb, dict):
             sb = {}
             c["score_breakdown_json"] = sb
-        sb["market_viability_flag"] = {
+        flag_dict: dict[str, Any] = {
             "demoted": True,
             "demotion_steps": int(demotion_steps),
             "rent_percentile": float(rent_pct),
@@ -4999,16 +5076,48 @@ def _apply_market_viability_pass(
             "radiance_pixel_count": radiance_meta["radiance_pixel_count"],
             "radiance_year_month": radiance_meta["radiance_year_month"],
         }
+        if rpc_active:
+            flag_dict.update(rpc_telemetry_by_id.get(id(c), {
+                "rent_per_capita_sar": None,
+                "rent_per_capita_pct": None,
+                "rent_per_capita_demote": None,
+            }))
+        sb["market_viability_flag"] = flag_dict
         if target > i:
             out.pop(i)
             out.insert(target, c)
         demoted += 1
+
+    # Write rpc telemetry to candidates the rpc leg evaluated but the
+    # demote loop did not touch (i.e. no leg fired for them). The demote
+    # loop above already included the rpc keys for every demoted candidate
+    # via flag_dict. When the rpc leg is inactive (cohort below the
+    # min-cohort floor), no flag writes happen — per the leg's contract.
+    if rpc_active:
+        demoted_ids: set[int] = {id(out[i]) for i in demote_indices}
+        for c in out:
+            cid = id(c)
+            if cid in demoted_ids:
+                continue
+            telemetry = rpc_telemetry_by_id.get(cid)
+            if telemetry is None:
+                continue
+            sb = c.get("score_breakdown_json")
+            if not isinstance(sb, dict):
+                sb = {}
+                c["score_breakdown_json"] = sb
+            mvf = sb.get("market_viability_flag")
+            if not isinstance(mvf, dict):
+                mvf = {}
+                sb["market_viability_flag"] = mvf
+            mvf.update(telemetry)
 
     pop_demoted = sum(1 for pe in pre_eval if pe[0])
     rent_demoted = sum(1 for pe in pre_eval if pe[1])
     econ_demoted = sum(1 for pe in pre_eval if pe[2])
     demand_demoted = sum(1 for pe in pre_eval if pe[3])
     radiance_demoted = sum(1 for pe in pre_eval if pe[4])
+    rpc_demoted = sum(1 for v in rpc_demote_by_id.values() if v)
     if demoted:
         logger.info(
             "expansion_market_viability_pass: search_id=%s demoted=%d "
@@ -5040,6 +5149,7 @@ def _apply_market_viability_pass(
                 "dropped_economics": econ_demoted,
                 "dropped_demand": demand_demoted,
                 "dropped_radiance_growth": radiance_demoted,
+                "dropped_rent_per_capita": rpc_demoted,
             },
             "thresholds": {
                 "rent_pct_threshold": float(rent_pct_threshold),
@@ -5054,10 +5164,17 @@ def _apply_market_viability_pass(
                 ),
                 "demand_min_branches": int(demand_min_branches),
                 "radiance_yoy_demote_threshold": float(radiance_yoy_demote_threshold),
+                "rpc_percentile": float(rpc_percentile_threshold),
+                "rpc_threshold": (
+                    float(rpc_threshold) if rpc_threshold is not None else None
+                ),
+                "rpc_min_cohort": int(rpc_min_cohort),
+                "rpc_cohort_n": len(valid_rpc),
             },
             "leg_enabled": {
                 "demand": demand_leg_enabled,
                 "radiance_growth": radiance_growth_leg_enabled,
+                "rent_per_capita": rpc_active,
             },
         }
     return out
