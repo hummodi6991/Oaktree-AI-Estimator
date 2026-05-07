@@ -2219,7 +2219,11 @@ def _demand_blend_weights(service_model: str) -> tuple[float, float]:
     return _BLENDS.get(service_model, (0.60, 0.40))
 
 
-def _competition_whitespace_score(competitor_count: int) -> float:
+def _competition_whitespace_score(
+    competitor_count: int,
+    *,
+    confident: bool | None = None,
+) -> float:
     """Whitespace score with tighter calibration for Riyadh F&B density.
 
     Riyadh districts typically have 0-8 same-category competitors within
@@ -2235,7 +2239,17 @@ def _competition_whitespace_score(competitor_count: int) -> float:
       8              -> 40
       12             -> 28
       20+            -> 15  (floor)
+
+    F4 (defensive): when ``confident`` is ``False``, the spatial query
+    returned zero rows AND no broader POI/delivery presence was observed
+    in the radius (i.e. thin POI coverage, not a true greenfield). In
+    that case return the neutral midpoint (50.0) so the candidate
+    neither receives the free 100 boost nor an implicit penalty.
+    ``confident=None`` (caller did not supply a flag) preserves the
+    legacy behavior unchanged.
     """
+    if confident is False and competitor_count <= 0:
+        return 50.0
     if competitor_count <= 0:
         return 100.0
     # Log-scaled decay: steeper at low counts, gentler at high counts.
@@ -5927,16 +5941,25 @@ def _bulk_enrich_competitors(
     competition_radius_m: float | None = None,
     *,
     service_model: str | None = None,
-) -> dict[str, int]:
+) -> dict[str, dict[str, Any]]:
     """Bulk-compute competitor_count for a set of candidate locations.
 
-    Returns {parcel_id: competitor_count} for all rows that have lat/lon.
-    Uses a single SQL query with unnest + LATERAL to avoid N+1.
+    Returns ``{parcel_id: {"competitor_count": int, "confident": bool}}``
+    for all rows that have lat/lon. Uses a single SQL query with unnest
+    + LATERAL to avoid N+1.
 
     Searches both restaurant_poi (Google Places data) and
     delivery_source_record (HungerStation / delivery marketplace data) via
     UNION to ensure categories like shawarma and indian that only exist in
     delivery data are counted.
+
+    F4: ``confident`` is True iff at least one observation (in any
+    category) was returned by the underlying tables in the candidate's
+    search radius. When both tables return zero rows, ``confident`` is
+    False — the radius has thin POI coverage and the zero same-category
+    count cannot be trusted as evidence of a true greenfield. The
+    downstream whitespace scorer falls back to a neutral midpoint when
+    confidence is False.
 
     The competition radius follows the same priority as
     ``_bulk_enrich_population``'s demand radius: explicit arg >
@@ -5994,27 +6017,29 @@ def _bulk_enrich_competitors(
                     )
                     SELECT
                         i.parcel_id,
-                        COALESCE(comp.competitor_count, 0) AS competitor_count
+                        COALESCE(comp.competitor_count, 0) AS competitor_count,
+                        COALESCE(comp.broader_count, 0) AS broader_count
                     FROM inputs i
                     LEFT JOIN LATERAL (
-                        SELECT COUNT(*) AS competitor_count
+                        SELECT
+                            COUNT(*) FILTER (WHERE in_category) AS competitor_count,
+                            COUNT(*) AS broader_count
                         FROM (
                             -- Source 1: restaurant_poi (Google Places)
-                            SELECT rp.geom
+                            SELECT (lower(rp.category) = ANY(:category_keys)) AS in_category
                             FROM restaurant_poi rp
-                            WHERE lower(rp.category) = ANY(:category_keys)
-                              AND ST_DWithin(
+                            WHERE ST_DWithin(
                                   rp.geom::geography,
                                   ST_SetSRID(ST_MakePoint(i.lon, i.lat), 4326)::geography,
                                   :radius_m
                               )
                             UNION ALL
                             -- Source 2: delivery_source_record (HungerStation etc.)
-                            SELECT {_dsr_geo}::geometry AS geom
+                            SELECT (lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
+                                    OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
+                                   ) AS in_category
                             FROM delivery_source_record dsr
                             WHERE {_dsr_where}
-                              AND (lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
-                                   OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex)
                               AND ST_DWithin(
                                   {_dsr_geo},
                                   ST_SetSRID(ST_MakePoint(i.lon, i.lat), 4326)::geography,
@@ -6028,7 +6053,13 @@ def _bulk_enrich_competitors(
                  "radius_m": competition_radius_m},
             ).mappings().all()
 
-        return {str(r["parcel_id"]): int(r["competitor_count"]) for r in result}
+        return {
+            str(r["parcel_id"]): {
+                "competitor_count": int(r["competitor_count"]),
+                "confident": int(r["broader_count"]) > 0,
+            }
+            for r in result
+        }
     except Exception as exc:
         logger.warning("Bulk competitor enrichment failed: %s", exc, exc_info=True)
         return {}
@@ -6658,7 +6689,9 @@ def run_expansion_search(
             for _r in rows:
                 _pid = str(_r.get("parcel_id") or _r.get("id") or "")
                 if _pid in _bulk_comp:
-                    _r["competitor_count"] = _bulk_comp[_pid]
+                    _entry = _bulk_comp[_pid]
+                    _r["competitor_count"] = _entry["competitor_count"]
+                    _r["competitor_count_confident"] = _entry["confident"]
             logger.info(
                 "expansion_search: bulk competitor enrichment applied to %d/%d candidates, search_id=%s",
                 len(_bulk_comp), len(rows), search_id,
@@ -6698,7 +6731,9 @@ def run_expansion_search(
                 for _r in rows:
                     _pid = str(_r.get("parcel_id") or _r.get("id") or "")
                     if _pid in _bulk_comp:
-                        _r["competitor_count"] = _bulk_comp[_pid]
+                        _entry = _bulk_comp[_pid]
+                        _r["competitor_count"] = _entry["competitor_count"]
+                        _r["competitor_count_confident"] = _entry["confident"]
 
             # ── Resolve commercial unit districts to Arabic names ──────────
             # Commercial units store English neighborhood names from Aqar,
@@ -7188,6 +7223,13 @@ def run_expansion_search(
             area_m2 = max_area_m2
         population_reach = _safe_float(row.get("population_reach"))
         competitor_count = _safe_int(row.get("competitor_count"))
+        # F4: confidence flag emitted by _bulk_enrich_competitors. Falls
+        # through as None on the ARCGIS-fallback candidate-pool SQL path
+        # (preserves legacy behavior for rows that bypass bulk enrichment).
+        _cc_confident_raw = row.get("competitor_count_confident")
+        competitor_count_confident: bool | None = (
+            bool(_cc_confident_raw) if _cc_confident_raw is not None else None
+        )
         delivery_listing_count = _safe_int(row.get("delivery_listing_count"))
         provider_listing_count = _safe_int(row.get("provider_listing_count"))
         provider_platform_count = _safe_int(row.get("provider_platform_count"))
@@ -7241,7 +7283,9 @@ def run_expansion_search(
         _pop_w, _del_w = _demand_blend_weights(service_model)
         demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
 
-        whitespace_score = _competition_whitespace_score(competitor_count)
+        whitespace_score = _competition_whitespace_score(
+            competitor_count, confident=competitor_count_confident
+        )
 
         area_fit = _area_fit(area_m2, target_area_m2, min_area_m2, max_area_m2)
         zoning_fit_score = _zoning_fit_score(landuse_label, landuse_code)
@@ -7512,6 +7556,7 @@ def run_expansion_search(
                 "area_m2": area_m2,
                 "population_reach": population_reach,
                 "competitor_count": competitor_count,
+                "competitor_count_confident": competitor_count_confident,
                 "delivery_listing_count": delivery_listing_count,
                 "provider_listing_count": provider_listing_count,
                 "provider_platform_count": provider_platform_count,
@@ -8151,6 +8196,7 @@ def run_expansion_search(
         area_m2 = prepared_item["area_m2"]
         population_reach = prepared_item["population_reach"]
         competitor_count = prepared_item["competitor_count"]
+        competitor_count_confident = prepared_item.get("competitor_count_confident")
         delivery_listing_count = prepared_item["delivery_listing_count"]
         provider_listing_count = prepared_item["provider_listing_count"]
         provider_platform_count = prepared_item["provider_platform_count"]
@@ -8522,6 +8568,11 @@ def run_expansion_search(
             landlord_signal_score=row.get("unit_llm_landlord_signal_score"),
         )
         score_breakdown_json["inputs"]["rent_fallback_used"] = rent_fallback_used
+        # F4: surface the whitespace confidence flag so the API response
+        # meta exposes whether the boost-to-100-on-zero path was gated.
+        score_breakdown_json["inputs"]["competition_whitespace_confident"] = (
+            competitor_count_confident
+        )
         score_breakdown_json["inputs"]["parking_context_available"] = bool(feature_snapshot_json["context_sources"].get("parking_context_available"))
         score_breakdown_json["inputs"]["road_context_available"] = bool(feature_snapshot_json["context_sources"].get("road_context_available"))
         score_breakdown_json["inputs"]["parking_evidence_band"] = feature_snapshot_json["context_sources"].get("parking_evidence_band")
