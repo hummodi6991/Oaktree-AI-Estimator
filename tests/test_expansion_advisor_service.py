@@ -2304,6 +2304,75 @@ def test_brand_presence_aggregation_shape():
     assert len(presence["top_chains"]) == 3
 
 
+def test_brand_presence_name_fallback_sort_and_telemetry():
+    """Patch 02: rows from the canonical sub-select and from the
+    name-deduped non-canonical sub-select must coexist in the per-candidate
+    list. Canonical entries sort first; the wrapper carries the new
+    unique_brands_canonical / unique_brands_total telemetry fields and
+    unique_brands stays as the union total (the value the gate reads)."""
+    raw_rows = [
+        # canonical rows
+        {"candidate_pid": "p", "canonical_brand_id": "starbucks",
+         "norm_name_key": None, "display_name_en": "Starbucks",
+         "display_name_ar": "ستاربكس", "branch_count": 5,
+         "nearest_distance_m": 120.0},
+        {"candidate_pid": "p", "canonical_brand_id": "kfc",
+         "norm_name_key": None, "display_name_en": "KFC",
+         "display_name_ar": "كنتاكي", "branch_count": 2,
+         "nearest_distance_m": 200.0},
+        # non-canonical rows (alias-deduped, denylist-filtered upstream)
+        {"candidate_pid": "p", "canonical_brand_id": None,
+         "norm_name_key": "abu sufyan", "display_name_en": "Abu Sufyan",
+         "display_name_ar": None, "branch_count": 9,
+         "nearest_distance_m": 80.0},
+        {"candidate_pid": "p", "canonical_brand_id": None,
+         "norm_name_key": "al baik", "display_name_en": "Al Baik",
+         "display_name_ar": None, "branch_count": 1,
+         "nearest_distance_m": 400.0},
+    ]
+
+    per_candidate: dict[str, list[dict]] = {}
+    for r in raw_rows:
+        per_candidate.setdefault(str(r["candidate_pid"]), []).append({
+            "canonical_brand_id": r["canonical_brand_id"],
+            "norm_name_key": r.get("norm_name_key"),
+            "display_name_en": r.get("display_name_en"),
+            "display_name_ar": r.get("display_name_ar"),
+            "branch_count": int(r["branch_count"]),
+            "nearest_distance_m": float(r.get("nearest_distance_m") or 0.0),
+        })
+    for brands in per_candidate.values():
+        brands.sort(key=lambda b: (
+            b.get("canonical_brand_id") is None,
+            -b["branch_count"],
+            b.get("nearest_distance_m") or 0.0,
+            b.get("canonical_brand_id") or b.get("norm_name_key") or "",
+        ))
+
+    chains = per_candidate["p"]
+    # Canonical rows come first regardless of branch_count
+    assert chains[0]["canonical_brand_id"] == "starbucks"
+    assert chains[1]["canonical_brand_id"] == "kfc"
+    # Then non-canonical, sorted by branch_count desc
+    assert chains[2]["canonical_brand_id"] is None
+    assert chains[2]["norm_name_key"] == "abu sufyan"
+    assert chains[3]["norm_name_key"] == "al baik"
+
+    canonical_count = sum(1 for c in chains if c.get("canonical_brand_id") is not None)
+    presence = {
+        "radius_m": 500,
+        "unique_brands": len(chains),
+        "unique_brands_canonical": canonical_count,
+        "unique_brands_total": len(chains),
+        "total_branches": sum(c["branch_count"] for c in chains),
+        "top_chains": chains[:5],
+    }
+    assert presence["unique_brands"] == 4              # gate input is the union
+    assert presence["unique_brands_canonical"] == 2    # pre-patch number
+    assert presence["unique_brands_total"] == 4        # diagnostic mirror
+    assert presence["total_branches"] == 17
+
+
 # ---------------------------------------------------------------------------
 # value_score chip — geometric mean of revenue_index and rent_burden_score.
 # ---------------------------------------------------------------------------
