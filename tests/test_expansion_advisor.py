@@ -594,7 +594,11 @@ def test_confidence_score_parcel_legacy_base():
 
 
 def test_confidence_grade_listing_a():
-    """Listing with high score grades A without needing parcel context."""
+    """Listing with high score grades A without needing parcel context.
+
+    Evidence bands are present (``primary``) so the listings ceiling cap
+    based on missing road/parking bands does not apply.
+    """
     grade = _confidence_grade(
         confidence_score=85.0,
         district="Al Olaya",
@@ -607,6 +611,8 @@ def test_confidence_grade_listing_a():
         delivery_observed=False,
         data_completeness_score=0,
         is_listing=True,
+        road_evidence_band="primary",
+        parking_evidence_band="primary",
     )
     assert grade == "A"
 

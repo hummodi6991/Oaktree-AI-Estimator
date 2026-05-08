@@ -1417,9 +1417,9 @@ VOICE EXAMPLES (target tone — match this directness and depth):
 Example C — strong recommend, score 84, rank 1, district-tier comparable:
 {
   "headline_recommendation": "Recommend — asking rent sits at the 28th percentile vs district comparables and the corner frontage gives the brand visibility from two arteries.",
-  "ranking_explanation": "The investment case here is rent: SAR 432,000/yr lands at the 28th percentile vs 14 district comparables, a roughly SAR 110,000/yr discount to the median that compounds materially over a five-year lease. Site quality reinforces the economics — a 24 m corner on a primary artery with an access/visibility score of 82/100 — and a population reach of 41,000 inside the walking catchment supports the dine-in model. The trade-off is depth of competition: three named chains operate within 500 m, so the brand will need a defensible category position rather than a generic offer.",
+  "ranking_explanation": "The investment case here is rent: SAR 432,000/yr lands at the 28th percentile vs 14 district comparables — roughly 20% below the SAR 542,000 median, a cushion that compounds materially over a five-year lease. Site quality reinforces the economics — a 24 m corner on a primary artery with an access/visibility score of 82/100 — and a population reach of 41,000 inside the walking catchment supports the dine-in model. The trade-off is depth of competition: three named chains operate within 500 m, so the brand will need a defensible category position rather than a generic offer.",
   "key_evidence": [
-    {"signal": "annual rent", "value": "SAR 432,000/yr", "implication": "the spread to the district median justifies the entry — roughly SAR 110k/yr saved vs peer listings", "polarity": "positive"},
+    {"signal": "annual rent", "value": "SAR 432,000/yr", "implication": "asking sits roughly 20% below the district median — the entry basis is genuinely below peer listings, not just below list", "polarity": "positive"},
     {"signal": "rent percentile vs comparables", "value": "28th percentile (vs 14 district comparables)", "implication": "deal pricing is genuinely below market, not just below list", "polarity": "positive"},
     {"signal": "frontage", "value": "24 m corner", "implication": "signage works in both traffic directions on a primary artery", "polarity": "positive"},
     {"signal": "access/visibility score", "value": "82/100", "implication": "site quality reinforces the rent advantage rather than offsetting it", "polarity": "positive"},
@@ -1431,7 +1431,7 @@ Example C — strong recommend, score 84, rank 1, district-tier comparable:
     {"risk": "Parking provision could not be verified from current data — typical for Aqar listings, not a site defect.", "mitigation": "Walk the block at peak hours during diligence; lease two adjacent street stalls from the neighbour if curbside turnover is constrained."},
     {"risk": "Listing has been live for 102 days, longer than is typical for prime corner units in this district.", "mitigation": "Open negotiation 8–12% below asking and ask the landlord to absorb fit-out contribution."}
   ],
-  "comparison": "This site beats Peer Chain A on rent by roughly SAR 90k/yr and matches Peer Chain B on visibility, while pulling ahead of rank 2 in this search on rent percentile (28th vs 47th) and access/visibility (82/100 vs 71/100). Rank 2 has a marginally larger footprint but no comparable corner exposure.",
+  "comparison": "This site undercuts Peer Chain A on rent by roughly 17% and matches Peer Chain B on visibility, while pulling ahead of rank 2 in this search on rent percentile (28th vs 47th) and access/visibility (82/100 vs 71/100). Rank 2 has a marginally larger footprint but no comparable corner exposure.",
   "bottom_line": "This is the deal in the shortlist — sign it before the listing turns."
 }
 
@@ -1481,9 +1481,9 @@ Inline note on missing rank-2 alternatives: when next_candidate_summary is absen
 Example F — strong recommend with the four typed advisory sections fully populated (district-tier comparable, rank-2 present):
 {
   "headline_recommendation": "Recommend — asking rent sits at the 28th percentile vs district comparables and the corner frontage gives the brand visibility from two arteries.",
-  "ranking_explanation": "The investment case here is rent: SAR 432,000/yr lands at the 28th percentile vs 14 district comparables, a roughly SAR 110,000/yr discount to the median. Site quality reinforces the economics — a 24 m corner on a primary artery with an access/visibility score of 82/100 — and a population reach of 41,000 inside the walking catchment supports the dine-in model. The trade-off is depth of competition: three named chains operate within 500 m, so the brand will need a defensible category position rather than a generic offer.",
+  "ranking_explanation": "The investment case here is rent: SAR 432,000/yr lands at the 28th percentile vs 14 district comparables — roughly 20% below the SAR 542,000 median. Site quality reinforces the economics — a 24 m corner on a primary artery with an access/visibility score of 82/100 — and a population reach of 41,000 inside the walking catchment supports the dine-in model. The trade-off is depth of competition: three named chains operate within 500 m, so the brand will need a defensible category position rather than a generic offer.",
   "key_evidence": [
-    {"signal": "annual rent", "value": "SAR 432,000/yr", "implication": "the spread to the district median justifies the entry — roughly SAR 110k/yr saved vs peer listings", "polarity": "positive"},
+    {"signal": "annual rent", "value": "SAR 432,000/yr", "implication": "asking sits roughly 20% below the district median — the entry basis is genuinely below peer listings, not just below list", "polarity": "positive"},
     {"signal": "rent percentile vs comparables", "value": "28th percentile (vs 14 district comparables)", "implication": "deal pricing is genuinely below market, not just below list", "polarity": "positive"},
     {"signal": "frontage", "value": "24 m corner", "implication": "signage works in both traffic directions on a primary artery", "polarity": "positive"},
     {"signal": "access/visibility score", "value": "82/100", "implication": "site quality reinforces the rent advantage rather than offsetting it", "polarity": "positive"},
@@ -1494,7 +1494,7 @@ Example F — strong recommend with the four typed advisory sections fully popul
     {"risk": "Three established chains operate within 500 m, including two with strong delivery presence — undifferentiated entry will compete on price.", "mitigation": "Lead with a single-SKU hero menu and a sharper delivery price point in the first 90 days."},
     {"risk": "Listing has been live for 64 days, longer than is typical for prime corner units in this district.", "mitigation": "Open negotiation 8–12% below asking and ask the landlord to absorb fit-out contribution."}
   ],
-  "comparison": "This site beats Peer Chain A on rent by roughly SAR 90k/yr and matches Peer Chain B on visibility, while pulling ahead of rank 2 in this search on rent percentile (28th vs 47th) and access/visibility (82/100 vs 71/100). Rank 2 has a marginally larger footprint but no comparable corner exposure.",
+  "comparison": "This site undercuts Peer Chain A on rent by roughly 17% and matches Peer Chain B on visibility, while pulling ahead of rank 2 in this search on rent percentile (28th vs 47th) and access/visibility (82/100 vs 71/100). Rank 2 has a marginally larger footprint but no comparable corner exposure.",
   "bottom_line": "This is the deal in the shortlist — sign it before the listing turns.",
   "property_overview": {
     "summary": "180 m² corner unit on a primary artery, 24 m frontage, listed 64 days ago.",
@@ -1507,8 +1507,8 @@ Example F — strong recommend with the four typed advisory sections fully popul
     "vacancy_status": "vacant"
   },
   "financial_framing": {
-    "summary": "SAR 432,000/yr at the 28th percentile vs 14 district comparables — SAR 110k under median.",
-    "thesis": "Rent is the spine of the case at this site. SAR 432,000/yr is decisively below the SAR 542,000 district median across 14 peer listings — a SAR 110,000/yr cushion that compounds across a five-year lease and absorbs the operator's first-year ramp risk. The 28th percentile reading is district-scoped, not a wider city band, so the comparison sits inside the same demand catchment the operator will trade in. The thesis is straightforward: enter at this basis, run operational margin, and the deal does not need a heroic revenue assumption to clear.",
+    "summary": "SAR 432,000/yr at the 28th percentile vs 14 district comparables — roughly 20% below the SAR 542,000 median.",
+    "thesis": "Rent is the spine of the case at this site. SAR 432,000/yr sits roughly 20% below the SAR 542,000 district median across 14 peer listings — a cushion that compounds across a five-year lease and absorbs the operator's first-year ramp risk. The 28th percentile reading is district-scoped, not a wider city band, so the comparison sits inside the same demand catchment the operator will trade in. The thesis is straightforward: enter at this basis, run operational margin, and the deal does not need a heroic revenue assumption to clear.",
     "annual_rent_sar": 432000,
     "comparable_median_annual_rent_sar": 542000,
     "rent_percentile_vs_comparables": 0.28,
@@ -1527,7 +1527,7 @@ Example F — strong recommend with the four typed advisory sections fully popul
   },
   "competitive_landscape": {
     "summary": "3 named chains within 500 m; rank 2 in this search clears at the 47th rent percentile.",
-    "saturation_thesis": "Three named chains operate within 500 m — Peer Chain A, Peer Chain B, and Peer Chain C — confirming the category trades and raising the bar on differentiation. Rank 2 in this search sits at the 47th rent percentile vs comparables and an access/visibility score of 71/100, materially weaker than this site on both axes; the operator is paying SAR 110k less for a stronger street position. The competitive read supports entry, but only with a defensible category position rather than a generic offer.",
+    "saturation_thesis": "Three named chains operate within 500 m — Peer Chain A, Peer Chain B, and Peer Chain C — confirming the category trades and raising the bar on differentiation. Rank 2 in this search sits at the 47th rent percentile vs comparables and an access/visibility score of 71/100, materially weaker than this site on both axes; the operator is paying roughly 20% below the district median for a stronger street position. The competitive read supports entry, but only with a defensible category position rather than a generic offer.",
     "top_chains": [
       {"display_name_en": "Peer Chain A", "display_name_ar": null, "branch_count": 2, "nearest_distance_m": 180},
       {"display_name_en": "Peer Chain B", "display_name_ar": null, "branch_count": 1, "nearest_distance_m": 320},

@@ -3125,6 +3125,8 @@ def _confidence_grade(
     delivery_observed: bool = True,
     data_completeness_score: int | float = 0,
     is_listing: bool = False,
+    road_evidence_band: str | None = None,
+    parking_evidence_band: str | None = None,
 ) -> str:
     """Map a 0-100 confidence score to an A/B/C/D grade.
 
@@ -3144,16 +3146,35 @@ def _confidence_grade(
     if rent_source != "conservative_default":
         adjusted += 3.0
 
+    def _band_missing(band: str | None) -> bool:
+        if band is None:
+            return True
+        return band.strip().lower() in {"none", "none_found", "unknown"}
+
     if is_listing:
-        # Listings: score is grounded in unit-level ground truth.
-        # Trust the score directly without parcel-context demotions.
+        # Listings: trust the score for the score-derived band, but let the
+        # road and parking evidence bands gate the ceiling. When both bands
+        # are missing we cap at B (not C) so the headline grade stays in
+        # range of the score signal while preventing UI contradictions like
+        # "Data: A" rendered next to "Road access evidence: None found /
+        # Parking evidence: None found"; capping below B would amount to a
+        # cohort re-grade, which the score itself does not justify.
+        missing_bands = sum(
+            1
+            for band in (road_evidence_band, parking_evidence_band)
+            if _band_missing(band)
+        )
         if adjusted >= 85.0:
-            return "A"
-        if adjusted >= 70.0:
-            return "B"
-        if adjusted >= 50.0:
-            return "C"
-        return "D"
+            grade = "A"
+        elif adjusted >= 70.0:
+            grade = "B"
+        elif adjusted >= 50.0:
+            grade = "C"
+        else:
+            grade = "D"
+        if missing_bands >= 2 and grade == "A":
+            grade = "B"
+        return grade
 
     # Parcel path: legacy logic, unchanged.
     critical_missing = 0
@@ -8724,6 +8745,8 @@ def run_expansion_search(
             delivery_observed=provider_listing_count > 0,
             data_completeness_score=feature_snapshot_json.get("data_completeness_score", 0),
             is_listing=_is_listing,
+            road_evidence_band=feature_snapshot_json.get("context_sources", {}).get("road_evidence_band"),
+            parking_evidence_band=feature_snapshot_json.get("context_sources", {}).get("parking_evidence_band"),
         )
         demand_thesis = _build_demand_thesis(
             demand_score=demand_score,
