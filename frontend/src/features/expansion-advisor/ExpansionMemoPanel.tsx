@@ -166,7 +166,39 @@ export default function ExpansionMemoPanel({
             const breakdown = cand.score_breakdown_json;
             const comps = (cand.comparable_competitors || []) as Array<Record<string, unknown>>;
             const positives = toList(cand.top_positives_json).slice(0, 3);
-            const risks = toList(cand.top_risks_json).slice(0, 3);
+            // TOP RISKS: prefer the heuristic top_risks_json when it fired;
+            // otherwise fall back to the LLM StructuredMemo's risks (already
+            // surfaced on the Memo tab as "Risks to watch") so a clean
+            // rank-1 candidate doesn't show "—" when the LLM has flagged
+            // qualitative risks the heuristic doesn't model.
+            const heuristicRisks = toList(cand.top_risks_json).slice(0, 3);
+            const memoStructured = cand.decision_memo_json;
+            const memoRiskFallback: string[] =
+              heuristicRisks.length === 0 && memoStructured && Array.isArray(memoStructured.risks)
+                ? memoStructured.risks
+                    .map((r) => (r && typeof r === "object" && typeof (r as { risk?: unknown }).risk === "string"
+                      ? ((r as { risk: string }).risk)
+                      : ""))
+                    .filter((s) => s.length > 0)
+                    .slice(0, 3)
+                : [];
+            const risks = heuristicRisks.length > 0 ? heuristicRisks : memoRiskFallback;
+
+            const marketResearch = memo.market_research || {};
+            const deliveryMarketSummary = typeof marketResearch.delivery_market_summary === "string"
+              ? marketResearch.delivery_market_summary.trim()
+              : "";
+            const competitiveContext = typeof marketResearch.competitive_context === "string"
+              ? marketResearch.competitive_context.trim()
+              : "";
+            const districtFitSummary = typeof marketResearch.district_fit_summary === "string"
+              ? marketResearch.district_fit_summary.trim()
+              : "";
+            const hasAnyMarketContent =
+              deliveryMarketSummary.length > 0
+              || competitiveContext.length > 0
+              || districtFitSummary.length > 0
+              || comps.length > 0;
 
             // Verdict color
             const verdictColor = rec.verdict?.toLowerCase() === "go" ? "green" : rec.verdict?.toLowerCase() === "caution" ? "amber" : "red";
@@ -342,8 +374,26 @@ export default function ExpansionMemoPanel({
                         {/* Market tab */}
                         {activeTab === "market" && (
                           <div className="ea-memo-tab-panel">
+                            {deliveryMarketSummary.length > 0 && (
+                              <section className="ea-memo-market-section">
+                                <h5 className="ea-detail__section-title">{t("expansionAdvisor.marketDeliverySummary")}</h5>
+                                <p className="ea-detail__text">{deliveryMarketSummary}</p>
+                              </section>
+                            )}
+                            {competitiveContext.length > 0 && (
+                              <section className="ea-memo-market-section" style={{ marginTop: 12 }}>
+                                <h5 className="ea-detail__section-title">{t("expansionAdvisor.marketCompetitiveContext")}</h5>
+                                <p className="ea-detail__text">{competitiveContext}</p>
+                              </section>
+                            )}
+                            {districtFitSummary.length > 0 && (
+                              <section className="ea-memo-market-section" style={{ marginTop: 12 }}>
+                                <h5 className="ea-detail__section-title">{t("expansionAdvisor.marketDistrictFit")}</h5>
+                                <p className="ea-detail__text">{districtFitSummary}</p>
+                              </section>
+                            )}
                             {comps.length > 0 && (
-                              <>
+                              <section className="ea-memo-market-section" style={{ marginTop: 12 }}>
                                 <h5 className="ea-detail__section-title">{t("expansionAdvisor.comparableCompetitors")}</h5>
                                 <table className="ea-comp-table">
                                   <thead><tr><th>{t("expansionAdvisor.branchName")}</th><th>{t("expansionAdvisor.district")}</th><th>{t("expansionAdvisor.nearestBranch")}</th></tr></thead>
@@ -365,7 +415,10 @@ export default function ExpansionMemoPanel({
                                     })}
                                   </tbody>
                                 </table>
-                              </>
+                              </section>
+                            )}
+                            {!hasAnyMarketContent && (
+                              <p className="ea-detail__text">{t("expansionAdvisor.marketTabEmpty")}</p>
                             )}
                           </div>
                         )}
