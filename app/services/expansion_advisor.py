@@ -554,10 +554,16 @@ def _expand_category(category: str) -> dict:
 
     if aliases:
         keys = aliases["keys"]
-        regex = "|".join(re.escape(p).replace(r"\.", ".") for p in aliases["raw_patterns"])
+        inner = "|".join(re.escape(p).replace(r"\.", ".") for p in aliases["raw_patterns"])
     else:
         keys = [cat_lower.replace(" ", "_")]
-        regex = re.escape(cat_lower).replace(r"\ ", ".").replace(r"\.", ".")
+        inner = re.escape(cat_lower).replace(r"\ ", ".").replace(r"\.", ".")
+
+    # Wrap in PostgreSQL POSIX word boundaries (\m left, \M right) so substring
+    # matches like "hamburgerville" don't pollute the predicate. The same regex
+    # is consumed by both the restaurant_poi name/category match and the
+    # delivery_source_record category_raw/cuisine_raw match.
+    regex = r"\m(" + inner + r")\M"
 
     return {
         "keys": keys,
@@ -6108,7 +6114,13 @@ def _bulk_enrich_competitors(
                             -- chain_strength signal is captured per same-
                             -- category POI row; rows without an ECQ match
                             -- contribute NULL (ignored by MAX).
-                            SELECT (lower(rp.category) = ANY(:category_keys)) AS in_category,
+                            -- Match on category OR name: ~36% of burger venues
+                            -- (Burger King, Hardee's, ...) are miscategorized
+                            -- as "international" in restaurant_poi.category but
+                            -- carry the cuisine token in rp.name. Word-bounded
+                            -- regex avoids substring pollution.
+                            SELECT (lower(rp.category) ~* :category_regex
+                                    OR lower(rp.name) ~* :category_regex) AS in_category,
                                    ecq.chain_strength_score AS chain_strength
                             FROM restaurant_poi rp
                             LEFT JOIN expansion_competitor_quality ecq
@@ -6405,12 +6417,14 @@ def run_expansion_search(
         ) pop ON TRUE
         """
 
-        # Competitor: single LATERAL join
+        # Competitor: single LATERAL join. Match on category OR name (word-
+        # bounded regex) — see _bulk_enrich_competitors for rationale.
         _COMP_LATERAL = f"""
         LEFT JOIN LATERAL (
             SELECT COALESCE(COUNT(*), 0) AS competitor_count
             FROM restaurant_poi rp
-            WHERE lower(rp.category) = ANY(:category_keys)
+            WHERE (lower(rp.category) ~* :category_regex
+                   OR lower(rp.name) ~* :category_regex)
               AND ST_DWithin(
                   rp.geom::geography,
                   ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
@@ -6507,12 +6521,13 @@ def run_expansion_search(
         ) pop ON TRUE
         """
 
-        # ── Competitor LATERAL ──
+        # ── Competitor LATERAL ── (match on category OR name, word-bounded)
         _COMP_LATERAL = f"""
         LEFT JOIN LATERAL (
             SELECT COALESCE(COUNT(*), 0) AS competitor_count
             FROM restaurant_poi rp
-            WHERE lower(rp.category) = ANY(:category_keys)
+            WHERE (lower(rp.category) ~* :category_regex
+                   OR lower(rp.name) ~* :category_regex)
               AND ST_DWithin(
                   rp.geom::geography,
                   ST_SetSRID(ST_MakePoint(b.lon, b.lat), 4326)::geography,
