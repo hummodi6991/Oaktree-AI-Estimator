@@ -302,6 +302,20 @@ class Settings:
         os.getenv("EXPANSION_CENTROID_CLIP_KM", "10.0")
     )
 
+    # Weight (in percent) of chain_strength_score in the Expansion Advisor
+    # scoring composite. Pro-presence direction — higher max
+    # chain_strength_score (from expansion_competitor_quality) within a
+    # candidate's competition radius raises its score, on the theory that
+    # an established brand operating nearby is evidence the area is
+    # validated by serious operators. Pulled from competition_whitespace
+    # (8.7640 → 5.7640), so the 10 component weights still sum to 100.0.
+    # Set to 0 to disable the chain_strength leg without code changes; if
+    # changed, EXPANSION_COMPETITION_WHITESPACE_WEIGHT must be adjusted in
+    # lockstep — the runtime assertion in _score_breakdown catches drift.
+    EXPANSION_CHAIN_STRENGTH_WEIGHT: float = float(
+        os.getenv("EXPANSION_CHAIN_STRENGTH_WEIGHT", "3.0")
+    )
+
     # --- Expansion Advisor decision-memo pre-warm (Phase 3) ---
     # After POST /searches returns, schedule a background task that
     # generates structured decision memos for the top-N candidates so the
