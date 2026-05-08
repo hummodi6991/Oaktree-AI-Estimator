@@ -2259,6 +2259,25 @@ def _competition_whitespace_score(
     return _clamp(max(15.0, raw))
 
 
+def _chain_strength_score(max_chain_strength: float | None) -> float:
+    """Pillar 2 scoring input: validation by established brands.
+
+    Higher ``max_chain_strength`` (max chain_strength_score from
+    ``expansion_competitor_quality`` across same-category POIs in the
+    candidate's competition radius) = stronger evidence the area is
+    validated by an established operator. Pro-presence direction.
+
+    When no same-category competitor POIs are in radius (aggregate is
+    None), the signal is missing rather than zero — return the neutral
+    midpoint 50.0 so thin-data candidates are neither penalized nor
+    rewarded. Mirrors the F4 defensive pattern in
+    ``_competition_whitespace_score``.
+    """
+    if max_chain_strength is None:
+        return 50.0
+    return _clamp(float(max_chain_strength))
+
+
 def _confidence_score(
     *,
     is_listing: bool = False,
@@ -2808,6 +2827,8 @@ def _score_breakdown(
     confidence_score: float,
     listing_quality_score: float,
     landlord_signal_score: int | float | None = None,
+    chain_strength_score: float = 50.0,
+    chain_strength_max: float | None = None,
 ) -> dict[str, Any]:
     """Listings-first weight distribution.
 
@@ -2818,7 +2839,8 @@ def _score_breakdown(
       - landlord_signal (7.0112%):  LLM read of landlord intent / listing copy
       - access_visibility (8.7640%): measured street width
       - brand_fit (9.6404%): district preference + format fit
-      - competition_whitespace (8.7640%)
+      - competition_whitespace (5.7640% post-Patch-B; was 8.7640%)
+      - chain_strength (3.0% — Patch B; pulled from competition_whitespace)
       - demand_potential (8.7640%)
       - delivery_demand (4.3820%)
       - confidence (4.3820%): data trust signal
@@ -2828,7 +2850,9 @@ def _score_breakdown(
     2026-05-07 rebalance then lifted ``listing_quality`` from 11 to 22 to
     materially elevate the recency and district-momentum signals; every
     other component was rescaled by 78/89 = 0.8764045 so weights still
-    sum to 100.
+    sum to 100. Patch B then carved 3.0 points out of competition_whitespace
+    for the new chain_strength leg (pro-presence: established-brand
+    validation), keeping the total at 100.
     """
     # Top-level weight rebalance — 2026-05-07 (CEO directive elevation).
     # Audit (branch claude/audit-advisor-ranking-4prR3) found that even
@@ -2852,12 +2876,19 @@ def _score_breakdown(
     # sub-components also lift proportionally — listing-quality writ
     # large (recency, momentum, suitability, image, furnished) is the
     # CEO-aligned axis.
+    # Patch B: chain_strength is a new pro-presence leg pulled from
+    # competition_whitespace. The chain_strength weight is env-driven so
+    # it can be calibrated without a code change; competition_whitespace
+    # absorbs the equal-and-opposite move so the total stays at 100.
+    _chain_strength_weight = float(settings.EXPANSION_CHAIN_STRENGTH_WEIGHT)
+    _competition_whitespace_weight = round(8.7640 - _chain_strength_weight, 4)
     component_weights = {
         "occupancy_economics": 26.2924,
         "listing_quality": 22.0,
         "brand_fit": 9.6404,
         "landlord_signal": 7.0112,
-        "competition_whitespace": 8.7640,
+        "competition_whitespace": _competition_whitespace_weight,
+        "chain_strength": _chain_strength_weight,
         "demand_potential": 8.7640,
         "access_visibility": 8.7640,
         "delivery_demand": 4.3820,
@@ -2865,17 +2896,21 @@ def _score_breakdown(
     }
     # Invariant: weights must sum to 100 so final_score stays on a 0-100 scale.
     # Tolerance accommodates IEEE-754 rounding of 4-decimal float weights.
+    # Catches misconfigured EXPANSION_CHAIN_STRENGTH_WEIGHT at startup
+    # rather than producing silently wrong scores.
     assert abs(sum(component_weights.values()) - 100) < 1e-3, (
         f"_score_breakdown component weights must sum to 100, "
         f"got {sum(component_weights.values())}"
     )
     landlord_input = _landlord_signal_component(landlord_signal_score)
+    chain_strength_input = _safe_float(chain_strength_score)
     raw_inputs = {
         "occupancy_economics": round(_safe_float(economics_score), 2),
         "listing_quality": round(_safe_float(listing_quality_score), 2),
         "brand_fit": round(_safe_float(brand_fit_score), 2),
         "landlord_signal": round(landlord_input, 2),
         "competition_whitespace": round(_safe_float(whitespace_score), 2),
+        "chain_strength": round(chain_strength_input, 2),
         "demand_potential": round(_safe_float(demand_score), 2),
         "access_visibility": round(_safe_float(access_visibility_score), 2),
         "delivery_demand": round(_safe_float(provider_intelligence_composite), 2),
@@ -2886,7 +2921,12 @@ def _score_breakdown(
         "listing_quality": round(_safe_float(listing_quality_score) * 0.22, 2),
         "brand_fit": round(_safe_float(brand_fit_score) * 0.096404, 2),
         "landlord_signal": round(landlord_input * 0.070112, 2),
-        "competition_whitespace": round(_safe_float(whitespace_score) * 0.087640, 2),
+        "competition_whitespace": round(
+            _safe_float(whitespace_score) * (_competition_whitespace_weight / 100.0), 2
+        ),
+        "chain_strength": round(
+            chain_strength_input * (_chain_strength_weight / 100.0), 2
+        ),
         "demand_potential": round(_safe_float(demand_score) * 0.087640, 2),
         "access_visibility": round(_safe_float(access_visibility_score) * 0.087640, 2),
         "delivery_demand": round(_safe_float(provider_intelligence_composite) * 0.043820, 2),
@@ -2903,7 +2943,14 @@ def _score_breakdown(
     }
     return {
         "weights": component_weights,
-        "inputs": raw_inputs,
+        "inputs": {
+            **raw_inputs,
+            "chain_strength_max": (
+                round(float(chain_strength_max), 2)
+                if chain_strength_max is not None
+                else None
+            ),
+        },
         "weighted_components": weighted_components,
         "display": display,
         "final_score": round(_clamp(final_score), 2),
@@ -5944,9 +5991,9 @@ def _bulk_enrich_competitors(
 ) -> dict[str, dict[str, Any]]:
     """Bulk-compute competitor_count for a set of candidate locations.
 
-    Returns ``{parcel_id: {"competitor_count": int, "confident": bool}}``
-    for all rows that have lat/lon. Uses a single SQL query with unnest
-    + LATERAL to avoid N+1.
+    Returns ``{parcel_id: {"competitor_count": int, "confident": bool,
+    "max_chain_strength": float | None}}`` for all rows that have lat/lon.
+    Uses a single SQL query with unnest + LATERAL to avoid N+1.
 
     Searches both restaurant_poi (Google Places data) and
     delivery_source_record (HungerStation / delivery marketplace data) via
@@ -5960,6 +6007,14 @@ def _bulk_enrich_competitors(
     count cannot be trusted as evidence of a true greenfield. The
     downstream whitespace scorer falls back to a neutral midpoint when
     confidence is False.
+
+    Patch B: ``max_chain_strength`` is the MAX of
+    ``expansion_competitor_quality.chain_strength_score`` across same-
+    category restaurant_poi rows in the radius. None when there are no
+    same-category POI matches (or the join produces no chain_strength
+    rows). Delivery_source_record rows do not contribute (no POI mapping
+    to chain quality), so the leg measures established-brand validation
+    via the Google Places side only.
 
     The competition radius follows the same priority as
     ``_bulk_enrich_population``'s demand radius: explicit arg >
@@ -6018,26 +6073,39 @@ def _bulk_enrich_competitors(
                     SELECT
                         i.parcel_id,
                         COALESCE(comp.competitor_count, 0) AS competitor_count,
-                        COALESCE(comp.broader_count, 0) AS broader_count
+                        COALESCE(comp.broader_count, 0) AS broader_count,
+                        comp.max_chain_strength AS max_chain_strength
                     FROM inputs i
                     LEFT JOIN LATERAL (
                         SELECT
                             COUNT(*) FILTER (WHERE in_category) AS competitor_count,
-                            COUNT(*) AS broader_count
+                            COUNT(*) AS broader_count,
+                            MAX(chain_strength) FILTER (WHERE in_category) AS max_chain_strength
                         FROM (
-                            -- Source 1: restaurant_poi (Google Places)
-                            SELECT (lower(rp.category) = ANY(:category_keys)) AS in_category
+                            -- Source 1: restaurant_poi (Google Places).
+                            -- LEFT JOIN expansion_competitor_quality so the
+                            -- chain_strength signal is captured per same-
+                            -- category POI row; rows without an ECQ match
+                            -- contribute NULL (ignored by MAX).
+                            SELECT (lower(rp.category) = ANY(:category_keys)) AS in_category,
+                                   ecq.chain_strength_score AS chain_strength
                             FROM restaurant_poi rp
+                            LEFT JOIN expansion_competitor_quality ecq
+                                   ON ecq.restaurant_poi_id = rp.id
+                                  AND ecq.city = 'riyadh'
                             WHERE ST_DWithin(
                                   rp.geom::geography,
                                   ST_SetSRID(ST_MakePoint(i.lon, i.lat), 4326)::geography,
                                   :radius_m
                               )
                             UNION ALL
-                            -- Source 2: delivery_source_record (HungerStation etc.)
+                            -- Source 2: delivery_source_record (HungerStation etc.).
+                            -- No POI mapping to chain quality, so chain_strength
+                            -- is NULL on every delivery-side row.
                             SELECT (lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
                                     OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
-                                   ) AS in_category
+                                   ) AS in_category,
+                                   NULL::double precision AS chain_strength
                             FROM delivery_source_record dsr
                             WHERE {_dsr_where}
                               AND ST_DWithin(
@@ -6057,6 +6125,11 @@ def _bulk_enrich_competitors(
             str(r["parcel_id"]): {
                 "competitor_count": int(r["competitor_count"]),
                 "confident": int(r["broader_count"]) > 0,
+                "max_chain_strength": (
+                    float(r["max_chain_strength"])
+                    if r["max_chain_strength"] is not None
+                    else None
+                ),
             }
             for r in result
         }
@@ -6692,6 +6765,7 @@ def run_expansion_search(
                     _entry = _bulk_comp[_pid]
                     _r["competitor_count"] = _entry["competitor_count"]
                     _r["competitor_count_confident"] = _entry["confident"]
+                    _r["max_chain_strength"] = _entry.get("max_chain_strength")
             logger.info(
                 "expansion_search: bulk competitor enrichment applied to %d/%d candidates, search_id=%s",
                 len(_bulk_comp), len(rows), search_id,
@@ -6734,6 +6808,7 @@ def run_expansion_search(
                         _entry = _bulk_comp[_pid]
                         _r["competitor_count"] = _entry["competitor_count"]
                         _r["competitor_count_confident"] = _entry["confident"]
+                        _r["max_chain_strength"] = _entry.get("max_chain_strength")
 
             # ── Resolve commercial unit districts to Arabic names ──────────
             # Commercial units store English neighborhood names from Aqar,
@@ -7230,6 +7305,17 @@ def run_expansion_search(
         competitor_count_confident: bool | None = (
             bool(_cc_confident_raw) if _cc_confident_raw is not None else None
         )
+        # Patch B: max chain_strength_score across same-category POIs in
+        # the candidate's competition radius. None when the bulk enrichment
+        # path was bypassed OR when no same-category POI rows joined to
+        # expansion_competitor_quality. _chain_strength_score() converts
+        # None to a neutral 50 so thin-data candidates aren't penalized.
+        _max_chain_strength_raw = row.get("max_chain_strength")
+        max_chain_strength: float | None = (
+            float(_max_chain_strength_raw)
+            if _max_chain_strength_raw is not None
+            else None
+        )
         delivery_listing_count = _safe_int(row.get("delivery_listing_count"))
         provider_listing_count = _safe_int(row.get("provider_listing_count"))
         provider_platform_count = _safe_int(row.get("provider_platform_count"))
@@ -7286,6 +7372,7 @@ def run_expansion_search(
         whitespace_score = _competition_whitespace_score(
             competitor_count, confident=competitor_count_confident
         )
+        chain_strength_score = _chain_strength_score(max_chain_strength)
 
         area_fit = _area_fit(area_m2, target_area_m2, min_area_m2, max_area_m2)
         zoning_fit_score = _zoning_fit_score(landuse_label, landuse_code)
@@ -7549,6 +7636,8 @@ def run_expansion_search(
             confidence_score=confidence_score,
             listing_quality_score=listing_quality,
             landlord_signal_score=row.get("unit_llm_landlord_signal_score"),
+            chain_strength_score=chain_strength_score,
+            chain_strength_max=max_chain_strength,
         )
         prepared.append(
             {
@@ -7557,6 +7646,8 @@ def run_expansion_search(
                 "population_reach": population_reach,
                 "competitor_count": competitor_count,
                 "competitor_count_confident": competitor_count_confident,
+                "max_chain_strength": max_chain_strength,
+                "chain_strength_score": chain_strength_score,
                 "delivery_listing_count": delivery_listing_count,
                 "provider_listing_count": provider_listing_count,
                 "provider_platform_count": provider_platform_count,
@@ -8197,6 +8288,10 @@ def run_expansion_search(
         population_reach = prepared_item["population_reach"]
         competitor_count = prepared_item["competitor_count"]
         competitor_count_confident = prepared_item.get("competitor_count_confident")
+        max_chain_strength = prepared_item.get("max_chain_strength")
+        chain_strength_score = prepared_item.get("chain_strength_score")
+        if chain_strength_score is None:
+            chain_strength_score = _chain_strength_score(max_chain_strength)
         delivery_listing_count = prepared_item["delivery_listing_count"]
         provider_listing_count = prepared_item["provider_listing_count"]
         provider_platform_count = prepared_item["provider_platform_count"]
@@ -8566,6 +8661,8 @@ def run_expansion_search(
             confidence_score=confidence_score,
             listing_quality_score=listing_quality,
             landlord_signal_score=row.get("unit_llm_landlord_signal_score"),
+            chain_strength_score=chain_strength_score,
+            chain_strength_max=max_chain_strength,
         )
         score_breakdown_json["inputs"]["rent_fallback_used"] = rent_fallback_used
         # F4: surface the whitespace confidence flag so the API response
