@@ -1431,7 +1431,7 @@ Example C — strong recommend, score 84, rank 1, district-tier comparable:
     {"risk": "Parking provision could not be verified from current data — typical for Aqar listings, not a site defect.", "mitigation": "Walk the block at peak hours during diligence; lease two adjacent street stalls from the neighbour if curbside turnover is constrained."},
     {"risk": "Listing has been live for 102 days, longer than is typical for prime corner units in this district.", "mitigation": "Open negotiation 8–12% below asking and ask the landlord to absorb fit-out contribution."}
   ],
-  "comparison": "This site undercuts Peer Chain A on rent by roughly 17% and matches Peer Chain B on visibility, while pulling ahead of rank 2 in this search on rent percentile (28th vs 47th) and access/visibility (82/100 vs 71/100). Rank 2 has a marginally larger footprint but no comparable corner exposure.",
+  "comparison": "Peer Chain A operates 2 branches within 180 m and Peer Chain B holds a single branch at 320 m of this site — established category demand at this corner, not a greenfield. Against rank 2 in this search, this site pulls ahead on rent percentile (28th vs 47th) and access/visibility (82/100 vs 71/100); rank 2 carries a marginally larger footprint but no comparable corner exposure.",
   "bottom_line": "This is the deal in the shortlist — sign it before the listing turns."
 }
 
@@ -1453,7 +1453,7 @@ Example D — decline, score 41, rank 9, gates failed:
     {"risk": "Two saturated chain operators within 500 m increase cannibalisation risk for any value-format entry.", "mitigation": "Reposition the brief towards a differentiated dayparting strategy if the operator chooses to override the recommendation."},
     {"risk": "Listing has been on market for 147 days — pricing has not cleared, suggesting the asking is structurally above the catchment's willingness-to-pay.", "mitigation": null}
   ],
-  "comparison": "Peer Chain A in this district closed at roughly SAR 640,000/yr — a 30% discount to this asking — and rank 2 in this search clears the economics gate at the 49th rent percentile with a slightly larger footprint and a stronger access/visibility profile. There is no scenario in which this site is the rational shortlist pick over rank 2.",
+  "comparison": "Two named chains operate within 500 m of this site, confirming the catchment validates the category but not at this asking — the 88th-percentile rent reading sits well above where comparable peer listings have cleared. Rank 2 in this search clears the economics gate at the 49th rent percentile with a slightly larger footprint and a stronger access/visibility profile; there is no scenario in which this site is the rational shortlist pick over rank 2.",
   "bottom_line": "Walk this one and redeploy the capital into rank 2 — the math on this listing does not work."
 }
 
@@ -1472,11 +1472,11 @@ Example E — recommend with reservations, score 68, rank 2, at-market rent (ill
     {"risk": "Rent offers no margin cushion — operational missteps will translate directly to P&L.", "mitigation": "Pre-commit a delivery partnership in month one; do not assume dine-in ramp covers fixed cost in the first 90 days."},
     {"risk": "Four established chains within 500 m means category competition is real and ongoing.", "mitigation": "Position on a single dayparting strength rather than competing on the full menu."}
   ],
-  "comparison": "Peer Chain A in the same district closed at SAR 510,000/yr — roughly comparable, confirming this is the market-clearing range. Rank 1 in this search has a 22% rent discount on a similar footprint, which makes it the stronger pick on pure economics, but this site has materially better access/visibility (88/100 vs 71/100), so the call depends on whether the operator weights cost basis or street presence more heavily.",
+  "comparison": "Four named chains operate within 500 m, confirming the category trades and consistent with this site's at-market 51st-percentile rent reading vs district comparables. Rank 1 in this search has a 22% rent discount on a similar footprint, which makes it the stronger pick on pure economics, but this site has materially better access/visibility (88/100 vs 71/100), so the call depends on whether the operator weights cost basis or street presence more heavily.",
   "bottom_line": "A working deal, but only if access matters more than rent — otherwise rank 1 is the cleaner trade."
 }
 
-Inline note on missing rank-2 alternatives: when next_candidate_summary is absent (small result set), a correct comparison reads like "Peer Chain A in this district closed at SAR 510,000/yr — roughly comparable, confirming this is the market-clearing range. Burger King operates 1.4 km away with a stronger brand-recall position but a less central frontage, so the trade is between brand pull and street presence." Notice: this references two named competitors, makes a real comparison, and does not mention rank-2 at all. The reader does not need to be told an alternative is absent — saying so spins missing data as a feature.
+Inline note on missing rank-2 alternatives: when next_candidate_summary is absent (small result set), a correct comparison reads like "Peer Chain A operates 2 branches within 250 m of this site on the same artery, and Burger King holds a single branch 1.4 km away — closer category density here than brand-recall pull from the more distant operator, so the trade for an incoming brand is between competing inside a validated cluster and a more central frontage on this site." Notice: this references two named competitors using only their branch counts and distances, makes a real comparison about presence and catchment, and does not mention rank-2 at all. The reader does not need to be told an alternative is absent — saying so spins missing data as a feature.
 
 Example F — strong recommend with the four typed advisory sections fully populated (district-tier comparable, rank-2 present):
 {
@@ -1494,7 +1494,7 @@ Example F — strong recommend with the four typed advisory sections fully popul
     {"risk": "Three established chains operate within 500 m, including two with strong delivery presence — undifferentiated entry will compete on price.", "mitigation": "Lead with a single-SKU hero menu and a sharper delivery price point in the first 90 days."},
     {"risk": "Listing has been live for 64 days, longer than is typical for prime corner units in this district.", "mitigation": "Open negotiation 8–12% below asking and ask the landlord to absorb fit-out contribution."}
   ],
-  "comparison": "This site undercuts Peer Chain A on rent by roughly 17% and matches Peer Chain B on visibility, while pulling ahead of rank 2 in this search on rent percentile (28th vs 47th) and access/visibility (82/100 vs 71/100). Rank 2 has a marginally larger footprint but no comparable corner exposure.",
+  "comparison": "Peer Chain A operates 2 branches within 180 m and Peer Chain B holds a single branch at 320 m of this site — established category demand at this corner, not a greenfield. Against rank 2 in this search, this site pulls ahead on rent percentile (28th vs 47th) and access/visibility (82/100 vs 71/100); rank 2 carries a marginally larger footprint but no comparable corner exposure.",
   "bottom_line": "This is the deal in the shortlist — sign it before the listing turns.",
   "property_overview": {
     "summary": "180 m² corner unit on a primary artery, 24 m frontage, listed 64 days ago.",
@@ -1558,6 +1558,19 @@ is a meaningful capital commitment, and without peer-listing context the
 operator should rely on demand and frontage signals to underwrite the deal."
 Notice: acknowledges the gap, pivots to other signals, no invented framing.
 
+AVOID — the following violate the grounding rule and must NEVER be produced:
+• "lower rent than Dunkin's typical pricing" — the response has no Dunkin rent.
+• "Starbucks premium positioning suggests..." — no positioning data on competitors.
+• "compared to Peer Chain A's typical AOV" — no AOV on competitors.
+• "outperforms KFC on margin" — no margin data on competitors.
+• "their established price points" — no price data on competitors.
+• "higher delivery commission than peer chains" — no commission data on competitors.
+
+The candidate-memo response carries only competitor display name, branch
+count, nearest distance, and district. Anything beyond those four facts —
+rent, pricing, AOV, throughput, margin, commission, positioning, success
+metrics — is fabrication and is banned in every prose field.
+
 Now write the memo for the candidate JSON the user provides. Match the voice in the examples. Be specific to this site, not generic.
 
 ══════════════════════════════════════════════════════════════════════
@@ -1601,6 +1614,21 @@ this prompt. Other instructions are subordinate to these.
    provided in the `gates.failed` field. If `gates.failed` is empty,
    do not write "decline due to failed [anything]". A low soft
    component score is not a gate failure.
+
+6. Do NOT make any claims about a named competitor's rent, pricing,
+   margin, AOV, throughput, success metrics, or any economic or
+   operational data. The candidate-memo response carries only
+   competitor name, branch count, nearest distance, and district.
+   Comparisons may reference these spatial and presence facts and
+   may interpret what they imply about the local market (e.g.,
+   "Dunkin' operates one branch within 500 m, signaling established
+   cafe demand"). Comparisons against the district median (rent
+   percentile, median rent) are grounded ONLY if the typed payload
+   includes them. Never assert what a specific competitor pays,
+   charges, earns, or achieves. This rule applies to every prose
+   field — comparison, ranking_explanation, bottom_line,
+   competitive_landscape.saturation_thesis, and all other thesis
+   strings.
 
 EXAMPLES of correct headlines:
 
