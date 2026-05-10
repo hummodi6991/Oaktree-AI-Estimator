@@ -233,10 +233,17 @@ class Settings:
     )
     # Minimum YoY radiance growth pct (0-100 scale) for the third leg (NASA
     # Black Marble VNP46A3) to rescue a candidate from market-viability
-    # flagging. Default 0 means any positive growth rescues; raise to e.g.
-    # 5.0 to require meaningful growth before granting a rescue.
+    # flagging. Operator is ``>=``. Rescue threshold for "confident,
+    # meaningfully growing" districts: only YoY at or above this floor
+    # mutes the pop/rent demote legs. Recalibrated 2026-05-10 against the
+    # rolling-6 candidate distribution (radiance_yoy_distribution.sql §7a):
+    # of 1,960 confident candidates over the last 30 days, ~1,000 (~51%)
+    # sit at >=2.0% YoY — the upper half of the confident-signal cohort,
+    # which is the "meaningfully growing" tier we want to rescue. Holding
+    # this at 0.0 rescued ~93% of confident candidates and made the
+    # rescue meaningless.
     EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD: float = float(
-        os.getenv("EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD", "0.0")
+        os.getenv("EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD", "2.0")
     )
     # Demote threshold for the radiance-growth leg of
     # _apply_market_viability_pass (CEO directive pillar 3 — "strong
@@ -244,19 +251,19 @@ class Settings:
     # is True and ``value_yoy_pct`` < this threshold, the candidate is
     # soft-demoted by the same positional mechanism as the population /
     # rent / economics / demand legs. Operator is strict ``<``.
-    # Calibrated 2026-05-06 against the candidate-side distribution from
-    # the last 24h of production searches (515 confident rolling-6
-    # candidates). Distribution is bimodal with an empty gap between
-    # 1.5% and 3.0% YoY; 2.0 sits inside that gap and demotes 234 of
-    # 515 confident candidates (~45%) — concentrated in two single
-    # districts (~0.01% and ~1.46% YoY). Above-typical citywide growth
-    # is ~5%, so below 2% is not "strong growth" per Faisal's directive
-    # (Pillar 3). Distinct from
+    # Recalibrated 2026-05-10 against the rolling-6 candidate distribution
+    # (radiance_yoy_distribution.sql §7b): of 1,960 confident candidates
+    # over the last 30 days, only ~140 (~7.1%) sit below 0% YoY. The prior
+    # 2.0 threshold demoted ~49% of confident candidates (820 flat 0..2%
+    # + 140 shrinking), compressing top scores; 0.0 isolates the
+    # "confidently shrinking" tier — districts whose own NTL signal is
+    # contracting — which is the only group the demote leg should fire
+    # on per Pillar 3. Distinct from
     # ``EXPANSION_VIABILITY_RADIANCE_YOY_THRESHOLD`` above (which drives
     # the rescue side, operator ``>=``); splitting the knobs prevents
     # calibrating one from silently affecting the other.
     EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD: float = float(
-        os.getenv("EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD", "2.0")
+        os.getenv("EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD", "0.0")
     )
     # Kill switch for the radiance-growth demote leg. Setting this to
     # ``false`` suppresses the leg's demote decision while leaving the
