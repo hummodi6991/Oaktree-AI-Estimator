@@ -2389,14 +2389,17 @@ from app.services.expansion_advisor import (
     _value_score,
     _classify_value_band,
     _value_band_is_low_confidence,
-    _apply_value_band_pass,
-    _VALUE_DOWNRANK_MAX_POSITIONS,
-    _VALUE_UPRANK_MAX_POSITIONS,
+    _value_band_score_delta,
     _VALUE_BAND_BEST_VALUE_MIN,
     _VALUE_BAND_ABOVE_MARKET_MAX,
-    _FUZZY_TIE_WINDOW,
 )
 from app.core.config import settings as _ea_settings
+
+# Score-delta refactor: _apply_value_band_pass, _apply_llm_fuzzy_tiebreak,
+# _FUZZY_TIE_WINDOW, _VALUE_{UP,DOWN}RANK_MAX_POSITIONS were removed; the
+# value-band signal now contributes a fixed score delta (+4 / -6) folded
+# into final_score by run_expansion_search rather than a positional nudge.
+# See _value_band_score_delta and the bonus_detail tests below.
 
 
 def test_value_score_geometric_mean_basic():
@@ -2469,81 +2472,45 @@ def _make_candidate(*, id_, final_score, value_band=None, low_conf=False):
     }
 
 
-def test_value_band_pass_downrank_within_rerank_max_move():
-    # All EXPANSION_LLM_RERANK_MAX_MOVE checks must hold strictly.
-    rerank_max = _ea_settings.EXPANSION_LLM_RERANK_MAX_MOVE
-    assert _VALUE_DOWNRANK_MAX_POSITIONS < rerank_max
-    assert _VALUE_UPRANK_MAX_POSITIONS < rerank_max
-
-    candidates = [
-        _make_candidate(id_=f"c{i}", final_score=80 - i)
-        for i in range(20)
-    ]
-    candidates[3]["value_band"] = "above_market"
-    candidates[7]["value_band"] = "above_market"
-    candidates[11]["value_band"] = "above_market"
-    # Low-confidence above_market: must NOT move.
-    candidates[15]["value_band"] = "above_market"
-    candidates[15]["value_band_low_confidence"] = True
-
-    out = _apply_value_band_pass(list(candidates), search_id="t")
-    # Low-confidence above_market candidate did NOT receive a downrank.
-    # Its absolute index may shift slightly because other candidates were
-    # demoted around it; what we guarantee is no positional nudge applied
-    # to this specific row.
-    c15_out = next(c for c in out if c["id"] == "c15")
-    assert c15_out.get("value_downrank_applied") is not True
-
-    # High-confidence above_market candidates moved by AT MOST
-    # _VALUE_DOWNRANK_MAX_POSITIONS, never further.
-    for cid in ("c3", "c7", "c11"):
-        c = next(item for item in out if item["id"] == cid)
-        delta = c.get("value_downrank_delta", 0)
-        assert 0 < delta <= _VALUE_DOWNRANK_MAX_POSITIONS
-        assert c.get("value_downrank_applied") is True
+def test_value_band_score_delta_high_conf_best_value_uprank():
+    c = _make_candidate(id_="c", final_score=70.0, value_band="best_value", low_conf=False)
+    assert _value_band_score_delta(c) == 4.0
 
 
-def test_value_band_pass_uprank_respects_fuzzy_window():
-    # Two cases: tight gap (uprank allowed) vs. wide gap (no uprank past the peer).
-    # Tight gap: peer ahead by 1 point → less than _FUZZY_TIE_WINDOW (1.5),
-    # uprank should swap.
-    tight = [
-        _make_candidate(id_="c0", final_score=80.0),  # peer
-        _make_candidate(id_="c1", final_score=79.0, value_band="best_value"),
-    ]
-    out_tight = _apply_value_band_pass(list(tight), search_id="t")
-    assert out_tight[0]["id"] == "c1"
-    assert out_tight[0].get("value_uprank_applied") is True
-
-    # Wide gap: peer ahead by 6 points → outside fuzzy window, no uprank.
-    wide = [
-        _make_candidate(id_="c0", final_score=80.0),  # peer (well clear)
-        _make_candidate(id_="c1", final_score=74.0, value_band="best_value"),
-    ]
-    out_wide = _apply_value_band_pass(list(wide), search_id="t")
-    assert out_wide[0]["id"] == "c0"
-    assert out_wide[1]["id"] == "c1"
-    assert not out_wide[1].get("value_uprank_applied")
+def test_value_band_score_delta_high_conf_above_market_downrank():
+    c = _make_candidate(id_="c", final_score=70.0, value_band="above_market", low_conf=False)
+    assert _value_band_score_delta(c) == -6.0
 
 
-def test_value_band_pass_skips_low_confidence_best_value():
-    candidates = [
-        _make_candidate(id_="c0", final_score=80.0),
-        _make_candidate(id_="c1", final_score=79.5, value_band="best_value", low_conf=True),
-    ]
-    out = _apply_value_band_pass(list(candidates), search_id="t")
-    # Order unchanged because low-confidence best_value is skipped.
-    assert [c["id"] for c in out] == ["c0", "c1"]
+def test_value_band_score_delta_low_conf_is_inert():
+    # Low-confidence pools (citywide) preserve the skip semantics from the
+    # deleted positional pass: zero delta even when the band is set.
+    c_best = _make_candidate(id_="c", final_score=70.0, value_band="best_value", low_conf=True)
+    c_above = _make_candidate(id_="c", final_score=70.0, value_band="above_market", low_conf=True)
+    assert _value_band_score_delta(c_best) == 0.0
+    assert _value_band_score_delta(c_above) == 0.0
 
 
-def test_value_band_pass_no_op_when_flag_disabled(monkeypatch):
-    monkeypatch.setattr(_ea_settings, "EXPANSION_VALUE_SCORE_ENABLED", False)
-    candidates = [
-        _make_candidate(id_="c0", final_score=80.0, value_band="above_market"),
-        _make_candidate(id_="c1", final_score=79.0),
-    ]
-    out = _apply_value_band_pass(list(candidates), search_id="t")
-    assert [c["id"] for c in out] == ["c0", "c1"]
+def test_value_band_score_delta_neutral_or_missing_is_inert():
+    assert _value_band_score_delta(_make_candidate(id_="c", final_score=70.0, value_band="neutral")) == 0.0
+    assert _value_band_score_delta(_make_candidate(id_="c", final_score=70.0, value_band=None)) == 0.0
+
+
+def test_value_band_score_delta_reads_economics_detail_first():
+    # Production candidates carry the band inside score_breakdown_json
+    # rather than at the top level (top-level is set by
+    # _normalize_candidate_payload, which runs after this delta is folded).
+    c = {
+        "id": "c",
+        "parcel_id": "c",
+        "score_breakdown_json": {
+            "economics_detail": {
+                "value_band": "best_value",
+                "value_band_low_confidence": False,
+            }
+        },
+    }
+    assert _value_band_score_delta(c) == 4.0
 
 
 # ---------------------------------------------------------------------------
@@ -2626,9 +2593,12 @@ def test_viability_pass_fires_when_pop_below_p25(disable_market_viability_floors
     target = next(c for c in out if c["id"] == "target")
     flag = target["score_breakdown_json"].get("market_viability_flag")
     assert flag is not None and flag["demoted"] is True
-    # Position must have moved down by demotion_steps (default 6), capped.
-    new_idx = next(i for i, c in enumerate(out) if c["id"] == "target")
-    assert new_idx > 2
+    # Score-delta refactor: viability no longer reorders the list. Each fired
+    # leg contributes -10 to viability_delta. This cohort fires both the pop
+    # leg (target pop=4500 < p25) and the rent leg (rent_pct=0.85 confident).
+    assert "population_below_quartile" in target["viability_legs_fired"]
+    assert target["viability_delta"] <= -10.0
+    assert target["viability_delta"] == -10.0 * len(target["viability_legs_fired"])
 
 
 def test_viability_pass_high_rent_high_pop_fires_rent_leg(disable_market_viability_floors):
@@ -2707,9 +2677,11 @@ def test_viability_pass_demotion_capped_at_end(disable_market_viability_floors):
     out = _apply_market_viability_pass(list(cohort), search_id="t")
     assert len(out) == n
     last = next(c for c in out if c["id"] == "last")
-    assert out.index(last) == n - 1  # capped at list end, no IndexError
     flag = last["score_breakdown_json"]["market_viability_flag"]
     assert flag["demoted"] is True
+    # Score-delta refactor: caller (run_expansion_search) folds viability_delta
+    # into final_score before sorting; the function itself no longer reorders.
+    assert last["viability_delta"] <= -10.0
 
 
 def test_viability_pass_cohort_too_small():
@@ -2755,10 +2727,12 @@ def test_viability_pass_p25_correctness(disable_market_viability_floors):
     assert flagged["c7"] is False
 
 
-def test_viability_pass_stacks_with_value_band_pass(disable_market_viability_floors):
-    # A candidate that is BOTH above_market (value_band) and high-rent +
-    # low-pop should accumulate both nudges and end up further down than
-    # either pass alone. Mirrors how the orchestration sequences them.
+def test_viability_pass_stacks_with_value_band_delta(disable_market_viability_floors):
+    # Score-delta refactor: a candidate that is BOTH above_market (value_band)
+    # and high-rent + low-pop accumulates both deltas. The viability pass only
+    # writes the viability_delta side; the value_band delta is computed by
+    # _value_band_score_delta in the run_expansion_search main flow. We assert
+    # both signals are individually correct so the caller's sum is correct.
     pops = [5000, 6000, 7000, 8000, 50000, 60000, 70000, 80000]
     cohort = [
         _make_viability_candidate(
@@ -2769,7 +2743,6 @@ def test_viability_pass_stacks_with_value_band_pass(disable_market_viability_flo
         )
         for i, p in enumerate(pops)
     ]
-    # Insert a candidate at position 2 that triggers BOTH passes.
     target = _make_viability_candidate(
         id_="dual",
         final_score=78.0,
@@ -2779,20 +2752,19 @@ def test_viability_pass_stacks_with_value_band_pass(disable_market_viability_flo
         value_band="above_market",
     )
     cohort.insert(2, target)
-    starting_idx = next(i for i, c in enumerate(cohort) if c["id"] == "dual")
 
-    after_band = _apply_value_band_pass(list(cohort), search_id="t")
-    after_viab = _apply_market_viability_pass(after_band, search_id="t")
+    # Value-band delta is independent of the viability pass.
+    assert _value_band_score_delta(target) == -6.0
 
-    final_idx = next(i for i, c in enumerate(after_viab) if c["id"] == "dual")
-    # Both passes pushed the row down further than either alone.
-    band_idx = next(i for i, c in enumerate(after_band) if c["id"] == "dual")
-    assert band_idx > starting_idx, "value_band pass should have demoted"
-    assert final_idx > band_idx, "viability pass should have demoted further"
-    flag = after_viab[final_idx]["score_breakdown_json"]["market_viability_flag"]
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target_out = next(c for c in out if c["id"] == "dual")
+    flag = target_out["score_breakdown_json"]["market_viability_flag"]
     assert flag["demoted"] is True
-    # value_band pass writes its own marker; both must coexist.
-    assert "value_pass" in after_viab[final_idx]["score_breakdown_json"]
+    # Both pop and rent legs fire on this candidate; -10 each, no swap.
+    assert sorted(target_out["viability_legs_fired"]) == [
+        "population_below_quartile", "rent_high",
+    ]
+    assert target_out["viability_delta"] == -20.0
 
 
 # ---------------------------------------------------------------------------
@@ -3120,7 +3092,6 @@ def test_viability_demand_only_leg_fires(disable_market_viability_floors):
         target_demand=400.0,
         target_demand_branches=5,
     )
-    starting_idx = next(i for i, c in enumerate(cohort) if c["id"] == "target")
     out = _apply_market_viability_pass(list(cohort), search_id="t")
     target = next(c for c in out if c["id"] == "target")
     flag = target["score_breakdown_json"].get("market_viability_flag")
@@ -3133,11 +3104,9 @@ def test_viability_demand_only_leg_fires(disable_market_viability_floors):
     assert flag["realized_demand_branches"] == 5
     assert flag["realized_demand_threshold"] is not None
     assert flag["reason"] == "demand_low"
-    new_idx = next(i for i, c in enumerate(out) if c["id"] == "target")
-    # Default demotion is 6 steps, capped at the end of the list.
-    assert new_idx == min(
-        starting_idx + 6, len(out) - 1
-    ), "candidate should move down by EXPANSION_VIABILITY_DEMOTION_STEPS"
+    # Score-delta refactor: each leg contributes -10; no positional swap.
+    assert target["viability_legs_fired"] == ["demand_low"]
+    assert target["viability_delta"] == -10.0
 
 
 def test_viability_demand_leg_skipped_when_branches_below_min(
@@ -3375,7 +3344,6 @@ def test_viability_radiance_growth_only_leg_fires(disable_market_viability_floor
         target_yoy_pct=-2.0,
         target_confident=True,
     )
-    starting_idx = next(i for i, c in enumerate(cohort) if c["id"] == "target")
     out = _apply_market_viability_pass(list(cohort), search_id="t")
     target = next(c for c in out if c["id"] == "target")
     flag = target["score_breakdown_json"].get("market_viability_flag")
@@ -3389,10 +3357,9 @@ def test_viability_radiance_growth_only_leg_fires(disable_market_viability_floor
     assert flag["radiance_confident"] is True
     assert flag["radiance_yoy_demote_threshold"] == 2.0
     assert flag["reason"] == "radiance_growth_low"
-    new_idx = next(i for i, c in enumerate(out) if c["id"] == "target")
-    assert new_idx == min(
-        starting_idx + 6, len(out) - 1
-    ), "candidate should move down by EXPANSION_VIABILITY_DEMOTION_STEPS"
+    # Score-delta refactor: -10 per fired leg, no swap.
+    assert target["viability_legs_fired"] == ["radiance_growth_low"]
+    assert target["viability_delta"] == -10.0
 
 
 def test_viability_radiance_growth_leg_skipped_when_not_confident(
@@ -3660,8 +3627,10 @@ def test_viability_rpc_leg_demotes_top_quartile(disable_market_viability_floors)
     assert flag["rent_per_capita_pct"] == 1.0
     assert flag["demoted"] is True
     assert "rent_per_capita_high" in flag["reason"].split("_and_")
-    # Position must have moved down.
-    assert next(i for i, c in enumerate(out) if c["id"] == "target") > 2
+    # Score-delta refactor: viability_delta carries -10 per fired leg; the
+    # function no longer reorders the candidate list.
+    assert "rent_per_capita_high" in target_out["viability_legs_fired"]
+    assert target_out["viability_delta"] <= -10.0
 
 
 def test_viability_rpc_leg_skipped_below_min_cohort(
@@ -4048,20 +4017,13 @@ def test_get_recommendation_report_best_value_none_when_no_value_score(monkeypat
     assert report["recommendation"]["best_value_candidate_id"] is None
 
 
-def test_value_band_pass_uprank_reads_band_from_score_breakdown_json():
-    """Regression for the production bug where value_uprank_applied is always
-    False. In production the candidate dict carries value_band inside
-    score_breakdown_json["economics_detail"], not at the top level. The pass
-    must consult that nested location, otherwise the promote_indices set is
-    empty and no row is ever upranked."""
-    # Index 4: peer with final_score equal to the best_value below it.
-    # Index 5: high-confidence best_value, value_band only inside
-    # score_breakdown_json["economics_detail"] (the persisted layout).
-    candidates = [
-        {"id": f"c{i}", "parcel_id": f"c{i}", "final_score": 80.0 - i, "score_breakdown_json": {}}
-        for i in range(5)
-    ]
-    candidates.append({
+def test_value_band_score_delta_reads_band_from_score_breakdown_json():
+    """Regression for the production bug where value_uprank_applied was always
+    False because _apply_value_band_pass read value_band only from the top
+    level. After the score-delta refactor, _value_band_score_delta consults
+    the nested ``score_breakdown_json["economics_detail"]`` location first,
+    so high-confidence best_value bands earn the +4 delta."""
+    candidate = {
         "id": "c5-best-value",
         "parcel_id": "c5-best-value",
         "final_score": 75.98,
@@ -4072,22 +4034,8 @@ def test_value_band_pass_uprank_reads_band_from_score_breakdown_json():
                 "value_band_low_confidence": False,
             },
         },
-    })
-    # Tighten the gap between index 4 and the best_value so the swap is
-    # within the fuzzy window.
-    candidates[4]["final_score"] = 75.98
-
-    out = _apply_value_band_pass(list(candidates), search_id="t")
-    moved = next(c for c in out if c["id"] == "c5-best-value")
-    new_idx = out.index(moved)
-    assert new_idx < 5, f"best_value did not move (still at {new_idx})"
-    assert moved.get("value_uprank_applied") is True
-    assert moved.get("value_uprank_delta", 0) >= 1
-    # Marker must also be persisted inside score_breakdown_json so it
-    # survives the DB round-trip (no dedicated column for these fields).
-    vp = moved.get("score_breakdown_json", {}).get("value_pass") or {}
-    assert vp.get("value_uprank_applied") is True
-    assert vp.get("value_uprank_delta", 0) >= 1
+    }
+    assert _value_band_score_delta(candidate) == 4.0
 
 
 def test_recommendation_report_top_payload_preserves_economics_detail(monkeypatch):
@@ -4233,3 +4181,302 @@ def test_district_momentum_score_returns_empty_on_db_error():
 
     out = _district_momentum_score(db)
     assert out == {}
+
+
+# ===========================================================================
+# Score-delta refactor: integrated final_score arithmetic + bonus_detail
+# persistence + deterministic sort. The 12 tests below exercise the
+# _apply_score_deltas_and_sort helper that the run_expansion_search main
+# flow uses to fold value_band, viability, freshness, and momentum signals
+# into a single final_score, the result of which drives ORDER BY.
+# ===========================================================================
+
+from app.services.expansion_advisor import (
+    _apply_score_deltas_and_sort,
+    _apply_market_viability_pass as _mv_pass,
+    _LISTING_FRESHNESS_DAYS,
+    _MOMENTUM_DISPLAY_THRESHOLD,
+)
+
+
+def _sd_candidate(
+    *,
+    parcel_id: str,
+    base_final_score: float,
+    value_band: str | None = None,
+    value_band_low_conf: bool = False,
+    viability_legs: list[str] | None = None,
+    created_days: int | None = None,
+    updated_days: int | None = None,
+    momentum_score: float | None = None,
+    sample_floor_applied: bool = False,
+    cannibalization_score: float | None = None,
+) -> dict:
+    """Build a minimal candidate carrying just enough state to drive the
+    score-delta pipeline. ``viability_legs`` is the list the viability pass
+    would have attached as ``viability_legs_fired`` (each leg contributes
+    -10 to ``viability_delta``); pass [] for "no leg fired"."""
+    sb: dict = {}
+    if value_band is not None:
+        sb["economics_detail"] = {
+            "value_band": value_band,
+            "value_band_low_confidence": value_band_low_conf,
+        }
+    fs: dict = {}
+    if created_days is not None or updated_days is not None:
+        fs["listing_age"] = {
+            "created_days": created_days,
+            "updated_days": updated_days,
+        }
+    if momentum_score is not None:
+        fs["district_momentum"] = {
+            "momentum_score": momentum_score,
+            "sample_floor_applied": sample_floor_applied,
+        }
+    cand: dict = {
+        "id": parcel_id,
+        "parcel_id": parcel_id,
+        "final_score": base_final_score,
+        "score_breakdown_json": sb,
+        "feature_snapshot_json": fs,
+    }
+    if viability_legs is not None:
+        cand["viability_legs_fired"] = list(viability_legs)
+        cand["viability_delta"] = -10.0 * len(viability_legs)
+    if cannibalization_score is not None:
+        cand["cannibalization_score"] = cannibalization_score
+    return cand
+
+
+def test_score_delta_empty_branches():
+    # Brief with no existing branches, candidate with viable economics:
+    # base_deterministic stays as-is when no signals fire, and the bonus_detail
+    # block is still written with zeroed-out fields so the persisted shape is
+    # stable for the saved-study UI.
+    c = _sd_candidate(parcel_id="p1", base_final_score=72.5, viability_legs=[])
+    out = _apply_score_deltas_and_sort([c])
+    bd = out[0]["score_breakdown_json"]["bonus_detail"]
+    assert bd["base_deterministic"] == 72.5
+    assert bd["value_band_delta"] == 0.0
+    assert bd["viability_delta"] == 0.0
+    assert bd["viability_legs_fired"] == []
+    assert bd["freshness_bonus"] == 0.0
+    assert bd["freshness_label"] is None
+    assert bd["momentum_bonus"] == 0.0
+    assert bd["total_delta"] == 0.0
+    assert bd["final_score_clamped"] is False
+    assert out[0]["final_score"] == 72.5
+    # rank ordering matches final_score sort (single-row trivial case).
+    assert [c["parcel_id"] for c in out] == ["p1"]
+
+
+def test_score_delta_best_value_high_conf_uprank():
+    c = _sd_candidate(
+        parcel_id="p1",
+        base_final_score=70.0,
+        value_band="best_value",
+        value_band_low_conf=False,
+        viability_legs=[],
+    )
+    out = _apply_score_deltas_and_sort([c])
+    bd = out[0]["score_breakdown_json"]["bonus_detail"]
+    assert bd["value_band_delta"] == 4.0
+    assert out[0]["final_score"] == 74.0
+    # Legacy back-compat keys must still write on uprank.
+    assert out[0]["value_uprank_applied"] is True
+    assert out[0]["value_uprank_delta"] == 4
+
+
+def test_score_delta_above_market_low_conf_no_penalty():
+    c = _sd_candidate(
+        parcel_id="p1",
+        base_final_score=70.0,
+        value_band="above_market",
+        value_band_low_conf=True,  # citywide pool — skip
+        viability_legs=[],
+    )
+    out = _apply_score_deltas_and_sort([c])
+    bd = out[0]["score_breakdown_json"]["bonus_detail"]
+    assert bd["value_band_delta"] == 0.0
+    assert out[0]["final_score"] == 70.0
+    # Low-confidence skip means no legacy downrank marker.
+    assert out[0].get("value_downrank_applied") is not True
+
+
+def test_score_delta_viability_stacks():
+    # Three legs fire on a single candidate — each contributes -10, summed.
+    c = _sd_candidate(
+        parcel_id="p1",
+        base_final_score=80.0,
+        viability_legs=[
+            "population_below_quartile",
+            "rent_high",
+            "economics_below_threshold",
+        ],
+    )
+    out = _apply_score_deltas_and_sort([c])
+    bd = out[0]["score_breakdown_json"]["bonus_detail"]
+    assert bd["viability_delta"] == -30.0
+    assert len(bd["viability_legs_fired"]) == 3
+    assert out[0]["final_score"] == 50.0
+
+
+def test_score_delta_freshness_mutual_exclusion():
+    # created_days=2 (fresh) AND updated_days=1 (also recent) → "new" wins,
+    # bonus is +2, NOT +3.
+    c = _sd_candidate(
+        parcel_id="p1",
+        base_final_score=70.0,
+        created_days=2,
+        updated_days=1,
+        viability_legs=[],
+    )
+    out = _apply_score_deltas_and_sort([c])
+    bd = out[0]["score_breakdown_json"]["bonus_detail"]
+    assert bd["freshness_label"] == "new"
+    assert bd["freshness_bonus"] == 2.0
+    assert out[0]["final_score"] == 72.0
+
+
+def test_score_delta_top_tier_market_gated_by_sample_floor():
+    # momentum_score=80 is well above the 70 cliff but sample_floor_applied
+    # forces the neutral fallback shape — momentum bonus must NOT fire.
+    c = _sd_candidate(
+        parcel_id="p1",
+        base_final_score=70.0,
+        momentum_score=80.0,
+        sample_floor_applied=True,
+        viability_legs=[],
+    )
+    out = _apply_score_deltas_and_sort([c])
+    bd = out[0]["score_breakdown_json"]["bonus_detail"]
+    assert bd["momentum_bonus"] == 0.0
+    # Sanity: with sample_floor_applied=False, the bonus does fire.
+    c2 = _sd_candidate(
+        parcel_id="p1",
+        base_final_score=70.0,
+        momentum_score=80.0,
+        sample_floor_applied=False,
+        viability_legs=[],
+    )
+    out2 = _apply_score_deltas_and_sort([c2])
+    assert out2[0]["score_breakdown_json"]["bonus_detail"]["momentum_bonus"] == 2.0
+
+
+def test_score_delta_clamping_at_100():
+    # Base 95 + best_value (+4) + new (+2) + top-tier momentum (+2) = 103 → 100.
+    c = _sd_candidate(
+        parcel_id="p1",
+        base_final_score=95.0,
+        value_band="best_value",
+        value_band_low_conf=False,
+        created_days=1,
+        momentum_score=80.0,
+        sample_floor_applied=False,
+        viability_legs=[],
+    )
+    out = _apply_score_deltas_and_sort([c])
+    bd = out[0]["score_breakdown_json"]["bonus_detail"]
+    assert bd["total_delta"] == 8.0
+    assert out[0]["final_score"] == 100.0
+    assert bd["final_score_clamped"] is True
+
+
+def test_score_delta_clamping_at_0():
+    # Base 8 + 3-leg viability stack (-30) = -22 → 0.
+    c = _sd_candidate(
+        parcel_id="p1",
+        base_final_score=8.0,
+        viability_legs=[
+            "population_below_quartile",
+            "rent_high",
+            "economics_below_threshold",
+        ],
+    )
+    out = _apply_score_deltas_and_sort([c])
+    bd = out[0]["score_breakdown_json"]["bonus_detail"]
+    assert bd["viability_delta"] == -30.0
+    assert out[0]["final_score"] == 0.0
+    assert bd["final_score_clamped"] is True
+
+
+def test_sort_determinism_parcel_id_tiebreak():
+    # Two candidates with identical final_score: lexicographically smaller
+    # parcel_id ranks first. Two consecutive calls produce identical orderings.
+    c_b = _sd_candidate(parcel_id="bbb", base_final_score=70.0, viability_legs=[])
+    c_a = _sd_candidate(parcel_id="aaa", base_final_score=70.0, viability_legs=[])
+    out_first = _apply_score_deltas_and_sort([c_b, c_a])
+    assert [c["parcel_id"] for c in out_first] == ["aaa", "bbb"]
+    # Re-run on a fresh copy — must yield byte-identical ordering.
+    c_b2 = _sd_candidate(parcel_id="bbb", base_final_score=70.0, viability_legs=[])
+    c_a2 = _sd_candidate(parcel_id="aaa", base_final_score=70.0, viability_legs=[])
+    out_second = _apply_score_deltas_and_sort([c_b2, c_a2])
+    assert [c["parcel_id"] for c in out_second] == [c["parcel_id"] for c in out_first]
+
+
+def test_no_fuzzy_tiebreak():
+    # The deleted _apply_llm_fuzzy_tiebreak symbol must not exist on the
+    # module: re-runs of a search must produce identical orderings, no LLM
+    # call. Two candidates with similar-but-not-identical scores rank
+    # strictly by score — no within-window LLM-driven swap.
+    assert not hasattr(expansion_service, "_apply_llm_fuzzy_tiebreak")
+    assert not hasattr(expansion_service, "_FUZZY_TIE_WINDOW")
+    c_high = _sd_candidate(parcel_id="hi", base_final_score=80.0, viability_legs=[])
+    c_low = _sd_candidate(parcel_id="lo", base_final_score=79.5, viability_legs=[])
+    out = _apply_score_deltas_and_sort([c_low, c_high])
+    assert [c["parcel_id"] for c in out] == ["hi", "lo"]
+
+
+def test_legacy_value_pass_keys_preserved_for_back_compat():
+    # When the value-band delta fires, the deprecated value_pass.* keys
+    # (and their top-level mirrors) must still get written so any existing
+    # saved-study consumer that hasn't migrated to bonus_detail keeps working.
+    c_up = _sd_candidate(
+        parcel_id="p1", base_final_score=70.0, value_band="best_value",
+        viability_legs=[],
+    )
+    out = _apply_score_deltas_and_sort([c_up])
+    sb = out[0]["score_breakdown_json"]
+    assert sb["value_pass"]["value_uprank_applied"] is True
+    assert sb["value_pass"]["value_uprank_delta"] == 4
+    assert out[0]["value_uprank_applied"] is True
+    assert out[0]["value_uprank_delta"] == 4
+    # And on the downrank side.
+    c_down = _sd_candidate(
+        parcel_id="p2", base_final_score=70.0, value_band="above_market",
+        viability_legs=[],
+    )
+    out2 = _apply_score_deltas_and_sort([c_down])
+    sb2 = out2[0]["score_breakdown_json"]
+    assert sb2["value_pass"]["value_downrank_applied"] is True
+    assert sb2["value_pass"]["value_downrank_delta"] == 4
+    assert out2[0]["value_downrank_applied"] is True
+    assert out2[0]["value_downrank_delta"] == 4
+
+
+def test_existing_branches_present_no_score_change():
+    # Regression guard: a brief with existing branches and viable
+    # cannibalization_score must not have its final_score changed by the
+    # refactor beyond what the legitimate viability legs contribute.
+    # Sanity: the cannibalization_score field is still consumed by
+    # _economics_score (its parameter name is unchanged), so a synthetic
+    # candidate that carries it through the score-delta pipeline keeps the
+    # field intact for downstream consumers.
+    from app.services.expansion_advisor import _economics_score
+    import inspect
+
+    # The economics_score function still consumes cannibalization_score —
+    # parameter name and semantics unchanged.
+    sig = inspect.signature(_economics_score)
+    assert "cannibalization_score" in sig.parameters
+
+    c = _sd_candidate(
+        parcel_id="p1", base_final_score=72.0,
+        cannibalization_score=35.0,
+        viability_legs=[],
+    )
+    out = _apply_score_deltas_and_sort([c])
+    # No legitimate leg fired → final_score unchanged, cannibalization_score
+    # untouched on the candidate dict (the score-delta pass must not strip it).
+    assert out[0]["final_score"] == 72.0
+    assert out[0]["cannibalization_score"] == 35.0
