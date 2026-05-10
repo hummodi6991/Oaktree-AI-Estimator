@@ -3338,7 +3338,7 @@ def _viability_cohort_with_radiance_growth_target(
 
 def test_viability_radiance_growth_only_leg_fires(disable_market_viability_floors):
     # Radiance leg alone: pop above p25, rent low, economics healthy, demand
-    # mid-cohort. Confident negative YoY (-2.0%) below the calibrated 2.0
+    # mid-cohort. Confident negative YoY (-2.0%) below the calibrated 0.0
     # demote threshold ⇒ leg fires alone with reason="radiance_growth_low".
     cohort = _viability_cohort_with_radiance_growth_target(
         target_yoy_pct=-2.0,
@@ -3355,7 +3355,7 @@ def test_viability_radiance_growth_only_leg_fires(disable_market_viability_floor
     assert flag["radiance_growth_demote"] is True
     assert flag["radiance_growth_pct"] == -2.0
     assert flag["radiance_confident"] is True
-    assert flag["radiance_yoy_demote_threshold"] == 2.0
+    assert flag["radiance_yoy_demote_threshold"] == 0.0
     assert flag["reason"] == "radiance_growth_low"
     # Score-delta refactor: -10 per fired leg, no swap.
     assert target["viability_legs_fired"] == ["radiance_growth_low"]
@@ -3398,7 +3398,7 @@ def test_viability_radiance_growth_leg_no_growth_rescue(
 ):
     # Confident negative YoY drives the radiance leg, AND the same row
     # carries the same negative YoY (which can't self-rescue anyway —
-    # rescue requires yoy >= radiance_yoy_threshold, default 0.0). Mirrors
+    # rescue requires yoy >= radiance_yoy_threshold, default 2.0). Mirrors
     # the economics/demand precedent: the leg whose own forward-looking
     # signal triggered the demote cannot self-rescue.
     cohort = _viability_cohort_with_radiance_growth_target(
@@ -3480,13 +3480,80 @@ def test_viability_radiance_growth_leg_threshold_boundary(
     )
 
 
+def test_viability_radiance_growth_neutral_zone_neither_rescue_nor_demote(
+    disable_market_viability_floors,
+):
+    # Post-calibration (2026-05-10) the rescue threshold is 2.0 and the
+    # demote threshold is 0.0, opening a neutral zone in 0..2% YoY where
+    # the radiance signal is confident but neither strong enough to
+    # rescue the pop/rent legs nor weak enough to fire the radiance
+    # demote leg. Per §7a of radiance_yoy_distribution.sql, ~42% of
+    # confident candidates sit in this band — they should be evaluated
+    # on the other legs as-is, with no growth-side intervention.
+    #
+    # Setup: target has low pop + high rent (which would normally fire
+    # pop_demote and rent_demote), confident YoY=1.0 in the neutral
+    # zone. Assertions: (a) radiance_growth_demote is False, and (b)
+    # pop_demote / rent_demote fire — proving the rescue branch did NOT
+    # mask them for this leg.
+    cohort = _viability_cohort_with_radiance_target(
+        target_radiance_confident=True,
+        target_radiance_yoy_pct=1.0,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["radiance_growth_demote"] is False, (
+        "YoY 1.0 is above the 0.0 demote threshold; leg must not fire"
+    )
+    assert flag["radiance_confident"] is True
+    assert flag["radiance_growth_pct"] == 1.0
+    # The rescue branch (operator >=, threshold 2.0) must NOT mask pop/rent
+    # when YoY sits in the neutral zone. Both legs fire as if no radiance
+    # signal had been considered.
+    assert flag["population_demote"] is True, (
+        "growth rescue must not apply in the neutral zone (1.0 < 2.0)"
+    )
+    assert flag["rent_demote"] is True, (
+        "growth rescue must not apply in the neutral zone (1.0 < 2.0)"
+    )
+
+
+def test_viability_radiance_growth_negative_fires_demote_under_new_defaults(
+    disable_market_viability_floors,
+):
+    # Post-calibration the demote threshold is 0.0 (operator strict <).
+    # Confident YoY=-1.0 sits in the "confidently shrinking" tier (§7b,
+    # ~7.1% of confident candidates) and must fire the radiance demote
+    # leg alone — pop/rent/econ/demand are neutral in this cohort, so
+    # the only firing leg is radiance_growth_low.
+    cohort = _viability_cohort_with_radiance_growth_target(
+        target_yoy_pct=-1.0,
+        target_confident=True,
+    )
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    flag = target["score_breakdown_json"].get("market_viability_flag")
+    assert flag is not None and flag["demoted"] is True
+    assert flag["radiance_growth_demote"] is True
+    assert flag["radiance_growth_pct"] == -1.0
+    assert flag["radiance_confident"] is True
+    assert flag["radiance_yoy_demote_threshold"] == 0.0
+    assert flag["population_demote"] is False
+    assert flag["rent_demote"] is False
+    assert flag["economics_demote"] is False
+    assert flag["demand_demote"] is False
+    assert flag["reason"] == "radiance_growth_low"
+
+
 def test_viability_all_five_legs_fire_with_compound_annotation(
     disable_market_viability_floors,
 ):
     # Five-leg variant of test_viability_all_four_legs_fire_with_compound_annotation:
     # pop below p25, rent high on confident scope, economics_score=60 < 65,
     # realized_demand_30d=400 in the bottom quartile with 5 branches,
-    # confident negative radiance YoY (-1.5%) below the 2.0 demote threshold.
+    # confident negative radiance YoY (-1.5%) below the 0.0 demote threshold.
     # Reason concatenates in stable order: pop, rent, econ, demand, radiance.
     cohort = _viability_cohort_with_demand_target(
         target_demand=400.0,
@@ -3567,7 +3634,7 @@ def test_viability_diagnostics_demote_legs_block_written(
         "rpc_cohort_n",
     }
     assert set(thresholds.keys()) == expected_threshold_keys
-    assert thresholds["radiance_yoy_demote_threshold"] == 2.0
+    assert thresholds["radiance_yoy_demote_threshold"] == 0.0
 
     leg_enabled = diagnostics["demote_legs"]["leg_enabled"]
     assert leg_enabled["demand"] is True
