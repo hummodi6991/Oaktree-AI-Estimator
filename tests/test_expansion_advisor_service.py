@@ -4449,9 +4449,9 @@ def test_legacy_value_pass_keys_preserved_for_back_compat():
     out2 = _apply_score_deltas_and_sort([c_down])
     sb2 = out2[0]["score_breakdown_json"]
     assert sb2["value_pass"]["value_downrank_applied"] is True
-    assert sb2["value_pass"]["value_downrank_delta"] == 4
+    assert sb2["value_pass"]["value_downrank_delta"] == 6
     assert out2[0]["value_downrank_applied"] is True
-    assert out2[0]["value_downrank_delta"] == 4
+    assert out2[0]["value_downrank_delta"] == 6
 
 
 def test_existing_branches_present_no_score_change():

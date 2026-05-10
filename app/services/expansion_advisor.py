@@ -4499,9 +4499,10 @@ def _apply_score_deltas_and_sort(
         # Back-compat: legacy value_pass keys + top-level mirrors so existing
         # saved-study consumers and the frontend Why-#N chip continue to read
         # the uprank/downrank flag for one release cycle. The "delta" fields
-        # carry the legacy positional placeholder (4) regardless of which
-        # high-confidence band fired — readers should consult bonus_detail
-        # for the actual score delta. Deprecated as of score-delta refactor.
+        # carry the magnitude of the score delta (4 for +4 best_value, 6 for
+        # -6 above_market) so the chip displays an accurate change. Readers
+        # should migrate to bonus_detail.value_band_delta for the signed
+        # value. Deprecated as of score-delta refactor.
         if value_band_delta == 4.0:
             vp = sb.setdefault("value_pass", {})
             vp["value_uprank_applied"] = True
@@ -4511,9 +4512,9 @@ def _apply_score_deltas_and_sort(
         elif value_band_delta == -6.0:
             vp = sb.setdefault("value_pass", {})
             vp["value_downrank_applied"] = True
-            vp["value_downrank_delta"] = 4
+            vp["value_downrank_delta"] = 6
             _c["value_downrank_applied"] = True
-            _c["value_downrank_delta"] = 4
+            _c["value_downrank_delta"] = 6
 
         # Drop transient working fields populated by the viability pass so
         # they do not leak into persistence or downstream consumers.
