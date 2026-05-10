@@ -888,6 +888,8 @@
     "updatedBadgeTooltip": "تم تحديث العقار على عقار خلال آخر 7 أيام",
     "premierBadge": "متميّز",
     "premierBadgeTooltip": "ثقة عالية، يجتاز جميع المعايير، وحاصل على أعلى الدرجات",
+    "exploratoryBadge": "استكشافي",
+    "exploratoryBadgeTooltip": "ثقة أقل أو فشل في أحد المعايير — راجع بعناية قبل الإضافة إلى القائمة المختصرة",
     "tierPremierHeader": "متميّز — الأفضل بين الأفضل",
     "tierExploratoryHeader": "خيارات إضافية للنظر",
     "viewOnAqar": "عرض في عقار",
