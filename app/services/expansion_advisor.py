@@ -996,76 +996,6 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(high, value))
 
 
-# Patch 13: candidates whose ``final_score`` values are within this many
-# points of each other are treated as fuzzy-tied; within each such group
-# rows are reordered by combined LLM signal strength so rich-copy
-# listings win over sparse-copy listings at the same structural rank.
-_FUZZY_TIE_WINDOW = 1.5
-
-
-def _apply_llm_fuzzy_tiebreak(ranked_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Re-sort candidates within fuzzy-tie groups by LLM signal strength.
-
-    Two candidates whose ``final_score`` values are within ``_FUZZY_TIE_WINDOW``
-    of each other are considered tied for ranking purposes; within each
-    such group we prefer rows with the higher combined LLM signal
-    (``unit_llm_landlord_signal_score`` + ``unit_llm_suitability_score``).
-    Rows outside any group keep their original order, and the global
-    ordering by ``final_score`` is preserved across group boundaries —
-    only within-group order can change.
-
-    Rows missing LLM scores are treated as ``0 + 0`` and fall to the
-    bottom of their group, which is the desired behavior: sparse-copy
-    listings should yield to rich-copy listings within the same fuzzy
-    bucket on the rare occasion both land at the same ``final_score``.
-
-    Input must already be sorted by ``final_score`` descending.
-    """
-    if not ranked_rows or len(ranked_rows) < 2:
-        return ranked_rows
-
-    def _final_score(row: dict[str, Any]) -> float:
-        return _safe_float(row.get("final_score"), 0.0)
-
-    def _llm_strength(row: dict[str, Any]) -> float:
-        return (
-            _safe_float(row.get("unit_llm_landlord_signal_score"), 0.0)
-            + _safe_float(row.get("unit_llm_suitability_score"), 0.0)
-        )
-
-    # Walk the list and collect contiguous groups of rows whose final_score
-    # values are within _FUZZY_TIE_WINDOW of each other.  A row joins the
-    # current group when it is within the window of the group's *first*
-    # (highest-scoring) row — this prevents drift where a long chain of
-    # closely-spaced rows would pull the window open indefinitely.
-    groups: list[list[int]] = []
-    current_group: list[int] = [0]
-    for i in range(1, len(ranked_rows)):
-        head_score = _final_score(ranked_rows[current_group[0]])
-        this_score = _final_score(ranked_rows[i])
-        if abs(head_score - this_score) <= _FUZZY_TIE_WINDOW:
-            current_group.append(i)
-        else:
-            if len(current_group) > 1:
-                groups.append(current_group)
-            current_group = [i]
-    if len(current_group) > 1:
-        groups.append(current_group)
-
-    if not groups:
-        return ranked_rows
-
-    out = list(ranked_rows)
-    for group in groups:
-        group_rows = [ranked_rows[i] for i in group]
-        # Stable sort by LLM signal descending — rows with equal signal
-        # retain their original final_score order.
-        group_rows.sort(key=_llm_strength, reverse=True)
-        for idx, row in zip(group, group_rows):
-            out[idx] = row
-    return out
-
-
 # Rerank metadata fields attached to every candidate, whether or not the
 # bounded LLM reranker ran. Consumers rely on the presence of these keys.
 _RERANK_STATUS_FLAG_OFF = "flag_off"
@@ -1329,12 +1259,14 @@ def _normalize_candidate_payload(
     payload["value_band_low_confidence"] = bool(
         _ed.get("value_band_low_confidence") if isinstance(_ed, dict) else False
     )
-    # Per-search ordering metadata (set by _apply_value_band_pass; absent
-    # on rows that didn't move). Default to False/0 so the response shape
-    # is stable. The markers persist inside score_breakdown_json["value_pass"]
-    # because expansion_candidate has no dedicated columns for them; read
-    # from the nested location and fall back to top-level (set in-memory
-    # during the pass before persistence).
+    # Per-search value-band markers (legacy back-compat keys, written by
+    # the score-delta accumulation step in run_expansion_search). Default
+    # to False/0 so the response shape is stable. Persisted inside
+    # score_breakdown_json["value_pass"] because expansion_candidate has
+    # no dedicated columns for them; read from the nested location and
+    # fall back to top-level (set in-memory during the pass before
+    # persistence). Deprecated as of the score-delta refactor — readers
+    # should consult score_breakdown_json["bonus_detail"] instead.
     _vp = (payload.get("score_breakdown_json") or {}).get("value_pass") or {}
     if not isinstance(_vp, dict):
         _vp = {}
@@ -4400,13 +4332,6 @@ def _economics_score(
 _VALUE_BAND_BEST_VALUE_MIN: float = 75.0
 _VALUE_BAND_ABOVE_MARKET_MAX: float = 25.0
 
-# Soft up/downrank caps. Both strictly less than EXPANSION_LLM_RERANK_MAX_MOVE
-# (default 5) so the LLM reranker keeps full authority to undo a value-band
-# nudge if it disagrees. Asymmetric on purpose: above_market is an
-# unambiguously worse signal for the buyer than best_value is a positive one.
-_VALUE_DOWNRANK_MAX_POSITIONS: int = 4
-_VALUE_UPRANK_MAX_POSITIONS: int = 3
-
 
 def _value_score(revenue_index: float, rent_burden_score: float) -> float:
     """Geometric mean of revenue_index and rent_burden_score, clamped 0-100.
@@ -4468,127 +4393,159 @@ def _candidate_value_band(c: dict[str, Any]) -> tuple[str | None, bool]:
     return c.get("value_band"), bool(c.get("value_band_low_confidence"))
 
 
-def _record_value_pass_marker(
-    c: dict[str, Any],
-    *,
-    direction: str,
-    delta: int,
-) -> None:
-    """Stash the uprank/downrank marker on the candidate dict AND inside
-    ``score_breakdown_json`` so the flag survives DB round-trips. The
-    expansion_candidate table has no dedicated columns for these markers;
-    score_breakdown_json is JSONB and is already persisted.
-    """
-    applied_key = f"value_{direction}_applied"
-    delta_key = f"value_{direction}_delta"
-    c[applied_key] = True
-    c[delta_key] = int(delta)
-    sb = c.get("score_breakdown_json")
-    if not isinstance(sb, dict):
-        sb = {}
-        c["score_breakdown_json"] = sb
-    vp = sb.get("value_pass")
-    if not isinstance(vp, dict):
-        vp = {}
-        sb["value_pass"] = vp
-    vp[applied_key] = True
-    vp[delta_key] = int(delta)
-
-
-def _apply_value_band_pass(
+def _apply_score_deltas_and_sort(
     candidates: list[dict[str, Any]],
-    *,
-    search_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Soft positional nudge: above_market down, best_value up. Operates by
-    list reorder only — does NOT mutate final_score or any persisted score.
-    Stays strictly inside ±EXPANSION_LLM_RERANK_MAX_MOVE so the LLM rerank
-    that runs later retains full authority to undo a nudge it disagrees with.
+    """Fold value-band, viability, freshness, and momentum deltas into
+    ``final_score`` and re-sort by ``final_score DESC, parcel_id ASC``.
 
-    Skips low-confidence above_market candidates: the badge is amber (per
-    product override 2) and the ordering signal is intentionally muted to
-    match. Skips low-confidence best_value too — same principle, the badge
-    carries an "low confidence" mark and we don't promote thin-pool comparisons.
+    Inputs:
+      * ``final_score`` is the current base_deterministic score (output of
+        ``_score_breakdown``).
+      * ``viability_legs_fired`` and ``viability_delta`` are populated by
+        ``_apply_market_viability_pass`` (transient working fields, dropped
+        before this function returns).
+      * ``feature_snapshot_json["listing_age"]`` and
+        ``feature_snapshot_json["district_momentum"]`` drive the freshness
+        and momentum bonuses respectively.
+
+    Output mutations on every candidate:
+      * ``final_score`` is overwritten with ``clamp(base + Σ deltas, 0, 100)``.
+      * ``score_breakdown_json["final_score"]`` mirrors the clamped score.
+      * ``score_breakdown_json["bonus_detail"]`` records every input delta,
+        the clamping flag, and the freshness label so callers can audit how
+        the bonus stacked.
+      * Legacy back-compat keys ``value_uprank_*`` / ``value_downrank_*``
+        (top-level + ``score_breakdown_json["value_pass"]``) are written
+        when the value-band leg fires; readers should migrate to
+        ``bonus_detail.value_band_delta``. Deprecated.
+
+    Sort is strict: ``(-final_score, parcel_id)``. The parcel_id tie-break
+    guarantees identical orderings on re-runs even when scores collide.
     """
-    if not candidates:
-        return candidates
-    if not settings.EXPANSION_VALUE_SCORE_ENABLED:
-        return candidates
+    for _c in candidates:
+        base = _safe_float(_c.get("final_score"), 0.0)
 
-    out = list(candidates)
-    n = len(out)
+        value_band_delta = _value_band_score_delta(_c)
 
-    bands = [_candidate_value_band(c) for c in out]
+        viability_legs_fired = list(_c.get("viability_legs_fired") or [])
+        viability_delta = float(_c.get("viability_delta", 0.0) or 0.0)
 
-    # Diagnostic pre-trace: log every row that carries a value_band so
-    # production triage can confirm the pass saw the same picture the
-    # response reports. INFO level is intentional — this fires once per
-    # search and the volume is bounded.
-    flagged = [
-        (i, _safe_float(out[i].get("final_score")), bands[i][0], bands[i][1])
-        for i in range(n)
-        if bands[i][0] is not None
-    ]
-    if flagged:
-        logger.info(
-            "expansion_value_band_pass entry: search_id=%s n=%d flagged=%s",
-            search_id, n, flagged,
+        # Freshness: "New" (created within window) takes precedence over
+        # "Updated" (refreshed within window). Mutually exclusive by design
+        # so a fresh-and-recently-refreshed listing earns +2, not +3.
+        fs = _c.get("feature_snapshot_json") or {}
+        listing_age = fs.get("listing_age") or {}
+        created_days = listing_age.get("created_days")
+        updated_days = listing_age.get("updated_days")
+        is_new = (
+            isinstance(created_days, (int, float))
+            and not isinstance(created_days, bool)
+            and 0 <= float(created_days) <= _LISTING_FRESHNESS_DAYS
         )
-
-    # Pass 1: downrank above_market (high-confidence only). Process from
-    # bottom up so earlier pops don't shift later indices.
-    demote_indices = [
-        i for i in range(n)
-        if bands[i][0] == "above_market" and not bands[i][1]
-    ]
-    demoted = 0
-    for i in reversed(demote_indices):
-        target = min(i + _VALUE_DOWNRANK_MAX_POSITIONS, n - 1)
-        if target > i:
-            c = out.pop(i)
-            out.insert(target, c)
-            _record_value_pass_marker(c, direction="downrank", delta=target - i)
-            demoted += 1
-
-    # Re-index after demotions so promote_indices reference current positions.
-    bands = [_candidate_value_band(c) for c in out]
-
-    # Pass 2: uprank best_value (high-confidence only). Promote up to
-    # _VALUE_UPRANK_MAX_POSITIONS but never past a peer whose final_score is
-    # more than _FUZZY_TIE_WINDOW points higher.
-    promote_indices = [
-        i for i in range(len(out))
-        if bands[i][0] == "best_value" and not bands[i][1]
-    ]
-    promoted = 0
-    fuzzy_window = _FUZZY_TIE_WINDOW
-    for i in promote_indices:
-        c = out[i]
-        c_final = _safe_float(c.get("final_score"))
-        max_steps = _VALUE_UPRANK_MAX_POSITIONS
-        new_idx = i
-        for _step in range(1, max_steps + 1):
-            j = new_idx - 1
-            if j < 0:
-                break
-            j_final = _safe_float(out[j].get("final_score"))
-            if j_final - c_final > fuzzy_window:
-                break
-            new_idx = j
-        if new_idx < i:
-            c = out.pop(i)
-            out.insert(new_idx, c)
-            _record_value_pass_marker(c, direction="uprank", delta=i - new_idx)
-            promoted += 1
-
-    if demoted or promoted:
-        logger.info(
-            "expansion_value_band_pass: search_id=%s demoted=%d promoted=%d "
-            "downrank_cap=%d uprank_cap=%d",
-            search_id, demoted, promoted,
-            _VALUE_DOWNRANK_MAX_POSITIONS, _VALUE_UPRANK_MAX_POSITIONS,
+        is_updated = (
+            (not is_new)
+            and isinstance(updated_days, (int, float))
+            and not isinstance(updated_days, bool)
+            and 0 <= float(updated_days) <= _LISTING_FRESHNESS_DAYS
         )
-    return out
+        if is_new:
+            freshness_bonus = 2.0
+            freshness_label: str | None = "new"
+        elif is_updated:
+            freshness_bonus = 1.0
+            freshness_label = "updated"
+        else:
+            freshness_bonus = 0.0
+            freshness_label = None
+
+        momentum = fs.get("district_momentum") or {}
+        momentum_score = momentum.get("momentum_score")
+        if (
+            isinstance(momentum_score, (int, float))
+            and not isinstance(momentum_score, bool)
+            and float(momentum_score) >= _MOMENTUM_DISPLAY_THRESHOLD
+            and momentum.get("sample_floor_applied") is False
+        ):
+            momentum_bonus = 2.0
+        else:
+            momentum_bonus = 0.0
+
+        total_delta = (
+            value_band_delta + viability_delta + freshness_bonus + momentum_bonus
+        )
+        raw_final = base + total_delta
+        final_clamped = (raw_final < 0.0) or (raw_final > 100.0)
+        new_final = _clamp(raw_final, 0.0, 100.0)
+
+        sb = _c.get("score_breakdown_json")
+        if not isinstance(sb, dict):
+            sb = {}
+            _c["score_breakdown_json"] = sb
+        sb["bonus_detail"] = {
+            "base_deterministic": round(base, 2),
+            "value_band_delta": float(value_band_delta),
+            "viability_legs_fired": viability_legs_fired,
+            "viability_delta": float(viability_delta),
+            "freshness_bonus": float(freshness_bonus),
+            "freshness_label": freshness_label,
+            "momentum_bonus": float(momentum_bonus),
+            "total_delta": float(total_delta),
+            "final_score_clamped": bool(final_clamped),
+        }
+        sb["final_score"] = round(new_final, 2)
+        _c["final_score"] = round(new_final, 2)
+
+        # Back-compat: legacy value_pass keys + top-level mirrors so existing
+        # saved-study consumers and the frontend Why-#N chip continue to read
+        # the uprank/downrank flag for one release cycle. The "delta" fields
+        # carry the magnitude of the score delta (4 for +4 best_value, 6 for
+        # -6 above_market) so the chip displays an accurate change. Readers
+        # should migrate to bonus_detail.value_band_delta for the signed
+        # value. Deprecated as of score-delta refactor.
+        if value_band_delta == 4.0:
+            vp = sb.setdefault("value_pass", {})
+            vp["value_uprank_applied"] = True
+            vp["value_uprank_delta"] = 4
+            _c["value_uprank_applied"] = True
+            _c["value_uprank_delta"] = 4
+        elif value_band_delta == -6.0:
+            vp = sb.setdefault("value_pass", {})
+            vp["value_downrank_applied"] = True
+            vp["value_downrank_delta"] = 6
+            _c["value_downrank_applied"] = True
+            _c["value_downrank_delta"] = 6
+
+        # Drop transient working fields populated by the viability pass so
+        # they do not leak into persistence or downstream consumers.
+        _c.pop("viability_legs_fired", None)
+        _c.pop("viability_delta", None)
+
+    candidates.sort(
+        key=lambda _c: (
+            -_safe_float(_c.get("final_score"), 0.0),
+            str(_c.get("parcel_id", "")),
+        )
+    )
+    return candidates
+
+
+def _value_band_score_delta(c: dict[str, Any]) -> float:
+    """Return the score delta contributed by the candidate's value_band.
+
+    +4 for high-confidence ``best_value``; -6 for high-confidence
+    ``above_market``; 0 otherwise (low-confidence pools and neutral/missing
+    bands are intentionally inert — same skip semantics as the deleted
+    ``_apply_value_band_pass`` positional nudge).
+    """
+    band, low_conf = _candidate_value_band(c)
+    if low_conf:
+        return 0.0
+    if band == "best_value":
+        return 4.0
+    if band == "above_market":
+        return -6.0
+    return 0.0
 
 
 def _apply_market_viability_pass(
@@ -4597,7 +4554,6 @@ def _apply_market_viability_pass(
     search_id: str | None = None,
     rent_pct_threshold: float | None = None,
     pop_percentile_threshold: float | None = None,
-    demotion_steps: int | None = None,
     radiance_yoy_threshold: float | None = None,
     population_hard_floor: int | None = None,
     commercial_hard_floor: int | None = None,
@@ -4660,10 +4616,17 @@ def _apply_market_viability_pass(
     Conservative: each measured leg requires its underlying signal to be
     CONFIDENT (rent scope not citywide; pop reach > 0; economics_score
     populated; realized_demand_30d present with branches >= the configured
-    minimum). Positional reorder only, does not mutate final_score. Writes
-    ``market_viability_flag`` to score_breakdown_json with the legs that fired
-    encoded as a stable ``_and_``-joined string in the ``reason`` field
-    (stable order: population, rent, economics, demand, radiance_growth).
+    minimum).
+
+    Score-delta refactor: this function no longer reorders the candidate
+    list. For each survivor of the hard-floor drops it computes which legs
+    fired and stashes ``viability_legs_fired`` (list[str]) and
+    ``viability_delta`` (float, ``-10`` per fired leg) on the candidate dict
+    so the caller can fold the delta into ``final_score`` once. It still
+    writes ``market_viability_flag`` to ``score_breakdown_json`` with the
+    legs that fired (stable order: rpc, population, rent, economics, demand,
+    radiance_growth) and the per-leg booleans / threshold context used by
+    the saved-study UI.
     """
     if not candidates:
         return candidates
@@ -4677,11 +4640,6 @@ def _apply_market_viability_pass(
         pop_percentile_threshold
         if pop_percentile_threshold is not None
         else settings.EXPANSION_VIABILITY_POP_PERCENTILE
-    )
-    demotion_steps = (
-        demotion_steps
-        if demotion_steps is not None
-        else settings.EXPANSION_VIABILITY_DEMOTION_STEPS
     )
     radiance_yoy_threshold = (
         radiance_yoy_threshold
@@ -5126,18 +5084,15 @@ def _apply_market_viability_pass(
         )
 
     pre_eval = [_flag_inputs(c) for c in out]
-    demote_indices = [
-        i for i in range(n)
-        if (
-            rpc_demote_by_id.get(id(out[i]), False)
-            or pre_eval[i][0] or pre_eval[i][1] or pre_eval[i][2]
-            or pre_eval[i][3] or pre_eval[i][4]
-        )
-    ]
 
+    # Score-delta refactor: instead of swapping list positions, attach the
+    # legs that fired and the resulting delta (-10 each, stacking) to every
+    # candidate. The caller folds ``viability_delta`` into final_score once
+    # and re-sorts. ``market_viability_flag`` is still written for every
+    # candidate where any leg fired, mirroring the legacy persisted shape
+    # (minus the now-meaningless ``demotion_steps`` key).
     demoted = 0
-    for i in reversed(demote_indices):
-        target = min(i + demotion_steps, n - 1)
+    for i in range(n):
         c = out[i]
         (
             pop_demote, rent_demote, econ_demote, demand_demote,
@@ -5162,63 +5117,65 @@ def _apply_market_viability_pass(
             reasons.append("demand_low")
         if radiance_growth_demote:
             reasons.append("radiance_growth_low")
-        sb = c.get("score_breakdown_json")
-        if not isinstance(sb, dict):
-            sb = {}
-            c["score_breakdown_json"] = sb
-        flag_dict: dict[str, Any] = {
-            "demoted": True,
-            "demotion_steps": int(demotion_steps),
-            "rent_percentile": float(rent_pct),
-            "rent_source_label": rent_scope,
-            "population_reach": float(pop_reach),
-            "population_threshold": float(pop_threshold),
-            "economics_score": (
-                float(economics_score) if economics_score is not None else None
-            ),
-            "economics_threshold": float(economics_min),
-            "population_demote": pop_demote,
-            "rent_demote": rent_demote,
-            "economics_demote": econ_demote,
-            "realized_demand_30d": (
-                float(demand_value) if demand_value is not None else None
-            ),
-            "realized_demand_branches": demand_branches,
-            "realized_demand_threshold": (
-                float(demand_threshold) if demand_threshold is not None else None
-            ),
-            "demand_demote": demand_demote,
-            "radiance_growth_demote": radiance_growth_demote,
-            "radiance_yoy_demote_threshold": float(radiance_yoy_demote_threshold),
-            "reason": "_and_".join(reasons),
-            "radiance_growth_pct": radiance_meta["radiance_growth_pct"],
-            "radiance_confident": radiance_meta["radiance_confident"],
-            "radiance_pixel_count": radiance_meta["radiance_pixel_count"],
-            "radiance_year_month": radiance_meta["radiance_year_month"],
-        }
-        if rpc_active:
-            flag_dict.update(rpc_telemetry_by_id.get(id(c), {
-                "rent_per_capita_sar": None,
-                "rent_per_capita_pct": None,
-                "rent_per_capita_demote": None,
-            }))
-        sb["market_viability_flag"] = flag_dict
-        if target > i:
-            out.pop(i)
-            out.insert(target, c)
-        demoted += 1
 
-    # Write rpc telemetry to candidates the rpc leg evaluated but the
-    # demote loop did not touch (i.e. no leg fired for them). The demote
-    # loop above already included the rpc keys for every demoted candidate
-    # via flag_dict. When the rpc leg is inactive (cohort below the
-    # min-cohort floor), no flag writes happen — per the leg's contract.
+        any_leg_fired = bool(reasons)
+        viability_delta = -10.0 * len(reasons)
+        # Stash on the candidate dict so the caller can apply the delta.
+        # These are transient working fields and the caller drops them
+        # after folding into bonus_detail.
+        c["viability_legs_fired"] = list(reasons)
+        c["viability_delta"] = float(viability_delta)
+
+        if any_leg_fired:
+            sb = c.get("score_breakdown_json")
+            if not isinstance(sb, dict):
+                sb = {}
+                c["score_breakdown_json"] = sb
+            flag_dict: dict[str, Any] = {
+                "demoted": True,
+                "rent_percentile": float(rent_pct),
+                "rent_source_label": rent_scope,
+                "population_reach": float(pop_reach),
+                "population_threshold": float(pop_threshold),
+                "economics_score": (
+                    float(economics_score) if economics_score is not None else None
+                ),
+                "economics_threshold": float(economics_min),
+                "population_demote": pop_demote,
+                "rent_demote": rent_demote,
+                "economics_demote": econ_demote,
+                "realized_demand_30d": (
+                    float(demand_value) if demand_value is not None else None
+                ),
+                "realized_demand_branches": demand_branches,
+                "realized_demand_threshold": (
+                    float(demand_threshold) if demand_threshold is not None else None
+                ),
+                "demand_demote": demand_demote,
+                "radiance_growth_demote": radiance_growth_demote,
+                "radiance_yoy_demote_threshold": float(radiance_yoy_demote_threshold),
+                "reason": "_and_".join(reasons),
+                "radiance_growth_pct": radiance_meta["radiance_growth_pct"],
+                "radiance_confident": radiance_meta["radiance_confident"],
+                "radiance_pixel_count": radiance_meta["radiance_pixel_count"],
+                "radiance_year_month": radiance_meta["radiance_year_month"],
+            }
+            if rpc_active:
+                flag_dict.update(rpc_telemetry_by_id.get(id(c), {
+                    "rent_per_capita_sar": None,
+                    "rent_per_capita_pct": None,
+                    "rent_per_capita_demote": None,
+                }))
+            sb["market_viability_flag"] = flag_dict
+            demoted += 1
+
+    # Write rpc telemetry to candidates the rpc leg evaluated but no other
+    # leg fired (no market_viability_flag block above). When the rpc leg is
+    # inactive (cohort below the min-cohort floor), no flag writes happen —
+    # per the leg's contract.
     if rpc_active:
-        demoted_ids: set[int] = {id(out[i]) for i in demote_indices}
         for c in out:
             cid = id(c)
-            if cid in demoted_ids:
-                continue
             telemetry = rpc_telemetry_by_id.get(cid)
             if telemetry is None:
                 continue
@@ -5246,14 +5203,14 @@ def _apply_market_viability_pass(
             "rent_pct_threshold=%.2f pop_percentile=%.2f pop_threshold=%.0f "
             "economics_min=%.2f demand_percentile=%.2f demand_threshold=%s "
             "radiance_yoy_demote_threshold=%.2f "
-            "demotion_steps=%d cohort_n=%d demand_cohort_n=%d",
+            "cohort_n=%d demand_cohort_n=%d",
             search_id, demoted, pop_demoted, rent_demoted, econ_demoted,
             demand_demoted, radiance_demoted,
             rent_pct_threshold, pop_percentile_threshold, pop_threshold,
             economics_min, demand_percentile_threshold,
             ("%.2f" % demand_threshold) if demand_threshold is not None else "None",
             radiance_yoy_demote_threshold,
-            demotion_steps, len(pop_values), len(demand_values),
+            len(pop_values), len(demand_values),
         )
 
     # Per-leg diagnostics: parallel block to ``hard_floors`` (written
@@ -9050,13 +9007,6 @@ def run_expansion_search(
             search_id, _pre_score_dedup, len(candidates),
         )
 
-    # Patch 13: LLM-aware fuzzy tiebreak. Within groups whose final_score
-    # values fall inside _FUZZY_TIE_WINDOW points of each other, prefer rows
-    # with higher combined LLM signal (suitability + landlord). Runs after
-    # dedup so we don't reorder rows about to be removed, but before
-    # district balancing so the tiebroken order feeds into district pick.
-    candidates = _apply_llm_fuzzy_tiebreak(candidates)
-
     # ── District balancing: ensure multi-district searches get representation ──
     # When target_districts has 2+ districts, guarantee at least min_per_district
     # candidates from each district that has qualifying parcels, before filling
@@ -9090,25 +9040,21 @@ def run_expansion_search(
 
         candidates = _balanced
 
-    # Soft value-band ordering pass. Runs AFTER district balancing (so we
-    # don't sabotage the multi-district guarantee) and BEFORE truncation +
-    # rerank (so positional changes propagate through `:limit` cleanly and
-    # the LLM rerank's deterministic_rank reflects the post-nudge position).
-    # Stays within ±EXPANSION_LLM_RERANK_MAX_MOVE-1 by construction; the
-    # rerank validator's ±max_move bound is unchanged and remains
-    # authoritative.
-    candidates = _apply_value_band_pass(candidates, search_id=search_id)
-
-    # CEO directive #1 (2-of-3): demote candidates that are confidently bad on
-    # both rent and population. Soft positional pass; runs after value_band so
-    # demotions stack when the same row is both above-market and high-rent +
-    # low-pop, and before truncation/rerank so the LLM sees post-pass order.
+    # ── Score-delta refactor ──
+    # The viability pass now applies hard-floor drops AND attaches per-leg
+    # decisions (viability_legs_fired, viability_delta) on each survivor,
+    # without any positional reorder. We then fold the value_band, viability,
+    # freshness, and momentum deltas into final_score and re-sort strictly
+    # by (final_score DESC, parcel_id ASC). The LLM rerank pass that follows
+    # is a no-op in production (EXPANSION_LLM_RERANK_ENABLED=False).
     viability_diagnostics: dict[str, Any] = {}
     candidates = _apply_market_viability_pass(
         candidates,
         search_id=search_id,
         diagnostics=viability_diagnostics,
     )
+
+    candidates = _apply_score_deltas_and_sort(candidates)
 
     candidates = candidates[:limit]
 
