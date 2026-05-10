@@ -256,6 +256,17 @@
   opacity: 1;
 }
 
+.ea-badge--exploratory {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.ea-candidate__exploratory-pill {
+  font-size: 11px;
+  padding: 1px 8px;
+  letter-spacing: 0.02em;
+}
+
 /* ─ Candidate card ─ */
 .ea-candidate {
   display: grid;

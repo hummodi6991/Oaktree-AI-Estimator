@@ -961,6 +961,8 @@
     "updatedBadgeTooltip": "Listing refreshed by the owner on Aqar within the last 7 days",
     "premierBadge": "Premier",
     "premierBadgeTooltip": "High confidence, clears all gates, and scores in the top tier",
+    "exploratoryBadge": "Exploratory",
+    "exploratoryBadgeTooltip": "Lower confidence or a failed gate — review carefully before shortlisting",
     "tierPremierHeader": "Premier — best of the best",
     "tierExploratoryHeader": "Also consider",
     "viewOnAqar": "View on Aqar",

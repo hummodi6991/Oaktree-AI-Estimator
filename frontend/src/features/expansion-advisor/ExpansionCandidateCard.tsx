@@ -177,6 +177,14 @@ export default function ExpansionCandidateCard({
               {t("expansionAdvisor.premierBadge")}
             </span>
           )}
+          {isExploratory && (
+            <span
+              className="ea-badge ea-badge--exploratory ea-candidate__exploratory-pill"
+              title={t("expansionAdvisor.exploratoryBadgeTooltip")}
+            >
+              {t("expansionAdvisor.exploratoryBadge")}
+            </span>
+          )}
           <ScorePill value={getDisplayScore(candidate)} />
           {/* value_band chip — derived "strong location at a fair price"
             * signal. Three states render:

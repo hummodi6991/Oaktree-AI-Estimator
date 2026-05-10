@@ -47,12 +47,12 @@ const EXPLORATORY_OVERRIDES: Partial<ExpansionCandidate> = {
   gate_status_json: { overall_pass: false },
 };
 
-describe("ExpansionResultsPanel — tier section headers", () => {
-  it("renders no section headers when every candidate is Standard", () => {
+describe("ExpansionResultsPanel — flat rank-ordered render", () => {
+  it("never renders tier section headers (no grouping in the panel)", () => {
     const items = [
-      baseCandidate({ id: "c1", rank_position: 1 }),
+      baseCandidate({ id: "c1", rank_position: 1, ...PREMIER_OVERRIDES }),
       baseCandidate({ id: "c2", rank_position: 2 }),
-      baseCandidate({ id: "c3", rank_position: 3 }),
+      baseCandidate({ id: "c3", rank_position: 3, ...EXPLORATORY_OVERRIDES }),
     ];
     const html = render(items);
     expect(html).not.toContain("ea-candidate-list__section-header");
@@ -60,43 +60,28 @@ describe("ExpansionResultsPanel — tier section headers", () => {
     expect(html).not.toContain("Also consider");
   });
 
-  it("renders the Premier header only when a Premier candidate exists", () => {
-    const items = [
-      baseCandidate({ id: "c1", rank_position: 1, ...PREMIER_OVERRIDES }),
-      baseCandidate({ id: "c2", rank_position: 2 }),
-    ];
-    const html = render(items);
-    expect(html).toContain("Premier — best of the best");
-    expect(html).not.toContain("Also consider");
-  });
-
-  it("renders the Exploratory header only when an Exploratory candidate exists", () => {
+  it("renders candidates in the exact order supplied by the backend", () => {
+    // Mixed tiers in backend rank order: standard, standard, premier,
+    // standard, exploratory. The panel must preserve this order — a
+    // Premier card at rank 3 sits at DOM position 3, not lifted to the top.
     const items = [
       baseCandidate({ id: "c1", rank_position: 1 }),
-      baseCandidate({ id: "c2", rank_position: 2, ...EXPLORATORY_OVERRIDES }),
-    ];
-    const html = render(items);
-    expect(html).not.toContain("Premier — best of the best");
-    expect(html).toContain("Also consider");
-  });
-
-  it("renders both headers when both tiers are populated", () => {
-    const items = [
-      baseCandidate({ id: "c1", rank_position: 1, ...PREMIER_OVERRIDES }),
       baseCandidate({ id: "c2", rank_position: 2 }),
-      baseCandidate({ id: "c3", rank_position: 3, ...EXPLORATORY_OVERRIDES }),
+      baseCandidate({ id: "c3", rank_position: 3, ...PREMIER_OVERRIDES }),
+      baseCandidate({ id: "c4", rank_position: 4 }),
+      baseCandidate({ id: "c5", rank_position: 5, ...EXPLORATORY_OVERRIDES }),
     ];
     const html = render(items);
-    expect(html).toContain("Premier — best of the best");
-    expect(html).toContain("Also consider");
-    // Premier section must appear before Exploratory section in the DOM.
-    const premierIdx = html.indexOf("Premier — best of the best");
-    const exploratoryIdx = html.indexOf("Also consider");
-    expect(premierIdx).toBeGreaterThan(-1);
-    expect(exploratoryIdx).toBeGreaterThan(premierIdx);
+    const positions = ["c1", "c2", "c3", "c4", "c5"].map((id) =>
+      html.indexOf(`data-candidate-id="${id}"`),
+    );
+    positions.forEach((p) => expect(p).toBeGreaterThan(-1));
+    for (let i = 1; i < positions.length; i += 1) {
+      expect(positions[i]).toBeGreaterThan(positions[i - 1]);
+    }
   });
 
-  it("renders the Premier pill on Premier cards", () => {
+  it("renders the Premier chip on Premier cards (in-card, not under a header)", () => {
     const items = [baseCandidate({ id: "c1", rank_position: 1, ...PREMIER_OVERRIDES })];
     const html = render(items);
     expect(html).toContain("ea-candidate--premier");
@@ -104,12 +89,19 @@ describe("ExpansionResultsPanel — tier section headers", () => {
     expect(html).toContain(">Premier<");
   });
 
-  it("applies the exploratory class (muted) on Exploratory cards", () => {
+  it("renders the Exploratory chip on Exploratory cards", () => {
     const items = [baseCandidate({ id: "c1", rank_position: 1, ...EXPLORATORY_OVERRIDES })];
     const html = render(items);
     expect(html).toContain("ea-candidate--exploratory");
-    // No "Exploratory" label on the card itself — the section header carries it.
-    expect(html).not.toContain(">Exploratory<");
+    expect(html).toContain("ea-candidate__exploratory-pill");
+    expect(html).toContain(">Exploratory<");
+  });
+
+  it("renders no tier chip on Standard cards", () => {
+    const items = [baseCandidate({ id: "c1", rank_position: 1 })];
+    const html = render(items);
+    expect(html).not.toContain("ea-candidate__premier-pill");
+    expect(html).not.toContain("ea-candidate__exploratory-pill");
   });
 
   it("handles an empty shortlist", () => {
@@ -118,7 +110,7 @@ describe("ExpansionResultsPanel — tier section headers", () => {
     expect(html).toContain("ea-candidate-list");
   });
 
-  it("preserves global rank numbers across tier groups (not reset per tier)", () => {
+  it("preserves global rank numbers across mixed tiers", () => {
     const items = [
       baseCandidate({ id: "c1", rank_position: 1, ...PREMIER_OVERRIDES }),
       baseCandidate({ id: "c2", rank_position: 2 }),
