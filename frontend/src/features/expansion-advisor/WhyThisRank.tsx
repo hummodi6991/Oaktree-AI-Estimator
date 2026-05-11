@@ -39,7 +39,7 @@ export default function WhyThisRank({ candidate }: Props) {
           {/* Score components */}
           {components.length > 0 && (
             <div className="ea-why-rank__section">
-              <h6 className="ea-why-rank__section-title">{t("expansionAdvisor.scoreComponents")}</h6>
+              <h6 className="ea-why-rank__section-title">{t("expansionAdvisor.scoreComponentsHeading")}</h6>
               <div className="ea-why-rank__score-grid">
                 {components.map((comp) => (
                   <div key={comp.label} className="ea-why-rank__score-row">

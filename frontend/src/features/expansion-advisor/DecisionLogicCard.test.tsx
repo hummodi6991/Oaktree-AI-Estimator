@@ -45,7 +45,7 @@ function productionGateReasons(): CandidateGateReasons {
 }
 
 function fullBreakdown(overrides?: Partial<CandidateScoreBreakdown>): CandidateScoreBreakdown {
-  // 9-component fixture; weighted_components sum to final_score (78.05).
+  // 10-component fixture; weighted_components sum to final_score.
   const weighted_components: Record<string, number> = {
     occupancy_economics: 22.5,
     listing_quality: 8.25,
@@ -56,6 +56,7 @@ function fullBreakdown(overrides?: Partial<CandidateScoreBreakdown>): CandidateS
     access_visibility: 7.5,
     delivery_demand: 4.0,
     confidence: 5.85,
+    chain_strength: 1.5,
   };
   const final_score = Object.values(weighted_components).reduce((a, b) => a + b, 0);
   return {
@@ -69,8 +70,20 @@ function fullBreakdown(overrides?: Partial<CandidateScoreBreakdown>): CandidateS
       access_visibility: 10,
       delivery_demand: 5,
       confidence: 5,
+      chain_strength: 3,
     },
-    inputs: {},
+    inputs: {
+      occupancy_economics: 75,
+      listing_quality: 75,
+      brand_fit: 85,
+      landlord_signal: 70,
+      competition_whitespace: 80,
+      demand_potential: 70,
+      access_visibility: 75,
+      delivery_demand: 80,
+      confidence: 117,
+      chain_strength: 50,
+    },
     weighted_components,
     final_score,
     display_score: final_score,
@@ -249,7 +262,7 @@ describe("DecisionLogicCard gate explanations", () => {
 /* ─── 5. Score contributions: 9 segments + legend totals final_score ───── */
 
 describe("DecisionLogicCard score contributions", () => {
-  it("renders 9 bar segments and 9 legend items, with summed weighted_points matching final_score", () => {
+  it("renders 10 bar segments and 10 legend items, with summed weighted_points matching final_score", () => {
     const breakdown = fullBreakdown();
     const html = renderToStaticMarkup(
       <DecisionLogicCard
@@ -260,21 +273,171 @@ describe("DecisionLogicCard score contributions", () => {
       />,
     );
     const segMatches = html.match(/ea-decision-logic__bar-segment(?!--| ea-decision-logic__legend-swatch)/g) ?? [];
-    // Count the actual bar segments by matching the data-component attribute.
+    // Each component renders: one bar segment, one legend item, and one
+    // component-row <details> — three data-component attributes per component,
+    // so 10 components × 2 (segment + legend) + 10 (component-row details) = 30.
     const dataComponentMatches = html.match(/data-component="/g) ?? [];
-    // Each component renders one segment and one legend item, so data-component
-    // should appear exactly 9 segments + 9 legend items = 18 times.
-    expect(segMatches.length).toBeGreaterThanOrEqual(9);
-    expect(dataComponentMatches.length).toBe(18);
+    expect(segMatches.length).toBeGreaterThanOrEqual(10);
+    expect(dataComponentMatches.length).toBe(30);
 
     // Parse out the weighted_points from the legend's rendered text and sum.
+    // The bonuses block also surfaces ".N pts" magnitudes inside chips, so
+    // restrict to the strict "{n}.{d} pts<" form rendered by the legend.
     const legendValueMatches = html.match(/>(\d+\.\d)\s+pts</g) ?? [];
-    expect(legendValueMatches.length).toBe(9);
-    const sum = legendValueMatches
+    expect(legendValueMatches.length).toBeGreaterThanOrEqual(10);
+    const legendOnly = legendValueMatches.slice(0, 10);
+    const sum = legendOnly
       .map((m) => parseFloat(m.replace(/[^\d.]/g, "")))
       .reduce((a, b) => a + b, 0);
     // Rounded-to-1-decimal legend values should sum within 0.5 of final_score.
     expect(Math.abs(sum - (breakdown.final_score as number))).toBeLessThan(0.5);
+  });
+});
+
+/* ─── 5b. Component-row accordion: 10 rows + definitions + chain_strength ─ */
+
+describe("DecisionLogicCard component-row accordion", () => {
+  it("renders 10 component accordion rows with labels and definitions", () => {
+    const breakdown = fullBreakdown();
+    const html = renderToStaticMarkup(
+      <DecisionLogicCard
+        gateReasons={productionGateReasons()}
+        scoreBreakdown={breakdown}
+        deterministicRank={1}
+        finalRank={1}
+      />,
+    );
+    // 10 component-row <details> wrappers.
+    const componentRows = html.match(/ea-decision-logic__subsection--component-row/g) ?? [];
+    expect(componentRows.length).toBe(10);
+    // Each component label and definition (or a leading word from each)
+    // appears at least once.
+    const componentKeys = [
+      "occupancy_economics",
+      "listing_quality",
+      "brand_fit",
+      "landlord_signal",
+      "competition_whitespace",
+      "demand_potential",
+      "access_visibility",
+      "delivery_demand",
+      "confidence",
+      "chain_strength",
+    ];
+    for (const key of componentKeys) {
+      const label = en.expansionAdvisor.scoreComponents[
+        key as keyof typeof en.expansionAdvisor.scoreComponents
+      ].label;
+      // renderToStaticMarkup HTML-escapes the ampersand, so compare against
+      // the escaped form.
+      const escaped = label.replace(/&/g, "&amp;");
+      expect(html).toContain(escaped);
+    }
+    // chain_strength rust color class is wired through.
+    expect(html).toContain("ea-decision-logic__bar-segment--chain_strength");
+  });
+});
+
+/* ─── 5c. Bonuses & adjustments sub-block ───────────────────────────────── */
+
+describe("DecisionLogicCard bonuses sub-block", () => {
+  it("renders bonus chips, total adjustment, and final score when bonus_detail present", () => {
+    const breakdown = fullBreakdown({
+      bonus_detail: {
+        base_deterministic: 72.5,
+        value_band_delta: 4.0,
+        viability_legs_fired: ["demand_low"],
+        viability_delta: -10.0,
+        freshness_bonus: 2.0,
+        freshness_label: "new",
+        momentum_bonus: 0.0,
+        total_delta: -4.0,
+        final_score_clamped: false,
+      },
+    } as unknown as Partial<CandidateScoreBreakdown>);
+    const html = renderToStaticMarkup(
+      <DecisionLogicCard
+        gateReasons={productionGateReasons()}
+        scoreBreakdown={breakdown}
+        deterministicRank={1}
+        finalRank={1}
+        candidate={{ value_band: "best_value", value_band_low_confidence: false } as any}
+      />,
+    );
+    // Heading and subtotal (ampersand is HTML-escaped in SSR output).
+    expect(html).toContain(
+      en.expansionAdvisor.decisionLogic.bonusesHeading.replace(/&/g, "&amp;"),
+    );
+    expect(html).toContain("72.50");
+    // Best Value +4 chip.
+    expect(html).toContain(en.expansionAdvisor.bonuses.bestValue);
+    expect(html).toContain("ea-decision-logic__delta--up");
+    // Freshness "new" +2 chip.
+    expect(html).toContain(en.expansionAdvisor.bonuses.freshnessNew);
+    // Viability demand_low −10 chip.
+    expect(html).toContain(en.expansionAdvisor.bonuses.viability.demand_low);
+    expect(html).toContain("ea-decision-logic__delta--down");
+    // Final score row.
+    expect(html).toContain(en.expansionAdvisor.decisionLogic.finalScore);
+  });
+
+  it("renders the clamped badge when bonus_detail.final_score_clamped is true", () => {
+    const breakdown = fullBreakdown({
+      bonus_detail: {
+        base_deterministic: 99.0,
+        value_band_delta: 4.0,
+        viability_legs_fired: [],
+        viability_delta: 0,
+        freshness_bonus: 0,
+        freshness_label: null,
+        momentum_bonus: 0,
+        total_delta: 4.0,
+        final_score_clamped: true,
+      },
+    } as unknown as Partial<CandidateScoreBreakdown>);
+    const html = renderToStaticMarkup(
+      <DecisionLogicCard
+        gateReasons={productionGateReasons()}
+        scoreBreakdown={breakdown}
+        deterministicRank={1}
+        finalRank={1}
+      />,
+    );
+    expect(html).toContain("ea-decision-logic__clamped-badge");
+    expect(html).toContain(en.expansionAdvisor.decisionLogic.clamped);
+  });
+});
+
+/* ─── 5d. Suppressed value_band renders as neutral chip ─────────────────── */
+
+describe("DecisionLogicCard suppressed value band", () => {
+  it("renders a suppressed-style chip with no signed magnitude when value_band_low_confidence is true and delta is 0", () => {
+    const breakdown = fullBreakdown({
+      bonus_detail: {
+        base_deterministic: 72.0,
+        value_band_delta: 0.0,
+        viability_legs_fired: [],
+        viability_delta: 0,
+        freshness_bonus: 0,
+        freshness_label: null,
+        momentum_bonus: 0,
+        total_delta: 0,
+        final_score_clamped: false,
+      },
+    } as unknown as Partial<CandidateScoreBreakdown>);
+    const html = renderToStaticMarkup(
+      <DecisionLogicCard
+        gateReasons={productionGateReasons()}
+        scoreBreakdown={breakdown}
+        deterministicRank={1}
+        finalRank={1}
+        candidate={{ value_band: "above_market", value_band_low_confidence: true } as any}
+      />,
+    );
+    expect(html).toContain("ea-decision-logic__delta--suppressed");
+    expect(html).toContain(en.expansionAdvisor.bonuses.aboveMarketSuppressed);
+    // Signed magnitude must NOT render alongside the suppressed chip.
+    expect(html).not.toContain("ea-decision-logic__delta--suppressed</span><span class=\"ea-decision-logic__delta-magnitude");
   });
 });
 

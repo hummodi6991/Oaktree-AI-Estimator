@@ -1,11 +1,28 @@
 import { useTranslation } from "react-i18next";
 import type {
+  CandidateFeatureSnapshot,
   CandidateGateReasons,
   CandidateScoreBreakdown,
+  ExpansionCandidate,
   RerankReason,
   RerankStatus,
 } from "../../lib/api/expansionAdvisor";
 import { humanGateLabel } from "./formatHelpers";
+import {
+  PER_COMPONENT_INPUTS,
+  VIABILITY_LEG_ORDER,
+  type ResolvedInputValue,
+  type SourceToken,
+} from "./scoreComponentMeta";
+
+// The memo response embeds a loose candidate shape (feature_snapshot,
+// not feature_snapshot_json). Accept a permissive partial so this component
+// can be fed from the list endpoint or the memo endpoint.
+type LooseCandidate = Partial<ExpansionCandidate> &
+  Record<string, unknown> & {
+    feature_snapshot?: CandidateFeatureSnapshot | Record<string, unknown>;
+    feature_snapshot_json?: CandidateFeatureSnapshot | Record<string, unknown>;
+  };
 
 type Props = {
   gateReasons?: CandidateGateReasons;
@@ -15,12 +32,17 @@ type Props = {
   rerankStatus?: RerankStatus | null;
   rerankReason?: RerankReason | null;
   rerankDelta?: number;
+  /** Whole candidate (ExpansionCandidate or memo.candidate). Optional — when
+   * omitted, contributions accordion still renders summaries but per-input
+   * values fall back to em-dashes. */
+  candidate?: LooseCandidate;
 };
 
 /* ─── Score-component display metadata ──────────────────────────────────── */
 
 // Canonical component order + labels matching
-// app/services/expansion_advisor.py:2409-2419 (9 components summing to 100%).
+// app/services/expansion_advisor.py:_score_breakdown (10 components summing
+// to 100% after the Patch B chain_strength split-off).
 const SCORE_COMPONENT_ORDER: readonly string[] = [
   "occupancy_economics",
   "listing_quality",
@@ -31,26 +53,8 @@ const SCORE_COMPONENT_ORDER: readonly string[] = [
   "access_visibility",
   "delivery_demand",
   "confidence",
+  "chain_strength",
 ] as const;
-
-const SCORE_COMPONENT_LABEL: Record<string, string> = {
-  occupancy_economics: "Economics",
-  listing_quality: "Listing Quality",
-  brand_fit: "Brand Fit",
-  landlord_signal: "Landlord Signal",
-  competition_whitespace: "Competitor Openness",
-  demand_potential: "Demand Strength",
-  access_visibility: "Access & Visibility",
-  delivery_demand: "Delivery Market",
-  confidence: "Data Quality",
-};
-
-function labelForComponent(key: string): string {
-  return (
-    SCORE_COMPONENT_LABEL[key] ||
-    key.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase())
-  );
-}
 
 /* ─── Inline gate-status icons (no icon library) ────────────────────────── */
 
@@ -243,33 +247,75 @@ function GatesSection({
   );
 }
 
+/* ─── Score contributions: input-value formatting ───────────────────────── */
+
+function formatInputValue(
+  v: ResolvedInputValue,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
+  if (v == null) return "—";
+  if (typeof v === "boolean") {
+    return v ? t("expansionAdvisor.decisionLogic.boolYes") : t("expansionAdvisor.decisionLogic.boolNo");
+  }
+  if (typeof v === "number") {
+    if (!Number.isFinite(v)) return "—";
+    return Number.isInteger(v) ? String(v) : v.toFixed(2);
+  }
+  return v;
+}
+
+function sourceLabel(
+  token: SourceToken,
+  t: ReturnType<typeof useTranslation>["t"],
+): string {
+  return t(`expansionAdvisor.scoreSources.${token}`, { defaultValue: token });
+}
+
 /* ─── Sub-component: score contributions ────────────────────────────────── */
 
 function ContributionsSection({
   breakdown,
+  candidate,
   t,
 }: {
   breakdown: CandidateScoreBreakdown | undefined;
+  candidate: LooseCandidate | undefined;
   t: ReturnType<typeof useTranslation>["t"];
 }) {
   const weightedRaw = (breakdown?.weighted_components ||
     {}) as Record<string, unknown>;
   const weights = (breakdown?.weights || {}) as Record<string, unknown>;
+  const inputs = (breakdown?.inputs || {}) as Record<string, unknown>;
   const finalScore = Number(
     breakdown?.display_score ?? breakdown?.final_score ?? 0,
   );
+
+  // Feature snapshot may arrive as `feature_snapshot` (memo response) or
+  // `feature_snapshot_json` (list/detail responses). Defensive: try both.
+  const featureSnapshot =
+    (candidate?.feature_snapshot_json as CandidateFeatureSnapshot | undefined) ||
+    (candidate?.feature_snapshot as CandidateFeatureSnapshot | undefined);
+  const contextSources =
+    (featureSnapshot?.context_sources as Record<string, unknown> | undefined) ||
+    {};
 
   const components = SCORE_COMPONENT_ORDER
     .filter((key) => key in weightedRaw)
     .map((key) => {
       const points = Number(weightedRaw[key]) || 0;
       const weight = Number(weights[key]) || 0;
-      return { key, points, weight };
+      const subScore = Number(inputs[key]) || 0;
+      return { key, points, weight, subScore };
     });
 
   const totalPoints = components.reduce((acc, c) => acc + c.points, 0);
 
-  const renderSegment = (key: string, points: number, weight: number) => {
+  const renderSegment = (
+    key: string,
+    points: number,
+    weight: number,
+    label: string,
+  ) => {
     const widthPct =
       totalPoints > 0 ? Math.max(0.01, (points / totalPoints) * 100) : 0;
     return (
@@ -277,10 +323,109 @@ function ContributionsSection({
         key={`seg-${key}`}
         className={`ea-decision-logic__bar-segment ea-decision-logic__bar-segment--${key}`}
         style={{ flexBasis: `${widthPct}%` }}
-        title={`${labelForComponent(key)}: ${points.toFixed(2)} / ${weight}`}
+        title={`${label}: ${points.toFixed(2)} / ${weight}`}
         data-component={key}
         data-points={points.toFixed(2)}
       />
+    );
+  };
+
+  const renderComponentRow = (c: {
+    key: string;
+    points: number;
+    weight: number;
+    subScore: number;
+  }) => {
+    const label = t(`expansionAdvisor.scoreComponents.${c.key}.label`, {
+      defaultValue: c.key.replace(/_/g, " "),
+    });
+    const definition = t(`expansionAdvisor.scoreComponents.${c.key}.definition`, {
+      defaultValue: "",
+    });
+    const descriptors = PER_COMPONENT_INPUTS[c.key] ?? [];
+    const resolved = descriptors.map((d) => ({
+      key: d.key,
+      ...d.resolve({
+        candidate: (candidate as Record<string, unknown>) || {},
+        scoreBreakdown: breakdown,
+        featureSnapshot,
+        contextSources,
+      }),
+    }));
+
+    return (
+      <details
+        key={`comp-${c.key}`}
+        className="ea-decision-logic__subsection ea-decision-logic__subsection--component-row"
+        data-component={c.key}
+      >
+        <summary className="ea-decision-logic__subsection-summary">
+          <span
+            className={`ea-decision-logic__legend-swatch ea-decision-logic__bar-segment--${c.key}`}
+            aria-hidden="true"
+          />
+          <span className="ea-decision-logic__subsection-title">{label}</span>
+          <span className="ea-decision-logic__subsection-status">
+            {t("expansionAdvisor.decisionLogic.weightAndPoints", {
+              weight: c.weight.toFixed(1),
+              points: c.points.toFixed(1),
+            })}
+          </span>
+        </summary>
+        <div className="ea-decision-logic__subsection-body">
+          {definition && (
+            <p className="ea-decision-logic__component-definition">
+              {definition}
+            </p>
+          )}
+          <dl className="ea-decision-logic__component-meta">
+            <div className="ea-decision-logic__component-meta-row">
+              <dt>{t("expansionAdvisor.decisionLogic.subScoreLabel")}</dt>
+              <dd>{c.subScore.toFixed(1)} / 100</dd>
+            </div>
+            <div className="ea-decision-logic__component-meta-row">
+              <dt>{t("expansionAdvisor.decisionLogic.weightLabel")}</dt>
+              <dd>{c.weight.toFixed(1)}%</dd>
+            </div>
+            <div className="ea-decision-logic__component-meta-row">
+              <dt>{t("expansionAdvisor.decisionLogic.contributionLabel")}</dt>
+              <dd>{c.points.toFixed(2)} pts</dd>
+            </div>
+          </dl>
+          {resolved.length > 0 && (
+            <>
+              <h6 className="ea-decision-logic__component-inputs-title">
+                {t("expansionAdvisor.decisionLogic.inputsHeading")}
+              </h6>
+              <dl className="ea-decision-logic__component-inputs">
+                {resolved.map((r) => {
+                  const inputLabel = t(
+                    `expansionAdvisor.scoreComponents.${c.key}.inputs.${r.key}.label`,
+                    { defaultValue: r.key.replace(/_/g, " ") },
+                  );
+                  return (
+                    <div
+                      key={`${c.key}-${r.key}`}
+                      className="ea-decision-logic__component-input-row"
+                      data-input={r.key}
+                    >
+                      <dt className="ea-decision-logic__component-input-label">
+                        {inputLabel}
+                      </dt>
+                      <dd className="ea-decision-logic__component-input-value">
+                        {formatInputValue(r.value, t)}
+                      </dd>
+                      <dd className="ea-decision-logic__component-input-source">
+                        {sourceLabel(r.source, t)}
+                      </dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            </>
+          )}
+        </div>
+      </details>
     );
   };
 
@@ -300,7 +445,16 @@ function ContributionsSection({
         {components.length > 0 ? (
           <>
             <div className="ea-decision-logic__bar" aria-hidden="true">
-              {components.map((c) => renderSegment(c.key, c.points, c.weight))}
+              {components.map((c) =>
+                renderSegment(
+                  c.key,
+                  c.points,
+                  c.weight,
+                  t(`expansionAdvisor.scoreComponents.${c.key}.label`, {
+                    defaultValue: c.key,
+                  }),
+                ),
+              )}
             </div>
             <ul className="ea-decision-logic__legend">
               {components.map((c) => (
@@ -314,7 +468,9 @@ function ContributionsSection({
                     aria-hidden="true"
                   />
                   <span className="ea-decision-logic__legend-label">
-                    {labelForComponent(c.key)}
+                    {t(`expansionAdvisor.scoreComponents.${c.key}.label`, {
+                      defaultValue: c.key,
+                    })}
                   </span>
                   <span className="ea-decision-logic__legend-value">
                     {t("expansionAdvisor.decisionLogicWeightedPoints", {
@@ -324,10 +480,235 @@ function ContributionsSection({
                 </li>
               ))}
             </ul>
+            <div className="ea-decision-logic__component-rows">
+              {components.map((c) => renderComponentRow(c))}
+            </div>
+            <BonusesSubBlock
+              breakdown={breakdown}
+              candidate={candidate}
+              featureSnapshot={featureSnapshot}
+              t={t}
+            />
           </>
         ) : null}
       </div>
     </details>
+  );
+}
+
+/* ─── Sub-block: bonuses & adjustments ──────────────────────────────────── */
+
+type BonusDetail = {
+  base_deterministic?: number;
+  value_band_delta?: number;
+  viability_legs_fired?: string[];
+  viability_delta?: number;
+  freshness_bonus?: number;
+  freshness_label?: string | null;
+  momentum_bonus?: number;
+  total_delta?: number;
+  final_score_clamped?: boolean;
+};
+
+type ChipKind = "up" | "down" | "suppressed";
+
+function Chip({
+  kind,
+  label,
+  magnitude,
+}: {
+  kind: ChipKind;
+  label: string;
+  magnitude?: number | null;
+}) {
+  const cls = `ea-decision-logic__delta ea-decision-logic__delta--${kind}`;
+  return (
+    <span className={cls}>
+      {kind === "up" && magnitude != null && (
+        <span aria-hidden="true">↑</span>
+      )}
+      {kind === "down" && magnitude != null && (
+        <span aria-hidden="true">↓</span>
+      )}
+      <span className="ea-decision-logic__delta-label">{label}</span>
+      {kind !== "suppressed" && magnitude != null && (
+        <span className="ea-decision-logic__delta-magnitude">
+          {kind === "up" ? "+" : "−"}
+          {Math.abs(magnitude)}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function BonusesSubBlock({
+  breakdown,
+  candidate,
+  featureSnapshot,
+  t,
+}: {
+  breakdown: CandidateScoreBreakdown | undefined;
+  candidate: LooseCandidate | undefined;
+  featureSnapshot: CandidateFeatureSnapshot | Record<string, unknown> | undefined;
+  t: ReturnType<typeof useTranslation>["t"];
+}) {
+  const bd = ((breakdown as unknown as { bonus_detail?: BonusDetail } | undefined)
+    ?.bonus_detail || null) as BonusDetail | null;
+  if (!bd) return null;
+
+  const base = typeof bd.base_deterministic === "number" ? bd.base_deterministic : null;
+  const valueBandDelta = typeof bd.value_band_delta === "number" ? bd.value_band_delta : 0;
+  const viabilityLegs = Array.isArray(bd.viability_legs_fired) ? bd.viability_legs_fired : [];
+  const freshness = bd.freshness_label || null;
+  const momentumBonus = typeof bd.momentum_bonus === "number" ? bd.momentum_bonus : 0;
+  const totalDelta = typeof bd.total_delta === "number" ? bd.total_delta : 0;
+  const clamped = bd.final_score_clamped === true;
+  const finalScore = Number(breakdown?.final_score ?? 0);
+
+  const valueBand = (candidate?.value_band as string | undefined) || null;
+  const valueBandLowConfidence = candidate?.value_band_low_confidence === true;
+
+  // Order chips by source order: value_band → freshness → momentum → viability.
+  type ChipDef = { key: string; kind: ChipKind; label: string; magnitude?: number | null };
+  const chips: ChipDef[] = [];
+
+  if (valueBandDelta === 4) {
+    chips.push({
+      key: "best_value",
+      kind: "up",
+      label: t("expansionAdvisor.bonuses.bestValue"),
+      magnitude: 4,
+    });
+  } else if (valueBandDelta === -6) {
+    chips.push({
+      key: "above_market",
+      kind: "down",
+      label: t("expansionAdvisor.bonuses.aboveMarket"),
+      magnitude: -6,
+    });
+  } else if (
+    valueBandDelta === 0 &&
+    valueBandLowConfidence &&
+    (valueBand === "best_value" || valueBand === "above_market")
+  ) {
+    chips.push({
+      key: "value_band_suppressed",
+      kind: "suppressed",
+      label:
+        valueBand === "above_market"
+          ? t("expansionAdvisor.bonuses.aboveMarketSuppressed")
+          : t("expansionAdvisor.bonuses.bestValueSuppressed"),
+    });
+  }
+
+  if (freshness === "new") {
+    chips.push({
+      key: "freshness_new",
+      kind: "up",
+      label: t("expansionAdvisor.bonuses.freshnessNew"),
+      magnitude: 2,
+    });
+  } else if (freshness === "updated") {
+    chips.push({
+      key: "freshness_updated",
+      kind: "up",
+      label: t("expansionAdvisor.bonuses.freshnessUpdated"),
+      magnitude: 1,
+    });
+  }
+
+  // Momentum: derive client-side from district_momentum, but only display
+  // when the backend awarded the bonus.
+  const momentum = (featureSnapshot as Record<string, unknown> | undefined)?.district_momentum as
+    | Record<string, unknown>
+    | undefined;
+  const momentumScore = typeof momentum?.momentum_score === "number" ? momentum.momentum_score : null;
+  const sampleFloorApplied = momentum?.sample_floor_applied === true;
+  if (
+    momentumBonus === 2 &&
+    momentumScore != null &&
+    momentumScore >= 70 &&
+    !sampleFloorApplied
+  ) {
+    chips.push({
+      key: "momentum_top_tier",
+      kind: "up",
+      label: t("expansionAdvisor.bonuses.momentumTopTier"),
+      magnitude: 2,
+    });
+  }
+
+  // Viability legs in stable backend order.
+  const firedSet = new Set(viabilityLegs);
+  for (const leg of VIABILITY_LEG_ORDER) {
+    if (!firedSet.has(leg)) continue;
+    chips.push({
+      key: `viability_${leg}`,
+      kind: "down",
+      label: t(`expansionAdvisor.bonuses.viability.${leg}`, {
+        defaultValue: leg.replace(/_/g, " "),
+      }),
+      magnitude: -10,
+    });
+  }
+  // Surface any unexpected legs the backend may have added, defensively.
+  for (const leg of viabilityLegs) {
+    if (VIABILITY_LEG_ORDER.includes(leg)) continue;
+    chips.push({
+      key: `viability_${leg}`,
+      kind: "down",
+      label: t(`expansionAdvisor.bonuses.viability.${leg}`, {
+        defaultValue: leg.replace(/_/g, " "),
+      }),
+      magnitude: -10,
+    });
+  }
+
+  return (
+    <div className="ea-decision-logic__bonuses">
+      <h5 className="ea-decision-logic__bonuses-title">
+        {t("expansionAdvisor.decisionLogic.bonusesHeading")}
+      </h5>
+      <dl className="ea-decision-logic__bonuses-meta">
+        <div className="ea-decision-logic__bonuses-row">
+          <dt>{t("expansionAdvisor.decisionLogic.subtotal")}</dt>
+          <dd>{base != null ? base.toFixed(2) : "—"}</dd>
+        </div>
+        {chips.length > 0 && (
+          <div className="ea-decision-logic__bonuses-row ea-decision-logic__bonuses-row--chips">
+            <dt>{t("expansionAdvisor.decisionLogic.adjustmentsLabel")}</dt>
+            <dd className="ea-decision-logic__bonuses-chips">
+              {chips.map((c) => (
+                <Chip
+                  key={c.key}
+                  kind={c.kind}
+                  label={c.label}
+                  magnitude={c.magnitude}
+                />
+              ))}
+            </dd>
+          </div>
+        )}
+        <div className="ea-decision-logic__bonuses-row">
+          <dt>{t("expansionAdvisor.decisionLogic.totalAdjustment")}</dt>
+          <dd>
+            {totalDelta > 0 ? "+" : ""}
+            {totalDelta.toFixed(2)}
+          </dd>
+        </div>
+        <div className="ea-decision-logic__bonuses-row ea-decision-logic__bonuses-row--final">
+          <dt>{t("expansionAdvisor.decisionLogic.finalScore")}</dt>
+          <dd>
+            {finalScore.toFixed(2)}
+            {clamped && (
+              <span className="ea-decision-logic__clamped-badge">
+                {t("expansionAdvisor.decisionLogic.clamped")}
+              </span>
+            )}
+          </dd>
+        </div>
+      </dl>
+    </div>
   );
 }
 
@@ -517,6 +898,7 @@ export default function DecisionLogicCard({
   rerankStatus,
   rerankReason,
   rerankDelta,
+  candidate,
 }: Props) {
   const { t } = useTranslation();
 
@@ -526,7 +908,7 @@ export default function DecisionLogicCard({
         {t("expansionAdvisor.decisionLogicTitle")}
       </h4>
       <GatesSection reasons={gateReasons} t={t} />
-      <ContributionsSection breakdown={scoreBreakdown} t={t} />
+      <ContributionsSection breakdown={scoreBreakdown} candidate={candidate} t={t} />
       <RankingDecisionSection
         deterministicRank={deterministicRank}
         finalRank={finalRank}
