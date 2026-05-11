@@ -4533,6 +4533,21 @@
   font-size: var(--oak-fs-xs, 12px);
   padding-block: 2px;
 }
+.ea-decision-logic__subsection--component-row > .ea-decision-logic__subsection-summary::before {
+  font-size: var(--oak-fs-sm, 14px);
+  color: var(--oak-primary, #14312c);
+  font-weight: 700;
+  margin-inline-end: 6px;
+  transition: transform 120ms ease;
+}
+.ea-decision-logic__subsection--component-row > .ea-decision-logic__subsection-summary:hover {
+  background: rgba(20, 49, 44, 0.04);
+  cursor: pointer;
+}
+.ea-decision-logic__subsection--component-row > .ea-decision-logic__subsection-summary:focus-visible {
+  outline: 2px solid var(--oak-primary, #14312c);
+  outline-offset: 2px;
+}
 .ea-decision-logic__subsection--component-row .ea-decision-logic__legend-swatch {
   inline-size: 10px;
   block-size: 10px;
