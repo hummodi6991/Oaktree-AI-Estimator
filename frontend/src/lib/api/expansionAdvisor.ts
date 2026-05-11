@@ -111,10 +111,35 @@ export type CandidateGateStatusJson = {
   [key: string]: boolean | null | undefined;
 };
 
+export type FeatureBrandPresence = {
+  radius_m?: number;
+  unique_brands?: number;
+  unique_brands_canonical?: number;
+  unique_brands_total?: number;
+  total_branches?: number;
+  top_chains?: Array<Record<string, unknown>>;
+  top_chain_strength_name?: string | null;
+  [key: string]: unknown;
+};
+
+export type FeatureListingQualitySignals = {
+  llm_suitability_score?: number | null;
+  llm_listing_quality_score?: number | null;
+  is_furnished?: boolean | null;
+  has_drive_thru?: boolean | null;
+  unit_restaurant_score?: number | null;
+};
+
 export type CandidateFeatureSnapshot = {
   context_sources: Record<string, unknown>;
   missing_context: string[];
   data_completeness_score: number;
+  // Score Contributions diagnostics surface (additive plumbing for the
+  // Decision Memo Diagnostics tab). All optional; absent on legacy rows.
+  listing_quality_signals?: FeatureListingQualitySignals;
+  area_confidence?: "actual" | "estimate" | null;
+  is_listing?: boolean;
+  brand_presence?: FeatureBrandPresence;
   [key: string]: unknown;
 };
 

@@ -6052,13 +6052,22 @@ def _bulk_enrich_competitors(
                         i.parcel_id,
                         COALESCE(comp.competitor_count, 0) AS competitor_count,
                         COALESCE(comp.broader_count, 0) AS broader_count,
-                        comp.max_chain_strength AS max_chain_strength
+                        comp.max_chain_strength AS max_chain_strength,
+                        comp.top_chain_strength_name AS top_chain_strength_name
                     FROM inputs i
                     LEFT JOIN LATERAL (
                         SELECT
                             COUNT(*) FILTER (WHERE in_category) AS competitor_count,
                             COUNT(*) AS broader_count,
-                            MAX(chain_strength) FILTER (WHERE in_category) AS max_chain_strength
+                            MAX(chain_strength) FILTER (WHERE in_category) AS max_chain_strength,
+                            -- Brand provenance for the chain_strength leg:
+                            -- the name attached to the same-category row that
+                            -- carried the MAX chain_strength_score above.
+                            -- Distinct from brand_presence.top_chains[0],
+                            -- which orders by branch_count.
+                            (array_agg(brand_name ORDER BY chain_strength DESC NULLS LAST)
+                                FILTER (WHERE in_category AND chain_strength IS NOT NULL))[1]
+                                AS top_chain_strength_name
                         FROM (
                             -- Source 1: restaurant_poi (Google Places).
                             -- LEFT JOIN expansion_competitor_quality so the
@@ -6066,7 +6075,8 @@ def _bulk_enrich_competitors(
                             -- category POI row; rows without an ECQ match
                             -- contribute NULL (ignored by MAX).
                             SELECT (lower(rp.category) = ANY(:category_keys)) AS in_category,
-                                   ecq.chain_strength_score AS chain_strength
+                                   ecq.chain_strength_score AS chain_strength,
+                                   rp.name AS brand_name
                             FROM restaurant_poi rp
                             LEFT JOIN expansion_competitor_quality ecq
                                    ON ecq.restaurant_poi_id = rp.id
@@ -6083,7 +6093,8 @@ def _bulk_enrich_competitors(
                             SELECT (lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
                                     OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
                                    ) AS in_category,
-                                   NULL::double precision AS chain_strength
+                                   NULL::double precision AS chain_strength,
+                                   NULL::text AS brand_name
                             FROM delivery_source_record dsr
                             WHERE {_dsr_where}
                               AND ST_DWithin(
@@ -6106,6 +6117,11 @@ def _bulk_enrich_competitors(
                 "max_chain_strength": (
                     float(r["max_chain_strength"])
                     if r["max_chain_strength"] is not None
+                    else None
+                ),
+                "top_chain_strength_name": (
+                    str(r["top_chain_strength_name"])
+                    if r.get("top_chain_strength_name") is not None
                     else None
                 ),
             }
@@ -6744,6 +6760,7 @@ def run_expansion_search(
                     _r["competitor_count"] = _entry["competitor_count"]
                     _r["competitor_count_confident"] = _entry["confident"]
                     _r["max_chain_strength"] = _entry.get("max_chain_strength")
+                    _r["top_chain_strength_name"] = _entry.get("top_chain_strength_name")
             logger.info(
                 "expansion_search: bulk competitor enrichment applied to %d/%d candidates, search_id=%s",
                 len(_bulk_comp), len(rows), search_id,
@@ -6787,6 +6804,7 @@ def run_expansion_search(
                         _r["competitor_count"] = _entry["competitor_count"]
                         _r["competitor_count_confident"] = _entry["confident"]
                         _r["max_chain_strength"] = _entry.get("max_chain_strength")
+                        _r["top_chain_strength_name"] = _entry.get("top_chain_strength_name")
 
             # ── Resolve commercial unit districts to Arabic names ──────────
             # Commercial units store English neighborhood names from Aqar,
@@ -8455,6 +8473,12 @@ def run_expansion_search(
         # Top 5 by branch count, with unique brand count and total branch
         # count summarized for the Breakdown tab header.
         _bp_brands_for_candidate = _bulk_brand_presence.get(_pid_str, [])
+        # top_chain_strength_name: brand whose chain_strength_score was the
+        # MAX in the competition catchment (surfaced from
+        # _bulk_enrich_competitors). Distinct from top_chains[0], which is
+        # ordered by branch_count. None when no same-category POI carried a
+        # non-NULL chain_strength_score.
+        _top_chain_strength_name = row.get("top_chain_strength_name")
         if _bp_brands_for_candidate:
             _bp_canonical_count = sum(
                 1 for b in _bp_brands_for_candidate
@@ -8471,6 +8495,7 @@ def run_expansion_search(
                 "unique_brands_total": len(_bp_brands_for_candidate),
                 "total_branches": sum(b["branch_count"] for b in _bp_brands_for_candidate),
                 "top_chains": _bp_brands_for_candidate[:5],
+                "top_chain_strength_name": _top_chain_strength_name,
             }
         else:
             feature_snapshot_json["brand_presence"] = {
@@ -8480,6 +8505,7 @@ def run_expansion_search(
                 "unique_brands_total": 0,
                 "total_branches": 0,
                 "top_chains": [],
+                "top_chain_strength_name": _top_chain_strength_name,
             }
         # Construction proximity (CEO directive — exclude areas with heavy
         # construction). Every persisted candidate must have this key set,
@@ -8857,6 +8883,40 @@ def run_expansion_search(
                 feature_snapshot_json["comparable_source_label"] = str(
                     _comparable_source_label
                 )
+
+        # ── Score Contributions diagnostics surface ──
+        # Per-input candidate values that the score functions read but the
+        # snapshot did not previously persist. Purely additive — no score
+        # formula change. The frontend Decision Memo Diagnostics tab reads
+        # these to show per-component candidate inputs.
+        feature_snapshot_json["is_listing"] = bool(_is_listing)
+        _area_confidence_val = row.get("area_confidence")
+        feature_snapshot_json["area_confidence"] = (
+            str(_area_confidence_val) if _area_confidence_val is not None else None
+        )
+        # listing_quality_signals: only meaningful for listing-backed
+        # candidates. For parcel candidates, emit an empty dict (consumers
+        # treat missing keys as "not applicable"); do not raise when the
+        # unit_* columns are absent.
+        if _is_listing:
+            def _opt_bool(value: Any) -> bool | None:
+                return None if value is None else bool(value)
+
+            feature_snapshot_json["listing_quality_signals"] = {
+                "llm_suitability_score": _safe_float(row.get("unit_llm_suitability_score"))
+                    if row.get("unit_llm_suitability_score") is not None
+                    else None,
+                "llm_listing_quality_score": _safe_float(
+                    row.get("unit_llm_listing_quality_score")
+                ) if row.get("unit_llm_listing_quality_score") is not None else None,
+                "is_furnished": _opt_bool(row.get("unit_is_furnished")),
+                "has_drive_thru": _opt_bool(row.get("unit_has_drive_thru")),
+                "unit_restaurant_score": _safe_float(row.get("unit_restaurant_score"))
+                    if row.get("unit_restaurant_score") is not None
+                    else None,
+            }
+        else:
+            feature_snapshot_json["listing_quality_signals"] = {}
 
         candidates.append(
             {
