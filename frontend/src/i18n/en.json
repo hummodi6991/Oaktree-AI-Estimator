@@ -748,7 +748,7 @@
     "backendRank": "Backend rank (original scoring order)",
     "backendRankLabel": "Rank #{{rank}}",
     "whyThisRank": "Why this rank?",
-    "scoreComponents": "Score components",
+    "scoreComponentsHeading": "Score components",
     "dataQuality": "Data quality",
     "filterLabel": "Filter",
     "sortLabel": "Sort",
@@ -1080,7 +1080,21 @@
     "rerankReasonLabel": "LLM review",
     "rerankOutsideWindow": "Outside LLM review window",
     "rerankDeterministicAccepted": "Deterministic ranking accepted",
-    "decisionLogic": "Decision logic",
+    "decisionLogic": {
+      "boolYes": "Yes",
+      "boolNo": "No",
+      "subScoreLabel": "Sub-score",
+      "weightLabel": "Weight",
+      "contributionLabel": "Contribution",
+      "weightAndPoints": "{{weight}}% · {{points}} pts",
+      "inputsHeading": "Inputs",
+      "bonusesHeading": "Bonuses & adjustments",
+      "subtotal": "Base score",
+      "adjustmentsLabel": "Adjustments",
+      "totalAdjustment": "Total adjustment",
+      "finalScore": "Final score",
+      "clamped": "Clamped to 0–100"
+    },
     "decisionLogicTitle": "Ranking logic",
     "decisionLogicGates": "Gates",
     "decisionLogicContributions": "Score contributions",
@@ -1100,6 +1114,140 @@
     "decisionLogicDeltaAria": "Rank moved {{direction}} by {{magnitude}}",
     "decisionLogicDeltaUp": "up",
     "decisionLogicDeltaDown": "down",
+    "scoreComponents": {
+      "occupancy_economics": {
+        "label": "Economics",
+        "definition": "How much rent the site costs relative to comparable listings and how that interacts with fit-out, area, and cannibalization. Lower rent burden lifts the score; above-market rent drags it.",
+        "inputs": {
+          "estimated_annual_rent_sar": { "label": "Annual rent (SAR)" },
+          "estimated_fitout_cost_sar": { "label": "Fit-out cost (SAR)" },
+          "area_m2": { "label": "Area (m²)" },
+          "cannibalization_score": { "label": "Cannibalization risk" },
+          "rent_burden_percentile": { "label": "Rent percentile vs. comparables" }
+        }
+      },
+      "listing_quality": {
+        "label": "Listing Quality",
+        "definition": "How recent, well-described, and well-presented the listing is, combined with the district's underlying momentum. Fresh, furnished, image-backed listings in rising districts score higher.",
+        "inputs": {
+          "effective_age_days": { "label": "Effective listing age (days)" },
+          "has_image": { "label": "Has image" },
+          "llm_suitability_score": { "label": "LLM suitability score" },
+          "llm_listing_quality_score": { "label": "LLM listing quality score" },
+          "is_furnished": { "label": "Furnished" },
+          "has_drive_thru": { "label": "Drive-thru" },
+          "district_momentum_score": { "label": "District momentum score" }
+        }
+      },
+      "brand_fit": {
+        "label": "Brand Fit",
+        "definition": "How well the site matches the brand's preferred district, target area band, service model, and cannibalization tolerance from the operator brief.",
+        "inputs": {
+          "district": { "label": "District" },
+          "area_match": { "label": "Area (m²)" },
+          "service_model_fit": { "label": "Source / format" },
+          "cannibalization_distance_m": { "label": "Distance to nearest branch (m)" }
+        }
+      },
+      "landlord_signal": {
+        "label": "Landlord Signal",
+        "definition": "An LLM read of landlord responsiveness and listing copy — does the landlord look professional, motivated, and likely to negotiate fairly?",
+        "inputs": {
+          "llm_landlord_signal_score": { "label": "LLM landlord signal score" }
+        }
+      },
+      "competition_whitespace": {
+        "label": "Competitor Openness",
+        "definition": "How crowded the immediate trade area is with same-category competitors. Whitespace (low competitor density combined with measured demand) scores higher.",
+        "inputs": {
+          "competitor_count": { "label": "Competitor count (nearby)" },
+          "nearest_branch_distance_m": { "label": "Distance to nearest branch (m)" },
+          "whitespace_input": { "label": "Whitespace sub-score" }
+        }
+      },
+      "demand_potential": {
+        "label": "Demand Strength",
+        "definition": "Combined demand evidence: population reach within a walking/driving catchment, realized 30-day delivery demand, and the district's nighttime-light growth trend.",
+        "inputs": {
+          "population_reach": { "label": "Population reach" },
+          "realized_demand_30d": { "label": "Realized demand (30d)" },
+          "realized_demand_branches": { "label": "Active demand branches" },
+          "radiance_growth_pct": { "label": "Radiance YoY growth (%)" }
+        }
+      },
+      "access_visibility": {
+        "label": "Access & Visibility",
+        "definition": "Street width, frontage, parking, and proximity to a major road. Wider streets, road-adjacent parcels, and observed parking lift the score.",
+        "inputs": {
+          "street_width_m": { "label": "Street width (m)" },
+          "nearest_major_road_distance_m": { "label": "Nearest major road (m)" },
+          "touches_road": { "label": "Touches road" },
+          "frontage_score": { "label": "Frontage sub-score" },
+          "parking_score": { "label": "Parking sub-score" }
+        }
+      },
+      "delivery_demand": {
+        "label": "Delivery Market",
+        "definition": "Multi-platform delivery presence in the area — how many providers are active, how many platforms list food in this district, and how strong multi-platform presence is.",
+        "inputs": {
+          "provider_listing_count": { "label": "Provider listing count" },
+          "provider_platform_count": { "label": "Provider platform count" },
+          "multi_platform_presence_score": { "label": "Multi-platform presence" }
+        }
+      },
+      "confidence": {
+        "label": "Data Quality",
+        "definition": "How complete and trustworthy the input data is for this candidate — feature coverage, area certainty, and the count of missing signals.",
+        "inputs": {
+          "data_completeness_score": { "label": "Data completeness" },
+          "area_confidence": { "label": "Area confidence" },
+          "missing_context_count": { "label": "Missing signals" }
+        }
+      },
+      "chain_strength": {
+        "label": "Chain Strength",
+        "definition": "Pro-presence signal: when established, well-performing chains are already nearby, that's evidence the trade area can support a strong concept.",
+        "inputs": {
+          "max_chain_strength": { "label": "Max nearby chain strength" },
+          "top_chain_name": { "label": "Top nearby chain" },
+          "unique_brands": { "label": "Unique nearby brands" }
+        }
+      }
+    },
+    "scoreSources": {
+      "aqar": "Aqar",
+      "google_places": "Google Places",
+      "black_marble": "Black Marble VNP46A3",
+      "osm": "OpenStreetMap",
+      "arcgis_riyadh_parcels": "ArcGIS (Riyadh parcels)",
+      "operator_brief": "Operator brief",
+      "hungerstation": "HungerStation",
+      "talabat": "Talabat",
+      "mrsool": "Mrsool",
+      "population_grid": "Population grid",
+      "oaktree_llm": "Oaktree LLM",
+      "oaktree_internal": "Oaktree internal",
+      "expansion_road_context": "Expansion road context",
+      "expansion_parking_asset": "Expansion parking asset",
+      "expansion_delivery_market": "Expansion delivery market"
+    },
+    "bonuses": {
+      "bestValue": "Best Value",
+      "aboveMarket": "Above Market",
+      "bestValueSuppressed": "Best Value (suppressed — low comparable confidence)",
+      "aboveMarketSuppressed": "Above Market (suppressed — low comparable confidence)",
+      "freshnessNew": "New listing",
+      "freshnessUpdated": "Recently updated",
+      "momentumTopTier": "District momentum top-tier",
+      "viability": {
+        "rent_per_capita_high": "Rent-per-capita too high",
+        "population_below_quartile": "Population below quartile",
+        "rent_high": "Rent above threshold",
+        "economics_below_threshold": "Economics below threshold",
+        "demand_low": "Realized demand too low",
+        "radiance_growth_low": "Radiance growth too low"
+      }
+    },
     "gateVerdictPass": "Passed",
     "gateVerdictFail": "Failed",
     "gateVerdictUnknown": "Unverified",

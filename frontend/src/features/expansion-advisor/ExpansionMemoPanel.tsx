@@ -317,6 +317,7 @@ export default function ExpansionMemoPanel({
                         rerankStatus={cand.rerank_status ?? null}
                         rerankReason={cand.rerank_reason ?? null}
                         rerankDelta={typeof cand.rerank_delta === "number" ? cand.rerank_delta : 0}
+                        candidate={cand as Record<string, unknown>}
                       />
                     </div>
 

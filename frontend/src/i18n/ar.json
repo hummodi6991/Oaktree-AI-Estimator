@@ -747,7 +747,7 @@
     "backendRank": "ترتيب النظام (التسجيل الأصلي)",
     "backendRankLabel": "الترتيب #{{rank}}",
     "whyThisRank": "لماذا هذا الترتيب؟",
-    "scoreComponents": "مكونات الدرجة",
+    "scoreComponentsHeading": "مكونات الدرجة",
     "dataQuality": "جودة البيانات",
     "filterLabel": "تصفية",
     "sortLabel": "ترتيب",
@@ -1008,7 +1008,21 @@
     "rerankReasonLabel": "مراجعة النموذج اللغوي",
     "rerankOutsideWindow": "خارج نطاق مراجعة النموذج اللغوي",
     "rerankDeterministicAccepted": "تم اعتماد الترتيب الحتمي",
-    "decisionLogic": "منطق القرار",
+    "decisionLogic": {
+      "boolYes": "نعم",
+      "boolNo": "لا",
+      "subScoreLabel": "الدرجة الفرعية",
+      "weightLabel": "الوزن",
+      "contributionLabel": "المساهمة",
+      "weightAndPoints": "{{weight}}٪ · {{points}} نقطة",
+      "inputsHeading": "المدخلات",
+      "bonusesHeading": "المكافآت والتعديلات",
+      "subtotal": "الدرجة الأساسية",
+      "adjustmentsLabel": "التعديلات",
+      "totalAdjustment": "إجمالي التعديل",
+      "finalScore": "الدرجة النهائية",
+      "clamped": "تم تقييدها بين 0 و100"
+    },
     "decisionLogicTitle": "منطق الترتيب",
     "decisionLogicGates": "البوابات",
     "decisionLogicContributions": "مساهمات الدرجات",
@@ -1028,6 +1042,140 @@
     "decisionLogicDeltaAria": "تحرك الترتيب {{direction}} بمقدار {{magnitude}}",
     "decisionLogicDeltaUp": "للأعلى",
     "decisionLogicDeltaDown": "للأسفل",
+    "scoreComponents": {
+      "occupancy_economics": {
+        "label": "الاقتصاد",
+        "definition": "تكلفة إيجار الموقع مقارنةً بالقوائم المشابهة وكيف تتفاعل مع التشطيب والمساحة والتنافس مع الفروع. الإيجار المنخفض يرفع الدرجة والإيجار الأعلى من السوق يخفضها.",
+        "inputs": {
+          "estimated_annual_rent_sar": { "label": "الإيجار السنوي (ريال)" },
+          "estimated_fitout_cost_sar": { "label": "تكلفة التشطيب (ريال)" },
+          "area_m2": { "label": "المساحة (م²)" },
+          "cannibalization_score": { "label": "خطر التنافس مع الفروع" },
+          "rent_burden_percentile": { "label": "المئوية للإيجار مقارنةً بالمقارنات" }
+        }
+      },
+      "listing_quality": {
+        "label": "جودة القائمة",
+        "definition": "مدى حداثة القائمة وجودة وصفها وعرضها، مع زخم الحي. القوائم الحديثة والمفروشة والمدعمة بصور في أحياء صاعدة تحصل على درجة أعلى.",
+        "inputs": {
+          "effective_age_days": { "label": "العمر الفعلي للقائمة (أيام)" },
+          "has_image": { "label": "تحتوي على صورة" },
+          "llm_suitability_score": { "label": "درجة الملاءمة (LLM)" },
+          "llm_listing_quality_score": { "label": "درجة جودة القائمة (LLM)" },
+          "is_furnished": { "label": "مفروش" },
+          "has_drive_thru": { "label": "خدمة السيارات" },
+          "district_momentum_score": { "label": "درجة زخم الحي" }
+        }
+      },
+      "brand_fit": {
+        "label": "ملاءمة العلامة",
+        "definition": "مدى توافق الموقع مع الحي المفضل للعلامة، ونطاق المساحة المستهدف، ونموذج الخدمة، وحد التنافس مع الفروع من ملف المشغل.",
+        "inputs": {
+          "district": { "label": "الحي" },
+          "area_match": { "label": "المساحة (م²)" },
+          "service_model_fit": { "label": "المصدر / الصيغة" },
+          "cannibalization_distance_m": { "label": "المسافة لأقرب فرع (م)" }
+        }
+      },
+      "landlord_signal": {
+        "label": "إشارة المؤجر",
+        "definition": "قراءة LLM لاستجابة المؤجر ونص القائمة — هل المؤجر يبدو محترفًا ومتحفزًا ومن المرجح أن يتفاوض بإنصاف؟",
+        "inputs": {
+          "llm_landlord_signal_score": { "label": "درجة إشارة المؤجر (LLM)" }
+        }
+      },
+      "competition_whitespace": {
+        "label": "انفتاح المنافسة",
+        "definition": "مدى ازدحام منطقة التجارة المباشرة بمنافسين من نفس الفئة. المساحة البيضاء (كثافة منافسين منخفضة مع طلب مقاس) تحصل على درجة أعلى.",
+        "inputs": {
+          "competitor_count": { "label": "عدد المنافسين القريبين" },
+          "nearest_branch_distance_m": { "label": "المسافة لأقرب فرع (م)" },
+          "whitespace_input": { "label": "درجة المساحة البيضاء الفرعية" }
+        }
+      },
+      "demand_potential": {
+        "label": "قوة الطلب",
+        "definition": "أدلة الطلب المركبة: السكان ضمن نطاق المشي/القيادة، الطلب الفعلي للتوصيل خلال 30 يومًا، واتجاه نمو إضاءة الحي ليلًا.",
+        "inputs": {
+          "population_reach": { "label": "نطاق السكان" },
+          "realized_demand_30d": { "label": "الطلب المحقق (30 يومًا)" },
+          "realized_demand_branches": { "label": "فروع الطلب النشطة" },
+          "radiance_growth_pct": { "label": "نمو الإضاءة سنويًا (٪)" }
+        }
+      },
+      "access_visibility": {
+        "label": "الوصول والوضوح",
+        "definition": "عرض الشارع والواجهة ومواقف السيارات والقرب من طريق رئيسي. الشوارع الأوسع والقطع الملاصقة للطريق ومواقف السيارات المرصودة ترفع الدرجة.",
+        "inputs": {
+          "street_width_m": { "label": "عرض الشارع (م)" },
+          "nearest_major_road_distance_m": { "label": "أقرب طريق رئيسي (م)" },
+          "touches_road": { "label": "ملامس للطريق" },
+          "frontage_score": { "label": "درجة الواجهة الفرعية" },
+          "parking_score": { "label": "درجة المواقف الفرعية" }
+        }
+      },
+      "delivery_demand": {
+        "label": "سوق التوصيل",
+        "definition": "حضور التوصيل متعدد المنصات في المنطقة — كم عدد المزودين النشطين، وعلى كم منصة، ومدى قوة الحضور متعدد المنصات.",
+        "inputs": {
+          "provider_listing_count": { "label": "عدد قوائم المزودين" },
+          "provider_platform_count": { "label": "عدد منصات المزودين" },
+          "multi_platform_presence_score": { "label": "الحضور متعدد المنصات" }
+        }
+      },
+      "confidence": {
+        "label": "جودة البيانات",
+        "definition": "اكتمال البيانات وموثوقيتها لهذا المرشح — تغطية الميزات، يقين المساحة، وعدد الإشارات المفقودة.",
+        "inputs": {
+          "data_completeness_score": { "label": "اكتمال البيانات" },
+          "area_confidence": { "label": "يقين المساحة" },
+          "missing_context_count": { "label": "الإشارات المفقودة" }
+        }
+      },
+      "chain_strength": {
+        "label": "قوة السلسلة",
+        "definition": "إشارة داعمة للتواجد: عندما تكون سلاسل راسخة وذات أداء جيد قريبة بالفعل، فهذا دليل على أن منطقة التجارة قادرة على دعم مفهوم قوي.",
+        "inputs": {
+          "max_chain_strength": { "label": "أعلى قوة سلسلة قريبة" },
+          "top_chain_name": { "label": "أعلى سلسلة قريبة" },
+          "unique_brands": { "label": "العلامات الفريدة القريبة" }
+        }
+      }
+    },
+    "scoreSources": {
+      "aqar": "عقار",
+      "google_places": "Google Places",
+      "black_marble": "Black Marble VNP46A3",
+      "osm": "OpenStreetMap",
+      "arcgis_riyadh_parcels": "ArcGIS (قطع الرياض)",
+      "operator_brief": "ملف المشغل",
+      "hungerstation": "هنقرستيشن",
+      "talabat": "طلبات",
+      "mrsool": "مرسول",
+      "population_grid": "Population grid",
+      "oaktree_llm": "Oaktree LLM",
+      "oaktree_internal": "Oaktree الداخلي",
+      "expansion_road_context": "سياق الطرق",
+      "expansion_parking_asset": "أصول المواقف",
+      "expansion_delivery_market": "سوق التوصيل"
+    },
+    "bonuses": {
+      "bestValue": "أفضل قيمة",
+      "aboveMarket": "أعلى من السوق",
+      "bestValueSuppressed": "أفضل قيمة (مكبوتة — ثقة المقارنة منخفضة)",
+      "aboveMarketSuppressed": "أعلى من السوق (مكبوتة — ثقة المقارنة منخفضة)",
+      "freshnessNew": "قائمة جديدة",
+      "freshnessUpdated": "تم تحديثها مؤخرًا",
+      "momentumTopTier": "زخم الحي في المرتبة العليا",
+      "viability": {
+        "rent_per_capita_high": "الإيجار للفرد مرتفع",
+        "population_below_quartile": "السكان دون الربع",
+        "rent_high": "الإيجار فوق العتبة",
+        "economics_below_threshold": "الاقتصاد دون العتبة",
+        "demand_low": "الطلب المحقق منخفض",
+        "radiance_growth_low": "نمو الإضاءة منخفض"
+      }
+    },
     "gateVerdictPass": "اجتاز",
     "gateVerdictFail": "لم يجتز",
     "gateVerdictUnknown": "غير مُتحقَّق",
