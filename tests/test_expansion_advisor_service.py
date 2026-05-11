@@ -4547,3 +4547,133 @@ def test_existing_branches_present_no_score_change():
     # untouched on the candidate dict (the score-delta pass must not strip it).
     assert out[0]["final_score"] == 72.0
     assert out[0]["cannibalization_score"] == 35.0
+
+
+class _DiagnosticsFakeDB(FakeDB):
+    """FakeDB variant that routes the rent-comparable percentile query and
+    the listing-district momentum CTE to empty results so listing-backed
+    candidates don't accidentally match the generic "FROM commercial_unit"
+    branch and feed the candidate row back in as a rent comparable."""
+
+    def execute(self, stmt, params=None):
+        sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+        if "PERCENTILE_CONT" in sql:
+            return _Result([])
+        return super().execute(stmt, params)
+
+
+def test_feature_snapshot_includes_listing_quality_signals_and_chain_provenance(
+    disable_market_viability_floors,
+):
+    """Score Contributions diagnostics: per-input candidate values that the
+    score functions read but the snapshot did not previously persist must
+    flow into ``feature_snapshot_json`` as a purely additive surface."""
+    db = _DiagnosticsFakeDB(
+        candidate_rows=[
+            {
+                "parcel_id": "p1",
+                "commercial_unit_id": "cu-1",
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 180,
+                "lon": 46.7,
+                "lat": 24.7,
+                "district": "حي العليا",
+                "population_reach": 15000,
+                "competitor_count": 4,
+                "delivery_listing_count": 12,
+                # Listing quality input scalars (consumed by _listing_quality_score)
+                "unit_llm_suitability_score": 72.5,
+                "unit_llm_listing_quality_score": 64.0,
+                "unit_is_furnished": True,
+                "unit_has_drive_thru": False,
+                "unit_restaurant_score": 81.0,
+                # Confidence inputs (consumed by _confidence_score)
+                "area_confidence": "actual",
+                # Chain-strength provenance from bulk competitor enrichment.
+                # The bulk enricher returns {} against FakeDB (no POI rows),
+                # so we inject these directly on the row to simulate the
+                # post-enrichment state.
+                "max_chain_strength": 78.0,
+                "top_chain_strength_name": "Test Chain Brand",
+            }
+        ]
+    )
+
+    items = run_expansion_search(
+        db,
+        search_id="search-diag",
+        brand_name="Brand X",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=300,
+        target_area_m2=180,
+        limit=10,
+    )
+
+    assert len(items) == 1
+    snapshot = items[0]["feature_snapshot_json"]
+
+    # Group A — listing_quality_signals (5 keys, listing-backed candidate).
+    lqs = snapshot["listing_quality_signals"]
+    assert lqs["llm_suitability_score"] == 72.5
+    assert lqs["llm_listing_quality_score"] == 64.0
+    assert lqs["is_furnished"] is True
+    assert lqs["has_drive_thru"] is False
+    assert lqs["unit_restaurant_score"] == 81.0
+
+    # Group B — confidence inputs surfaced top-level.
+    assert snapshot["area_confidence"] == "actual"
+    assert snapshot["is_listing"] is True
+
+    # Group C — chain_strength provenance under brand_presence.
+    assert snapshot["brand_presence"]["top_chain_strength_name"] == "Test Chain Brand"
+
+
+def test_feature_snapshot_parcel_candidate_omits_listing_quality_signals(
+    disable_market_viability_floors,
+):
+    """Parcel-only (non-listing) candidate: is_listing must be False and the
+    listing_quality_signals block must be empty (consumers treat missing
+    keys as not-applicable). The unit_* columns are absent on parcel rows
+    and the snapshot assembly must not raise."""
+    db = FakeDB(
+        candidate_rows=[
+            {
+                "parcel_id": "p1",
+                # No commercial_unit_id → _is_listing is False.
+                "landuse_label": "Commercial",
+                "landuse_code": "C",
+                "area_m2": 180,
+                "lon": 46.7,
+                "lat": 24.7,
+                "district": "حي العليا",
+                "population_reach": 15000,
+                "competitor_count": 4,
+                "delivery_listing_count": 12,
+            }
+        ]
+    )
+
+    items = run_expansion_search(
+        db,
+        search_id="search-parcel-diag",
+        brand_name="Brand X",
+        category="burger",
+        service_model="qsr",
+        min_area_m2=100,
+        max_area_m2=300,
+        target_area_m2=180,
+        limit=10,
+    )
+
+    assert len(items) == 1
+    snapshot = items[0]["feature_snapshot_json"]
+    assert snapshot["is_listing"] is False
+    assert snapshot["listing_quality_signals"] == {}
+    # area_confidence is absent on the parcel row → key present, value None.
+    assert snapshot["area_confidence"] is None
+    # brand_presence still has the chain_strength provenance key, but with
+    # a None value because the bulk enricher returned no chain_strength rows.
+    assert snapshot["brand_presence"]["top_chain_strength_name"] is None
