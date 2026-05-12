@@ -2527,7 +2527,12 @@ def _candidate_gate_status(
         "frontage_access_min": 55.0,
         "parking_min": 45.0,
         "economics_min": settings.EXPANSION_VIABILITY_ECONOMICS_MIN,
-        "delivery_provider_density_min": 45.0,
+        # Calibrated 2026-05-12 from trailing-90d density distribution:
+        # passes 92% of candidates; cleanly excludes the dead-zone
+        # cluster (density 0-5). See docs/investigations/
+        # delivery_market_investigation_2026-05-12.md and
+        # scripts/diagnostics/density_threshold_calibration.sql
+        "delivery_provider_density_min": 10.0,
         "delivery_platform_presence_min": 35.0,
         "cannibalization_min_distance_m": _safe_float(brand_profile.get("cannibalization_tolerance_m"), 1800.0),
     }
@@ -2596,12 +2601,13 @@ def _candidate_gate_status(
 
     primary_channel = (brand_profile.get("primary_channel") or "balanced").lower()
     if primary_channel == "delivery":
-        _delivery_composite = (
-            provider_density_score * 0.6
-            + multi_platform_presence_score * 0.4
-        )
+        # Gate rebased onto provider_density_score alone: only HungerStation
+        # is producing live data today, so multi_platform_presence_score is
+        # not a usable signal. Threshold calibrated against the trailing-90d
+        # density distribution (see delivery_provider_density_min comment).
         delivery_market_pass = (
-            _delivery_composite >= thresholds["delivery_provider_density_min"]
+            provider_density_score
+            >= thresholds["delivery_provider_density_min"]
         )
     else:
         delivery_market_pass = True
@@ -7598,11 +7604,15 @@ def run_expansion_search(
             brand_profile=effective_brand_profile,
             service_model=service_model,
         )
+        # multi_platform_presence_score is excluded from the composite because
+        # only 1 of 14 delivery scrapers (HungerStation) is producing data
+        # today, which collapses the signal to 0 for ~0.15% of candidates and
+        # 100 for ~99.85% — pure noise. The remaining three inputs keep their
+        # original ratio (0.28 : 0.30 : 0.20) renormalized to sum to 1.0.
         provider_intelligence_composite = _clamp(
-            provider_density_score * 0.28
-            + provider_whitespace_score * 0.30
-            + multi_platform_presence_score * 0.22
-            + (100.0 - delivery_competition_score) * 0.20
+            provider_density_score * 0.36
+            + provider_whitespace_score * 0.38
+            + (100.0 - delivery_competition_score) * 0.26
         )
 
         effective_age_days, _ = _effective_listing_age_days(row)
