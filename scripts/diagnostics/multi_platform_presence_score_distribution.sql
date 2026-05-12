@@ -5,10 +5,11 @@
 --
 -- Persistence shape (verified in repo):
 --   * multi_platform_presence_score IS persisted as a top-level numeric
---     column on expansion_candidate (set around
---     app/services/expansion_advisor.py:8960 and the INSERT block at :9185+).
---   * It is also mirrored under feature_snapshot_json for downstream
---     consumers — but the column read is the authoritative path.
+--     column on expansion_candidate (added in
+--     alembic/versions/20260311_exp_adv_brand_v4.py and written in the
+--     INSERT block at app/services/expansion_advisor.py:9187 / :9253).
+--   * The candidate-row timestamp column is `computed_at`, not `created_at`
+--     (alembic/versions/20260310_exp_adv_v0.py).
 --
 -- The score is computed in _delivery_market_signal as:
 --     (provider_platform_count / _active_platform_count) * 100
@@ -31,7 +32,7 @@ SELECT
     MAX(multi_platform_presence_score)                         AS bucket_max,
     ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2)         AS pct_of_total
 FROM expansion_candidate
-WHERE created_at >= now() - interval '30 days'
+WHERE computed_at >= now() - interval '30 days'
   AND multi_platform_presence_score IS NOT NULL
 GROUP BY 1
 ORDER BY 1;
@@ -41,7 +42,7 @@ SELECT
     ROUND(multi_platform_presence_score::numeric, 1)           AS score_value,
     COUNT(*)                                                   AS candidate_count
 FROM expansion_candidate
-WHERE created_at >= now() - interval '30 days'
+WHERE computed_at >= now() - interval '30 days'
   AND multi_platform_presence_score IS NOT NULL
 GROUP BY 1
 ORDER BY candidate_count DESC, score_value
@@ -55,7 +56,7 @@ SELECT
     width_bucket(multi_platform_presence_score, 0, 100, 5)     AS mpp_bucket_1_5,
     COUNT(*)                                                   AS candidate_count
 FROM expansion_candidate
-WHERE created_at >= now() - interval '30 days'
+WHERE computed_at >= now() - interval '30 days'
   AND multi_platform_presence_score IS NOT NULL
   AND provider_density_score IS NOT NULL
 GROUP BY 1, 2

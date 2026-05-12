@@ -14,6 +14,12 @@
 -- the trailing 30 days, sourced from feature_snapshot_json (which is where
 -- the field is persisted; it is NOT a top-level column on expansion_candidate).
 --
+-- Schema notes (verified against alembic/versions/20260310_exp_adv_v0.py):
+--   * The candidate-row timestamp column is `computed_at`, not `created_at`.
+--   * `service_model` is NOT a column on expansion_candidate and is NOT
+--     stored in feature_snapshot_json. It lives on the parent
+--     `expansion_search` row and is reached via expansion_candidate.search_id.
+--
 -- Run from Codespace:
 --   psql "$DATABASE_URL" -f scripts/diagnostics/provider_platform_count_distribution.sql
 
@@ -28,19 +34,20 @@ SELECT
     ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2)
                                             AS pct_of_total
 FROM expansion_candidate
-WHERE created_at >= now() - interval '30 days'
+WHERE computed_at >= now() - interval '30 days'
   AND feature_snapshot_json IS NOT NULL
 GROUP BY 1
 ORDER BY 1;
 
-\echo === Same, sliced by service_model for context ===
+\echo === Same, sliced by service_model (joined from expansion_search) for context ===
 SELECT
-    COALESCE(service_model, '(null)')       AS service_model,
-    COALESCE((feature_snapshot_json ->> 'provider_platform_count')::int, -1)
+    COALESCE(s.service_model, '(null)')     AS service_model,
+    COALESCE((c.feature_snapshot_json ->> 'provider_platform_count')::int, -1)
                                             AS provider_platform_count,
     COUNT(*)                                AS candidate_count
-FROM expansion_candidate
-WHERE created_at >= now() - interval '30 days'
-  AND feature_snapshot_json IS NOT NULL
+FROM expansion_candidate c
+JOIN expansion_search s ON s.id = c.search_id
+WHERE c.computed_at >= now() - interval '30 days'
+  AND c.feature_snapshot_json IS NOT NULL
 GROUP BY 1, 2
 ORDER BY 1, 2;
