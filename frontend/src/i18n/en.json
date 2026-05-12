@@ -1188,7 +1188,7 @@
       },
       "delivery_demand": {
         "label": "Delivery Market",
-        "definition": "Multi-platform delivery presence in the area — how many providers are active, how many platforms list food in this district, and how strong multi-platform presence is.",
+        "definition": "Delivery activity in the area — how many delivery listings exist nearby, how much delivery-platform competition the site faces, and whether the catchment is well-served or under-served.",
         "inputs": {
           "provider_listing_count": { "label": "Provider listing count" },
           "provider_platform_count": { "label": "Provider platform count" },
