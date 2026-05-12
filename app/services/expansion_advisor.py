@@ -1711,6 +1711,57 @@ def _road_evidence_band(nearby_road_count: int | None, touches_road: bool | None
     return "strong"
 
 
+def _road_evidence_band_from_street_width(street_width_m: float | None) -> str | None:
+    """Listing-aware road evidence band derived from Aqar's measured
+    street width. Returns None when input is non-positive so the caller
+    can fall back to the OSM-derived band.
+
+    Width breakpoints chosen for Riyadh streets:
+      - >= 12 m: direct frontage on a wide road
+      - >=  8 m: moderate frontage
+      -  > 0 m: limited frontage (narrow side street)
+    """
+    if street_width_m is None or street_width_m <= 0:
+        return None
+    if street_width_m >= 12.0:
+        return "direct_frontage"
+    if street_width_m >= 8.0:
+        return "moderate"
+    return "limited"
+
+
+def _parking_evidence_band_for_listing(
+    *,
+    parking_context_available: bool,
+    nearby_parking_amenity_count: int | None,
+    parking_score: float | None,
+) -> str | None:
+    """Listing-aware parking evidence band.
+
+    Returns None when the listing path has no basis for overriding the
+    OSM-derived band (caller falls through to existing behavior).
+
+    Rules:
+      - parking_context_available is False: we never authoritatively
+        looked → return "unknown". Honest about absent data; avoids the
+        "None found" claim when we genuinely don't know.
+      - parking_context_available is True AND count > 0: do NOT override;
+        let the existing OSM-count-based band stand.
+      - parking_context_available is True AND count == 0 AND
+        parking_score >= 55: the v2 parking scorer found a signal the
+        OSM amenity count missed → "limited" (conservative; we do have
+        SOME evidence but the OSM tag layer is thin here).
+      - All other cases: return None (no override).
+    """
+    if not parking_context_available:
+        return "unknown"
+    if (nearby_parking_amenity_count or 0) > 0:
+        return None
+    if parking_score is not None and parking_score >= 55.0:
+        return "limited"
+    return None
+
+
 def _access_visibility_score(*, frontage_score: float, access_score: float, brand_profile: dict[str, Any]) -> float:
     visibility_weight = _sensitivity_weight(brand_profile.get("visibility_sensitivity"))
     frontage_weight = _sensitivity_weight(brand_profile.get("frontage_sensitivity"))
@@ -8630,6 +8681,24 @@ def run_expansion_search(
             access_score=access_score,
             parking_context_available=parking_context_available,
         )
+        # Listing-aware override of evidence bands. Mirrors the listing-aware
+        # short-circuits already used by _frontage_score / _access_score: when
+        # we have direct ground truth from the listing, the OSM-derived band
+        # computed in the parcel-context snapshot pass is the wrong source.
+        if _is_listing:
+            _ctx_sources = feature_snapshot_json.setdefault("context_sources", {})
+
+            _road_override = _road_evidence_band_from_street_width(_unit_street_width)
+            if _road_override is not None:
+                _ctx_sources["road_evidence_band"] = _road_override
+
+            _parking_override = _parking_evidence_band_for_listing(
+                parking_context_available=bool(_ctx_sources.get("parking_context_available")),
+                nearby_parking_amenity_count=feature_snapshot_json.get("nearby_parking_amenity_count"),
+                parking_score=parking_score,
+            )
+            if _parking_override is not None:
+                _ctx_sources["parking_evidence_band"] = _parking_override
         access_visibility_score = _access_visibility_score(
             frontage_score=frontage_score,
             access_score=access_score,

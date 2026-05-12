@@ -16,7 +16,9 @@ from app.services.expansion_advisor import (
     _top_positives_and_risks,
     _nonnegative_int,
     _parking_evidence_band,
+    _parking_evidence_band_for_listing,
     _road_evidence_band,
+    _road_evidence_band_from_street_width,
     _road_signal_from_context,
     clear_expansion_caches,
 )
@@ -163,6 +165,96 @@ def test_road_evidence_band_moderate():
 
 def test_road_evidence_band_strong():
     assert _road_evidence_band(6, False) == "strong"
+
+
+# ---------------------------------------------------------------------------
+# Listing-aware evidence bands
+# ---------------------------------------------------------------------------
+
+
+def test_road_evidence_band_from_street_width_none_input():
+    assert _road_evidence_band_from_street_width(None) is None
+
+
+def test_road_evidence_band_from_street_width_zero():
+    assert _road_evidence_band_from_street_width(0) is None
+
+
+def test_road_evidence_band_from_street_width_negative():
+    assert _road_evidence_band_from_street_width(-1) is None
+
+
+def test_road_evidence_band_from_street_width_limited():
+    assert _road_evidence_band_from_street_width(5.0) == "limited"
+
+
+def test_road_evidence_band_from_street_width_moderate_boundary():
+    assert _road_evidence_band_from_street_width(8.0) == "moderate"
+
+
+def test_road_evidence_band_from_street_width_direct_boundary():
+    assert _road_evidence_band_from_street_width(12.0) == "direct_frontage"
+
+
+def test_road_evidence_band_from_street_width_wide():
+    assert _road_evidence_band_from_street_width(60.0) == "direct_frontage"
+
+
+def test_parking_evidence_band_for_listing_unavailable_with_fallback_score():
+    # The production case that motivated this patch: parking_context_available
+    # is False and the parking score came from the fallback branch.
+    assert (
+        _parking_evidence_band_for_listing(
+            parking_context_available=False,
+            nearby_parking_amenity_count=0,
+            parking_score=44.88,
+        )
+        == "unknown"
+    )
+
+
+def test_parking_evidence_band_for_listing_unavailable_all_none():
+    assert (
+        _parking_evidence_band_for_listing(
+            parking_context_available=False,
+            nearby_parking_amenity_count=None,
+            parking_score=None,
+        )
+        == "unknown"
+    )
+
+
+def test_parking_evidence_band_for_listing_available_with_amenities_no_override():
+    assert (
+        _parking_evidence_band_for_listing(
+            parking_context_available=True,
+            nearby_parking_amenity_count=3,
+            parking_score=70.0,
+        )
+        is None
+    )
+
+
+def test_parking_evidence_band_for_listing_zero_amenities_high_score_limited():
+    assert (
+        _parking_evidence_band_for_listing(
+            parking_context_available=True,
+            nearby_parking_amenity_count=0,
+            parking_score=70.0,
+        )
+        == "limited"
+    )
+
+
+def test_parking_evidence_band_for_listing_zero_amenities_low_score_no_override():
+    assert (
+        _parking_evidence_band_for_listing(
+            parking_context_available=True,
+            nearby_parking_amenity_count=0,
+            parking_score=30.0,
+        )
+        is None
+    )
 
 
 def _road_signal_distance_component(distance_m, *, touches: bool = False) -> float:
