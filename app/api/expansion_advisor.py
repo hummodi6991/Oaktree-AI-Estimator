@@ -1448,42 +1448,17 @@ def _decision_memo_cache_lookup(
     search_id: str,
     parcel_id: str,
 ) -> tuple[str | None, dict[str, Any] | None] | None:
-    """Return (cached_text, cached_json) if a row exists with a memo
-    persisted under the CURRENT ``MEMO_PROMPT_VERSION``, else None.
+    """Always return None — memo cache reads are disabled.
 
-    A row whose ``decision_memo_prompt_version`` does not match the
-    current version (including NULL — pre-versioning rows) is treated as
-    a cache miss so the caller regenerates against the new prompt. Any
-    DB error is swallowed and treated as a cache miss.
+    Every POST /decision-memo and pre-warm task now regenerates against
+    the live LLM. Writes via ``_decision_memo_cache_write`` are still
+    issued so ``decision_memo_present`` keeps flipping True for the
+    frontend "View memo" affordance and GET /candidates/{id}/memo keeps
+    returning a stored payload. The persisted memo simply becomes the
+    most-recent generation rather than a cache.
     """
-    try:
-        row = db.execute(
-            text(
-                "SELECT decision_memo, decision_memo_json, "
-                "       decision_memo_prompt_version "
-                "FROM expansion_candidate "
-                "WHERE search_id = :sid AND parcel_id = :pid "
-                "LIMIT 1"
-            ),
-            {"sid": search_id, "pid": parcel_id},
-        ).fetchone()
-    except Exception as exc:
-        logger.warning(
-            "Decision memo cache lookup failed for (%s,%s): %s",
-            search_id, parcel_id, exc,
-        )
-        return None
-    if row is None:
-        return None
-    cached_text = row[0]
-    cached_json = row[1]
-    cached_version = row[2]
-    if cached_text is None and cached_json is None:
-        return None
-    if cached_version != MEMO_PROMPT_VERSION:
-        # Stale (different version) or pre-versioning (NULL) — regenerate.
-        return None
-    return cached_text, cached_json
+    del db, search_id, parcel_id
+    return None
 
 
 def _decision_memo_cache_write(
