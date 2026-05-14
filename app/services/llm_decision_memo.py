@@ -18,14 +18,30 @@ from typing import Any, Literal
 
 from app.core.config import settings
 
-# Hard-fail gate keys. Must stay in sync with
-# ``app.services.expansion_advisor.HARD_FAIL_GATES`` (the canonical source of
-# truth). Redefined here instead of imported to keep this module's import
-# graph independent of expansion_advisor's heavy SQLAlchemy/PostGIS surface.
-HARD_FAIL_GATE_KEYS: frozenset[str] = frozenset({
-    "zoning_fit_pass",
-    "area_fit_pass",
-})
+def _hard_fail_gate_labels() -> frozenset[str]:
+    """Humanized labels of the live hard-fail gate set.
+
+    Derived lazily from ``expansion_advisor.HARD_FAIL_GATES`` so env-driven
+    optional hard-fail gates (population_floor_pass, commercial_floor_pass,
+    construction_proximity_pass) are picked up automatically and stay in
+    sync with the canonical source of truth.
+
+    Labels (not raw keys) because the gate dicts the comparison runs
+    against — produced by ``_normalize_gate_reasons`` → ``_humanize_gate_list``
+    in expansion_advisor — only carry the humanized name by the time they
+    reach this module.
+
+    Lazy-imported to preserve this module's import-graph footprint
+    (expansion_advisor pulls in SQLAlchemy/PostGIS). Every real call path
+    into the classification site enters via app.api.expansion_advisor,
+    which imports expansion_advisor before importing this module — so
+    HARD_FAIL_GATES is reliably populated by the time this helper runs.
+    """
+    from app.services.expansion_advisor import (
+        HARD_FAIL_GATES,
+        _gate_key_to_label,
+    )
+    return frozenset(_gate_key_to_label(g) for g in HARD_FAIL_GATES)
 
 logger = logging.getLogger(__name__)
 
@@ -1751,12 +1767,15 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
     # Split failures into blocking vs advisory. Only blocking failures
     # justify a "Decline" instruction — advisory-only failures (e.g.,
     # ``radiance_growth_pass``) leave ``overall_pass`` at True and must
-    # NOT push the LLM toward a Decline headline.
+    # NOT push the LLM toward a Decline headline. Compare on humanized
+    # labels because ``failed_entries`` (from ``_build_gate_buckets``) only
+    # carries the humanized name by the time it reaches this point.
+    hard_fail_labels = _hard_fail_gate_labels()
     blocking_failed = [
-        e for e in failed_entries if str(e.get("name")) in HARD_FAIL_GATE_KEYS
+        e for e in failed_entries if str(e.get("name")) in hard_fail_labels
     ]
     advisory_failed = [
-        e for e in failed_entries if str(e.get("name")) not in HARD_FAIL_GATE_KEYS
+        e for e in failed_entries if str(e.get("name")) not in hard_fail_labels
     ]
 
     if blocking_failed:
@@ -2062,18 +2081,19 @@ def _parse_and_validate_memo_shape(
 
 
 def _blocking_failed_from_buckets(buckets: dict | None) -> list[dict]:
-    """Return the subset of ``buckets["failed"]`` whose gate name is in
-    HARD_FAIL_GATE_KEYS — i.e., failures that flipped overall_pass to False.
-    Mirrors the same split used in render_structured_memo_prompt so the
-    retry layer's view of "blocking" stays consistent with what the LLM
-    saw in the prompt addendum.
+    """Return the subset of ``buckets["failed"]`` whose gate label matches
+    the live hard-fail set — i.e., failures that flipped overall_pass to
+    False. Mirrors the same split used in render_structured_memo_prompt so
+    the retry layer's view of "blocking" stays consistent with what the
+    LLM saw in the prompt addendum.
     """
     if not isinstance(buckets, dict):
         return []
     failed = buckets.get("failed") or []
+    hard_fail_labels = _hard_fail_gate_labels()
     return [
         e for e in failed
-        if isinstance(e, dict) and str(e.get("name")) in HARD_FAIL_GATE_KEYS
+        if isinstance(e, dict) and str(e.get("name")) in hard_fail_labels
     ]
 
 
