@@ -753,7 +753,7 @@ class TestRenderPromptFailedGate:
     def test_failed_gate_triggers_failure_addendum_and_base_rule_sections(self):
         cand = dict(BASE_STRUCTURED_CANDIDATE)
         cand["gate_status_json"] = [
-            {"gate": "zoning_fit_pass", "verdict": "fail", "reason": "C-2 not allowed on this parcel"},
+            {"gate": "zoning fit", "verdict": "fail", "reason": "C-2 not allowed on this parcel"},
             {"gate": "rent_reasonable", "verdict": "pass", "reason": "ok"},
         ]
 
@@ -768,7 +768,7 @@ class TestRenderPromptFailedGate:
         # Failure-language is still permitted/encouraged for a genuinely
         # failed gate, so the GATE FAILURE situational addendum fires.
         assert "GATE FAILURE" in system_content
-        assert "zoning_fit_pass" in system_content
+        assert "zoning fit" in system_content
 
 
 class TestRenderPromptArabicLocale:
@@ -1756,12 +1756,14 @@ _RANK1_ADVISORY_FAILURE_CANDIDATE = {
         "overall_pass": True,
     },
     "gate_reasons_json": {
+        # Humanized labels — production wire shape after
+        # ``_normalize_gate_reasons`` → ``_humanize_gate_list``.
         "passed": [
-            "zoning_fit_pass", "area_fit_pass", "frontage_access_pass",
-            "parking_pass", "district_pass", "cannibalization_pass",
-            "delivery_market_pass", "economics_pass",
+            "zoning fit", "area fit", "frontage/access",
+            "parking", "district", "cannibalization",
+            "delivery market", "economics",
         ],
-        "failed": ["radiance_growth_pass"],
+        "failed": ["Market growth signal"],
         "unknown": [],
         "blocking_failures": [],
         "advisory_failures": ["radiance_growth_pass"],
@@ -1800,10 +1802,12 @@ _RANK1_ALL_PASS_CANDIDATE = {
         "overall_pass": True,
     },
     "gate_reasons_json": {
+        # Humanized labels — production wire shape after
+        # ``_normalize_gate_reasons`` → ``_humanize_gate_list``.
         "passed": [
-            "zoning_fit_pass", "area_fit_pass", "frontage_access_pass",
-            "parking_pass", "district_pass", "cannibalization_pass",
-            "delivery_market_pass", "economics_pass",
+            "zoning fit", "area fit", "frontage/access",
+            "parking", "district", "cannibalization",
+            "delivery market", "economics",
         ],
         "failed": [],
         "unknown": [],
@@ -1890,8 +1894,10 @@ _BLOCKING_FAILURE_CANDIDATE = {
         "overall_pass": False,
     },
     "gate_reasons_json": {
-        "passed": ["area_fit_pass"],
-        "failed": ["zoning_fit_pass", "economics_pass"],
+        # Humanized labels — production wire shape after
+        # ``_normalize_gate_reasons`` → ``_humanize_gate_list``.
+        "passed": ["area fit"],
+        "failed": ["zoning fit", "economics"],
         "unknown": [],
         "blocking_failures": ["zoning_fit_pass"],
         "advisory_failures": ["economics_pass"],
@@ -2135,7 +2141,7 @@ class TestRenderPromptAdvisoryFailureNoGateFailureAddendum:
 
         assert "GATE FAILURE" not in system_content
         assert "ADVISORY GATE NOTE" in system_content
-        assert "radiance_growth_pass" in system_content
+        assert "Market growth signal" in system_content
 
 
 class TestRenderPromptBlockingFailureKeepsGateFailureAddendum:
@@ -2152,4 +2158,4 @@ class TestRenderPromptBlockingFailureKeepsGateFailureAddendum:
         system_content = messages[0]["content"]
 
         assert "GATE FAILURE" in system_content
-        assert "zoning_fit_pass" in system_content
+        assert "zoning fit" in system_content
