@@ -308,32 +308,36 @@ export const PER_COMPONENT_INPUTS: Record<string, InputDescriptor[]> = {
     },
   ],
 
+  // All four demand inputs read from feature_snapshot_json, which is always
+  // populated. The score_breakdown_json.market_viability_flag block is only
+  // written when a viability demotion leg fires, so non-demoted candidates
+  // (the common case) would otherwise strand these rows as em-dashes.
   demand_potential: [
     {
       key: "population_reach",
-      resolve: ({ scoreBreakdown }) => ({
-        value: asNumber(readNested(scoreBreakdown, "market_viability_flag", "population_reach")),
+      resolve: ({ featureSnapshot }) => ({
+        value: asNumber(readNested(featureSnapshot, "population_reach")),
         source: "population_grid",
       }),
     },
     {
       key: "realized_demand_30d",
-      resolve: ({ scoreBreakdown, contextSources }) => ({
-        value: asNumber(readNested(scoreBreakdown, "market_viability_flag", "realized_demand_30d")),
+      resolve: ({ featureSnapshot, contextSources }) => ({
+        value: asNumber(readNested(featureSnapshot, "realized_demand_30d")),
         source: overrideSource(contextSources, "delivery_source", "expansion_delivery_market"),
       }),
     },
     {
       key: "realized_demand_branches",
-      resolve: ({ scoreBreakdown, contextSources }) => ({
-        value: asNumber(readNested(scoreBreakdown, "market_viability_flag", "realized_demand_branches")),
+      resolve: ({ featureSnapshot, contextSources }) => ({
+        value: asNumber(readNested(featureSnapshot, "realized_demand_branches")),
         source: overrideSource(contextSources, "delivery_source", "expansion_delivery_market"),
       }),
     },
     {
       key: "radiance_growth_pct",
-      resolve: ({ scoreBreakdown }) => ({
-        value: asNumber(readNested(scoreBreakdown, "market_viability_flag", "radiance_growth_pct")),
+      resolve: ({ featureSnapshot }) => ({
+        value: asNumber(readNested(featureSnapshot, "radiance_growth", "value_yoy_pct")),
         source: "black_marble",
       }),
     },
