@@ -40,6 +40,34 @@ function renderPanel() {
   );
 }
 
+function renderVerdictChip(verdict: string) {
+  return renderToStaticMarkup(
+    <ExpansionMemoPanel
+      loading={false}
+      memo={{
+        recommendation: { verdict, headline: `${verdict} headline` },
+        candidate: {},
+        market_research: {},
+        brand_profile: {},
+      }}
+    />,
+  );
+}
+
+describe("ExpansionMemoPanel verdict chip traffic-light contract", () => {
+  it("maps go → ea-badge--green", () => {
+    expect(renderVerdictChip("go")).toMatch(/ea-memo-verdict-badge[^"]*ea-badge--green/);
+  });
+
+  it("maps consider → ea-badge--amber", () => {
+    expect(renderVerdictChip("consider")).toMatch(/ea-memo-verdict-badge[^"]*ea-badge--amber/);
+  });
+
+  it("maps caution → ea-badge--red", () => {
+    expect(renderVerdictChip("caution")).toMatch(/ea-memo-verdict-badge[^"]*ea-badge--red/);
+  });
+});
+
 describe("ExpansionMemoPanel decision-drawer tabs (Memo / Diagnostics)", () => {
   it("defaults to the Memo tab and renders verdict + property facts row", () => {
     const html = renderPanel();

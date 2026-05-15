@@ -201,7 +201,7 @@ export default function ExpansionMemoPanel({
               || comps.length > 0;
 
             // Verdict color
-            const verdictColor = rec.verdict?.toLowerCase() === "go" ? "green" : rec.verdict?.toLowerCase() === "caution" ? "amber" : "red";
+            const verdictColor = rec.verdict?.toLowerCase() === "go" ? "green" : rec.verdict?.toLowerCase() === "consider" ? "amber" : "red";
 
             // Scroll-anchor class is only rendered when initialSection is set,
             // so the default-open drawer path emits identical markup to pre-3d.
