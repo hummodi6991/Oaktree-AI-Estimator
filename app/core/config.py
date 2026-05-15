@@ -87,12 +87,11 @@ class Settings:
     # "delivery rating velocity", never as "orders".
     #
     # Default flipped ON (B3): the production coverage check confirmed
-    # 100% of recent candidates carry ≥3 branches in the 1200 m catchment
-    # (median realized_demand_30d ≈ 797, p90 ≈ 2,293 — well above the
-    # _delivery_score calibration reference of 200). The signal is now
-    # first-class, not opt-in. Set EXPANSION_REALIZED_DEMAND_ENABLED=false
-    # to restore the legacy behavior (snapshot fields suppressed and
-    # realized_demand_source reported as ``history_unavailable``).
+    # ~3,128 of 7,405 recent candidates (trailing 90d) carry ≥3 branches in
+    # the 1200 m catchment. The signal is now first-class, not opt-in. Set
+    # EXPANSION_REALIZED_DEMAND_ENABLED=false to restore the legacy behavior
+    # (snapshot fields suppressed and realized_demand_source reported as
+    # ``history_unavailable``).
     EXPANSION_REALIZED_DEMAND_ENABLED: bool = (
         os.getenv("EXPANSION_REALIZED_DEMAND_ENABLED", "true").strip().lower()
         in {"1", "true", "yes", "on"}
@@ -110,10 +109,14 @@ class Settings:
     )
     # Reference point for the square-root-scaled realized-demand score in
     # _delivery_score(): realized_demand == this value maps to a score of 100.
-    # Placeholder default 200.0 pending calibration against the trailing-90d
-    # Riyadh distribution (see scripts/diagnostics/realized_demand_calibration.sql).
+    # Calibrated 2026-05-15 from the trailing-90d realized_demand_30d
+    # distribution across 3,128 populated candidates (median 133, p75 263,
+    # p90 496, p95 840). Anchor at p75: a candidate at the 75th percentile of
+    # measured demand saturates the demand leg, median candidates score ~71,
+    # only the top quartile maxes out. See
+    # scripts/diagnostics/realized_demand_calibration.sql.
     EXPANSION_REALIZED_DEMAND_REFERENCE: float = float(
-        os.getenv("EXPANSION_REALIZED_DEMAND_REFERENCE", "200.0")
+        os.getenv("EXPANSION_REALIZED_DEMAND_REFERENCE", "263.0")
     )
 
     # --- Expansion Advisor structured decision memo (Phase 1) ---
