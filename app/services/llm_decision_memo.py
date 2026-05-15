@@ -54,7 +54,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v6-headline-rules-2026-05"
+MEMO_PROMPT_VERSION = "v7-verdict-mandatory-2026-05"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -1603,14 +1603,17 @@ this prompt. Other instructions are subordinate to these.
    has weak signals or mixed evidence, you MUST choose one of the
    three allowed prefixes.
 
-2. Map the deterministic_verdict to the headline prefix as follows:
+2. Map the deterministic_verdict to the headline prefix as follows.
+   These mappings are MANDATORY when overall_pass == true. The
+   deterministic verdict is the source of truth for the headline verb;
+   do not re-adjudicate from raw scores or demand thresholds.
    - deterministic_verdict == "go"
        → "Recommend" (default)
        → "Recommend with reservations" only if blocking gates failed
+       → NEVER "Decline"
    - deterministic_verdict == "consider"
-       → "Recommend with reservations" (default)
-       → "Decline" only if blocking gates failed AND the case for
-         the candidate is materially weaker than rank-2
+       → "Recommend with reservations" (mandatory when overall_pass == true)
+       → NEVER "Decline" when overall_pass == true
    - deterministic_verdict == "caution"
        → "Decline" (default)
        → "Recommend with reservations" only if there is a strong,
@@ -1855,15 +1858,20 @@ def _headline_validity_reason(
     final_score: float | None,
     overall_pass: bool | None,
     blocking_failed: list,
+    deterministic_verdict: str | None = None,
 ) -> str | None:
     """Return None when ``headline`` satisfies the format rules; otherwise
     a short reason string suitable for logging and retry-prompt context.
 
-    Catches the three failure modes observed in production:
+    Catches the failure modes observed in production:
       1. Headlines that don't begin with an allowed prefix (e.g.,
          "consider due to ...").
       2. Rank-1 high-score Decline headlines with no blocking failures.
-      3. Confabulated gate failures (Decline citing "failed [X]" when
+      3. ``overall_pass == False`` candidates with a Recommend headline.
+      4. ``overall_pass == True`` candidates whose deterministic verdict
+         is "go" or "consider" but whose headline starts with "Decline"
+         (mutually exclusive with #3 by construction).
+      5. Confabulated gate failures (Decline citing "failed [X]" when
          ``gates.failed`` is empty).
     """
     if not isinstance(headline, str) or not headline.strip():
@@ -1905,6 +1913,21 @@ def _headline_validity_reason(
         return (
             "overall_pass=False candidate must have a Decline headline, "
             "not Recommend"
+        )
+
+    # Symmetric guard: overall_pass=True candidates whose deterministic
+    # verdict is "go" or "consider" must not have a Decline headline.
+    # Mutually exclusive with the False-guard above (overall_pass is True
+    # XOR False); deterministic_verdict is None when scores are missing,
+    # in which case this guard is intentionally inert.
+    if (
+        overall_pass is True
+        and deterministic_verdict in ("go", "consider")
+        and starts_with_decline
+    ):
+        return (
+            f"overall_pass=True with deterministic_verdict="
+            f"{deterministic_verdict!r} must not have a Decline headline"
         )
 
     # Confabulation guard: a Decline headline citing failed gates when
@@ -2106,10 +2129,11 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
     On a successful shape-validated response, run an additional headline-
     validity check. If the headline violates the format / consistency
     rules (banned prefix, rank-1 high-score Decline, overall_pass=False
-    Recommend, or confabulated gate failure), retry the call once with a
-    corrective preamble. If the retry also fails, log an error and rewrite
-    the headline locally so a contradicting recommendation never reaches
-    the user.
+    Recommend, overall_pass=True with go/consider verdict Decline, or
+    confabulated gate failure), retry the call once with a corrective
+    preamble. If the retry also fails, log an error and rewrite the
+    headline locally so a contradicting recommendation never reaches the
+    user.
 
     Returns the parsed JSON dict on success. Token usage is recorded against
     the same ``_daily_cost_tracker`` as the legacy path so the $/day ceiling
@@ -2167,6 +2191,7 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
         final_score=ctx.final_score,
         overall_pass=ctx.overall_pass,
         blocking_failed=blocking_failed,
+        deterministic_verdict=ctx.deterministic_verdict,
     )
 
     usage = getattr(response, "usage", None)
@@ -2225,6 +2250,7 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
                     final_score=ctx.final_score,
                     overall_pass=ctx.overall_pass,
                     blocking_failed=blocking_failed,
+                    deterministic_verdict=ctx.deterministic_verdict,
                 )
                 retry_usage = getattr(retry_response, "usage", None)
                 input_tokens += int(
@@ -2268,8 +2294,7 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
             # state and would contradict the rewritten headline. Empty them so
             # the frontend renders verdict + headline only on the safety-net
             # path. This is intentional graceful degradation, not data loss —
-            # the next view-time regeneration (after the v6 prompt-version bump
-            # invalidates the cache) will repopulate everything.
+            # the next view-time regeneration will repopulate everything.
             parsed["ranking_explanation"] = ""
             parsed["key_evidence"] = []
             parsed["risks"] = []
