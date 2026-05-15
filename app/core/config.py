@@ -81,7 +81,10 @@ class Settings:
     # writer publishes ``realized_demand_30d`` / ``realized_demand_branches``
     # to feature_snapshot_json and the service layer blends a realized-demand
     # score (rating_count growth per category per radius over the last N
-    # days) into the supply-based _delivery_score().
+    # days) into the supply-based _delivery_score().  This is delivery rating
+    # velocity — a partial proxy for orders, not an order count, since only a
+    # fraction of orders produce a rating; it is surfaced to users as
+    # "delivery rating velocity", never as "orders".
     #
     # Default flipped ON (B3): the production coverage check confirmed
     # 100% of recent candidates carry ≥3 branches in the 1200 m catchment

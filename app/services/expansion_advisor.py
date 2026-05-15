@@ -2161,10 +2161,12 @@ def _delivery_score(
     * ``delivery_listing_count`` — same-category branches observed in the
       delivery catchment (supply / saturation proxy).  Always available.
     * ``realized_demand`` — Σ Δrating_count across same-category branches in
-      the catchment over the trailing window (proxy for actual order volume;
-      a rating accrues roughly per order on delivery platforms).  Only
-      populated when ``EXPANSION_REALIZED_DEMAND_ENABLED`` is true and the
-      history table has ≥2 snapshots for the catchment.
+      the catchment over the trailing window (delivery rating velocity; a
+      partial proxy for order volume, since only a fraction of orders —
+      typically 5–30% on food-delivery platforms — produce a rating, so the
+      figure systematically undercounts true orders).  Only populated when
+      ``EXPANSION_REALIZED_DEMAND_ENABLED`` is true and the history table
+      has ≥2 snapshots for the catchment.
 
     When realized demand is available, blend it with the listing-count
     signal: ``score = (1-w) · listing + w · realized``.  Otherwise fall

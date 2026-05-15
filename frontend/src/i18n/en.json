@@ -1056,7 +1056,7 @@
     "districtActivity30d": "Listings active in district (30d)",
     "districtLabel": "District",
     "percentileValue": "{{value}}th percentile",
-    "realizedDemand30d": "Realized demand (30d)",
+    "realizedDemand30d": "Delivery rating velocity (30d)",
     "realizedDemandSubline": "{{branches}} branches, {{window}}d window",
     "rentBaseline": "Rent baseline",
     "rentMicroAdjustment": "Rent micro-adjustment",
@@ -1170,8 +1170,8 @@
         "definition": "Combined demand evidence: population reach within a walking/driving catchment, realized 30-day delivery demand, and the district's nighttime-light growth trend.",
         "inputs": {
           "population_reach": { "label": "Population reach" },
-          "realized_demand_30d": { "label": "Realized demand (30d)" },
-          "realized_demand_branches": { "label": "Active demand branches" },
+          "realized_demand_30d": { "label": "Delivery rating velocity (30d)" },
+          "realized_demand_branches": { "label": "Rating-contributing branches" },
           "radiance_growth_pct": { "label": "Radiance YoY growth (%)" }
         }
       },
@@ -1275,7 +1275,7 @@
       "spreadToMedian": "Spread to median",
       "populationReach": "Population reach",
       "districtMomentum": "District momentum",
-      "realizedDemandBranches": "Realized demand branches",
+      "realizedDemandBranches": "Rating-contributing branches",
       "deliveryListingCount": "Delivery listings",
       "topChains": "Top chains within 500 m",
       "comparableCompetitors": "Comparable competitors",
