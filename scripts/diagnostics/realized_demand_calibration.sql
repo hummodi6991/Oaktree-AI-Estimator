@@ -41,11 +41,11 @@ WHERE s.created_at >= now() - interval '90 days'
 \echo ''
 \echo '=== C. realized_demand_30d percentiles over populated values ==='
 SELECT
-  COUNT(*)                                                            AS n,
-  ROUND(percentile_cont(0.50) WITHIN GROUP (ORDER BY rd), 1)           AS median,
-  ROUND(percentile_cont(0.75) WITHIN GROUP (ORDER BY rd), 1)           AS p75,
-  ROUND(percentile_cont(0.90) WITHIN GROUP (ORDER BY rd), 1)           AS p90,
-  ROUND(percentile_cont(0.95) WITHIN GROUP (ORDER BY rd), 1)           AS p95
+  COUNT(*)                                                                  AS n,
+  ROUND(percentile_cont(0.50) WITHIN GROUP (ORDER BY rd)::numeric, 1)        AS median,
+  ROUND(percentile_cont(0.75) WITHIN GROUP (ORDER BY rd)::numeric, 1)        AS p75,
+  ROUND(percentile_cont(0.90) WITHIN GROUP (ORDER BY rd)::numeric, 1)        AS p90,
+  ROUND(percentile_cont(0.95) WITHIN GROUP (ORDER BY rd)::numeric, 1)        AS p95
 FROM (
   SELECT (c.feature_snapshot_json->>'realized_demand_30d')::numeric AS rd
   FROM expansion_candidate c
