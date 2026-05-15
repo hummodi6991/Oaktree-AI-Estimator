@@ -54,7 +54,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v7-verdict-mandatory-2026-05"
+MEMO_PROMPT_VERSION = "v8-rating-velocity-2026-05"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -1273,7 +1273,7 @@ Return ONLY a single JSON object — no markdown fences, no commentary before or
   "headline_recommendation": "string — one short sentence. MUST start with 'Recommend', 'Recommend with reservations', or 'Decline'. Never start with 'Consider' — that is a non-decision. Never start with 'consider due to'.",
   "ranking_explanation": "string — 3 to 5 sentences. Lead with the strongest investment argument grounded in a specific number (rent vs comparable median, foot traffic, brand saturation, demand signal). MUST cite at least one number with units. Mention one real trade-off. Do NOT recite the score breakdown back at the reader; synthesize it into an investment thesis.",
   "key_evidence": [
-    {"signal": "string", "value": "string — MUST include a unit (SAR/yr, SAR/m²/yr, orders/30d, /100, m, count, %, etc.); never a bare number", "implication": "string — one clause naming the investment consequence (not a description of what the number is)", "polarity": "positive | negative | neutral"}
+    {"signal": "string", "value": "string — MUST include a unit (SAR/yr, SAR/m²/yr, ratings/30d, /100, m, count, %, etc.); never a bare number", "implication": "string — one clause naming the investment consequence (not a description of what the number is)", "polarity": "positive | negative | neutral"}
   ],
   "risks": [
     {"risk": "string", "mitigation": "string or null — specific tactics only; see rule below"}
@@ -1350,8 +1350,12 @@ Market context:
 - population_reach: reachable population within walking distance.
 - district_momentum: trajectory signal for the district.
 - delivery_listing_count: depth of delivery demand in the area.
-- realized_demand_30d / realized_demand_branches: actual delivery orders, not
-  proxies. Lead with these when present.
+- realized_demand_30d / realized_demand_branches: count of new customer ratings
+  accrued on nearby same-category delivery branches over the trailing 30 days
+  (HungerStation). This is a measured demand signal — but a partial proxy for
+  orders, since only a fraction of orders produce a rating. Describe it as
+  "delivery rating velocity" or "ratings on nearby branches," never as an order
+  count. Lead with it when present.
 
 Competitive landscape:
 - brand_presence.top_chains: named chains within 500m with branch_count and
@@ -1533,8 +1537,8 @@ Example F — strong recommend with the four typed advisory sections fully popul
     "spread_to_median_sar": -110000
   },
   "market_context": {
-    "summary": "41,000 walking-catchment population with rising district momentum and 380 orders/30d realized.",
-    "demand_thesis": "Demand is observable, not modelled. A 41,000 walking-catchment population covers the dine-in mix without leaning on delivery, and realized order velocity in the district is 380 over the trailing 30 days across 6 active branches — meaningful evidence the category trades. District momentum reads rising on the 30-day window, supporting the underwriting on a 36-month horizon. The trade-off: the same momentum is what is bringing competitors into the corridor, which the saturation thesis below has to account for.",
+    "summary": "41,000 walking-catchment population with rising district momentum and 380 ratings/30d delivery rating velocity.",
+    "demand_thesis": "Demand is observable, not modelled. A 41,000 walking-catchment population covers the dine-in mix without leaning on delivery, and delivery rating velocity in the district is 380 ratings over the trailing 30 days across 6 active branches — meaningful evidence the category trades. District momentum reads rising on the 30-day window, supporting the underwriting on a 36-month horizon. The trade-off: the same momentum is what is bringing competitors into the corridor, which the saturation thesis below has to account for.",
     "population_reach": 41000,
     "district_momentum": "rising",
     "realized_demand_30d": 380,
@@ -1757,11 +1761,11 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
         )
     if ctx.realized_demand is not None:
         addenda.append(
-            "REALIZED DEMAND: This candidate has actual delivery-order data "
-            "(not a supply proxy). Lead the key_evidence with the realized "
-            "demand figure (orders/30d), cite the district median for "
-            "context, and let it anchor the ranking_explanation if it is "
-            "the strongest signal."
+            "REALIZED DEMAND: This candidate has measured delivery rating "
+            "velocity (not a supply proxy). Lead the key_evidence with the "
+            "delivery rating velocity figure (ratings/30d), cite the district "
+            "median for context, and let it anchor the ranking_explanation if "
+            "it is the strongest signal. Never describe it as an order count."
         )
     buckets = ctx.gate_buckets or {}
     failed_entries = [e for e in (buckets.get("failed") or []) if e.get("name")]

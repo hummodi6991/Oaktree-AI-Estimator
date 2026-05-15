@@ -29,13 +29,19 @@ from app.services.llm_decision_memo import (
 logger = logging.getLogger(__name__)
 
 
+# Bumped whenever RERANK_SYSTEM_PROMPT changes meaningfully, so any
+# downstream caching keyed on the prompt can treat a stale version as a
+# cache-miss. Mirrors MEMO_PROMPT_VERSION in app.services.llm_decision_memo.
+RERANK_PROMPT_VERSION = "v1-2026-05"
+
+
 RERANK_SYSTEM_PROMPT = """You are a senior commercial real-estate analyst covering Riyadh, Saudi Arabia, evaluating a shortlist of candidate sites that have already been ranked by a deterministic scorer for a specific F&B brand's expansion.
 
 Your job is to identify cases where the deterministic scoring missed an interaction effect - for example, a strong score that hides a disqualifying context, or a mediocre score that masks an exceptional fit. You may rerank candidates within a tight window (defined below). When in doubt, leave the deterministic ranking alone.
 
 You will receive a JSON object containing:
 - The brand profile (category, service model, expansion goal, preferences).
-- The shortlist: an array of candidates, each with deterministic_rank, final_score, score_breakdown (9 components with weights and contributions), gate_verdicts, feature_snapshot (rent, area, frontage, competitor counts, etc.), and - when present - realized_demand (actual customer order velocity over the last 30 days, by far the highest-quality demand signal available).
+- The shortlist: an array of candidates, each with deterministic_rank, final_score, score_breakdown (9 components with weights and contributions), gate_verdicts, feature_snapshot (rent, area, frontage, competitor counts, etc.), and - when present - realized_demand (delivery rating velocity over the last 30 days - the count of new customer ratings on nearby same-category branches, a measured demand signal and the highest-quality demand evidence available; a partial proxy for orders, not an order count).
 
 Hard rules (violations cause your output to be discarded):
 

@@ -984,7 +984,7 @@
     "districtActivity30d": "العقارات النشطة في الحي (30 يومًا)",
     "districtLabel": "الحي",
     "percentileValue": "النسبة المئوية {{value}}",
-    "realizedDemand30d": "الطلب الفعلي (30 يومًا)",
+    "realizedDemand30d": "سرعة تقييمات التوصيل (30 يومًا)",
     "realizedDemandSubline": "{{branches}} فروع، نافذة {{window}} يومًا",
     "rentBaseline": "الإيجار الأساسي",
     "rentMicroAdjustment": "التعديل الدقيق للإيجار",
@@ -1098,8 +1098,8 @@
         "definition": "أدلة الطلب المركبة: السكان ضمن نطاق المشي/القيادة، الطلب الفعلي للتوصيل خلال 30 يومًا، واتجاه نمو إضاءة الحي ليلًا.",
         "inputs": {
           "population_reach": { "label": "نطاق السكان" },
-          "realized_demand_30d": { "label": "الطلب المحقق (30 يومًا)" },
-          "realized_demand_branches": { "label": "فروع الطلب النشطة" },
+          "realized_demand_30d": { "label": "سرعة تقييمات التوصيل (30 يومًا)" },
+          "realized_demand_branches": { "label": "الفروع المساهمة بالتقييمات" },
           "radiance_growth_pct": { "label": "نمو الإضاءة سنويًا (٪)" }
         }
       },
@@ -1222,7 +1222,7 @@
       "spreadToMedian": "Spread to median",
       "populationReach": "Population reach",
       "districtMomentum": "District momentum",
-      "realizedDemandBranches": "Realized demand branches",
+      "realizedDemandBranches": "Rating-contributing branches",
       "deliveryListingCount": "Delivery listings",
       "topChains": "Top chains within 500 m",
       "comparableCompetitors": "Comparable competitors",
