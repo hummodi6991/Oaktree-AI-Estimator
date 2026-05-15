@@ -108,6 +108,13 @@ class Settings:
     EXPANSION_REALIZED_DEMAND_BLEND: float = float(
         os.getenv("EXPANSION_REALIZED_DEMAND_BLEND", "0.5")
     )
+    # Reference point for the square-root-scaled realized-demand score in
+    # _delivery_score(): realized_demand == this value maps to a score of 100.
+    # Placeholder default 200.0 pending calibration against the trailing-90d
+    # Riyadh distribution (see scripts/diagnostics/realized_demand_calibration.sql).
+    EXPANSION_REALIZED_DEMAND_REFERENCE: float = float(
+        os.getenv("EXPANSION_REALIZED_DEMAND_REFERENCE", "200.0")
+    )
 
     # --- Expansion Advisor structured decision memo (Phase 1) ---
     # Model/token/temperature controls for the new structured memo path in

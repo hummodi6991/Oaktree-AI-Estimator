@@ -2179,10 +2179,14 @@ def _delivery_score(
     )
     if realized_demand is None or realized_demand <= 0:
         return listing_score
-    # Reference: 200 new ratings/window ≈ 100.  Square-root scaling mirrors
-    # the listing-count term so the two blend cleanly.  Calibrate once
-    # enough history has accumulated across Riyadh.
-    realized_score = _clamp((realized_demand / 200.0) ** 0.5 * 100.0)
+    # Reference point (EXPANSION_REALIZED_DEMAND_REFERENCE): realized_demand
+    # equal to the reference maps to a score of 100.  Square-root scaling
+    # mirrors the listing-count term so the two blend cleanly.  Calibrate via
+    # scripts/diagnostics/realized_demand_calibration.sql.
+    realized_score = _clamp(
+        (realized_demand / settings.EXPANSION_REALIZED_DEMAND_REFERENCE) ** 0.5
+        * 100.0
+    )
     bw = max(0.0, min(1.0, blend_weight))
     return _clamp(listing_score * (1.0 - bw) + realized_score * bw)
 
