@@ -1993,18 +1993,19 @@ def test_delivery_score_blends_realized_demand_when_provided():
     from app.services.expansion_advisor import _delivery_score
 
     listing_only = _delivery_score(10)  # ~50
-    # Realized demand of 200 Δ ratings ≈ 100 on the realized curve
-    blended = _delivery_score(10, realized_demand=200.0, blend_weight=0.5)
+    # Realized demand at the calibration reference (p75 = 263 Δ ratings)
+    # ≈ 100 on the realized curve.
+    blended = _delivery_score(10, realized_demand=263.0, blend_weight=0.5)
     # Blend pulls the score toward the stronger realized signal
     assert blended > listing_only
     # Full-realized weight = realized score only
     realized_only = _delivery_score(
-        10, realized_demand=200.0, blend_weight=1.0
+        10, realized_demand=263.0, blend_weight=1.0
     )
     assert abs(realized_only - 100.0) < 0.01
     # Zero blend weight = listing-only
     ignore_realized = _delivery_score(
-        10, realized_demand=200.0, blend_weight=0.0
+        10, realized_demand=263.0, blend_weight=0.0
     )
     assert abs(ignore_realized - listing_only) < 0.01
 
