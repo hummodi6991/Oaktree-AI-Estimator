@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type { CandidateMemoResponse, RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
@@ -14,29 +15,12 @@ function toList(input: unknown): string[] {
   return Array.isArray(input) ? input.map(String) : [];
 }
 
-/** Humanize score component keys for the breakdown */
-const SCORE_LABEL_MAP: Record<string, string> = {
-  competition_whitespace: "Competitor Openness",
-  demand_potential: "Demand Strength",
-  occupancy_economics: "Economics",
-  delivery_demand: "Delivery Market",
-  access_visibility: "Access & Visibility",
-  brand_fit: "Brand Fit",
-  confidence: "Data Quality",
-  provider_density: "Provider Density",
-  provider_whitespace: "Market Gap",
-  multi_platform_presence: "Multi-platform",
-  delivery_competition: "Delivery Competition",
-  zoning_fit: "Zoning Fit",
-  frontage: "Frontage",
-  parking: "Parking",
-  economics: "Economics",
-  cannibalization: "Cannibalization",
-};
-
-function humanizeScoreLabel(key: string): string {
-  const cleaned = key.replace(/_score$/, "").replace(/_/g, " ");
-  return SCORE_LABEL_MAP[key.replace(/_score$/, "")] || cleaned.replace(/^\w/, (c) => c.toUpperCase());
+/** Humanize score component keys for the breakdown, localized via i18n.
+ *  The stripped key doubles as the leaf under expansionAdvisor.scoreLabels. */
+function humanizeScoreLabel(key: string, t: TFunction): string {
+  const stripped = key.replace(/_score$/, "");
+  const fallback = stripped.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+  return t(`expansionAdvisor.scoreLabels.${stripped}`, { defaultValue: fallback });
 }
 
 type MemoTab = "economics" | "market" | "site" | "risks" | "breakdown";
@@ -787,7 +771,7 @@ export default function ExpansionMemoPanel({
                         <div className="ea-detail__grid">
                           {Object.entries(breakdown.weighted_components).map(([key, val]) => (
                             <div key={key} className="ea-detail__kv">
-                              <span className="ea-detail__kv-label">{humanizeScoreLabel(key)}</span>
+                              <span className="ea-detail__kv-label">{humanizeScoreLabel(key, t)}</span>
                               <span className="ea-detail__kv-value">{typeof val === "number" ? fmtScore(val) : String(val ?? "—")}</span>
                             </div>
                           ))}
