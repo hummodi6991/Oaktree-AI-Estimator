@@ -194,3 +194,136 @@ def test_list_saved_searches_generic_error_propagates(monkeypatch):
         app.dependency_overrides.pop(get_db, None)
 
     assert res.status_code == 500
+
+
+# ---------------------------------------------------------------------------
+# PR #1: `lang` parameter threading — plumbing only.
+#
+# The candidate-shaped saved-search endpoints (create / list / get / patch)
+# must accept `lang`, default to "en", coerce invalid values to "en" (200,
+# not 422), and behave identically to omitting it. DELETE is out of scope.
+# ---------------------------------------------------------------------------
+
+_SAVED_ROW = {
+    "id": "saved-1",
+    "search_id": "search-1",
+    "title": "Study A",
+    "status": "draft",
+    "selected_candidate_ids": [],
+    "filters_json": {},
+    "ui_state_json": {},
+    "description": None,
+    "search": None,
+    "candidates": [],
+}
+
+
+def test_create_saved_search_accepts_lang(monkeypatch):
+    from app.api import expansion_advisor as api
+
+    monkeypatch.setattr(api, "get_search", lambda *_: {"id": "search-1"})
+    monkeypatch.setattr(api, "create_saved_search", lambda *_a, **_k: dict(_SAVED_ROW))
+
+    client = _client(DummyDB())
+
+    def _create(**extra):
+        body = {"search_id": "search-1", "title": "Study A", "status": "draft"}
+        body.update(extra)
+        return client.post("/v1/expansion-advisor/saved-searches", json=body)
+
+    try:
+        omitted = _create()
+        en = _create(lang="en")
+        ar = _create(lang="ar")
+        invalid = _create(lang="fr")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    for resp in (omitted, en, ar, invalid):
+        assert resp.status_code == 200
+        assert resp.json() == omitted.json()
+
+
+def test_list_saved_searches_accepts_lang(monkeypatch):
+    from app.api import expansion_advisor as api
+
+    monkeypatch.setattr(api, "list_saved_searches", lambda *_a, **_k: [dict(_SAVED_ROW)])
+
+    client = _client(DummyDB())
+    try:
+        omitted = client.get("/v1/expansion-advisor/saved-searches")
+        en = client.get("/v1/expansion-advisor/saved-searches?lang=en")
+        ar = client.get("/v1/expansion-advisor/saved-searches?lang=ar")
+        invalid = client.get("/v1/expansion-advisor/saved-searches?lang=fr")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    for resp in (omitted, en, ar, invalid):
+        assert resp.status_code == 200
+        assert resp.json() == omitted.json()
+
+
+def test_get_saved_search_accepts_lang(monkeypatch):
+    from app.api import expansion_advisor as api
+
+    monkeypatch.setattr(api, "get_saved_search", lambda *_a, **_k: dict(_SAVED_ROW))
+
+    client = _client(DummyDB())
+    try:
+        omitted = client.get("/v1/expansion-advisor/saved-searches/saved-1")
+        en = client.get("/v1/expansion-advisor/saved-searches/saved-1?lang=en")
+        ar = client.get("/v1/expansion-advisor/saved-searches/saved-1?lang=ar")
+        invalid = client.get("/v1/expansion-advisor/saved-searches/saved-1?lang=fr")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    for resp in (omitted, en, ar, invalid):
+        assert resp.status_code == 200
+        assert resp.json() == omitted.json()
+
+
+def test_patch_saved_search_accepts_lang(monkeypatch):
+    from app.api import expansion_advisor as api
+
+    monkeypatch.setattr(api, "update_saved_search", lambda *_a, **_k: dict(_SAVED_ROW))
+
+    client = _client(DummyDB())
+    try:
+        omitted = client.patch("/v1/expansion-advisor/saved-searches/saved-1", json={"title": "Renamed"})
+        en = client.patch("/v1/expansion-advisor/saved-searches/saved-1", json={"title": "Renamed", "lang": "en"})
+        ar = client.patch("/v1/expansion-advisor/saved-searches/saved-1", json={"title": "Renamed", "lang": "ar"})
+        invalid = client.patch("/v1/expansion-advisor/saved-searches/saved-1", json={"title": "Renamed", "lang": "fr"})
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    for resp in (omitted, en, ar, invalid):
+        assert resp.status_code == 200
+        assert resp.json() == omitted.json()
+
+
+def test_patch_saved_search_does_not_pass_lang_to_update(monkeypatch):
+    """R3: `lang` must be popped from the payload before it reaches
+    update_saved_search — it is not a persisted saved-search column."""
+    from app.api import expansion_advisor as api
+
+    captured = {}
+
+    def _spy_update(_db, _saved_id, payload):
+        captured["payload"] = payload
+        return dict(_SAVED_ROW)
+
+    monkeypatch.setattr(api, "update_saved_search", _spy_update)
+
+    client = _client(DummyDB())
+    try:
+        res = client.patch(
+            "/v1/expansion-advisor/saved-searches/saved-1",
+            json={"title": "Renamed", "lang": "ar"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert res.status_code == 200
+    assert "payload" in captured
+    assert "lang" not in captured["payload"]
+    assert captured["payload"]["title"] == "Renamed"
