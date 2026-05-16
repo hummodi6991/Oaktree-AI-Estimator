@@ -7,7 +7,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from datetime import datetime
 import time as _prewarm_time
 
@@ -130,6 +130,7 @@ class ExpansionAdvisorSearchRequest(BaseModel):
     bbox: ExpansionAdvisorBBox | None = None
     limit: int = Field(15, ge=1, le=100)
     brand_profile: ExpansionBrandProfileInput | None = None
+    lang: str = "en"
 
 
 
@@ -468,6 +469,7 @@ class SavedSearchListResponse(StrictResponseModel):
 class CompareCandidatesRequest(BaseModel):
     search_id: str = Field(..., min_length=1, max_length=36)
     candidate_ids: list[str] = Field(..., min_length=2, max_length=6)
+    lang: str = "en"
 
 
 
@@ -479,6 +481,7 @@ class SavedSearchCreateRequest(BaseModel):
     selected_candidate_ids: list[str] = Field(default_factory=list)
     filters_json: dict[str, Any] = Field(default_factory=dict)
     ui_state_json: dict[str, Any] = Field(default_factory=dict)
+    lang: str = "en"
 
 
 class SavedSearchPatchRequest(BaseModel):
@@ -488,6 +491,7 @@ class SavedSearchPatchRequest(BaseModel):
     selected_candidate_ids: list[str] = Field(default_factory=list)
     filters_json: dict[str, Any] = Field(default_factory=dict)
     ui_state_json: dict[str, Any] = Field(default_factory=dict)
+    lang: str = "en"
 
 
 
@@ -768,6 +772,8 @@ def _prewarm_decision_memos(
             ctx = build_memo_context(
                 candidate=spec,
                 brief={"brand_profile": brand_profile or {}},
+                # Hardcoded "en" until heuristic strings have Arabic parity (PR #3).
+                # Threading lang here would emit memos with mixed-language sections.
                 lang="en",
             )
             memo_json = generate_structured_memo(ctx)
@@ -892,6 +898,8 @@ def create_expansion_search(
             status_code=400,
             detail="min_area_m2 must be less than or equal to max_area_m2",
         )
+    lang = req.lang if req.lang in ("en", "ar") else "en"
+    # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     # Clear cached lookups at the start of each new search so they pick up
     # any data changes since the last request.
     clear_expansion_caches()
@@ -928,7 +936,7 @@ def create_expansion_search(
         resolved_target_districts.append(resolved if resolved else td)
     req_target_districts = resolved_target_districts
 
-    request_json = req.model_dump()
+    request_json = req.model_dump(exclude={"lang"})
     bbox_json = req.bbox.model_dump() if req.bbox else None
     existing_branches_payload = [branch.model_dump() for branch in req.existing_branches]
     brand_profile_payload = req.brand_profile.model_dump() if req.brand_profile else None
@@ -1122,7 +1130,13 @@ def create_expansion_search(
 
 
 @router.get("/searches/{search_id}", response_model=ExpansionSearchDetailResponse)
-def get_expansion_search(search_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+def get_expansion_search(
+    search_id: str,
+    lang: str = Query("en"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    lang = lang if lang in ("en", "ar") else "en"
+    # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     search = get_search(db, search_id)
     if not search:
         raise HTTPException(status_code=404, detail="Expansion search not found")
@@ -1130,7 +1144,13 @@ def get_expansion_search(search_id: str, db: Session = Depends(get_db)) -> dict[
 
 
 @router.get("/searches/{search_id}/candidates", response_model=ExpansionCandidatesListResponse)
-def get_expansion_search_candidates(search_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+def get_expansion_search_candidates(
+    search_id: str,
+    lang: str = Query("en"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    lang = lang if lang in ("en", "ar") else "en"
+    # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     search = get_search(db, search_id)
     if not search:
         raise HTTPException(status_code=404, detail="Expansion search not found")
@@ -1138,7 +1158,13 @@ def get_expansion_search_candidates(search_id: str, db: Session = Depends(get_db
 
 
 @router.get("/searches/{search_id}/report", response_model=RecommendationReportResponse)
-def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+def get_expansion_search_report(
+    search_id: str,
+    lang: str = Query("en"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    lang = lang if lang in ("en", "ar") else "en"
+    # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     import time as _time
     t0 = _time.monotonic()
 
@@ -1202,7 +1228,13 @@ def get_expansion_search_report(search_id: str, db: Session = Depends(get_db)) -
 
 
 @router.get("/candidates/{candidate_id}/memo", response_model=CandidateMemoResponse)
-def get_expansion_candidate_memo(candidate_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+def get_expansion_candidate_memo(
+    candidate_id: str,
+    lang: str = Query("en"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    lang = lang if lang in ("en", "ar") else "en"
+    # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     memo = get_candidate_memo(db, candidate_id)
     if not memo:
         raise HTTPException(status_code=404, detail="Expansion candidate not found")
@@ -1213,6 +1245,8 @@ def compare_expansion_candidates(
     req: CompareCandidatesRequest,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    lang = req.lang if req.lang in ("en", "ar") else "en"
+    # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     try:
         return compare_candidates(db, req.search_id, req.candidate_ids)
     except ValueError:
@@ -1221,6 +1255,8 @@ def compare_expansion_candidates(
 
 @router.post("/saved-searches", response_model=SavedSearchResponse)
 def create_expansion_saved_search(req: SavedSearchCreateRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    lang = req.lang if req.lang in ("en", "ar") else "en"
+    # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     if not get_search(db, req.search_id):
         raise HTTPException(status_code=404, detail="Expansion search not found")
     try:
@@ -1245,8 +1281,11 @@ def create_expansion_saved_search(req: SavedSearchCreateRequest, db: Session = D
 def list_expansion_saved_searches(
     status: Literal["draft", "final"] | None = None,
     limit: int = 20,
+    lang: str = Query("en"),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    lang = lang if lang in ("en", "ar") else "en"
+    # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     safe_limit = min(max(limit, 1), 100)
     try:
         return {"items": list_saved_searches(db, status=status, limit=safe_limit)}
@@ -1260,7 +1299,13 @@ def list_expansion_saved_searches(
 
 
 @router.get("/saved-searches/{saved_id}", response_model=SavedSearchResponse)
-def get_expansion_saved_search(saved_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+def get_expansion_saved_search(
+    saved_id: str,
+    lang: str = Query("en"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    lang = lang if lang in ("en", "ar") else "en"
+    # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     saved = get_saved_search(db, saved_id)
     if not saved:
         raise HTTPException(status_code=404, detail="Saved search not found")
@@ -1273,7 +1318,10 @@ def patch_expansion_saved_search(
     req: SavedSearchPatchRequest,
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
+    lang = req.lang if req.lang in ("en", "ar") else "en"
+    # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     payload = req.model_dump(exclude_unset=True)
+    payload.pop("lang", None)
     try:
         saved = update_saved_search(db, saved_id, payload)
         if not saved:

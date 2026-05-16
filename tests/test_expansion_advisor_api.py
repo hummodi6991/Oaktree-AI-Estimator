@@ -1077,3 +1077,250 @@ def test_meta_demote_leg_fields_default_none_when_block_absent(monkeypatch):
     assert meta["demote_leg_drops"] is None
     assert meta["demote_leg_thresholds"] is None
     assert meta["demote_leg_enabled"] is None
+
+
+# ---------------------------------------------------------------------------
+# PR #1: `lang` parameter threading — plumbing only.
+#
+# Each updated endpoint must accept `lang` (body field for POST/PATCH, query
+# param for GET), default to "en", coerce any invalid value to "en" (always
+# 200, never 422), and produce output identical to omitting `lang` — because
+# this PR wires the parameter but does not consume it yet.
+# ---------------------------------------------------------------------------
+
+
+def _setup_searches_mocks(monkeypatch):
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(expansion_api, "persist_existing_branches", lambda *_a, **_k: None)
+    monkeypatch.setattr(expansion_api, "persist_brand_profile", lambda *_a, **_k: None)
+    # Constant candidate payload so `lang` is the only variable under test:
+    # the real run_expansion_search stamps the fresh per-call search_id onto
+    # each candidate, which would otherwise mask the comparison.
+    monkeypatch.setattr(
+        expansion_api,
+        "run_expansion_search",
+        lambda **kwargs: [
+            {
+                "id": "candidate-1",
+                "search_id": "search-fixed",
+                "parcel_id": "parcel-123",
+                "district": "Olaya",
+                "final_score": 80.0,
+            }
+        ],
+    )
+
+
+def _post_search(client, **body_overrides):
+    payload = {"brand_name": "Brand X", "category": "burger"}
+    payload.update(body_overrides)
+    return client.post("/v1/expansion-advisor/searches", json=payload)
+
+
+def test_post_searches_lang_accepted_defaulted_and_coerced(monkeypatch):
+    """POST /searches accepts lang en/ar, defaults to en when omitted, and
+    coerces invalid values to en (200, not 422). Response is identical to
+    omitting lang (search_id masked — it is a fresh UUID per call)."""
+    _setup_searches_mocks(monkeypatch)
+    client = _client_with_db(DummyDB())
+    try:
+        omitted = _post_search(client)
+        en = _post_search(client, lang="en")
+        ar = _post_search(client, lang="ar")
+        invalid = _post_search(client, lang="fr")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    for resp in (omitted, en, ar, invalid):
+        assert resp.status_code == 200
+
+    def _masked(resp):
+        body = resp.json()
+        body.pop("search_id", None)
+        return body
+
+    base = _masked(omitted)
+    assert _masked(en) == base
+    assert _masked(ar) == base
+    assert _masked(invalid) == base
+
+
+def test_post_searches_lang_not_persisted_in_request_json(monkeypatch):
+    """R1: the persisted expansion_search.request_json blob must NOT gain a
+    `lang` key — otherwise rows written before/after this PR drift."""
+    _setup_searches_mocks(monkeypatch)
+    db = DummyDB()
+    client = _client_with_db(db)
+    try:
+        response = _post_search(client, lang="ar")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 200
+    insert_rows = [
+        params for sql, params in db.executed
+        if "INSERT INTO expansion_search" in sql
+    ]
+    assert insert_rows, "expected an INSERT INTO expansion_search"
+    request_json = insert_rows[0]["request_json"]
+    assert "lang" not in request_json
+    assert '"lang"' not in request_json
+
+
+def test_get_search_detail_accepts_lang(monkeypatch):
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(
+        expansion_api,
+        "get_search",
+        lambda _db, _search_id: {
+            "id": "search-1",
+            "created_at": "2026-01-01T00:00:00Z",
+            "brand_name": "Brand X",
+            "category": "burger",
+            "service_model": "qsr",
+            "target_districts": [],
+            "min_area_m2": 100,
+            "max_area_m2": 300,
+            "target_area_m2": 180,
+            "bbox": None,
+            "request_json": {},
+            "notes": {"version": "expansion_advisor_v7"},
+            "existing_branches": [],
+            "brand_profile": None,
+            "meta": {"version": "expansion_advisor_v7"},
+        },
+    )
+    client = _client_with_db(DummyDB())
+    try:
+        omitted = client.get("/v1/expansion-advisor/searches/search-1")
+        en = client.get("/v1/expansion-advisor/searches/search-1?lang=en")
+        ar = client.get("/v1/expansion-advisor/searches/search-1?lang=ar")
+        invalid = client.get("/v1/expansion-advisor/searches/search-1?lang=fr")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    for resp in (omitted, en, ar, invalid):
+        assert resp.status_code == 200
+        assert resp.json() == omitted.json()
+
+
+def test_get_search_candidates_accepts_lang(monkeypatch):
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(expansion_api, "get_search", lambda _db, _search_id: {"id": "search-1"})
+    monkeypatch.setattr(
+        expansion_api,
+        "get_candidates",
+        lambda _db, _search_id: [
+            {"id": "candidate-1", "search_id": "search-1", "district": "Olaya"}
+        ],
+    )
+    client = _client_with_db(DummyDB())
+    try:
+        omitted = client.get("/v1/expansion-advisor/searches/search-1/candidates")
+        en = client.get("/v1/expansion-advisor/searches/search-1/candidates?lang=en")
+        ar = client.get("/v1/expansion-advisor/searches/search-1/candidates?lang=ar")
+        invalid = client.get("/v1/expansion-advisor/searches/search-1/candidates?lang=EN")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    for resp in (omitted, en, ar, invalid):
+        assert resp.status_code == 200
+        assert resp.json() == omitted.json()
+
+
+def test_get_search_report_accepts_lang(monkeypatch):
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(
+        expansion_api,
+        "get_recommendation_report",
+        lambda _db, _search_id: {
+            "search_id": "search-1",
+            "meta": {"version": "expansion_advisor_v7"},
+            "recommendation": {
+                "best_candidate_id": "c1",
+                "why_best": "",
+                "main_risk": "",
+                "best_format": "",
+                "summary": "",
+                "report_summary": "",
+            },
+            "assumptions": {},
+            "top_candidates": [],
+        },
+    )
+    client = _client_with_db(DummyDB())
+    try:
+        omitted = client.get("/v1/expansion-advisor/searches/search-1/report")
+        en = client.get("/v1/expansion-advisor/searches/search-1/report?lang=en")
+        ar = client.get("/v1/expansion-advisor/searches/search-1/report?lang=ar")
+        invalid = client.get("/v1/expansion-advisor/searches/search-1/report?lang=")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    for resp in (omitted, en, ar, invalid):
+        assert resp.status_code == 200
+        assert resp.json() == omitted.json()
+
+
+def test_compare_endpoint_accepts_lang(monkeypatch):
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(
+        expansion_api,
+        "compare_candidates",
+        lambda _db, _search_id, _candidate_ids: {
+            "items": [{"candidate_id": "c1"}, {"candidate_id": "c2"}],
+            "summary": {"best_overall_candidate_id": "c1"},
+        },
+    )
+    client = _client_with_db(DummyDB())
+
+    def _compare(**extra):
+        body = {"search_id": "search-1", "candidate_ids": ["c1", "c2"]}
+        body.update(extra)
+        return client.post("/v1/expansion-advisor/candidates/compare", json=body)
+
+    try:
+        omitted = _compare()
+        en = _compare(lang="en")
+        ar = _compare(lang="ar")
+        invalid = _compare(lang="fr")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    for resp in (omitted, en, ar, invalid):
+        assert resp.status_code == 200
+        assert resp.json() == omitted.json()
+
+
+def test_candidate_memo_endpoint_accepts_lang(monkeypatch):
+    from app.api import expansion_advisor as expansion_api
+
+    monkeypatch.setattr(
+        expansion_api,
+        "get_candidate_memo",
+        lambda _db, _candidate_id: {
+            "candidate_id": "c1",
+            "search_id": "search-1",
+            "brand_profile": {},
+            "candidate": {},
+            "recommendation": {},
+            "market_research": {},
+        },
+    )
+    client = _client_with_db(DummyDB())
+    try:
+        omitted = client.get("/v1/expansion-advisor/candidates/c1/memo")
+        en = client.get("/v1/expansion-advisor/candidates/c1/memo?lang=en")
+        ar = client.get("/v1/expansion-advisor/candidates/c1/memo?lang=ar")
+        invalid = client.get("/v1/expansion-advisor/candidates/c1/memo?lang=fr")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    for resp in (omitted, en, ar, invalid):
+        assert resp.status_code == 200
+        assert resp.json() == omitted.json()
