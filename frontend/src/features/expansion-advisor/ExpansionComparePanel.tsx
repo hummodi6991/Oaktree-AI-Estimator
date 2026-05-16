@@ -5,11 +5,9 @@ import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
 import { fmtScore, fmtSAR, fmtMonths, fmtSarPerM2Year, gateColor, candidateDistrictLabel } from "./formatHelpers";
 
-// Note: hard-coded English labels match the file's existing pattern.
-// i18n debt for this panel is tracked separately and out of scope here.
-// "Lowest Rent Burden" continues to mean "smallest absolute annual rent"
-// across the compared set; "Best Value" is a new, independent peer that
-// surfaces the value_score-aware winner. Both are populated server-side.
+// "Lowest Rent Burden" means "smallest absolute annual rent" across the
+// compared set; "Best Value" surfaces the value_score-aware winner. Both
+// are populated server-side. Display labels are localized via i18n.
 const SUMMARY_KEY_ORDER = [
   "best_overall_candidate_id",
   "best_gate_pass_candidate_id",
@@ -24,24 +22,6 @@ const SUMMARY_KEY_ORDER = [
   "most_confident_candidate_id",
 ] as const;
 
-const SUMMARY_LABELS: Record<string, string> = {
-  best_overall_candidate_id: "Best Overall",
-  best_gate_pass_candidate_id: "Best Gate Pass",
-  best_value_candidate_id: "Best Value",
-  best_economics_candidate_id: "Best Economics",
-  lowest_rent_burden_candidate_id: "Lowest Rent Burden",
-  best_brand_fit_candidate_id: "Best Brand Fit",
-  highest_demand_candidate_id: "Highest Demand",
-  strongest_delivery_market_candidate_id: "Strongest Delivery",
-  strongest_whitespace_candidate_id: "Strongest Whitespace",
-  lowest_cannibalization_candidate_id: "Lowest Cannibalization",
-  most_confident_candidate_id: "Most Confident",
-};
-
-function summaryLabel(key: string) {
-  return SUMMARY_LABELS[key] || key.replace(/_candidate_id$/, "").replace(/_/g, " ").trim();
-}
-
 export function getOrderedCompareSummaryEntries(summary: Record<string, string | null> = {}) {
   const sortedKnown = SUMMARY_KEY_ORDER.map((key) => [key, summary[key]] as const).filter((entry) => entry[1]);
   const knownKeys = new Set(SUMMARY_KEY_ORDER);
@@ -50,49 +30,50 @@ export function getOrderedCompareSummaryEntries(summary: Record<string, string |
 }
 
 type DimensionGroup = {
-  label: string;
-  rows: Array<{ label: string; key: string; fmt?: "sar" | "months" | "sar_m2_year" }>;
+  labelKey: string;
+  rows: Array<{ key: string; fmt?: "sar" | "months" | "sar_m2_year" }>;
 };
 
+// Row `key` doubles as the i18n leaf under expansionAdvisor.compare.rows.
 const DIMENSION_GROUPS: DimensionGroup[] = [
   {
-    label: "Overall Rank & Score",
+    labelKey: "overall",
     rows: [
-      { label: "Rank", key: "rank_position" },
-      { label: "Final score", key: "final_score" },
-      { label: "Confidence", key: "confidence_grade" },
-      { label: "Gate status", key: "gate" },
+      { key: "rank_position" },
+      { key: "final_score" },
+      { key: "confidence_grade" },
+      { key: "gate" },
     ],
   },
   {
-    label: "Demand & Whitespace",
+    labelKey: "demand",
     rows: [
-      { label: "Demand", key: "demand_score" },
-      { label: "Fit", key: "fit_score" },
-      { label: "Brand fit", key: "brand_fit_score" },
-      { label: "Provider density", key: "provider_density_score" },
-      { label: "Whitespace", key: "provider_whitespace_score" },
-      { label: "Delivery competition", key: "delivery_competition_score" },
-      { label: "Multi-platform", key: "multi_platform_presence_score" },
+      { key: "demand_score" },
+      { key: "fit_score" },
+      { key: "brand_fit_score" },
+      { key: "provider_density_score" },
+      { key: "provider_whitespace_score" },
+      { key: "delivery_competition_score" },
+      { key: "multi_platform_presence_score" },
     ],
   },
   {
-    label: "Economics & Rent",
+    labelKey: "economics",
     rows: [
-      { label: "Economics", key: "economics_score" },
-      { label: "Rent/m²/yr", key: "estimated_rent_sar_m2_year", fmt: "sar_m2_year" },
-      { label: "Annual rent", key: "display_annual_rent_sar", fmt: "sar" },
-      { label: "Cannibalization", key: "cannibalization_score" },
+      { key: "economics_score" },
+      { key: "estimated_rent_sar_m2_year", fmt: "sar_m2_year" },
+      { key: "display_annual_rent_sar", fmt: "sar" },
+      { key: "cannibalization_score" },
     ],
   },
   {
-    label: "Site Quality",
+    labelKey: "site",
     rows: [
-      { label: "Zoning", key: "zoning_fit_score" },
-      { label: "Frontage", key: "frontage_score" },
-      { label: "Access", key: "access_score" },
-      { label: "Parking", key: "parking_score" },
-      { label: "Visibility", key: "access_visibility_score" },
+      { key: "zoning_fit_score" },
+      { key: "frontage_score" },
+      { key: "access_score" },
+      { key: "parking_score" },
+      { key: "access_visibility_score" },
     ],
   },
 ];
@@ -173,7 +154,11 @@ export default function ExpansionComparePanel({
                   style={{ cursor: v ? "pointer" : "default" }}
                   onClick={() => v && onSelectCandidateId?.(v)}
                 >
-                  <span className="ea-compare-highlight__dim">{summaryLabel(k)}</span>
+                  <span className="ea-compare-highlight__dim">
+                    {t(`expansionAdvisor.compare.winners.${k}`, {
+                      defaultValue: k.replace(/_candidate_id$/, "").replace(/_/g, " ").trim(),
+                    })}
+                  </span>
                   <span className="ea-badge ea-badge--green">{t("expansionAdvisor.compareBestHighlight")}</span>
                 </span>
               ))}
@@ -198,15 +183,15 @@ export default function ExpansionComparePanel({
                 </thead>
                 <tbody>
                   {DIMENSION_GROUPS.map((group) => (
-                    <React.Fragment key={`group-${group.label}`}>
+                    <React.Fragment key={`group-${group.labelKey}`}>
                       <tr className="ea-compare-table__group-header">
-                        <td colSpan={items.length + 1}>{group.label}</td>
+                        <td colSpan={items.length + 1}>{t(`expansionAdvisor.compare.groups.${group.labelKey}`)}</td>
                       </tr>
                       {group.rows.map((row) => {
                         const bestId = findBestOnKey(items as unknown as Array<Record<string, unknown>>, row.key);
                         return (
                           <tr key={row.key}>
-                            <td style={{ fontWeight: 500, color: "var(--oak-text-light)" }}>{row.label}</td>
+                            <td style={{ fontWeight: 500, color: "var(--oak-text-light)" }}>{t(`expansionAdvisor.compare.rows.${row.key}`)}</td>
                             {items.map((item) => {
                               const raw = (item as Record<string, unknown>)[row.key];
                               const isBest = bestId != null && item.candidate_id === bestId;
