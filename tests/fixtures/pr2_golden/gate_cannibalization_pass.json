@@ -1,0 +1,9 @@
+{
+  "expected_english": "cannibalization",
+  "expected_structured": null,
+  "id": "gate_cannibalization_pass",
+  "kwargs": {
+    "gate_key": "cannibalization_pass"
+  },
+  "producer": "_gate_key_to_label"
+}

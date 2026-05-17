@@ -1,0 +1,9 @@
+{
+  "expected_english": "district",
+  "expected_structured": null,
+  "id": "gate_district_pass",
+  "kwargs": {
+    "gate_key": "district_pass"
+  },
+  "producer": "_gate_key_to_label"
+}

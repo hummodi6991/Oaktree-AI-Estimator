@@ -1,0 +1,24 @@
+{
+  "expected_english": "Demand is moderate (score 55.0) with population reach around 20000; provider activity is limited district data, whitespace is potentially tight (district-level), and delivery competition is district-level estimate.",
+  "expected_structured": {
+    "id": "demand_thesis",
+    "params": {
+      "competition_label": "district_estimate",
+      "demand_label": "moderate",
+      "demand_score": 55.0,
+      "population_reach": 20000.0,
+      "provider_label": "limited_district",
+      "whitespace_label": "tight_district"
+    }
+  },
+  "id": "dt_06_limited_district_tight",
+  "kwargs": {
+    "delivery_competition_score": 70.0,
+    "delivery_observed": false,
+    "demand_score": 55.0,
+    "population_reach": 20000.0,
+    "provider_density_score": 20.0,
+    "provider_whitespace_score": 30.0
+  },
+  "producer": "_build_demand_thesis"
+}

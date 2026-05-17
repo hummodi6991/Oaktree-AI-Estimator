@@ -1,0 +1,43 @@
+{
+  "expected_english": {
+    "positives": [],
+    "risks": [
+      "High competitor density (11 nearby) — market may be saturated."
+    ]
+  },
+  "expected_structured": {
+    "positives": [],
+    "risks": [
+      {
+        "id": "risk.high_competitor_density",
+        "params": {
+          "count": 11
+        }
+      }
+    ]
+  },
+  "id": "tpr_K13_high_competitor_density",
+  "kwargs": {
+    "candidate": {
+      "brand_fit_score": 0.0,
+      "cannibalization_score": 0.0,
+      "competitor_count": 11,
+      "delivery_competition_score": 0.0,
+      "demand_score": 0.0,
+      "economics_score": 60.0,
+      "gate_status_json": {
+        "overall_pass": false
+      },
+      "multi_platform_presence_score": 0.0,
+      "provider_density_score": 10.0,
+      "provider_whitespace_score": 0.0,
+      "whitespace_score": 0.0
+    },
+    "gate_reasons": {
+      "failed": [],
+      "passed": [],
+      "unknown": []
+    }
+  },
+  "producer": "_top_positives_and_risks"
+}

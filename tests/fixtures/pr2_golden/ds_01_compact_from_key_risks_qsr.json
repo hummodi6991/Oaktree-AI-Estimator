@@ -1,0 +1,27 @@
+{
+  "expected_english": "This compact candidate in Al Olaya scores 70.0/100 overall with an economics score of 60.0/100. It is a practical first-pass option for neighborhood qsr. Biggest commercial risk: Cannibalization risk is elevated versus branch network.",
+  "expected_structured": {
+    "id": "decision_summary",
+    "params": {
+      "area_label": "compact",
+      "district_label": "Al Olaya",
+      "economics_score": 60.0,
+      "final_score": 70.0,
+      "risk_kind": "from_key_risks",
+      "risk_text_en": "Cannibalization risk is elevated versus branch network.",
+      "use_case": "neighborhood_qsr"
+    }
+  },
+  "id": "ds_01_compact_from_key_risks_qsr",
+  "kwargs": {
+    "area_m2": 150.0,
+    "district": "Al Olaya",
+    "economics_score": 60.0,
+    "final_score": 70.0,
+    "key_risks": [
+      "Cannibalization risk is elevated versus branch network."
+    ],
+    "service_model": "qsr"
+  },
+  "producer": "_decision_summary"
+}

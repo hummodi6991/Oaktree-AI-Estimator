@@ -1,0 +1,24 @@
+{
+  "expected_english": "Demand is limited (score 30.0) with population reach around 8000; provider activity is thin, whitespace is tight, and delivery competition is manageable.",
+  "expected_structured": {
+    "id": "demand_thesis",
+    "params": {
+      "competition_label": "manageable",
+      "demand_label": "limited",
+      "demand_score": 30.0,
+      "population_reach": 8000.0,
+      "provider_label": "thin",
+      "whitespace_label": "tight"
+    }
+  },
+  "id": "dt_03_limited_observed_thin",
+  "kwargs": {
+    "delivery_competition_score": 10.0,
+    "delivery_observed": true,
+    "demand_score": 30.0,
+    "population_reach": 8000.0,
+    "provider_density_score": 10.0,
+    "provider_whitespace_score": 10.0
+  },
+  "producer": "_build_demand_thesis"
+}

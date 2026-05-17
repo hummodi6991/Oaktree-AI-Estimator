@@ -1,0 +1,77 @@
+{
+  "expected_english": {
+    "positives": [],
+    "risks": [
+      "Cannibalization risk is elevated versus branch network.",
+      "Economics score is below preferred threshold.",
+      "Delivery competition intensity is high.",
+      "Delivery platform competition is dense — limited delivery-channel whitespace.",
+      "Zoning fit gate failed.",
+      "Parking gate failed."
+    ]
+  },
+  "expected_structured": {
+    "positives": [],
+    "risks": [
+      {
+        "id": "risk.cannibalization_elevated",
+        "params": {}
+      },
+      {
+        "id": "risk.economics_below_threshold",
+        "params": {}
+      },
+      {
+        "id": "risk.delivery_competition_high",
+        "params": {}
+      },
+      {
+        "id": "risk.delivery_whitespace_limited",
+        "params": {}
+      },
+      {
+        "id": "risk.gate_failed",
+        "params": {
+          "gate_key": "zoning_fit_pass"
+        }
+      },
+      {
+        "id": "risk.gate_failed",
+        "params": {
+          "gate_key": "parking_pass"
+        }
+      }
+    ]
+  },
+  "id": "tpr_MULTI_risks_overflow",
+  "kwargs": {
+    "candidate": {
+      "area_m2": 85.0,
+      "brand_fit_score": 0.0,
+      "cannibalization_score": 80.0,
+      "competitor_count": 11,
+      "delivery_competition_score": 85.0,
+      "demand_score": 0.0,
+      "distance_to_nearest_branch_m": 1200.0,
+      "economics_score": 40.0,
+      "gate_status_json": {
+        "overall_pass": false
+      },
+      "multi_platform_presence_score": 0.0,
+      "provider_density_score": 10.0,
+      "provider_whitespace_score": 10.0,
+      "whitespace_score": 0.0
+    },
+    "gate_reasons": {
+      "failed": [
+        "zoning_fit_pass",
+        "parking_pass"
+      ],
+      "passed": [],
+      "unknown": [
+        "frontage_access_pass"
+      ]
+    }
+  },
+  "producer": "_top_positives_and_risks"
+}

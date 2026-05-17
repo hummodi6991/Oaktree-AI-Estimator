@@ -1,0 +1,47 @@
+{
+  "expected_english": {
+    "positives": [
+      "District ranks in the top tier for recent listing activity."
+    ],
+    "risks": []
+  },
+  "expected_structured": {
+    "positives": [
+      {
+        "id": "pos.top_tier_market",
+        "params": {}
+      }
+    ],
+    "risks": []
+  },
+  "id": "tpr_P15_top_tier_market",
+  "kwargs": {
+    "candidate": {
+      "brand_fit_score": 0.0,
+      "cannibalization_score": 0.0,
+      "competitor_count": 5,
+      "delivery_competition_score": 0.0,
+      "demand_score": 0.0,
+      "economics_score": 60.0,
+      "feature_snapshot_json": {
+        "district_momentum": {
+          "momentum_score": 85.0,
+          "sample_floor_applied": false
+        }
+      },
+      "gate_status_json": {
+        "overall_pass": false
+      },
+      "multi_platform_presence_score": 0.0,
+      "provider_density_score": 10.0,
+      "provider_whitespace_score": 0.0,
+      "whitespace_score": 0.0
+    },
+    "gate_reasons": {
+      "failed": [],
+      "passed": [],
+      "unknown": []
+    }
+  },
+  "producer": "_top_positives_and_risks"
+}

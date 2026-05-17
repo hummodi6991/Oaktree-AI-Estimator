@@ -1,0 +1,24 @@
+{
+  "expected_english": "Demand is strong (score 75.0) with population reach around 50000; provider activity is district-level estimate, whitespace is district-inferred, and delivery competition is district-level estimate.",
+  "expected_structured": {
+    "id": "demand_thesis",
+    "params": {
+      "competition_label": "district_estimate",
+      "demand_label": "strong",
+      "demand_score": 75.0,
+      "population_reach": 50000.0,
+      "provider_label": "district_estimate",
+      "whitespace_label": "district_inferred"
+    }
+  },
+  "id": "dt_05_district_estimate_inferred",
+  "kwargs": {
+    "delivery_competition_score": 70.0,
+    "delivery_observed": false,
+    "demand_score": 75.0,
+    "population_reach": 50000.0,
+    "provider_density_score": 70.0,
+    "provider_whitespace_score": 65.0
+  },
+  "producer": "_build_demand_thesis"
+}

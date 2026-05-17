@@ -1,0 +1,23 @@
+{
+  "expected_english": "Demand is moderate (score 68.0) with population reach around 33333; provider activity is steady, whitespace is balanced, and delivery competition is manageable.",
+  "expected_structured": {
+    "id": "demand_thesis",
+    "params": {
+      "competition_label": "manageable",
+      "demand_label": "moderate",
+      "demand_score": 68.0,
+      "population_reach": 33333.0,
+      "provider_label": "steady",
+      "whitespace_label": "balanced"
+    }
+  },
+  "id": "dt_09_default_delivery_observed",
+  "kwargs": {
+    "delivery_competition_score": 64.0,
+    "demand_score": 68.0,
+    "population_reach": 33333.0,
+    "provider_density_score": 46.0,
+    "provider_whitespace_score": 41.0
+  },
+  "producer": "_build_demand_thesis"
+}

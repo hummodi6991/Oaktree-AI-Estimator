@@ -2050,9 +2050,10 @@ def test_phase4_state2_new_only_appends_new_string():
         updated_days=2,
         district_momentum=_NEUTRAL_MOMENTUM,
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     assert "Newly listed within the last week." in positives
     assert "Recently refreshed listing in a top-tier market." not in positives
     assert "District ranks in the top tier for recent listing activity." not in positives
@@ -2064,9 +2065,10 @@ def test_phase4_state3_updated_only_appends_updated_string():
         updated_days=4,
         district_momentum=_NEUTRAL_MOMENTUM,
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     assert "Listing refreshed by the owner within the last week." in positives
     assert "Newly listed within the last week." not in positives
 
@@ -2077,9 +2079,10 @@ def test_phase4_state5_active_market_only():
         updated_days=120,
         district_momentum=_ACTIVE_MOMENTUM,
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     assert "District ranks in the top tier for recent listing activity." in positives
     assert "Newly listed within the last week." not in positives
     assert "Listing refreshed by the owner within the last week." not in positives
@@ -2091,9 +2094,10 @@ def test_phase4_state6_new_plus_active_appends_combined_string():
         updated_days=1,
         district_momentum={"momentum_score": 90.0, "sample_floor_applied": False},
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     assert "Newly listed in a top-tier market." in positives
     # The combined string replaces the standalone strings — the function
     # emits exactly one Phase 4 line.
@@ -2107,9 +2111,10 @@ def test_phase4_state7_updated_plus_active_appends_combined_string():
         updated_days=6,
         district_momentum={"momentum_score": 75.0, "sample_floor_applied": False},
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     assert "Recently refreshed listing in a top-tier market." in positives
     assert "Listing refreshed by the owner within the last week." not in positives
     assert "District ranks in the top tier for recent listing activity." not in positives
@@ -2121,9 +2126,10 @@ def test_phase4_state1_neither_signal_emits_nothing():
         updated_days=30,
         district_momentum=_NEUTRAL_MOMENTUM,
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     for phrase in (
         "Newly listed within the last week.",
         "Listing refreshed by the owner within the last week.",
@@ -2140,9 +2146,10 @@ def test_phase4_momentum_threshold_cliff_69_99_emits_nothing():
         updated_days=120,
         district_momentum={"momentum_score": 69.99, "sample_floor_applied": False},
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     assert "District ranks in the top tier for recent listing activity." not in positives
 
 
@@ -2152,9 +2159,10 @@ def test_phase4_momentum_threshold_cliff_70_00_emits_active_market():
         updated_days=120,
         district_momentum={"momentum_score": 70.0, "sample_floor_applied": False},
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     assert "District ranks in the top tier for recent listing activity." in positives
 
 
@@ -2168,9 +2176,10 @@ def test_phase4_both_days_null_emits_no_freshness():
         updated_days=None,
         district_momentum=_NEUTRAL_MOMENTUM,
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     for phrase in (
         "Newly listed within the last week.",
         "Listing refreshed by the owner within the last week.",
@@ -2189,9 +2198,10 @@ def test_phase4_new_wins_when_both_days_are_fresh():
         updated_days=2,
         district_momentum=_NEUTRAL_MOMENTUM,
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     assert "Newly listed within the last week." in positives
     assert "Listing refreshed by the owner within the last week." not in positives
 
@@ -2202,9 +2212,10 @@ def test_phase4_updated_fires_only_when_created_is_older_than_window():
         updated_days=3,
         district_momentum=_NEUTRAL_MOMENTUM,
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     assert "Listing refreshed by the owner within the last week." in positives
     assert "Newly listed within the last week." not in positives
 
@@ -2218,9 +2229,10 @@ def test_phase4_new_fires_even_when_updated_is_also_fresh():
         updated_days=1,
         district_momentum=_NEUTRAL_MOMENTUM,
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     assert "Newly listed within the last week." in positives
     assert "Listing refreshed by the owner within the last week." not in positives
 
@@ -2237,9 +2249,10 @@ def test_phase4_block_runs_after_existing_positives_in_function_order():
         district_momentum=_NEUTRAL_MOMENTUM,
         demand_score=85.0,  # triggers "Demand potential is strong..."
     )
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     existing_positive = "Demand potential is strong for this district."
     phase4_positive = "Newly listed within the last week."
     assert existing_positive in positives
@@ -2252,8 +2265,9 @@ def test_phase4_missing_feature_snapshot_is_safe():
     function. Common in tests and in a few recovery paths."""
     candidate = _phase4_candidate()
     candidate["feature_snapshot_json"] = None
-    positives, _ = _top_positives_and_risks(
+    positives, _, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons={"passed": [], "failed": [], "unknown": []}
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     # Nothing from Phase 4 should fire; we mainly want no exception.
     assert isinstance(positives, list)

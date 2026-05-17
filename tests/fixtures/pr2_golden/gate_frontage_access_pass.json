@@ -1,0 +1,9 @@
+{
+  "expected_english": "frontage/access",
+  "expected_structured": null,
+  "id": "gate_frontage_access_pass",
+  "kwargs": {
+    "gate_key": "frontage_access_pass"
+  },
+  "producer": "_gate_key_to_label"
+}

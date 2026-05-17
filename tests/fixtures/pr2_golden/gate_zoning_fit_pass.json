@@ -1,0 +1,9 @@
+{
+  "expected_english": "zoning fit",
+  "expected_structured": null,
+  "id": "gate_zoning_fit_pass",
+  "kwargs": {
+    "gate_key": "zoning_fit_pass"
+  },
+  "producer": "_gate_key_to_label"
+}

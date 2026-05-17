@@ -1,0 +1,45 @@
+{
+  "expected_english": {
+    "positives": [],
+    "risks": [
+      "District could not be verified from current data."
+    ]
+  },
+  "expected_structured": {
+    "positives": [],
+    "risks": [
+      {
+        "id": "risk.gate_unknown",
+        "params": {
+          "gate_key": "district_pass"
+        }
+      }
+    ]
+  },
+  "id": "tpr_K6_gate_unknown",
+  "kwargs": {
+    "candidate": {
+      "brand_fit_score": 0.0,
+      "cannibalization_score": 0.0,
+      "competitor_count": 5,
+      "delivery_competition_score": 0.0,
+      "demand_score": 0.0,
+      "economics_score": 60.0,
+      "gate_status_json": {
+        "overall_pass": false
+      },
+      "multi_platform_presence_score": 0.0,
+      "provider_density_score": 10.0,
+      "provider_whitespace_score": 0.0,
+      "whitespace_score": 0.0
+    },
+    "gate_reasons": {
+      "failed": [],
+      "passed": [],
+      "unknown": [
+        "district_pass"
+      ]
+    }
+  },
+  "producer": "_top_positives_and_risks"
+}

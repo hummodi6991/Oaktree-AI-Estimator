@@ -1,0 +1,9 @@
+{
+  "expected_english": "area fit",
+  "expected_structured": null,
+  "id": "gate_area_fit_pass",
+  "kwargs": {
+    "gate_key": "area_fit_pass"
+  },
+  "producer": "_gate_key_to_label"
+}

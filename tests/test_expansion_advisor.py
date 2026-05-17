@@ -757,7 +757,7 @@ def test_confidence_grade_listing_d_for_low_score():
 
 def test_demand_thesis_observed_delivery_uses_concrete_labels():
     """When delivery is observed, the thesis uses density labels like 'dense'/'thin'."""
-    thesis = _build_demand_thesis(
+    thesis, thesis_structured = _build_demand_thesis(
         demand_score=75.0,
         population_reach=50000,
         provider_density_score=70.0,
@@ -765,13 +765,14 @@ def test_demand_thesis_observed_delivery_uses_concrete_labels():
         delivery_competition_score=70.0,
         delivery_observed=True,
     )
+    assert isinstance(thesis_structured, dict)
     assert "dense" in thesis
     assert "not observed" not in thesis
 
 
 def test_demand_thesis_not_observed_uses_inferred_language():
     """When delivery is NOT observed and no district data, the thesis uses qualified 'inferred' language."""
-    thesis = _build_demand_thesis(
+    thesis, thesis_structured = _build_demand_thesis(
         demand_score=75.0,
         population_reach=50000,
         provider_density_score=0.0,
@@ -779,6 +780,7 @@ def test_demand_thesis_not_observed_uses_inferred_language():
         delivery_competition_score=70.0,
         delivery_observed=False,
     )
+    assert isinstance(thesis_structured, dict)
     assert "not observed (inferred)" in thesis
     assert "inferred whitespace opportunity" in thesis
     assert "not directly observed" in thesis
@@ -787,7 +789,7 @@ def test_demand_thesis_not_observed_uses_inferred_language():
 def test_demand_thesis_district_fallback_uses_district_language():
     """When delivery is NOT observed but district data exists (provider_density_score > 0),
     the thesis uses 'district-level estimate' language."""
-    thesis = _build_demand_thesis(
+    thesis, thesis_structured = _build_demand_thesis(
         demand_score=75.0,
         population_reach=50000,
         provider_density_score=70.0,
@@ -795,13 +797,14 @@ def test_demand_thesis_district_fallback_uses_district_language():
         delivery_competition_score=70.0,
         delivery_observed=False,
     )
+    assert isinstance(thesis_structured, dict)
     assert "district-level estimate" in thesis
     assert "district-inferred" in thesis
 
 
 def test_demand_thesis_zero_density_observed_shows_thin():
     """provider_density_score=0 with observed data shows 'thin', not a false positive."""
-    thesis = _build_demand_thesis(
+    thesis, thesis_structured = _build_demand_thesis(
         demand_score=30.0,
         population_reach=10000,
         provider_density_score=0.0,
@@ -809,6 +812,7 @@ def test_demand_thesis_zero_density_observed_shows_thin():
         delivery_competition_score=10.0,
         delivery_observed=True,
     )
+    assert isinstance(thesis_structured, dict)
     assert "thin" in thesis
     assert "not observed" not in thesis
 
@@ -1143,7 +1147,8 @@ def test_delivery_wording_inferred_when_no_observed_listings():
         "gate_status_json": {"overall_pass": True},
     }
     gate_reasons = {"failed": [], "unknown": [], "passed": ["delivery_market_pass"]}
-    positives, risks = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+    positives, risks, positives_structured, risks_structured = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
 
     # Should NOT have positive-sounding delivery/whitespace wording
     whitespace_positives = [p for p in positives if "whitespace" in p.lower()]
@@ -1170,7 +1175,8 @@ def test_delivery_wording_observed_when_listings_present():
         "gate_status_json": {"overall_pass": True},
     }
     gate_reasons = {"failed": [], "unknown": [], "passed": ["delivery_market_pass"]}
-    positives, risks = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+    positives, risks, positives_structured, risks_structured = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
 
     # Should NOT have inferred-delivery risk
     delivery_risks = [r for r in risks if "inferred" in r.lower() and "delivery" in r.lower()]
@@ -1231,7 +1237,7 @@ def test_delivery_gate_explanation_observed_when_listings_present():
 
 def test_demand_thesis_inferred_when_no_delivery():
     """Demand thesis should use inferred language when no delivery observed."""
-    thesis = _build_demand_thesis(
+    thesis, thesis_structured = _build_demand_thesis(
         demand_score=70.0,
         population_reach=50000.0,
         provider_density_score=0.0,
@@ -1239,12 +1245,13 @@ def test_demand_thesis_inferred_when_no_delivery():
         delivery_competition_score=0.0,
         delivery_observed=False,
     )
+    assert isinstance(thesis_structured, dict)
     assert "inferred" in thesis.lower() or "not observed" in thesis.lower()
 
 
 def test_demand_thesis_observed_when_delivery_present():
     """Demand thesis should use observed language when delivery listings exist."""
-    thesis = _build_demand_thesis(
+    thesis, thesis_structured = _build_demand_thesis(
         demand_score=70.0,
         population_reach=50000.0,
         provider_density_score=60.0,
@@ -1252,6 +1259,7 @@ def test_demand_thesis_observed_when_delivery_present():
         delivery_competition_score=45.0,
         delivery_observed=True,
     )
+    assert isinstance(thesis_structured, dict)
     assert "inferred" not in thesis.lower()
 
 
@@ -1332,7 +1340,8 @@ def test_top_risks_never_show_raw_gate_keys():
         "unknown": ["frontage_access_pass"],
         "passed": [],
     }
-    _, risks = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+    _, risks, positives_structured, risks_structured = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
     for risk in risks:
         assert "_pass" not in risk, f"Raw gate key leaked in risk text: {risk}"
         assert "zoning_fit_pass" not in risk

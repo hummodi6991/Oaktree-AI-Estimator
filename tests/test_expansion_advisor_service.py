@@ -1720,9 +1720,10 @@ def test_top_positives_and_risks_no_raw_gate_keys():
         "unknown": ["parking_pass"],
     }
 
-    positives, risks = _top_positives_and_risks(
+    positives, risks, positives_structured, risks_structured = _top_positives_and_risks(
         candidate=candidate, gate_reasons=gate_reasons,
     )
+    assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
 
     all_text = " ".join(positives + risks)
     for raw_key in ["zoning_fit_pass", "area_fit_pass", "frontage_access_pass",

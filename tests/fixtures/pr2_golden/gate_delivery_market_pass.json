@@ -1,0 +1,9 @@
+{
+  "expected_english": "delivery market",
+  "expected_structured": null,
+  "id": "gate_delivery_market_pass",
+  "kwargs": {
+    "gate_key": "delivery_market_pass"
+  },
+  "producer": "_gate_key_to_label"
+}
