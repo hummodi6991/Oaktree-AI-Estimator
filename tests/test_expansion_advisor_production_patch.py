@@ -275,7 +275,7 @@ class TestDistrictMojibake:
 class TestDeliveryWording:
     def test_demand_thesis_no_delivery_observed(self):
         """When delivery_observed=False, language must be qualified."""
-        thesis, _ = _build_demand_thesis(
+        thesis, thesis_structured = _build_demand_thesis(
             demand_score=60,
             population_reach=5000,
             provider_density_score=0,
@@ -283,11 +283,12 @@ class TestDeliveryWording:
             delivery_competition_score=0,
             delivery_observed=False,
         )
+        assert isinstance(thesis_structured, dict)
         assert "not observed" in thesis.lower() or "inferred" in thesis.lower()
 
     def test_demand_thesis_with_delivery_observed(self):
         """When delivery_observed=True, language should use observed terms."""
-        thesis, _ = _build_demand_thesis(
+        thesis, thesis_structured = _build_demand_thesis(
             demand_score=75,
             population_reach=15000,
             provider_density_score=70,
@@ -295,6 +296,7 @@ class TestDeliveryWording:
             delivery_competition_score=45,
             delivery_observed=True,
         )
+        assert isinstance(thesis_structured, dict)
         assert "not observed" not in thesis.lower()
         assert "inferred" not in thesis.lower()
 
@@ -312,9 +314,10 @@ class TestDeliveryWording:
             "multi_platform_presence_score": 0,
         }
         gate_reasons = {"passed": [], "failed": [], "unknown": []}
-        positives, risks, _, _ = _top_positives_and_risks(
+        positives, risks, positives_structured, risks_structured = _top_positives_and_risks(
             candidate=candidate, gate_reasons=gate_reasons
         )
+        assert isinstance(positives_structured, list) and isinstance(risks_structured, list)
         assert any("inferred" in r.lower() or "no observed" in r.lower() for r in risks)
 
 
