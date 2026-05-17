@@ -1013,6 +1013,7 @@ def create_expansion_search(
             target_districts=req_target_districts,
             existing_branches=existing_branches_payload,
             brand_profile=brand_profile_payload,
+            lang=lang,
         )
         # Handle both dict (new format) and list (legacy/test mocks)
         if isinstance(_search_result, dict):
@@ -1154,7 +1155,7 @@ def get_expansion_search_candidates(
     search = get_search(db, search_id)
     if not search:
         raise HTTPException(status_code=404, detail="Expansion search not found")
-    return {"items": get_candidates(db, search_id), "meta": {"version": "expansion_advisor_v7"}}
+    return {"items": get_candidates(db, search_id, lang=lang), "meta": {"version": "expansion_advisor_v7"}}
 
 
 @router.get("/searches/{search_id}/report", response_model=RecommendationReportResponse)
@@ -1169,7 +1170,7 @@ def get_expansion_search_report(
     t0 = _time.monotonic()
 
     try:
-        report = get_recommendation_report(db, search_id)
+        report = get_recommendation_report(db, search_id, lang=lang)
     except (ValueError, KeyError, TypeError, AttributeError, ProgrammingError) as exc:
         # Recoverable data-shape / query errors: return sparse report with degraded flag.
         logger.warning(
@@ -1235,7 +1236,7 @@ def get_expansion_candidate_memo(
 ) -> dict[str, Any]:
     lang = lang if lang in ("en", "ar") else "en"
     # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
-    memo = get_candidate_memo(db, candidate_id)
+    memo = get_candidate_memo(db, candidate_id, lang=lang)
     if not memo:
         raise HTTPException(status_code=404, detail="Expansion candidate not found")
     return memo
@@ -1248,7 +1249,7 @@ def compare_expansion_candidates(
     lang = req.lang if req.lang in ("en", "ar") else "en"
     # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     try:
-        return compare_candidates(db, req.search_id, req.candidate_ids)
+        return compare_candidates(db, req.search_id, req.candidate_ids, lang=lang)
     except ValueError:
         raise HTTPException(status_code=404, detail="Expansion search/candidates not found")
 
@@ -1269,6 +1270,7 @@ def create_expansion_saved_search(req: SavedSearchCreateRequest, db: Session = D
             selected_candidate_ids=req.selected_candidate_ids,
             filters_json=req.filters_json,
             ui_state_json=req.ui_state_json,
+            lang=lang,
         )
         db.commit()
         return saved
@@ -1288,7 +1290,7 @@ def list_expansion_saved_searches(
     # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
     safe_limit = min(max(limit, 1), 100)
     try:
-        return {"items": list_saved_searches(db, status=status, limit=safe_limit)}
+        return {"items": list_saved_searches(db, status=status, limit=safe_limit, lang=lang)}
     except ProgrammingError:
         # Table may not exist if the migration hasn't been applied yet.
         # Return an empty list instead of a 500 so the UI shows a clean
@@ -1306,7 +1308,7 @@ def get_expansion_saved_search(
 ) -> dict[str, Any]:
     lang = lang if lang in ("en", "ar") else "en"
     # Threaded for PR #2/#3 consumers; no English-output changes in this PR.
-    saved = get_saved_search(db, saved_id)
+    saved = get_saved_search(db, saved_id, lang=lang)
     if not saved:
         raise HTTPException(status_code=404, detail="Saved search not found")
     return saved
@@ -1323,7 +1325,7 @@ def patch_expansion_saved_search(
     payload = req.model_dump(exclude_unset=True)
     payload.pop("lang", None)
     try:
-        saved = update_saved_search(db, saved_id, payload)
+        saved = update_saved_search(db, saved_id, payload, lang=lang)
         if not saved:
             db.rollback()
             raise HTTPException(status_code=404, detail="Saved search not found")

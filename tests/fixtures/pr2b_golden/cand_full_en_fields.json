@@ -1,0 +1,89 @@
+{
+  "candidate": {
+    "area_m2": 220.0,
+    "candidate_id": "c-full-1",
+    "cost_thesis": "Estimated rent is 1851 SAR/m²/year.",
+    "decision_summary": "This standard candidate in Al Olaya scores 81.4/100.",
+    "demand_thesis": "Demand is strong (score 81.4).",
+    "district": "Al Olaya",
+    "economics_score": 73.2,
+    "estimated_annual_rent_sar": 407132.0,
+    "estimated_rent_sar_m2_year": 1850.6,
+    "final_score": 81.4,
+    "parcel_id": "P-1001",
+    "top_positives_json": [
+      "Demand potential is strong for this district.",
+      "Economics profile meets target screening band."
+    ],
+    "top_risks_json": [
+      "Economics score is below preferred threshold."
+    ]
+  },
+  "expected_en": {
+    "area_m2": 220.0,
+    "candidate_id": "c-full-1",
+    "commercial_unit_id": null,
+    "comparable_competitors_json": [],
+    "confidence_grade": "D",
+    "cost_thesis": "Estimated rent is 1851 SAR/m²/year.",
+    "decision_summary": "This standard candidate in Al Olaya scores 81.4/100.",
+    "demand_thesis": "Demand is strong (score 81.4).",
+    "display_annual_rent_sar": 407220.0,
+    "district": "Al Olaya",
+    "district_display": "Al Olaya",
+    "district_key": "Al Olaya",
+    "district_name_ar": "Al Olaya",
+    "district_name_en": null,
+    "economics_score": 73.2,
+    "estimated_annual_rent_sar": 407132.0,
+    "estimated_rent_sar_m2_year": 1850.6,
+    "feature_snapshot_json": {
+      "context_sources": {},
+      "data_completeness_score": 0,
+      "missing_context": []
+    },
+    "final_score": 81.4,
+    "gate_reasons_json": {
+      "explanations": {},
+      "failed": [],
+      "passed": [],
+      "thresholds": {},
+      "unknown": []
+    },
+    "gate_status_json": {},
+    "image_url": null,
+    "listing_url": null,
+    "parcel_id": "P-1001",
+    "rank_position": null,
+    "score_breakdown_json": {
+      "display": {},
+      "economics_detail": {},
+      "final_score": 81.4,
+      "inputs": {},
+      "weighted_components": {},
+      "weights": {}
+    },
+    "source_type": "parcel",
+    "top_positives_json": [
+      "Demand potential is strong for this district.",
+      "Economics profile meets target screening band."
+    ],
+    "top_risks_json": [
+      "Economics score is below preferred threshold."
+    ],
+    "unit_area_sqm": null,
+    "unit_listing_type": null,
+    "unit_neighborhood": null,
+    "unit_price_sar_annual": null,
+    "unit_street_width_m": null,
+    "value_band": null,
+    "value_band_low_confidence": false,
+    "value_downrank_applied": false,
+    "value_downrank_delta": 0,
+    "value_score": null,
+    "value_uprank_applied": false,
+    "value_uprank_delta": 0
+  },
+  "id": "cand_full_en_fields",
+  "kind": "candidate"
+}

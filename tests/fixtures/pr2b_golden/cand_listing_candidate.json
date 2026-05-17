@@ -1,0 +1,86 @@
+{
+  "candidate": {
+    "area_m2": 160.0,
+    "candidate_id": "c-listing-1",
+    "commercial_unit_id": "CU-77",
+    "cost_thesis": "Rent measured from listing.",
+    "decision_summary": "Listing-backed candidate.",
+    "demand_thesis": "Demand is strong.",
+    "district": "Hittin",
+    "final_score": 70.0,
+    "image_url": "https://example.com/img/77.jpg",
+    "listing_url": "https://example.com/listing/77",
+    "parcel_id": "P-1005",
+    "source_type": "commercial_unit",
+    "top_positives_json": [
+      "Newly listed within the last week."
+    ],
+    "top_risks_json": [],
+    "unit_area_sqm": 160.0,
+    "unit_listing_type": "rent",
+    "unit_neighborhood": "Hittin",
+    "unit_price_sar_annual": 250000.0,
+    "unit_street_width_m": 20.0
+  },
+  "expected_en": {
+    "area_m2": 160.0,
+    "candidate_id": "c-listing-1",
+    "commercial_unit_id": "CU-77",
+    "comparable_competitors_json": [],
+    "confidence_grade": "D",
+    "cost_thesis": "Rent measured from listing.",
+    "decision_summary": "Listing-backed candidate.",
+    "demand_thesis": "Demand is strong.",
+    "display_annual_rent_sar": null,
+    "district": "Hittin",
+    "district_display": "Hittin",
+    "district_key": "Hittin",
+    "district_name_ar": "Hittin",
+    "district_name_en": null,
+    "feature_snapshot_json": {
+      "context_sources": {},
+      "data_completeness_score": 0,
+      "missing_context": []
+    },
+    "final_score": 70.0,
+    "gate_reasons_json": {
+      "explanations": {},
+      "failed": [],
+      "passed": [],
+      "thresholds": {},
+      "unknown": []
+    },
+    "gate_status_json": {},
+    "image_url": "https://example.com/img/77.jpg",
+    "listing_url": "https://example.com/listing/77",
+    "parcel_id": "P-1005",
+    "rank_position": null,
+    "score_breakdown_json": {
+      "display": {},
+      "economics_detail": {},
+      "final_score": 70.0,
+      "inputs": {},
+      "weighted_components": {},
+      "weights": {}
+    },
+    "source_type": "commercial_unit",
+    "top_positives_json": [
+      "Newly listed within the last week."
+    ],
+    "top_risks_json": [],
+    "unit_area_sqm": 160.0,
+    "unit_listing_type": "rent",
+    "unit_neighborhood": "Hittin",
+    "unit_price_sar_annual": 250000.0,
+    "unit_street_width_m": 20.0,
+    "value_band": null,
+    "value_band_low_confidence": false,
+    "value_downrank_applied": false,
+    "value_downrank_delta": 0,
+    "value_score": null,
+    "value_uprank_applied": false,
+    "value_uprank_delta": 0
+  },
+  "id": "cand_listing_candidate",
+  "kind": "candidate"
+}

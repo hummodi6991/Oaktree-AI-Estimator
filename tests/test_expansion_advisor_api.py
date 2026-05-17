@@ -108,7 +108,7 @@ def test_get_expansion_search_detail_includes_versioned_meta(monkeypatch):
     monkeypatch.setattr(
         expansion_api,
         "get_search",
-        lambda _db, _search_id: {
+        lambda _db, _search_id, **_kw: {
             "id": "search-1",
             "created_at": "2026-01-01T00:00:00Z",
             "brand_name": "Brand X",
@@ -143,11 +143,11 @@ def test_get_expansion_search_candidates_shape(monkeypatch):
 
     from app.api import expansion_advisor as expansion_api
 
-    monkeypatch.setattr(expansion_api, "get_search", lambda _db, _search_id: {"id": "search-1"})
+    monkeypatch.setattr(expansion_api, "get_search", lambda _db, _search_id, **_kw: {"id": "search-1"})
     monkeypatch.setattr(
         expansion_api,
         "get_candidates",
-        lambda _db, _search_id: [
+        lambda _db, _search_id, **_kw: [
             {
                 "id": "candidate-1",
                 "search_id": "search-1",
@@ -209,7 +209,7 @@ def test_compare_endpoint_happy_path(monkeypatch):
     monkeypatch.setattr(
         expansion_api,
         "compare_candidates",
-        lambda _db, _search_id, _candidate_ids: {
+        lambda _db, _search_id, _candidate_ids, **_kw: {
             "items": [
                 {"candidate_id": "c1", "economics_score": 70.0, "zoning_fit_score": 82, "frontage_score": 65, "access_score": 66, "parking_score": 61, "access_visibility_score": 64},
                 {"candidate_id": "c2", "economics_score": 62.0},
@@ -266,7 +266,7 @@ def test_compare_endpoint_rejects_foreign_candidate_ids(monkeypatch):
 
     from app.api import expansion_advisor as expansion_api
 
-    def _raise_not_found(_db, _search_id, _candidate_ids):
+    def _raise_not_found(_db, _search_id, _candidate_ids, **_kw):
         raise ValueError("not_found")
 
     monkeypatch.setattr(expansion_api, "compare_candidates", _raise_not_found)
@@ -321,7 +321,7 @@ def test_candidate_memo_endpoint_happy_path(monkeypatch):
     monkeypatch.setattr(
         expansion_api,
         "get_candidate_memo",
-        lambda _db, _candidate_id: {
+        lambda _db, _candidate_id, **_kw: {
             "candidate_id": "c1",
             "search_id": "search-1",
             "brand_profile": {"brand_name": "Brand X", "category": "burger", "service_model": "qsr"},
@@ -392,7 +392,7 @@ def test_candidate_memo_endpoint_404(monkeypatch):
 
     from app.api import expansion_advisor as expansion_api
 
-    monkeypatch.setattr(expansion_api, "get_candidate_memo", lambda _db, _candidate_id: None)
+    monkeypatch.setattr(expansion_api, "get_candidate_memo", lambda _db, _candidate_id, **_kw: None)
 
     client = _client_with_db(db)
     try:
@@ -406,7 +406,7 @@ def test_candidate_memo_endpoint_404(monkeypatch):
 def test_report_endpoint_happy_path(monkeypatch):
     db = DummyDB()
     from app.api import expansion_advisor as expansion_api
-    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id: {"search_id": "search-1", "meta": {"version": "expansion_advisor_v7"}, "recommendation": {"best_candidate_id": "c1", "runner_up_candidate_id": "c2", "best_pass_candidate_id": "c1", "best_confidence_candidate_id": "c2", "why_best": "", "main_risk": "", "best_format": "", "summary": "", "report_summary": ""}, "assumptions": {}, "top_candidates": [{"id": "c1", "final_score": 91, "rank_position": 1, "confidence_grade": "A", "gate_verdict": "pass", "top_positives_json": [], "top_risks_json": [], "feature_snapshot_json": {}, "score_breakdown_json": {"weights": {}, "inputs": {}, "weighted_components": {}, "final_score": 91}}]})
+    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id, **_kw: {"search_id": "search-1", "meta": {"version": "expansion_advisor_v7"}, "recommendation": {"best_candidate_id": "c1", "runner_up_candidate_id": "c2", "best_pass_candidate_id": "c1", "best_confidence_candidate_id": "c2", "why_best": "", "main_risk": "", "best_format": "", "summary": "", "report_summary": ""}, "assumptions": {}, "top_candidates": [{"id": "c1", "final_score": 91, "rank_position": 1, "confidence_grade": "A", "gate_verdict": "pass", "top_positives_json": [], "top_risks_json": [], "feature_snapshot_json": {}, "score_breakdown_json": {"weights": {}, "inputs": {}, "weighted_components": {}, "final_score": 91}}]})
     client = _client_with_db(db)
     try:
         response = client.get("/v1/expansion-advisor/searches/search-1/report")
@@ -422,7 +422,7 @@ def test_report_endpoint_happy_path(monkeypatch):
 def test_report_endpoint_404(monkeypatch):
     db = DummyDB()
     from app.api import expansion_advisor as expansion_api
-    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id: None)
+    monkeypatch.setattr(expansion_api, "get_recommendation_report", lambda _db, _search_id, **_kw: None)
     client = _client_with_db(db)
     try:
         response = client.get("/v1/expansion-advisor/searches/missing/report")
@@ -733,11 +733,11 @@ def test_feature_snapshot_surfaces_listing_age_and_district_momentum(monkeypatch
 
     from app.api import expansion_advisor as expansion_api
 
-    monkeypatch.setattr(expansion_api, "get_search", lambda _db, _search_id: {"id": "search-1"})
+    monkeypatch.setattr(expansion_api, "get_search", lambda _db, _search_id, **_kw: {"id": "search-1"})
     monkeypatch.setattr(
         expansion_api,
         "get_candidates",
-        lambda _db, _search_id: [
+        lambda _db, _search_id, **_kw: [
             {
                 "id": "candidate-1",
                 "search_id": "search-1",
@@ -1174,7 +1174,7 @@ def test_get_search_detail_accepts_lang(monkeypatch):
     monkeypatch.setattr(
         expansion_api,
         "get_search",
-        lambda _db, _search_id: {
+        lambda _db, _search_id, **_kw: {
             "id": "search-1",
             "created_at": "2026-01-01T00:00:00Z",
             "brand_name": "Brand X",
@@ -1209,11 +1209,11 @@ def test_get_search_detail_accepts_lang(monkeypatch):
 def test_get_search_candidates_accepts_lang(monkeypatch):
     from app.api import expansion_advisor as expansion_api
 
-    monkeypatch.setattr(expansion_api, "get_search", lambda _db, _search_id: {"id": "search-1"})
+    monkeypatch.setattr(expansion_api, "get_search", lambda _db, _search_id, **_kw: {"id": "search-1"})
     monkeypatch.setattr(
         expansion_api,
         "get_candidates",
-        lambda _db, _search_id: [
+        lambda _db, _search_id, **_kw: [
             {"id": "candidate-1", "search_id": "search-1", "district": "Olaya"}
         ],
     )
@@ -1237,7 +1237,7 @@ def test_get_search_report_accepts_lang(monkeypatch):
     monkeypatch.setattr(
         expansion_api,
         "get_recommendation_report",
-        lambda _db, _search_id: {
+        lambda _db, _search_id, **_kw: {
             "search_id": "search-1",
             "meta": {"version": "expansion_advisor_v7"},
             "recommendation": {
@@ -1272,7 +1272,7 @@ def test_compare_endpoint_accepts_lang(monkeypatch):
     monkeypatch.setattr(
         expansion_api,
         "compare_candidates",
-        lambda _db, _search_id, _candidate_ids: {
+        lambda _db, _search_id, _candidate_ids, **_kw: {
             "items": [{"candidate_id": "c1"}, {"candidate_id": "c2"}],
             "summary": {"best_overall_candidate_id": "c1"},
         },
@@ -1303,7 +1303,7 @@ def test_candidate_memo_endpoint_accepts_lang(monkeypatch):
     monkeypatch.setattr(
         expansion_api,
         "get_candidate_memo",
-        lambda _db, _candidate_id: {
+        lambda _db, _candidate_id, **_kw: {
             "candidate_id": "c1",
             "search_id": "search-1",
             "brand_profile": {},

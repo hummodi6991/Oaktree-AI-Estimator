@@ -109,11 +109,11 @@ ADVISORY_ONLY_GATES: frozenset[str] = frozenset({
 })
 
 
-def _humanize_gate_list(values: list[Any] | None) -> list[str]:
+def _humanize_gate_list(values: list[Any] | None, lang: str = "en") -> list[str]:
     labels: list[str] = []
     seen: set[str] = set()
     for value in values or []:
-        label = _gate_key_to_label(str(value))
+        label = _gate_key_to_label(str(value), lang)
         if not label or label in seen:
             continue
         seen.add(label)
@@ -121,9 +121,16 @@ def _humanize_gate_list(values: list[Any] | None) -> list[str]:
     return labels
 
 
-def _gate_key_to_label(gate_key: str) -> str:
-    """Return a human-friendly label for an internal gate key."""
-    return _GATE_HUMAN_LABELS.get(gate_key, gate_key.replace("_pass", "").replace("_", " "))
+def _gate_key_to_label(gate_key: str, lang: str = "en") -> str:
+    """Return a human-friendly label for an internal gate key.
+
+    Delegates to the i18n module so the gate vocabulary has a single
+    source of truth. ``humanize_gate(key, "en")`` reproduces the legacy
+    ``_GATE_HUMAN_LABELS`` lookup + fallback byte-for-byte.
+    """
+    from app.services.expansion_advisor_i18n import humanize_gate
+
+    return humanize_gate(gate_key, lang)
 
 
 def _gate_verdict_label(overall_pass: Any) -> str:
@@ -1175,7 +1182,7 @@ def _normalize_gate_status(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _normalize_gate_reasons(value: Any) -> dict[str, Any]:
+def _normalize_gate_reasons(value: Any, lang: str = "en") -> dict[str, Any]:
     base = {
         "passed": [],
         "failed": [],
@@ -1184,9 +1191,9 @@ def _normalize_gate_reasons(value: Any) -> dict[str, Any]:
         "explanations": {},
     }
     if isinstance(value, dict):
-        base["passed"] = _humanize_gate_list(value.get("passed") or [])
-        base["failed"] = _humanize_gate_list(value.get("failed") or [])
-        base["unknown"] = _humanize_gate_list(value.get("unknown") or [])
+        base["passed"] = _humanize_gate_list(value.get("passed") or [], lang)
+        base["failed"] = _humanize_gate_list(value.get("failed") or [], lang)
+        base["unknown"] = _humanize_gate_list(value.get("unknown") or [], lang)
         base["thresholds"] = value.get("thresholds") or {}
         base["explanations"] = value.get("explanations") or {}
     return base
@@ -1218,23 +1225,110 @@ def _normalize_score_breakdown(value: Any, final_score: Any) -> dict[str, Any]:
     return raw
 
 
+# ── PR #2b structured-record read path ──────────────────────────────
+# These render the locale-invariant structured records (PR #2a) into
+# the requested language. They always fall back to the English
+# persisted column when the structured record is NULL (pre-PR-2a rows)
+# or fails to render — so a missing/malformed structured record can
+# never degrade the response below the English baseline (rule #4).
+_STRUCTURED_CANDIDATE_COLS: tuple[str, ...] = (
+    "top_positives_structured_json",
+    "top_risks_structured_json",
+    "decision_summary_structured_json",
+    "demand_thesis_structured_json",
+    "cost_thesis_structured_json",
+)
+
+
+def _render_structured_list(
+    structured: Any,
+    english_fallback: Any,
+    lang: str,
+) -> list[str]:
+    """Render a list of structured records; fall back to the English
+    persisted list on any failure (rule #4)."""
+    from app.services.expansion_advisor_i18n import render
+
+    if isinstance(structured, list) and structured:
+        out: list[str] = []
+        for rec in structured:
+            rendered = render(rec, lang) if isinstance(rec, dict) else ""
+            if not rendered:
+                # Single-record failure → fall back to the whole
+                # English list (safer than mixing rendered + raw).
+                return english_fallback or []
+            out.append(rendered)
+        return out
+    return english_fallback or []
+
+
+def _render_structured_one(
+    structured: Any,
+    english_fallback: Any,
+    lang: str,
+) -> str:
+    """Render a single structured record; fall back to the English
+    persisted string on any failure (rule #4)."""
+    from app.services.expansion_advisor_i18n import render
+
+    if isinstance(structured, dict):
+        rendered = render(structured, lang)
+        return rendered or (english_fallback or "")
+    return english_fallback or ""
+
+
 def _normalize_candidate_payload(
     candidate: dict[str, Any],
     district_lookup: dict[str, dict[str, str]] | None = None,
+    lang: str = "en",
 ) -> dict[str, Any]:
     payload = dict(candidate)
+
+    # R-6 idempotency guard. If this payload was normalized before at a
+    # different lang, the structured columns may already be dropped —
+    # the only safe path is to stay in en (the persisted English
+    # columns are still present and authoritative).
+    _prior_lang = payload.pop("_eai_normalized_lang", None)
+    if _prior_lang is not None and _prior_lang != lang:
+        lang = "en"
+
     payload["gate_status_json"] = _normalize_gate_status(payload.get("gate_status_json"))
-    payload["gate_reasons_json"] = _normalize_gate_reasons(payload.get("gate_reasons_json"))
+    payload["gate_reasons_json"] = _normalize_gate_reasons(payload.get("gate_reasons_json"), lang)
     payload["feature_snapshot_json"] = _normalize_feature_snapshot(payload.get("feature_snapshot_json"))
     payload["score_breakdown_json"] = _normalize_score_breakdown(payload.get("score_breakdown_json"), payload.get("final_score"))
-    payload["top_positives_json"] = payload.get("top_positives_json") or []
-    payload["top_risks_json"] = payload.get("top_risks_json") or []
+
+    if lang == "ar":
+        payload["top_positives_json"] = _render_structured_list(
+            candidate.get("top_positives_structured_json"),
+            payload.get("top_positives_json"), lang)
+        payload["top_risks_json"] = _render_structured_list(
+            candidate.get("top_risks_structured_json"),
+            payload.get("top_risks_json"), lang)
+        payload["decision_summary"] = _render_structured_one(
+            candidate.get("decision_summary_structured_json"),
+            payload.get("decision_summary"), lang)
+        payload["demand_thesis"] = _render_structured_one(
+            candidate.get("demand_thesis_structured_json"),
+            payload.get("demand_thesis"), lang)
+        payload["cost_thesis"] = _render_structured_one(
+            candidate.get("cost_thesis_structured_json"),
+            payload.get("cost_thesis"), lang)
+    else:
+        # byte-identical to HEAD
+        payload["top_positives_json"] = payload.get("top_positives_json") or []
+        payload["top_risks_json"] = payload.get("top_risks_json") or []
+        payload["decision_summary"] = payload.get("decision_summary") or ""
+        payload["demand_thesis"] = payload.get("demand_thesis") or ""
+        payload["cost_thesis"] = payload.get("cost_thesis") or ""
+
     payload["comparable_competitors_json"] = payload.get("comparable_competitors_json") or []
     payload["rank_position"] = payload.get("rank_position") or payload.get("compare_rank")
     payload["confidence_grade"] = payload.get("confidence_grade") or "D"
-    payload["decision_summary"] = payload.get("decision_summary") or ""
-    payload["demand_thesis"] = payload.get("demand_thesis") or ""
-    payload["cost_thesis"] = payload.get("cost_thesis") or ""
+
+    # The five structured columns are internal — never part of the API
+    # response shape. Drop them from the outgoing payload.
+    for _col in _STRUCTURED_CANDIDATE_COLS:
+        payload.pop(_col, None)
 
     # ── Commercial unit fields (pass through) ──
     payload["source_type"] = payload.get("source_type", "parcel")
@@ -1328,6 +1422,7 @@ def _normalize_saved_search_payload(
     *,
     search: dict[str, Any] | None = None,
     candidates: list[dict[str, Any]] | None = None,
+    lang: str = "en",
 ) -> dict[str, Any] | None:
     if saved is None:
         return None
@@ -1338,7 +1433,7 @@ def _normalize_saved_search_payload(
     payload["description"] = payload.get("description")
     payload["search"] = _normalize_search_payload(search if search is not None else payload.get("search"))
     normalized_candidates = candidates if candidates is not None else payload.get("candidates")
-    payload["candidates"] = [_normalize_candidate_payload(dict(item)) for item in (normalized_candidates or [])]  # district_lookup=None is OK: additive fields filled from raw district
+    payload["candidates"] = [_normalize_candidate_payload(dict(item), lang=lang) for item in (normalized_candidates or [])]  # district_lookup=None is OK: additive fields filled from raw district
 
     search_payload = payload.get("search") or {}
     if search_payload.get("brand_profile"):
@@ -6322,6 +6417,7 @@ def run_expansion_search(
     target_districts: list[str] | None = None,
     existing_branches: list[dict[str, Any]] | None = None,
     brand_profile: dict[str, Any] | None = None,
+    lang: str = "en",
 ) -> list[dict[str, Any]]:
     t_start = time.monotonic()
     bbox = bbox or {}
@@ -9562,7 +9658,7 @@ def run_expansion_search(
     result: list[dict[str, Any]] = []
     for candidate in persisted_candidates:
         try:
-            result.append(_normalize_candidate_payload(candidate, district_lookup))
+            result.append(_normalize_candidate_payload(candidate, district_lookup, lang=lang))
         except Exception:
             logger.warning(
                 "Failed to normalize candidate id=%s search_id=%s – skipping",
@@ -9722,7 +9818,7 @@ def get_search(db: Session, search_id: str) -> dict[str, Any] | None:
     return _normalize_search_payload(payload)
 
 
-def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[str, str]] | None = None) -> list[dict[str, Any]]:
+def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[str, str]] | None = None, lang: str = "en") -> list[dict[str, Any]]:
     if district_lookup is None:
         district_lookup = _cached_district_lookup(db)
     rows = db.execute(
@@ -9759,6 +9855,11 @@ def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[
                 cost_thesis,
                 top_positives_json,
                 top_risks_json,
+                top_positives_structured_json,
+                top_risks_structured_json,
+                decision_summary_structured_json,
+                demand_thesis_structured_json,
+                cost_thesis_structured_json,
                 comparable_competitors_json,
                 cannibalization_score,
                 distance_to_nearest_branch_m,
@@ -9816,7 +9917,7 @@ def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[
     # response — the frontend reads ``decision_memo_present`` to know
     # whether to enable the "View decision memo" affordance and fetches
     # the full memo via GET /candidates/{id}/memo on demand.
-    return [_normalize_candidate_payload(dict(row), district_lookup) for row in rows]
+    return [_normalize_candidate_payload(dict(row), district_lookup, lang=lang) for row in rows]
 
 
 
@@ -9831,6 +9932,7 @@ def create_saved_search(
     selected_candidate_ids: list[str] | None,
     filters_json: dict[str, Any] | None,
     ui_state_json: dict[str, Any] | None,
+    lang: str = "en",
 ) -> dict[str, Any]:
     saved_id = str(uuid.uuid4())
     row = db.execute(
@@ -9881,7 +9983,7 @@ def create_saved_search(
             "ui_state_json": json.dumps(ui_state_json, ensure_ascii=False) if ui_state_json is not None else None,
         },
     ).mappings().first()
-    return _normalize_saved_search_payload(dict(row) if row else {})
+    return _normalize_saved_search_payload(dict(row) if row else {}, lang=lang)
 
 
 def list_saved_searches(
@@ -9889,6 +9991,7 @@ def list_saved_searches(
     *,
     status: str | None,
     limit: int,
+    lang: str = "en",
 ) -> list[dict[str, Any]]:
     rows = db.execute(
         text(
@@ -9912,10 +10015,10 @@ def list_saved_searches(
         ),
         {"status": status, "limit": limit},
     ).mappings().all()
-    return [_normalize_saved_search_payload(dict(row)) for row in rows]
+    return [_normalize_saved_search_payload(dict(row), lang=lang) for row in rows]
 
 
-def get_saved_search(db: Session, saved_id: str) -> dict[str, Any] | None:
+def get_saved_search(db: Session, saved_id: str, lang: str = "en") -> dict[str, Any] | None:
     row = db.execute(
         text(
             """
@@ -9941,14 +10044,15 @@ def get_saved_search(db: Session, saved_id: str) -> dict[str, Any] | None:
 
     saved = dict(row)
     search = get_search(db, str(saved["search_id"]))
-    candidates = get_candidates(db, str(saved["search_id"]))
-    return _normalize_saved_search_payload(saved, search=search, candidates=candidates)
+    candidates = get_candidates(db, str(saved["search_id"]), lang=lang)
+    return _normalize_saved_search_payload(saved, search=search, candidates=candidates, lang=lang)
 
 
 def update_saved_search(
     db: Session,
     saved_id: str,
     payload: dict[str, Any],
+    lang: str = "en",
 ) -> dict[str, Any] | None:
     if not payload:
         row = db.execute(
@@ -10009,7 +10113,7 @@ def update_saved_search(
         ),
         params,
     ).mappings().first()
-    return _normalize_saved_search_payload(dict(row)) if row else None
+    return _normalize_saved_search_payload(dict(row), lang=lang) if row else None
 
 
 _COMPARE_SUMMARY_KEYS = [
@@ -10044,7 +10148,7 @@ def delete_saved_search(db: Session, saved_id: str) -> bool:
         {"saved_id": saved_id},
     ).first()
     return bool(row)
-def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) -> dict[str, Any]:
+def compare_candidates(db: Session, search_id: str, candidate_ids: list[str], lang: str = "en") -> dict[str, Any]:
     search = db.execute(text("SELECT id FROM expansion_search WHERE id = :search_id"), {"search_id": search_id}).first()
     if not search:
         raise ValueError("not_found")
@@ -10211,7 +10315,7 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
             "unit_street_width_m": row.get("unit_street_width_m"),
             "unit_neighborhood": row.get("unit_neighborhood"),
             "unit_listing_type": row.get("unit_listing_type"),
-        }, district_lookup)
+        }, district_lookup, lang=lang)
         item["pros"] = pros
         item["cons"] = cons
         items.append(item)
@@ -10268,7 +10372,7 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str]) ->
     return {"items": items, "summary": summary}
 
 
-def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
+def get_candidate_memo(db: Session, candidate_id: str, lang: str = "en") -> dict[str, Any] | None:
     t_start = time.monotonic()
     row = db.execute(
         text(
@@ -10308,6 +10412,11 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
                 c.cost_thesis,
                 c.top_positives_json,
                 c.top_risks_json,
+                c.top_positives_structured_json,
+                c.top_risks_structured_json,
+                c.decision_summary_structured_json,
+                c.demand_thesis_structured_json,
+                c.cost_thesis_structured_json,
                 c.comparable_competitors_json,
                 c.cannibalization_score,
                 c.distance_to_nearest_branch_m,
@@ -10355,7 +10464,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
         return None
 
     district_lookup = _cached_district_lookup(db)
-    candidate = _normalize_candidate_payload(dict(row), district_lookup)
+    candidate = _normalize_candidate_payload(dict(row), district_lookup, lang=lang)
     brand_profile = get_brand_profile(db, str(candidate.get("search_id"))) or {}
     strengths = candidate.get("key_strengths_json") or []
     risks = candidate.get("key_risks_json") or []
@@ -10496,7 +10605,7 @@ def get_candidate_memo(db: Session, candidate_id: str) -> dict[str, Any] | None:
     }
 
 
-def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | None:
+def get_recommendation_report(db: Session, search_id: str, lang: str = "en") -> dict[str, Any] | None:
     t_start = time.monotonic()
     search = get_search(db, search_id)
     if not search:
@@ -10504,8 +10613,11 @@ def get_recommendation_report(db: Session, search_id: str) -> dict[str, Any] | N
     district_lookup = _cached_district_lookup(db)
     t_lookup = time.monotonic()
     try:
-        raw_candidates = get_candidates(db, search_id, district_lookup=district_lookup)
+        raw_candidates = get_candidates(db, search_id, district_lookup=district_lookup, lang=lang)
     except TypeError:
+        # Legacy-compat fallback for a 2-arg get_candidates (e.g. a test
+        # double). lang cannot be threaded through such a callable —
+        # degrade to the English read path.
         raw_candidates = get_candidates(db, search_id)
     t_candidates = time.monotonic()
     # Candidates are already normalized by get_candidates — skip redundant re-normalization
