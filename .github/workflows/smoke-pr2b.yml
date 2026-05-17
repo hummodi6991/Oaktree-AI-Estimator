@@ -1,0 +1,383 @@
+name: smoke-pr2b
+
+# Post-PR-2b production smoke checks. Manual trigger only.
+# Runs the four post-PR-2b smoke checks (reachability, EN smoke,
+# Bearer parity, AR smoke, AR fallback) against production and emits
+# results to the run log / job summary so they are visible without
+# any shell access.
+
+on:
+  workflow_dispatch:
+    inputs:
+      post_pr2a_search_id:
+        description: "Search id created after PR-2a (has structured columns)"
+        required: false
+        default: "0b64061a-8e82-4ab1-b91f-703c83618b73"
+      pre_pr2a_search_id:
+        description: "Search id created before PR-2a (no structured columns)"
+        required: false
+        default: "004bd91c-6478-4877-adf6-46666bffb4ed"
+      host:
+        description: "Production host base URL"
+        required: false
+        default: "http://8.213.84.191"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-pr2b
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    env:
+      HOST: ${{ inputs.host }}
+      POST_PR2A_SEARCH_ID: ${{ inputs.post_pr2a_search_id }}
+      PRE_PR2A_SEARCH_ID: ${{ inputs.pre_pr2a_search_id }}
+      PROD_API_KEY: ${{ secrets.PROD_API_KEY }}
+    steps:
+      - name: Guard - PROD_API_KEY present
+        run: |
+          set -euo pipefail
+          if [ -z "${PROD_API_KEY:-}" ]; then
+            echo "::error::PROD_API_KEY secret is absent or empty. Set the PROD_API_KEY repository secret before running this workflow."
+            echo "## PR-2B smoke" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "PR-2B_SMOKE: fail — PROD_API_KEY secret is absent or empty" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # Redact the key from all subsequent log output.
+          echo "::add-mask::${PROD_API_KEY}"
+          echo "PROD_API_KEY present."
+
+      - name: A - reachability
+        id: a
+        run: |
+          set -uo pipefail
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' "${HOST}/v1/health" || echo "000")
+          echo "A reachability HTTP status: ${CODE}"
+          echo "A_CODE=${CODE}" >> "$GITHUB_ENV"
+          {
+            echo "| check | status | notes |"
+            echo "| --- | --- | --- |"
+            if [ "${CODE}" = "200" ]; then
+              echo "| A reachability | ${CODE} | /v1/health |"
+            else
+              echo "| A reachability | ${CODE} | /v1/health — NOT 200 |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Fail-soft: record failure but continue.
+          if [ "${CODE}" != "200" ]; then
+            echo "::warning::Reachability returned ${CODE} (expected 200). Continuing."
+          fi
+
+      - name: B - EN smoke
+        id: b
+        if: always()
+        run: |
+          set -uo pipefail
+          CODE=$(curl -s -o /tmp/sm_B.json -w '%{http_code}' \
+            -H "X-API-Key: ${PROD_API_KEY}" \
+            "${HOST}/v1/expansion-advisor/searches/${POST_PR2A_SEARCH_ID}/candidates" || echo "000")
+          echo "B EN smoke HTTP status: ${CODE}"
+          echo "B_CODE=${CODE}" >> "$GITHUB_ENV"
+
+      - name: C - Bearer parity
+        id: c
+        if: always()
+        run: |
+          set -uo pipefail
+          CODE=$(curl -s -o /tmp/sm_C.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${PROD_API_KEY}" \
+            "${HOST}/v1/expansion-advisor/searches/${POST_PR2A_SEARCH_ID}/candidates" || echo "000")
+          echo "C Bearer parity HTTP status: ${CODE}"
+          echo "C_CODE=${CODE}" >> "$GITHUB_ENV"
+
+      - name: D - AR smoke
+        id: d
+        if: always()
+        run: |
+          set -uo pipefail
+          CODE=$(curl -s -o /tmp/sm_D.json -w '%{http_code}' \
+            -H "X-API-Key: ${PROD_API_KEY}" \
+            "${HOST}/v1/expansion-advisor/searches/${POST_PR2A_SEARCH_ID}/candidates?lang=ar" || echo "000")
+          echo "D AR smoke HTTP status: ${CODE}"
+          echo "D_CODE=${CODE}" >> "$GITHUB_ENV"
+
+      - name: E - AR fallback smoke
+        id: e
+        if: always()
+        run: |
+          set -uo pipefail
+          CODE=$(curl -s -o /tmp/sm_E.json -w '%{http_code}' \
+            -H "X-API-Key: ${PROD_API_KEY}" \
+            "${HOST}/v1/expansion-advisor/searches/${PRE_PR2A_SEARCH_ID}/candidates?lang=ar" || echo "000")
+          echo "E AR fallback HTTP status: ${CODE}"
+          echo "E_CODE=${CODE}" >> "$GITHUB_ENV"
+
+      - name: Validate and summarize
+        if: always()
+        run: |
+          set -uo pipefail
+          python3 - <<'PY'
+          import json, os, re
+
+          ARABIC = re.compile(r'[؀-ۿ]')
+
+          # The five structured columns that must never appear at the top
+          # level of a candidate payload. Verified against
+          # app/services/expansion_advisor.py:_STRUCTURED_CANDIDATE_COLS
+          # (lines 1234-1240), stripped in _normalize_candidate_payload.
+          LEAK_COLS = [
+              "top_positives_structured_json",
+              "top_risks_structured_json",
+              "decision_summary_structured_json",
+              "demand_thesis_structured_json",
+              "cost_thesis_structured_json",
+          ]
+          # The five content fields that must be populated (B/D).
+          LIST_FIELDS = ["top_positives_json", "top_risks_json"]
+          STR_FIELDS = ["decision_summary", "demand_thesis", "cost_thesis"]
+
+          a_code = os.environ.get("A_CODE", "000")
+          b_code = os.environ.get("B_CODE", "000")
+          c_code = os.environ.get("C_CODE", "000")
+          d_code = os.environ.get("D_CODE", "000")
+          e_code = os.environ.get("E_CODE", "000")
+
+          def load(path):
+              try:
+                  with open(path, "r", encoding="utf-8") as fh:
+                      return json.load(fh), None
+              except Exception as exc:  # noqa: BLE001
+                  return None, str(exc)
+
+          def candidates(doc):
+              if isinstance(doc, dict):
+                  items = doc.get("items")
+                  if isinstance(items, list):
+                      return items
+              return []
+
+          def check_leaks(cand):
+              return [c for c in LEAK_COLS if c in cand]
+
+          def check_populated(cand):
+              """Return (populated_count, total, problems)."""
+              total = len(LIST_FIELDS) + len(STR_FIELDS)
+              ok = 0
+              problems = []
+              for f in LIST_FIELDS:
+                  v = cand.get(f)
+                  if isinstance(v, list) and len(v) >= 1:
+                      ok += 1
+                  else:
+                      problems.append(f)
+              for f in STR_FIELDS:
+                  v = cand.get(f)
+                  if isinstance(v, str) and len(v) >= 1:
+                      ok += 1
+                  else:
+                      problems.append(f)
+              return ok, total, problems
+
+          def has_arabic(cand):
+              for f in ["decision_summary", "demand_thesis", "cost_thesis"]:
+                  v = cand.get(f)
+                  if isinstance(v, str) and ARABIC.search(v):
+                      return True
+              return False
+
+          details = []
+          fail_reasons = []
+
+          # ---- B: EN smoke ----
+          b_doc, b_err = load("/tmp/sm_B.json")
+          b_cands = candidates(b_doc)
+          b_leak = False
+          b_all_pop = True
+          b_note = ""
+          if b_code != "200":
+              fail_reasons.append(f"B status {b_code}")
+              b_note = f"status {b_code}"
+          elif b_err or not b_cands:
+              b_all_pop = False
+              fail_reasons.append("B body unparseable or empty")
+              b_note = b_err or "no candidates"
+          else:
+              pop_ok = 0
+              for i, cand in enumerate(b_cands):
+                  leaks = check_leaks(cand)
+                  ok, total, problems = check_populated(cand)
+                  if leaks:
+                      b_leak = True
+                  if ok == total:
+                      pop_ok += 1
+                  details.append(
+                      f"  - B cand[{i}] {cand.get('candidate_id', cand.get('id', '?'))}: "
+                      f"{ok}/{total} fields"
+                      + (f", MISSING {problems}" if problems else "")
+                      + (f", LEAK {leaks}" if leaks else ", no leak")
+                  )
+              if pop_ok != len(b_cands):
+                  b_all_pop = False
+                  fail_reasons.append("B fields not fully populated")
+              if b_leak:
+                  fail_reasons.append("B structured-column leak")
+              b_note = f"{pop_ok}/{len(b_cands)} candidates 5/5 fields, " + (
+                  "LEAK DETECTED" if b_leak else "no leak")
+
+          # ---- C: Bearer parity ----
+          c_doc, c_err = load("/tmp/sm_C.json")
+          parity = "fail"
+          c_note = ""
+          if c_code != "200":
+              fail_reasons.append(f"C status {c_code}")
+              c_note = f"status {c_code}"
+          if c_code != b_code:
+              fail_reasons.append(f"C/B status mismatch ({c_code} vs {b_code})")
+          try:
+              with open("/tmp/sm_B.json", "rb") as fb, open("/tmp/sm_C.json", "rb") as fc:
+                  identical = fb.read() == fc.read()
+              parity = "pass" if identical else "fail"
+          except Exception as exc:  # noqa: BLE001
+              parity = "fail"
+              c_note = str(exc)
+          if parity == "pass":
+              c_note = c_note or "byte-identical to B"
+          else:
+              c_note = c_note or "body differs from B"
+              fail_reasons.append("BEARER_PARITY fail")
+          details.append(f"  - C BEARER_PARITY: {parity} ({c_note})")
+
+          # ---- D: AR smoke ----
+          d_doc, d_err = load("/tmp/sm_D.json")
+          d_cands = candidates(d_doc)
+          d_leak = False
+          d_all_pop = True
+          ar_render = "fail"
+          d_note = ""
+          if d_code != "200":
+              fail_reasons.append(f"D status {d_code}")
+              d_note = f"status {d_code}"
+          elif d_err or not d_cands:
+              d_all_pop = False
+              fail_reasons.append("D body unparseable or empty")
+              d_note = d_err or "no candidates"
+          else:
+              pop_ok = 0
+              ar_ok = 0
+              for i, cand in enumerate(d_cands):
+                  leaks = check_leaks(cand)
+                  ok, total, problems = check_populated(cand)
+                  arabic = has_arabic(cand)
+                  if leaks:
+                      d_leak = True
+                  if ok == total:
+                      pop_ok += 1
+                  if arabic:
+                      ar_ok += 1
+                  details.append(
+                      f"  - D cand[{i}] {cand.get('candidate_id', cand.get('id', '?'))}: "
+                      f"{ok}/{total} fields, "
+                      + ("Arabic present" if arabic else "NO Arabic")
+                      + (f", MISSING {problems}" if problems else "")
+                      + (f", LEAK {leaks}" if leaks else ", no leak")
+                  )
+              if pop_ok != len(d_cands):
+                  d_all_pop = False
+                  fail_reasons.append("D fields not fully populated")
+              if d_leak:
+                  fail_reasons.append("D structured-column leak")
+              ar_render = "pass" if ar_ok == len(d_cands) and d_cands else "fail"
+              if ar_render != "pass":
+                  fail_reasons.append("AR_RENDER fail")
+              d_note = (
+                  f"{ar_ok}/{len(d_cands)} candidates rendered Arabic, "
+                  + ("LEAK DETECTED" if d_leak else "no leak")
+              )
+
+          # ---- E: AR fallback ----
+          e_doc, e_err = load("/tmp/sm_E.json")
+          e_cands = candidates(e_doc)
+          e_leak = False
+          ar_fallback = "fail"
+          e_note = ""
+          if e_code != "200":
+              fail_reasons.append(f"E status {e_code}")
+              e_note = f"status {e_code}"
+          elif e_err or not e_cands:
+              fail_reasons.append("E body unparseable or empty")
+              e_note = e_err or "no candidates"
+          else:
+              en_ok = 0
+              for i, cand in enumerate(e_cands):
+                  leaks = check_leaks(cand)
+                  if leaks:
+                      e_leak = True
+                  # Pre-PR-2a rows: 3 bare string fields present with
+                  # English content (no Arabic block characters).
+                  bare_present = all(
+                      isinstance(cand.get(f), str) and len(cand.get(f)) >= 1
+                      for f in STR_FIELDS
+                  )
+                  arabic = has_arabic(cand)
+                  stayed_en = bare_present and not arabic
+                  if stayed_en:
+                      en_ok += 1
+                  details.append(
+                      f"  - E cand[{i}] {cand.get('candidate_id', cand.get('id', '?'))}: "
+                      + ("3/3 bare fields, English" if stayed_en else "did NOT stay English")
+                      + (f", LEAK {leaks}" if leaks else ", no leak")
+                  )
+              if e_leak:
+                  fail_reasons.append("E structured-column leak")
+              ar_fallback = "pass" if en_ok == len(e_cands) and e_cands else "fail"
+              if ar_fallback != "pass":
+                  fail_reasons.append("AR_FALLBACK_TO_EN fail")
+              e_note = f"{en_ok}/{len(e_cands)} candidates stayed English, " + (
+                  "LEAK DETECTED" if e_leak else "no leak")
+
+          # ---- Verdict ----
+          all_200 = all(c == "200" for c in (a_code, b_code, c_code, d_code, e_code))
+          no_leaks = not (b_leak or d_leak or e_leak)
+          verdict_pass = (
+              all_200
+              and no_leaks
+              and parity == "pass"
+              and ar_render == "pass"
+              and ar_fallback == "pass"
+              and b_all_pop
+              and d_all_pop
+          )
+
+          if verdict_pass:
+              verdict = "PR-2B_SMOKE: pass"
+          else:
+              reason = fail_reasons[0] if fail_reasons else "see summary"
+              verdict = f"PR-2B_SMOKE: fail — {reason}"
+
+          # ---- Write summary ----
+          summary = os.environ["GITHUB_STEP_SUMMARY"]
+          with open(summary, "a", encoding="utf-8") as fh:
+              fh.write("\n")
+              fh.write(f"| B EN smoke | {b_code} | {b_note} |\n")
+              fh.write(f"| C Bearer parity | {c_code} | {c_note} |\n")
+              fh.write(f"| D AR smoke | {d_code} | {d_note} |\n")
+              fh.write(f"| E AR fallback | {e_code} | {e_note} |\n")
+              fh.write("\n")
+              fh.write(f"BEARER_PARITY: {parity}\n\n")
+              fh.write(f"AR_RENDER: {ar_render}\n\n")
+              fh.write(f"AR_FALLBACK_TO_EN: {ar_fallback}\n\n")
+              fh.write(f"**{verdict}**\n\n")
+              fh.write("<details><summary>Per-candidate detail</summary>\n\n")
+              for line in details:
+                  fh.write(line + "\n")
+              fh.write("\n</details>\n")
+
+          print(verdict)
+          if not verdict_pass:
+              raise SystemExit(1)
+          PY
