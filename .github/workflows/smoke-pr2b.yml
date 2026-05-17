@@ -165,22 +165,31 @@ jobs:
               return [c for c in LEAK_COLS if c in cand]
 
           def check_populated(cand):
-              """Return (populated_count, total, problems)."""
+              """Return (populated_count, total, problems).
+
+              LIST_FIELDS: a list (including []) counts as populated — an
+              empty list is a valid output for a candidate with no
+              recorded positives/risks. None / absent key is a real miss;
+              any other type is a type error.
+              STR_FIELDS: only a non-empty string counts as populated.
+              """
               total = len(LIST_FIELDS) + len(STR_FIELDS)
               ok = 0
               problems = []
               for f in LIST_FIELDS:
                   v = cand.get(f)
-                  if isinstance(v, list) and len(v) >= 1:
+                  if isinstance(v, list):
                       ok += 1
+                  elif v is None:
+                      problems.append(f"'{f}' (None)")
                   else:
-                      problems.append(f)
+                      problems.append(f"'{f}' (wrong type)")
               for f in STR_FIELDS:
                   v = cand.get(f)
                   if isinstance(v, str) and len(v) >= 1:
                       ok += 1
                   else:
-                      problems.append(f)
+                      problems.append(f"'{f}'")
               return ok, total, problems
 
           def has_arabic(cand):
@@ -189,6 +198,19 @@ jobs:
                   if isinstance(v, str) and ARABIC.search(v):
                       return True
               return False
+
+          _API_KEY = os.environ.get("PROD_API_KEY") or ""
+
+          def preview(v):
+              """200-char masked preview of a bare field for the E dump."""
+              if v is None:
+                  return "<NULL>"
+              if isinstance(v, str) and len(v) == 0:
+                  return "<EMPTY>"
+              s = str(v)
+              if _API_KEY:
+                  s = s.replace(_API_KEY, "***")
+              return s[:200]
 
           details = []
           fail_reasons = []
@@ -218,7 +240,7 @@ jobs:
                   details.append(
                       f"  - B cand[{i}] {cand.get('candidate_id', cand.get('id', '?'))}: "
                       f"{ok}/{total} fields"
-                      + (f", MISSING {problems}" if problems else "")
+                      + (f", MISSING [{', '.join(problems)}]" if problems else "")
                       + (f", LEAK {leaks}" if leaks else ", no leak")
                   )
               if pop_ok != len(b_cands):
@@ -283,7 +305,7 @@ jobs:
                       f"  - D cand[{i}] {cand.get('candidate_id', cand.get('id', '?'))}: "
                       f"{ok}/{total} fields, "
                       + ("Arabic present" if arabic else "NO Arabic")
-                      + (f", MISSING {problems}" if problems else "")
+                      + (f", MISSING [{', '.join(problems)}]" if problems else "")
                       + (f", LEAK {leaks}" if leaks else ", no leak")
                   )
               if pop_ok != len(d_cands):
@@ -327,11 +349,35 @@ jobs:
                   stayed_en = bare_present and not arabic
                   if stayed_en:
                       en_ok += 1
-                  details.append(
+                  header = (
                       f"  - E cand[{i}] {cand.get('candidate_id', cand.get('id', '?'))}: "
                       + ("3/3 bare fields, English" if stayed_en else "did NOT stay English")
                       + (f", LEAK {leaks}" if leaks else ", no leak")
                   )
+                  details.append(header)
+                  if not stayed_en:
+                      # Dump the raw bare-field content so AR_FALLBACK_TO_EN
+                      # misses are diagnosable: distinguishes genuine Arabic
+                      # rendering from has_arabic catching Arabic proper
+                      # nouns embedded in otherwise-English text.
+                      print(header)
+                      arabic_chars = 0
+                      total_chars = 0
+                      for f in STR_FIELDS:
+                          v = cand.get(f)
+                          if isinstance(v, str):
+                              arabic_chars += len(ARABIC.findall(v))
+                              total_chars += len(v)
+                      dump = [
+                          f"      decision_summary: {preview(cand.get('decision_summary'))}",
+                          f"      demand_thesis:    {preview(cand.get('demand_thesis'))}",
+                          f"      cost_thesis:      {preview(cand.get('cost_thesis'))}",
+                          f"      arabic_chars: {arabic_chars} / total_chars: {total_chars}"
+                          "  (so we can see the ratio)",
+                      ]
+                      for line in dump:
+                          details.append(line)
+                          print(line)
               if e_leak:
                   fail_reasons.append("E structured-column leak")
               ar_fallback = "pass" if en_ok == len(e_cands) and e_cands else "fail"
