@@ -1,0 +1,41 @@
+{
+  "expected_english": {
+    "positives": [
+      "Brand-fit profile aligns with site characteristics."
+    ],
+    "risks": []
+  },
+  "expected_structured": {
+    "positives": [
+      {
+        "id": "pos.brand_fit_aligned",
+        "params": {}
+      }
+    ],
+    "risks": []
+  },
+  "id": "tpr_P4_brand_fit_aligned",
+  "kwargs": {
+    "candidate": {
+      "brand_fit_score": 75.0,
+      "cannibalization_score": 0.0,
+      "competitor_count": 5,
+      "delivery_competition_score": 0.0,
+      "demand_score": 0.0,
+      "economics_score": 60.0,
+      "gate_status_json": {
+        "overall_pass": false
+      },
+      "multi_platform_presence_score": 0.0,
+      "provider_density_score": 10.0,
+      "provider_whitespace_score": 0.0,
+      "whitespace_score": 0.0
+    },
+    "gate_reasons": {
+      "failed": [],
+      "passed": [],
+      "unknown": []
+    }
+  },
+  "producer": "_top_positives_and_risks"
+}

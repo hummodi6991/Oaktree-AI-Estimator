@@ -1,0 +1,44 @@
+{
+  "expected_english": {
+    "positives": [],
+    "risks": [
+      "Area (85 m²) is near the minimum of the requested range."
+    ]
+  },
+  "expected_structured": {
+    "positives": [],
+    "risks": [
+      {
+        "id": "risk.area_near_min",
+        "params": {
+          "area_m2": 85.0
+        }
+      }
+    ]
+  },
+  "id": "tpr_K9_area_near_min",
+  "kwargs": {
+    "candidate": {
+      "area_m2": 85.0,
+      "brand_fit_score": 0.0,
+      "cannibalization_score": 0.0,
+      "competitor_count": 5,
+      "delivery_competition_score": 0.0,
+      "demand_score": 0.0,
+      "economics_score": 60.0,
+      "gate_status_json": {
+        "overall_pass": false
+      },
+      "multi_platform_presence_score": 0.0,
+      "provider_density_score": 10.0,
+      "provider_whitespace_score": 0.0,
+      "whitespace_score": 0.0
+    },
+    "gate_reasons": {
+      "failed": [],
+      "passed": [],
+      "unknown": []
+    }
+  },
+  "producer": "_top_positives_and_risks"
+}

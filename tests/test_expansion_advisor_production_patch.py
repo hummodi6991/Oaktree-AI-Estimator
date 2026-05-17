@@ -275,7 +275,7 @@ class TestDistrictMojibake:
 class TestDeliveryWording:
     def test_demand_thesis_no_delivery_observed(self):
         """When delivery_observed=False, language must be qualified."""
-        thesis = _build_demand_thesis(
+        thesis, _ = _build_demand_thesis(
             demand_score=60,
             population_reach=5000,
             provider_density_score=0,
@@ -287,7 +287,7 @@ class TestDeliveryWording:
 
     def test_demand_thesis_with_delivery_observed(self):
         """When delivery_observed=True, language should use observed terms."""
-        thesis = _build_demand_thesis(
+        thesis, _ = _build_demand_thesis(
             demand_score=75,
             population_reach=15000,
             provider_density_score=70,
@@ -312,7 +312,7 @@ class TestDeliveryWording:
             "multi_platform_presence_score": 0,
         }
         gate_reasons = {"passed": [], "failed": [], "unknown": []}
-        positives, risks = _top_positives_and_risks(
+        positives, risks, _, _ = _top_positives_and_risks(
             candidate=candidate, gate_reasons=gate_reasons
         )
         assert any("inferred" in r.lower() or "no observed" in r.lower() for r in risks)

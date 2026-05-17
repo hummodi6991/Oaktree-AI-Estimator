@@ -1720,7 +1720,7 @@ def test_top_positives_and_risks_no_raw_gate_keys():
         "unknown": ["parking_pass"],
     }
 
-    positives, risks = _top_positives_and_risks(
+    positives, risks, _, _ = _top_positives_and_risks(
         candidate=candidate, gate_reasons=gate_reasons,
     )
 

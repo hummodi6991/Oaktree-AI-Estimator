@@ -1,0 +1,25 @@
+{
+  "expected_english": "This compact candidate in Al Olaya scores 70.0/100 overall with an economics score of 60.0/100. It is a practical first-pass option for neighborhood dine-in. Biggest commercial risk: Execution risk should be managed during leasing and design.",
+  "expected_structured": {
+    "id": "decision_summary",
+    "params": {
+      "area_label": "compact",
+      "district_label": "Al Olaya",
+      "economics_score": 60.0,
+      "final_score": 70.0,
+      "risk_kind": "execution",
+      "risk_text_en": "execution risk should be managed during leasing and design",
+      "use_case": "neighborhood_dine_in"
+    }
+  },
+  "id": "ds_04_compact_execution_neighborhood_dine_in",
+  "kwargs": {
+    "area_m2": 150.0,
+    "district": "Al Olaya",
+    "economics_score": 60.0,
+    "final_score": 70.0,
+    "key_risks": [],
+    "service_model": "dine_in"
+  },
+  "producer": "_decision_summary"
+}

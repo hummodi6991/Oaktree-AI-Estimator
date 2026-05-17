@@ -757,7 +757,7 @@ def test_confidence_grade_listing_d_for_low_score():
 
 def test_demand_thesis_observed_delivery_uses_concrete_labels():
     """When delivery is observed, the thesis uses density labels like 'dense'/'thin'."""
-    thesis = _build_demand_thesis(
+    thesis, _ = _build_demand_thesis(
         demand_score=75.0,
         population_reach=50000,
         provider_density_score=70.0,
@@ -771,7 +771,7 @@ def test_demand_thesis_observed_delivery_uses_concrete_labels():
 
 def test_demand_thesis_not_observed_uses_inferred_language():
     """When delivery is NOT observed and no district data, the thesis uses qualified 'inferred' language."""
-    thesis = _build_demand_thesis(
+    thesis, _ = _build_demand_thesis(
         demand_score=75.0,
         population_reach=50000,
         provider_density_score=0.0,
@@ -787,7 +787,7 @@ def test_demand_thesis_not_observed_uses_inferred_language():
 def test_demand_thesis_district_fallback_uses_district_language():
     """When delivery is NOT observed but district data exists (provider_density_score > 0),
     the thesis uses 'district-level estimate' language."""
-    thesis = _build_demand_thesis(
+    thesis, _ = _build_demand_thesis(
         demand_score=75.0,
         population_reach=50000,
         provider_density_score=70.0,
@@ -801,7 +801,7 @@ def test_demand_thesis_district_fallback_uses_district_language():
 
 def test_demand_thesis_zero_density_observed_shows_thin():
     """provider_density_score=0 with observed data shows 'thin', not a false positive."""
-    thesis = _build_demand_thesis(
+    thesis, _ = _build_demand_thesis(
         demand_score=30.0,
         population_reach=10000,
         provider_density_score=0.0,
@@ -1143,7 +1143,7 @@ def test_delivery_wording_inferred_when_no_observed_listings():
         "gate_status_json": {"overall_pass": True},
     }
     gate_reasons = {"failed": [], "unknown": [], "passed": ["delivery_market_pass"]}
-    positives, risks = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+    positives, risks, _, _ = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
 
     # Should NOT have positive-sounding delivery/whitespace wording
     whitespace_positives = [p for p in positives if "whitespace" in p.lower()]
@@ -1170,7 +1170,7 @@ def test_delivery_wording_observed_when_listings_present():
         "gate_status_json": {"overall_pass": True},
     }
     gate_reasons = {"failed": [], "unknown": [], "passed": ["delivery_market_pass"]}
-    positives, risks = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+    positives, risks, _, _ = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
 
     # Should NOT have inferred-delivery risk
     delivery_risks = [r for r in risks if "inferred" in r.lower() and "delivery" in r.lower()]
@@ -1231,7 +1231,7 @@ def test_delivery_gate_explanation_observed_when_listings_present():
 
 def test_demand_thesis_inferred_when_no_delivery():
     """Demand thesis should use inferred language when no delivery observed."""
-    thesis = _build_demand_thesis(
+    thesis, _ = _build_demand_thesis(
         demand_score=70.0,
         population_reach=50000.0,
         provider_density_score=0.0,
@@ -1244,7 +1244,7 @@ def test_demand_thesis_inferred_when_no_delivery():
 
 def test_demand_thesis_observed_when_delivery_present():
     """Demand thesis should use observed language when delivery listings exist."""
-    thesis = _build_demand_thesis(
+    thesis, _ = _build_demand_thesis(
         demand_score=70.0,
         population_reach=50000.0,
         provider_density_score=60.0,
@@ -1332,7 +1332,7 @@ def test_top_risks_never_show_raw_gate_keys():
         "unknown": ["frontage_access_pass"],
         "passed": [],
     }
-    _, risks = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
+    _, risks, _, _ = _top_positives_and_risks(candidate=candidate, gate_reasons=gate_reasons)
     for risk in risks:
         assert "_pass" not in risk, f"Raw gate key leaked in risk text: {risk}"
         assert "zoning_fit_pass" not in risk

@@ -1,0 +1,18 @@
+{
+  "expected_english": "Estimated rent is 2000 SAR/m²/year (~1,234,567 SAR annually), fit-out is ~9,876,543 SAR.",
+  "expected_structured": {
+    "id": "cost_thesis",
+    "params": {
+      "estimated_annual_rent_sar": 1234567.0,
+      "estimated_fitout_cost_sar": 9876543.0,
+      "estimated_rent_sar_m2_year": 2000.0
+    }
+  },
+  "id": "ct_02_large_thousands",
+  "kwargs": {
+    "estimated_annual_rent_sar": 1234567.0,
+    "estimated_fitout_cost_sar": 9876543.0,
+    "estimated_rent_sar_m2_year": 2000.0
+  },
+  "producer": "_build_cost_thesis"
+}

@@ -1,0 +1,9 @@
+{
+  "expected_english": "Commercial activity floor",
+  "expected_structured": null,
+  "id": "gate_commercial_floor_pass",
+  "kwargs": {
+    "gate_key": "commercial_floor_pass"
+  },
+  "producer": "_gate_key_to_label"
+}

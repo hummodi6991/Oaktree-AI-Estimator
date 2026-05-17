@@ -1,0 +1,41 @@
+{
+  "expected_english": {
+    "positives": [
+      "All required gates pass under available context."
+    ],
+    "risks": []
+  },
+  "expected_structured": {
+    "positives": [
+      {
+        "id": "pos.all_gates_pass",
+        "params": {}
+      }
+    ],
+    "risks": []
+  },
+  "id": "tpr_P6_all_gates_pass",
+  "kwargs": {
+    "candidate": {
+      "brand_fit_score": 0.0,
+      "cannibalization_score": 0.0,
+      "competitor_count": 5,
+      "delivery_competition_score": 0.0,
+      "demand_score": 0.0,
+      "economics_score": 60.0,
+      "gate_status_json": {
+        "overall_pass": true
+      },
+      "multi_platform_presence_score": 0.0,
+      "provider_density_score": 10.0,
+      "provider_whitespace_score": 0.0,
+      "whitespace_score": 0.0
+    },
+    "gate_reasons": {
+      "failed": [],
+      "passed": [],
+      "unknown": []
+    }
+  },
+  "producer": "_top_positives_and_risks"
+}

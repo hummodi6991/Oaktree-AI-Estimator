@@ -2956,9 +2956,17 @@ def _top_positives_and_risks(
     *,
     candidate: dict[str, Any],
     gate_reasons: dict[str, Any],
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[dict[str, Any]], list[dict[str, Any]]]:
     positives: list[str] = []
     risks: list[str] = []
+    # PR #2a: parallel structured records built from the same inputs as the
+    # English strings. The English-rendering lines are NOT edited; each
+    # structured append is paired one-to-one with its English append (same
+    # order, same firing condition) so element i of a structured list
+    # corresponds to element i of its English list after the identical
+    # [:5] / [:6] slice. The two outputs are deliberately NOT DRY'd.
+    positives_structured: list[dict[str, Any]] = []
+    risks_structured: list[dict[str, Any]] = []
 
     # Determine delivery observation status upfront so wording can be qualified.
     delivery_observed = (
@@ -2969,41 +2977,55 @@ def _top_positives_and_risks(
 
     if _safe_float(candidate.get("demand_score")) >= 70:
         positives.append("Demand potential is strong for this district.")
+        positives_structured.append({"id": "pos.demand_strong", "params": {}})
     if _safe_float(candidate.get("whitespace_score")) >= 65:
         if delivery_observed and _safe_float(candidate.get("provider_whitespace_score")) >= 25:
             positives.append("Brick-and-mortar competitor whitespace remains favorable.")
+            positives_structured.append({"id": "pos.bnm_whitespace_favorable", "params": {}})
         elif not delivery_observed:
             # Whitespace is high only because no delivery activity was observed —
             # phrase as inferred opportunity, not observed strength.
             positives.append("Inferred competitor whitespace opportunity — low observed delivery activity nearby.")
+            positives_structured.append({"id": "pos.inferred_whitespace", "params": {}})
     if _safe_float(candidate.get("brand_fit_score")) >= 70:
         positives.append("Brand-fit profile aligns with site characteristics.")
+        positives_structured.append({"id": "pos.brand_fit_aligned", "params": {}})
     if _safe_float(candidate.get("economics_score")) >= 65:
         positives.append("Economics profile meets target screening band.")
+        positives_structured.append({"id": "pos.economics_meets_band", "params": {}})
     overall = (candidate.get("gate_status_json") or {}).get("overall_pass")
     if overall is True:
         positives.append("All required gates pass under available context.")
+        positives_structured.append({"id": "pos.all_gates_pass", "params": {}})
 
     if _safe_float(candidate.get("cannibalization_score")) >= 70:
         risks.append("Cannibalization risk is elevated versus branch network.")
+        risks_structured.append({"id": "risk.cannibalization_elevated", "params": {}})
     if _safe_float(candidate.get("economics_score")) < 50:
         risks.append("Economics score is below preferred threshold.")
+        risks_structured.append({"id": "risk.economics_below_threshold", "params": {}})
     if delivery_observed and _safe_float(candidate.get("delivery_competition_score")) >= 65:
         risks.append("Delivery competition intensity is high.")
+        risks_structured.append({"id": "risk.delivery_competition_high", "params": {}})
     if delivery_observed and _safe_float(candidate.get("provider_whitespace_score")) < 25 and _safe_float(candidate.get("delivery_competition_score")) >= 80:
         risks.append("Delivery platform competition is dense — limited delivery-channel whitespace.")
+        risks_structured.append({"id": "risk.delivery_whitespace_limited", "params": {}})
     for gate in gate_reasons.get("failed") or []:
         label = _gate_key_to_label(gate)
         risks.append(f"{label.capitalize()} gate failed.")
+        risks_structured.append({"id": "risk.gate_failed", "params": {"gate_key": str(gate)}})
     for gate in gate_reasons.get("unknown") or []:
         label = _gate_key_to_label(gate)
         risks.append(f"{label.capitalize()} could not be verified from current data.")
+        risks_structured.append({"id": "risk.gate_unknown", "params": {"gate_key": str(gate)}})
     # Flag when delivery scores are inferred (no observed listings).
     if not delivery_observed:
         if _safe_float(candidate.get("provider_density_score")) > 0:
             risks.append("Delivery data is based on district-level estimates — no listings observed within 1.2 km.")
+            risks_structured.append({"id": "risk.delivery_district_estimates", "params": {}})
         else:
             risks.append("Delivery market data is inferred — no observed listings near site.")
+            risks_structured.append({"id": "risk.delivery_inferred", "params": {}})
 
     # ── Area utilization signal ──
     area_m2 = _safe_float(candidate.get("area_m2"))
@@ -3013,23 +3035,28 @@ def _top_positives_and_risks(
         mid_area = (min_area + max_area) / 2.0
         if abs(area_m2 - mid_area) / max(mid_area, 1.0) < 0.15:
             positives.append("Site area is well-aligned with target range.")
+            positives_structured.append({"id": "pos.area_well_aligned", "params": {}})
         elif area_m2 < min_area * 1.1:
             risks.append(
                 f"Area ({area_m2:.0f} m\u00b2) is near the minimum of the requested range."
             )
+            risks_structured.append({"id": "risk.area_near_min", "params": {"area_m2": area_m2}})
         elif area_m2 > max_area * 0.9:
             risks.append(
                 f"Area ({area_m2:.0f} m\u00b2) is near the maximum \u2014 may increase fit-out cost."
             )
+            risks_structured.append({"id": "risk.area_near_max", "params": {"area_m2": area_m2}})
 
     # ── Rent economics signal ──
     economics = _safe_float(candidate.get("economics_score"))
     if economics >= 70:
         positives.append("Strong economics with favorable rent-to-revenue ratio.")
+        positives_structured.append({"id": "pos.strong_economics", "params": {}})
     elif economics < 55:
         risks.append(
             "Economics are marginal \u2014 rent burden may be high relative to revenue potential."
         )
+        risks_structured.append({"id": "risk.economics_marginal", "params": {}})
 
     # ── Cannibalization proximity signal ──
     nearest_m = _safe_float(candidate.get("distance_to_nearest_branch_m"))
@@ -3039,10 +3066,12 @@ def _top_positives_and_risks(
             risks.append(
                 f"Nearest own branch is only {nearest_km:.1f} km away \u2014 high overlap risk."
             )
+            risks_structured.append({"id": "risk.nearest_branch_close", "params": {"nearest_km": nearest_km}})
         elif nearest_km > 5.0:
             positives.append(
                 f"Well-separated from nearest branch ({nearest_km:.1f} km) \u2014 low overlap."
             )
+            positives_structured.append({"id": "pos.well_separated_branch", "params": {"nearest_km": nearest_km}})
 
     # ── Competitor density signal ──
     competitor_count = _safe_int(candidate.get("competitor_count"))
@@ -3050,8 +3079,10 @@ def _top_positives_and_risks(
         risks.append(
             f"High competitor density ({competitor_count} nearby) \u2014 market may be saturated."
         )
+        risks_structured.append({"id": "risk.high_competitor_density", "params": {"count": competitor_count}})
     elif competitor_count <= 2 and competitor_count >= 0:
         positives.append("Low same-category competitor density \u2014 potential first-mover advantage.")
+        positives_structured.append({"id": "pos.low_competitor_density", "params": {}})
 
     # Phase 4 - listing recency + district momentum callouts.
     # Mirrors the badge/tag logic on the card so the rationale line matches
@@ -3095,16 +3126,21 @@ def _top_positives_and_risks(
 
     if is_new and is_top_tier_market:
         positives.append("Newly listed in a top-tier market.")
+        positives_structured.append({"id": "pos.new_in_top_market", "params": {}})
     elif is_updated and is_top_tier_market:
         positives.append("Recently refreshed listing in a top-tier market.")
+        positives_structured.append({"id": "pos.refreshed_in_top_market", "params": {}})
     elif is_new:
         positives.append("Newly listed within the last week.")
+        positives_structured.append({"id": "pos.newly_listed", "params": {}})
     elif is_updated:
         positives.append("Listing refreshed by the owner within the last week.")
+        positives_structured.append({"id": "pos.refreshed_listing", "params": {}})
     elif is_top_tier_market:
         positives.append("District ranks in the top tier for recent listing activity.")
+        positives_structured.append({"id": "pos.top_tier_market", "params": {}})
 
-    return positives[:5], risks[:6]
+    return positives[:5], risks[:6], positives_structured[:5], risks_structured[:6]
 
 
 def _confidence_grade(
@@ -3203,26 +3239,50 @@ def _build_demand_thesis(
     provider_whitespace_score: float,
     delivery_competition_score: float,
     delivery_observed: bool = True,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     demand_label = "strong" if demand_score >= 70 else "moderate" if demand_score >= 50 else "limited"
     if not delivery_observed and provider_density_score > 0:
         # District-level fallback: real district data but no spatial-radius data
         provider_label = "district-level estimate" if provider_density_score >= 30 else "limited district data"
         whitespace_label = "district-inferred" if provider_whitespace_score >= 50 else "potentially tight (district-level)"
         competition_label = "district-level estimate"
+        # PR #2a: locale-invariant token mirroring the English branch above.
+        provider_token = "district_estimate" if provider_density_score >= 30 else "limited_district"
+        whitespace_token = "district_inferred" if provider_whitespace_score >= 50 else "tight_district"
+        competition_token = "district_estimate"
     elif not delivery_observed:
         # No delivery data at all — fully inferred
         provider_label = "not observed (inferred)"
         whitespace_label = "inferred whitespace opportunity"
         competition_label = "not directly observed"
+        provider_token = "not_observed"
+        whitespace_token = "inferred_opportunity"
+        competition_token = "not_directly_observed"
     else:
         provider_label = "dense" if provider_density_score >= 65 else "steady" if provider_density_score >= 45 else "thin"
         whitespace_label = "attractive" if provider_whitespace_score >= 60 else "balanced" if provider_whitespace_score >= 40 else "tight"
         competition_label = "intense" if delivery_competition_score >= 65 else "manageable"
-    return (
+        provider_token = "dense" if provider_density_score >= 65 else "steady" if provider_density_score >= 45 else "thin"
+        whitespace_token = "attractive" if provider_whitespace_score >= 60 else "balanced" if provider_whitespace_score >= 40 else "tight"
+        competition_token = "intense" if delivery_competition_score >= 65 else "manageable"
+    english = (
         f"Demand is {demand_label} (score {demand_score:.1f}) with population reach around {population_reach:.0f}; "
         f"provider activity is {provider_label}, whitespace is {whitespace_label}, and delivery competition is {competition_label}."
     )
+    # PR #2a: structured record built from the same inputs as the English
+    # string above. demand_label is itself a locale-invariant token.
+    structured = {
+        "id": "demand_thesis",
+        "params": {
+            "demand_score": demand_score,
+            "population_reach": population_reach,
+            "demand_label": demand_label,
+            "provider_label": provider_token,
+            "whitespace_label": whitespace_token,
+            "competition_label": competition_token,
+        },
+    }
+    return english, structured
 
 
 def _build_cost_thesis(
@@ -3230,11 +3290,23 @@ def _build_cost_thesis(
     estimated_rent_sar_m2_year: float,
     estimated_annual_rent_sar: float,
     estimated_fitout_cost_sar: float,
-) -> str:
-    return (
+) -> tuple[str, dict[str, Any]]:
+    english = (
         f"Estimated rent is {estimated_rent_sar_m2_year:.0f} SAR/m²/year (~{estimated_annual_rent_sar:,.0f} SAR annually), "
         f"fit-out is ~{estimated_fitout_cost_sar:,.0f} SAR."
     )
+    # PR #2a: structured record built from the same inputs as the English
+    # string above. Numbers stored raw; PR #2b's template carries the format
+    # spec so the English re-render is byte-identical.
+    structured = {
+        "id": "cost_thesis",
+        "params": {
+            "estimated_rent_sar_m2_year": estimated_rent_sar_m2_year,
+            "estimated_annual_rent_sar": estimated_annual_rent_sar,
+            "estimated_fitout_cost_sar": estimated_fitout_cost_sar,
+        },
+    }
+    return english, structured
 
 
 def _comparable_competitors(
@@ -5355,6 +5427,22 @@ def _recommended_use_case(service_model: str, area_m2: float) -> str:
     return "neighborhood qsr"
 
 
+def _recommended_use_case_token(service_model: str, area_m2: float) -> str:
+    """PR #2a: locale-invariant token mirror of _recommended_use_case.
+
+    The English-returning _recommended_use_case above is byte-untouched;
+    this sibling returns the matching translation key for the structured
+    record. The branch logic is intentionally duplicated (NOT DRY'd).
+    """
+    if service_model == "dine_in":
+        return "flagship_dine_in" if area_m2 >= 260 else "neighborhood_dine_in"
+    if service_model == "delivery_first":
+        return "delivery_led_branch"
+    if service_model == "cafe":
+        return "compact_cafe" if area_m2 < 180 else "destination_cafe"
+    return "neighborhood_qsr"
+
+
 def _decision_summary(
     *,
     district: str | None,
@@ -5363,7 +5451,7 @@ def _decision_summary(
     key_risks: list[str],
     service_model: str,
     area_m2: float,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     area_label = "compact" if area_m2 < 180 else "standard"
     district_label = district or "the target district"
     if key_risks:
@@ -5385,7 +5473,31 @@ def _decision_summary(
         if not risk_sentence[0].isupper():
             risk_sentence = risk_sentence[0].upper() + risk_sentence[1:]
         summary = f"{summary} Biggest commercial risk: {risk_sentence}."
-    return summary
+    # PR #2a: structured record built from the same inputs as the English
+    # summary above. The English branches are NOT edited; risk_kind is
+    # re-derived in this parallel block (deliberately NOT DRY'd).
+    if key_risks:
+        risk_kind = "from_key_risks"
+    elif economics_score < 55:
+        risk_kind = "tight_economics"
+    else:
+        risk_kind = "execution"
+    # risk_text_en is the deferred parity bridge for _build_strengths_and_risks
+    # (out of scope for PR #2; tracked for PR #3). When PR #3 brings strengths/risks
+    # into structured inputs, this field becomes redundant and should be removed.
+    structured = {
+        "id": "decision_summary",
+        "params": {
+            "area_label": area_label,
+            "district_label": district,
+            "final_score": final_score,
+            "economics_score": economics_score,
+            "use_case": _recommended_use_case_token(service_model, area_m2),
+            "risk_kind": risk_kind,
+            "risk_text_en": risk_text,
+        },
+    }
+    return summary, structured
 
 
 def persist_existing_branches(db: Session, search_id: str, existing_branches: list[dict[str, Any]]) -> None:
@@ -8816,7 +8928,7 @@ def run_expansion_search(
             road_evidence_band=feature_snapshot_json.get("context_sources", {}).get("road_evidence_band"),
             parking_evidence_band=feature_snapshot_json.get("context_sources", {}).get("parking_evidence_band"),
         )
-        demand_thesis = _build_demand_thesis(
+        demand_thesis, demand_thesis_structured = _build_demand_thesis(
             demand_score=demand_score,
             population_reach=population_reach,
             provider_density_score=provider_density_score,
@@ -8824,7 +8936,7 @@ def run_expansion_search(
             delivery_competition_score=delivery_competition_score,
             delivery_observed=provider_listing_count > 0,
         )
-        cost_thesis = _build_cost_thesis(
+        cost_thesis, cost_thesis_structured = _build_cost_thesis(
             estimated_rent_sar_m2_year=estimated_rent_sar_m2_year,
             estimated_annual_rent_sar=estimated_annual_rent_sar,
             estimated_fitout_cost_sar=estimated_fitout_cost_sar,
@@ -8873,9 +8985,14 @@ def run_expansion_search(
             "competitor_count": competitor_count,
             "provider_whitespace_score": provider_whitespace_score,
         }
-        top_positives_json, top_risks_json = _top_positives_and_risks(candidate=seed_candidate, gate_reasons=gate_reasons_json)
+        (
+            top_positives_json,
+            top_risks_json,
+            top_positives_structured,
+            top_risks_structured,
+        ) = _top_positives_and_risks(candidate=seed_candidate, gate_reasons=gate_reasons_json)
         district_canon = _canonicalize_district_label(district, district_lookup)
-        decision_summary = _decision_summary(
+        decision_summary, decision_summary_structured = _decision_summary(
             district=district_canon["district_display"] or district,
             final_score=final_score,
             economics_score=economics_score,
@@ -9053,6 +9170,12 @@ def run_expansion_search(
                 "cost_thesis": cost_thesis,
                 "top_positives_json": top_positives_json,
                 "top_risks_json": top_risks_json,
+                # PR #2a: parallel structured records (write-only this PR).
+                "top_positives_structured_json": top_positives_structured,
+                "top_risks_structured_json": top_risks_structured,
+                "demand_thesis_structured_json": demand_thesis_structured,
+                "cost_thesis_structured_json": cost_thesis_structured,
+                "decision_summary_structured_json": decision_summary_structured,
                 "comparable_competitors_json": comparable_competitors_json,
                 "decision_summary": decision_summary,
                 "key_risks_json": key_risks_json,
@@ -9280,6 +9403,11 @@ def run_expansion_search(
             cost_thesis,
             top_positives_json,
             top_risks_json,
+            top_positives_structured_json,
+            top_risks_structured_json,
+            demand_thesis_structured_json,
+            cost_thesis_structured_json,
+            decision_summary_structured_json,
             comparable_competitors_json,
             decision_summary,
             key_risks_json,
@@ -9346,6 +9474,11 @@ def run_expansion_search(
             :cost_thesis,
             CAST(:top_positives_json AS jsonb),
             CAST(:top_risks_json AS jsonb),
+            CAST(:top_positives_structured_json AS jsonb),
+            CAST(:top_risks_structured_json AS jsonb),
+            CAST(:demand_thesis_structured_json AS jsonb),
+            CAST(:cost_thesis_structured_json AS jsonb),
+            CAST(:decision_summary_structured_json AS jsonb),
             CAST(:comparable_competitors_json AS jsonb),
             :decision_summary,
             CAST(:key_risks_json AS jsonb),
@@ -9385,6 +9518,11 @@ def run_expansion_search(
             "score_breakdown_json": json.dumps(_sanitize_for_json(candidate["score_breakdown_json"]), ensure_ascii=False),
             "top_positives_json": json.dumps(_sanitize_for_json(candidate["top_positives_json"]), ensure_ascii=False),
             "top_risks_json": json.dumps(_sanitize_for_json(candidate["top_risks_json"]), ensure_ascii=False),
+            "top_positives_structured_json": json.dumps(_sanitize_for_json(candidate["top_positives_structured_json"]), ensure_ascii=False),
+            "top_risks_structured_json": json.dumps(_sanitize_for_json(candidate["top_risks_structured_json"]), ensure_ascii=False),
+            "demand_thesis_structured_json": json.dumps(_sanitize_for_json(candidate["demand_thesis_structured_json"]), ensure_ascii=False),
+            "cost_thesis_structured_json": json.dumps(_sanitize_for_json(candidate["cost_thesis_structured_json"]), ensure_ascii=False),
+            "decision_summary_structured_json": json.dumps(_sanitize_for_json(candidate["decision_summary_structured_json"]), ensure_ascii=False),
             "comparable_competitors_json": json.dumps(_sanitize_for_json(candidate["comparable_competitors_json"]), ensure_ascii=False),
             "rerank_reason": (
                 json.dumps(_sanitize_for_json(candidate["rerank_reason"]), ensure_ascii=False)

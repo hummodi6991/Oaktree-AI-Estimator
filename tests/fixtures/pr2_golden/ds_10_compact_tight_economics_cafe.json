@@ -1,0 +1,25 @@
+{
+  "expected_english": "This compact candidate in Al Murabba scores 48.0/100 overall with an economics score of 54.0/100. It is a practical first-pass option for compact cafe. Biggest commercial risk: Rent economics are tight and should be validated with actual lease terms.",
+  "expected_structured": {
+    "id": "decision_summary",
+    "params": {
+      "area_label": "compact",
+      "district_label": "Al Murabba",
+      "economics_score": 54.0,
+      "final_score": 48.0,
+      "risk_kind": "tight_economics",
+      "risk_text_en": "rent economics are tight and should be validated with actual lease terms",
+      "use_case": "compact_cafe"
+    }
+  },
+  "id": "ds_10_compact_tight_economics_cafe",
+  "kwargs": {
+    "area_m2": 120.0,
+    "district": "Al Murabba",
+    "economics_score": 54.0,
+    "final_score": 48.0,
+    "key_risks": [],
+    "service_model": "cafe"
+  },
+  "producer": "_decision_summary"
+}

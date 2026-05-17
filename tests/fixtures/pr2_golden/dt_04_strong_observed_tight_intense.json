@@ -1,0 +1,24 @@
+{
+  "expected_english": "Demand is strong (score 72.0) with population reach around 41000; provider activity is dense, whitespace is tight, and delivery competition is intense.",
+  "expected_structured": {
+    "id": "demand_thesis",
+    "params": {
+      "competition_label": "intense",
+      "demand_label": "strong",
+      "demand_score": 72.0,
+      "population_reach": 41000.0,
+      "provider_label": "dense",
+      "whitespace_label": "tight"
+    }
+  },
+  "id": "dt_04_strong_observed_tight_intense",
+  "kwargs": {
+    "delivery_competition_score": 80.0,
+    "delivery_observed": true,
+    "demand_score": 72.0,
+    "population_reach": 41000.0,
+    "provider_density_score": 66.0,
+    "provider_whitespace_score": 20.0
+  },
+  "producer": "_build_demand_thesis"
+}

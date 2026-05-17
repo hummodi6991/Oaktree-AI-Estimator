@@ -1,0 +1,44 @@
+{
+  "expected_english": {
+    "positives": [],
+    "risks": [
+      "Nearest own branch is only 1.2 km away — high overlap risk."
+    ]
+  },
+  "expected_structured": {
+    "positives": [],
+    "risks": [
+      {
+        "id": "risk.nearest_branch_close",
+        "params": {
+          "nearest_km": 1.2
+        }
+      }
+    ]
+  },
+  "id": "tpr_K12_nearest_branch_close",
+  "kwargs": {
+    "candidate": {
+      "brand_fit_score": 0.0,
+      "cannibalization_score": 0.0,
+      "competitor_count": 5,
+      "delivery_competition_score": 0.0,
+      "demand_score": 0.0,
+      "distance_to_nearest_branch_m": 1200.0,
+      "economics_score": 60.0,
+      "gate_status_json": {
+        "overall_pass": false
+      },
+      "multi_platform_presence_score": 0.0,
+      "provider_density_score": 10.0,
+      "provider_whitespace_score": 0.0,
+      "whitespace_score": 0.0
+    },
+    "gate_reasons": {
+      "failed": [],
+      "passed": [],
+      "unknown": []
+    }
+  },
+  "producer": "_top_positives_and_risks"
+}

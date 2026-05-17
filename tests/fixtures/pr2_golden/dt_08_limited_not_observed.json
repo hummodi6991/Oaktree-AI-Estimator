@@ -1,0 +1,24 @@
+{
+  "expected_english": "Demand is limited (score 30.0) with population reach around 3000; provider activity is not observed (inferred), whitespace is inferred whitespace opportunity, and delivery competition is not directly observed.",
+  "expected_structured": {
+    "id": "demand_thesis",
+    "params": {
+      "competition_label": "not_directly_observed",
+      "demand_label": "limited",
+      "demand_score": 30.0,
+      "population_reach": 3000.0,
+      "provider_label": "not_observed",
+      "whitespace_label": "inferred_opportunity"
+    }
+  },
+  "id": "dt_08_limited_not_observed",
+  "kwargs": {
+    "delivery_competition_score": 0.0,
+    "delivery_observed": false,
+    "demand_score": 30.0,
+    "population_reach": 3000.0,
+    "provider_density_score": 0.0,
+    "provider_whitespace_score": 10.0
+  },
+  "producer": "_build_demand_thesis"
+}

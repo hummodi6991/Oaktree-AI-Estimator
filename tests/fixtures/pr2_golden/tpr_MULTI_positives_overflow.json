@@ -1,0 +1,63 @@
+{
+  "expected_english": {
+    "positives": [
+      "Demand potential is strong for this district.",
+      "Brick-and-mortar competitor whitespace remains favorable.",
+      "Brand-fit profile aligns with site characteristics.",
+      "Economics profile meets target screening band.",
+      "All required gates pass under available context."
+    ],
+    "risks": []
+  },
+  "expected_structured": {
+    "positives": [
+      {
+        "id": "pos.demand_strong",
+        "params": {}
+      },
+      {
+        "id": "pos.bnm_whitespace_favorable",
+        "params": {}
+      },
+      {
+        "id": "pos.brand_fit_aligned",
+        "params": {}
+      },
+      {
+        "id": "pos.economics_meets_band",
+        "params": {}
+      },
+      {
+        "id": "pos.all_gates_pass",
+        "params": {}
+      }
+    ],
+    "risks": []
+  },
+  "id": "tpr_MULTI_positives_overflow",
+  "kwargs": {
+    "candidate": {
+      "area_m2": 290.0,
+      "brand_fit_score": 80.0,
+      "cannibalization_score": 0.0,
+      "competitor_count": 1,
+      "delivery_competition_score": 0.0,
+      "demand_score": 80.0,
+      "distance_to_nearest_branch_m": 6300.0,
+      "economics_score": 75.0,
+      "gate_status_json": {
+        "overall_pass": true
+      },
+      "multi_platform_presence_score": 0.0,
+      "provider_density_score": 10.0,
+      "provider_whitespace_score": 30.0,
+      "whitespace_score": 70.0
+    },
+    "gate_reasons": {
+      "failed": [],
+      "passed": [],
+      "unknown": []
+    }
+  },
+  "producer": "_top_positives_and_risks"
+}

@@ -1,0 +1,9 @@
+{
+  "expected_english": "economics",
+  "expected_structured": null,
+  "id": "gate_economics_pass",
+  "kwargs": {
+    "gate_key": "economics_pass"
+  },
+  "producer": "_gate_key_to_label"
+}

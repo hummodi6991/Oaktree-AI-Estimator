@@ -1,0 +1,225 @@
+{
+  "ct_01_typical": "Estimated rent is 1850 SAR/m²/year (~462,500 SAR annually), fit-out is ~390,000 SAR.",
+  "ct_02_large_thousands": "Estimated rent is 2000 SAR/m²/year (~1,234,567 SAR annually), fit-out is ~9,876,543 SAR.",
+  "ct_03_zeros": "Estimated rent is 0 SAR/m²/year (~0 SAR annually), fit-out is ~0 SAR.",
+  "ct_04_fractional_rounding": "Estimated rent is 1850 SAR/m²/year (~462,500 SAR annually), fit-out is ~389,999 SAR.",
+  "ds_01_compact_from_key_risks_qsr": "This compact candidate in Al Olaya scores 70.0/100 overall with an economics score of 60.0/100. It is a practical first-pass option for neighborhood qsr. Biggest commercial risk: Cannibalization risk is elevated versus branch network.",
+  "ds_02_standard_tight_economics_qsr": "This standard candidate in Al Olaya scores 50.0/100 overall with an economics score of 50.0/100. It is a practical first-pass option for neighborhood qsr. Biggest commercial risk: Rent economics are tight and should be validated with actual lease terms.",
+  "ds_03_standard_execution_qsr": "This standard candidate in Al Olaya scores 70.0/100 overall with an economics score of 60.0/100. It is a practical first-pass option for neighborhood qsr. Biggest commercial risk: Execution risk should be managed during leasing and design.",
+  "ds_04_compact_execution_neighborhood_dine_in": "This compact candidate in Al Olaya scores 70.0/100 overall with an economics score of 60.0/100. It is a practical first-pass option for neighborhood dine-in. Biggest commercial risk: Execution risk should be managed during leasing and design.",
+  "ds_05_standard_execution_flagship_dine_in": "This standard candidate in Al Olaya scores 70.0/100 overall with an economics score of 60.0/100. It is a practical first-pass option for flagship dine-in. Biggest commercial risk: Execution risk should be managed during leasing and design.",
+  "ds_06_execution_delivery_led_branch": "This standard candidate in Al Olaya scores 70.0/100 overall with an economics score of 60.0/100. It is a practical first-pass option for delivery-led branch. Biggest commercial risk: Execution risk should be managed during leasing and design.",
+  "ds_07_compact_execution_compact_cafe": "This compact candidate in Al Olaya scores 70.0/100 overall with an economics score of 60.0/100. It is a practical first-pass option for compact cafe. Biggest commercial risk: Execution risk should be managed during leasing and design.",
+  "ds_08_standard_execution_destination_cafe": "This standard candidate in Al Olaya scores 70.0/100 overall with an economics score of 60.0/100. It is a practical first-pass option for destination cafe. Biggest commercial risk: Execution risk should be managed during leasing and design.",
+  "ds_09_district_none_default": "This standard candidate in the target district scores 70.0/100 overall with an economics score of 60.0/100. It is a practical first-pass option for neighborhood qsr. Biggest commercial risk: Execution risk should be managed during leasing and design.",
+  "ds_10_compact_tight_economics_cafe": "This compact candidate in Al Murabba scores 48.0/100 overall with an economics score of 54.0/100. It is a practical first-pass option for compact cafe. Biggest commercial risk: Rent economics are tight and should be validated with actual lease terms.",
+  "dt_01_strong_observed_dense": "Demand is strong (score 75.0) with population reach around 50000; provider activity is dense, whitespace is attractive, and delivery competition is intense.",
+  "dt_02_moderate_observed_steady": "Demand is moderate (score 55.0) with population reach around 20000; provider activity is steady, whitespace is balanced, and delivery competition is manageable.",
+  "dt_03_limited_observed_thin": "Demand is limited (score 30.0) with population reach around 8000; provider activity is thin, whitespace is tight, and delivery competition is manageable.",
+  "dt_04_strong_observed_tight_intense": "Demand is strong (score 72.0) with population reach around 41000; provider activity is dense, whitespace is tight, and delivery competition is intense.",
+  "dt_05_district_estimate_inferred": "Demand is strong (score 75.0) with population reach around 50000; provider activity is district-level estimate, whitespace is district-inferred, and delivery competition is district-level estimate.",
+  "dt_06_limited_district_tight": "Demand is moderate (score 55.0) with population reach around 20000; provider activity is limited district data, whitespace is potentially tight (district-level), and delivery competition is district-level estimate.",
+  "dt_07_not_observed_inferred": "Demand is moderate (score 60.0) with population reach around 5000; provider activity is not observed (inferred), whitespace is inferred whitespace opportunity, and delivery competition is not directly observed.",
+  "dt_08_limited_not_observed": "Demand is limited (score 30.0) with population reach around 3000; provider activity is not observed (inferred), whitespace is inferred whitespace opportunity, and delivery competition is not directly observed.",
+  "dt_09_default_delivery_observed": "Demand is moderate (score 68.0) with population reach around 33333; provider activity is steady, whitespace is balanced, and delivery competition is manageable.",
+  "gate_area_fit_pass": "area fit",
+  "gate_cannibalization_pass": "cannibalization",
+  "gate_commercial_floor_pass": "Commercial activity floor",
+  "gate_construction_proximity_pass": "Construction proximity floor",
+  "gate_delivery_market_pass": "delivery market",
+  "gate_district_pass": "district",
+  "gate_economics_pass": "economics",
+  "gate_frontage_access_pass": "frontage/access",
+  "gate_parking_pass": "parking",
+  "gate_population_floor_pass": "Population reach floor",
+  "gate_radiance_growth_pass": "Market growth signal",
+  "gate_zoning_fit_pass": "zoning fit",
+  "tpr_K10_area_near_max": {
+    "positives": [],
+    "risks": [
+      "Area (470 m²) is near the maximum — may increase fit-out cost."
+    ]
+  },
+  "tpr_K11_economics_marginal": {
+    "positives": [],
+    "risks": [
+      "Economics are marginal — rent burden may be high relative to revenue potential."
+    ]
+  },
+  "tpr_K12_nearest_branch_close": {
+    "positives": [],
+    "risks": [
+      "Nearest own branch is only 1.2 km away — high overlap risk."
+    ]
+  },
+  "tpr_K13_high_competitor_density": {
+    "positives": [],
+    "risks": [
+      "High competitor density (11 nearby) — market may be saturated."
+    ]
+  },
+  "tpr_K1_cannibalization_elevated": {
+    "positives": [],
+    "risks": [
+      "Cannibalization risk is elevated versus branch network."
+    ]
+  },
+  "tpr_K2_economics_below_threshold": {
+    "positives": [],
+    "risks": [
+      "Economics score is below preferred threshold.",
+      "Economics are marginal — rent burden may be high relative to revenue potential."
+    ]
+  },
+  "tpr_K3_delivery_competition_high": {
+    "positives": [],
+    "risks": [
+      "Delivery competition intensity is high."
+    ]
+  },
+  "tpr_K4_delivery_whitespace_limited": {
+    "positives": [],
+    "risks": [
+      "Delivery competition intensity is high.",
+      "Delivery platform competition is dense — limited delivery-channel whitespace."
+    ]
+  },
+  "tpr_K5_gate_failed": {
+    "positives": [],
+    "risks": [
+      "Parking gate failed."
+    ]
+  },
+  "tpr_K6_gate_unknown": {
+    "positives": [],
+    "risks": [
+      "District could not be verified from current data."
+    ]
+  },
+  "tpr_K8_delivery_inferred": {
+    "positives": [],
+    "risks": [
+      "Delivery market data is inferred — no observed listings near site."
+    ]
+  },
+  "tpr_K9_area_near_min": {
+    "positives": [],
+    "risks": [
+      "Area (85 m²) is near the minimum of the requested range."
+    ]
+  },
+  "tpr_MULTI_positives_overflow": {
+    "positives": [
+      "Demand potential is strong for this district.",
+      "Brick-and-mortar competitor whitespace remains favorable.",
+      "Brand-fit profile aligns with site characteristics.",
+      "Economics profile meets target screening band.",
+      "All required gates pass under available context."
+    ],
+    "risks": []
+  },
+  "tpr_MULTI_risks_overflow": {
+    "positives": [],
+    "risks": [
+      "Cannibalization risk is elevated versus branch network.",
+      "Economics score is below preferred threshold.",
+      "Delivery competition intensity is high.",
+      "Delivery platform competition is dense — limited delivery-channel whitespace.",
+      "Zoning fit gate failed.",
+      "Parking gate failed."
+    ]
+  },
+  "tpr_P10_low_competitor_density": {
+    "positives": [
+      "Low same-category competitor density — potential first-mover advantage."
+    ],
+    "risks": []
+  },
+  "tpr_P11_new_in_top_market": {
+    "positives": [
+      "Newly listed in a top-tier market."
+    ],
+    "risks": []
+  },
+  "tpr_P12_refreshed_in_top_market": {
+    "positives": [
+      "Recently refreshed listing in a top-tier market."
+    ],
+    "risks": []
+  },
+  "tpr_P13_newly_listed": {
+    "positives": [
+      "Newly listed within the last week."
+    ],
+    "risks": []
+  },
+  "tpr_P14_refreshed_listing": {
+    "positives": [
+      "Listing refreshed by the owner within the last week."
+    ],
+    "risks": []
+  },
+  "tpr_P15_top_tier_market": {
+    "positives": [
+      "District ranks in the top tier for recent listing activity."
+    ],
+    "risks": []
+  },
+  "tpr_P1_demand_strong": {
+    "positives": [
+      "Demand potential is strong for this district."
+    ],
+    "risks": []
+  },
+  "tpr_P2_bnm_whitespace_favorable": {
+    "positives": [
+      "Brick-and-mortar competitor whitespace remains favorable."
+    ],
+    "risks": []
+  },
+  "tpr_P3_inferred_whitespace": {
+    "positives": [
+      "Inferred competitor whitespace opportunity — low observed delivery activity nearby."
+    ],
+    "risks": [
+      "Delivery market data is inferred — no observed listings near site."
+    ]
+  },
+  "tpr_P4_brand_fit_aligned": {
+    "positives": [
+      "Brand-fit profile aligns with site characteristics."
+    ],
+    "risks": []
+  },
+  "tpr_P5_economics_meets_band": {
+    "positives": [
+      "Economics profile meets target screening band."
+    ],
+    "risks": []
+  },
+  "tpr_P6_all_gates_pass": {
+    "positives": [
+      "All required gates pass under available context."
+    ],
+    "risks": []
+  },
+  "tpr_P7_area_well_aligned": {
+    "positives": [
+      "Site area is well-aligned with target range."
+    ],
+    "risks": []
+  },
+  "tpr_P8_strong_economics": {
+    "positives": [
+      "Economics profile meets target screening band.",
+      "Strong economics with favorable rent-to-revenue ratio."
+    ],
+    "risks": []
+  },
+  "tpr_P9_well_separated_branch": {
+    "positives": [
+      "Well-separated from nearest branch (6.3 km) — low overlap."
+    ],
+    "risks": []
+  }
+}

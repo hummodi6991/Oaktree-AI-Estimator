@@ -1,0 +1,9 @@
+{
+  "expected_english": "parking",
+  "expected_structured": null,
+  "id": "gate_parking_pass",
+  "kwargs": {
+    "gate_key": "parking_pass"
+  },
+  "producer": "_gate_key_to_label"
+}

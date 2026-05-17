@@ -1,0 +1,9 @@
+{
+  "expected_english": "Market growth signal",
+  "expected_structured": null,
+  "id": "gate_radiance_growth_pass",
+  "kwargs": {
+    "gate_key": "radiance_growth_pass"
+  },
+  "producer": "_gate_key_to_label"
+}
