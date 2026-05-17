@@ -117,10 +117,10 @@ def test_saved_search_404_paths(monkeypatch):
     db = DummyDB()
     from app.api import expansion_advisor as api
 
-    monkeypatch.setattr(api, "get_search", lambda *_: None)
-    monkeypatch.setattr(api, "get_saved_search", lambda *_: None)
-    monkeypatch.setattr(api, "update_saved_search", lambda *_: None)
-    monkeypatch.setattr(api, "delete_saved_search", lambda *_: False)
+    monkeypatch.setattr(api, "get_search", lambda *_, **_kw: None)
+    monkeypatch.setattr(api, "get_saved_search", lambda *_, **_kw: None)
+    monkeypatch.setattr(api, "update_saved_search", lambda *_, **_kw: None)
+    monkeypatch.setattr(api, "delete_saved_search", lambda *_, **_kw: False)
 
     client = _client(db)
     try:
@@ -302,14 +302,17 @@ def test_patch_saved_search_accepts_lang(monkeypatch):
 
 
 def test_patch_saved_search_does_not_pass_lang_to_update(monkeypatch):
-    """R3: `lang` must be popped from the payload before it reaches
-    update_saved_search — it is not a persisted saved-search column."""
+    """`lang` must be popped from the persisted payload before it reaches
+    update_saved_search — it is not a saved-search column. PR #2b passes
+    `lang` as a separate keyword argument (the Arabic read path), never
+    inside `payload`."""
     from app.api import expansion_advisor as api
 
     captured = {}
 
-    def _spy_update(_db, _saved_id, payload):
+    def _spy_update(_db, _saved_id, payload, lang="en"):
         captured["payload"] = payload
+        captured["lang"] = lang
         return dict(_SAVED_ROW)
 
     monkeypatch.setattr(api, "update_saved_search", _spy_update)
@@ -327,3 +330,5 @@ def test_patch_saved_search_does_not_pass_lang_to_update(monkeypatch):
     assert "payload" in captured
     assert "lang" not in captured["payload"]
     assert captured["payload"]["title"] == "Renamed"
+    # PR #2b: lang reaches update_saved_search as a separate kwarg.
+    assert captured["lang"] == "ar"

@@ -752,10 +752,21 @@ class TestRenderPromptFailedGate:
 
     def test_failed_gate_triggers_failure_addendum_and_base_rule_sections(self):
         cand = dict(BASE_STRUCTURED_CANDIDATE)
-        cand["gate_status_json"] = [
-            {"gate": "zoning fit", "verdict": "fail", "reason": "C-2 not allowed on this parcel"},
-            {"gate": "rent_reasonable", "verdict": "pass", "reason": "ok"},
-        ]
+        # Realistic production shape: gate_status_json is the flat
+        # raw-keyed bool/None map; gate_reasons_json is the bucketed
+        # humanized view. PR #2b's blocking/advisory split resolves the
+        # raw key (zoning_fit_pass) from gate_status_json.
+        cand["gate_status_json"] = {
+            "overall_pass": False,
+            "zoning_fit_pass": False,
+            "economics_pass": True,
+        }
+        cand["gate_reasons_json"] = {
+            "passed": ["economics"],
+            "failed": ["zoning fit"],
+            "unknown": [],
+            "explanations": {"zoning fit": "C-2 not allowed on this parcel"},
+        }
 
         ctx = build_memo_context(candidate=cand, brief=BASE_STRUCTURED_BRIEF, lang="en")
         messages = render_structured_memo_prompt(ctx)

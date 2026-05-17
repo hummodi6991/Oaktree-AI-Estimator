@@ -18,18 +18,15 @@ from typing import Any, Literal
 
 from app.core.config import settings
 
-def _hard_fail_gate_labels() -> frozenset[str]:
-    """Humanized labels of the live hard-fail gate set.
+def _hard_fail_gate_keys() -> frozenset[str]:
+    """Raw (locale-invariant) hard-fail gate keys.
 
-    Derived lazily from ``expansion_advisor.HARD_FAIL_GATES`` so env-driven
-    optional hard-fail gates (population_floor_pass, commercial_floor_pass,
+    Returns the live ``expansion_advisor.HARD_FAIL_GATES`` set directly so
+    the blocking/advisory split compares on raw keys, independent of the
+    memo's display language. Env-driven optional hard-fail gates
+    (population_floor_pass, commercial_floor_pass,
     construction_proximity_pass) are picked up automatically and stay in
     sync with the canonical source of truth.
-
-    Labels (not raw keys) because the gate dicts the comparison runs
-    against — produced by ``_normalize_gate_reasons`` → ``_humanize_gate_list``
-    in expansion_advisor — only carry the humanized name by the time they
-    reach this module.
 
     Lazy-imported to preserve this module's import-graph footprint
     (expansion_advisor pulls in SQLAlchemy/PostGIS). Every real call path
@@ -37,11 +34,9 @@ def _hard_fail_gate_labels() -> frozenset[str]:
     which imports expansion_advisor before importing this module — so
     HARD_FAIL_GATES is reliably populated by the time this helper runs.
     """
-    from app.services.expansion_advisor import (
-        HARD_FAIL_GATES,
-        _gate_key_to_label,
-    )
-    return frozenset(_gate_key_to_label(g) for g in HARD_FAIL_GATES)
+    from app.services.expansion_advisor import HARD_FAIL_GATES
+
+    return HARD_FAIL_GATES
 
 logger = logging.getLogger(__name__)
 
@@ -700,23 +695,56 @@ def _coerce_gate_verdicts(raw: Any) -> list[dict]:
 def _build_gate_buckets(
     gate_reasons: dict[str, Any] | None,
     gate_verdicts: list[dict],
+    gate_status: dict[str, Any] | None = None,
+    lang: str = "en",
 ) -> dict[str, list[dict]]:
     """Return ``{"passed": [...], "failed": [...], "unknown": [...]}`` of
-    ``{name, explanation}`` entries.
+    ``{key, name, explanation}`` entries.
 
-    Prefers ``gate_reasons`` (``passed/failed/unknown`` arrays + ``explanations``)
-    as the authoritative source, because the bucket arrays carry the right
-    tri-state semantics. Falls back to ``gate_verdicts`` when
-    ``gate_reasons`` is unavailable or empty.
+    ``key`` is the raw, locale-invariant gate key (e.g. ``parking_pass``)
+    resolved from ``gate_status`` — the flat raw-keyed ``gate_status_json``
+    map — or ``None`` when it cannot be resolved (legacy candidates with
+    no ``gate_status_json``). The blocking/advisory split compares on
+    ``key``; entries with ``key=None`` are treated as advisory, never
+    blocking. ``key`` is internal — it is stripped before the buckets
+    reach the LLM prompt (see ``_gate_buckets_for_prompt``).
+
+    ``name`` is the display label: byte-identical to HEAD for
+    ``lang="en"`` (the humanized label carried by ``gate_reasons``); the
+    Arabic label when ``lang="ar"`` and the raw key is known.
+
+    Prefers ``gate_reasons`` (``passed/failed/unknown`` arrays +
+    ``explanations``) for membership / order / explanation so the English
+    prompt addendum stays byte-identical. Falls back to ``gate_verdicts``
+    when ``gate_reasons`` is unavailable or empty.
     """
+    from app.services.expansion_advisor import _gate_key_to_label
+
     buckets: dict[str, list[dict]] = {"passed": [], "failed": [], "unknown": []}
+
+    # Index humanized-en label -> raw gate key, built from the flat
+    # raw-keyed gate_status_json. Lets us attach a locale-invariant key
+    # to each humanized bucket entry without lossy label inversion.
+    label_to_key: dict[str, str] = {}
+    if isinstance(gate_status, dict):
+        for raw_key in gate_status:
+            if raw_key == "overall_pass":
+                continue
+            label_to_key[_gate_key_to_label(str(raw_key), "en")] = str(raw_key)
 
     def _append(bucket: str, name: str, explanation: str) -> None:
         gate_name = str(name or "").strip()
         if not gate_name:
             return
+        raw_key = label_to_key.get(gate_name)
+        display_name = gate_name
+        if lang == "ar" and raw_key is not None:
+            from app.services.expansion_advisor_i18n import humanize_gate
+
+            display_name = humanize_gate(raw_key, "ar")
         buckets[bucket].append({
-            "name": gate_name,
+            "key": raw_key,
+            "name": display_name,
             "explanation": explanation or "",
         })
 
@@ -900,6 +928,8 @@ def build_memo_context(
     gate_buckets = _build_gate_buckets(
         raw_gate_reasons if isinstance(raw_gate_reasons, dict) else None,
         gate_verdicts,
+        gate_status=raw_gate_status if isinstance(raw_gate_status, dict) else None,
+        lang=lang,
     )
 
     comparable_competitors = _as_list(
@@ -1686,6 +1716,25 @@ _MAX_USER_PAYLOAD_CHARS = 12000
 _FEATURE_SNAPSHOT_SOFT_LIMIT = 4000
 
 
+def _gate_buckets_for_prompt(buckets: dict | None) -> dict:
+    """Project gate buckets to the HEAD ``{name, explanation}`` entry
+    shape for the LLM user message. The internal ``key`` field (PR #2b,
+    used only for the locale-invariant blocking/advisory split) must not
+    leak into the prompt — rule #7: the English prompt text stays
+    byte-identical to HEAD.
+    """
+    src = buckets or {}
+    out: dict[str, list[dict]] = {"passed": [], "failed": [], "unknown": []}
+    for bucket_key in ("passed", "failed", "unknown"):
+        for e in src.get(bucket_key) or []:
+            if isinstance(e, dict):
+                out[bucket_key].append({
+                    "name": e.get("name", ""),
+                    "explanation": e.get("explanation", ""),
+                })
+    return out
+
+
 def _serialize_context_for_user_message(ctx: MemoContext) -> str:
     """Serialize the MemoContext to a compact JSON string for the user turn,
     truncating ``feature_snapshot`` to the whitelist if the full payload would
@@ -1716,7 +1765,7 @@ def _serialize_context_for_user_message(ctx: MemoContext) -> str:
         # Kept for backward-compat with any downstream consumer. The
         # authoritative tri-state view for the LLM is ``gates`` below.
         "gate_verdicts": ctx.gate_verdicts,
-        "gates": ctx.gate_buckets or {"passed": [], "failed": [], "unknown": []},
+        "gates": _gate_buckets_for_prompt(ctx.gate_buckets),
         "overall_pass": ctx.overall_pass,
         "final_rank": ctx.final_rank,
         "final_score": ctx.final_score,
@@ -1774,15 +1823,16 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
     # Split failures into blocking vs advisory. Only blocking failures
     # justify a "Decline" instruction — advisory-only failures (e.g.,
     # ``radiance_growth_pass``) leave ``overall_pass`` at True and must
-    # NOT push the LLM toward a Decline headline. Compare on humanized
-    # labels because ``failed_entries`` (from ``_build_gate_buckets``) only
-    # carries the humanized name by the time it reaches this point.
-    hard_fail_labels = _hard_fail_gate_labels()
+    # NOT push the LLM toward a Decline headline. Compare on the raw,
+    # locale-invariant gate key so the split is identical regardless of
+    # the memo's display language. Entries with ``key=None`` (legacy
+    # candidates with no gate_status_json) are treated as advisory.
+    hard_fail_keys = _hard_fail_gate_keys()
     blocking_failed = [
-        e for e in failed_entries if str(e.get("name")) in hard_fail_labels
+        e for e in failed_entries if e.get("key") in hard_fail_keys
     ]
     advisory_failed = [
-        e for e in failed_entries if str(e.get("name")) not in hard_fail_labels
+        e for e in failed_entries if e.get("key") not in hard_fail_keys
     ]
 
     if blocking_failed:
@@ -2108,19 +2158,20 @@ def _parse_and_validate_memo_shape(
 
 
 def _blocking_failed_from_buckets(buckets: dict | None) -> list[dict]:
-    """Return the subset of ``buckets["failed"]`` whose gate label matches
-    the live hard-fail set — i.e., failures that flipped overall_pass to
-    False. Mirrors the same split used in render_structured_memo_prompt so
-    the retry layer's view of "blocking" stays consistent with what the
-    LLM saw in the prompt addendum.
+    """Return the subset of ``buckets["failed"]`` whose raw gate key
+    matches the live hard-fail set — i.e., failures that flipped
+    overall_pass to False. Mirrors the same split used in
+    render_structured_memo_prompt so the retry layer's view of
+    "blocking" stays consistent with what the LLM saw in the prompt
+    addendum.
     """
     if not isinstance(buckets, dict):
         return []
     failed = buckets.get("failed") or []
-    hard_fail_labels = _hard_fail_gate_labels()
+    hard_fail_keys = _hard_fail_gate_keys()
     return [
         e for e in failed
-        if isinstance(e, dict) and str(e.get("name")) in hard_fail_labels
+        if isinstance(e, dict) and e.get("key") in hard_fail_keys
     ]
 
 

@@ -1,0 +1,264 @@
+{
+  "expected_en": {
+    "candidates": [
+      {
+        "area_m2": 220.0,
+        "candidate_id": "c-full-1",
+        "commercial_unit_id": null,
+        "comparable_competitors_json": [],
+        "confidence_grade": "D",
+        "cost_thesis": "Estimated rent is 1851 SAR/m²/year.",
+        "decision_summary": "This standard candidate in Al Olaya scores 81.4/100.",
+        "demand_thesis": "Demand is strong (score 81.4).",
+        "display_annual_rent_sar": 407220.0,
+        "district": "Al Olaya",
+        "district_display": "Al Olaya",
+        "district_key": "Al Olaya",
+        "district_name_ar": "Al Olaya",
+        "district_name_en": null,
+        "economics_score": 73.2,
+        "estimated_annual_rent_sar": 407132.0,
+        "estimated_rent_sar_m2_year": 1850.6,
+        "feature_snapshot_json": {
+          "context_sources": {},
+          "data_completeness_score": 0,
+          "missing_context": []
+        },
+        "final_score": 81.4,
+        "gate_reasons_json": {
+          "explanations": {},
+          "failed": [],
+          "passed": [],
+          "thresholds": {},
+          "unknown": []
+        },
+        "gate_status_json": {},
+        "image_url": null,
+        "listing_url": null,
+        "parcel_id": "P-1001",
+        "rank_position": null,
+        "score_breakdown_json": {
+          "display": {},
+          "economics_detail": {},
+          "final_score": 81.4,
+          "inputs": {},
+          "weighted_components": {},
+          "weights": {}
+        },
+        "source_type": "parcel",
+        "top_positives_json": [
+          "Demand potential is strong for this district.",
+          "Economics profile meets target screening band."
+        ],
+        "top_risks_json": [
+          "Economics score is below preferred threshold."
+        ],
+        "unit_area_sqm": null,
+        "unit_listing_type": null,
+        "unit_neighborhood": null,
+        "unit_price_sar_annual": null,
+        "unit_street_width_m": null,
+        "value_band": null,
+        "value_band_low_confidence": false,
+        "value_downrank_applied": false,
+        "value_downrank_delta": 0,
+        "value_score": null,
+        "value_uprank_applied": false,
+        "value_uprank_delta": 0
+      },
+      {
+        "area_m2": 140.0,
+        "candidate_id": "c-gate-1",
+        "commercial_unit_id": null,
+        "comparable_competitors_json": [],
+        "confidence_grade": "D",
+        "cost_thesis": "Rent estimate pending.",
+        "decision_summary": "Caution advised.",
+        "demand_thesis": "Demand is moderate.",
+        "display_annual_rent_sar": null,
+        "district": "Al Malqa",
+        "district_display": "Al Malqa",
+        "district_key": "Al Malqa",
+        "district_name_ar": "Al Malqa",
+        "district_name_en": null,
+        "feature_snapshot_json": {
+          "context_sources": {},
+          "data_completeness_score": 0,
+          "missing_context": []
+        },
+        "final_score": 55.0,
+        "gate_reasons_json": {
+          "explanations": {
+            "area_fit_pass": "Area below the requested minimum."
+          },
+          "failed": [
+            "area fit"
+          ],
+          "passed": [
+            "zoning fit",
+            "economics"
+          ],
+          "thresholds": {
+            "area_fit_pass": {
+              "min": 80
+            }
+          },
+          "unknown": [
+            "parking"
+          ]
+        },
+        "gate_status_json": {
+          "area_fit_pass": false,
+          "economics_pass": true,
+          "overall_pass": false,
+          "parking_pass": null,
+          "zoning_fit_pass": true
+        },
+        "image_url": null,
+        "listing_url": null,
+        "parcel_id": "P-1002",
+        "rank_position": null,
+        "score_breakdown_json": {
+          "display": {},
+          "economics_detail": {},
+          "final_score": 55.0,
+          "inputs": {},
+          "weighted_components": {},
+          "weights": {}
+        },
+        "source_type": "parcel",
+        "top_positives_json": [],
+        "top_risks_json": [
+          "Area fit gate failed."
+        ],
+        "unit_area_sqm": null,
+        "unit_listing_type": null,
+        "unit_neighborhood": null,
+        "unit_price_sar_annual": null,
+        "unit_street_width_m": null,
+        "value_band": null,
+        "value_band_low_confidence": false,
+        "value_downrank_applied": false,
+        "value_downrank_delta": 0,
+        "value_score": null,
+        "value_uprank_applied": false,
+        "value_uprank_delta": 0
+      }
+    ],
+    "description": null,
+    "filters_json": {},
+    "id": "ss-1",
+    "search": {
+      "bbox": null,
+      "brand_name": "TestBrand",
+      "brand_profile": {},
+      "category": "qsr",
+      "existing_branches": [],
+      "id": "search-1",
+      "meta": {
+        "excluded_sources": [
+          "arcgis_parcels",
+          "hungerstation_poi",
+          "suhail",
+          "inferred_parcels"
+        ],
+        "parcel_source": "listings_only",
+        "version": "expansion_advisor_v7"
+      },
+      "notes": {},
+      "request_json": {},
+      "service_model": "qsr",
+      "target_districts": [
+        "Al Olaya"
+      ]
+    },
+    "selected_candidate_ids": [
+      "c-full-1"
+    ],
+    "status": "active",
+    "title": "Riyadh QSR shortlist",
+    "ui_state_json": {}
+  },
+  "id": "saved_basic",
+  "kind": "saved_search",
+  "saved": {
+    "candidates": [
+      {
+        "area_m2": 220.0,
+        "candidate_id": "c-full-1",
+        "cost_thesis": "Estimated rent is 1851 SAR/m²/year.",
+        "decision_summary": "This standard candidate in Al Olaya scores 81.4/100.",
+        "demand_thesis": "Demand is strong (score 81.4).",
+        "district": "Al Olaya",
+        "economics_score": 73.2,
+        "estimated_annual_rent_sar": 407132.0,
+        "estimated_rent_sar_m2_year": 1850.6,
+        "final_score": 81.4,
+        "parcel_id": "P-1001",
+        "top_positives_json": [
+          "Demand potential is strong for this district.",
+          "Economics profile meets target screening band."
+        ],
+        "top_risks_json": [
+          "Economics score is below preferred threshold."
+        ]
+      },
+      {
+        "area_m2": 140.0,
+        "candidate_id": "c-gate-1",
+        "cost_thesis": "Rent estimate pending.",
+        "decision_summary": "Caution advised.",
+        "demand_thesis": "Demand is moderate.",
+        "district": "Al Malqa",
+        "final_score": 55.0,
+        "gate_reasons_json": {
+          "explanations": {
+            "area_fit_pass": "Area below the requested minimum."
+          },
+          "failed": [
+            "area_fit_pass"
+          ],
+          "passed": [
+            "zoning_fit_pass",
+            "economics_pass"
+          ],
+          "thresholds": {
+            "area_fit_pass": {
+              "min": 80
+            }
+          },
+          "unknown": [
+            "parking_pass"
+          ]
+        },
+        "gate_status_json": {
+          "area_fit_pass": false,
+          "economics_pass": true,
+          "overall_pass": false,
+          "parking_pass": null,
+          "zoning_fit_pass": true
+        },
+        "parcel_id": "P-1002",
+        "top_positives_json": [],
+        "top_risks_json": [
+          "Area fit gate failed."
+        ]
+      }
+    ],
+    "id": "ss-1",
+    "search": {
+      "brand_name": "TestBrand",
+      "category": "qsr",
+      "id": "search-1",
+      "service_model": "qsr",
+      "target_districts": [
+        "Al Olaya"
+      ]
+    },
+    "selected_candidate_ids": [
+      "c-full-1"
+    ],
+    "status": "active",
+    "title": "Riyadh QSR shortlist"
+  }
+}

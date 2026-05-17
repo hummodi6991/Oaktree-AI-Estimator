@@ -398,14 +398,14 @@ def test_run_expansion_search_caches_rent_resolution_by_district(monkeypatch, di
     assert len(calls) == 2
 
 
-def test_report_happy_path_returns_best_and_runner_up():
+def test_report_happy_path_returns_best_and_runner_up(monkeypatch):
     db = FakeDB(candidate_rows=[], brand_profile_row={"price_tier": "mid", "preferred_districts_json": [], "excluded_districts_json": []})
     import app.services.expansion_advisor as svc
-    svc.get_search = lambda _db, _sid: {"id": "search-1", "service_model": "qsr", "brand_profile": {"expansion_goal": "balanced"}}
-    svc.get_candidates = lambda _db, _sid, district_lookup=None: [
+    monkeypatch.setattr(svc, "get_search", lambda _db, _sid, **_kw: {"id": "search-1", "service_model": "qsr", "brand_profile": {"expansion_goal": "balanced"}})
+    monkeypatch.setattr(svc, "get_candidates", lambda _db, _sid, district_lookup=None, **_kw: [
         {"id": "c1", "final_score": 90, "brand_fit_score": 82, "economics_score": 70, "area_m2": 170, "district": "Olaya", "key_risks_json": ["risk"]},
         {"id": "c2", "final_score": 86, "brand_fit_score": 79, "economics_score": 68, "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"]},
-    ]
+    ])
     report = get_recommendation_report(db, "search-1")
     assert report is not None
     assert report["recommendation"]["best_candidate_id"] == "c1"
@@ -494,14 +494,14 @@ def test_comparable_competitors_payload_shape():
     assert {"id", "name", "category", "district", "rating", "review_count", "distance_m", "source"}.issubset(items[0].keys())
 
 
-def test_report_includes_new_decision_outputs():
+def test_report_includes_new_decision_outputs(monkeypatch):
     db = FakeDB(candidate_rows=[])
     import app.services.expansion_advisor as svc
-    svc.get_search = lambda _db, _sid: {"id": "search-1", "service_model": "qsr", "brand_profile": {"expansion_goal": "balanced"}}
-    svc.get_candidates = lambda _db, _sid, district_lookup=None: [
+    monkeypatch.setattr(svc, "get_search", lambda _db, _sid, **_kw: {"id": "search-1", "service_model": "qsr", "brand_profile": {"expansion_goal": "balanced"}})
+    monkeypatch.setattr(svc, "get_candidates", lambda _db, _sid, district_lookup=None, **_kw: [
         {"id": "c1", "final_score": 90, "brand_fit_score": 82, "economics_score": 70, "area_m2": 170, "district": "Olaya", "key_risks_json": ["risk"], "confidence_grade": "A", "confidence_score": 85, "gate_status_json": {"overall_pass": True}, "demand_thesis": "d", "cost_thesis": "c", "comparable_competitors_json": [{"id": "x"}], "zoning_fit_score": 88, "frontage_score": 65, "access_score": 67, "parking_score": 62, "access_visibility_score": 66, "feature_snapshot_json": {"parcel_area_m2": 170, "data_completeness_score": 90}, "rank_position": 1, "score_breakdown_json": {"final_score": 90}, "top_positives_json": ["pos"], "top_risks_json": ["risk"]},
         {"id": "c2", "final_score": 86, "brand_fit_score": 79, "economics_score": 68, "area_m2": 180, "district": "Malqa", "key_risks_json": ["risk2"], "confidence_grade": "B", "confidence_score": 72, "gate_status_json": {"overall_pass": False}, "demand_thesis": "d2", "cost_thesis": "c2", "comparable_competitors_json": [], "zoning_fit_score": 78, "frontage_score": 61, "access_score": 60, "parking_score": 58, "access_visibility_score": 61, "feature_snapshot_json": {"parcel_area_m2": 180, "data_completeness_score": 80}, "rank_position": 2, "score_breakdown_json": {"final_score": 86}, "top_positives_json": ["pos2"], "top_risks_json": ["risk2"]},
-    ]
+    ])
     report = get_recommendation_report(db, "search-1")
     assert report["recommendation"]["best_pass_candidate_id"] == "c1"
     assert report["recommendation"]["best_confidence_candidate_id"] == "c1"
@@ -1642,7 +1642,7 @@ def test_large_parcel_not_favored_when_target_is_small():
     assert area_fit_250 > area_fit_500, "250 m² should score better than 500 m²"
 
 
-def test_report_best_pass_candidate_id_null_when_no_pass():
+def test_report_best_pass_candidate_id_null_when_no_pass(monkeypatch):
     """get_recommendation_report() must set best_pass_candidate_id = None when
     no candidates pass all gates."""
     import app.services.expansion_advisor as svc
@@ -1652,13 +1652,13 @@ def test_report_best_pass_candidate_id_null_when_no_pass():
         "preferred_districts_json": [],
         "excluded_districts_json": [],
     })
-    svc.get_search = lambda _db, _sid: {
+    monkeypatch.setattr(svc, "get_search", lambda _db, _sid, **_kw: {
         "id": "search-1",
         "service_model": "qsr",
         "brand_profile": {"expansion_goal": "balanced"},
-    }
+    })
     # Both candidates have overall_pass=False
-    svc.get_candidates = lambda _db, _sid, district_lookup=None: [
+    monkeypatch.setattr(svc, "get_candidates", lambda _db, _sid, district_lookup=None, **_kw: [
         {
             "id": "c1", "final_score": 75, "brand_fit_score": 60, "economics_score": 55,
             "area_m2": 200, "district": "Olaya", "key_risks_json": ["risk"],
@@ -1679,7 +1679,7 @@ def test_report_best_pass_candidate_id_null_when_no_pass():
             "top_positives_json": [], "top_risks_json": ["risk2"],
             "feature_snapshot_json": {"parcel_area_m2": 180, "data_completeness_score": 60},
         },
-    ]
+    ])
 
     report = get_recommendation_report(db, "search-1")
 
@@ -1799,7 +1799,7 @@ def test_score_breakdown_has_display_structure():
             f"{name}: weighted_points should differ from weight_percent unless input is 100"
 
 
-def test_report_gate_verdict_uses_tristate():
+def test_report_gate_verdict_uses_tristate(monkeypatch):
     """top_candidates[].gate_verdict in reports must use tri-state mapping,
     not bool()."""
     import app.services.expansion_advisor as svc
@@ -1809,12 +1809,12 @@ def test_report_gate_verdict_uses_tristate():
         "preferred_districts_json": [],
         "excluded_districts_json": [],
     })
-    svc.get_search = lambda _db, _sid: {
+    monkeypatch.setattr(svc, "get_search", lambda _db, _sid, **_kw: {
         "id": "search-1",
         "service_model": "qsr",
         "brand_profile": {"expansion_goal": "balanced"},
-    }
-    svc.get_candidates = lambda _db, _sid, district_lookup=None: [
+    })
+    monkeypatch.setattr(svc, "get_candidates", lambda _db, _sid, district_lookup=None, **_kw: [
         {
             "id": "c1", "final_score": 85, "brand_fit_score": 70, "economics_score": 65,
             "area_m2": 200, "district": "Olaya", "key_risks_json": ["risk"],
@@ -1825,7 +1825,7 @@ def test_report_gate_verdict_uses_tristate():
             "top_positives_json": ["pos"], "top_risks_json": ["risk"],
             "feature_snapshot_json": {"parcel_area_m2": 200, "data_completeness_score": 80},
         },
-    ]
+    ])
 
     report = get_recommendation_report(db, "search-1")
 
@@ -1954,20 +1954,22 @@ def test_derive_site_fit_context_empty_snapshot():
     assert ctx["parking_score_mode"] == "estimated"
 
 
-def test_report_compatible_with_legacy_two_arg_get_candidates():
+def test_report_compatible_with_legacy_two_arg_get_candidates(monkeypatch):
     """get_recommendation_report must work when get_candidates is a 2-arg callable (legacy monkeypatch)."""
     db = FakeDB(candidate_rows=[])
     import app.services.expansion_advisor as svc
-    svc.get_search = lambda _db, _sid: {
+    monkeypatch.setattr(svc, "get_search", lambda _db, _sid, **_kw: {
         "id": "search-1",
         "service_model": "qsr",
         "brand_profile": {"expansion_goal": "balanced"},
-    }
-    # Legacy 2-arg callable — must not raise TypeError
-    svc.get_candidates = lambda _db, _sid: [
+    })
+    # Legacy 2-arg callable — must not raise TypeError. get_recommendation_report
+    # falls back to the 2-arg call form when the lang/district_lookup kwargs
+    # are rejected.
+    monkeypatch.setattr(svc, "get_candidates", lambda _db, _sid: [
         {"id": "c1", "final_score": 80, "brand_fit_score": 70, "economics_score": 60,
          "area_m2": 150, "district": "Olaya", "key_risks_json": []},
-    ]
+    ])
     report = get_recommendation_report(db, "search-1")
     assert report is not None
     assert report["recommendation"]["best_candidate_id"] == "c1"
