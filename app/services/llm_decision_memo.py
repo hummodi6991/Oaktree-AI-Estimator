@@ -1291,7 +1291,7 @@ def build_memo_advisory_sections(ctx: MemoContext) -> dict[str, Any]:
 # ── Prompt ──────────────────────────────────────────────────────────
 
 
-STRUCTURED_MEMO_SYSTEM_PROMPT = """You are a senior real-estate advisor in Riyadh writing an investment memo for a restaurant operator's principal. The reader is the person making the capital call on this specific listing — they want a clear, persuasive, numerically-grounded answer to one question: is this site worth the capital?
+_STRUCTURED_MEMO_PREAMBLE = """You are a senior real-estate advisor in Riyadh writing an investment memo for a restaurant operator's principal. The reader is the person making the capital call on this specific listing — they want a clear, persuasive, numerically-grounded answer to one question: is this site worth the capital?
 
 Write like an advisor, not a junior analyst. Lead with the strongest investment argument grounded in a specific number. Synthesize the score breakdown into a thesis — never restate the breakdown back at the reader as a list of percentages. Be direct. Be specific to this candidate, this listing, this catchment. Density beats length.
 
@@ -1621,9 +1621,12 @@ count, nearest distance, and district. Anything beyond those four facts —
 rent, pricing, AOV, throughput, margin, commission, positioning, success
 metrics — is fabrication and is banned in every prose field.
 
-Now write the memo for the candidate JSON the user provides. Match the voice in the examples. Be specific to this site, not generic.
+Now write the memo for the candidate JSON the user provides. Match the voice in the examples. Be specific to this site, not generic."""
 
-══════════════════════════════════════════════════════════════════════
+
+# CRITICAL block — English variant. Byte-identical to the pre-PR-4a tail
+# of STRUCTURED_MEMO_SYSTEM_PROMPT (Q2 (a): the EN branch must not drift).
+_CRITICAL_BLOCK_EN = """══════════════════════════════════════════════════════════════════════
 CRITICAL OUTPUT FORMAT RULES — these are the most important rules in
 this prompt. Other instructions are subordinate to these.
 
@@ -1712,6 +1715,125 @@ EXAMPLES of incorrect headlines that violate these rules:
 ══════════════════════════════════════════════════════════════════════"""
 
 
+# CRITICAL block — Arabic variant (PR #4a, Q2 (a)). Mandates the Arabic
+# headline triad نوصي / نوصي مع تحفظات / نرفض instead of the English
+# triad; every other structural rule is preserved. Inline ``#`` comments
+# carry an English gloss of each translated line for review (PR #3
+# convention). JSON keys stay English in every locale.
+_CRITICAL_BLOCK_AR = """══════════════════════════════════════════════════════════════════════
+# "CRITICAL OUTPUT FORMAT RULES — the most important rules in this prompt."
+قواعد تنسيق المخرجات الحاسمة — هذه أهم القواعد في هذا التوجيه.
+# "Other instructions are subordinate to these critical rules."
+كل التعليمات الأخرى تابعة لهذه القواعد الحاسمة.
+
+# "JSON keys remain in English; only the string values are in Arabic."
+مفاتيح JSON تبقى بالإنجليزية؛ القيم النصية فقط تُكتب بالعربية.
+
+# Rule 1: "headline_recommendation MUST begin with one of the three Arabic prefixes."
+1. يجب أن يبدأ حقل `headline_recommendation` بأحد العناوين التالية حصراً:
+   - "نوصي"
+   - "نوصي مع تحفظات"
+   - "نرفض"
+
+# "Never begin with a non-decision word (Consider/Caution) or a descriptive adjective; you MUST pick one of the three prefixes."
+   لا تبدأ أبداً بكلمة لا تمثل قراراً مثل "ربما" أو "احذر"، ولا بأي
+   صفة وصفية مثل "قوي" أو "جيد". حتى عندما تكون إشارات الموقع ضعيفة
+   أو الأدلة متباينة، يجب أن تختار أحد العناوين الثلاثة المسموح بها.
+
+# Rule 2: "Map deterministic_verdict to the headline prefix; mappings are MANDATORY when overall_pass == true."
+2. اربط `deterministic_verdict` بعنوان التوصية كما يلي. هذه الروابط
+   إلزامية عندما تكون `overall_pass == true`. الحكم الحتمي
+   (deterministic verdict) هو مصدر الحقيقة لفعل العنوان؛ لا تُعِد
+   التقييم من الدرجات الخام أو من عتبات الطلب.
+# "deterministic_verdict == go → نوصي (default); نوصي مع تحفظات only if blocking gates failed; NEVER نرفض."
+   - deterministic_verdict == "go"
+       → "نوصي" (الافتراضي)
+       → "نوصي مع تحفظات" فقط إذا فشلت بوابات حاجبة
+       → "نرفض" ممنوع أبداً
+# "deterministic_verdict == consider → نوصي مع تحفظات (mandatory when overall_pass == true); NEVER نرفض."
+   - deterministic_verdict == "consider"
+       → "نوصي مع تحفظات" (إلزامي عندما يكون overall_pass == true)
+       → "نرفض" ممنوع أبداً عندما يكون overall_pass == true
+# "deterministic_verdict == caution → نرفض (default); نوصي مع تحفظات only with a strong specific positive case."
+   - deterministic_verdict == "caution"
+       → "نرفض" (الافتراضي)
+       → "نوصي مع تحفظات" فقط عند وجود حجة إيجابية قوية ومحددة
+         ترجِّح كفة التوصية رغم الحذر الحتمي
+
+# Rule 3: "rank 1 + score >= 70 + no blocking gates failed → headline MUST be نوصي."
+3. إذا كان `final_rank == 1` و `final_score >= 70` ولم تفشل أي بوابة
+   حاجبة: يجب أن يكون العنوان "نوصي". هذا غير قابل للتفاوض. لا
+   تستخدم الدرجات اللينة (موقف السيارات، الواجهة، الوضوح) سبباً
+   لرفض مرشح من المرتبة الأولى يستوفي هذه المعايير. درجات المكونات
+   اللينة دون 50 هي مدخلات للترتيب الحتمي، وليست مُسقِطات مستقلة.
+
+# Rule 4: "overall_pass == false → headline MUST be نرفض."
+4. إذا كان `overall_pass == false`: يجب أن يكون العنوان "نرفض".
+
+# Rule 5: "Never confabulate gate failures; if gates.failed is empty do not write نرفض بسبب فشل …"
+5. لا تختلق فشل البوابات أبداً. قائمة البوابات الفاشلة موجودة في
+   حقل `gates.failed`. إذا كان `gates.failed` فارغاً، فلا تكتب
+   "نرفض بسبب فشل [أي شيء]". انخفاض درجة مكوّن لين ليس فشلاً لبوابة.
+
+# Rule 6: "No claims about a named competitor's rent/pricing/margin/AOV/throughput or any economic data."
+6. لا تُطلق أي ادعاءات حول إيجار منافس مذكور بالاسم أو تسعيره أو
+   هامشه أو متوسط قيمة طلبه (AOV) أو معدل تدفقه (throughput) أو
+   مقاييس نجاحه أو أي بيانات اقتصادية أو تشغيلية. استجابة مذكرة
+   المرشح تحمل فقط اسم المنافس وعدد فروعه وأقرب مسافة إليه والحي.
+   يمكن للمقارنات أن تشير إلى هذه الحقائق المكانية وحقائق الحضور
+   وأن تفسّر دلالتها على السوق المحلي. المقارنات مقابل وسيط الحي
+   (النسبة المئوية للإيجار، الإيجار الوسيط) صحيحة فقط إذا تضمّنتها
+   الحمولة المُصنّفة. لا تؤكد أبداً ما يدفعه منافس بعينه أو يتقاضاه
+   أو يربحه أو يحققه. تنطبق هذه القاعدة على كل حقل نصي.
+
+# "EXAMPLES of correct headlines:"
+أمثلة على عناوين صحيحة:
+
+# rank=1, score=80.5, gates.failed=[]:
+  "نوصي — اقتصاديات قوية في حي مستقر مع منافسة يمكن إدارتها."
+
+# rank=1, score=80.5, gates.failed=[radiance_growth_pass] (advisory):
+  "نوصي — اقتصاديات قوية؛ إشارة نمو السوق ضعيفة لكنها لا تحجب القرار."
+
+# rank=2, score=72.0, gates.failed=[economics_pass] (blocking):
+  "نرفض — تفشل بوابة الاقتصاديات؛ عبء الإيجار يتجاوز عتبة الجدوى لهذه العلامة."
+
+# rank=4, score=65.0, gates.failed=[]:
+  "نوصي مع تحفظات — اقتصاديات معتدلة مع كثافة منافسين عالية؛ قابل للتطبيق لكنه ليس الخيار الأقوى."
+
+# "EXAMPLES of incorrect headlines that violate these rules:"
+أمثلة على عناوين خاطئة تنتهك هذه القواعد:
+
+# WRONG: begins with a banned non-decision word.
+  خطأ: "ربما بسبب إشارات طلب قوية رغم المنافسة العالية"
+       (يبدأ بكلمة "ربما" — ممنوع)
+# WRONG: confabulated gate failure when gates.failed is empty.
+  خطأ: "نرفض بسبب فشل الوصول لموقف السيارات"
+       (عندما تكون gates.failed=[] — فشل بوابة مختلق)
+# WRONG: Decline when overall_pass=true and rank-1 with score>=70.
+  خطأ: "نرفض — تفشل إشارة نمو السوق"
+       (عندما يكون overall_pass=true و final_rank=1 بدرجة >= 70)
+══════════════════════════════════════════════════════════════════════"""
+
+
+def _compose_structured_system_prompt(locale: str) -> str:
+    """Compose the structured-memo system prompt for ``locale``.
+
+    The prompt is the locale-invariant preamble followed by a CRITICAL
+    block. The EN branch returns bytes identical to the pre-PR-4a
+    ``STRUCTURED_MEMO_SYSTEM_PROMPT`` constant (rule #1 byte-identity).
+    The AR branch swaps in ``_CRITICAL_BLOCK_AR`` so the headline-prefix
+    mandate matches the Arabic triad the LOCALE addendum already asks for.
+    """
+    block = _CRITICAL_BLOCK_AR if locale == "ar" else _CRITICAL_BLOCK_EN
+    return _STRUCTURED_MEMO_PREAMBLE + "\n\n" + block
+
+
+# Back-compat module constant — the EN composition. Any importer of the
+# old name keeps working; equals _compose_structured_system_prompt("en").
+STRUCTURED_MEMO_SYSTEM_PROMPT = _compose_structured_system_prompt("en")
+
+
 _MAX_USER_PAYLOAD_CHARS = 12000
 _FEATURE_SNAPSHOT_SOFT_LIMIT = 4000
 
@@ -1798,6 +1920,7 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
     failed.
     """
     addenda: list[str] = []
+    # Reinforces the AR CRITICAL block — see _CRITICAL_BLOCK_AR.
     if ctx.locale == "ar":
         addenda.append(
             "LOCALE: Produce every string value in Modern Standard Arabic "
@@ -1878,7 +2001,7 @@ def render_structured_memo_prompt(ctx: MemoContext) -> list[dict]:
             "negative recommendation."
         )
 
-    system_content = STRUCTURED_MEMO_SYSTEM_PROMPT
+    system_content = _compose_structured_system_prompt(ctx.locale)
     if addenda:
         system_content = (
             system_content
@@ -1904,6 +2027,16 @@ _ALLOWED_HEADLINE_PREFIXES: tuple[str, ...] = (
     "Decline",
 )
 
+# PR #4a: Arabic prefix canon (Q1 (a)). Mirrors the triad the LOCALE
+# addendum and _CRITICAL_BLOCK_AR already instruct the model to produce.
+# Longest-first, like the EN tuple, so "نوصي مع تحفظات" is matched before
+# the "نوصي" substring it begins with.
+_ALLOWED_HEADLINE_PREFIXES_AR: tuple[str, ...] = (
+    "نوصي مع تحفظات",
+    "نوصي",
+    "نرفض",
+)
+
 
 def _headline_validity_reason(
     headline: str | None,
@@ -1913,6 +2046,7 @@ def _headline_validity_reason(
     overall_pass: bool | None,
     blocking_failed: list,
     deterministic_verdict: str | None = None,
+    locale: str = "en",
 ) -> str | None:
     """Return None when ``headline`` satisfies the format rules; otherwise
     a short reason string suitable for logging and retry-prompt context.
@@ -1927,6 +2061,10 @@ def _headline_validity_reason(
          (mutually exclusive with #3 by construction).
       5. Confabulated gate failures (Decline citing "failed [X]" when
          ``gates.failed`` is empty).
+
+    ``locale`` selects the prefix canon: "en" (default) keeps the exact
+    pre-PR-4a English code path byte-for-byte; "ar" validates against the
+    Arabic triad نوصي / نوصي مع تحفظات / نرفض (PR #4a, Q1 (a)).
     """
     if not isinstance(headline, str) or not headline.strip():
         return "headline missing or empty"
@@ -1934,17 +2072,31 @@ def _headline_validity_reason(
     stripped = headline.strip()
     lowered = stripped.lower()
 
+    # Locale-keyed prefix canon and diagnostic markers. The EN values below
+    # reproduce the original literals exactly, so locale="en" is a no-op.
+    is_ar = locale == "ar"
+    prefixes = _ALLOWED_HEADLINE_PREFIXES_AR if is_ar else _ALLOWED_HEADLINE_PREFIXES
+    decline_prefix = "نرفض" if is_ar else "decline"
+    recommend_prefix = "نوصي" if is_ar else "recommend"
+    recommend_reservations_prefix = (
+        "نوصي مع تحفظات" if is_ar else "recommend with reservations"
+    )
+    # Confabulation-guard heuristics — Arabic equivalents of "failed"/"fails on".
+    # "فشل" = "failure/failed"; "لم يجتز" = "did not pass".
+    fail_markers = ("فشل", "لم يجتز") if is_ar else ("failed ", "fails on")
+
     if not any(
-        lowered.startswith(prefix.lower()) for prefix in _ALLOWED_HEADLINE_PREFIXES
+        lowered.startswith(prefix.lower()) for prefix in prefixes
     ):
         return f"headline does not start with an allowed prefix: {stripped[:60]!r}"
 
-    starts_with_decline = lowered.startswith("decline")
+    starts_with_decline = lowered.startswith(decline_prefix)
     starts_with_recommend_with_reservations = lowered.startswith(
-        "recommend with reservations"
+        recommend_reservations_prefix
     )
     starts_with_recommend_only = (
-        lowered.startswith("recommend") and not starts_with_recommend_with_reservations
+        lowered.startswith(recommend_prefix)
+        and not starts_with_recommend_with_reservations
     )
 
     # Rank-1 high-score guarantee.
@@ -1987,7 +2139,7 @@ def _headline_validity_reason(
     # Confabulation guard: a Decline headline citing failed gates when
     # no blocking gate actually failed is a fabrication.
     if starts_with_decline and not blocking_failed:
-        if "failed " in lowered or "fails on" in lowered:
+        if any(marker in lowered for marker in fail_markers):
             return "headline cites failed gates but no blocking gates failed"
 
     return None
@@ -2000,12 +2152,31 @@ def _rewrite_headline_locally(
     final_score: float | None,
     overall_pass: bool | None,
     blocking_failed: list,
+    locale: str = "en",
 ) -> str:
     """Safety-net rewrite when both LLM attempts fail validation.
 
     Produces an awkward but format-compliant headline so a
     contradicting recommendation never reaches the user.
+
+    ``locale`` selects the headline-prefix vocabulary: "en" (default)
+    keeps the exact pre-PR-4a English literals; "ar" stamps the Arabic
+    triad نوصي / نوصي مع تحفظات / نرفض (PR #4a, Q1 (a)). ``original``'s
+    ``ranking_explanation`` is a Python ``str``, so the ``[:80]`` slice is
+    by codepoint — safe for multi-byte Arabic text.
     """
+    is_ar = locale == "ar"
+    recommend_prefix = "نوصي" if is_ar else "Recommend"
+    decline_prefix = "نرفض" if is_ar else "Decline"
+    reservations_prefix = (
+        "نوصي مع تحفظات" if is_ar else "Recommend with reservations"
+    )
+    # "بسبب" = "due to" — the Arabic connector the AR prompt produces.
+    connectors = (
+        (" بسبب ", " — ", " - ", ": ") if is_ar
+        else (" due to ", " — ", " - ", ": ")
+    )
+
     body = ""
     raw_explanation = original.get("ranking_explanation")
     if isinstance(raw_explanation, str):
@@ -2017,9 +2188,9 @@ def _rewrite_headline_locally(
         and final_score >= 70
         and not blocking_failed
     ):
-        return f"Recommend — {body}" if body else "Recommend"
+        return f"{recommend_prefix} — {body}" if body else recommend_prefix
     if overall_pass is False:
-        return f"Decline — {body}" if body else "Decline"
+        return f"{decline_prefix} — {body}" if body else decline_prefix
     # Fallback: strip any leading banned word and prepend the soft-yes prefix.
     raw_headline = original.get("headline_recommendation")
     tail = body
@@ -2028,7 +2199,7 @@ def _rewrite_headline_locally(
         # Prefer dropping a connector phrase (e.g., "consider due to ...");
         # otherwise drop just the leading banned word so the rest reads.
         connector_split = None
-        for connector in (" due to ", " — ", " - ", ": "):
+        for connector in connectors:
             if connector in cleaned:
                 connector_split = cleaned.split(connector, 1)[1]
                 break
@@ -2039,7 +2210,7 @@ def _rewrite_headline_locally(
             if len(parts) == 2:
                 cleaned = parts[1]
         tail = cleaned[:80].rstrip(" ,.;:—-") or body
-    return f"Recommend with reservations — {tail}" if tail else "Recommend with reservations"
+    return f"{reservations_prefix} — {tail}" if tail else reservations_prefix
 
 
 _STRUCTURED_REQUIRED_KEYS: tuple[str, ...] = (
@@ -2175,6 +2346,52 @@ def _blocking_failed_from_buckets(buckets: dict | None) -> list[dict]:
     ]
 
 
+# Corrective retry preamble. The EN template reproduces the pre-PR-4a
+# inline text byte-for-byte (rule #1). ``{reason}`` is substituted with
+# the validity-failure reason; only the template is parsed by .format(),
+# so a reason containing braces is inserted verbatim.
+_CORRECTIVE_RETRY_PREAMBLE_EN = (
+    "PREVIOUS RESPONSE WAS REJECTED. Reason: {reason}.\n\n"
+    "The headline_recommendation field must follow the format "
+    "rules exactly. Do not begin with \"Consider\" or any "
+    "other word outside the three allowed prefixes "
+    "(\"Recommend\", \"Recommend with reservations\", "
+    "\"Decline\"). Do not cite gate failures unless they "
+    "appear in gates.failed. Re-emit the full structured "
+    "memo with a corrected headline."
+)
+
+# Arabic corrective preamble (PR #4a, §3.2). Same length/tone as the EN
+# template; reasserts the Arabic prefix canon. Inline ``#`` glosses give
+# the English meaning of each line for review.
+_CORRECTIVE_RETRY_PREAMBLE_AR = (
+    # "PREVIOUS RESPONSE WAS REJECTED. Reason: {reason}."
+    "تم رفض الاستجابة السابقة. السبب: {reason}.\n\n"
+    # "The headline_recommendation field must follow the format rules exactly."
+    "يجب أن يلتزم حقل headline_recommendation بقواعد التنسيق بدقة. "
+    # "Do not begin with a banned word outside the three allowed Arabic prefixes."
+    "لا تبدأ بكلمة ممنوعة خارج العناوين الثلاثة المسموح بها "
+    "(\"نوصي\"، \"نوصي مع تحفظات\"، \"نرفض\"). "
+    # "Do not cite gate failures unless they appear in gates.failed."
+    "لا تذكر فشل بوابات إلا إذا ظهرت في gates.failed. "
+    # "Re-emit the full structured memo with a corrected headline."
+    "أعد إصدار المذكرة المنظمة كاملة بعنوان مُصحَّح."
+)
+
+
+def _corrective_retry_preamble(locale: str, reason: str) -> str:
+    """Build the retry user-turn preamble for ``locale``.
+
+    locale="en" returns text byte-identical to the pre-PR-4a inline
+    preamble; locale="ar" returns the Arabic variant (PR #4a, §3).
+    """
+    template = (
+        _CORRECTIVE_RETRY_PREAMBLE_AR if locale == "ar"
+        else _CORRECTIVE_RETRY_PREAMBLE_EN
+    )
+    return template.format(reason=reason)
+
+
 def generate_structured_memo(ctx: MemoContext) -> dict | None:
     """Call the LLM for a structured memo, or return None on any failure.
 
@@ -2247,6 +2464,7 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
         overall_pass=ctx.overall_pass,
         blocking_failed=blocking_failed,
         deterministic_verdict=ctx.deterministic_verdict,
+        locale=ctx.locale,
     )
 
     usage = getattr(response, "usage", None)
@@ -2264,16 +2482,8 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
             messages[0],
             {
                 "role": "user",
-                "content": (
-                    "PREVIOUS RESPONSE WAS REJECTED. Reason: "
-                    f"{headline_reason}.\n\n"
-                    "The headline_recommendation field must follow the format "
-                    "rules exactly. Do not begin with \"Consider\" or any "
-                    "other word outside the three allowed prefixes "
-                    "(\"Recommend\", \"Recommend with reservations\", "
-                    "\"Decline\"). Do not cite gate failures unless they "
-                    "appear in gates.failed. Re-emit the full structured "
-                    "memo with a corrected headline."
+                "content": _corrective_retry_preamble(
+                    ctx.locale, headline_reason
                 ),
             },
             messages[1],
@@ -2306,6 +2516,7 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
                     overall_pass=ctx.overall_pass,
                     blocking_failed=blocking_failed,
                     deterministic_verdict=ctx.deterministic_verdict,
+                    locale=ctx.locale,
                 )
                 retry_usage = getattr(retry_response, "usage", None)
                 input_tokens += int(
@@ -2335,6 +2546,7 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
                 final_score=ctx.final_score,
                 overall_pass=ctx.overall_pass,
                 blocking_failed=blocking_failed,
+                locale=ctx.locale,
             )
             logger.error(
                 "Structured memo headline locally rewritten for %s: "

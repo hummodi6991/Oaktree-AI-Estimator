@@ -1517,9 +1517,15 @@ def _decision_memo_cache_write(
     parcel_id: str,
     memo_text: str | None,
     memo_json: dict[str, Any] | None,
+    lang: str = "en",
 ) -> None:
     """Persist the memo to expansion_candidate. Swallows errors — a persist
     failure must not break the endpoint response.
+
+    ``lang`` is the locale the memo was generated in; it is persisted to
+    ``decision_memo_lang`` (PR #4a) so GET /candidates/{id}/memo can detect
+    a locale mismatch and regenerate. The default "en" keeps the pre-PR-4a
+    pre-warm call site (which only ever generates English memos) unchanged.
 
     Phase 3 chunk 1 verification: this UPDATE is bound to the request session
     via :func:`get_db` and committed inline. The 0-memos-in-prod observation
@@ -1534,7 +1540,8 @@ def _decision_memo_cache_write(
                 "UPDATE expansion_candidate "
                 "SET decision_memo = :txt, "
                 "    decision_memo_json = CAST(:j AS JSONB), "
-                "    decision_memo_prompt_version = :ver "
+                "    decision_memo_prompt_version = :ver, "
+                "    decision_memo_lang = :lang "
                 "WHERE search_id = :sid AND parcel_id = :pid"
             ),
             {
@@ -1543,6 +1550,7 @@ def _decision_memo_cache_write(
                 "txt": memo_text,
                 "j": json.dumps(memo_json, ensure_ascii=False) if memo_json is not None else None,
                 "ver": MEMO_PROMPT_VERSION,
+                "lang": lang,
             },
         )
         db.commit()
@@ -1684,7 +1692,8 @@ def post_decision_memo(
     # 4) Persist when keyed
     if cache_keyed:
         _decision_memo_cache_write(
-            db, search_id, parcel_id, memo_text, response_payload["memo_json"]
+            db, search_id, parcel_id, memo_text,
+            response_payload["memo_json"], lang,
         )
 
     return response_payload
