@@ -10430,6 +10430,71 @@ def compare_candidates(db: Session, search_id: str, candidate_ids: list[str], la
     return {"items": items, "summary": summary}
 
 
+def _regenerate_candidate_memo_in_locale(
+    db: Session,
+    raw_candidate: dict[str, Any],
+    brand_profile: dict[str, Any] | None,
+    lang: str,
+) -> tuple[str | None, dict[str, Any]] | None:
+    """Regenerate and persist a structured decision memo in ``lang``.
+
+    Returns ``(memo_text, memo_json)`` on success, or None when structured
+    generation is unavailable (flag off, LLM error, renderer failure) — the
+    caller then serves the existing persisted memo unchanged.
+
+    PR #4a: invoked by :func:`get_candidate_memo` on a locale mismatch.
+    """
+    from app.services.llm_decision_memo import (
+        MEMO_PROMPT_VERSION,
+        build_memo_context,
+        generate_structured_memo,
+        render_structured_memo_as_text,
+    )
+
+    cid = raw_candidate.get("candidate_id") or raw_candidate.get("id")
+    try:
+        ctx = build_memo_context(
+            candidate=raw_candidate,
+            brief={"brand_profile": brand_profile or {}},
+            lang=lang,
+        )
+        memo_json = generate_structured_memo(ctx)
+        if memo_json is None:
+            return None
+        memo_text = render_structured_memo_as_text(memo_json, lang)
+    except Exception as exc:
+        logger.warning("decision memo regenerate failed for %s: %s", cid, exc)
+        return None
+
+    try:
+        db.execute(
+            text(
+                "UPDATE expansion_candidate "
+                "SET decision_memo = :txt, "
+                "    decision_memo_json = CAST(:j AS JSONB), "
+                "    decision_memo_prompt_version = :ver, "
+                "    decision_memo_lang = :lang "
+                "WHERE id = :cid"
+            ),
+            {
+                "txt": memo_text,
+                "j": json.dumps(memo_json, ensure_ascii=False),
+                "ver": MEMO_PROMPT_VERSION,
+                "lang": lang,
+                "cid": cid,
+            },
+        )
+        db.commit()
+    except Exception as exc:
+        logger.warning("decision memo regenerate persist failed for %s: %s", cid, exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+    return memo_text, memo_json
+
+
 def get_candidate_memo(db: Session, candidate_id: str, lang: str = "en") -> dict[str, Any] | None:
     t_start = time.monotonic()
     row = db.execute(
@@ -10504,7 +10569,8 @@ def get_candidate_memo(db: Session, candidate_id: str, lang: str = "en") -> dict
                 c.rerank_delta,
                 c.rerank_status,
                 c.decision_memo,
-                c.decision_memo_json
+                c.decision_memo_json,
+                c.decision_memo_lang
             FROM expansion_candidate c
             JOIN expansion_search s ON s.id = c.search_id
             WHERE c.id = :candidate_id
@@ -10552,7 +10618,7 @@ def get_candidate_memo(db: Session, candidate_id: str, lang: str = "en") -> dict
         candidate.get("search_id"), verdict,
     )
 
-    return {
+    result = {
         "candidate_id": candidate["candidate_id"],
         "search_id": candidate["search_id"],
         "brand_profile": {
@@ -10663,6 +10729,32 @@ def get_candidate_memo(db: Session, candidate_id: str, lang: str = "en") -> dict
         "decision_memo": candidate.get("decision_memo"),
         "decision_memo_json": candidate.get("decision_memo_json"),
     }
+
+    # PR #4a (Q3 (b)): regenerate-on-mismatch. The persisted memo carries
+    # the locale it was generated in (decision_memo_lang — read from the row
+    # internally; intentionally NOT surfaced on the response since
+    # CandidateMemoResponse forbids extra fields and the frontend contract
+    # must not drift). When the requested ``lang`` does not match — treating
+    # a NULL column on pre-PR-4a rows as English — the memo is regenerated
+    # in the requested locale and persisted.
+    # COST NOTE: this fires a synchronous model call from a GET handler.
+    # Pre-warm hardcodes lang="en" (Q4 defer), so the first AR view of a
+    # candidate not yet POSTed in Arabic pays this regeneration cost once.
+    stored_lang = candidate.get("decision_memo_lang")
+    has_memo = (
+        candidate.get("decision_memo_json") is not None
+        or candidate.get("decision_memo") is not None
+    )
+    if has_memo and lang != (stored_lang or "en"):
+        regenerated = _regenerate_candidate_memo_in_locale(
+            db, dict(row), brand_profile, lang,
+        )
+        if regenerated is not None:
+            regen_text, regen_json = regenerated
+            result["decision_memo"] = regen_text
+            result["decision_memo_json"] = regen_json
+
+    return result
 
 
 def get_recommendation_report(db: Session, search_id: str, lang: str = "en") -> dict[str, Any] | None:
