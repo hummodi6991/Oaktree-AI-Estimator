@@ -290,3 +290,137 @@ def test_normalize_candidate_ar_partial_failure_falls_back_whole_list() -> None:
     }
     result = _normalize_candidate_payload(dict(candidate), lang="ar")
     assert result["top_positives_json"] == ["English A.", "English B."]
+
+
+# ── PR #3: strengths/risks structured read path ─────────────────────
+
+def _pr3_candidate(**overrides: object) -> dict:
+    base = {
+        "candidate_id": "c-pr3",
+        "parcel_id": "P-PR3",
+        "district": "Al Olaya",
+        "key_strengths_json": ["High demand index supports branch throughput"],
+        "key_risks_json": ["High overlap risk with existing branches"],
+        "key_strengths_structured_json": [{"id": "S1", "params": {}}],
+        "key_risks_structured_json": [{"id": "R2", "params": {}}],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_normalize_ar_localizes_key_strengths() -> None:
+    """AR branch renders key_strengths_json from the structured column."""
+    result = _normalize_candidate_payload(_pr3_candidate(), lang="ar")
+    assert result["key_strengths_json"] == [TEMPLATES["S1"]["ar"]]
+
+
+def test_normalize_ar_localizes_key_risks() -> None:
+    """AR branch renders key_risks_json from the structured column."""
+    result = _normalize_candidate_payload(_pr3_candidate(), lang="ar")
+    assert result["key_risks_json"] == [TEMPLATES["R2"]["ar"]]
+
+
+def test_normalize_ar_main_watchout_path_is_localized() -> None:
+    """get_candidate_memo derives main_watchout as key_risks_json[0];
+    after the AR normalize that element is Arabic."""
+    result = _normalize_candidate_payload(_pr3_candidate(), lang="ar")
+    main_watchout = result["key_risks_json"][0]
+    assert main_watchout == TEMPLATES["R2"]["ar"]
+
+
+def test_normalize_ar_main_risk_path_is_localized() -> None:
+    """get_recommendation_report derives main_risk as key_risks_json[0]
+    of the best candidate; the same column overwrite localizes it."""
+    result = _normalize_candidate_payload(_pr3_candidate(), lang="ar")
+    main_risk = (result["key_risks_json"] or ["x"])[0]
+    assert main_risk == TEMPLATES["R2"]["ar"]
+
+
+@pytest.mark.parametrize("lang", ["en", None])
+def test_normalize_en_key_strengths_risks_byte_identical(lang) -> None:
+    """en/omitted branch leaves the English persisted lists untouched
+    even when the PR #3 structured columns are populated (rule #2)."""
+    cand = _pr3_candidate()
+    kwargs = {} if lang is None else {"lang": lang}
+    result = _normalize_candidate_payload(dict(cand), **kwargs)
+    assert result["key_strengths_json"] == [
+        "High demand index supports branch throughput"
+    ]
+    assert result["key_risks_json"] == ["High overlap risk with existing branches"]
+
+
+def test_normalize_ar_falls_back_when_structured_null() -> None:
+    """Pre-PR-3 rows (NULL structured columns) serve the English
+    persisted lists unchanged on the AR path (rule #4)."""
+    cand = _pr3_candidate(
+        key_strengths_structured_json=None,
+        key_risks_structured_json=None,
+    )
+    result = _normalize_candidate_payload(cand, lang="ar")
+    assert result["key_strengths_json"] == [
+        "High demand index supports branch throughput"
+    ]
+    assert result["key_risks_json"] == ["High overlap risk with existing branches"]
+
+
+def test_normalize_drops_pr3_structured_columns() -> None:
+    """The two PR #3 structured columns are internal — never in the
+    outgoing payload, on either language branch."""
+    for lang in ("en", "ar"):
+        result = _normalize_candidate_payload(_pr3_candidate(), lang=lang)
+        assert "key_strengths_structured_json" not in result
+        assert "key_risks_structured_json" not in result
+
+
+def test_normalize_compare_style_dict_without_columns_untouched() -> None:
+    """compare_candidates passes a dict carrying neither key_*_json nor
+    the structured columns (Q2 deferral). The AR overwrite is guarded
+    on column presence, so no key_strengths_json/key_risks_json key is
+    introduced."""
+    compare_like = {
+        "candidate_id": "c-cmp",
+        "parcel_id": "P-CMP",
+        "district": "Al Olaya",
+    }
+    result = _normalize_candidate_payload(compare_like, lang="ar")
+    assert "key_strengths_json" not in result
+    assert "key_risks_json" not in result
+
+
+# ── PR #3: _render_decision_summary dual-read (Q3) ──────────────────
+
+def _decision_summary_record(**param_overrides: object) -> dict:
+    params = {
+        "area_label": "compact",
+        "district_label": "Al Olaya",
+        "final_score": 70.0,
+        "economics_score": 60.0,
+        "use_case": "neighborhood_qsr",
+        "risk_kind": "from_key_risks",
+        "risk_text_en": "High overlap risk with existing branches",
+    }
+    params.update(param_overrides)
+    return {"id": "decision_summary", "params": params}
+
+
+def test_decision_summary_ar_dual_read_uses_risk_id() -> None:
+    """Post-PR-3 row: both risk_text_en and risk_id present — the AR
+    render uses the localized R-template clause."""
+    rendered = render(_decision_summary_record(risk_id="R2"), "ar")
+    assert TEMPLATES["R2"]["ar"] in rendered
+    assert "High overlap risk with existing branches" not in rendered
+
+
+def test_decision_summary_ar_dual_read_falls_back_to_risk_text_en() -> None:
+    """Post-PR-2a-pre-PR-3 row: only risk_text_en present (no risk_id)
+    — the AR render falls back to the persisted English clause (Q3)."""
+    rendered = render(_decision_summary_record(), "ar")
+    assert "High overlap risk with existing branches" in rendered
+
+
+def test_decision_summary_en_dual_read_ignores_risk_id() -> None:
+    """The en path never consults risk_id — byte-identical to HEAD
+    (rule #2). risk_id is present but the en clause stays English."""
+    rendered = render(_decision_summary_record(risk_id="R2"), "en")
+    assert "High overlap risk with existing branches" in rendered
+    assert TEMPLATES["R2"]["ar"] not in rendered
