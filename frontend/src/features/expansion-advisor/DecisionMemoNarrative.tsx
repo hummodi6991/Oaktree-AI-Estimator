@@ -11,14 +11,20 @@ import { generateDecisionMemo } from "../../lib/api/expansionAdvisor";
 
 // Module-level cache shared across all DecisionMemoNarrative instances. Lets
 // callers (and tests) read the fetched memo synchronously after it has
-// resolved once for a given candidate id.
+// resolved once for a given candidate id. Keyed by `${candidateId}:${lang}`
+// so EN and AR memos coexist and a locale toggle never serves stale text.
 const memoModuleCache = new Map<string, GeneratedDecisionMemo>();
+
+function memoModuleCacheKey(candidateId: string, lang: string): string {
+  return `${candidateId}:${lang}`;
+}
 
 export function _seedDecisionMemoCacheForTest(
   candidateId: string,
   value: GeneratedDecisionMemo,
+  lang = "en",
 ): void {
-  memoModuleCache.set(candidateId, value);
+  memoModuleCache.set(memoModuleCacheKey(candidateId, lang), value);
 }
 
 export function _clearDecisionMemoCacheForTest(): void {
@@ -252,7 +258,7 @@ export default function DecisionMemoNarrative({ candidate, brief, lang }: Props)
   // Seed initial state from the module cache so tests (and same-session
   // re-mounts) can render synchronously without re-fetching.
   const [result, setResult] = useState<GeneratedDecisionMemo | null>(
-    () => (candidateId ? memoModuleCache.get(candidateId) ?? null : null),
+    () => (candidateId ? memoModuleCache.get(memoModuleCacheKey(candidateId, lang)) ?? null : null),
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -260,7 +266,10 @@ export default function DecisionMemoNarrative({ candidate, brief, lang }: Props)
   useEffect(() => {
     if (!candidateId) return;
 
-    const cached = memoModuleCache.get(candidateId);
+    // Key by dispatch-time locale: a toggle re-runs this effect (lang dep)
+    // and reads/writes a locale-specific cache slot.
+    const key = memoModuleCacheKey(candidateId, lang);
+    const cached = memoModuleCache.get(key);
     if (cached) {
       setResult(cached);
       setError(null);
@@ -275,7 +284,8 @@ export default function DecisionMemoNarrative({ candidate, brief, lang }: Props)
     generateDecisionMemo(candidate, brief, lang)
       .then((fetched) => {
         if (cancelled) return;
-        memoModuleCache.set(candidateId, fetched);
+        // stale-locale-safe: cache key uses dispatch-time lang
+        memoModuleCache.set(key, fetched);
         setResult(fetched);
       })
       .catch(() => {
@@ -289,7 +299,7 @@ export default function DecisionMemoNarrative({ candidate, brief, lang }: Props)
     return () => {
       cancelled = true;
     };
-  }, [candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [candidateId, lang]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (

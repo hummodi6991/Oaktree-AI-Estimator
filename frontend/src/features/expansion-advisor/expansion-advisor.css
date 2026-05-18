@@ -1,5 +1,15 @@
 /* ─── Expansion Advisor ─── */
 
+/* RTL audit (PR-FE-AR): physical-direction declarations converted to logical
+   properties (margin/padding/border/inset -inline-*) so layout mirrors under
+   dir="rtl" without JS branches. Symmetric pairs (left:0;right:0) and
+   centered rules (left:50% + translateX) are direction-agnostic and left
+   untouched.
+   Documented exception — 1 scoped [dir="rtl"] selector:
+     .ea-form__select — the dropdown chevron is painted via
+     background-position (no logical equivalent); mirrored explicitly to the
+     leading edge. See the rule near `.ea-form__select`. */
+
 .ea-page {
   display: grid;
   gap: var(--oak-gap, 16px);
@@ -216,18 +226,14 @@
 }
 
 /* ─ Tier 1: Premier ─ */
-/* Premier cards get a thin accent strip on the left edge plus a subtly
+/* Premier cards get a thin accent strip on the leading edge plus a subtly
    warmer background. The accent color is the existing primary; no new
    palette is introduced. The strip sits on the inside of the existing
-   border so the card's rounded corners stay clean. */
+   border so the card's rounded corners stay clean. The logical
+   border-inline-start mirrors to the right edge under RTL automatically. */
 .ea-candidate--premier {
   background: #fafdfb;
-  border-left: 3px solid var(--oak-primary, #14312c);
-}
-
-[dir="rtl"] .ea-candidate--premier {
-  border-left: 1px solid #E5E7EB;
-  border-right: 3px solid var(--oak-primary, #14312c);
+  border-inline-start: 3px solid var(--oak-primary, #14312c);
 }
 
 .ea-badge--premier {
@@ -805,10 +811,18 @@
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
-  padding-right: 30px;
+  padding-inline-end: 30px;
   background: var(--oak-bg-surface, #fff) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23828282' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center / 12px;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* RTL exception: the chevron is painted via background-position, which has
+   no logical-property equivalent — mirror it explicitly to the leading edge
+   so it tracks the (logical) padding-inline-end reserve under RTL. */
+[dir="rtl"] .ea-form__select,
+[dir="rtl"] .ea-form__select:focus {
+  background-position: left 10px center;
 }
 
 .ea-form__input:focus,
@@ -851,7 +865,7 @@
 
 .ea-branch-search__search-icon {
   position: absolute;
-  left: 10px;
+  inset-inline-start: 10px;
   display: flex;
   align-items: center;
   color: var(--oak-text-light, #828282);
@@ -860,13 +874,13 @@
 }
 .ea-branch-search__input {
   width: 100%;
-  padding-left: 30px !important;
-  padding-right: 32px !important;
+  padding-inline-start: 30px !important;
+  padding-inline-end: 32px !important;
 }
 
 .ea-branch-search__spinner {
   position: absolute;
-  right: 10px;
+  inset-inline-end: 10px;
   width: 14px;
   height: 14px;
   border: 2px solid var(--oak-outlines, #d7d7d7);
@@ -3074,7 +3088,7 @@
   color: var(--oak-text-light, #828282);
   flex-shrink: 0;
   pointer-events: none;
-  margin-left: auto;
+  margin-inline-start: auto;
   padding: 0 2px;
 }
 .ea-district-ms__chip {
@@ -3223,7 +3237,7 @@
   color: var(--oak-text-light, #828282);
   user-select: none;
   flex-shrink: 0;
-  margin-left: 2px;
+  margin-inline-start: 2px;
 }
 .ea-district-ss__dropdown {
   position: absolute;
@@ -3319,7 +3333,7 @@
   color: var(--oak-text-light, #828282);
   flex-shrink: 0;
   pointer-events: none;
-  margin-left: auto;
+  margin-inline-start: auto;
 }
 
 /* Selected pill */
@@ -3347,7 +3361,7 @@
 .ea-category-select__pill-ar {
   font-size: var(--oak-fs-xs, 12px);
   color: var(--oak-text-light, #828282);
-  margin-left: 2px;
+  margin-inline-start: 2px;
 }
 .ea-category-select__pill-remove {
   border: none;

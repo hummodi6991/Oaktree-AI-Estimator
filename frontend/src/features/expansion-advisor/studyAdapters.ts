@@ -252,12 +252,17 @@ export function restoreCompareFromSaved(
 
 /* ─── Memo/report caching keys ─── */
 
-export function memoCacheKey(candidateId: string): string {
-  return `memo:${candidateId}`;
+// Cache keys are locale-keyed: EN and AR payloads coexist under distinct
+// keys so a locale toggle never serves the wrong language from cache.
+// Write sites compute the key from the dispatch-time locale; read sites
+// from the render-time locale (see ExpansionAdvisorPage).
+
+export function memoCacheKey(candidateId: string, lang: string): string {
+  return `memo:${candidateId}:${lang}`;
 }
 
-export function reportCacheKey(searchId: string): string {
-  return `report:${searchId}`;
+export function reportCacheKey(searchId: string, lang: string): string {
+  return `report:${searchId}:${lang}`;
 }
 
 export type MemoCache = Map<string, CandidateMemoResponse>;
