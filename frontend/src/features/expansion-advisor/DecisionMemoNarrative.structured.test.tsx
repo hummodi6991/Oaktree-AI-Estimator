@@ -5,9 +5,11 @@ import "../../i18n";
 import i18n from "../../i18n";
 import en from "../../i18n/en.json";
 import ar from "../../i18n/ar.json";
-import {
+import DecisionMemoNarrative, {
   StructuredNarrative,
   isValidStructuredMemo,
+  _seedDecisionMemoCacheForTest,
+  _clearDecisionMemoCacheForTest,
 } from "./DecisionMemoNarrative";
 import type {
   GeneratedDecisionMemo,
@@ -383,5 +385,63 @@ describe("DecisionMemoNarrative cache behaviour", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(0);
 
     vi.doUnmock("../../lib/api/expansionAdvisor");
+  });
+});
+
+/* ── 9. Locale-keyed module cache ── */
+
+describe("DecisionMemoNarrative locale-keyed module cache", () => {
+  beforeEach(() => {
+    _clearDecisionMemoCacheForTest();
+  });
+
+  it("serves a cached memo only under the locale it was written for", () => {
+    const seeded: GeneratedDecisionMemo = {
+      memo: makeLegacy(),
+      memo_text: null,
+      memo_json: makeStructured(),
+    };
+    // Memo cached under AR (the dispatch-time locale).
+    _seedDecisionMemoCacheForTest("c1", seeded, "ar");
+
+    // Render under AR — the synchronous useState initializer hits the
+    // AR cache slot, so the narrative renders without a fetch.
+    const arHtml = renderToStaticMarkup(
+      <DecisionMemoNarrative candidate={{ id: "c1" }} brief={{}} lang="ar" />,
+    );
+    expect(arHtml).toContain(seeded.memo_json!.headline_recommendation);
+
+    // Render under EN — the EN cache slot is empty, so the EN view does
+    // not get the AR payload (renderToStaticMarkup fires no effect/fetch).
+    const enHtml = renderToStaticMarkup(
+      <DecisionMemoNarrative candidate={{ id: "c1" }} brief={{}} lang="en" />,
+    );
+    expect(enHtml).not.toContain(seeded.memo_json!.headline_recommendation);
+  });
+
+  it("keeps EN and AR memos in separate slots for the same candidate", () => {
+    const enMemo: GeneratedDecisionMemo = {
+      memo: makeLegacy(),
+      memo_text: null,
+      memo_json: makeStructured({ headline_recommendation: "EN headline marker" }),
+    };
+    const arMemo: GeneratedDecisionMemo = {
+      memo: makeLegacy(),
+      memo_text: null,
+      memo_json: makeStructured({ headline_recommendation: "AR headline marker" }),
+    };
+    _seedDecisionMemoCacheForTest("c1", enMemo, "en");
+    _seedDecisionMemoCacheForTest("c1", arMemo, "ar");
+
+    expect(
+      renderToStaticMarkup(
+        <DecisionMemoNarrative candidate={{ id: "c1" }} brief={{}} lang="en" />,
+      ),
+    ).toContain("EN headline marker");
+    expect(
+      renderToStaticMarkup(
+        <DecisionMemoNarrative candidate={{ id: "c1" }} brief={{}} lang="ar" />,
+      ),
+    ).toContain("AR headline marker");
   });
 });

@@ -1,5 +1,18 @@
 import { buildApiUrl, fetchWithAuth } from "../../api";
+import i18n from "../../i18n";
 import { CANDIDATE_NUMERIC_FIELDS, coerceCandidateNumerics } from "./coerceNumeric";
+
+/** Resolves the current API language. Single source of truth for the
+ * Expansion Advisor lang parameter — never read i18n.language directly
+ * elsewhere in this file. */
+export function currentLang(): "en" | "ar" {
+  const lang = i18n.language?.toLowerCase() ?? "en";
+  // Accept i18next region variants (ar-SA, en-US) but normalize to the
+  // two values the backend accepts. Unknown locales fall back to en
+  // (matches the backend's lang clamp in app/api/expansion_advisor.py).
+  if (lang === "ar" || lang.startsWith("ar-")) return "ar";
+  return "en";
+}
 
 export type ExpansionAdvisorHardFloorDrops = {
   dropped_population?: number;
@@ -765,12 +778,12 @@ async function readJson<T>(res: Response): Promise<T> {
 }
 
 export async function createExpansionSearch(payload: ExpansionBrief): Promise<ExpansionSearchResponse> {
-  const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/searches"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/searches"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, lang: currentLang() }) }); // PR-FE-AR: locale per request
   const data = await readJson<ExpansionSearchResponse>(res);
   return { ...data, items: normalizeCandidates(data.items || []), notes: data.notes || {} };
 }
 export async function getExpansionSearch(searchId: string): Promise<ExpansionSearchDetailResponse> {
-  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}`));
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}?lang=${currentLang()}`));
   const data = await readJson<ExpansionSearchDetailResponse>(res);
   return {
     ...data,
@@ -782,20 +795,20 @@ export async function getExpansionSearch(searchId: string): Promise<ExpansionSea
   };
 }
 export async function getExpansionCandidates(searchId: string): Promise<ExpansionCandidatesListResponse> {
-  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/candidates`));
+  const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/candidates?lang=${currentLang()}`));
   const data = await readJson<ExpansionCandidatesListResponse>(res);
   return { ...data, items: normalizeCandidates(data.items || []), meta: data.meta || {} };
 }
-export async function compareExpansionCandidates(searchId: string, candidateIds: string[]): Promise<CompareCandidatesResponse> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/candidates/compare"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search_id: searchId, candidate_ids: candidateIds }) }); const data = await readJson<CompareCandidatesResponse>(res); return normalizeCompareResponse(data); }
+export async function compareExpansionCandidates(searchId: string, candidateIds: string[]): Promise<CompareCandidatesResponse> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/candidates/compare"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ search_id: searchId, candidate_ids: candidateIds, lang: currentLang() }) }); const data = await readJson<CompareCandidatesResponse>(res); return normalizeCompareResponse(data); } // PR-FE-AR: locale per request
 export async function getExpansionCandidateMemo(candidateId: string): Promise<CandidateMemoResponse> {
-  const url = buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo`);
+  const url = buildApiUrl(`/v1/expansion-advisor/candidates/${candidateId}/memo?lang=${currentLang()}`);
   console.info("[expansion-memo] fetching memo", { url, candidateId });
   const res = await fetchWithAuth(url);
   const data = await readJson<CandidateMemoResponse>(res);
   return normalizeMemoResponse(data);
 }
 export async function getExpansionRecommendationReport(searchId: string): Promise<RecommendationReportResponse> {
-  const url = buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report`);
+  const url = buildApiUrl(`/v1/expansion-advisor/searches/${searchId}/report?lang=${currentLang()}`);
   console.info("[expansion-report] fetching report", { url, searchId });
   const res = await fetchWithAuth(url);
   const data = await readJson<RecommendationReportResponse>(res);
@@ -813,9 +826,9 @@ export async function getExpansionRecommendationReport(searchId: string): Promis
   }
   return normalized;
 }
-export async function createSavedExpansionSearch(payload: Omit<SavedExpansionSearch, "id">): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/saved-searches"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }
+export async function createSavedExpansionSearch(payload: Omit<SavedExpansionSearch, "id">): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/saved-searches"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, lang: currentLang() }) }); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); } // PR-FE-AR: locale per request
 export async function listSavedExpansionSearches(status?: "draft" | "final", limit = 20): Promise<SavedExpansionSearchListResponse> {
-  const params = new URLSearchParams({ limit: String(limit) });
+  const params = new URLSearchParams({ limit: String(limit), lang: currentLang() });
   if (status) params.set("status", status);
   try {
     const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches?${params.toString()}`));
@@ -831,8 +844,8 @@ export async function listSavedExpansionSearches(status?: "draft" | "final", lim
     throw err;
   }
 }
-export async function getSavedExpansionSearch(savedId: string): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`)); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }
-export async function updateSavedExpansionSearch(savedId: string, payload: Partial<SavedExpansionSearch>): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }
+export async function getSavedExpansionSearch(savedId: string): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}?lang=${currentLang()}`)); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }
+export async function updateSavedExpansionSearch(savedId: string, payload: Partial<SavedExpansionSearch>): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, lang: currentLang() }) }); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); } // PR-FE-AR: locale per request
 export async function deleteSavedExpansionSearch(savedId: string): Promise<{ deleted: boolean }> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`), { method: "DELETE" }); return readJson<{ deleted: boolean }>(res); }
 
 export async function getExpansionDistricts(): Promise<DistrictOption[]> {
@@ -869,7 +882,7 @@ export interface GeneratedDecisionMemo {
 export async function generateDecisionMemo(
   candidate: Record<string, unknown>,
   brief: Record<string, unknown>,
-  lang: string,
+  lang: string = currentLang(),
 ): Promise<GeneratedDecisionMemo> {
   const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/decision-memo"), {
     method: "POST",

@@ -4,6 +4,7 @@ import {
   compareExpansionCandidates,
   createExpansionSearch,
   createSavedExpansionSearch,
+  currentLang,
   deleteSavedExpansionSearch,
   getExpansionCandidates,
   getExpansionCandidateMemo,
@@ -264,7 +265,9 @@ export default function ExpansionAdvisorPage({
 
   const loadReport = useCallback(async (targetSearchId: string) => {
     if (!targetSearchId) return;
-    const cacheKey = reportCacheKey(targetSearchId);
+    // Key the cache by the dispatch-time locale so EN and AR reports coexist
+    // and a stale in-flight response can never be read under the wrong locale.
+    const cacheKey = reportCacheKey(targetSearchId, currentLang());
     const cached = reportCacheRef.current.get(cacheKey);
     if (cached) { setReport(cached); setReportError(null); return; }
     setLoadingReport(true);
@@ -272,6 +275,7 @@ export default function ExpansionAdvisorPage({
     void trackEvent("ui_expansion_report_opened", { meta: { search_id: targetSearchId } });
     try {
       const result = await getExpansionRecommendationReport(targetSearchId);
+      // stale-locale-safe: cache key uses dispatch-time lang
       reportCacheRef.current.set(cacheKey, result);
       setReport(result);
       setReportError(null);
@@ -304,10 +308,11 @@ export default function ExpansionAdvisorPage({
   };
 
   const loadMemoForCandidate = useCallback(async (candidateId: string): Promise<CandidateMemoResponse | null> => {
-    const cacheKey = memoCacheKey(candidateId);
+    const cacheKey = memoCacheKey(candidateId, currentLang());
     const cached = memoCacheRef.current.get(cacheKey);
     if (cached) return cached;
     const result = await getExpansionCandidateMemo(candidateId);
+    // stale-locale-safe: cache key uses dispatch-time lang
     memoCacheRef.current.set(cacheKey, result);
     return result;
   }, []);

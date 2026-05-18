@@ -571,12 +571,35 @@ describe("Candidate 'why this rank?' from deterministic fields", () => {
 });
 
 describe("Memo/report caching keys", () => {
-  it("memo cache key uses candidate id", () => {
-    expect(memoCacheKey("c1")).toBe("memo:c1");
+  it("memo cache key uses candidate id and locale", () => {
+    expect(memoCacheKey("c1", "en")).toBe("memo:c1:en");
+    expect(memoCacheKey("c1", "ar")).toBe("memo:c1:ar");
   });
 
-  it("report cache key uses search id", () => {
-    expect(reportCacheKey("s1")).toBe("report:s1");
+  it("report cache key uses search id and locale", () => {
+    expect(reportCacheKey("s1", "en")).toBe("report:s1:en");
+    expect(reportCacheKey("s1", "ar")).toBe("report:s1:ar");
+  });
+
+  it("locale-keyed cache: EN and AR payloads coexist and are never cross-served", () => {
+    // Mirrors the manual cache Maps in ExpansionAdvisorPage. A write under
+    // one locale must not be readable under another (stale-locale-safe),
+    // and both locales' payloads coexist.
+    const memo = new Map<string, string>();
+    memo.set(memoCacheKey("c1", "en"), "EN-memo");
+    // Toggle to AR — the read misses, so the UI refetches instead of
+    // serving the EN payload.
+    expect(memo.get(memoCacheKey("c1", "ar"))).toBeUndefined();
+    memo.set(memoCacheKey("c1", "ar"), "AR-memo");
+    // Toggle back to EN — the EN payload is still cached.
+    expect(memo.get(memoCacheKey("c1", "en"))).toBe("EN-memo");
+    expect(memo.get(memoCacheKey("c1", "ar"))).toBe("AR-memo");
+
+    const report = new Map<string, string>();
+    report.set(reportCacheKey("s1", "en"), "EN-report");
+    expect(report.get(reportCacheKey("s1", "ar"))).toBeUndefined();
+    report.set(reportCacheKey("s1", "ar"), "AR-report");
+    expect(report.get(reportCacheKey("s1", "en"))).toBe("EN-report");
   });
 });
 
