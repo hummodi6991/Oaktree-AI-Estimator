@@ -1,8 +1,9 @@
 """Locale-invariant rendering for Expansion Advisor structured records.
 
 PR #2a persists structured records of the form {"id": ..., "params": ...}
-in five JSONB columns on expansion_candidate. PR #2b renders them
-into the requested language at read time. The en-side templates are
+in JSONB columns on expansion_candidate (five columns at PR #2a, plus
+two structured strengths/risks columns at PR #3). PR #2b and PR #3
+render them into the requested language at read time. The en-side templates are
 byte-identical to the producer's English f-strings/append literals
 at HEAD; the ar-side templates are Arabic anchor translations
 following these formatting conventions:
@@ -139,6 +140,48 @@ TEMPLATES: dict[str, dict[str, str]] = {
     "risk.high_competitor_density": {
         "en": "High competitor density ({count} nearby) — market may be saturated.",
         "ar": "كثافة المنافسين مرتفعة ({count} في المحيط القريب) — السوق قد يكون مشبعاً.",
+    },
+    # ── PR #3: _build_strengths_and_risks structured records ──
+    # Six zero-param templates. The en side is byte-identical to the
+    # producer's append literals in _build_strengths_and_risks (no
+    # trailing period — matches the producer). The ar side follows the
+    # PR #2b conventions: Latin digits, inline English units, and
+    # parenthetical English for jargon that is ambiguous in F&B context.
+    # S1 en: "High demand index supports branch throughput"
+    #   — a strong demand index supports the branch's customer throughput.
+    "S1": {
+        "en": "High demand index supports branch throughput",
+        "ar": "مؤشر طلب مرتفع يدعم معدّل تدفق الفرع (throughput)",
+    },
+    # S2 en: "Competitive whitespace remains attractive"
+    #   — competitor whitespace (market gap) is still attractive.
+    "S2": {
+        "en": "Competitive whitespace remains attractive",
+        "ar": "الفجوة السوقية التنافسية (whitespace) لا تزال جذابة",
+    },
+    # S3 en: "Parcel characteristics align with target format"
+    #   — the parcel's characteristics fit the target branch format.
+    "S3": {
+        "en": "Parcel characteristics align with target format",
+        "ar": "خصائص قطعة الأرض تتوافق مع الصيغة المستهدفة",
+    },
+    # R1 en: "Rent benchmark fell back to conservative city default (lower confidence)"
+    #   — the rent benchmark used the conservative city-wide default.
+    "R1": {
+        "en": "Rent benchmark fell back to conservative city default (lower confidence)",
+        "ar": "تراجع مرجع الإيجار إلى القيمة الافتراضية المحافظة على مستوى المدينة (ثقة أقل)",
+    },
+    # R2 en: "High overlap risk with existing branches"
+    #   — high cannibalization/overlap risk against the branch network.
+    "R2": {
+        "en": "High overlap risk with existing branches",
+        "ar": "مخاطر تداخل مرتفعة مع الفروع الحالية",
+    },
+    # R3 en: "Competitive density may pressure launch economics"
+    #   — competitor density could pressure the launch economics.
+    "R3": {
+        "en": "Competitive density may pressure launch economics",
+        "ar": "كثافة المنافسة قد تضغط على اقتصاديات الإطلاق",
     },
     "demand_thesis": {
         "en": ("Demand is {_demand_label} (score {demand_score:.1f}) with "
@@ -353,6 +396,18 @@ def _render_decision_summary(
     risk_kind = resolved.get("risk_kind")
     if risk_kind == "from_key_risks":
         suffix_key = f"{lang}_suffix_from_key_risks" if lang == "ar" else "en_suffix_from_key_risks"
+        # PR #3 dual-read (Q3): prefer the structured risk_id — rendered
+        # from the localized R-template — over the persisted English
+        # risk_text_en. risk_text_en is retained as the fallback for
+        # post-PR-2a-pre-PR-3 rows, which carry no risk_id. The
+        # en/omitted path never enters this branch, so it stays
+        # byte-identical to HEAD (discipline rule #2).
+        if lang == "ar":
+            risk_id = resolved.get("risk_id")
+            if isinstance(risk_id, str) and risk_id in TEMPLATES:
+                ar_clause = render({"id": risk_id, "params": {}}, "ar")
+                if ar_clause:
+                    resolved = {**resolved, "_risk_text_en": ar_clause}
     elif risk_kind == "tight_economics":
         suffix_key = f"{lang}_suffix_tight_economics" if lang == "ar" else "en_suffix_tight_economics"
     elif risk_kind == "execution":

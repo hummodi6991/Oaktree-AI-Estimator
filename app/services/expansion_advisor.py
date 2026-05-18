@@ -1237,6 +1237,9 @@ _STRUCTURED_CANDIDATE_COLS: tuple[str, ...] = (
     "decision_summary_structured_json",
     "demand_thesis_structured_json",
     "cost_thesis_structured_json",
+    # PR #3 structured strengths/risks.
+    "key_strengths_structured_json",
+    "key_risks_structured_json",
 )
 
 
@@ -1313,6 +1316,20 @@ def _normalize_candidate_payload(
         payload["cost_thesis"] = _render_structured_one(
             candidate.get("cost_thesis_structured_json"),
             payload.get("cost_thesis"), lang)
+        # PR #3: localize the strengths/risks string lists. These columns
+        # feed the four secondary leak paths (candidate.key_strengths /
+        # key_risks / main_watchout / main_risk) downstream. Guarded on
+        # presence so compare_candidates — which passes neither column
+        # (Q2 deferral) — is untouched. NULL structured columns (pre-PR-3
+        # rows) fall back to the persisted English list (rule #4).
+        if "key_strengths_json" in payload:
+            payload["key_strengths_json"] = _render_structured_list(
+                candidate.get("key_strengths_structured_json"),
+                payload.get("key_strengths_json"), lang)
+        if "key_risks_json" in payload:
+            payload["key_risks_json"] = _render_structured_list(
+                candidate.get("key_risks_structured_json"),
+                payload.get("key_risks_json"), lang)
     else:
         # byte-identical to HEAD
         payload["top_positives_json"] = payload.get("top_positives_json") or []
@@ -5494,22 +5511,36 @@ def _build_strengths_and_risks(
     fit_score: float,
     cannibalization_score: float,
     rent_source: str,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], list[dict[str, Any]], list[dict[str, Any]]]:
     strengths: list[str] = []
     risks: list[str] = []
+    # PR #3: parallel locale-invariant structured records. The English
+    # append literals below are byte-untouched; the structured side
+    # mirrors the same six firing conditions in the same order
+    # (deliberately NOT DRY'd — same convention as
+    # _recommended_use_case / _recommended_use_case_token). All six
+    # conditions are zero-param, so params is always {}.
+    strengths_structured: list[dict[str, Any]] = []
+    risks_structured: list[dict[str, Any]] = []
     if demand_score >= 70:
         strengths.append("High demand index supports branch throughput")
+        strengths_structured.append({"id": "S1", "params": {}})
     if whitespace_score >= 65:
         strengths.append("Competitive whitespace remains attractive")
+        strengths_structured.append({"id": "S2", "params": {}})
     if fit_score >= 70:
         strengths.append("Parcel characteristics align with target format")
+        strengths_structured.append({"id": "S3", "params": {}})
     if rent_source == "conservative_default":
         risks.append("Rent benchmark fell back to conservative city default (lower confidence)")
+        risks_structured.append({"id": "R1", "params": {}})
     if cannibalization_score >= 70:
         risks.append("High overlap risk with existing branches")
+        risks_structured.append({"id": "R2", "params": {}})
     if whitespace_score <= 45:
         risks.append("Competitive density may pressure launch economics")
-    return strengths[:4], risks[:4]
+        risks_structured.append({"id": "R3", "params": {}})
+    return strengths[:4], risks[:4], strengths_structured[:4], risks_structured[:4]
 
 
 def _recommended_use_case(service_model: str, area_m2: float) -> str:
@@ -5546,6 +5577,7 @@ def _decision_summary(
     key_risks: list[str],
     service_model: str,
     area_m2: float,
+    key_risks_structured: list[dict[str, Any]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     area_label = "compact" if area_m2 < 180 else "standard"
     district_label = district or "the target district"
@@ -5577,9 +5609,10 @@ def _decision_summary(
         risk_kind = "tight_economics"
     else:
         risk_kind = "execution"
-    # risk_text_en is the deferred parity bridge for _build_strengths_and_risks
-    # (out of scope for PR #2; tracked for PR #3). When PR #3 brings strengths/risks
-    # into structured inputs, this field becomes redundant and should be removed.
+    # risk_text_en is retained as the dual-read bridge: post-PR-2a-pre-PR-3
+    # rows carry only risk_text_en, and the ar renderer falls back to it
+    # when no risk_id is present (PR #3 Q3). PR #3 adds the sibling
+    # risk_id below so post-PR-3 rows render a localized Arabic clause.
     structured = {
         "id": "decision_summary",
         "params": {
@@ -5592,6 +5625,14 @@ def _decision_summary(
             "risk_text_en": risk_text,
         },
     }
+    # PR #3: when the risk clause is spliced from key_risks, persist the
+    # structured risk id (index-aligned with key_risks — both lists are
+    # built from the same six firing conditions in _build_strengths_and_risks)
+    # so the Arabic read path can render a localized clause.
+    if risk_kind == "from_key_risks" and key_risks_structured:
+        _first_risk = key_risks_structured[0]
+        if isinstance(_first_risk, dict) and _first_risk.get("id"):
+            structured["params"]["risk_id"] = _first_risk["id"]
     return summary, structured
 
 
@@ -8975,7 +9016,12 @@ def run_expansion_search(
         if isinstance(score_breakdown_json, dict):
             score_breakdown_json.setdefault("economics_detail", {}).update(economics_meta)
         final_score = _safe_float(score_breakdown_json.get("final_score"))
-        key_strengths_json, key_risks_json = _build_strengths_and_risks(
+        (
+            key_strengths_json,
+            key_risks_json,
+            key_strengths_structured,
+            key_risks_structured,
+        ) = _build_strengths_and_risks(
             demand_score=demand_score,
             whitespace_score=whitespace_score,
             fit_score=fit_score,
@@ -9095,6 +9141,7 @@ def run_expansion_search(
             key_risks=key_risks_json,
             service_model=service_model,
             area_m2=area_m2,
+            key_risks_structured=key_risks_structured,
         )
 
         # ── Advisory-grade snapshot plumbing (PR #1) ──
@@ -9276,6 +9323,9 @@ def run_expansion_search(
                 "decision_summary": decision_summary,
                 "key_risks_json": key_risks_json,
                 "key_strengths_json": key_strengths_json,
+                # PR #3: parallel structured records for the Arabic read path.
+                "key_strengths_structured_json": key_strengths_structured,
+                "key_risks_structured_json": key_risks_structured,
                 "final_score": round(final_score, 2),
                 "explanation": explanation,
                 "zoning_signal_source": zoning_source,
@@ -9508,6 +9558,8 @@ def run_expansion_search(
             decision_summary,
             key_risks_json,
             key_strengths_json,
+            key_strengths_structured_json,
+            key_risks_structured_json,
             compare_rank,
             rank_position,
             explanation,
@@ -9579,6 +9631,8 @@ def run_expansion_search(
             :decision_summary,
             CAST(:key_risks_json AS jsonb),
             CAST(:key_strengths_json AS jsonb),
+            CAST(:key_strengths_structured_json AS jsonb),
+            CAST(:key_risks_structured_json AS jsonb),
             :compare_rank,
             :rank_position,
             CAST(:explanation AS jsonb),
@@ -9608,6 +9662,8 @@ def run_expansion_search(
             "explanation": json.dumps(_sanitize_for_json(candidate["explanation"]), ensure_ascii=False),
             "key_risks_json": json.dumps(_sanitize_for_json(candidate["key_risks_json"]), ensure_ascii=False),
             "key_strengths_json": json.dumps(_sanitize_for_json(candidate["key_strengths_json"]), ensure_ascii=False),
+            "key_strengths_structured_json": json.dumps(_sanitize_for_json(candidate["key_strengths_structured_json"]), ensure_ascii=False),
+            "key_risks_structured_json": json.dumps(_sanitize_for_json(candidate["key_risks_structured_json"]), ensure_ascii=False),
             "gate_status_json": json.dumps(_sanitize_for_json(candidate["gate_status_json"]), ensure_ascii=False),
             "gate_reasons_json": json.dumps(_sanitize_for_json(candidate["gate_reasons_json"]), ensure_ascii=False),
             "feature_snapshot_json": json.dumps(_sanitize_for_json(candidate["feature_snapshot_json"]), ensure_ascii=False),
@@ -9876,6 +9932,8 @@ def get_candidates(db: Session, search_id: str, district_lookup: dict[str, dict[
                 decision_summary,
                 key_risks_json,
                 key_strengths_json,
+                key_strengths_structured_json,
+                key_risks_structured_json,
                 final_score,
                 compare_rank,
                 rank_position,
@@ -10426,6 +10484,8 @@ def get_candidate_memo(db: Session, candidate_id: str, lang: str = "en") -> dict
                 c.estimated_revenue_index,
                 c.key_strengths_json,
                 c.key_risks_json,
+                c.key_strengths_structured_json,
+                c.key_risks_structured_json,
                 c.decision_summary,
                 c.rank_position,
                 c.source_type,
