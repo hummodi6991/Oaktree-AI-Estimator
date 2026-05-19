@@ -1720,6 +1720,11 @@ EXAMPLES of incorrect headlines that violate these rules:
 # triad; every other structural rule is preserved. Inline ``#`` comments
 # carry an English gloss of each translated line for review (PR #3
 # convention). JSON keys stay English in every locale.
+#
+# PR #4c adds rules 7-8 and a fully-Arabic worked key_evidence example
+# (Example AR-1) so the model emits Arabic ``signal``/``value`` strings
+# instead of copying the English VOICE EXAMPLES — the EN preamble's
+# four examples are otherwise the only key_evidence pattern it sees.
 _CRITICAL_BLOCK_AR = """══════════════════════════════════════════════════════════════════════
 # "CRITICAL OUTPUT FORMAT RULES — the most important rules in this prompt."
 قواعد تنسيق المخرجات الحاسمة — هذه أهم القواعد في هذا التوجيه.
@@ -1813,6 +1818,79 @@ _CRITICAL_BLOCK_AR = """══════════════════�
 # WRONG: Decline when overall_pass=true and rank-1 with score>=70.
   خطأ: "نرفض — تفشل إشارة نمو السوق"
        (عندما يكون overall_pass=true و final_rank=1 بدرجة >= 70)
+
+# Rule 7: "key_evidence — write signal AND value strings in Arabic; JSON keys stay English."
+7. حقل `key_evidence`: تبقى مفاتيح JSON بالإنجليزية (`signal`، `value`،
+   `implication`، `polarity`)، أما قيمها النصية فتُكتب كلها بالعربية —
+   بما في ذلك `signal` و `value`، وليس `implication` وحده. لا تنسخ
+   التسميات الإنجليزية من الأمثلة الإنجليزية أعلاه. استخدم المصطلحات
+   العربية التالية حصراً في حقل `signal` للإشارات المتكررة:
+#  "annual rent"
+   - الإيجار السنوي
+#  "rent percentile vs comparables"
+   - نسبة الإيجار مقابل المقارنات
+#  "frontage"
+   - الواجهة
+#  "access/visibility score"
+   - نقاط الوصول والرؤية
+#  "population reach"
+   - عدد السكان القابلين للوصول
+#  "named chains within 500 m"
+   - سلاسل مذكورة ضمن 500 م
+#  "economics gate"
+   - بوابة الاقتصاديات
+#  "listing age (created)"
+   - عمر الإعلان (تاريخ النشر)
+#  realized delivery-rating demand signal
+   - التقييمات على الفروع المجاورة
+
+# Rule 8: "key_evidence value field — Arabic unit-token policy."
+8. حقل `value`: اتبع سياسة الوحدات التالية. تبقى الأرقام بالأرقام
+   العربية (0-9) كما في بقية المذكرة.
+#  "SAR <amount>/yr"
+   - الإيجار السنوي: "<المبلغ> ريال سعودي/سنة"
+#  "<N>th percentile (vs <N> <scope> comparables)"
+   - نسبة الإيجار: "النسبة المئوية <N>% (مقارنة بـ <N> <نطاق>)" حيث
+     <نطاق> هو "مقارنات في الحي" أو "مقارنات في نفس النطاق على مستوى
+     المدينة" أو "مقارنات على مستوى المدينة"
+#  "<N>/100" — kept as-is in both locales
+   - درجات الجودة: تبقى "<N>/100" كما هي
+#  "<N> m corner"
+   - الواجهة: "زاوية بعرض <N> م"
+#  "<N> within walking catchment"
+   - عدد السكان: "<N> ضمن نطاق المشي"
+#  "<N> count" — never emit the literal token "count"
+   - العدد: "<N> منافسين" للمنافسين أو "<N> فرع" للفروع؛ لا تكتب الكلمة
+     "count" أبداً
+#  "<N> days"
+   - عمر الإعلان: "<N> يوماً"
+#  "ratings/30d"
+   - سرعة التقييمات: "تقييم/30 يوم"
+#  "failed" — feminine past tense agreeing with بوابة
+   - حالة البوابة الفاشلة: "فشلت"
+
+# Example AR-1 — strong recommend, score 84, rank 1, district-tier
+# comparable (Arabic mirror of Example C). Imitate this row shape for
+# key_evidence whenever lang=ar — every signal and value is Arabic.
+{
+  "headline_recommendation": "نوصي — يقع الإيجار المطلوب في النسبة المئوية 28% مقابل مقارنات الحي، وتمنح واجهة الزاوية العلامة التجارية وضوحاً من شريانين.",
+  "ranking_explanation": "الحجة الاستثمارية هنا هي الإيجار: 432,000 ريال سعودي/سنة يقع في النسبة المئوية 28% مقابل 14 مقارنة في الحي — أقل بنحو 20% من الوسيط البالغ 542,000 ريال، وهو هامش يتراكم بشكل ملموس على مدى عقد إيجار من خمس سنوات. جودة الموقع تعزز الاقتصاديات — زاوية بعرض 24 م على شريان رئيسي مع نقاط وصول ورؤية تبلغ 82/100 — وعدد السكان القابلين للوصول البالغ 41,000 ضمن نطاق المشي يدعم نموذج تناول الطعام في الموقع. المقايضة هي عمق المنافسة: تعمل ثلاث سلاسل مذكورة ضمن 500 م، لذا ستحتاج العلامة إلى موقع فئوي قابل للدفاع بدلاً من عرض عام.",
+  "key_evidence": [
+    {"signal": "الإيجار السنوي", "value": "432,000 ريال سعودي/سنة", "implication": "أساس الدخول أدنى فعلياً من إعلانات النظراء وليس أدنى من السعر المعروض فقط", "polarity": "positive"},
+    {"signal": "نسبة الإيجار مقابل المقارنات", "value": "النسبة المئوية 28% (مقارنة بـ 14 مقارنات في الحي)", "implication": "تسعير الصفقة أقل من السوق فعلياً وليس أقل من السعر المعروض فقط", "polarity": "positive"},
+    {"signal": "الواجهة", "value": "زاوية بعرض 24 م", "implication": "اللافتات تعمل في اتجاهي الحركة على شريان رئيسي", "polarity": "positive"},
+    {"signal": "نقاط الوصول والرؤية", "value": "82/100", "implication": "جودة الموقع تعزز ميزة الإيجار بدلاً من أن تقابلها", "polarity": "positive"},
+    {"signal": "عدد السكان القابلين للوصول", "value": "41,000 ضمن نطاق المشي", "implication": "مزيج تناول الطعام في الموقع قابل للدعم دون الاعتماد على التوصيل لملء المقاعد", "polarity": "positive"},
+    {"signal": "سلاسل مذكورة ضمن 500 م", "value": "3 منافسين", "implication": "النطاق يثبت صلاحية الفئة لكنه يرفع سقف التميز المطلوب", "polarity": "negative"}
+  ],
+  "risks": [
+    {"risk": "تعمل ثلاث سلاسل راسخة ضمن 500 م، اثنتان منها بحضور توصيل قوي — الدخول غير المتمايز سينافس على السعر.", "mitigation": "ابدأ بقائمة بطل من صنف واحد ونقطة سعر توصيل أكثر حدة في أول 90 يوماً؛ أعد النظر في مزيج تناول الطعام في الموقع بعد استقرار سرعة الطلبات."},
+    {"risk": "تعذّر التحقق من توفّر مواقف السيارات من البيانات الحالية — أمر معتاد لإعلانات عقار وليس عيباً في الموقع.", "mitigation": "تجوّل في الحي في ساعات الذروة أثناء الفحص؛ استأجر موقفين مجاورين على الشارع من الجار إذا كان معدل دوران الرصيف محدوداً."},
+    {"risk": "الإعلان منشور منذ 102 يوماً، أطول من المعتاد للوحدات الزاوية المميزة في هذا الحي.", "mitigation": "افتح التفاوض بنسبة 8–12% أقل من السعر المطلوب واطلب من المالك تحمّل مساهمة في التجهيز."}
+  ],
+  "comparison": "تشغّل سلسلة النظراء أ فرعين ضمن 180 م وتملك سلسلة النظراء ب فرعاً واحداً على بُعد 320 م من هذا الموقع — طلب فئوي راسخ عند هذه الزاوية وليس موقعاً جديداً. مقابل المرتبة 2 في هذا البحث، يتقدّم هذا الموقع في نسبة الإيجار (28% مقابل 47%) وفي الوصول والرؤية (82/100 مقابل 71/100)؛ تحمل المرتبة 2 مساحة أكبر هامشياً لكن دون تعرّض زاوية مماثل.",
+  "bottom_line": "هذه هي الصفقة في القائمة المختصرة — وقّعها قبل أن يتغيّر الإعلان."
+}
 ══════════════════════════════════════════════════════════════════════"""
 
 
