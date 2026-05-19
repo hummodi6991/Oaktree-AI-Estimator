@@ -457,7 +457,15 @@ export default function ExpansionMemoPanel({
                                 <ConfidenceBadge grade={cand.confidence_grade as string | undefined} />
                               </div>
                             </div>
-                            {rec.gate_verdict && <p className="ea-detail__text" style={{ fontStyle: "italic", marginTop: 8 }}>{rec.gate_verdict}</p>}
+                            {rec.gate_verdict && (
+                              <p className="ea-detail__text" style={{ fontStyle: "italic", marginTop: 8 }}>
+                                {rec.gate_verdict === "pass"
+                                  ? t("expansionAdvisor.gatePass")
+                                  : rec.gate_verdict === "fail"
+                                  ? t("expansionAdvisor.gateFail")
+                                  : t("expansionAdvisor.gateNeedsValidation")}
+                              </p>
+                            )}
                           </div>
                         )}
 

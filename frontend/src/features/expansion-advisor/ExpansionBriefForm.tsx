@@ -120,7 +120,7 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
               value={brief.brand_name}
               onChange={(e) => set("brand_name", e.target.value)}
               disabled={loading}
-              placeholder="e.g. Al Baik, Kudu"
+              placeholder={t("expansionAdvisor.brandExamplesPlaceholder")}
             />
             {touched && errors.brand_name && <span className="ea-form__error">{t(`expansionAdvisor.${errors.brand_name}`)}</span>}
           </div>
@@ -130,7 +130,6 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
               value={brief.category}
               onChange={(val) => set("category", val)}
               disabled={loading}
-              placeholder="Select a restaurant category"
             />
           </div>
         </div>

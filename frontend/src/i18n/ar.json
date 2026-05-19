@@ -530,7 +530,11 @@
     "targetArea": "المساحة المستهدفة (م²)",
     "targetDistricts": "الأحياء المستهدفة (مفصولة بفواصل)",
     "existingBranches": "الفروع الحالية (الاسم،خط العرض،خط الطول،الحي لكل سطر)",
-    "searchLimit": "Search limit",
+    "searchLimit": "حد البحث",
+    "categorySelectPlaceholder": "اختر فئة المطعم",
+    "brandExamplesPlaceholder": "مثال: البيك، كودو",
+    "categorySelectHelp": "اختر أقرب تطابق للحصول على نتائج بحث أفضل",
+    "clearCategoryAriaLabel": "مسح {{label}}",
     "runSearch": "تشغيل البحث",
     "loadingSearch": "جاري تحميل البحث…",
     "noCandidates": "لم يتم العثور على عقارات متاحة.",
@@ -1320,5 +1324,12 @@
     "area": "المساحة",
     "annualRent": "الإيجار السنوي",
     "streetWidth": "عرض الشارع"
+  },
+  "search": {
+    "placeholder": "ابحث عن القطع والشوارع والأحياء",
+    "loading": "جارٍ البحث…",
+    "unavailable": "البحث غير متاح",
+    "noMatches": "لا توجد نتائج مطابقة",
+    "resultsAriaLabel": "نتائج البحث"
   }
 }
