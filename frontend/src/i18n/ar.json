@@ -665,7 +665,35 @@
     "districtFit": "ملاءمة الحي",
     "recommendation": "التوصية",
     "headline": "العنوان",
-    "verdict": "الحكم",
+    "verdict": {
+      "go": "موصى به",
+      "consider": "بتحفظ",
+      "caution": "تجنّب"
+    },
+    "confidenceBadge": {
+      "prefix": "البيانات: {{grade}}",
+      "tooltip": "درجة موثوقية البيانات"
+    },
+    "scoreLabel": {
+      "competitionWhitespace": "انفتاح المنافسة",
+      "demandStrength": "قوة الطلب",
+      "economics": "الاقتصاديات",
+      "deliveryMarket": "سوق التوصيل",
+      "accessVisibility": "الوصول والرؤية",
+      "brandFit": "ملاءمة العلامة",
+      "confidence": "جودة البيانات",
+      "listingQuality": "جودة الإعلان",
+      "landlordSignal": "سلوك المالك",
+      "chainStrength": "قوة السلاسل المنافسة",
+      "providerDensity": "كثافة مزودي التوصيل",
+      "marketGap": "الفجوة السوقية",
+      "multiPlatform": "تعدد المنصات",
+      "deliveryCompetition": "منافسة التوصيل",
+      "zoningFit": "ملاءمة التنظيم",
+      "frontage": "الواجهة",
+      "parking": "مواقف السيارات",
+      "cannibalization": "التهام الفروع"
+    },
     "selectCandidates": "اختر ٢\u2013٤ مرشحين للمقارنة",
     "compareSelected": "مقارنة ({{count}})",
     "executiveReport": "التقرير التنفيذي",

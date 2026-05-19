@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type { CandidateMemoResponse, RecommendationReportResponse } from "../../lib/api/expansionAdvisor";
 import ScorePill from "./ScorePill";
 import ConfidenceBadge from "./ConfidenceBadge";
@@ -14,29 +15,44 @@ function toList(input: unknown): string[] {
   return Array.isArray(input) ? input.map(String) : [];
 }
 
-/** Humanize score component keys for the breakdown */
-const SCORE_LABEL_MAP: Record<string, string> = {
-  competition_whitespace: "Competitor Openness",
-  demand_potential: "Demand Strength",
-  occupancy_economics: "Economics",
-  delivery_demand: "Delivery Market",
-  access_visibility: "Access & Visibility",
-  brand_fit: "Brand Fit",
-  confidence: "Data Quality",
-  provider_density: "Provider Density",
-  provider_whitespace: "Market Gap",
-  multi_platform_presence: "Multi-platform",
-  delivery_competition: "Delivery Competition",
-  zoning_fit: "Zoning Fit",
-  frontage: "Frontage",
-  parking: "Parking",
-  economics: "Economics",
-  cannibalization: "Cannibalization",
+/** Humanize score component keys for the breakdown — values are i18n keys. */
+const SCORE_LABEL_KEYS: Record<string, string> = {
+  competition_whitespace: "expansionAdvisor.scoreLabel.competitionWhitespace",
+  demand_potential: "expansionAdvisor.scoreLabel.demandStrength",
+  occupancy_economics: "expansionAdvisor.scoreLabel.economics",
+  delivery_demand: "expansionAdvisor.scoreLabel.deliveryMarket",
+  access_visibility: "expansionAdvisor.scoreLabel.accessVisibility",
+  brand_fit: "expansionAdvisor.scoreLabel.brandFit",
+  confidence: "expansionAdvisor.scoreLabel.confidence",
+  listing_quality: "expansionAdvisor.scoreLabel.listingQuality",
+  landlord_signal: "expansionAdvisor.scoreLabel.landlordSignal",
+  chain_strength: "expansionAdvisor.scoreLabel.chainStrength",
+  provider_density: "expansionAdvisor.scoreLabel.providerDensity",
+  provider_whitespace: "expansionAdvisor.scoreLabel.marketGap",
+  multi_platform_presence: "expansionAdvisor.scoreLabel.multiPlatform",
+  delivery_competition: "expansionAdvisor.scoreLabel.deliveryCompetition",
+  zoning_fit: "expansionAdvisor.scoreLabel.zoningFit",
+  frontage: "expansionAdvisor.scoreLabel.frontage",
+  parking: "expansionAdvisor.scoreLabel.parking",
+  economics: "expansionAdvisor.scoreLabel.economics",
+  cannibalization: "expansionAdvisor.scoreLabel.cannibalization",
 };
 
-function humanizeScoreLabel(key: string): string {
-  const cleaned = key.replace(/_score$/, "").replace(/_/g, " ");
-  return SCORE_LABEL_MAP[key.replace(/_score$/, "")] || cleaned.replace(/^\w/, (c) => c.toUpperCase());
+/** Localized verdict-pill labels, keyed off the lowercased raw API token. */
+const VERDICT_I18N_KEYS: Record<string, string> = {
+  go: "expansionAdvisor.verdict.go",
+  consider: "expansionAdvisor.verdict.consider",
+  caution: "expansionAdvisor.verdict.caution",
+};
+
+export function humanizeScoreLabel(key: string, t: TFunction): string {
+  const base = key.replace(/_score$/, "");
+  const i18nKey = SCORE_LABEL_KEYS[base];
+  if (i18nKey) {
+    const translated = t(i18nKey);
+    if (translated !== i18nKey) return translated;
+  }
+  return base.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
 type MemoTab = "economics" | "market" | "site" | "risks" | "breakdown";
@@ -243,7 +259,7 @@ export default function ExpansionMemoPanel({
                       >
                         {rec.verdict && (
                           <span className={`ea-memo-verdict-badge ea-badge ea-badge--${verdictColor}`}>
-                            {rec.verdict}
+                            {t(VERDICT_I18N_KEYS[rec.verdict.toLowerCase()] ?? "", { defaultValue: rec.verdict })}
                           </span>
                         )}
                         <ConfidenceBadge grade={cand.confidence_grade as string | undefined} />
@@ -787,7 +803,7 @@ export default function ExpansionMemoPanel({
                         <div className="ea-detail__grid">
                           {Object.entries(breakdown.weighted_components).map(([key, val]) => (
                             <div key={key} className="ea-detail__kv">
-                              <span className="ea-detail__kv-label">{humanizeScoreLabel(key)}</span>
+                              <span className="ea-detail__kv-label">{humanizeScoreLabel(key, t)}</span>
                               <span className="ea-detail__kv-value">{typeof val === "number" ? fmtScore(val) : String(val ?? "—")}</span>
                             </div>
                           ))}
