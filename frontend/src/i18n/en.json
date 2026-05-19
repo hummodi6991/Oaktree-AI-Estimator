@@ -479,6 +479,10 @@
     "targetDistricts": "Target Districts (comma-separated)",
     "existingBranches": "Existing Branches (name,lat,lon,district per line)",
     "searchLimit": "Search limit",
+    "categorySelectPlaceholder": "Select a restaurant category",
+    "brandExamplesPlaceholder": "e.g. Al Baik, Kudu",
+    "categorySelectHelp": "Choose the closest match for better search quality",
+    "clearCategoryAriaLabel": "Clear {{label}}",
     "runSearch": "Run Search",
     "loadingSearch": "Loading search…",
     "noCandidates": "No available listings found.",
@@ -1321,5 +1325,12 @@
     "area": "Area",
     "annualRent": "Annual rent",
     "streetWidth": "Street width"
+  },
+  "search": {
+    "placeholder": "Search by parcels, streets, districts",
+    "loading": "Searching…",
+    "unavailable": "Search unavailable",
+    "noMatches": "No matches found",
+    "resultsAriaLabel": "Search results"
   }
 }

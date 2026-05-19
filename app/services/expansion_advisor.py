@@ -5543,7 +5543,24 @@ def _build_strengths_and_risks(
     return strengths[:4], risks[:4], strengths_structured[:4], risks_structured[:4]
 
 
-def _recommended_use_case(service_model: str, area_m2: float) -> str:
+# PR #4d: Arabic phrases for the recommended use case, keyed by the
+# locale-invariant token from _recommended_use_case_token. The English
+# branches below are byte-untouched; the AR branch dispatches through
+# the existing token mirror so the two stay in lockstep.
+_RECOMMENDED_USE_CASE_AR: dict[str, str] = {
+    "flagship_dine_in": "مطعم رئيسي للتناول في الموقع",
+    "neighborhood_dine_in": "مطعم تناول في الموقع للحي",
+    "delivery_led_branch": "فرع يعتمد على التوصيل",
+    "compact_cafe": "مقهى صغير",
+    "destination_cafe": "مقهى وجهة",
+    "neighborhood_qsr": "مطعم خدمة سريعة للحي",
+}
+
+
+def _recommended_use_case(service_model: str, area_m2: float, lang: str = "en") -> str:
+    if lang == "ar":
+        token = _recommended_use_case_token(service_model, area_m2)
+        return _RECOMMENDED_USE_CASE_AR.get(token, _RECOMMENDED_USE_CASE_AR["neighborhood_qsr"])
     if service_model == "dine_in":
         return "flagship dine-in" if area_m2 >= 260 else "neighborhood dine-in"
     if service_model == "delivery_first":
@@ -10608,6 +10625,7 @@ def get_candidate_memo(db: Session, candidate_id: str, lang: str = "en") -> dict
     best_use_case = _recommended_use_case(
         str(candidate.get("service_model") or "qsr"),
         _safe_float(candidate.get("area_m2")),
+        lang=lang,
     )
     main_watchout = risks[0] if risks else "Validate lease and capex assumptions before commitment"
     district = candidate.get("district_display") or candidate.get("district") or "Riyadh"

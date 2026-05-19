@@ -4681,3 +4681,59 @@ def test_feature_snapshot_parcel_candidate_omits_listing_quality_signals(
     # brand_presence still has the chain_strength provenance key, but with
     # a None value because the bulk enricher returned no chain_strength rows.
     assert snapshot["brand_presence"]["top_chain_strength_name"] is None
+
+
+# ---------------------------------------------------------------------------
+# PR #4d §1 — _recommended_use_case Arabic localization
+# ---------------------------------------------------------------------------
+
+# Snapshot of every English phrase the pre-PR-4d function could return,
+# keyed by (service_model, area_m2). Used to prove the EN branch is
+# byte-identical after adding the ``lang`` parameter.
+_USE_CASE_EN_SNAPSHOT = {
+    ("dine_in", 300.0): "flagship dine-in",
+    ("dine_in", 200.0): "neighborhood dine-in",
+    ("delivery_first", 150.0): "delivery-led branch",
+    ("cafe", 150.0): "compact cafe",
+    ("cafe", 220.0): "destination cafe",
+    ("qsr", 200.0): "neighborhood qsr",
+}
+
+_USE_CASE_AR_SNAPSHOT = {
+    ("dine_in", 300.0): "مطعم رئيسي للتناول في الموقع",
+    ("dine_in", 200.0): "مطعم تناول في الموقع للحي",
+    ("delivery_first", 150.0): "فرع يعتمد على التوصيل",
+    ("cafe", 150.0): "مقهى صغير",
+    ("cafe", 220.0): "مقهى وجهة",
+    ("qsr", 200.0): "مطعم خدمة سريعة للحي",
+}
+
+
+def test_recommended_use_case_english_is_byte_identical():
+    """The default (lang='en') branch must not drift from the pre-PR-4d output."""
+    for (service_model, area_m2), expected in _USE_CASE_EN_SNAPSHOT.items():
+        # Implicit default and explicit lang="en" both return the EN phrase.
+        assert (
+            expansion_service._recommended_use_case(service_model, area_m2) == expected
+        )
+        assert (
+            expansion_service._recommended_use_case(service_model, area_m2, lang="en")
+            == expected
+        )
+
+
+def test_recommended_use_case_arabic_phrases():
+    """lang='ar' returns the six pre-approved Arabic phrases."""
+    for (service_model, area_m2), expected in _USE_CASE_AR_SNAPSHOT.items():
+        assert (
+            expansion_service._recommended_use_case(service_model, area_m2, lang="ar")
+            == expected
+        )
+
+
+def test_recommended_use_case_unknown_locale_falls_back_to_english():
+    """An unexpected lang token is treated as English (no crash, no key leak)."""
+    assert (
+        expansion_service._recommended_use_case("qsr", 200.0, lang="fr")
+        == "neighborhood qsr"
+    )

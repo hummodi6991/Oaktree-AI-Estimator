@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { buildApiUrl } from "../api";
 import type { SearchItem, SearchResponse } from "../types/search";
 
@@ -10,6 +11,7 @@ const DEBOUNCE_MS = 250;
 const MIN_QUERY_LENGTH = 2;
 
 export default function SearchBar({ onSelect }: SearchBarProps) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -52,7 +54,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
         if (requestId !== requestIdRef.current) return;
         setItems([]);
         setOpen(true);
-        setError(fetchError instanceof Error ? fetchError.message : "Search unavailable");
+        setError(fetchError instanceof Error ? fetchError.message : t("search.unavailable"));
       } finally {
         if (requestId !== requestIdRef.current) return;
         setLoading(false);
@@ -63,7 +65,7 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
       controller.abort();
       window.clearTimeout(handle);
     };
-  }, [trimmed]);
+  }, [trimmed, t]);
 
   return (
     <div className="ui-v2-search app-topbar__search" onBlur={() => window.setTimeout(() => setOpen(false), 120)}>
@@ -73,14 +75,14 @@ export default function SearchBar({ onSelect }: SearchBarProps) {
         value={query}
         onFocus={() => setOpen(items.length > 0 || Boolean(error))}
         onChange={(event) => setQuery(event.target.value)}
-        placeholder="Search by parcels, streets, districts"
-        aria-label="Search by parcels, streets, districts"
+        placeholder={t("search.placeholder")}
+        aria-label={t("search.placeholder")}
       />
-      {loading ? <span className="ui-v2-search__loading">Searching…</span> : null}
+      {loading ? <span className="ui-v2-search__loading">{t("search.loading")}</span> : null}
       {open ? (
-        <div className="ui-v2-search__results" role="listbox" aria-label="Search results">
-          {error ? <div className="ui-v2-search__status">Search unavailable</div> : null}
-          {!error && !items.length ? <div className="ui-v2-search__status">No matches found</div> : null}
+        <div className="ui-v2-search__results" role="listbox" aria-label={t("search.resultsAriaLabel")}>
+          {error ? <div className="ui-v2-search__status">{t("search.unavailable")}</div> : null}
+          {!error && !items.length ? <div className="ui-v2-search__status">{t("search.noMatches")}</div> : null}
           {items.map((item) => (
             <button
               key={`${item.type}-${item.id}`}

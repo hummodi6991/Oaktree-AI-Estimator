@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   CATEGORY_GROUPS,
   CATEGORY_OPTIONS,
@@ -28,8 +29,10 @@ export default function CategorySelect({
   value,
   onChange,
   disabled = false,
-  placeholder = "Select a restaurant category",
+  placeholder,
 }: Props) {
+  const { t } = useTranslation();
+  const resolvedPlaceholder = placeholder ?? t("expansionAdvisor.categorySelectPlaceholder");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -161,7 +164,7 @@ export default function CategorySelect({
                   clearSelection();
                 }}
                 tabIndex={-1}
-                aria-label={`Clear ${displayLabel}`}
+                aria-label={t("expansionAdvisor.clearCategoryAriaLabel", { label: displayLabel })}
               >
                 ×
               </button>
@@ -182,7 +185,7 @@ export default function CategorySelect({
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
           disabled={disabled}
-          placeholder={value && !open ? "" : placeholder}
+          placeholder={value && !open ? "" : resolvedPlaceholder}
           autoComplete="off"
           role="combobox"
           aria-expanded={open}
@@ -198,7 +201,7 @@ export default function CategorySelect({
       {/* Helper text */}
       {!value && !open && (
         <span className="ea-category-select__helper">
-          Choose the closest match for better search quality
+          {t("expansionAdvisor.categorySelectHelp")}
         </span>
       )}
 

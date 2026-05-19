@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
+import "../../i18n";
 import CategorySelect from "./CategorySelect";
 import { CATEGORY_OPTIONS, findCategoryOption } from "./categoryOptions";
 
