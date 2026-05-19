@@ -11024,7 +11024,7 @@ def get_recommendation_report(db: Session, search_id: str, lang: str = "en") -> 
             "validation_clear_count": validation_clear_count,
             "why_best": why_best,
             "main_risk": (best.get("key_risks_json") or ["Validate lease and execution assumptions"])[0],
-            "best_format": _recommended_use_case(str(search.get("service_model") or "qsr"), _safe_float(best.get("area_m2"))),
+            "best_format": _recommended_use_case(str(search.get("service_model") or "qsr"), _safe_float(best.get("area_m2")), lang=lang),
             "summary": summary_text,
             "report_summary": report_summary_text,
         },

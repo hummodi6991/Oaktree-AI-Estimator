@@ -4737,3 +4737,65 @@ def test_recommended_use_case_unknown_locale_falls_back_to_english():
         expansion_service._recommended_use_case("qsr", 200.0, lang="fr")
         == "neighborhood qsr"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR #4d follow-up §1 — get_recommendation_report.best_format honors lang
+# ---------------------------------------------------------------------------
+
+def _install_recommendation_report_fixture(
+    monkeypatch, *, service_model: str, area_m2: float
+) -> None:
+    """Stub get_search and get_candidates for a single-candidate report fixture."""
+    monkeypatch.setattr(
+        expansion_service,
+        "get_search",
+        lambda *_a, **_kw: {
+            "id": "search-1",
+            "service_model": service_model,
+            "brand_profile": {"expansion_goal": "balanced"},
+        },
+    )
+    monkeypatch.setattr(
+        expansion_service,
+        "get_candidates",
+        lambda *_a, **_kw: [
+            {
+                "id": "c1", "final_score": 80, "brand_fit_score": 70, "economics_score": 65,
+                "area_m2": area_m2, "district": "Olaya", "key_risks_json": ["risk"],
+                "gate_status_json": {"overall_pass": True},
+                "confidence_grade": "B", "confidence_score": 70,
+                "rank_position": 1, "score_breakdown_json": {"final_score": 80},
+                "top_positives_json": [], "top_risks_json": ["risk"],
+                "feature_snapshot_json": {"parcel_area_m2": area_m2, "data_completeness_score": 70},
+            }
+        ],
+    )
+
+
+def test_get_recommendation_report_best_format_english_byte_identical(monkeypatch):
+    """best_format is byte-identical to the pre-PR EN output when lang is
+    omitted, lang='en', or an unknown locale (e.g. 'fr' → EN fallback)."""
+    for (service_model, area_m2), expected in _USE_CASE_EN_SNAPSHOT.items():
+        _install_recommendation_report_fixture(
+            monkeypatch, service_model=service_model, area_m2=area_m2
+        )
+        # Implicit default.
+        report = get_recommendation_report(FakeDB(), "search-1")
+        assert report["recommendation"]["best_format"] == expected, (service_model, area_m2)
+        # Explicit lang="en".
+        report = get_recommendation_report(FakeDB(), "search-1", lang="en")
+        assert report["recommendation"]["best_format"] == expected, (service_model, area_m2)
+        # Unknown locale → English fallback.
+        report = get_recommendation_report(FakeDB(), "search-1", lang="fr")
+        assert report["recommendation"]["best_format"] == expected, (service_model, area_m2)
+
+
+def test_get_recommendation_report_best_format_arabic(monkeypatch):
+    """best_format returns the matching AR phrase when lang='ar'."""
+    for (service_model, area_m2), expected in _USE_CASE_AR_SNAPSHOT.items():
+        _install_recommendation_report_fixture(
+            monkeypatch, service_model=service_model, area_m2=area_m2
+        )
+        report = get_recommendation_report(FakeDB(), "search-1", lang="ar")
+        assert report["recommendation"]["best_format"] == expected, (service_model, area_m2)
