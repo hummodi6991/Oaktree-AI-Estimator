@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { confidenceColor } from "./formatHelpers";
 
 type ConfidenceBadgeProps = {
@@ -7,11 +8,12 @@ type ConfidenceBadgeProps = {
 };
 
 export default function ConfidenceBadge({ grade, compact }: ConfidenceBadgeProps) {
+  const { t } = useTranslation();
   const color = confidenceColor(grade);
   const label = grade || "—";
   return (
-    <span className={`ea-badge ea-badge--${color}`} title="Data confidence grade">
-      {compact ? label : `Data: ${label}`}
+    <span className={`ea-badge ea-badge--${color}`} title={t("expansionAdvisor.confidenceBadge.tooltip")}>
+      {compact ? label : t("expansionAdvisor.confidenceBadge.prefix", { grade: label })}
     </span>
   );
 }

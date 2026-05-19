@@ -613,7 +613,32 @@
     "districtFit": "District fit",
     "recommendation": "Recommendation",
     "headline": "Headline",
-    "verdict": "Verdict",
+    "verdict": {
+      "go": "Go",
+      "consider": "Consider",
+      "caution": "Caution"
+    },
+    "confidenceBadge": {
+      "prefix": "Data: {{grade}}",
+      "tooltip": "Data confidence grade"
+    },
+    "scoreLabel": {
+      "competitionWhitespace": "Competitor Openness",
+      "demandStrength": "Demand Strength",
+      "economics": "Economics",
+      "deliveryMarket": "Delivery Market",
+      "accessVisibility": "Access & Visibility",
+      "brandFit": "Brand Fit",
+      "confidence": "Data Quality",
+      "providerDensity": "Provider Density",
+      "marketGap": "Market Gap",
+      "multiPlatform": "Multi-platform",
+      "deliveryCompetition": "Delivery Competition",
+      "zoningFit": "Zoning Fit",
+      "frontage": "Frontage",
+      "parking": "Parking",
+      "cannibalization": "Cannibalization"
+    },
     "selectCandidates": "Select 2\u20134 candidates to compare",
     "compareSelected": "Compare ({{count}})",
     "executiveReport": "Executive Report",

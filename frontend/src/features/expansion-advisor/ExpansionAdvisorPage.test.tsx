@@ -2822,7 +2822,9 @@ describe("Memo panel structured score breakdown and feature snapshot", () => {
       />,
     );
     expect(html).toContain("ea-drawer");
-    expect(html).toContain("go");
+    // PR #4b localizes the verdict pill: the raw "go" token stays on the API,
+    // the rendered surface shows the localized "Go".
+    expect(html).toContain("Go");
   });
 
   it("renders memo with feature snapshot data without crashing", () => {
