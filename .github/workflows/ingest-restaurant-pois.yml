@@ -112,7 +112,7 @@ jobs:
           from app.ingest.restaurant_pois import (
               ingest_overture_restaurants,
               ingest_osm_restaurants,
-              ingest_delivery_platforms,
+              upsert_restaurant_poi_from_delivery,
           )
 
           sources = '${{ steps.sources.outputs.list }}'.split(',')
@@ -147,11 +147,16 @@ jobs:
                   db.close()
 
           if 'delivery' in sources:
+              db = SessionLocal()
               try:
-                  results['delivery_platforms'] = ingest_delivery_platforms(sources=delivery_sources)
+                  results['delivery_platforms'] = upsert_restaurant_poi_from_delivery(
+                      db, platforms=delivery_sources
+                  )
               except Exception as exc:
-                  logger.error('Delivery ingestion failed: %s', exc)
+                  logger.error('Stage 2 POI upsert from delivery failed: %s', exc)
                   results['delivery_platforms'] = 0
+              finally:
+                  db.close()
 
           logger.info('Ingestion complete: %s', results)
           "
