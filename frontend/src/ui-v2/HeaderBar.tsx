@@ -1,6 +1,7 @@
 import { GlobeAltIcon } from "@heroicons/react/24/outline";
 import { useTranslation } from "react-i18next";
 import type { SearchItem } from "../types/search";
+import { restartInLocale } from "../i18n";
 import SearchBar from "./SearchBar";
 
 type HeaderBarProps = {
@@ -24,7 +25,7 @@ export default function HeaderBar({ onSearchSelect }: HeaderBarProps) {
           <button
             type="button"
             className="oak-btn oak-btn--secondary oak-btn--md"
-            onClick={() => void i18n.changeLanguage(isArabic ? "en" : "ar")}
+            onClick={() => restartInLocale(isArabic ? "en" : "ar")}
           >
             <GlobeAltIcon width={16} height={16} />
             <span>{isArabic ? "English" : "العربية"}</span>

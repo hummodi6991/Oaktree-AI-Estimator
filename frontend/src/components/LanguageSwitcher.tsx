@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { runFormatSanityCheck } from "../i18n/format";
+import { restartInLocale } from "../i18n";
 
 const LANGUAGE_OPTIONS = [
   { value: "en", labelKey: "language.english" },
@@ -13,7 +14,7 @@ export default function LanguageSwitcher() {
   const labelRef = useRef<HTMLSpanElement | null>(null);
 
   const handleChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    void i18n.changeLanguage(event.target.value);
+    restartInLocale(event.target.value);
   };
 
   const currentLanguage = i18n.language.startsWith("ar") ? "ar" : "en";

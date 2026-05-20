@@ -59,35 +59,27 @@ i18n.on("languageChanged", (locale) => {
 // locale-bound state (memo/report payloads, expanded panels, candidate
 // selections, MapLibre tiles, React Query cache) survives the toggle.
 //
-// __lastObservedLocale tracks the last locale we saw. It absorbs i18next's
-// boot-time languageChanged fire (so opening the app in AR does not loop
-// reload) and suppresses identity changes (changeLanguage(currentLocale)).
-// We track manually instead of comparing document.documentElement.lang
-// because the listener above already mutates that attribute before this
-// one runs (listeners fire in attachment order), so a doc-based check
-// would always read the new value and never reload.
-let __lastObservedLocale: string | null = null;
-
-i18n.on("languageChanged", (locale) => {
+// Driven directly from the UI click handlers (LanguageSwitcher, HeaderBar)
+// via restartInLocale instead of routing through i18next's languageChanged
+// event. Safari did not reliably fire languageChanged during init(), so
+// the previous boot-guard absorbed the first real user toggle and the
+// page never reloaded. Persisting + reloading at the click site removes
+// that dependency — on the next load, getInitialLocale() reads back the
+// stored choice.
+const restartInLocale = (locale: string) => {
   const normalized = normalizeLocale(locale);
-
-  if (__lastObservedLocale === null) {
-    __lastObservedLocale = normalized;
-    return;
-  }
-
-  if (__lastObservedLocale === normalized) {
-    return;
-  }
-
-  __lastObservedLocale = normalized;
-
-  if (typeof window !== "undefined") {
-    window.location.reload();
-  }
-});
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(LOCALE_STORAGE_KEY, normalized);
+  window.location.reload();
+};
 
 applyDocumentLocale(normalizeLocale(i18n.language));
 
-export { LOCALE_STORAGE_KEY, applyDocumentLocale, getInitialLocale, normalizeLocale };
+export {
+  LOCALE_STORAGE_KEY,
+  applyDocumentLocale,
+  getInitialLocale,
+  normalizeLocale,
+  restartInLocale,
+};
 export default i18n;

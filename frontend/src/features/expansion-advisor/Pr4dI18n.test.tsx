@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
 import "../../i18n";
@@ -254,28 +254,43 @@ describe("PR #4e §4 — F&B outlet fallback localizes via threaded t", () => {
 
 /* ─── language-change reload behaviour ──────────────────────────────── */
 
-describe("language-change reload — boot vs user toggle", () => {
-  // We cannot exercise window.location.reload() in jsdom (it is a no-op
-  // there and logs to stderr). What we DO assert: the listener is wired
-  // at module load, and an identity changeLanguage call resolves without
-  // throwing — proving the identity-skip path returns early.
+describe("restartInLocale — persist + reload from the click site", () => {
+  // The reload is driven from the UI click handlers (not from an i18next
+  // listener), so it works the same on Safari and Chrome. The test env is
+  // plain node (no jsdom), so we stub `window` for the duration of the
+  // test and assert the helper persists the chosen locale and calls
+  // reload exactly once per invocation.
 
-  it("the reload listener is registered at module load", () => {
-    // i18next v25 stores listeners in observers[event] as a Map keyed by
-    // the listener function; older shapes used _events[event] arrays.
-    // Accept either, count both.
-    const i18nAny = i18n as any;
-    const observerMap = i18nAny.observers?.languageChanged;
-    const legacyArray = i18nAny._events?.languageChanged;
-    const count =
-      (observerMap && typeof observerMap.size === "number" ? observerMap.size : 0) +
-      (Array.isArray(legacyArray) ? legacyArray.length : legacyArray ? 1 : 0);
-    expect(count).toBeGreaterThanOrEqual(1);
-  });
+  it("persists the normalized locale and calls window.location.reload()", async () => {
+    const { restartInLocale, LOCALE_STORAGE_KEY } = await import("../../i18n");
+    const reload = vi.fn();
+    const store: Record<string, string> = {};
+    const fakeWindow = {
+      localStorage: {
+        getItem: (key: string) => (key in store ? store[key] : null),
+        setItem: (key: string, value: string) => {
+          store[key] = value;
+        },
+        removeItem: (key: string) => {
+          delete store[key];
+        },
+      },
+      location: { reload },
+    };
+    const g = globalThis as any;
+    const originalWindow = g.window;
+    g.window = fakeWindow;
+    try {
+      restartInLocale("ar");
+      expect(store[LOCALE_STORAGE_KEY]).toBe("ar");
+      expect(reload).toHaveBeenCalledTimes(1);
 
-  it("changing language to the same locale does not throw", async () => {
-    const current = i18n.language;
-    await i18n.changeLanguage(current);
-    expect(i18n.language).toBe(current);
+      restartInLocale("en-US");
+      expect(store[LOCALE_STORAGE_KEY]).toBe("en");
+      expect(reload).toHaveBeenCalledTimes(2);
+    } finally {
+      if (originalWindow === undefined) delete g.window;
+      else g.window = originalWindow;
+    }
   });
 });
