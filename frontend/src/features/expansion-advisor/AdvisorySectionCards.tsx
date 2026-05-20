@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type {
   MemoCompetitiveLandscape,
   MemoFinancialFraming,
@@ -24,10 +25,17 @@ function FieldRow({ label, value }: FieldRowProps) {
   );
 }
 
-function pctFromFraction(frac: number | null): string | null {
+function pctFromFraction(frac: number | null, t: TFunction): string | null {
   if (frac == null || !Number.isFinite(frac)) return null;
   const clamped = Math.max(0, Math.min(1, frac));
-  return `${Math.round(clamped * 100)}th percentile`;
+  const pct = Math.round(clamped * 100);
+  if (pct >= 40 && pct <= 60) {
+    return t("expansionAdvisor.advisorySection.rentPositioningMid");
+  }
+  if (pct < 40) {
+    return t("expansionAdvisor.advisorySection.rentPositioningLow", { value: 100 - pct });
+  }
+  return t("expansionAdvisor.advisorySection.rentPositioningHigh", { value: pct });
 }
 
 function PropertyOverviewCard({
@@ -88,7 +96,7 @@ function FinancialFramingCard({
   if (section.comparable_median_annual_rent_sar != null) {
     fieldEntries.push([t("expansionAdvisor.advisorySection.comparableMedian"), fmtSAR(section.comparable_median_annual_rent_sar)]);
   }
-  const pctLabel = pctFromFraction(section.rent_percentile_vs_comparables);
+  const pctLabel = pctFromFraction(section.rent_percentile_vs_comparables, t);
   if (pctLabel) fieldEntries.push([t("expansionAdvisor.advisorySection.rentPercentile"), pctLabel]);
   if (section.comparable_n != null) fieldEntries.push([t("expansionAdvisor.advisorySection.comparableN"), section.comparable_n]);
   if (section.comparable_scope) fieldEntries.push([t("expansionAdvisor.advisorySection.comparableScope"), section.comparable_scope]);
@@ -238,10 +246,10 @@ function CompetitiveLandscapeCard({
               {next.annual_rent_sar != null && (
                 <FieldRow label={t("expansionAdvisor.annualRent")} value={fmtSAR(next.annual_rent_sar)} />
               )}
-              {pctFromFraction(next.rent_percentile_vs_comparables) && (
+              {pctFromFraction(next.rent_percentile_vs_comparables, t) && (
                 <FieldRow
                   label={t("expansionAdvisor.advisorySection.rentPercentile")}
-                  value={pctFromFraction(next.rent_percentile_vs_comparables)}
+                  value={pctFromFraction(next.rent_percentile_vs_comparables, t)}
                 />
               )}
               {next.access_visibility_score != null && (

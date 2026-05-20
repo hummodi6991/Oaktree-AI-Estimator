@@ -49,7 +49,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v8-rating-velocity-2026-05"
+MEMO_PROMPT_VERSION = "v9-lay-friendly-percentile-2026-05"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -1362,12 +1362,35 @@ Financial framing:
   same band/type." Do NOT claim district scope when the label is city-scoped —
   honesty about scope is non-negotiable.
 - score_breakdown.economics_detail.rent_burden.percentile: a 0–1 fraction.
-  Multiply by 100 to phrase ("at the 69th percentile vs comparables").
+  This is the raw signal. Do NOT phrase it as an ordinal percentile in
+  any user-visible prose — lay readers misread "low percentile" as a
+  bad score when it actually means rent is cheaper than most comparables.
+  Instead, use one of THREE polarity-keyed templates, chosen by the
+  fraction's zone:
+    - LOW zone (fraction ≤ 0.39 — rent is below most comparables, good
+      for the operator): "cheaper than about N% of nearby comparables"
+      where N = round((1 − fraction) × 100). Example: 0.28 →
+      "cheaper than about 72% of nearby comparables".
+    - MID zone (0.40 ≤ fraction ≤ 0.60 — at-market): "around the
+      district median rent". No number.
+    - HIGH zone (fraction ≥ 0.61 — rent is above most comparables, bad
+      for the operator): "more expensive than about N% of nearby
+      comparables" where N = round(fraction × 100). Example: 0.88 →
+      "more expensive than about 88% of nearby comparables".
+  Substitute "district comparables", "citywide comparables in the same
+  band/type", or "citywide comparables" for "nearby comparables" based
+  on comparable_source_label. The literal phrase "Nth percentile" is
+  BANNED in headline_recommendation, ranking_explanation, comparison,
+  bottom_line, financial_framing.summary, financial_framing.thesis,
+  competitive_landscape.summary, and competitive_landscape.saturation_thesis.
+  The raw 0–1 fraction stays in the typed financial_framing.rent_percentile_vs_comparables
+  field — the frontend re-renders it. (For Arabic memos, AR Rule 8
+  carries the parallel Arabic templates — match its shape.)
 - value_score (0–100) + value_band ("best_value" | "neutral" | "above_market"):
   the derived "strong location at a fair price" chip. When value_band is
   "best_value" or "above_market", financial_framing.thesis MUST cite it in
   one sentence (e.g., "Listing reads as best-value: revenue index 78 with
-  rent at the 22nd percentile of district peers"). When value_band is
+  rent cheaper than about 78% of district peers"). When value_band is
   "neutral" or null, do not mention value_score by name.
 
 Property overview:
@@ -1428,7 +1451,7 @@ HARD RULES:
 - The headline_recommendation, ranking_explanation, and bottom_line must agree directionally with `deterministic_verdict`, `overall_pass`, and `final_rank`. If `final_rank == 1` AND `final_score >= 70`, the headline must be 'Recommend' — not 'Recommend with reservations', not 'Consider'. If `overall_pass == false`, the headline must be 'Decline'.
 - key_evidence must be 4–6 items. Every value MUST include a unit. A bare number ('81.48', '15') is a hard error — write '81/100', '15 count', '15 m frontage', 'SAR 480,000/yr'.
 - Polarity discipline: 'neutral' is rare. If the implication mentions a concern, drawback, or risk, polarity is 'negative'. If it strengthens the investment case, 'positive'. The implication and polarity must agree.
-- Neutral-case honesty: for the rent-vs-comparables percentile specifically, treat 40th–60th percentile as essentially at-market — neither a discount nor a premium. Do NOT spin a 45th–55th percentile result as "competitive rent" or "favorable pricing." Phrase it plainly: "asking rent of SAR X/yr is at the 52nd percentile vs N comparables — essentially at market." Polarity for an at-market rent signal MUST be 'neutral'. The investment case must rest on other signals (demand, frontage, demographics, competition density), not on rent being something it isn't. This ban applies to the implication string of any rent or rent-percentile evidence item, not just the headline or ranking_explanation. Banned vocabulary anywhere in the rent or rent-percentile signal — including its implication string — for 40th–60th percentile rows: "competitive", "favorable", "well-positioned", "attractive pricing", "market-friendly", "advantageous". Replace with neutral phrasing: "essentially at market", "market-clearing", "neither premium nor discount", "at the median for comparable listings". The implication for an at-market rent must name an investment consequence ("offers no entry advantage; margin must come from operations", "deal pricing is market-clearing"), not editorialize the price.
+- Neutral-case honesty: for the rent-vs-comparables percentile specifically, treat the MID zone (fraction 0.40–0.60) as essentially at-market — neither a discount nor a premium. Do NOT spin a fraction 0.45–0.55 result as "competitive rent" or "favorable pricing." Phrase it plainly: "asking rent of SAR X/yr is around the district median across N comparables — essentially at market." Polarity for an at-market rent signal MUST be 'neutral'. The investment case must rest on other signals (demand, frontage, demographics, competition density), not on rent being something it isn't. This ban applies to the implication string of any rent or rent-percentile evidence item, not just the headline or ranking_explanation. Banned vocabulary anywhere in the rent or rent-percentile signal — including its implication string — for MID-zone rows: "competitive", "favorable", "well-positioned", "attractive pricing", "market-friendly", "advantageous". Replace with neutral phrasing: "essentially at market", "market-clearing", "neither premium nor discount", "at the median for comparable listings". The implication for an at-market rent must name an investment consequence ("offers no entry advantage; margin must come from operations", "deal pricing is market-clearing"), not editorialize the price.
 - Implication phrasing: name the investment consequence in one clause, not a description. Write "the spread justifies the entry rent" — not "rent is below median". Write "signage works in both traffic directions" — not "site is on a corner".
 - risks must be 2–4 distinct items. One-risk memos are a defect. Draw from gates.failed, gates.unknown, listing staleness, parking unknowns, frontage signals, cannibalization, brand saturation. Each item needs a `risk` field; the `mitigation` field is optional.
 - Mitigations must be specific tactics the operator can act on (e.g. 'Lease curbside pickup zone from neighbour', 'Partner with HungerStation for delivery-first hours in the first 90 days', 'Add LED frontage signage on the corner approach'). If you can only think of generic advice like 'consider marketing strategies', 'focus on differentiation', 'enhance visibility' — OMIT the mitigation field (set it to null). Better silent than empty.
@@ -1466,11 +1489,11 @@ VOICE EXAMPLES (target tone — match this directness and depth):
 
 Example C — strong recommend, score 84, rank 1, district-tier comparable:
 {
-  "headline_recommendation": "Recommend — asking rent sits at the 28th percentile vs district comparables and the corner frontage gives the brand visibility from two arteries.",
-  "ranking_explanation": "The investment case here is rent: SAR 432,000/yr lands at the 28th percentile vs 14 district comparables — roughly 20% below the SAR 542,000 median, a cushion that compounds materially over a five-year lease. Site quality reinforces the economics — a 24 m corner on a primary artery with an access/visibility score of 82/100 — and a population reach of 41,000 inside the walking catchment supports the dine-in model. The trade-off is depth of competition: three named chains operate within 500 m, so the brand will need a defensible category position rather than a generic offer.",
+  "headline_recommendation": "Recommend — asking rent is cheaper than about 72% of district comparables and the corner frontage gives the brand visibility from two arteries.",
+  "ranking_explanation": "The investment case here is rent: SAR 432,000/yr is cheaper than about 72% of 14 district comparables — roughly 20% below the SAR 542,000 median, a cushion that compounds materially over a five-year lease. Site quality reinforces the economics — a 24 m corner on a primary artery with an access/visibility score of 82/100 — and a population reach of 41,000 inside the walking catchment supports the dine-in model. The trade-off is depth of competition: three named chains operate within 500 m, so the brand will need a defensible category position rather than a generic offer.",
   "key_evidence": [
     {"signal": "annual rent", "value": "SAR 432,000/yr", "implication": "asking sits roughly 20% below the district median — the entry basis is genuinely below peer listings, not just below list", "polarity": "positive"},
-    {"signal": "rent percentile vs comparables", "value": "28th percentile (vs 14 district comparables)", "implication": "deal pricing is genuinely below market, not just below list", "polarity": "positive"},
+    {"signal": "rent percentile vs comparables", "value": "cheaper than ~72% (vs 14 district comparables)", "implication": "deal pricing is genuinely below market, not just below list", "polarity": "positive"},
     {"signal": "frontage", "value": "24 m corner", "implication": "signage works in both traffic directions on a primary artery", "polarity": "positive"},
     {"signal": "access/visibility score", "value": "82/100", "implication": "site quality reinforces the rent advantage rather than offsetting it", "polarity": "positive"},
     {"signal": "population reach", "value": "41,000 within walking catchment", "implication": "dine-in mix is supportable without leaning on delivery to fill seats", "polarity": "positive"},
@@ -1481,17 +1504,17 @@ Example C — strong recommend, score 84, rank 1, district-tier comparable:
     {"risk": "Parking provision could not be verified from current data — typical for Aqar listings, not a site defect.", "mitigation": "Walk the block at peak hours during diligence; lease two adjacent street stalls from the neighbour if curbside turnover is constrained."},
     {"risk": "Listing has been live for 102 days, longer than is typical for prime corner units in this district.", "mitigation": "Open negotiation 8–12% below asking and ask the landlord to absorb fit-out contribution."}
   ],
-  "comparison": "Peer Chain A operates 2 branches within 180 m and Peer Chain B holds a single branch at 320 m of this site — established category demand at this corner, not a greenfield. Against rank 2 in this search, this site pulls ahead on rent percentile (28th vs 47th) and access/visibility (82/100 vs 71/100); rank 2 carries a marginally larger footprint but no comparable corner exposure.",
+  "comparison": "Peer Chain A operates 2 branches within 180 m and Peer Chain B holds a single branch at 320 m of this site — established category demand at this corner, not a greenfield. Against rank 2 in this search, this site pulls ahead on rent positioning (cheaper than ~72% vs cheaper than ~53%) and access/visibility (82/100 vs 71/100); rank 2 carries a marginally larger footprint but no comparable corner exposure.",
   "bottom_line": "This is the deal in the shortlist — sign it before the listing turns."
 }
 
 Example D — decline, score 41, rank 9, gates failed:
 {
-  "headline_recommendation": "Decline — economics gate fails at the 88th rent percentile and the catchment cannot underwrite the asking price.",
-  "ranking_explanation": "The asking rent of SAR 920,000/yr lands at the 88th percentile vs 11 citywide comparables in the same band/type — roughly 34% above the SAR 685,000 median, which by itself is enough to fail the economics gate. The site does not earn that premium: population reach inside the walking catchment is 18,000 and the access/visibility score sits at 54/100, both below the levels needed to support a premium-rent thesis for this category. The next-best alternative in the shortlist offers materially better economics for a comparable footprint, so capital is better deployed there.",
+  "headline_recommendation": "Decline — economics gate fails, asking rent is more expensive than about 88% of citywide comparables in this band/type and the catchment cannot underwrite the asking price.",
+  "ranking_explanation": "The asking rent of SAR 920,000/yr is more expensive than about 88% of 11 citywide comparables in the same band/type — roughly 34% above the SAR 685,000 median, which by itself is enough to fail the economics gate. The site does not earn that premium: population reach inside the walking catchment is 18,000 and the access/visibility score sits at 54/100, both below the levels needed to support a premium-rent thesis for this category. The next-best alternative in the shortlist offers materially better economics for a comparable footprint, so capital is better deployed there.",
   "key_evidence": [
     {"signal": "annual rent", "value": "SAR 920,000/yr", "implication": "asking sits 34% above the comparable median — the deal is mispriced for the catchment", "polarity": "negative"},
-    {"signal": "rent percentile vs comparables", "value": "88th percentile (vs 11 citywide comparables in the same band/type)", "implication": "no peer-listing evidence that this rent is achievable for this format", "polarity": "negative"},
+    {"signal": "rent percentile vs comparables", "value": "more expensive than ~88% (vs 11 citywide comparables in the same band/type)", "implication": "no peer-listing evidence that this rent is achievable for this format", "polarity": "negative"},
     {"signal": "economics gate", "value": "failed", "implication": "deterministic threshold breached; the deal cannot be defended on rent burden", "polarity": "negative"},
     {"signal": "population reach", "value": "18,000 within walking catchment", "implication": "thin demand base does not justify a premium rent position", "polarity": "negative"},
     {"signal": "access/visibility score", "value": "54/100", "implication": "site quality is mid-tier and does not earn the premium pricing", "polarity": "negative"},
@@ -1503,17 +1526,17 @@ Example D — decline, score 41, rank 9, gates failed:
     {"risk": "Two saturated chain operators within 500 m increase cannibalisation risk for any value-format entry.", "mitigation": "Reposition the brief towards a differentiated dayparting strategy if the operator chooses to override the recommendation."},
     {"risk": "Listing has been on market for 147 days — pricing has not cleared, suggesting the asking is structurally above the catchment's willingness-to-pay.", "mitigation": null}
   ],
-  "comparison": "Two named chains operate within 500 m of this site, confirming the catchment validates the category but not at this asking — the 88th-percentile rent reading sits well above where comparable peer listings have cleared. Rank 2 in this search clears the economics gate at the 49th rent percentile with a slightly larger footprint and a stronger access/visibility profile; there is no scenario in which this site is the rational shortlist pick over rank 2.",
+  "comparison": "Two named chains operate within 500 m of this site, confirming the catchment validates the category but not at this asking — rent is more expensive than ~88% of comparable peer listings. Rank 2 in this search clears the economics gate while sitting cheaper than ~51% of comparables, with a slightly larger footprint and a stronger access/visibility profile; there is no scenario in which this site is the rational shortlist pick over rank 2.",
   "bottom_line": "Walk this one and redeploy the capital into rank 2 — the math on this listing does not work."
 }
 
 Example E — recommend with reservations, score 68, rank 2, at-market rent (illustrating neutral polarity):
 {
   "headline_recommendation": "Recommend with reservations — rent is at market and the case rests on access and demand, not pricing.",
-  "ranking_explanation": "This site does not win on rent. Asking SAR 540,000/yr lands at the 51st percentile vs 22 district comparables — essentially at market, neither a discount nor a premium. The investment case rests on the access/visibility score of 88/100 on a primary artery, a 4-named-chain catchment within 500 m suggesting validated demand, and a population reach of 33,000 within walking distance. The trade-off is that without a rent advantage, margin pressure is higher than in a discounted-entry deal.",
+  "ranking_explanation": "This site does not win on rent. Asking SAR 540,000/yr is around the district median across 22 comparables — essentially at market, neither a discount nor a premium. The investment case rests on the access/visibility score of 88/100 on a primary artery, a 4-named-chain catchment within 500 m suggesting validated demand, and a population reach of 33,000 within walking distance. The trade-off is that without a rent advantage, margin pressure is higher than in a discounted-entry deal.",
   "key_evidence": [
     {"signal": "annual rent", "value": "SAR 540,000/yr", "implication": "at-market pricing offers no entry advantage; margin must come from operations", "polarity": "neutral"},
-    {"signal": "rent percentile vs comparables", "value": "51st percentile (vs 22 district comparables)", "implication": "deal pricing is market-clearing, neither premium nor discount", "polarity": "neutral"},
+    {"signal": "rent percentile vs comparables", "value": "around district median (vs 22 district comparables)", "implication": "deal pricing is market-clearing, neither premium nor discount", "polarity": "neutral"},
     {"signal": "access/visibility score", "value": "88/100", "implication": "site quality is the primary thesis here; signage and approach support brand visibility", "polarity": "positive"},
     {"signal": "named chains within 500 m", "value": "4 count", "implication": "validates the catchment for the category at the cost of competitive intensity", "polarity": "neutral"},
     {"signal": "population reach", "value": "33,000 within walking catchment", "implication": "demand base supports the dine-in mix at typical capture rates", "polarity": "positive"}
@@ -1522,7 +1545,7 @@ Example E — recommend with reservations, score 68, rank 2, at-market rent (ill
     {"risk": "Rent offers no margin cushion — operational missteps will translate directly to P&L.", "mitigation": "Pre-commit a delivery partnership in month one; do not assume dine-in ramp covers fixed cost in the first 90 days."},
     {"risk": "Four established chains within 500 m means category competition is real and ongoing.", "mitigation": "Position on a single dayparting strength rather than competing on the full menu."}
   ],
-  "comparison": "Four named chains operate within 500 m, confirming the category trades and consistent with this site's at-market 51st-percentile rent reading vs district comparables. Rank 1 in this search has a 22% rent discount on a similar footprint, which makes it the stronger pick on pure economics, but this site has materially better access/visibility (88/100 vs 71/100), so the call depends on whether the operator weights cost basis or street presence more heavily.",
+  "comparison": "Four named chains operate within 500 m, confirming the category trades and consistent with this site's at-market rent reading vs district comparables. Rank 1 in this search has a 22% rent discount on a similar footprint, which makes it the stronger pick on pure economics, but this site has materially better access/visibility (88/100 vs 71/100), so the call depends on whether the operator weights cost basis or street presence more heavily.",
   "bottom_line": "A working deal, but only if access matters more than rent — otherwise rank 1 is the cleaner trade."
 }
 
@@ -1530,11 +1553,11 @@ Inline note on missing rank-2 alternatives: when next_candidate_summary is absen
 
 Example F — strong recommend with the four typed advisory sections fully populated (district-tier comparable, rank-2 present):
 {
-  "headline_recommendation": "Recommend — asking rent sits at the 28th percentile vs district comparables and the corner frontage gives the brand visibility from two arteries.",
-  "ranking_explanation": "The investment case here is rent: SAR 432,000/yr lands at the 28th percentile vs 14 district comparables — roughly 20% below the SAR 542,000 median. Site quality reinforces the economics — a 24 m corner on a primary artery with an access/visibility score of 82/100 — and a population reach of 41,000 inside the walking catchment supports the dine-in model. The trade-off is depth of competition: three named chains operate within 500 m, so the brand will need a defensible category position rather than a generic offer.",
+  "headline_recommendation": "Recommend — asking rent is cheaper than about 72% of district comparables and the corner frontage gives the brand visibility from two arteries.",
+  "ranking_explanation": "The investment case here is rent: SAR 432,000/yr is cheaper than about 72% of 14 district comparables — roughly 20% below the SAR 542,000 median. Site quality reinforces the economics — a 24 m corner on a primary artery with an access/visibility score of 82/100 — and a population reach of 41,000 inside the walking catchment supports the dine-in model. The trade-off is depth of competition: three named chains operate within 500 m, so the brand will need a defensible category position rather than a generic offer.",
   "key_evidence": [
     {"signal": "annual rent", "value": "SAR 432,000/yr", "implication": "asking sits roughly 20% below the district median — the entry basis is genuinely below peer listings, not just below list", "polarity": "positive"},
-    {"signal": "rent percentile vs comparables", "value": "28th percentile (vs 14 district comparables)", "implication": "deal pricing is genuinely below market, not just below list", "polarity": "positive"},
+    {"signal": "rent percentile vs comparables", "value": "cheaper than ~72% (vs 14 district comparables)", "implication": "deal pricing is genuinely below market, not just below list", "polarity": "positive"},
     {"signal": "frontage", "value": "24 m corner", "implication": "signage works in both traffic directions on a primary artery", "polarity": "positive"},
     {"signal": "access/visibility score", "value": "82/100", "implication": "site quality reinforces the rent advantage rather than offsetting it", "polarity": "positive"},
     {"signal": "population reach", "value": "41,000 within walking catchment", "implication": "dine-in mix is supportable without leaning on delivery to fill seats", "polarity": "positive"},
@@ -1544,7 +1567,7 @@ Example F — strong recommend with the four typed advisory sections fully popul
     {"risk": "Three established chains operate within 500 m, including two with strong delivery presence — undifferentiated entry will compete on price.", "mitigation": "Lead with a single-SKU hero menu and a sharper delivery price point in the first 90 days."},
     {"risk": "Listing has been live for 64 days, longer than is typical for prime corner units in this district.", "mitigation": "Open negotiation 8–12% below asking and ask the landlord to absorb fit-out contribution."}
   ],
-  "comparison": "Peer Chain A operates 2 branches within 180 m and Peer Chain B holds a single branch at 320 m of this site — established category demand at this corner, not a greenfield. Against rank 2 in this search, this site pulls ahead on rent percentile (28th vs 47th) and access/visibility (82/100 vs 71/100); rank 2 carries a marginally larger footprint but no comparable corner exposure.",
+  "comparison": "Peer Chain A operates 2 branches within 180 m and Peer Chain B holds a single branch at 320 m of this site — established category demand at this corner, not a greenfield. Against rank 2 in this search, this site pulls ahead on rent positioning (cheaper than ~72% vs cheaper than ~53%) and access/visibility (82/100 vs 71/100); rank 2 carries a marginally larger footprint but no comparable corner exposure.",
   "bottom_line": "This is the deal in the shortlist — sign it before the listing turns.",
   "property_overview": {
     "summary": "180 m² corner unit on a primary artery, 24 m frontage, listed 64 days ago.",
@@ -1557,8 +1580,8 @@ Example F — strong recommend with the four typed advisory sections fully popul
     "vacancy_status": "vacant"
   },
   "financial_framing": {
-    "summary": "SAR 432,000/yr at the 28th percentile vs 14 district comparables — roughly 20% below the SAR 542,000 median.",
-    "thesis": "Rent is the spine of the case at this site. SAR 432,000/yr sits roughly 20% below the SAR 542,000 district median across 14 peer listings — a cushion that compounds across a five-year lease and absorbs the operator's first-year ramp risk. The 28th percentile reading is district-scoped, not a wider city band, so the comparison sits inside the same demand catchment the operator will trade in. The thesis is straightforward: enter at this basis, run operational margin, and the deal does not need a heroic revenue assumption to clear.",
+    "summary": "SAR 432,000/yr cheaper than about 72% of 14 district comparables — roughly 20% below the SAR 542,000 median.",
+    "thesis": "Rent is the spine of the case at this site. SAR 432,000/yr sits roughly 20% below the SAR 542,000 district median across 14 peer listings — a cushion that compounds across a five-year lease and absorbs the operator's first-year ramp risk. The cheaper-than-72% positioning is district-scoped, not a wider city band, so the comparison sits inside the same demand catchment the operator will trade in. The thesis is straightforward: enter at this basis, run operational margin, and the deal does not need a heroic revenue assumption to clear.",
     "annual_rent_sar": 432000,
     "comparable_median_annual_rent_sar": 542000,
     "rent_percentile_vs_comparables": 0.28,
@@ -1576,8 +1599,8 @@ Example F — strong recommend with the four typed advisory sections fully popul
     "delivery_listing_count": 22
   },
   "competitive_landscape": {
-    "summary": "3 named chains within 500 m; rank 2 in this search clears at the 47th rent percentile.",
-    "saturation_thesis": "Three named chains operate within 500 m — Peer Chain A, Peer Chain B, and Peer Chain C — confirming the category trades and raising the bar on differentiation. Rank 2 in this search sits at the 47th rent percentile vs comparables and an access/visibility score of 71/100, materially weaker than this site on both axes; the operator is paying roughly 20% below the district median for a stronger street position. The competitive read supports entry, but only with a defensible category position rather than a generic offer.",
+    "summary": "3 named chains within 500 m; rank 2 in this search sits cheaper than ~53% of comparables.",
+    "saturation_thesis": "Three named chains operate within 500 m — Peer Chain A, Peer Chain B, and Peer Chain C — confirming the category trades and raising the bar on differentiation. Rank 2 in this search sits cheaper than ~53% of comparables and at access/visibility 71/100, materially weaker than this site on both axes; the operator is paying roughly 20% below the district median for a stronger street position. The competitive read supports entry, but only with a defensible category position rather than a generic offer.",
     "top_chains": [
       {"display_name_en": "Peer Chain A", "display_name_ar": null, "branch_count": 2, "nearest_distance_m": 180},
       {"display_name_en": "Peer Chain B", "display_name_ar": null, "branch_count": 1, "nearest_distance_m": 320},
@@ -1849,10 +1872,18 @@ _CRITICAL_BLOCK_AR = """══════════════════�
    العربية (0-9) كما في بقية المذكرة.
 #  "SAR <amount>/yr"
    - الإيجار السنوي: "<المبلغ> ريال سعودي/سنة"
-#  "<N>th percentile (vs <N> <scope> comparables)"
-   - نسبة الإيجار: "النسبة المئوية <N>% (مقارنة بـ <N> <نطاق>)" حيث
-     <نطاق> هو "مقارنات في الحي" أو "مقارنات في نفس النطاق على مستوى
-     المدينة" أو "مقارنات على مستوى المدينة"
+#  rent percentile vs comparables — three templates by polarity
+#  zone (PR #4f lay-friendly rephrase). The literal "النسبة المئوية N%"
+#  is BANNED in user-visible prose; use one of these three templates.
+   - نسبة الإيجار: استخدم القالب المناسب وفقاً للمنطقة:
+     - منطقة منخفضة (المئوية ≤ 39): "أقل من حوالي N% من <نطاق>"
+       حيث N = (100 − المئوية). مثال: 0.28 → "أقل من حوالي 72% من <نطاق>".
+     - منطقة وسطى (40 ≤ المئوية ≤ 60): "قريب من الإيجار الوسيط لـ<نطاق>".
+       بدون رقم.
+     - منطقة مرتفعة (المئوية ≥ 61): "أعلى من حوالي N% من <نطاق>"
+       حيث N = المئوية. مثال: 0.88 → "أعلى من حوالي 88% من <نطاق>".
+     <نطاق> هو "المقارنات في الحي" أو "المقارنات في نفس النطاق على
+     مستوى المدينة" أو "المقارنات على مستوى المدينة".
 #  "<N>/100" — kept as-is in both locales
    - درجات الجودة: تبقى "<N>/100" كما هي
 #  "<N> m corner"
@@ -1873,11 +1904,11 @@ _CRITICAL_BLOCK_AR = """══════════════════�
 # comparable (Arabic mirror of Example C). Imitate this row shape for
 # key_evidence whenever lang=ar — every signal and value is Arabic.
 {
-  "headline_recommendation": "نوصي — يقع الإيجار المطلوب في النسبة المئوية 28% مقابل مقارنات الحي، وتمنح واجهة الزاوية العلامة التجارية وضوحاً من شريانين.",
-  "ranking_explanation": "الحجة الاستثمارية هنا هي الإيجار: 432,000 ريال سعودي/سنة يقع في النسبة المئوية 28% مقابل 14 مقارنة في الحي — أقل بنحو 20% من الوسيط البالغ 542,000 ريال، وهو هامش يتراكم بشكل ملموس على مدى عقد إيجار من خمس سنوات. جودة الموقع تعزز الاقتصاديات — زاوية بعرض 24 م على شريان رئيسي مع نقاط وصول ورؤية تبلغ 82/100 — وعدد السكان القابلين للوصول البالغ 41,000 ضمن نطاق المشي يدعم نموذج تناول الطعام في الموقع. المقايضة هي عمق المنافسة: تعمل ثلاث سلاسل مذكورة ضمن 500 م، لذا ستحتاج العلامة إلى موقع فئوي قابل للدفاع بدلاً من عرض عام.",
+  "headline_recommendation": "نوصي — الإيجار المطلوب أقل من حوالي 72% من المقارنات في الحي، وتمنح واجهة الزاوية العلامة التجارية وضوحاً من شريانين.",
+  "ranking_explanation": "الحجة الاستثمارية هنا هي الإيجار: 432,000 ريال سعودي/سنة أقل من حوالي 72% من 14 مقارنة في الحي — أقل بنحو 20% من الوسيط البالغ 542,000 ريال، وهو هامش يتراكم بشكل ملموس على مدى عقد إيجار من خمس سنوات. جودة الموقع تعزز الاقتصاديات — زاوية بعرض 24 م على شريان رئيسي مع نقاط وصول ورؤية تبلغ 82/100 — وعدد السكان القابلين للوصول البالغ 41,000 ضمن نطاق المشي يدعم نموذج تناول الطعام في الموقع. المقايضة هي عمق المنافسة: تعمل ثلاث سلاسل مذكورة ضمن 500 م، لذا ستحتاج العلامة إلى موقع فئوي قابل للدفاع بدلاً من عرض عام.",
   "key_evidence": [
     {"signal": "الإيجار السنوي", "value": "432,000 ريال سعودي/سنة", "implication": "أساس الدخول أدنى فعلياً من إعلانات النظراء وليس أدنى من السعر المعروض فقط", "polarity": "positive"},
-    {"signal": "نسبة الإيجار مقابل المقارنات", "value": "النسبة المئوية 28% (مقارنة بـ 14 مقارنات في الحي)", "implication": "تسعير الصفقة أقل من السوق فعلياً وليس أقل من السعر المعروض فقط", "polarity": "positive"},
+    {"signal": "نسبة الإيجار مقابل المقارنات", "value": "أقل من حوالي 72% (مقارنة بـ 14 مقارنات في الحي)", "implication": "تسعير الصفقة أقل من السوق فعلياً وليس أقل من السعر المعروض فقط", "polarity": "positive"},
     {"signal": "الواجهة", "value": "زاوية بعرض 24 م", "implication": "اللافتات تعمل في اتجاهي الحركة على شريان رئيسي", "polarity": "positive"},
     {"signal": "نقاط الوصول والرؤية", "value": "82/100", "implication": "جودة الموقع تعزز ميزة الإيجار بدلاً من أن تقابلها", "polarity": "positive"},
     {"signal": "عدد السكان القابلين للوصول", "value": "41,000 ضمن نطاق المشي", "implication": "مزيج تناول الطعام في الموقع قابل للدعم دون الاعتماد على التوصيل لملء المقاعد", "polarity": "positive"},
@@ -1888,7 +1919,7 @@ _CRITICAL_BLOCK_AR = """══════════════════�
     {"risk": "تعذّر التحقق من توفّر مواقف السيارات من البيانات الحالية — أمر معتاد لإعلانات عقار وليس عيباً في الموقع.", "mitigation": "تجوّل في الحي في ساعات الذروة أثناء الفحص؛ استأجر موقفين مجاورين على الشارع من الجار إذا كان معدل دوران الرصيف محدوداً."},
     {"risk": "الإعلان منشور منذ 102 يوماً، أطول من المعتاد للوحدات الزاوية المميزة في هذا الحي.", "mitigation": "افتح التفاوض بنسبة 8–12% أقل من السعر المطلوب واطلب من المالك تحمّل مساهمة في التجهيز."}
   ],
-  "comparison": "تشغّل سلسلة النظراء أ فرعين ضمن 180 م وتملك سلسلة النظراء ب فرعاً واحداً على بُعد 320 م من هذا الموقع — طلب فئوي راسخ عند هذه الزاوية وليس موقعاً جديداً. مقابل المرتبة 2 في هذا البحث، يتقدّم هذا الموقع في نسبة الإيجار (28% مقابل 47%) وفي الوصول والرؤية (82/100 مقابل 71/100)؛ تحمل المرتبة 2 مساحة أكبر هامشياً لكن دون تعرّض زاوية مماثل.",
+  "comparison": "تشغّل سلسلة النظراء أ فرعين ضمن 180 م وتملك سلسلة النظراء ب فرعاً واحداً على بُعد 320 م من هذا الموقع — طلب فئوي راسخ عند هذه الزاوية وليس موقعاً جديداً. مقابل المرتبة 2 في هذا البحث، يتقدّم هذا الموقع في نسبة الإيجار (أقل من ~72% مقابل أقل من ~53%) وفي الوصول والرؤية (82/100 مقابل 71/100)؛ تحمل المرتبة 2 مساحة أكبر هامشياً لكن دون تعرّض زاوية مماثل.",
   "bottom_line": "هذه هي الصفقة في القائمة المختصرة — وقّعها قبل أن يتغيّر الإعلان."
 }
 ══════════════════════════════════════════════════════════════════════"""

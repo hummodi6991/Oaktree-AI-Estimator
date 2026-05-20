@@ -30,7 +30,7 @@ function fullMemo(): StructuredMemo {
       vacancy_status: "vacant",
     },
     financial_framing: {
-      summary: "SAR 432,000/yr at the 28th percentile vs 14 district comparables.",
+      summary: "SAR 432,000/yr cheaper than about 72% of 14 district comparables.",
       thesis: "Rent is the spine of the case at this site.",
       annual_rent_sar: 432000,
       comparable_median_annual_rent_sar: 542000,
@@ -49,7 +49,7 @@ function fullMemo(): StructuredMemo {
       delivery_listing_count: 22,
     },
     competitive_landscape: {
-      summary: "3 named chains within 500 m; rank 2 sits at 47th percentile.",
+      summary: "3 named chains within 500 m; rank 2 sits cheaper than ~53% of comparables.",
       saturation_thesis: "Three named chains operate within 500 m.",
       top_chains: [
         { display_name_en: "Peer Chain A", display_name_ar: null, branch_count: 2, nearest_distance_m: 180 },
@@ -131,5 +131,44 @@ describe("AdvisorySectionCards — PR #3 typed sections", () => {
     } finally {
       await i18n.changeLanguage("en");
     }
+  });
+
+  it("renders the MID-zone template (~around district median) for a 0.51 percentile in the Rent percentile field", () => {
+    const memo = fullMemo();
+    if (memo.financial_framing) {
+      memo.financial_framing.rent_percentile_vs_comparables = 0.51;
+      // Wipe the summary string so the negative assertion isn't tripped by
+      // fixture prose that mirrors the polarity templates.
+      memo.financial_framing.summary = "summary";
+    }
+    if (memo.competitive_landscape?.next_candidate_summary) {
+      memo.competitive_landscape.next_candidate_summary.rent_percentile_vs_comparables = 0.51;
+    }
+    if (memo.competitive_landscape) {
+      memo.competitive_landscape.summary = "summary";
+    }
+    const html = renderToStaticMarkup(<AdvisorySectionCards memo={memo} lang="en" />);
+    expect(html).toContain("around the district median rent");
+    // Must NOT render either of the polarity-keyed N% templates in the value cells.
+    expect(html).not.toContain("cheaper than ~");
+    expect(html).not.toContain("more expensive than ~");
+  });
+
+  it("renders the HIGH-zone template (more expensive than ~N%) for a 0.88 percentile in the Rent percentile field", () => {
+    const memo = fullMemo();
+    if (memo.financial_framing) {
+      memo.financial_framing.rent_percentile_vs_comparables = 0.88;
+      memo.financial_framing.summary = "summary";
+    }
+    if (memo.competitive_landscape?.next_candidate_summary) {
+      memo.competitive_landscape.next_candidate_summary.rent_percentile_vs_comparables = 0.88;
+    }
+    if (memo.competitive_landscape) {
+      memo.competitive_landscape.summary = "summary";
+    }
+    const html = renderToStaticMarkup(<AdvisorySectionCards memo={memo} lang="en" />);
+    expect(html).toContain("more expensive than ~88% of nearby comparables");
+    expect(html).not.toContain("around the district median rent");
+    expect(html).not.toContain("cheaper than ~");
   });
 });

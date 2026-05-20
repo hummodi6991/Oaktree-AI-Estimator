@@ -262,8 +262,8 @@ class TestComparisonAssertionContract:
         good = (
             "Dunkin operates 1 branch within 240 m and Starbucks 2 branches "
             "at 380 m — established cafe demand at this corner. Against rank 2 "
-            "in this search, this site pulls ahead on rent percentile (28th "
-            "vs 47th) and access/visibility (78/100 vs 71/100)."
+            "in this search, this site pulls ahead on rent positioning (cheaper "
+            "than ~72% vs cheaper than ~53%) and access/visibility (78/100 vs 71/100)."
         )
         # Should not raise.
         _assert_comparison_grounded(good)
@@ -323,10 +323,10 @@ class TestStructuredMemoMockedEndToEnd:
     @patch("app.services.llm_decision_memo._get_client")
     def test_grounded_mock_response_passes_assertion(self, mock_get_client):
         grounded_response = {
-            "headline_recommendation": "Recommend — rent at the 28th percentile vs district comparables.",
+            "headline_recommendation": "Recommend — rent is cheaper than about 72% of district comparables.",
             "ranking_explanation": (
-                "Rent is the spine of the case: SAR 432,000/yr lands at the 28th percentile "
-                "vs 14 district comparables — roughly 20% below the SAR 542,000 median. "
+                "Rent is the spine of the case: SAR 432,000/yr is cheaper than about 72% "
+                "of 14 district comparables — roughly 20% below the SAR 542,000 median. "
                 "Site quality reinforces the economics with an access/visibility score of "
                 "78/100, and a population reach of 38,000 supports the dine-in mix. "
                 "Two named chains operate within 500 m, validating the catchment."
@@ -336,7 +336,7 @@ class TestStructuredMemoMockedEndToEnd:
                  "implication": "asking sits roughly 20% below the district median",
                  "polarity": "positive"},
                 {"signal": "rent percentile vs comparables",
-                 "value": "28th percentile (vs 14 district comparables)",
+                 "value": "cheaper than ~72% (vs 14 district comparables)",
                  "implication": "deal pricing is genuinely below market",
                  "polarity": "positive"},
                 {"signal": "access/visibility score", "value": "78/100",
@@ -371,7 +371,7 @@ class TestStructuredMemoMockedEndToEnd:
                 "vacancy_status": "vacant",
             },
             "financial_framing": {
-                "summary": "SAR 432,000/yr at the 28th percentile vs 14 district comparables.",
+                "summary": "SAR 432,000/yr cheaper than about 72% of 14 district comparables.",
                 "thesis": (
                     "Rent is the spine of the case. SAR 432,000/yr lands roughly 20% below "
                     "the SAR 542,000 district median across 14 peer listings — a cushion "

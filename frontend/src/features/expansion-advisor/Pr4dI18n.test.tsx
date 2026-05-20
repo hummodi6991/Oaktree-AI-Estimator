@@ -170,6 +170,9 @@ describe("PR #4d — i18n parity", () => {
       "expansionAdvisor.clearCategoryAriaLabel",
       "expansionAdvisor.decisionLogic.weightPercent",
       "expansionAdvisor.landlordBriefing.fallbackFormat",
+      "expansionAdvisor.advisorySection.rentPositioningLow",
+      "expansionAdvisor.advisorySection.rentPositioningMid",
+      "expansionAdvisor.advisorySection.rentPositioningHigh",
     ];
     const enKeys = flatKeys(en as Record<string, unknown>);
     const arKeys = flatKeys(ar as Record<string, unknown>);
@@ -249,6 +252,55 @@ describe("PR #4e §4 — F&B outlet fallback localizes via threaded t", () => {
     );
     expect(out).toContain("مقهى صغير");
     expect(out).not.toContain("منشأة أغذية ومشروبات");
+  });
+});
+
+/* ─── PR #4f percentile rephrase ────────────────────────────────────── */
+
+describe("PR #4f — pctFromFraction polarity-keyed templates", () => {
+  it("low percentile renders 'cheaper than ~N%' (EN)", () => {
+    expect(i18n.getFixedT("en")(
+      "expansionAdvisor.advisorySection.rentPositioningLow", { value: 72 }
+    )).toBe("cheaper than ~72% of nearby comparables");
+  });
+
+  it("low percentile renders the AR template", () => {
+    expect(i18n.getFixedT("ar")(
+      "expansionAdvisor.advisorySection.rentPositioningLow", { value: 72 }
+    )).toBe("أقل من حوالي 72٪ من المقارنات في الحي");
+  });
+
+  it("mid percentile renders 'around district median' (EN)", () => {
+    expect(i18n.getFixedT("en")(
+      "expansionAdvisor.advisorySection.rentPositioningMid"
+    )).toBe("around the district median rent");
+  });
+
+  it("mid percentile renders the AR template", () => {
+    expect(i18n.getFixedT("ar")(
+      "expansionAdvisor.advisorySection.rentPositioningMid"
+    )).toBe("قريب من الإيجار الوسيط للحي");
+  });
+
+  it("high percentile renders 'more expensive than ~N%' (EN)", () => {
+    expect(i18n.getFixedT("en")(
+      "expansionAdvisor.advisorySection.rentPositioningHigh", { value: 88 }
+    )).toBe("more expensive than ~88% of nearby comparables");
+  });
+
+  it("high percentile renders the AR template", () => {
+    expect(i18n.getFixedT("ar")(
+      "expansionAdvisor.advisorySection.rentPositioningHigh", { value: 88 }
+    )).toBe("أعلى من حوالي 88٪ من المقارنات في الحي");
+  });
+
+  it("ar.json rentPercentile label is no longer the English literal", () => {
+    expect(i18n.getFixedT("ar")(
+      "expansionAdvisor.advisorySection.rentPercentile"
+    )).toBe("موقع الإيجار");
+    expect(i18n.getFixedT("ar")(
+      "expansionAdvisor.advisorySection.rentPercentile"
+    )).not.toBe("Rent percentile");
   });
 });
 
