@@ -9,6 +9,8 @@ import ExpansionMemoPanel from "./ExpansionMemoPanel";
 import ExpansionBriefForm, { defaultBrief } from "./ExpansionBriefForm";
 import CategorySelect from "./CategorySelect";
 import SearchBar from "../../ui-v2/SearchBar";
+import ScoreBreakdownCompact from "./ScoreBreakdownCompact";
+import { formatLandlordBriefingText } from "./studyAdapters";
 
 beforeEach(async () => {
   if (i18n.language !== "en") await i18n.changeLanguage("en");
@@ -166,6 +168,8 @@ describe("PR #4d — i18n parity", () => {
       "expansionAdvisor.brandExamplesPlaceholder",
       "expansionAdvisor.categorySelectHelp",
       "expansionAdvisor.clearCategoryAriaLabel",
+      "expansionAdvisor.decisionLogic.weightPercent",
+      "expansionAdvisor.landlordBriefing.fallbackFormat",
     ];
     const enKeys = flatKeys(en as Record<string, unknown>);
     const arKeys = flatKeys(ar as Record<string, unknown>);
@@ -180,5 +184,70 @@ describe("PR #4d — i18n parity", () => {
     const arKeys = flatKeys(ar as Record<string, unknown>);
     expect([...enKeys].filter((k) => !arKeys.has(k))).toEqual([]);
     expect([...arKeys].filter((k) => !enKeys.has(k))).toEqual([]);
+  });
+});
+
+/* ─── PR #4e Tier 2 cosmetic AR cleanup ─────────────────────────────── */
+
+describe("PR #4e §1/§2 — pts literal consumes decisionLogicWeightedPoints", () => {
+  const breakdown = {
+    weights: { economics: 0.4 },
+    inputs: { economics: 50 },
+    weighted_components: { economics: 12.3 },
+  } as any;
+
+  it("renders the pts label in EN with the existing key", () => {
+    const html = renderToStaticMarkup(<ScoreBreakdownCompact breakdown={breakdown} />);
+    expect(html).toContain("12.3 pts");
+  });
+
+  it("renders the pts label in AR with the existing key", async () => {
+    await i18n.changeLanguage("ar");
+    const html = renderToStaticMarkup(<ScoreBreakdownCompact breakdown={breakdown} />);
+    expect(html).toContain(" نقطة");
+    expect(html).not.toContain(" pts");
+  });
+});
+
+describe("PR #4e §3 — % weight uses new decisionLogic.weightPercent key", () => {
+  it("resolves both locales", () => {
+    expect(i18n.getFixedT("en")("expansionAdvisor.decisionLogic.weightPercent", { value: 25 })).toBe("25% weight");
+    expect(i18n.getFixedT("ar")("expansionAdvisor.decisionLogic.weightPercent", { value: 25 })).toBe("25٪ وزن");
+  });
+});
+
+describe("PR #4e §4 — F&B outlet fallback localizes via threaded t", () => {
+  it("returns English fallback when t is omitted (back-compat)", () => {
+    const out = formatLandlordBriefingText(
+      { parcel_id: "P1", rank_position: 1 } as any,
+      null,
+      null,
+    );
+    expect(out).toContain("F&B outlet");
+  });
+
+  it("returns localized AR fallback when t resolves AR", async () => {
+    await i18n.changeLanguage("ar");
+    const t = i18n.getFixedT("ar");
+    const out = formatLandlordBriefingText(
+      { parcel_id: "P1", rank_position: 1 } as any,
+      null,
+      null,
+      t as any,
+    );
+    expect(out).toContain("منشأة أغذية ومشروبات");
+    expect(out).not.toContain("F&B outlet");
+  });
+
+  it("prefers report.best_format over fallback when present", () => {
+    const t = i18n.getFixedT("ar");
+    const out = formatLandlordBriefingText(
+      { parcel_id: "P1", rank_position: 1 } as any,
+      { recommendation: { best_format: "مقهى صغير" } } as any,
+      null,
+      t as any,
+    );
+    expect(out).toContain("مقهى صغير");
+    expect(out).not.toContain("منشأة أغذية ومشروبات");
   });
 });

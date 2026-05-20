@@ -853,6 +853,9 @@
     "showingOf": "عرض {{shown}} من {{total}}",
     "localSort": "ترتيب محلي",
     "reopenStudy": "إعادة فتح",
+    "landlordBriefing": {
+      "fallbackFormat": "منشأة أغذية ومشروبات"
+    },
     "leadSite": "الموقع الرئيسي",
     "setAsLead": "تعيين كرئيسي",
     "clearLead": "إلغاء الرئيسي",
@@ -1099,6 +1102,7 @@
       "weightLabel": "الوزن",
       "contributionLabel": "المساهمة",
       "weightAndPoints": "{{weight}}٪ · {{points}} نقطة",
+      "weightPercent": "{{value}}٪ وزن",
       "inputsHeading": "المدخلات",
       "bonusesHeading": "المكافآت والتعديلات",
       "subtotal": "الدرجة الأساسية",

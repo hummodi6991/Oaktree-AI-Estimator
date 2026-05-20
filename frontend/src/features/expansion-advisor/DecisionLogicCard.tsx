@@ -389,7 +389,7 @@ function ContributionsSection({
             </div>
             <div className="ea-decision-logic__component-meta-row">
               <dt>{t("expansionAdvisor.decisionLogic.contributionLabel")}</dt>
-              <dd>{c.points.toFixed(2)} pts</dd>
+              <dd>{t("expansionAdvisor.decisionLogicWeightedPoints", { points: c.points.toFixed(2) })}</dd>
             </div>
           </dl>
           {resolved.length > 0 && (

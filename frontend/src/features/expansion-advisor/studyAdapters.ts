@@ -15,6 +15,7 @@ import type {
   CandidateGateReasons,
   CandidateFeatureSnapshot,
 } from "../../lib/api/expansionAdvisor";
+import type { TFunction } from "i18next";
 import { defaultBrief } from "./ExpansionBriefForm";
 import { humanGateLabel, humanGateSentence, candidateDistrictLabel } from "./formatHelpers";
 
@@ -1105,13 +1106,15 @@ export function formatLandlordBriefingText(
   candidate: ExpansionCandidate,
   report?: RecommendationReportResponse | null,
   memo?: CandidateMemoResponse | null,
+  t?: TFunction,
 ): string {
   const district = candidateDistrictLabel(candidate, "—");
   const parcelId = candidate.parcel_id || "—";
   const rank = candidate.rank_position || "?";
   const rentM2 = candidate.estimated_rent_sar_m2_year ? `${Math.round(candidate.estimated_rent_sar_m2_year)} SAR/m²/yr` : "TBD";
   const annualRent = (candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar) ? `${Math.round(candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar!).toLocaleString()} SAR/yr` : "TBD";
-  const format = report?.recommendation?.best_format || memo?.recommendation?.best_use_case || "F&B outlet";
+  const fallback = t ? t("expansionAdvisor.landlordBriefing.fallbackFormat") : "F&B outlet";
+  const format = report?.recommendation?.best_format || memo?.recommendation?.best_use_case || fallback;
   const gatePass = candidate.gate_status_json?.overall_pass;
   const gateLabel = gatePass === true ? "All gates passed" : gatePass === false ? "Some gates require review" : "Gates pending verification";
 
