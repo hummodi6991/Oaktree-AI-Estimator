@@ -297,11 +297,11 @@ VALID_STRUCTURED_RESPONSE = {
         "vacancy_status": "vacant",
     },
     "financial_framing": {
-        "summary": "SAR 480,000/yr at the 22nd percentile vs 14 district comparables.",
+        "summary": "SAR 480,000/yr cheaper than about 78% of 14 district comparables.",
         "thesis": (
             "Rent is the spine of the case at this site. SAR 480,000/yr is decisively "
             "below the SAR 560,000 district median across 14 peer listings — a SAR 80k/yr "
-            "cushion that compounds across a five-year lease. The 22nd percentile reading "
+            "cushion that compounds across a five-year lease. The cheaper-than-78% reading "
             "is district-scoped, supporting the underwriting on a same-catchment basis."
         ),
         "annual_rent_sar": 480000,
@@ -326,11 +326,11 @@ VALID_STRUCTURED_RESPONSE = {
         "delivery_listing_count": 22,
     },
     "competitive_landscape": {
-        "summary": "Peer A and Peer B operate within 500 m; rank 2 sits at 47th percentile rent.",
+        "summary": "Peer A and Peer B operate within 500 m; rank 2 sits cheaper than ~53% of comparables.",
         "saturation_thesis": (
             "Two named chains operate within 500 m — Peer A and Peer B — confirming the "
             "category trades and raising the bar on differentiation. Rank 2 in this search "
-            "sits at the 47th rent percentile vs comparables and an access/visibility score "
+            "sits cheaper than ~53% of comparables and at access/visibility score "
             "of 71/100, materially weaker than this site on both axes."
         ),
         "top_chains": [
