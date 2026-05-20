@@ -55,6 +55,38 @@ i18n.on("languageChanged", (locale) => {
   applyDocumentLocale(normalized);
 });
 
+// Hard-reload the page on a user-initiated language change so no stale,
+// locale-bound state (memo/report payloads, expanded panels, candidate
+// selections, MapLibre tiles, React Query cache) survives the toggle.
+//
+// __lastObservedLocale tracks the last locale we saw. It absorbs i18next's
+// boot-time languageChanged fire (so opening the app in AR does not loop
+// reload) and suppresses identity changes (changeLanguage(currentLocale)).
+// We track manually instead of comparing document.documentElement.lang
+// because the listener above already mutates that attribute before this
+// one runs (listeners fire in attachment order), so a doc-based check
+// would always read the new value and never reload.
+let __lastObservedLocale: string | null = null;
+
+i18n.on("languageChanged", (locale) => {
+  const normalized = normalizeLocale(locale);
+
+  if (__lastObservedLocale === null) {
+    __lastObservedLocale = normalized;
+    return;
+  }
+
+  if (__lastObservedLocale === normalized) {
+    return;
+  }
+
+  __lastObservedLocale = normalized;
+
+  if (typeof window !== "undefined") {
+    window.location.reload();
+  }
+});
+
 applyDocumentLocale(normalizeLocale(i18n.language));
 
 export { LOCALE_STORAGE_KEY, applyDocumentLocale, getInitialLocale, normalizeLocale };
