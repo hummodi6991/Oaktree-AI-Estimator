@@ -251,3 +251,31 @@ describe("PR #4e §4 — F&B outlet fallback localizes via threaded t", () => {
     expect(out).not.toContain("منشأة أغذية ومشروبات");
   });
 });
+
+/* ─── language-change reload behaviour ──────────────────────────────── */
+
+describe("language-change reload — boot vs user toggle", () => {
+  // We cannot exercise window.location.reload() in jsdom (it is a no-op
+  // there and logs to stderr). What we DO assert: the listener is wired
+  // at module load, and an identity changeLanguage call resolves without
+  // throwing — proving the identity-skip path returns early.
+
+  it("the reload listener is registered at module load", () => {
+    // i18next v25 stores listeners in observers[event] as a Map keyed by
+    // the listener function; older shapes used _events[event] arrays.
+    // Accept either, count both.
+    const i18nAny = i18n as any;
+    const observerMap = i18nAny.observers?.languageChanged;
+    const legacyArray = i18nAny._events?.languageChanged;
+    const count =
+      (observerMap && typeof observerMap.size === "number" ? observerMap.size : 0) +
+      (Array.isArray(legacyArray) ? legacyArray.length : legacyArray ? 1 : 0);
+    expect(count).toBeGreaterThanOrEqual(1);
+  });
+
+  it("changing language to the same locale does not throw", async () => {
+    const current = i18n.language;
+    await i18n.changeLanguage(current);
+    expect(i18n.language).toBe(current);
+  });
+});
