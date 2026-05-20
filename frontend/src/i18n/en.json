@@ -802,6 +802,9 @@
     "showingOf": "Showing {{shown}} of {{total}}",
     "localSort": "Local sort",
     "reopenStudy": "Reopen",
+    "landlordBriefing": {
+      "fallbackFormat": "F&B outlet"
+    },
     "leadSite": "Lead Site",
     "setAsLead": "Set as Lead",
     "clearLead": "Clear Lead",
@@ -1119,6 +1122,7 @@
       "weightLabel": "Weight",
       "contributionLabel": "Contribution",
       "weightAndPoints": "{{weight}}% · {{points}} pts",
+      "weightPercent": "{{value}}% weight",
       "inputsHeading": "Inputs",
       "bonusesHeading": "Bonuses & adjustments",
       "subtotal": "Base score",

@@ -47,10 +47,10 @@ export default function ScoreBreakdownCompact({ breakdown }: Props) {
             />
           </div>
           <span className="ea-score-breakdown-compact__value">
-            {fmtScore(comp.weighted, 1)} pts
+            {t("expansionAdvisor.decisionLogicWeightedPoints", { points: fmtScore(comp.weighted, 1) })}
           </span>
           <span className="ea-score-breakdown-compact__weight">
-            {normalizeWeightPercent(comp.weight)}% weight
+            {t("expansionAdvisor.decisionLogic.weightPercent", { value: normalizeWeightPercent(comp.weight) })}
           </span>
         </div>
       ))}

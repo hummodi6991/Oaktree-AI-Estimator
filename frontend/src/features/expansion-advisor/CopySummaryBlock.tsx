@@ -28,7 +28,7 @@ export default function CopySummaryBlock({ candidate, report, memo }: Props) {
   const handleCopyBriefing = async () => {
     if (!candidate) return;
     try {
-      const briefingText = formatLandlordBriefingText(candidate, report, memo);
+      const briefingText = formatLandlordBriefingText(candidate, report, memo, t);
       await navigator.clipboard.writeText(briefingText);
       setCopiedBriefing(true);
       setTimeout(() => setCopiedBriefing(false), 2000);
