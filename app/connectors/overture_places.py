@@ -8,6 +8,7 @@ Filters to restaurant-related categories within the Riyadh bounding box.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
@@ -15,8 +16,13 @@ logger = logging.getLogger(__name__)
 # Riyadh metro bounding box (generous)
 RIYADH_BBOX = (46.20, 24.20, 47.30, 25.10)
 
-# Overture release — bump when a new release lands
-OVERTURE_RELEASE = "2026-02-18.0"
+# Overture release. Override at runtime with the ``OVERTURE_RELEASE`` env var
+# (handy when a new release ships before this default is bumped). Bump the
+# default whenever an older release is pruned from
+# s3://overturemaps-us-west-2/release/ — Overture only keeps the most recent
+# couple of releases on S3, so a stale default produces a "No files found"
+# IO error in DuckDB.
+OVERTURE_RELEASE = os.environ.get("OVERTURE_RELEASE", "2026-05-20.0")
 OVERTURE_S3_PATH = (
     f"s3://overturemaps-us-west-2/release/{OVERTURE_RELEASE}/theme=places/type=place/*"
 )

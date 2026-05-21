@@ -96,6 +96,8 @@ def ingest_osm_restaurants(db: Session) -> int:
     """Ingest restaurant POIs from OpenStreetMap via Overpass API."""
     import httpx
 
+    from app.connectors.delivery_platforms import _UA
+
     overpass_url = "https://overpass-api.de/api/interpreter"
     query = """
     [out:json][timeout:120];
@@ -109,7 +111,14 @@ def ingest_osm_restaurants(db: Session) -> int:
 
     logger.info("Querying Overpass API for Riyadh restaurants...")
     try:
-        r = httpx.post(overpass_url, data={"data": query}, timeout=180)
+        # Overpass returns 406 Not Acceptable when the default httpx
+        # ``Accept: */*`` is sent without a UA; explicit headers fix it.
+        r = httpx.post(
+            overpass_url,
+            data={"data": query},
+            headers={"User-Agent": _UA, "Accept": "application/json"},
+            timeout=180,
+        )
         r.raise_for_status()
         data = r.json()
     except Exception as exc:
