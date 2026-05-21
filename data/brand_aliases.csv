@@ -199,3 +199,43 @@ alhatab bakery,8,ALHATAB BAKERY || ALHatab Bakery || AlHatab Bakery || Alhatab B
 archi,8,ARCHI || Archi,archi,Archi,ارتشي,
 bakery,8,Bakery || bakery,,,,GENERIC: should already be in denylist
 bangladesh hotel,8,Bangladesh Hotel || Bangladesh hotel,,,,GENERIC: cuisine type
+ماكدونالدز السعودية,45,ماكدونالدز السعودية,mcdonalds,McDonald's,ماكدونالدز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+سينابون,39,سينابون,cinnabon,Cinnabon,سينابون,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+تيم هورتنز,37,تيم هورتنز,tim_hortons,Tim Hortons,تيم هورتنز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+مايسترو بيتزا,32,مايسترو بيتزا,maestro_pizza,Maestro Pizza,مايسترو بيتزا,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+برجر كنج,31,برجر كنج,burger_king,Burger King,برجر كنج,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+عنوان القهوة بوتيك,29,عنوان القهوة بوتيك,coffee_address,Coffee Address,عنوان القهوة,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+papa john s,24,Papa John's || Papa John’s,papa_johns,Papa John's,بابا جونز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+الرومانسية,19,الرومانسية,al_romansiah,Al Romansiah,الرومانسية,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+بوبايز,19,بوبايز,popeyes,Popeyes,بوبايز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+ميدان الشام,10,ميدان الشام,al_sham,Al Sham,الشام,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+dr cafe,9,Dr Cafe || Dr. Cafe || Dr.CAFE || dr.CAFE || dr.Cafe,dr_cafe,Dr. CAFE,دكتور كيف,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+ماما نورة,9,ماما نورة,mama_noura,Mama Noura,ماما نورة,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+maestro pizza مايسترو بيتزا,9,MAESTRO PIZZA | مايسترو بيتزا || Maestro Pizza (مايسترو بيتزا) || Maestro Pizza | مايسترو بيتزا || Maestro Pizza مايسترو بيتزا,maestro_pizza,Maestro Pizza,مايسترو بيتزا,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+starbucks drive thru,8,Starbucks (Drive Thru) || Starbucks Drive Thru || Starbucks Drive-thru || Starbucks | Drive Thru,starbucks,Starbucks,ستاربكس,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+al baik,8,Al Baik,albaik,Albaik,البيك,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+cinnabon seattle s best,8,Cinnabon / Seattle's Best,cinnabon,Cinnabon,سينابون,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+بوكودور,8,بوكودور,kudu,Kudu,كودو,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+najd village,8,Najd Village,najd_village,Najd Village,قرية نجد,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+mama noura,8,Mama Noura,mama_noura,Mama Noura,ماما نورة,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+كاريبو كافيه,8,كاريبو كافيه,caribou_coffee,Caribou Coffee,كاريبو كوفي,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+dr cafe coffee v12 station د كيف كافيه,7,dr.CAFE COFFEE | V12 Station | د.كيف كافيه || dr.CAFE COFFEE | V12 Station | د.كيف كافيه‎,dr_cafe,Dr. CAFE,دكتور كيف,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+applebee s ابل بيز,7,Applebee's | أبل بيز || Applebee's | ابل بيز,applebees,Applebee's,ابلبيز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+the coffee address,7,The Coffee Address,coffee_address,Coffee Address,عنوان القهوة,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+little caesars,7,Little Caesars,little_caesars,Little Caesars,ليتل سيزرز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+caf bateel,7,Café Bateel,bateel,Bateel,بتيل,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+burger king arabia,7,Burger King Arabia,burger_king,Burger King,برجر كنج,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+dr cafe د كيف,6,Dr. Cafe   د. كيف || Dr. Cafe | د. كيف || Dr.Cafe | د.كيف || Dr.cafe | د.كيف || dr.CAFE | د.كيف,dr_cafe,Dr. CAFE,دكتور كيف,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+tim hortons تيم هورتنز,6,Tim Hortons | تيم هورتنز || Tim Hortons تيم هورتنز,tim_hortons,Tim Hortons,تيم هورتنز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+texas chicken,6,Texas Chicken,texas_chicken,Texas Chicken,تكساس تشكن,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+صب واي subway,6,صب واي Subway || صب واي subway || صب واي | Subway,subway,Subway,صب واي,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+coffee address,6,Coffee Address || Coffee address,coffee_address,Coffee Address,عنوان القهوة,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+بيتزا بابا جونز,6,بيتزا بابا جونز,papa_johns,Papa John's,بابا جونز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+shake shack,6,Shake Shack,shake_shack,Shake Shack,شيك شاك,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+barns,6,Barns || barns,barns,Barn's,بارنز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+caribou coffee كاريبو كوفي,6,Caribou Coffee | كاريبو كوفي,caribou_coffee,Caribou Coffee,كاريبو كوفي,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+popeyes louisiana kitchen,6,Popeyes Louisiana Kitchen || Popeyes Louisiana kitchen,popeyes,Popeyes,بوبايز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+nando s,6,Nando's,nandos,Nando's,ناندوز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+بتيل بوتيك,6,بتيل بوتيك,bateel,Bateel,بتيل,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+بارنز barn s,6,بارنز Barn’s || بارنز barn's || بارنز | Barn's,barns,Barn's,بارنز,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
+burger king برجر كينج,6,Burger King (برجر كينج) || Burger King | برجر كينج,burger_king,Burger King,برجر كنج,auto-curated 2026-05-21 from KNOWN_CHAINS high-confidence generator output
