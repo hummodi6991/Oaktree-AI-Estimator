@@ -89,6 +89,40 @@ def test_classify_known_chains(
     assert conf == expected_conf
 
 
+@pytest.mark.parametrize(
+    "chain_key,expected_id",
+    [
+        ("al romansiah", "al_romansiah"),
+        ("najd village", "najd_village"),
+        ("caribou coffee shop", "caribou_coffee"),  # substring match
+        ("mama noura riyadh", "mama_noura"),
+        ("الرومانسية", "al_romansiah"),  # Arabic-only match
+        ("الطازج", "al_tazaj"),
+    ],
+)
+def test_classify_extended_chains(gen, chain_key, expected_id):
+    cid, _, _, conf, _ = gen.classify(chain_key, [], poi_count=10)
+    assert cid == expected_id
+    assert conf == "high"
+
+
+def test_known_chains_no_persian_codepoints(gen):
+    """Every Arabic string in KNOWN_CHAINS must be in the Arabic block."""
+    for pattern, (cid, en, ar) in gen.KNOWN_CHAINS:
+        for ch in pattern:
+            if ord(ch) >= 0x0600:  # Arabic-ish ranges
+                assert 0x0600 <= ord(ch) <= 0x06FF, (
+                    f"Pattern '{pattern}' contains non-Arabic-block "
+                    f"codepoint U+{ord(ch):04X}"
+                )
+        for ch in ar:
+            if ord(ch) >= 0x0600:
+                assert 0x0600 <= ord(ch) <= 0x06FF, (
+                    f"Arabic display name '{ar}' contains non-Arabic-block "
+                    f"codepoint U+{ord(ch):04X}"
+                )
+
+
 def test_classify_non_chain_pattern(gen):
     cid, en, ar, conf, notes = gen.classify(
         "matjar al baqala بقالة المتجر",
