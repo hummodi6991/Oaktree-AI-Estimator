@@ -207,6 +207,9 @@ def _build_competitor_quality(db, replace: bool) -> dict:
                 WHERE name IS NOT NULL AND name != ''
                   AND {_name_norm} ~ '[a-z0-9\\u0600-\\u06FF]'
                   AND {_name_norm} NOT IN ({_denylist_sql})
+                  -- Closed venues do not count toward chain size.
+                  AND (business_status IS NULL
+                       OR business_status = 'OPERATIONAL')
             ) raw
             LEFT JOIN brand_alias ba ON ba.alias_key = raw.chain_key
             GROUP BY COALESCE(ba.canonical_brand_id, raw.chain_key)

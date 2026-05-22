@@ -414,9 +414,11 @@ class AsyncGooglePlacesClient:
             return _details_cache[place_id]
 
         key = _get_api_key()
+        # business_status is a Basic-tier field — including it does not
+        # bump the Place Details SKU pricing.
         fields = (
             "place_id,name,rating,user_ratings_total,price_level,"
-            "geometry,types,formatted_address"
+            "geometry,types,formatted_address,business_status"
         )
         params = {
             "place_id": place_id,
@@ -441,6 +443,7 @@ class AsyncGooglePlacesClient:
             "lng": r.get("geometry", {}).get("location", {}).get("lng"),
             "types": r.get("types", []),
             "formatted_address": r.get("formatted_address", ""),
+            "business_status": r.get("business_status"),
         }
         _details_cache[place_id] = details
         return details

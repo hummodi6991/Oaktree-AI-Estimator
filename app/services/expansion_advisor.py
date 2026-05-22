@@ -6409,7 +6409,13 @@ def _bulk_enrich_competitors(
                             LEFT JOIN expansion_competitor_quality ecq
                                    ON ecq.restaurant_poi_id = rp.id
                                   AND ecq.city = 'riyadh'
-                            WHERE ST_DWithin(
+                            -- Exclude closed venues: a CLOSED_PERMANENTLY /
+                            -- CLOSED_TEMPORARILY restaurant is not live
+                            -- competition. NULL is kept for non-Google
+                            -- sources and pre-backfill rows.
+                            WHERE (rp.business_status IS NULL
+                                   OR rp.business_status = 'OPERATIONAL')
+                              AND ST_DWithin(
                                   rp.geom::geography,
                                   ST_SetSRID(ST_MakePoint(i.lon, i.lat), 4326)::geography,
                                   :radius_m
