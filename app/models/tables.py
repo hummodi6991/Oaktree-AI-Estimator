@@ -324,6 +324,10 @@ class RestaurantPOI(Base):
     google_place_id = Column(Text)
     google_fetched_at = Column(DateTime(timezone=True))
     google_confidence = Column(Numeric)
+    # Google Places venue lifecycle: OPERATIONAL / CLOSED_TEMPORARILY /
+    # CLOSED_PERMANENTLY. NULL for non-Google sources or rows ingested
+    # before this column existed.
+    business_status = Column(String(32))
 
     __table_args__ = (
         Index("ix_restaurant_poi_category", "category"),
@@ -331,6 +335,7 @@ class RestaurantPOI(Base):
         Index("ix_restaurant_poi_district", "district"),
         Index("ix_restaurant_poi_chain_name", "chain_name"),
         Index("ix_restaurant_poi_google_place_id", "google_place_id"),
+        Index("ix_restaurant_poi_business_status", "business_status"),
     )
 
 

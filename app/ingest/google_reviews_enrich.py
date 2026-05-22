@@ -237,6 +237,12 @@ async def _enrich_one(
     poi.google_place_id = place_id
     poi.google_fetched_at = now
     poi.google_confidence = confidence
+    # Promote venue lifecycle to the typed column so closed venues are
+    # excluded from competitor counts. Only overwrite when Google
+    # returned a value — never clear an existing status to NULL.
+    business_status = details.get("business_status") or best.get("business_status")
+    if business_status:
+        poi.business_status = business_status
 
     existing_raw = poi.raw or {}
     existing_raw["google"] = {
