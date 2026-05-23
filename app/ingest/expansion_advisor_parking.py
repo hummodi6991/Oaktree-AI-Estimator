@@ -146,7 +146,7 @@ def _ingest_from_polygons(db, replace: bool) -> int:
                 WHEN lower(COALESCE({amenity_expr}, '')) = 'parking' THEN 'surface'
                 ELSE 'unknown'
             END,
-            ST_Centroid(ST_Transform(op.way, 4326)),
+            ST_Transform(op.way, 4326),
             CASE
                 WHEN {capacity_expr} ~ '^[0-9]+$' THEN CAST({capacity_expr} AS INTEGER)
                 ELSE NULL
