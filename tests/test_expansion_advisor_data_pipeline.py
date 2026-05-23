@@ -547,6 +547,18 @@ class TestParkingModule:
         assert hasattr(mod, "_ingest_from_points")
 
 
+class TestParkingGoogleModule:
+    def test_parking_google_module_import(self):
+        import app.ingest.expansion_advisor_parking_google as mod
+
+        assert hasattr(mod, "main")
+        assert hasattr(mod, "run_ingest")
+        assert hasattr(mod, "generate_grid_points")
+        assert hasattr(mod, "load_checkpoint")
+        assert hasattr(mod, "save_checkpoint")
+        assert hasattr(mod, "delete_checkpoint")
+
+
 # ---------------------------------------------------------------------------
 # Migration
 # ---------------------------------------------------------------------------
