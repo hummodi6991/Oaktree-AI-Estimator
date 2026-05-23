@@ -2321,7 +2321,7 @@ def _demand_blend_weights(service_model: str) -> tuple[float, float]:
 
 
 def _competition_whitespace_score(
-    competitor_count: int,
+    competitor_count: int | float,
     *,
     confident: bool | None = None,
 ) -> float:
@@ -2341,6 +2341,10 @@ def _competition_whitespace_score(
       12             -> 28
       20+            -> 15  (floor)
 
+    ``competitor_count`` accepts a float so callers can pass a price-
+    tier-weighted "effective" count (see ``_price_tier_weighted_competitor_count``)
+    that interpolates between the integer calibration points above.
+
     F4 (defensive): when ``confident`` is ``False``, the spatial query
     returned zero rows AND no broader POI/delivery presence was observed
     in the radius (i.e. thin POI coverage, not a true greenfield). In
@@ -2358,6 +2362,113 @@ def _competition_whitespace_score(
     # Floor at 15 — even saturated areas get some score so rankings remain
     # distinguishable.
     return _clamp(max(15.0, raw))
+
+
+# Map user-supplied brand_profile.price_tier strings to the integer scale
+# used by Google's ``restaurant_poi.price_level`` field (1=$, 2=$$, 3=$$$,
+# 4=$$$$). "premium" maps to 3 rather than 4 because the user-input enum
+# does not expose a "luxury" tier; treating premium as 3 keeps the price-
+# tier distance to a 4-tier competitor at 1 (close-ish) instead of 0
+# (treated as a direct competitor).
+_BRAND_PROFILE_PRICE_TIER_TO_INT: dict[str, int] = {
+    "value": 1,
+    "mid": 2,
+    "premium": 3,
+}
+
+
+def _normalize_user_price_tier(value: Any) -> int | None:
+    """Coerce a brand_profile.price_tier value to int 1-4, or None."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            tier = int(value)
+        except (TypeError, ValueError):
+            return None
+        return tier if 1 <= tier <= 4 else None
+    if isinstance(value, str):
+        return _BRAND_PROFILE_PRICE_TIER_TO_INT.get(value.lower().strip())
+    return None
+
+
+def _expected_price_tier(
+    user_price_tier: Any,
+    competitor_price_levels: list[int | None] | None,
+) -> int:
+    """Return the expected price tier (1-4) for cannibalization weighting.
+
+    Priority order:
+      1. User-specified tier from ``brand_profile.price_tier`` (if present)
+      2. Median ``price_level`` of in-category competitors in the catchment
+      3. Tier 2 (mid-market) as the neutral default
+
+    Option B (median) is the default because it works for every candidate
+    including those where the user has not yet specified a concept. Option A
+    (user input) overrides only when the operator has explicitly chosen a
+    price tier — then we trust their intent over the local market signal.
+    """
+    user_int = _normalize_user_price_tier(user_price_tier)
+    if user_int is not None:
+        return user_int
+    if competitor_price_levels:
+        observed = [
+            int(p) for p in competitor_price_levels
+            if p is not None and 1 <= int(p) <= 4
+        ]
+        if observed:
+            return int(statistics.median(observed))
+    return 2
+
+
+def _price_tier_weight(
+    competitor_price_level: int | None,
+    expected_price_tier: int,
+) -> float:
+    """Weight a competitor by how close its price tier is to expected.
+
+    Linear, distance-based calibration:
+        distance 0 (same tier)        -> 1.0
+        distance 1 (one tier away)    -> 0.6
+        distance 2 (two tiers away)   -> 0.2  (above the 0.1 floor)
+        distance 3 (three tiers away) -> 0.1  (floor)
+
+    NULL ``price_level`` (common for delivery-platform rows and OSM rows)
+    returns 0.7 — a neutral assumption that an unknown-price competitor
+    is close-ish to the expected tier, with a small discount for the
+    uncertainty. Do not change to 0.0 (would over-discount) or 1.0
+    (would over-weight).
+    """
+    if competitor_price_level is None:
+        return 0.7
+    distance = abs(int(competitor_price_level) - int(expected_price_tier))
+    return max(0.1, 1.0 - 0.4 * distance)
+
+
+def _price_tier_weighted_competitor_count(
+    competitor_price_levels: list[int | None] | None,
+    expected_price_tier: int,
+) -> float:
+    """Sum of per-competitor price-tier weights.
+
+    Used as the *effective* competitor count fed into
+    ``_competition_whitespace_score`` so that price-distant competitors
+    weigh less in the cannibalization signal. A fast-food candidate
+    surrounded by fine-dining neighbors sees less cannibalization
+    pressure than the raw same-category count would suggest.
+
+    Returns 0.0 when the list is empty. The raw ``competitor_count``
+    int is preserved separately for evidence display (UI bullets,
+    score breakdown, decision-summary thresholds).
+    """
+    if not competitor_price_levels:
+        return 0.0
+    return sum(
+        _price_tier_weight(p, expected_price_tier)
+        for p in competitor_price_levels
+    )
 
 
 def _chain_strength_score(max_chain_strength: float | None) -> float:
@@ -6381,7 +6492,8 @@ def _bulk_enrich_competitors(
                         COALESCE(comp.competitor_count, 0) AS competitor_count,
                         COALESCE(comp.broader_count, 0) AS broader_count,
                         comp.max_chain_strength AS max_chain_strength,
-                        comp.top_chain_strength_name AS top_chain_strength_name
+                        comp.top_chain_strength_name AS top_chain_strength_name,
+                        comp.competitor_price_levels AS competitor_price_levels
                     FROM inputs i
                     LEFT JOIN LATERAL (
                         SELECT
@@ -6395,7 +6507,15 @@ def _bulk_enrich_competitors(
                             -- which orders by branch_count.
                             (array_agg(brand_name ORDER BY chain_strength DESC NULLS LAST)
                                 FILTER (WHERE in_category AND chain_strength IS NOT NULL))[1]
-                                AS top_chain_strength_name
+                                AS top_chain_strength_name,
+                            -- Per-competitor price_level array for the same-
+                            -- category set. Drives the price-tier cannibalization
+                            -- weighting in the scoring loop. NULLs (delivery
+                            -- rows, pre-backfill POI rows) are preserved — the
+                            -- consumer assigns them a neutral 0.7 weight rather
+                            -- than dropping them.
+                            array_agg(price_level)
+                                FILTER (WHERE in_category) AS competitor_price_levels
                         FROM (
                             -- Source 1: restaurant_poi (Google Places).
                             -- LEFT JOIN expansion_competitor_quality so the
@@ -6404,7 +6524,8 @@ def _bulk_enrich_competitors(
                             -- contribute NULL (ignored by MAX).
                             SELECT (lower(rp.category) = ANY(:category_keys)) AS in_category,
                                    ecq.chain_strength_score AS chain_strength,
-                                   rp.name AS brand_name
+                                   rp.name AS brand_name,
+                                   rp.price_level AS price_level
                             FROM restaurant_poi rp
                             LEFT JOIN expansion_competitor_quality ecq
                                    ON ecq.restaurant_poi_id = rp.id
@@ -6423,12 +6544,15 @@ def _bulk_enrich_competitors(
                             UNION ALL
                             -- Source 2: delivery_source_record (HungerStation etc.).
                             -- No POI mapping to chain quality, so chain_strength
-                            -- is NULL on every delivery-side row.
+                            -- is NULL on every delivery-side row. price_level is
+                            -- NULL too (delivery feeds don't expose Google's $/
+                            -- $$/$$$/$$$$ scale).
                             SELECT (lower(COALESCE(dsr.category_raw, '')) ~* :category_regex
                                     OR lower(COALESCE(dsr.cuisine_raw, '')) ~* :category_regex
                                    ) AS in_category,
                                    NULL::double precision AS chain_strength,
-                                   NULL::text AS brand_name
+                                   NULL::text AS brand_name,
+                                   NULL::integer AS price_level
                             FROM delivery_source_record dsr
                             WHERE {_dsr_where}
                               AND ST_DWithin(
@@ -6458,6 +6582,13 @@ def _bulk_enrich_competitors(
                     if r.get("top_chain_strength_name") is not None
                     else None
                 ),
+                # Per-competitor price_level for the same-category set.
+                # NULLs are preserved; the price-tier weighting consumer
+                # treats them as "unknown, neutral-ish weight (0.7)".
+                "competitor_price_levels": [
+                    int(p) if p is not None else None
+                    for p in (r.get("competitor_price_levels") or [])
+                ],
             }
             for r in result
         }
@@ -7096,6 +7227,7 @@ def run_expansion_search(
                     _r["competitor_count_confident"] = _entry["confident"]
                     _r["max_chain_strength"] = _entry.get("max_chain_strength")
                     _r["top_chain_strength_name"] = _entry.get("top_chain_strength_name")
+                    _r["competitor_price_levels"] = _entry.get("competitor_price_levels") or []
             logger.info(
                 "expansion_search: bulk competitor enrichment applied to %d/%d candidates, search_id=%s",
                 len(_bulk_comp), len(rows), search_id,
@@ -7140,6 +7272,7 @@ def run_expansion_search(
                         _r["competitor_count_confident"] = _entry["confident"]
                         _r["max_chain_strength"] = _entry.get("max_chain_strength")
                         _r["top_chain_strength_name"] = _entry.get("top_chain_strength_name")
+                        _r["competitor_price_levels"] = _entry.get("competitor_price_levels") or []
 
             # ── Resolve commercial unit districts to Arabic names ──────────
             # Commercial units store English neighborhood names from Aqar,
@@ -7700,8 +7833,34 @@ def run_expansion_search(
         _pop_w, _del_w = _demand_blend_weights(service_model)
         demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
 
+        # Price-tier cannibalization weighting. Each in-category competitor
+        # contributes a fractional weight (1.0 same tier, 0.6 one tier
+        # away, …) based on how close its Google price_level is to the
+        # candidate's expected price tier. The whitespace scorer then
+        # consumes this *effective* count instead of the raw COUNT(*), so
+        # a fast-food candidate surrounded by fine-dining neighbors sees
+        # less cannibalization pressure than a same-tier neighborhood.
+        # Raw `competitor_count` (int) is kept untouched for evidence
+        # display (UI bullets, decision-summary thresholds, score
+        # breakdown).
+        _cpl_raw = row.get("competitor_price_levels")
+        if _cpl_raw is None:
+            # Legacy ARCGIS-fallback / pre-enrichment path: no per-competitor
+            # price_level array available. Fall back to raw count so legacy
+            # candidates score identically to before.
+            effective_competitor_count: int | float = competitor_count
+        else:
+            competitor_price_levels = list(_cpl_raw)
+            expected_price_tier = _expected_price_tier(
+                effective_brand_profile.get("price_tier") if effective_brand_profile else None,
+                competitor_price_levels,
+            )
+            effective_competitor_count = _price_tier_weighted_competitor_count(
+                competitor_price_levels, expected_price_tier
+            )
+
         whitespace_score = _competition_whitespace_score(
-            competitor_count, confident=competitor_count_confident
+            effective_competitor_count, confident=competitor_count_confident
         )
         chain_strength_score = _chain_strength_score(max_chain_strength)
 
