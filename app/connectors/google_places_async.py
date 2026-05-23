@@ -408,6 +408,31 @@ class AsyncGooglePlacesClient:
 
         return [], fallback_info
 
+    async def nearby_search(
+        self,
+        lat: float,
+        lon: float,
+        radius_m: int = 350,
+        place_type: str = "parking",
+    ) -> dict:
+        """
+        Nearby Search (legacy endpoint) for amenity POIs in a radius.
+
+        Returns the raw response dict. Caller is responsible for handling
+        the ``status`` field, deduping ``place_id``, and capping at the
+        20-result page limit (no pagination via ``next_page_token``).
+
+        Used by the grid-driven Google Places parking ingest.
+        """
+        url = f"{_BASE_URL}/nearbysearch/json"
+        params: dict[str, Any] = {
+            "location": f"{lat},{lon}",
+            "radius": radius_m,
+            "type": place_type,
+            "key": _get_api_key(),
+        }
+        return await self._request(url, params)
+
     async def get_place_details(self, place_id: str) -> dict:
         """Fetch Place Details for a specific place_id."""
         if place_id in _details_cache:

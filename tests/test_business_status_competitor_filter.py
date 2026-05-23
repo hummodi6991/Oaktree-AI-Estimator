@@ -293,3 +293,20 @@ def test_place_details_fields_includes_business_status_async():
     ).read_text()
     # The async get_place_details fields string must request the field.
     assert "formatted_address,business_status" in src
+
+
+def test_async_client_has_nearby_search():
+    """AsyncGooglePlacesClient must expose nearby_search as an async method.
+
+    Guards the contract relied on by the Google Places parking ingest in
+    ``app/ingest/expansion_advisor_parking_google.py``.
+    """
+    import inspect
+
+    from app.connectors.google_places_async import AsyncGooglePlacesClient
+
+    method = getattr(AsyncGooglePlacesClient, "nearby_search", None)
+    assert method is not None, "AsyncGooglePlacesClient.nearby_search is missing"
+    assert inspect.iscoroutinefunction(method), (
+        "AsyncGooglePlacesClient.nearby_search must be an async coroutine function"
+    )
