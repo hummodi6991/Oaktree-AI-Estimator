@@ -1498,6 +1498,8 @@ def upsert_listing(db, listing: dict) -> str:
                 "aqar_area_deed = COALESCE(:aqar_area_deed, commercial_unit.aqar_area_deed), "
                 "aqar_listing_source = COALESCE(:aqar_listing_source, commercial_unit.aqar_listing_source), "
                 "aqar_detail_scraped_at = COALESCE(:aqar_detail_scraped_at, commercial_unit.aqar_detail_scraped_at), "
+                "platform = :platform, "
+                "platform_listing_id = :platform_listing_id, "
                 "status = 'active', last_seen_at = now() "
                 "WHERE aqar_id = :aqar_id"
             ),
@@ -1519,6 +1521,7 @@ def upsert_listing(db, listing: dict) -> str:
                 "aqar_created_at, aqar_updated_at, aqar_views, "
                 "aqar_advertisement_license, aqar_license_expiry, aqar_plan_parcel, "
                 "aqar_area_deed, aqar_listing_source, aqar_detail_scraped_at, "
+                "platform, platform_listing_id, "
                 "status, first_seen_at, last_seen_at) "
                 "VALUES (:aqar_id, :title, :description, :neighborhood, :listing_url, :image_url, "
                 ":price_sar_annual, :price_per_sqm, :area_sqm, :street_width_m, "
@@ -1531,6 +1534,7 @@ def upsert_listing(db, listing: dict) -> str:
                 ":aqar_created_at, :aqar_updated_at, :aqar_views, "
                 ":aqar_advertisement_license, :aqar_license_expiry, :aqar_plan_parcel, "
                 ":aqar_area_deed, :aqar_listing_source, :aqar_detail_scraped_at, "
+                ":platform, :platform_listing_id, "
                 "'active', now(), now())"
             ),
             _listing_params(listing),
@@ -1540,8 +1544,11 @@ def upsert_listing(db, listing: dict) -> str:
 
 def _listing_params(listing: dict) -> dict:
     """Build parameter dict for SQL statements from a listing dict."""
+    aqar_id = listing.get("aqar_id")
     return {
-        "aqar_id": listing.get("aqar_id"),
+        "aqar_id": aqar_id,
+        "platform": "aqar",
+        "platform_listing_id": aqar_id,
         "title": listing.get("title"),
         "description": listing.get("description"),
         "neighborhood": listing.get("neighborhood"),
