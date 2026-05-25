@@ -17,6 +17,7 @@ import pytest
 
 from app.services import expansion_advisor as expansion_service
 from app.services.expansion_advisor import (
+    _CANDIDATE_POOL_LIMIT,
     _PER_DISTRICT_HEADROOM_MULTIPLIER,
     _PER_DISTRICT_MAX_CAP,
     _PER_DISTRICT_MIN_CAP,
@@ -252,6 +253,13 @@ def test_city_wide_branch_unchanged(caplog: pytest.LogCaptureFixture) -> None:
 def test_headroom_multiplier_constant_value() -> None:
     # Locks the multiplier so future tweaks cause a visible test break.
     assert expansion_service._PER_DISTRICT_HEADROOM_MULTIPLIER == 3
+
+
+def test_candidate_pool_limit_is_3500() -> None:
+    # Locks the outer candidate-pool ceiling so an accidental revert is
+    # caught at test time. Raised from 2000 ahead of Bayut ingest so the
+    # combined Aqar+Bayut pool has comfortable headroom.
+    assert _CANDIDATE_POOL_LIMIT == 3500
 
 
 _CL_LOG_RE = re.compile(
