@@ -449,6 +449,8 @@ class CommercialUnit(Base):
     aqar_area_deed = Column(Numeric(10, 2))
     aqar_listing_source = Column(Text)
     aqar_detail_scraped_at = Column(DateTime(timezone=True))
+    platform = Column(String(16), nullable=False)
+    platform_listing_id = Column(String(128), nullable=False)
 
     __table_args__ = (
         Index("ix_commercial_unit_neighborhood", "neighborhood"),
@@ -479,6 +481,13 @@ class CommercialUnit(Base):
             "aqar_id",
             postgresql_where=text("aqar_detail_scraped_at IS NULL"),
         ),
+        Index(
+            "ix_commercial_unit_platform_listing_id",
+            "platform",
+            "platform_listing_id",
+            unique=True,
+        ),
+        Index("ix_commercial_unit_platform", "platform"),
     )
 
 
