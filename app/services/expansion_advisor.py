@@ -39,7 +39,8 @@ logger = logging.getLogger(__name__)
 ARCGIS_PARCELS_TABLE = "public.riyadh_parcels_arcgis_proxy"
 
 # Candidate pool limits
-_CANDIDATE_POOL_LIMIT = 2000         # max total candidates from SQL
+_CANDIDATE_POOL_LIMIT = 3500         # pre-filter ceiling for the multi-platform candidate pool;
+                                     # sized for ~2x current Aqar volume plus headroom for Bayut
 _PER_DISTRICT_MIN_CAP = 5            # minimum parcels per district in stratified mode
 _PER_DISTRICT_MAX_CAP = 200          # upper bound per district — raised for listings-only pool
 _PER_DISTRICT_HEADROOM_MULTIPLIER = 3  # pull 3x the fair share per district
