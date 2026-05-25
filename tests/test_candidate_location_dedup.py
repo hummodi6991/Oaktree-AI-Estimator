@@ -227,7 +227,7 @@ class TestFingerprintFallbackPass:
 
     def test_connected_component_resolution(self):
         # Recursive CTE → MIN(root) per node → ROW_NUMBER per component.
-        assert "WITH " in self.fp_sql or "components AS" in self.fp_sql
+        assert "WITH RECURSIVE" in self.fp_sql
         assert "components AS" in self.fp_sql
         assert "component_root" in self.fp_sql
         assert "MIN(root) AS root_id" in self.fp_sql

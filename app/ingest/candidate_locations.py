@@ -350,7 +350,7 @@ def _run_deduplication(db: Session, run_id: str) -> int:
     # match set until the set stabilises), then within each component the
     # same Aqar-wins / last_seen_at / id-ASC tiebreak applies.
     db.execute(text("""
-        WITH fingerprint_pairs AS (
+        WITH RECURSIVE fingerprint_pairs AS (
             SELECT cl1.id AS a_id, cl2.id AS b_id
               FROM candidate_location cl1
               JOIN candidate_location cl2
