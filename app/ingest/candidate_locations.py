@@ -56,6 +56,7 @@ def _ingest_tier1_aqar(db: Session, run_id: str) -> int:
             listing_url, listing_type, image_url,
             is_vacant,
             street_width_m, has_drive_thru,
+            rega_advertisement_license,
             population_run_id
         )
         SELECT
@@ -72,6 +73,7 @@ def _ingest_tier1_aqar(db: Session, run_id: str) -> int:
             cu.listing_url, cu.listing_type, cu.image_url,
             TRUE,
             cu.street_width_m, cu.has_drive_thru,
+            cu.aqar_advertisement_license,
             :run_id
         FROM commercial_unit cu
         WHERE cu.status = 'active'
@@ -285,14 +287,156 @@ def _run_deduplication(db: Session, run_id: str) -> int:
     """), {"run_id": run_id})
 
     # Step 1: Mark ALL Tier 1 candidates as primary.
-    # Each real listing (Aqar, etc.) is a distinct rentable unit and must never
-    # be collapsed by spatial dedup — multiple units legitimately exist within 50m
-    # in dense commercial areas of Riyadh.
+    # Each real listing is a distinct rentable unit and must not be collapsed
+    # by spatial dedup — multiple units legitimately exist within 50m in
+    # dense commercial areas of Riyadh. The cross-portal collapses in Step
+    # 1a and Step 1b below DEMOTE the duplicates of a physical unit that
+    # appears on more than one portal (Aqar today, Bayut in PR4); they do
+    # not change the Aqar-only behavior because REGA licenses are unique
+    # per row when only one portal is present.
     db.execute(text("""
         UPDATE candidate_location
         SET is_cluster_primary = TRUE
         WHERE population_run_id = :run_id
           AND source_tier = 1
+    """), {"run_id": run_id})
+
+    # Step 1a: Cross-portal REGA-license dedup.
+    # When two Tier 1 rows share the same REGA advertisement license
+    # (case-insensitive, whitespace-stripped), they describe the same
+    # physical unit. Keep one primary per license group; demote the rest.
+    # Tiebreak: Aqar wins → commercial_unit.last_seen_at DESC → id ASC.
+    db.execute(text("""
+        WITH license_groups AS (
+            SELECT
+                cl.id,
+                COUNT(*) OVER (
+                    PARTITION BY cl.population_run_id,
+                                 LOWER(TRIM(cl.rega_advertisement_license))
+                ) AS group_size,
+                ROW_NUMBER() OVER (
+                    PARTITION BY cl.population_run_id,
+                                 LOWER(TRIM(cl.rega_advertisement_license))
+                    ORDER BY (cl.source_type = 'aqar') DESC,
+                             cu.last_seen_at DESC NULLS LAST,
+                             cl.id ASC
+                ) AS rn
+            FROM candidate_location cl
+            LEFT JOIN commercial_unit cu
+                   ON cu.platform = cl.source_type
+                  AND cu.platform_listing_id = cl.source_id
+            WHERE cl.population_run_id = :run_id
+              AND cl.source_tier = 1
+              AND cl.rega_advertisement_license IS NOT NULL
+              AND TRIM(cl.rega_advertisement_license) <> ''
+        )
+        UPDATE candidate_location cl
+           SET is_cluster_primary = FALSE
+          FROM license_groups lg
+         WHERE cl.id = lg.id
+           AND lg.group_size > 1
+           AND lg.rn > 1
+    """), {"run_id": run_id})
+
+    # Step 1b: Fingerprint fallback for Tier 1 rows where the REGA license
+    # is missing on one or both sides. Two rows match the same physical
+    # unit if they are within 25 m AND area_sqm differs by ≤5% AND
+    # rent_sar_annual differs by ≤5%. NULL/zero on either side prevents
+    # any match (silent NULL-vs-NULL match would be a false positive).
+    #
+    # Resolution uses connected components: if A↔B and B↔C all match,
+    # the trio collapses to a single primary. The component representative
+    # is computed iteratively (each member adopts the minimum id in its
+    # match set until the set stabilises), then within each component the
+    # same Aqar-wins / last_seen_at / id-ASC tiebreak applies.
+    db.execute(text("""
+        WITH fingerprint_pairs AS (
+            SELECT cl1.id AS a_id, cl2.id AS b_id
+              FROM candidate_location cl1
+              JOIN candidate_location cl2
+                ON cl1.population_run_id = cl2.population_run_id
+               AND cl1.id < cl2.id
+             WHERE cl1.population_run_id = :run_id
+               AND cl1.source_tier = 1
+               AND cl2.source_tier = 1
+               AND cl1.is_cluster_primary = TRUE
+               AND cl2.is_cluster_primary = TRUE
+               AND cl1.geom IS NOT NULL
+               AND cl2.geom IS NOT NULL
+               AND ST_DWithin(cl1.geom::geography, cl2.geom::geography, 25.0)
+               AND cl1.area_sqm IS NOT NULL
+               AND cl2.area_sqm IS NOT NULL
+               AND cl1.area_sqm > 0
+               AND cl2.area_sqm > 0
+               AND ABS(cl1.area_sqm - cl2.area_sqm)
+                   / GREATEST(cl1.area_sqm, cl2.area_sqm) <= 0.05
+               AND cl1.rent_sar_annual IS NOT NULL
+               AND cl2.rent_sar_annual IS NOT NULL
+               AND cl1.rent_sar_annual > 0
+               AND cl2.rent_sar_annual > 0
+               AND ABS(cl1.rent_sar_annual - cl2.rent_sar_annual)
+                   / GREATEST(cl1.rent_sar_annual, cl2.rent_sar_annual) <= 0.05
+               -- Only fire when the REGA pass did NOT already own this pair:
+               -- skip when both sides have non-empty REGA licenses.
+               AND (cl1.rega_advertisement_license IS NULL
+                    OR TRIM(cl1.rega_advertisement_license) = ''
+                    OR cl2.rega_advertisement_license IS NULL
+                    OR TRIM(cl2.rega_advertisement_license) = '')
+        ),
+        edges AS (
+            -- Undirected edges as bidirectional rows so reachability is symmetric.
+            SELECT a_id AS src, b_id AS dst FROM fingerprint_pairs
+            UNION ALL
+            SELECT b_id AS src, a_id AS dst FROM fingerprint_pairs
+        ),
+        components AS (
+            -- Transitive closure: each candidate node's component label is
+            -- the minimum id reachable via edges (including itself). Caps
+            -- depth at 32 hops — Tier 1 fingerprint clusters are tiny in
+            -- practice (typically 2, rarely 3); the cap protects against
+            -- pathological input.
+            SELECT id AS node, id AS root, 0 AS depth
+              FROM candidate_location
+             WHERE population_run_id = :run_id
+               AND source_tier = 1
+               AND is_cluster_primary = TRUE
+            UNION
+            SELECT e.src, LEAST(c.root, e.dst), c.depth + 1
+              FROM components c
+              JOIN edges e ON e.src = c.node
+             WHERE c.depth < 32
+        ),
+        component_root AS (
+            SELECT node, MIN(root) AS root_id
+              FROM components
+             GROUP BY node
+        ),
+        ranked AS (
+            SELECT
+                cl.id,
+                cr.root_id,
+                COUNT(*) OVER (PARTITION BY cr.root_id) AS component_size,
+                ROW_NUMBER() OVER (
+                    PARTITION BY cr.root_id
+                    ORDER BY (cl.source_type = 'aqar') DESC,
+                             cu.last_seen_at DESC NULLS LAST,
+                             cl.id ASC
+                ) AS rn
+              FROM candidate_location cl
+              JOIN component_root cr ON cr.node = cl.id
+              LEFT JOIN commercial_unit cu
+                     ON cu.platform = cl.source_type
+                    AND cu.platform_listing_id = cl.source_id
+             WHERE cl.population_run_id = :run_id
+               AND cl.source_tier = 1
+               AND cl.is_cluster_primary = TRUE
+        )
+        UPDATE candidate_location cl
+           SET is_cluster_primary = FALSE
+          FROM ranked r
+         WHERE cl.id = r.id
+           AND r.component_size > 1
+           AND r.rn > 1
     """), {"run_id": run_id})
 
     # Step 2: For clusters with NO Tier 1 candidates, pick the best Tier 2/3
