@@ -553,6 +553,12 @@ class CandidateLocation(Base):
     cluster_id = Column(Integer)
     is_cluster_primary = Column(Boolean, server_default=text("TRUE"))
 
+    # Cross-portal dedup signal (PR3): same physical unit can appear on
+    # multiple portals (Aqar today, Bayut in PR4) with the same REGA
+    # license. Denormalized from commercial_unit.aqar_advertisement_license
+    # so _run_deduplication is a single-table query.
+    rega_advertisement_license = Column(String(64), nullable=True)
+
     # Profitability model
     profitability_score = Column(Numeric(5, 2))
     success_proxy = Column(Numeric(5, 2))
@@ -574,6 +580,11 @@ class CandidateLocation(Base):
         Index("ix_cl_current_category", "current_category"),
         Index("ix_cl_rent_confidence", "rent_confidence"),
         Index("ix_cl_profitability", "profitability_score"),
+        Index(
+            "ix_candidate_location_rega_license",
+            "rega_advertisement_license",
+            postgresql_where=text("rega_advertisement_license IS NOT NULL"),
+        ),
     )
 
 
