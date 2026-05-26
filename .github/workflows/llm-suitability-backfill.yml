@@ -15,6 +15,7 @@ on:
     workflows:
       - "Deploy to sccc (Alibaba Cloud Riyadh)"
       - "Aqar Scraper"
+      - "Bayut Scraper"
     types: [completed]
 
 jobs:

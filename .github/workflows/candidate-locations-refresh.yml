@@ -12,7 +12,7 @@ on:
         type: boolean
         default: true
   workflow_run:
-    workflows: ["Aqar Scraper"]
+    workflows: ["Aqar Scraper", "Bayut Scraper"]
     types:
       - completed
     branches:

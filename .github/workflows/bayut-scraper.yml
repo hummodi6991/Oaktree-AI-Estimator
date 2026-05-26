@@ -1,0 +1,88 @@
+name: Bayut Scraper
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_pages:
+        description: "Maximum pages to scrape per category"
+        required: false
+        default: "100"
+      no_detail:
+        description: "Skip detail page scraping (--no-detail)"
+        type: boolean
+        default: false
+      skip_geocode:
+        description: "Skip geocoding (Bayut exposes coords in JSON)"
+        type: boolean
+        default: true
+      category:
+        description: "Category to crawl"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - shops
+          - showrooms
+      rate_limit:
+        description: "Seconds to sleep between requests"
+        required: false
+        default: "1.0"
+  schedule:
+    # Daily at 08:30 UTC (11:30 Riyadh time). The Aqar scraper runs at
+    # 02:17 UTC (05:17 Riyadh); the ~6h offset lets Aqar's
+    # candidate-locations refresh finish before Bayut starts writing
+    # rows that the next refresh will rejoin.
+    - cron: '30 8 * * *'
+
+concurrency:
+  group: bayut-scraper
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Bayut scraper
+        env:
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_SSLMODE: ${{ secrets.POSTGRES_SSLMODE }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          MAX_PAGES="${{ github.event.inputs.max_pages || '100' }}"
+          CATEGORY="${{ github.event.inputs.category || 'all' }}"
+          RATE_LIMIT="${{ github.event.inputs.rate_limit || '1.0' }}"
+          NO_DETAIL="${{ github.event.inputs.no_detail || 'false' }}"
+          SKIP_GEOCODE="${{ github.event.inputs.skip_geocode || 'true' }}"
+          FLAGS="--max-pages ${MAX_PAGES}"
+          FLAGS="${FLAGS} --category ${CATEGORY}"
+          FLAGS="${FLAGS} --rate-limit ${RATE_LIMIT}"
+          if [ "${NO_DETAIL}" = "true" ]; then
+            FLAGS="${FLAGS} --no-detail"
+          fi
+          if [ "${SKIP_GEOCODE}" = "true" ]; then
+            FLAGS="${FLAGS} --skip-geocode"
+          fi
+          FLAGS="${FLAGS} --resume"
+          echo "Running: python scripts/scrape_bayut.py ${FLAGS}"
+          python scripts/scrape_bayut.py ${FLAGS}
