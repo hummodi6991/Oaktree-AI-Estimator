@@ -331,8 +331,7 @@ def _run_deduplication(db: Session, run_id: str) -> int:
                 ) AS rn
             FROM candidate_location cl
             LEFT JOIN commercial_unit cu
-                   ON cu.platform = cl.source_type
-                  AND cu.platform_listing_id = cl.source_id
+                   ON cu.aqar_id = cl.source_id
             WHERE cl.population_run_id = :run_id
               AND cl.source_tier = 1
               AND cl.rega_advertisement_license IS NOT NULL
@@ -433,8 +432,7 @@ def _run_deduplication(db: Session, run_id: str) -> int:
               FROM candidate_location cl
               JOIN component_root cr ON cr.node = cl.id
               LEFT JOIN commercial_unit cu
-                     ON cu.platform = cl.source_type
-                    AND cu.platform_listing_id = cl.source_id
+                     ON cu.aqar_id = cl.source_id
              WHERE cl.population_run_id = :run_id
                AND cl.source_tier = 1
                AND cl.is_cluster_primary = TRUE

@@ -350,21 +350,15 @@ def test_cross_portal_dedup_collapses_same_license(pg_session):
 
 
 def test_within_portal_bayut_dedup_collapses_same_license(pg_session):
-    """PR5: two Bayut rows sharing a REGA license collapse to one primary.
+    """PR5: two Bayut rows sharing a REGA license collapse to one primary
+    via the ``cu.last_seen_at DESC NULLS LAST`` tier-break.
 
-    Note on tier-break for Bayut-only pairs: the dedup pass joins
-    ``commercial_unit cu ON cu.platform_listing_id = cl.source_id``.
-    For Aqar, ``cl.source_id = cu.aqar_id`` and ``cu.platform_listing_id
-    = cu.aqar_id`` (same raw id), so the join matches. For Bayut,
-    ``cu.aqar_id = 'bayut:<id>'`` (prefixed) but
-    ``cu.platform_listing_id = '<id>'`` (unprefixed), so the join does
-    NOT match. ``cu.last_seen_at`` is therefore NULL for Bayut rows,
-    and the second-place ``cu.last_seen_at DESC NULLS LAST`` tier-break
-    is a no-op — the winner is picked by ``cl.id ASC`` (i.e. the row
-    inserted first by ``_ingest_tier1_aqar``). PR5 deliberately leaves
-    this asymmetry in place because fixing it requires changing
-    ``cu.aqar_id``/``cl.source_id`` shape (out of scope per spec); see
-    the PR description for the flag.
+    To prove the last_seen_at tier-break is the decider (and not the
+    final-fallback ``cl.id ASC``), the row with the MORE RECENT
+    last_seen_at is inserted SECOND — it therefore gets the HIGHER
+    cl.id. Under cl.id ASC it would lose; under last_seen_at DESC it
+    wins. Asserting that it wins proves the tier-break is live, which
+    requires the LEFT JOIN to actually match Bayut rows.
     """
     from sqlalchemy import text as _t
     from app.ingest.candidate_locations import (
@@ -372,21 +366,21 @@ def test_within_portal_bayut_dedup_collapses_same_license(pg_session):
         _run_deduplication,
     )
 
-    # Insert older row first so it gets the lower cl.id and wins the
-    # cl.id ASC tier-break (since cu.last_seen_at joins NULL for both).
+    # Inserted first (lower cl.id) with the OLDER last_seen_at.
     _insert_commercial_unit(
         pg_session,
-        aqar_id="bayut:first",
+        aqar_id="bayut:stale",
         platform="bayut",
-        platform_listing_id="first",
+        platform_listing_id="stale",
         aqar_advertisement_license="REGA-DUP",
         last_seen_at="2026-04-01 00:00:00",
     )
+    # Inserted second (higher cl.id) with the MORE RECENT last_seen_at.
     _insert_commercial_unit(
         pg_session,
-        aqar_id="bayut:second",
+        aqar_id="bayut:recent",
         platform="bayut",
-        platform_listing_id="second",
+        platform_listing_id="recent",
         aqar_advertisement_license="REGA-DUP",
         last_seen_at="2026-05-20 00:00:00",
     )
@@ -407,8 +401,10 @@ def test_within_portal_bayut_dedup_collapses_same_license(pg_session):
     assert len(rows) == 2
     primaries = [r for r in rows if r["is_cluster_primary"]]
     assert len(primaries) == 1
-    # The collapsing-to-one behaviour is the main assertion. The exact
-    # winning row depends on cl.id ASC (see docstring); the first
-    # inserted row (lower id) survives.
+    # The recent-seen row wins. If the join were prefix-asymmetric and
+    # cu.last_seen_at joined NULL for both, the tier-break would fall
+    # through to cl.id ASC and the "stale" (newer-inserted, higher id)
+    # row would lose — but for the wrong reason. Asserting that
+    # "recent" wins proves the last_seen_at tier-break is live.
     assert primaries[0]["source_type"] == "bayut"
-    assert primaries[0]["source_id"] == "bayut:first"
+    assert primaries[0]["source_id"] == "bayut:recent"

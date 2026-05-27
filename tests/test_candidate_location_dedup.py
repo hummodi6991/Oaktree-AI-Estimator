@@ -202,12 +202,21 @@ class TestRegaLicenseCollapsePass:
         )
         assert m is not None, "REGA tiebreak order must be aqar→last_seen→id"
 
-    def test_joins_commercial_unit_via_platform_listing_id(self):
-        # JOIN predicate must be (platform, platform_listing_id) so it works
-        # for both Aqar today and Bayut in PR4.
+    def test_joins_commercial_unit_via_aqar_id(self):
+        # JOIN predicate is ``cu.aqar_id = cl.source_id``. Since
+        # ``_ingest_tier1_aqar`` projects ``cu.aqar_id`` into
+        # ``cl.source_id`` (line 70), the keys match shape-for-shape
+        # for both Aqar (raw id) and Bayut (``bayut:<id>`` prefixed on
+        # both sides). The earlier ``cu.platform_listing_id = cl.source_id``
+        # variant was prefix-asymmetric for Bayut (cu side unprefixed,
+        # cl side prefixed) and silently joined NULL, breaking the
+        # second-place ``cu.last_seen_at`` tier-break for within-portal
+        # Bayut pairs.
         assert "LEFT JOIN commercial_unit cu" in self.rega_sql
-        assert "cu.platform = cl.source_type" in self.rega_sql
-        assert "cu.platform_listing_id = cl.source_id" in self.rega_sql
+        assert "cu.aqar_id = cl.source_id" in self.rega_sql
+        # The pre-fix predicates must not be present.
+        assert "cu.platform = cl.source_type" not in self.rega_sql
+        assert "cu.platform_listing_id = cl.source_id" not in self.rega_sql
 
     def test_demotes_non_primary_rows_in_groups_of_size_gt_1(self):
         assert "SET is_cluster_primary = FALSE" in self.rega_sql
@@ -404,9 +413,11 @@ class TestCrossPortalDedupActivation:
     def test_cross_portal_dedup_collapses_same_license(self):
         # Cross-portal collapse: with real source_type values, a pair
         # (Aqar, Bayut) sharing a license falls in the same partition
-        # and the Bayut row is demoted by the tier-break.
-        assert "cu.platform = cl.source_type" in self.rega_sql
-        assert "cu.platform_listing_id = cl.source_id" in self.rega_sql
+        # and the Bayut row is demoted by the tier-break. The join is
+        # on ``cu.aqar_id = cl.source_id`` (prefix-symmetric for both
+        # platforms) so the second-place ``cu.last_seen_at`` tier-break
+        # also has live values for Bayut.
+        assert "cu.aqar_id = cl.source_id" in self.rega_sql
         # The Aqar-wins tier-break must be present.
         assert re.search(
             r"\(cl\.source_type = 'aqar'\) DESC", self.rega_sql,
