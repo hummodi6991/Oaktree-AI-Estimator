@@ -45,7 +45,15 @@ CATEGORY_AREA_DEFAULTS = {
 
 
 def _ingest_tier1_aqar(db: Session, run_id: str) -> int:
-    """Insert Tier 1 candidates from commercial_unit (Aqar)."""
+    """Insert Tier 1 candidates from commercial_unit (all platforms).
+
+    Historically Aqar-only (hence the ``_aqar`` suffix). Since PR4 the
+    ``commercial_unit`` table also carries Bayut listings; this function
+    projects ``cu.platform`` into ``candidate_location.source_type`` so
+    the cross-portal dedup ladder in ``_run_deduplication`` evaluates
+    correctly. The rename to ``_ingest_tier1_listings`` (or similar) is
+    deferred to a later cleanup PR to keep PR5's diff minimal.
+    """
     sql = text("""
         INSERT INTO candidate_location (
             source_tier, source_type, source_id,
@@ -60,7 +68,7 @@ def _ingest_tier1_aqar(db: Session, run_id: str) -> int:
             population_run_id
         )
         SELECT
-            1, 'aqar', cu.aqar_id,
+            1, cu.platform, cu.aqar_id,
             cu.lat, cu.lon,
             cu.neighborhood,
             cu.area_sqm,
