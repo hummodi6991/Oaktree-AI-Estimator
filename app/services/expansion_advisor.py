@@ -9365,7 +9365,7 @@ def run_expansion_search(
                 # ── Commercial unit metadata ──
                 "source_type": (
                     "commercial_unit" if row.get("commercial_unit_id")
-                    else {"1": "aqar", "2": "delivery_poi", "3": "arcgis_parcel"}.get(
+                    else {"2": "delivery_poi", "3": "arcgis_parcel"}.get(
                         str(row.get("source_tier", "")), "parcel"
                     )
                 ),
