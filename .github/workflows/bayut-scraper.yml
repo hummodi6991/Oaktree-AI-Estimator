@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       max_pages:
-        description: "Maximum pages to scrape per category"
+        description: "Maximum pages on the commercial index"
         required: false
-        default: "100"
+        default: "20"
       no_detail:
         description: "Skip detail page scraping (--no-detail)"
         type: boolean
@@ -15,15 +15,6 @@ on:
         description: "Skip geocoding (Bayut exposes coords in JSON)"
         type: boolean
         default: true
-      category:
-        description: "Category to crawl"
-        required: false
-        default: "all"
-        type: choice
-        options:
-          - all
-          - shops
-          - showrooms
       rate_limit:
         description: "Seconds to sleep between requests"
         required: false
@@ -69,13 +60,11 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          MAX_PAGES="${{ github.event.inputs.max_pages || '100' }}"
-          CATEGORY="${{ github.event.inputs.category || 'all' }}"
+          MAX_PAGES="${{ github.event.inputs.max_pages || '20' }}"
           RATE_LIMIT="${{ github.event.inputs.rate_limit || '1.0' }}"
           NO_DETAIL="${{ github.event.inputs.no_detail || 'false' }}"
           SKIP_GEOCODE="${{ github.event.inputs.skip_geocode || 'true' }}"
           FLAGS="--max-pages ${MAX_PAGES}"
-          FLAGS="${FLAGS} --category ${CATEGORY}"
           FLAGS="${FLAGS} --rate-limit ${RATE_LIMIT}"
           if [ "${NO_DETAIL}" = "true" ]; then
             FLAGS="${FLAGS} --no-detail"
