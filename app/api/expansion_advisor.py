@@ -987,7 +987,7 @@ def create_expansion_search(
                     {
                         "version": "expansion_advisor_v7",
                         "parcel_source": "listings_only",
-                        "candidate_sources": ["aqar", "wasalt", "bayut"],
+                        "candidate_sources_planned": ["aqar", "bayut"],
                         "excluded_sources": ["arcgis_parcels", "hungerstation_poi", "suhail", "inferred_parcels"],
                     },
                     ensure_ascii=False,
