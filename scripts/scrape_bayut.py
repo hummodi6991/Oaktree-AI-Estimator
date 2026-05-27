@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bayut.sa crawler — fetch Riyadh commercial-for-rent shops and showrooms.
+"""Bayut.sa crawler — fetch Riyadh commercial-for-rent Showrooms and Offices.
 
 PR4 of the multi-portal listings series. Writes to ``commercial_unit``
 with ``platform='bayut'``, ``platform_listing_id=<bayut-id>``, and a
@@ -7,10 +7,11 @@ prefixed primary key ``aqar_id=f"bayut:{bayut-id}"`` (Option α from the
 design doc — the column name is a legacy of the Aqar-only era; PR4 keeps
 the existing schema and namespaces the values).
 
-Categories: shops + showrooms only.  Bayut's ``/shops-for-rent/`` URL
-mixes residential listings into the index; the detail parser filters
-them out by the structured ``propertyType.en`` field rather than
-trusting the URL slug.
+URL: ``https://www.bayut.sa/en/to-rent/commercial/riyadh/?page=N`` —
+one index covers all commercial accommodation categories (Showroom,
+Office, Warehouse, Commercial Building, Complex). The parser's
+``accommodationCategory`` filter restricts the writer's pool to
+{Showroom, Office} — the only F&B-compatible categories in PR4 v1.
 
 The script mirrors ``scripts/scrape_aqar.py``:
   * Same HTTP retry policy (429 + 5xx, backoff_factor=0.5, total=5).
@@ -28,7 +29,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import random
 import time
 from datetime import datetime, timezone
@@ -44,7 +44,7 @@ from app.ingest.bayut.detail_scraper import (
 )
 from app.ingest.bayut.list_scraper import (
     USER_AGENTS,
-    fetch_category_listing_ids,
+    fetch_commercial_listing_ids,
 )
 from scripts.scrape_aqar import classify_restaurant_suitability
 
@@ -56,8 +56,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 # parsed lat/lon land outside this box get skipped at write time.
 RIYADH_LAT_MIN, RIYADH_LAT_MAX = 24.4, 25.1
 RIYADH_LON_MIN, RIYADH_LON_MAX = 46.4, 47.0
-
-CATEGORIES_ALL = ("shops", "showrooms")
 
 _BAYUT_HTTP_TIMEOUT = (10.0, 30.0)
 _DETAIL_FETCH_RETRY_BUDGET = 5
@@ -460,12 +458,10 @@ def _touch_last_seen(aqar_id: str, db) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Crawl Bayut.sa Riyadh commercial-for-rent listings (shops + showrooms)",
+        description="Crawl Bayut.sa Riyadh commercial-for-rent Showrooms and Offices",
     )
-    parser.add_argument("--max-pages", type=int, default=100,
-                        help="Max pages per category (default: 100)")
-    parser.add_argument("--category", choices=["all", "shops", "showrooms"],
-                        default="all")
+    parser.add_argument("--max-pages", type=int, default=20,
+                        help="Max pages on the commercial index (default: 20)")
     parser.add_argument("--no-detail", action="store_true",
                         help="Skip fetching individual listing detail pages")
     parser.add_argument("--skip-geocode", action="store_true", default=True,
@@ -480,11 +476,6 @@ def main() -> None:
                         help="Skip listings already in DB with last_seen_at < 7 days")
     parser.add_argument("--no-resume", dest="resume", action="store_false")
     args = parser.parse_args()
-
-    if args.category == "all":
-        categories = list(CATEGORIES_ALL)
-    else:
-        categories = [args.category]
 
     db = None
     if not args.dry_run or args.resume:
@@ -514,95 +505,94 @@ def main() -> None:
     seen_aqar_ids: set[str] = set()
 
     try:
-        for category in categories:
-            logger.info("=" * 60)
-            logger.info("  Bayut category: %s", category)
-            logger.info("=" * 60)
+        logger.info("=" * 60)
+        logger.info("  Bayut commercial — Riyadh")
+        logger.info("=" * 60)
 
-            for listing_id, listing_url in fetch_category_listing_ids(
-                session, category, max_pages=args.max_pages,
-                rate_limit=args.rate_limit,
-            ):
-                stats["discovered"] += 1
-                aqar_id = f"bayut:{listing_id}"
-                seen_aqar_ids.add(aqar_id)
+        for listing_id, listing_url in fetch_commercial_listing_ids(
+            session, city="riyadh", max_pages=args.max_pages,
+            rate_limit=args.rate_limit,
+        ):
+            stats["discovered"] += 1
+            aqar_id = f"bayut:{listing_id}"
+            seen_aqar_ids.add(aqar_id)
 
-                # Resume gate — skip listings we've already touched in the last 7d.
-                if args.resume and db is not None and _listing_already_exists(aqar_id, db):
-                    _touch_last_seen(aqar_id, db)
-                    stats["skipped_existing"] += 1
-                    logger.info("scraped: skipped_existing %s", aqar_id)
-                    continue
+            # Resume gate — skip listings we've already touched in the last 7d.
+            if args.resume and db is not None and _listing_already_exists(aqar_id, db):
+                _touch_last_seen(aqar_id, db)
+                stats["skipped_existing"] += 1
+                logger.info("scraped: skipped_existing %s", aqar_id)
+                continue
 
-                if args.no_detail:
-                    logger.info("scraped: no_detail %s", aqar_id)
-                    continue
+            if args.no_detail:
+                logger.info("scraped: no_detail %s", aqar_id)
+                continue
 
-                time.sleep(args.rate_limit)
-                html = _fetch_detail_html(session, listing_url)
-                if html is None:
-                    stats["errors"] += 1
-                    logger.info("error: fetch_failed %s", aqar_id)
-                    continue
+            time.sleep(args.rate_limit)
+            html = _fetch_detail_html(session, listing_url)
+            if html is None:
+                stats["errors"] += 1
+                logger.info("error: fetch_failed %s", aqar_id)
+                continue
 
-                fetched_at = datetime.now(timezone.utc)
-                payload = parse_detail_html(html, listing_url, fetched_at)
-                if payload is None:
-                    # The parser logs the specific reason (wrong property
-                    # type, missing JSON blob, unexpected rentFrequency).
-                    stats["skipped_wrong_property_type"] += 1
-                    logger.info("skipped: parser_rejected %s", aqar_id)
-                    continue
+            fetched_at = datetime.now(timezone.utc)
+            payload = parse_detail_html(html, listing_url, fetched_at)
+            if payload is None:
+                # The parser logs the specific reason (wrong accommodation
+                # category, missing payload, unsupported rentFrequency).
+                stats["skipped_wrong_property_type"] += 1
+                logger.info("skipped: parser_rejected %s", aqar_id)
+                continue
 
-                if not _within_riyadh(payload.lat, payload.lon):
-                    stats["skipped_outside_bbox"] += 1
-                    logger.info(
-                        "skipped: outside_bbox %s lat=%s lon=%s",
-                        aqar_id, payload.lat, payload.lon,
-                    )
-                    continue
+            if not _within_riyadh(payload.lat, payload.lon):
+                stats["skipped_outside_bbox"] += 1
+                logger.info(
+                    "skipped: outside_bbox %s lat=%s lon=%s",
+                    aqar_id, payload.lat, payload.lon,
+                )
+                continue
 
-                if payload.area_sqm is None or payload.area_sqm <= 0:
-                    stats["skipped_missing_field"] += 1
-                    logger.info("skipped: missing_required_field:area_sqm %s", aqar_id)
-                    continue
+            if payload.area_sqm is None or payload.area_sqm <= 0:
+                stats["skipped_missing_field"] += 1
+                logger.info("skipped: missing_required_field:area_sqm %s", aqar_id)
+                continue
 
-                if payload.price_sar_annual is None or payload.price_sar_annual <= 0:
-                    stats["skipped_missing_field"] += 1
-                    logger.info("skipped: missing_required_field:price_sar_annual %s", aqar_id)
-                    continue
+            if payload.price_sar_annual is None or payload.price_sar_annual <= 0:
+                stats["skipped_missing_field"] += 1
+                logger.info("skipped: missing_required_field:price_sar_annual %s", aqar_id)
+                continue
 
-                listing = _payload_to_listing(payload)
-                classify_restaurant_suitability(listing)
-                listing["price_per_sqm"] = _compute_price_per_sqm(listing)
+            listing = _payload_to_listing(payload)
+            classify_restaurant_suitability(listing)
+            listing["price_per_sqm"] = _compute_price_per_sqm(listing)
 
-                stats["scraped"] += 1
+            stats["scraped"] += 1
 
-                if args.dry_run:
-                    logger.info("[DRY-RUN] %s %s", aqar_id, listing)
-                    continue
+            if args.dry_run:
+                logger.info("[DRY-RUN] %s %s", aqar_id, listing)
+                continue
 
-                try:
-                    action = upsert_bayut_listing(db, listing)
-                    stats[action] += 1
-                    logger.info(
-                        "upserted: %s %s score=%s suitable=%s",
-                        action, aqar_id,
-                        listing.get("restaurant_score"),
-                        listing.get("restaurant_suitable"),
-                    )
-                except Exception as exc:
-                    stats["errors"] += 1
-                    logger.exception("error: upsert_failed %s: %s", aqar_id, exc)
-                    db.rollback()
-                    continue
+            try:
+                action = upsert_bayut_listing(db, listing)
+                stats[action] += 1
+                logger.info(
+                    "upserted: %s %s score=%s suitable=%s",
+                    action, aqar_id,
+                    listing.get("restaurant_score"),
+                    listing.get("restaurant_suitable"),
+                )
+            except Exception as exc:
+                stats["errors"] += 1
+                logger.exception("error: upsert_failed %s: %s", aqar_id, exc)
+                db.rollback()
+                continue
 
-                # Commit every 50 listings to keep transactions small.
-                if (stats["insert"] + stats["update"]) % 50 == 0:
-                    db.commit()
-
-            if db and not args.dry_run:
+            # Commit every 50 listings to keep transactions small.
+            if (stats["insert"] + stats["update"]) % 50 == 0:
                 db.commit()
+
+        if db and not args.dry_run:
+            db.commit()
 
         # Stale-handling sweeps — Bayut-scoped to avoid touching Aqar rows.
         if db is not None and not args.dry_run:

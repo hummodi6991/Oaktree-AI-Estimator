@@ -1,11 +1,17 @@
-"""Bayut.sa pagination helper — discovers listing IDs from category pages.
+"""Bayut.sa pagination helper — discovers listing IDs from the commercial index.
 
-Bayut renders the commercial-rent index pages as a server-side HTML
-grid; each listing card carries an anchor of the form
-``/en/property/details-<id>.html``. This module walks
-``https://www.bayut.sa/en/to-rent/{category}-for-rent/riyadh/?page=N``,
-extracts unique listing IDs per page, and stops when a page yields
-zero new IDs or returns a non-200 status.
+Bayut renders ``/en/to-rent/commercial/<city>/`` as a single
+server-side HTML grid covering all commercial accommodation categories
+(Showroom, Office, Warehouse, Commercial Building, Complex). The
+parser-level ``accommodationCategory`` filter restricts the writer's
+pool to {Showroom, Office}. There is no per-category landing page on
+real Bayut; the v1 ``/{slug}-for-rent/`` URLs returned a generic
+landing carousel of mostly residential featured listings.
+
+This module walks ``?page=N`` pagination, extracts unique listing IDs
+per page via the canonical ``/en/property/details-<id>.html`` anchor
+pattern, and stops when a page yields zero new IDs or returns
+non-200.
 """
 
 from __future__ import annotations
@@ -14,7 +20,7 @@ import logging
 import random
 import re
 import time
-from typing import Iterator, Literal
+from typing import Iterator
 
 import requests
 
@@ -22,11 +28,6 @@ logger = logging.getLogger(__name__)
 
 
 _BAYUT_BASE = "https://www.bayut.sa"
-
-CATEGORY_SLUG: dict[str, str] = {
-    "shops": "shops",
-    "showrooms": "showrooms",
-}
 
 _LISTING_HREF_RE = re.compile(r"/en/property/details-(\d+)\.html")
 
@@ -38,30 +39,27 @@ USER_AGENTS: tuple[str, ...] = (
 )
 
 
-def fetch_category_listing_ids(
+def fetch_commercial_listing_ids(
     session: requests.Session,
-    category: Literal["shops", "showrooms"],
-    max_pages: int = 100,
+    city: str = "riyadh",
+    max_pages: int = 20,
     *,
     rate_limit: float = 1.0,
     timeout: float = 30.0,
 ) -> Iterator[tuple[str, str]]:
-    """Yield ``(listing_id, listing_url)`` tuples for a category.
+    """Yield ``(listing_id, listing_url)`` tuples for commercial-for-rent in ``city``.
 
     Walks pages 1..``max_pages``. Stops early on:
       * HTTP non-200 from the index page
       * a page that yields zero new (previously-unseen) listing IDs
 
-    Each page-fetch is preceded by ``time.sleep(rate_limit)`` (after the
-    first) to honour the conservative 1 req/sec default.
+    Each subsequent page fetch is preceded by ``time.sleep(rate_limit)``
+    to honour the conservative 1 req/sec default. Riyadh commercial
+    inventory is small (~hundreds of listings), so ``max_pages=20``
+    provides a ~500-listing ceiling well above realistic volume.
     """
-    if category not in CATEGORY_SLUG:
-        raise ValueError(f"unknown Bayut category: {category!r}")
-
     seen: set[str] = set()
-    base_url = (
-        f"{_BAYUT_BASE}/en/to-rent/{CATEGORY_SLUG[category]}-for-rent/riyadh/"
-    )
+    base_url = f"{_BAYUT_BASE}/en/to-rent/commercial/{city}/"
 
     for page_num in range(1, max_pages + 1):
         if page_num > 1:
@@ -74,14 +72,14 @@ def fetch_category_listing_ids(
             resp = session.get(page_url, headers=headers, timeout=timeout)
         except requests.RequestException as exc:
             logger.warning(
-                "Bayut category page fetch error (%s page %d): %s — stopping",
-                category, page_num, exc,
+                "Bayut commercial index fetch error (page %d): %s — stopping",
+                page_num, exc,
             )
             return
 
         if resp.status_code != 200:
             logger.warning(
-                "Bayut category page %d returned HTTP %d — stopping",
+                "Bayut commercial index page %d returned HTTP %d — stopping",
                 page_num, resp.status_code,
             )
             return
@@ -89,8 +87,8 @@ def fetch_category_listing_ids(
         new_ids = _extract_listing_ids(resp.text, seen)
         if not new_ids:
             logger.info(
-                "Bayut category %s exhausted at page %d (no new IDs)",
-                category, page_num,
+                "Bayut commercial index exhausted at page %d (no new IDs)",
+                page_num,
             )
             return
 
