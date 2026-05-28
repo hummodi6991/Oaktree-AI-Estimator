@@ -346,6 +346,10 @@ export type ExpansionCandidate = {
   site_fit_context?: SiteFitContext;
   // Commercial unit / tier fields
   source_type?: "parcel" | "commercial_unit" | "aqar" | "delivery_poi";
+  // Platform discriminator for commercial-listing candidates, plus the
+  // prefix-stripped display id (e.g. "bayut:87825483" -> "87825483").
+  platform?: "aqar" | "bayut" | null;
+  display_id?: string | null;
   source_tier?: number | null;
   is_vacant?: boolean | null;
   current_tenant?: string | null;
@@ -643,6 +647,8 @@ export function normalizeCandidate(candidate: ExpansionCandidate): ExpansionCand
     rerank_delta: typeof candidate.rerank_delta === "number" ? candidate.rerank_delta : 0,
     rerank_status: candidate.rerank_status ?? null,
     decision_memo_present: candidate.decision_memo_present ?? false,
+    platform: candidate.platform ?? null,
+    display_id: candidate.display_id ?? null,
   };
 }
 

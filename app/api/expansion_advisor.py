@@ -253,6 +253,11 @@ class ExpansionCandidateResponse(FlexibleResponseModel):
     value_downrank_delta: int = 0
     value_uprank_applied: bool = False
     value_uprank_delta: int = 0
+    # Platform discriminator (commercial-listing tier only) and the
+    # prefix-stripped display id. Declared explicitly so they surface in
+    # /openapi.json even though FlexibleResponseModel would allow them.
+    platform: str | None = None
+    display_id: str | None = None
 
 
 
@@ -331,6 +336,8 @@ class CandidateMemoCandidateResponse(FlexibleResponseModel):
     # via ExpansionCandidateResponse, so the memo's quick-facts row reads
     # Area / Street width from the same source as the candidate list card.
     source_type: str | None = None
+    platform: str | None = None
+    display_id: str | None = None
     commercial_unit_id: str | None = None
     listing_url: str | None = None
     image_url: str | None = None

@@ -1140,6 +1140,22 @@ def _safe_int(value: Any, default: int = 0) -> int:
     except Exception:
         return default
 
+
+def _strip_platform_prefix(value: str | None) -> str | None:
+    """Strip a ``<platform>:`` storage prefix from an id for display.
+
+    ``commercial_unit.aqar_id`` carries a ``bayut:<id>`` prefix for Bayut
+    rows so the PK stays unique across platforms. The prefix is internal
+    storage hygiene and should not surface to API consumers. Returns the
+    raw id with the first ``<lower-letters>:`` prefix removed; returns
+    ``value`` unchanged if no such prefix is present.
+    """
+    if not value:
+        return value
+    m = re.match(r"^[a-z]+:(.+)$", value)
+    return m.group(1) if m else value
+
+
 def _context_checked(value: Any) -> bool:
     """
     Distinguish between:
@@ -9368,6 +9384,19 @@ def run_expansion_search(
                     else {"2": "delivery_poi", "3": "arcgis_parcel"}.get(
                         str(row.get("source_tier", "")), "parcel"
                     )
+                ),
+                # Platform discriminator surfaced to the frontend. Reads the
+                # raw ``row`` column (``aqar``/``bayut``) before the
+                # ``source_type`` key above collapses it to ``commercial_unit``.
+                "platform": (
+                    row.get("source_type")
+                    if row.get("commercial_unit_id") and row.get("source_type") in ("aqar", "bayut")
+                    else None
+                ),
+                # Prefix-stripped id for display only; identity keys
+                # (parcel_id / commercial_unit_id / source_id) keep their shape.
+                "display_id": _strip_platform_prefix(
+                    row.get("source_id") or row.get("commercial_unit_id")
                 ),
                 "source_tier": row.get("source_tier"),
                 "is_vacant": row.get("is_vacant"),

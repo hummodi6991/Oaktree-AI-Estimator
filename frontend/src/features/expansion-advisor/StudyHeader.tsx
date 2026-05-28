@@ -104,7 +104,7 @@ export default function StudyHeader({
         <div className={`ea-study-header__best${leadCandidate ? " ea-study-header__best--lead" : ""}`}>
           <span className="ea-study-header__best-label">{heroLabel}:</span>
           <span className="ea-study-header__best-name">
-            #{heroCandidate.rank_position} {candidateDistrictLabel(heroCandidate, heroCandidate.parcel_id || "—")}
+            #{heroCandidate.rank_position} {candidateDistrictLabel(heroCandidate, heroCandidate.display_id ?? heroCandidate.parcel_id ?? "—")}
           </span>
           <ScorePill value={heroCandidate.final_score} />
           {report?.recommendation?.why_best && (

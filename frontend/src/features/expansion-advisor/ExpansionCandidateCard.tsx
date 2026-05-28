@@ -237,7 +237,11 @@ export default function ExpansionCandidateCard({
           {freshness === "new" && (
             <span
               className="ea-badge ea-badge--green ea-candidate__freshness-pill"
-              title={t("expansionAdvisor.newBadgeTooltip")}
+              title={candidate.platform
+                ? t("expansionAdvisor.newBadgeTooltipPlatform", {
+                    platform: t(`expansionAdvisor.platformNames.${candidate.platform}`),
+                  })
+                : t("expansionAdvisor.newBadgeTooltipGeneric")}
             >
               {t("expansionAdvisor.newBadge")}
             </span>
@@ -245,7 +249,11 @@ export default function ExpansionCandidateCard({
           {freshness === "updated" && (
             <span
               className="ea-badge ea-badge--green ea-candidate__freshness-pill"
-              title={t("expansionAdvisor.updatedBadgeTooltip")}
+              title={candidate.platform
+                ? t("expansionAdvisor.updatedBadgeTooltipPlatform", {
+                    platform: t(`expansionAdvisor.platformNames.${candidate.platform}`),
+                  })
+                : t("expansionAdvisor.updatedBadgeTooltipGeneric")}
             >
               {t("expansionAdvisor.updatedBadge")}
             </span>
@@ -286,6 +294,7 @@ export default function ExpansionCandidateCard({
       <TierBadge
         sourceTier={candidate.source_tier}
         sourceType={candidate.source_type}
+        platform={candidate.platform}
         listingUrl={candidate.listing_url}
         rentConfidence={clRentConfidence}
       />

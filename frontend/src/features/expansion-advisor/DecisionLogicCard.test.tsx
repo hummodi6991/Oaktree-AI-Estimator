@@ -35,7 +35,7 @@ function productionGateReasons(): CandidateGateReasons {
       zoning_fit_pass: "Zoning fit compares parcel land-use compatibility against threshold.",
       area_fit_pass: "Area fit checks candidate area against requested branch range.",
       frontage_access_pass: "Frontage/access gate depends on road context and road-adjacent signals.",
-      parking_pass: "Parking context is not available for Aqar listings — cannot evaluate.",
+      parking_pass: "Parking context is not available for these listings — cannot evaluate.",
       district_pass: "District gate fails only for explicitly excluded districts.",
       cannibalization_pass: "Cannibalization gate checks minimum spacing from existing branches.",
       delivery_market_pass: "Delivery-market gate auto-passes for non-delivery channels.",
@@ -235,7 +235,7 @@ describe("DecisionLogicCard gate explanations", () => {
       />,
     );
     expect(html).toContain("ea-decision-logic__gate-explanation");
-    expect(html).toContain("Parking context is not available for Aqar listings — cannot evaluate.");
+    expect(html).toContain("Parking context is not available for these listings — cannot evaluate.");
   });
 
   it("omits the explanation span for a gate with no explanation string", () => {
