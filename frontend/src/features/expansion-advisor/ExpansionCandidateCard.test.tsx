@@ -483,15 +483,24 @@ describe("ExpansionCandidateCard — Phase 4 pills (New / Updated / Top-tier mar
     }
   });
 
-  it("attaches the English tooltip text via title attribute on the New pill", () => {
+  it("attaches the platform-specific New tooltip for an Aqar listing", () => {
     const html = renderCard(
-      withSnapshot({
-        created_days: 2,
-        updated_days: 2,
-        district_momentum: NEUTRAL_MOMENTUM,
-      }),
+      withSnapshot(
+        { created_days: 2, updated_days: 2, district_momentum: NEUTRAL_MOMENTUM },
+        { platform: "aqar" },
+      ),
     );
     expect(html).toMatch(/title="Listing newly created on Aqar within the last 7 days"/);
+  });
+
+  it("attaches the platform-specific New tooltip for a Bayut listing", () => {
+    const html = renderCard(
+      withSnapshot(
+        { created_days: 2, updated_days: 2, district_momentum: NEUTRAL_MOMENTUM },
+        { platform: "bayut" },
+      ),
+    );
+    expect(html).toMatch(/title="Listing newly created on Bayut within the last 7 days"/);
   });
 
   it("attaches the English tooltip text via title attribute on the Top-tier market pill", () => {

@@ -87,3 +87,35 @@ describe("normalizeCandidate — rerank + decision-memo metadata", () => {
     }
   });
 });
+
+describe("normalizeCandidate — platform / display_id passthrough", () => {
+  it("pins an Aqar listing: parcel_id == display_id, platform aqar", () => {
+    const out = normalizeCandidate({
+      ...baseCandidate,
+      parcel_id: "1003456",
+      platform: "aqar",
+      display_id: "1003456",
+    });
+    expect(out.platform).toBe("aqar");
+    expect(out.display_id).toBe("1003456");
+    expect(out.parcel_id).toBe("1003456");
+  });
+
+  it("pins a Bayut listing: prefixed parcel_id, bare display_id, platform bayut", () => {
+    const out = normalizeCandidate({
+      ...baseCandidate,
+      parcel_id: "bayut:87825483",
+      platform: "bayut",
+      display_id: "87825483",
+    });
+    expect(out.platform).toBe("bayut");
+    expect(out.display_id).toBe("87825483");
+    expect(out.parcel_id).toBe("bayut:87825483");
+  });
+
+  it("defaults platform / display_id to null for a non-listing candidate", () => {
+    const out = normalizeCandidate({ ...baseCandidate });
+    expect(out.platform).toBeNull();
+    expect(out.display_id).toBeNull();
+  });
+});
