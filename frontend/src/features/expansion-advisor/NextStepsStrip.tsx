@@ -41,14 +41,14 @@ export default function NextStepsStrip({
         <div className="ea-next-steps__item ea-next-steps__item--lead">
           <span className="ea-next-steps__label">{leadPasses ? t("expansionAdvisor.leadSiteSelected") : t("expansionAdvisor.exploratoryCandidateSelected")}</span>
           <span className="ea-next-steps__value">
-            #{lead.rank_position} {candidateDistrictLabel(lead, lead.parcel_id || "—")}
+            #{lead.rank_position} {candidateDistrictLabel(lead, lead.display_id ?? lead.parcel_id ?? "—")}
           </span>
         </div>
         {runnerUp && (
           <div className="ea-next-steps__item">
             <span className="ea-next-steps__label">{t("expansionAdvisor.runnerUpCandidate")}</span>
             <span className="ea-next-steps__value">
-              #{runnerUp.rank_position} {candidateDistrictLabel(runnerUp, runnerUp.parcel_id || "—")}
+              #{runnerUp.rank_position} {candidateDistrictLabel(runnerUp, runnerUp.display_id ?? runnerUp.parcel_id ?? "—")}
             </span>
           </div>
         )}
