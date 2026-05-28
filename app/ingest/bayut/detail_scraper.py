@@ -19,10 +19,12 @@ Conventions:
     ``window.state`` is extracted via ``json.JSONDecoder().raw_decode``
     — a non-greedy regex would mis-balance on nested objects in the
     155 KB hydration blob.
-  * Property-type filter (``Showroom`` and ``Office`` only) is applied
-    at parser-time. Bayut's ``/en/to-rent/commercial/`` URL also
-    exposes Warehouses, Commercial Buildings, and Complexes; the
-    filter restricts PR4 v1 to F&B-compatible accommodations.
+  * Property-type filter (``Showroom`` only) is applied at parser-time.
+    Bayut's ``/en/to-rent/commercial/`` URL also exposes Offices,
+    Warehouses, Commercial Buildings, and Complexes; the filter
+    restricts intake to F&B-compatible showroom accommodations. Office
+    was dropped after it proved F&B-unsuitable — see the accept-set
+    note below.
   * Price conversion branches on ``rentFrequency`` — Bayut publishes
     both ``yearly`` and ``monthly`` commercial listings:
       * ``yearly``  → ``price_sar_annual = price`` (no multiplier)
@@ -54,20 +56,23 @@ logger = logging.getLogger(__name__)
 
 # Accommodation categories acceptable as commercial-rent restaurant
 # candidates. Bayut's commercial taxonomy is {Showroom, Office,
-# Warehouse, Commercial Building, Complex}; v1 restricts to the two
-# that are structurally F&B-compatible. Anything else — including
-# residential leaks (Apartment, Villa, Floor, Townhouse) — gets
-# rejected at parser time.
-_BAYUT_ACCEPTED_PROPERTY_TYPES = frozenset({"Showroom", "Office"})
+# Warehouse, Commercial Building, Complex}; v1 restricts to Showroom —
+# the only structurally F&B-compatible accommodation. Anything else —
+# including residential leaks (Apartment, Villa, Floor, Townhouse) —
+# gets rejected at parser time.
+#
+# NOTE: Office was intentionally dropped (do not re-add). Bayut's office
+# inventory is F&B-unsuitable: the suitability classifier correctly
+# rates office space unsuitable, so the PR4 ``Office → store`` mapping
+# only contributed unsuitable noise to candidate_location. See the
+# Bayut-showroom-only investigation.
+_BAYUT_ACCEPTED_PROPERTY_TYPES = frozenset({"Showroom"})
 
 
 # Mapping from Bayut's accepted ``accommodationCategory`` strings to the
 # commercial_unit.listing_type enum the rest of the pipeline uses.
-# Aqar's classifier gates F&B-compatibility on {store, showroom}, so
-# Office (a serviced/leased commercial unit) maps onto ``store``.
 _BAYUT_LISTING_TYPE_MAP: dict[str, str] = {
     "Showroom": "showroom",
-    "Office": "store",
 }
 
 
