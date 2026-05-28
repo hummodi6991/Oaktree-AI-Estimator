@@ -11,8 +11,11 @@ layer mirrors Aqar's SELECT-then-(INSERT or UPDATE) shape but sets
 
 The two committed fixtures are real Bayut captures with PII redacted:
 ``bayut_real_showroom.html`` (listing 87825483 — yearly, 120 000 SAR/yr,
-883 m²) and ``bayut_real_office.html`` (listing 87772614 — monthly,
-2 000 SAR/mo → 24 000 SAR/yr, 884 m²).
+883 m²), which must parse, and ``bayut_real_office.html`` (listing
+87772614 — monthly Office), which must now be **rejected**. Office was
+dropped from the Bayut accept-set because its inventory is
+F&B-unsuitable; the office fixture is retained as the regression guard
+proving the rejection.
 """
 
 from __future__ import annotations
@@ -181,7 +184,17 @@ class TestRealShowroomFixture:
 
 
 class TestRealOfficeFixture:
-    """End-to-end parse of the real Office (monthly) detail page."""
+    """Regression fixture proving the real Office (monthly) detail page is
+    **rejected**.
+
+    Office was dropped from the Bayut accept-set: Bayut's office
+    inventory is F&B-unsuitable, so the PR4 ``Office → store`` mapping
+    only fed unsuitable noise into candidate_location. This fixture now
+    pins the reverse of its original behavior — an Office page must
+    route through the same parser-time rejection path as Warehouse /
+    Commercial Building / Complex, yielding ``None`` (no payload, no
+    ``commercial_unit`` insert, no ``store`` row).
+    """
 
     @classmethod
     def setup_class(cls) -> None:
@@ -189,47 +202,10 @@ class TestRealOfficeFixture:
 
         cls.payload = parse_detail_html(OFFICE_HTML, OFFICE_URL)
 
-    def test_payload_is_not_none(self) -> None:
-        assert self.payload is not None
-
-    def test_platform_listing_id(self) -> None:
-        assert self.payload.platform_listing_id == "87772614"
-
-    def test_accommodation_category_was_office(self) -> None:
-        assert self.payload.raw_property_type == "Office"
-
-    def test_listing_type_maps_to_store(self) -> None:
-        # Office → store (the Aqar classifier's F&B-compatible enum).
-        assert self.payload.listing_type == "store"
-
-    def test_permit_number_is_10_digit_numeric(self) -> None:
-        assert self.payload.aqar_advertisement_license == "7200680191"
-        assert self.payload.aqar_advertisement_license.isdigit()
-        assert len(self.payload.aqar_advertisement_license) == 10
-
-    def test_monthly_price_times_twelve(self) -> None:
-        # window.state.price = 2000 ; rentFrequency = monthly →
-        # price_sar_annual = 2000 * 12 = 24000.
-        assert self.payload.price_sar_annual == Decimal("24000.00")
-
-    def test_lat_lon_in_riyadh_bbox(self) -> None:
-        assert self.payload.lat == pytest.approx(24.886, abs=0.01)
-        assert self.payload.lon == pytest.approx(46.610, abs=0.01)
-        assert 24.4 <= self.payload.lat <= 25.1
-        assert 46.4 <= self.payload.lon <= 47.0
-
-    def test_area_sqm(self) -> None:
-        assert self.payload.area_sqm == Decimal("884.00")
-        assert self.payload.area_sqm > 0
-
-    def test_listing_source(self) -> None:
-        assert self.payload.aqar_listing_source == "Bayut"
-
-    def test_contact_phone_preserves_redaction(self) -> None:
-        assert self.payload.contact_phone == "+966XXXXXXXXX"
-
-    def test_neighborhood_is_al_arid(self) -> None:
-        assert self.payload.neighborhood == "Al Arid"
+    def test_office_is_rejected(self) -> None:
+        # Office is no longer in the accept-set; parse_detail_html returns
+        # None via the same path that rejects Warehouse / Complex.
+        assert self.payload is None
 
 
 # ---------------------------------------------------------------------------
@@ -239,11 +215,12 @@ class TestRealOfficeFixture:
 
 class TestPropertyTypeFiltering:
     """Mutates the Showroom fixture's accommodationCategory and asserts
-    the accept-set. Anything outside {Showroom, Office} returns None."""
+    the accept-set. Anything outside {Showroom} — Office now included —
+    returns None."""
 
     @pytest.mark.parametrize("category", [
         "Apartment", "Villa", "Floor", "Townhouse",
-        "Warehouse", "Commercial Building", "Complex",
+        "Office", "Warehouse", "Commercial Building", "Complex",
     ])
     def test_rejected_categories_return_none(self, category: str) -> None:
         from app.ingest.bayut.detail_scraper import parse_detail_html
@@ -259,15 +236,14 @@ class TestPropertyTypeFiltering:
         assert payload is not None
         assert payload.listing_type == "showroom"
 
-    def test_office_returns_valid_payload(self) -> None:
+    def test_office_is_rejected(self) -> None:
         from app.ingest.bayut.detail_scraper import parse_detail_html
 
-        # Start from the Showroom fixture but mutate to Office; the price
-        # path still resolves because rentFrequency stays 'yearly'.
+        # Office was dropped from the accept-set; even with a resolvable
+        # price path it must reject (returns None) like any other
+        # non-Showroom category.
         html = _swap_accommodation_category(SHOWROOM_HTML, "Office")
-        payload = parse_detail_html(html, SHOWROOM_URL)
-        assert payload is not None
-        assert payload.listing_type == "store"
+        assert parse_detail_html(html, SHOWROOM_URL) is None
 
 
 # ---------------------------------------------------------------------------
@@ -313,14 +289,6 @@ class TestRentFrequencyBranching:
         html = _set_rent_frequency(SHOWROOM_HTML, None)
         assert parse_detail_html(html, SHOWROOM_URL) is None
 
-    def test_office_monthly_path(self) -> None:
-        # The real Office fixture exercises monthly directly.
-        from app.ingest.bayut.detail_scraper import parse_detail_html
-
-        payload = parse_detail_html(OFFICE_HTML, OFFICE_URL)
-        assert payload is not None
-        assert payload.price_sar_annual == Decimal("24000.00")
-
 
 # ---------------------------------------------------------------------------
 # TestListingTypeMapping
@@ -335,14 +303,15 @@ class TestListingTypeMapping:
 
         assert _map_bayut_listing_type("Showroom") == "showroom"
 
-    def test_office_maps_to_store(self) -> None:
+    def test_office_maps_to_none(self) -> None:
+        # Office was removed from the type map — no longer maps to store.
         from app.ingest.bayut.detail_scraper import _map_bayut_listing_type
 
-        assert _map_bayut_listing_type("Office") == "store"
+        assert _map_bayut_listing_type("Office") is None
 
     @pytest.mark.parametrize("category", [
         "Apartment", "Villa", "Floor", "Townhouse",
-        "Warehouse", "Commercial Building", "Complex", "Shop",
+        "Office", "Warehouse", "Commercial Building", "Complex", "Shop",
     ])
     def test_other_categories_map_to_none(self, category: str) -> None:
         from app.ingest.bayut.detail_scraper import _map_bayut_listing_type
