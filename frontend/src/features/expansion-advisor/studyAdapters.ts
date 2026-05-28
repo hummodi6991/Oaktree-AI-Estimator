@@ -493,7 +493,7 @@ export function buildFinalistTiles(
       return {
         id: candidate.id,
         rankPosition: candidate.rank_position ?? null,
-        district: candidateDistrictLabel(candidate, candidate.parcel_id || "—"),
+        district: candidateDistrictLabel(candidate, candidate.display_id ?? candidate.parcel_id ?? "—"),
         gateVerdict: gatePass === true ? "pass" : gatePass === false ? "fail" : "unknown",
         estimatedAnnualRent: candidate.estimated_annual_rent_sar ?? null,
         fitoutCost: candidate.estimated_fitout_cost_sar ?? null,
@@ -693,7 +693,7 @@ export function buildCopySummary(
   return {
     siteLabel: allGatesPass ? "Lead site" : "Top ranked candidate",
     bestCandidate: candidate
-      ? `#${candidate.rank_position || "?"} ${candidateDistrictLabel(candidate, candidate.parcel_id || "—")}`
+      ? `#${candidate.rank_position || "?"} ${candidateDistrictLabel(candidate, candidate.display_id ?? candidate.parcel_id ?? "—")}`
       : "—",
     topReason: rec.why_best || memoRec.best_use_case || positives[0] || "—",
     mainRisk: rec.main_risk || memoRec.main_watchout || risks[0] || "—",
@@ -990,9 +990,9 @@ export function buildDecisionSnapshot(
 
   return {
     siteLabel: allGatesPass ? "Lead Site" : "Top ranked candidate",
-    leadSite: `#${candidate.rank_position || "?"} ${candidateDistrictLabel(candidate, candidate.parcel_id || "—")}`,
+    leadSite: `#${candidate.rank_position || "?"} ${candidateDistrictLabel(candidate, candidate.display_id ?? candidate.parcel_id ?? "—")}`,
     leadDistrict: candidateDistrictLabel(candidate, "—"),
-    leadParcelId: candidate.parcel_id || "—",
+    leadParcelId: candidate.display_id ?? candidate.parcel_id ?? "—",
     whyItWins: rec.why_best || memoRec.best_use_case || positives[0] || "—",
     whyItWinsLabel: allGatesPass ? "Why it wins" : "Top strength",
     mainRisk: rec.main_risk || memoRec.main_watchout || risks[0] || "—",
@@ -1028,7 +1028,7 @@ export function deriveCompareOutcome(
   const bestOverall = result.summary?.best_overall_candidate_id || null;
   const bestCandidate = bestOverall ? candidates.find((c) => c.id === bestOverall) : null;
   const winnerLabel = bestCandidate
-    ? `#${bestCandidate.rank_position || "?"} ${candidateDistrictLabel(bestCandidate, bestCandidate.parcel_id || "—")}`
+    ? `#${bestCandidate.rank_position || "?"} ${candidateDistrictLabel(bestCandidate, bestCandidate.display_id ?? bestCandidate.parcel_id ?? "—")}`
     : bestOverall?.slice(0, 8) || "—";
 
   // Find dimensions where runner-up wins
@@ -1090,7 +1090,7 @@ export function extractSavedStudyMeta(saved: SavedExpansionSearch): SavedStudyMe
 
   return {
     leadDistrict: lead ? candidateDistrictLabel(lead, "—") : null,
-    leadParcelId: lead?.parcel_id || leadId?.slice(0, 8) || null,
+    leadParcelId: (lead?.display_id ?? lead?.parcel_id) || leadId?.slice(0, 8) || null,
     leadGatesPass: lead?.gate_status_json?.overall_pass === true,
     shortlistCount: (saved.selected_candidate_ids || []).length,
     compareCount: compareIds.length,
@@ -1109,7 +1109,7 @@ export function formatLandlordBriefingText(
   t?: TFunction,
 ): string {
   const district = candidateDistrictLabel(candidate, "—");
-  const parcelId = candidate.parcel_id || "—";
+  const parcelId = candidate.display_id ?? candidate.parcel_id ?? "—";
   const rank = candidate.rank_position || "?";
   const rentM2 = candidate.estimated_rent_sar_m2_year ? `${Math.round(candidate.estimated_rent_sar_m2_year)} SAR/m²/yr` : "TBD";
   const annualRent = (candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar) ? `${Math.round(candidate.display_annual_rent_sar ?? candidate.estimated_annual_rent_sar!).toLocaleString()} SAR/yr` : "TBD";
