@@ -15,6 +15,7 @@ import type {
  */
 export type SourceToken =
   | "aqar"
+  | "bayut"
   | "google_places"
   | "black_marble"
   | "osm"
@@ -94,6 +95,8 @@ function overrideSource(
   switch (raw) {
     case "aqar":
       return "aqar";
+    case "bayut":
+      return "bayut";
     case "google_places":
       return "google_places";
     case "expansion_road_context":
@@ -127,6 +130,40 @@ function overrideSource(
   }
 }
 
+/**
+ * Resolve the candidate's listing platform ("aqar" | "bayut") from the
+ * candidate record. Returns null for non-listing candidates so callers can
+ * fall back to the legacy "aqar" default.
+ */
+function candidatePlatform(
+  candidate: Partial<ExpansionCandidate> | Record<string, unknown>,
+): "aqar" | "bayut" | null {
+  const p = (candidate as Record<string, unknown>).platform;
+  return p === "aqar" || p === "bayut" ? p : null;
+}
+
+/**
+ * Source resolution for rent-derived inputs. The raw rent_source value is
+ * the listing-economics tag ("commercial_unit_actual" / "+micro"), which is
+ * never in overrideSource()'s infrastructure allowlist — those inputs are
+ * sourced from the listing itself, so they attribute to the candidate's
+ * platform. Falls back to "aqar" when the platform is unknown.
+ */
+function resolveRentSource(
+  contextSources: Record<string, unknown>,
+  platform: "aqar" | "bayut" | null,
+): SourceToken {
+  const fallback: SourceToken = platform ?? "aqar";
+  const raw = contextSources["rent_source"];
+  if (
+    typeof raw === "string" &&
+    (raw === "commercial_unit_actual" || raw === "commercial_unit_actual+micro")
+  ) {
+    return fallback;
+  }
+  return overrideSource(contextSources, "rent_source", fallback);
+}
+
 /* ─── Component → inputs map ─────────────────────────────────────────────── */
 
 export const PER_COMPONENT_INPUTS: Record<string, InputDescriptor[]> = {
@@ -135,7 +172,7 @@ export const PER_COMPONENT_INPUTS: Record<string, InputDescriptor[]> = {
       key: "estimated_annual_rent_sar",
       resolve: ({ candidate, contextSources }) => ({
         value: asNumber((candidate as Record<string, unknown>).estimated_annual_rent_sar),
-        source: overrideSource(contextSources, "rent_source", "aqar"),
+        source: resolveRentSource(contextSources, candidatePlatform(candidate)),
       }),
     },
     {
@@ -162,11 +199,11 @@ export const PER_COMPONENT_INPUTS: Record<string, InputDescriptor[]> = {
     },
     {
       key: "rent_burden_percentile",
-      resolve: ({ scoreBreakdown, contextSources }) => {
+      resolve: ({ candidate, scoreBreakdown, contextSources }) => {
         const v = asNumber(readNested(scoreBreakdown, "economics_detail", "rent_burden", "percentile"));
         return {
           value: v != null ? Math.round(v * 100) / 100 : null,
-          source: overrideSource(contextSources, "rent_source", "aqar"),
+          source: resolveRentSource(contextSources, candidatePlatform(candidate)),
         };
       },
     },
@@ -175,7 +212,7 @@ export const PER_COMPONENT_INPUTS: Record<string, InputDescriptor[]> = {
   listing_quality: [
     {
       key: "effective_age_days",
-      resolve: ({ featureSnapshot }) => {
+      resolve: ({ candidate, featureSnapshot }) => {
         const la = readNested(featureSnapshot, "listing_age") as
           | Record<string, unknown>
           | undefined;
@@ -183,10 +220,9 @@ export const PER_COMPONENT_INPUTS: Record<string, InputDescriptor[]> = {
           asNumber(la?.effective_age_days) ??
           asNumber(la?.updated_days) ??
           asNumber(la?.created_days);
-        const src = asString(la?.source);
         return {
           value: v,
-          source: src === "aqar" ? "aqar" : "aqar",
+          source: candidatePlatform(candidate) ?? "aqar",
         };
       },
     },
@@ -194,7 +230,7 @@ export const PER_COMPONENT_INPUTS: Record<string, InputDescriptor[]> = {
       key: "has_image",
       resolve: ({ candidate }) => ({
         value: Boolean((candidate as Record<string, unknown>).image_url),
-        source: "aqar",
+        source: candidatePlatform(candidate) ?? "aqar",
       }),
     },
     {
@@ -213,16 +249,16 @@ export const PER_COMPONENT_INPUTS: Record<string, InputDescriptor[]> = {
     },
     {
       key: "is_furnished",
-      resolve: ({ featureSnapshot }) => ({
+      resolve: ({ candidate, featureSnapshot }) => ({
         value: asBool(readNested(featureSnapshot, "listing_quality_signals", "is_furnished")),
-        source: "aqar",
+        source: candidatePlatform(candidate) ?? "aqar",
       }),
     },
     {
       key: "has_drive_thru",
-      resolve: ({ featureSnapshot }) => ({
+      resolve: ({ candidate, featureSnapshot }) => ({
         value: asBool(readNested(featureSnapshot, "listing_quality_signals", "has_drive_thru")),
-        source: "aqar",
+        source: candidatePlatform(candidate) ?? "aqar",
       }),
     },
     {
