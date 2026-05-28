@@ -9365,7 +9365,7 @@ def run_expansion_search(
                 # ── Commercial unit metadata ──
                 "source_type": (
                     "commercial_unit" if row.get("commercial_unit_id")
-                    else {"1": "aqar", "2": "delivery_poi", "3": "arcgis_parcel"}.get(
+                    else {"2": "delivery_poi", "3": "arcgis_parcel"}.get(
                         str(row.get("source_tier", "")), "parcel"
                     )
                 ),
@@ -9784,9 +9784,13 @@ def run_expansion_search(
             d = c.get("district") or c.get("district_display")
             if d:
                 districts_in_result.add(d)
+        candidate_sources_observed = sorted({
+            r.get("source_type") for r in rows
+            if r.get("source_tier") == 1 and r.get("source_type")
+        })
         coverage_meta = {
             "parcel_source": "listings_only",
-            "candidate_sources": ["aqar", "wasalt", "bayut"],
+            "candidate_sources_observed": candidate_sources_observed,
             "candidate_selection": "stratified" if use_stratified else "targeted",
             "per_district_cap": per_district_cap,
             "candidates_evaluated": len(rows),

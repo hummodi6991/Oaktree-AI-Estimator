@@ -45,7 +45,15 @@ CATEGORY_AREA_DEFAULTS = {
 
 
 def _ingest_tier1_aqar(db: Session, run_id: str) -> int:
-    """Insert Tier 1 candidates from commercial_unit (Aqar)."""
+    """Insert Tier 1 candidates from commercial_unit (all platforms).
+
+    Historically Aqar-only (hence the ``_aqar`` suffix). Since PR4 the
+    ``commercial_unit`` table also carries Bayut listings; this function
+    projects ``cu.platform`` into ``candidate_location.source_type`` so
+    the cross-portal dedup ladder in ``_run_deduplication`` evaluates
+    correctly. The rename to ``_ingest_tier1_listings`` (or similar) is
+    deferred to a later cleanup PR to keep PR5's diff minimal.
+    """
     sql = text("""
         INSERT INTO candidate_location (
             source_tier, source_type, source_id,
@@ -60,7 +68,7 @@ def _ingest_tier1_aqar(db: Session, run_id: str) -> int:
             population_run_id
         )
         SELECT
-            1, 'aqar', cu.aqar_id,
+            1, cu.platform, cu.aqar_id,
             cu.lat, cu.lon,
             cu.neighborhood,
             cu.area_sqm,
@@ -323,8 +331,7 @@ def _run_deduplication(db: Session, run_id: str) -> int:
                 ) AS rn
             FROM candidate_location cl
             LEFT JOIN commercial_unit cu
-                   ON cu.platform = cl.source_type
-                  AND cu.platform_listing_id = cl.source_id
+                   ON cu.aqar_id = cl.source_id
             WHERE cl.population_run_id = :run_id
               AND cl.source_tier = 1
               AND cl.rega_advertisement_license IS NOT NULL
@@ -425,8 +432,7 @@ def _run_deduplication(db: Session, run_id: str) -> int:
               FROM candidate_location cl
               JOIN component_root cr ON cr.node = cl.id
               LEFT JOIN commercial_unit cu
-                     ON cu.platform = cl.source_type
-                    AND cu.platform_listing_id = cl.source_id
+                     ON cu.aqar_id = cl.source_id
              WHERE cl.population_run_id = :run_id
                AND cl.source_tier = 1
                AND cl.is_cluster_primary = TRUE

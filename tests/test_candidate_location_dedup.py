@@ -105,6 +105,33 @@ class TestIngestTier1AqarProjection:
         assert "cu.aqar_advertisement_license" in insert_sql
         assert params["run_id"] == "abcd1234"
 
+    def test_source_type_projected_from_cu_platform_not_hardcoded(self):
+        """PR5: ``source_type`` must come from ``cu.platform`` so Bayut rows
+        receive ``source_type='bayut'`` (not the pre-PR5 hardcoded literal
+        ``'aqar'``). The dynamic projection is what activates the
+        cross-portal dedup ladder in ``_run_deduplication``.
+
+        Behavior implication (verified at the SQL-shape layer here; a live-
+        PG integration variant would insert one Bayut and one Aqar row,
+        run the function, and assert the resulting ``candidate_location``
+        rows carry the corresponding ``source_type``):
+          * commercial_unit row with platform='bayut' → source_type='bayut'
+          * commercial_unit row with platform='aqar'  → source_type='aqar'
+        """
+        from app.ingest.candidate_locations import _ingest_tier1_aqar
+
+        db = _RecordingDB()
+        _ingest_tier1_aqar(db, run_id="zzz")
+        insert_sql, _ = db.calls[0]
+
+        # Projection now emits ``cu.platform`` in the source_type slot.
+        assert "1, cu.platform, cu.aqar_id" in insert_sql, (
+            "SELECT must project cu.platform (not a hardcoded literal) "
+            "into candidate_location.source_type"
+        )
+        # The pre-PR5 broken literal must not appear in the projection.
+        assert "1, 'aqar', cu.aqar_id" not in insert_sql
+
 
 # ---------------------------------------------------------------------------
 # 3. Dedup SQL — structure
@@ -159,6 +186,14 @@ class TestRegaLicenseCollapsePass:
 
     def test_tiebreak_order_aqar_first_then_last_seen_then_id(self):
         # Order must be: Aqar-vs-non-Aqar, then last_seen_at DESC, then id ASC.
+        # Pre-PR5 the ``(cl.source_type = 'aqar') DESC`` predicate was a
+        # no-op — every Tier 1 row had source_type='aqar' hardcoded by
+        # ``_ingest_tier1_aqar``, so the predicate evaluated TRUE for
+        # every row and the tier-break reduced to last_seen_at→id.
+        # Post-PR5 the projection emits ``cu.platform`` (real values
+        # ``'aqar'``/``'bayut'``), so this predicate becomes the actual
+        # cross-portal tier-break: same-license Bayut rows lose to
+        # same-license Aqar rows.
         m = re.search(
             r"ORDER BY\s+\(cl\.source_type = 'aqar'\) DESC,\s*"
             r"cu\.last_seen_at DESC NULLS LAST,\s*"
@@ -167,12 +202,21 @@ class TestRegaLicenseCollapsePass:
         )
         assert m is not None, "REGA tiebreak order must be aqar→last_seen→id"
 
-    def test_joins_commercial_unit_via_platform_listing_id(self):
-        # JOIN predicate must be (platform, platform_listing_id) so it works
-        # for both Aqar today and Bayut in PR4.
+    def test_joins_commercial_unit_via_aqar_id(self):
+        # JOIN predicate is ``cu.aqar_id = cl.source_id``. Since
+        # ``_ingest_tier1_aqar`` projects ``cu.aqar_id`` into
+        # ``cl.source_id`` (line 70), the keys match shape-for-shape
+        # for both Aqar (raw id) and Bayut (``bayut:<id>`` prefixed on
+        # both sides). The earlier ``cu.platform_listing_id = cl.source_id``
+        # variant was prefix-asymmetric for Bayut (cu side unprefixed,
+        # cl side prefixed) and silently joined NULL, breaking the
+        # second-place ``cu.last_seen_at`` tier-break for within-portal
+        # Bayut pairs.
         assert "LEFT JOIN commercial_unit cu" in self.rega_sql
-        assert "cu.platform = cl.source_type" in self.rega_sql
-        assert "cu.platform_listing_id = cl.source_id" in self.rega_sql
+        assert "cu.aqar_id = cl.source_id" in self.rega_sql
+        # The pre-fix predicates must not be present.
+        assert "cu.platform = cl.source_type" not in self.rega_sql
+        assert "cu.platform_listing_id = cl.source_id" not in self.rega_sql
 
     def test_demotes_non_primary_rows_in_groups_of_size_gt_1(self):
         assert "SET is_cluster_primary = FALSE" in self.rega_sql
@@ -233,6 +277,11 @@ class TestFingerprintFallbackPass:
         assert "MIN(root) AS root_id" in self.fp_sql
 
     def test_fingerprint_tiebreak_order(self):
+        # Same pre/post-PR5 nuance as the REGA pass: pre-PR5 the
+        # ``(cl.source_type = 'aqar') DESC`` predicate evaluated TRUE
+        # for every row (hardcoded literal), making it a no-op.
+        # Post-PR5 the projection emits ``cu.platform``, so this is the
+        # real cross-portal tier-break inside a fingerprint component.
         m = re.search(
             r"ORDER BY\s+\(cl\.source_type = 'aqar'\) DESC,\s*"
             r"cu\.last_seen_at DESC NULLS LAST,\s*"
@@ -271,16 +320,29 @@ class TestDedupIdempotency:
 
 
 # ---------------------------------------------------------------------------
-# 5. Today's reality: Aqar-only data, unique licenses → no demotions
+# 5. Promote-then-demote-only invariant (pure-Aqar pool → no demotions)
 # ---------------------------------------------------------------------------
 
 
-class TestPrePR3InvariantPreserved:
+class TestDedupPreservesAqarOnlyWithinPortalOnPureAqarPool:
+    """Renamed from ``TestPrePR3InvariantPreserved``: the underlying
+    SQL-shape assertion is unchanged but the *meaning* changes post-PR5.
+
+    Pre-PR5 the invariant "today's pool is Aqar-only and licenses are
+    unique, so dedup is a no-op" was guaranteed by data. Post-PR5 the
+    pool contains real Bayut rows and the dedup actively collapses
+    cross-portal duplicates, so that data-level invariant no longer
+    holds.
+
+    What this test still pins is the structural invariant: every Tier-1
+    row is promoted to primary in Step 1, and every subsequent Tier-1
+    mutation is a DEMOTION (``SET is_cluster_primary = FALSE``), never a
+    promotion. That guarantees a pure-Aqar pool with unique licenses
+    remains a no-op (REGA group_size>1 and fingerprint component_size>1
+    never fire), even though the dedup is now active for mixed pools.
+    """
+
     def test_step1_still_promotes_every_tier1_first(self):
-        """The pre-PR3 invariant — "every Tier 1 row starts as primary" —
-        is preserved. The new passes only DEMOTE rows. So against today's
-        Aqar-only data (no Bayut, no shared licenses), the dedup is a
-        no-op on the primary set."""
         sqls = _collect_dedup_sql()
 
         # Find the "mark every Tier 1 primary" step.
@@ -301,3 +363,85 @@ class TestPrePR3InvariantPreserved:
                 "license_groups" in s or "fingerprint_pairs" in s
             ):
                 assert "SET is_cluster_primary = FALSE" in s
+
+
+# ---------------------------------------------------------------------------
+# 6. PR5: cross-portal and within-portal dedup activation
+# ---------------------------------------------------------------------------
+
+
+class TestCrossPortalDedupActivation:
+    """PR5 activates the cross-portal collapse by emitting real ``cu.platform``
+    values into ``candidate_location.source_type``. The dedup SQL ladder
+    itself does not change — these tests pin the SQL shape that produces
+    the now-correct behavior.
+
+    Behavioral expectations (verified by SQL shape; a live-PG variant
+    would actually INSERT rows and assert on the resulting state):
+
+    * test_cross_portal_dedup_collapses_same_license: insert one Aqar
+      and one Bayut row sharing a REGA license → only one primary
+      survives, and per the ``(source_type='aqar') DESC`` tiebreak it
+      is the Aqar row.
+    * test_within_portal_bayut_dedup_collapses_same_license: insert two
+      Bayut rows sharing a REGA license → one primary, one demoted
+      (same license group, partitioned by normalized license alone, not
+      by platform).
+    """
+
+    def setup_method(self):
+        self.sqls = _collect_dedup_sql()
+        self.rega_sql = next(s for s in self.sqls if "license_groups" in s)
+
+    def test_license_partition_does_not_filter_by_platform(self):
+        # The PARTITION BY is on the normalised license alone — not
+        # platform. So a same-license pair collapses regardless of
+        # whether both rows are Aqar, both Bayut, or one of each.
+        normalised = "LOWER(TRIM(cl.rega_advertisement_license))"
+        assert self.rega_sql.count(normalised) >= 2
+        # Sanity: no platform filter sneaks into the partition.
+        # (We assert on the PARTITION BY clauses specifically; the
+        # tier-break expression ``(cl.source_type = 'aqar') DESC`` lives
+        # inside the ORDER BY, not the PARTITION BY.)
+        for partition_match in re.finditer(
+            r"PARTITION BY\s+([^\)]*?)\s+ORDER BY", self.rega_sql
+        ):
+            partition_expr = partition_match.group(1)
+            assert "cl.source_type" not in partition_expr
+            assert "cu.platform" not in partition_expr
+
+    def test_cross_portal_dedup_collapses_same_license(self):
+        # Cross-portal collapse: with real source_type values, a pair
+        # (Aqar, Bayut) sharing a license falls in the same partition
+        # and the Bayut row is demoted by the tier-break. The join is
+        # on ``cu.aqar_id = cl.source_id`` (prefix-symmetric for both
+        # platforms) so the second-place ``cu.last_seen_at`` tier-break
+        # also has live values for Bayut.
+        assert "cu.aqar_id = cl.source_id" in self.rega_sql
+        # The Aqar-wins tier-break must be present.
+        assert re.search(
+            r"\(cl\.source_type = 'aqar'\) DESC", self.rega_sql,
+        ) is not None
+        # Demotion fires when group has more than one row.
+        assert "lg.group_size > 1" in self.rega_sql
+        assert "lg.rn > 1" in self.rega_sql
+        # Demotion targets non-winners only (rn > 1).
+        assert "SET is_cluster_primary = FALSE" in self.rega_sql
+
+    def test_within_portal_bayut_dedup_collapses_same_license(self):
+        # Within-portal collapse: two Bayut rows sharing a license fall
+        # in the same license partition. Neither matches the Aqar-wins
+        # tier-break, so the second-place tier-break (``cu.last_seen_at
+        # DESC NULLS LAST, cl.id ASC``) decides the winner. SQL shape
+        # is identical to the cross-portal case — only the data differs.
+        # Pin the tier-break sequence end-to-end:
+        m = re.search(
+            r"ORDER BY\s+\(cl\.source_type = 'aqar'\) DESC,\s*"
+            r"cu\.last_seen_at DESC NULLS LAST,\s*"
+            r"cl\.id ASC",
+            self.rega_sql,
+        )
+        assert m is not None
+        # And the demotion gate uses group_size>1 → fires for any
+        # license group with more than one row, regardless of platform.
+        assert "lg.group_size > 1" in self.rega_sql
