@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 interface TierBadgeProps {
   sourceTier?: number | null;
   sourceType?: string | null;
+  platform?: "aqar" | "bayut" | null;
   isVacant?: boolean | null;
   currentCategory?: string | null;
   clAvgRating?: number | null;
@@ -50,6 +51,7 @@ const tierConfig: Record<number, {
 export default function TierBadge({
   sourceTier,
   sourceType,
+  platform,
   currentCategory,
   clAvgRating,
   listingUrl,
@@ -104,7 +106,7 @@ export default function TierBadge({
         </div>
       )}
 
-      {/* Tier 1: Aqar link */}
+      {/* Tier 1: listing link */}
       {sourceTier === 1 && listingUrl && (
         <div style={{ marginTop: 4 }}>
           <a
@@ -114,7 +116,12 @@ export default function TierBadge({
             style={{ fontSize: 12, color: "#2563eb", textDecoration: "underline" }}
             onClick={(e) => e.stopPropagation()}
           >
-            {t("expansionAdvisor.tierViewAqar")} &#8599;
+            {platform
+              ? t("expansionAdvisor.tierViewPlatform", {
+                  platform: t(`expansionAdvisor.platformNames.${platform}`),
+                })
+              : t("expansionAdvisor.tierViewListing")}{" "}
+            &#8599;
           </a>
         </div>
       )}
