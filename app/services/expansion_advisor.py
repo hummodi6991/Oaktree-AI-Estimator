@@ -2358,15 +2358,18 @@ def _competition_whitespace_score(
       12             -> 28
       20+            -> 15  (floor)
 
-    F4 (defensive): when ``confident`` is ``False``, the spatial query
-    returned zero rows AND no broader POI/delivery presence was observed
-    in the radius (i.e. thin POI coverage, not a true greenfield). In
-    that case return the neutral midpoint (50.0) so the candidate
-    neither receives the free 100 boost nor an implicit penalty.
-    ``confident=None`` (caller did not supply a flag) preserves the
-    legacy behavior unchanged.
+    F4 (defensive): ``count=0`` only earns the wide-open 100 when
+    ``confident`` is truthy — i.e. the competitor scan actually observed
+    broader POI/delivery presence in the radius, so a zero same-category
+    count is trustworthy evidence of a genuine greenfield. Both
+    ``confident=False`` (scan ran but found thin POI coverage, not a true
+    greenfield) and ``confident=None`` (no scan ran / caller supplied no
+    flag — e.g. the ArcGIS-fallback pool path) are treated as unknown and
+    return the neutral midpoint (50.0). Unknown competitor data must not
+    be scored as a confirmed empty market: that fabricates evidence and
+    pushes thin-coverage candidates up the ranking.
     """
-    if confident is False and competitor_count <= 0:
+    if not confident and competitor_count <= 0:
         return 50.0
     if competitor_count <= 0:
         return 100.0
