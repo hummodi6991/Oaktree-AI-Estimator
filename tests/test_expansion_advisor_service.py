@@ -480,6 +480,30 @@ def test_confidence_grade_bounds():
     assert _confidence_grade(confidence_score=30, district=None, provider_platform_count=None, multi_platform_presence_score=None, rent_source="conservative_default") == "D"
 
 
+def test_competition_whitespace_unknown_confidence_is_neutral_not_open():
+    """count=0 must only score wide-open (100) on confirmed evidence.
+
+    Unknown confidence (``None`` — e.g. the ArcGIS-fallback pool path that
+    bypasses bulk competitor enrichment) and explicit ``False`` (scan ran
+    but found thin POI coverage) must both fall back to the neutral
+    midpoint. Treating "we don't know" as "we know it's empty" fabricates
+    evidence and pushes thin-coverage candidates up the ranking.
+    """
+    from app.services.expansion_advisor import _competition_whitespace_score
+
+    # Unknown confidence + zero observed competitors -> neutral, NOT 100.
+    assert _competition_whitespace_score(0, confident=None) == 50.0
+    # Defensive (scan ran, thin coverage) -> neutral.
+    assert _competition_whitespace_score(0, confident=False) == 50.0
+    # Confirmed broader presence + zero same-category -> genuine greenfield.
+    assert _competition_whitespace_score(0, confident=True) == 100.0
+    # Sanity: positive counts are unaffected by the confidence flag and
+    # decay below the wide-open ceiling.
+    for _flag in (None, False, True):
+        score = _competition_whitespace_score(3, confident=_flag)
+        assert 15.0 <= score < 100.0
+
+
 def test_comparable_competitors_payload_shape():
     class _DB:
         def begin_nested(self):
