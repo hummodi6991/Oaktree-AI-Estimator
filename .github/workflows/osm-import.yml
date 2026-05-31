@@ -128,7 +128,10 @@ jobs:
             SUCCESS=0
             for URL in "$OVERPASS_MAIN" "$OVERPASS_FALLBACK"; do
               if curl --fail --silent --show-error --retry 6 --retry-all-errors \
-                   --max-time 120 --data-urlencode "data=$QUERY" \
+                   --max-time 120 \
+                   -H "User-Agent: oaktree-estimator/1.0 (+https://github.com/hummodi6991/Oaktree-AI-Estimator)" \
+                   -H "Accept: application/osm3s+xml" \
+                   --data-urlencode "data=$QUERY" \
                    "$URL" -o "$TILE_PATH"; then
                 SUCCESS=1
                 break
