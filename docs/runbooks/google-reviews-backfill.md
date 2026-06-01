@@ -1,7 +1,7 @@
 # Runbook: one-time Google reviews cold-start backfill
 
 **Scope:** Riyadh `restaurant_poi` (≈49,412 rows; ≈21,468 never enriched as of this writing).
-**Goal:** warm the table once, cheaply, so the quarterly steady-state cron only has to keep it fresh.
+**Goal:** warm the table once, cheaply, so the semiannual steady-state cron only has to keep it fresh.
 **Audience:** operator running the `Enrich Google Reviews` GitHub Action manually.
 **This is documentation only — it changes no runtime behavior.**
 
@@ -80,7 +80,7 @@ Repeat Window 2 (cursor keeps advancing) until the post-run coverage query (belo
 ## 5. Verify coverage after each run
 
 ```bash
-psql -c "SELECT count(*) AS total, count(*) FILTER (WHERE google_place_id IS NOT NULL) AS enriched, count(*) FILTER (WHERE google_place_id IS NULL) AS never_enriched, count(*) FILTER (WHERE google_fetched_at >= now() - interval '80 days') AS fresh FROM restaurant_poi;"
+psql -c "SELECT count(*) AS total, count(*) FILTER (WHERE google_place_id IS NOT NULL) AS enriched, count(*) FILTER (WHERE google_place_id IS NULL) AS never_enriched, count(*) FILTER (WHERE google_fetched_at >= now() - interval '150 days') AS fresh FROM restaurant_poi;"
 ```
 
 Also read the workflow run's **stats** (printed at the end and in the job log):
@@ -89,10 +89,10 @@ real cost driver.
 
 ## 6. Hand-off to steady state
 
-Once `never_enriched` ≈ 0, the table is warmed and the **quarterly** cron
-(`enrich-google-reviews.yml`, `0 4 1 1,4,7,10 *`) takes over. Its scheduled run resolves
-`limit=0` + `--no-only-missing` + `--reset`, so it walks the whole table each quarter and
-re-fetches every row older than `STALE_DAYS=80` — a ≤3-month freshness window. No further
+Once `never_enriched` ≈ 0, the table is warmed and the **semiannual** cron
+(`enrich-google-reviews.yml`, `0 4 1 1,7 *`) takes over. Its scheduled run resolves
+`limit=0` + `--no-only-missing` + `--reset`, so it walks the whole table each half-year and
+re-fetches every row older than `STALE_DAYS=150` — a ≤6-month freshness window. No further
 manual action is required unless coverage drops (re-run §3).
 
 > Note: the steady-state refresh path is **Details-only** by design (it re-fetches each

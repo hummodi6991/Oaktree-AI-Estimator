@@ -53,13 +53,14 @@ logger = logging.getLogger(__name__)
 RIYADH_LON_MIN, RIYADH_LON_MAX = 46.20, 47.30
 RIYADH_LAT_MIN, RIYADH_LAT_MAX = 24.20, 25.10
 
-# 80 days, paired with the QUARTERLY enrichment cron (Jan/Apr/Jul/Oct) and the
-# scheduled run's limit=0 (clear all stale per run). 80 < ~91-day quarter, so a row
-# enriched on one quarterly run is reliably stale (and thus re-fetched) on the next,
-# giving a ≤3-month freshness window. Ratings/review_counts are sticky enough that
-# quarterly refresh is sufficient, at ~1/3 the API cost of a monthly cadence.
-# (Supersedes the earlier 25-day value, which was correct only for a monthly cron.)
-STALE_DAYS = 80
+# 150 days, paired with the SEMIANNUAL enrichment cron (Jan 1 & Jul 1) and the
+# scheduled run's limit=0 (clear all stale per run). 150 < ~182-day semiannual
+# interval, so a row enriched on one semiannual run is reliably stale (and thus
+# re-fetched) on the next, giving a ≤6-month freshness window. Ratings/review_counts
+# are sticky; closures (business_status) are the only time-sensitive field, and a
+# 6-month worst-case lag is the accepted trade for ~1/6 the API cost of a monthly
+# cadence. (Supersedes both the monthly-25 and quarterly-80 values.)
+STALE_DAYS = 150
 DEFAULT_BATCH_SIZE = 200
 
 

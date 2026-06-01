@@ -20,9 +20,9 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "0 4 1 1,4,7,10 *"   # quarterly: Jan/Apr/Jul/Oct 1st @ 04:00 UTC. Paired with
-                                  # STALE_DAYS=80 + limit=0, this refreshes the whole warmed
-                                  # table 4×/year (≤3-month staleness) at a fraction of monthly cost.
+    - cron: "0 4 1 1,7 *"   # semiannual: Jan 1 & Jul 1 @ 04:00 UTC (matches the parking-google
+                            # biannual cadence). Paired with STALE_DAYS=150 + limit=0, this
+                            # refreshes the whole warmed table 2×/year (≤6-month staleness).
 
 concurrency:
   group: enrich-google-reviews
@@ -71,10 +71,10 @@ jobs:
         run: |
           # On schedule events workflow_dispatch input defaults do NOT apply, so
           # github.event.inputs.* are empty. Resolve safe defaults here so the
-          # quarterly run performs a full stale-refresh (no-only-missing) without
+          # semiannual run performs a full stale-refresh (no-only-missing) without
           # changing manual-dispatch behavior (where inputs are already populated).
           # limit=0 (unlimited): the scheduled run must clear EVERY stale row in one
-          # pass. With STALE_DAYS=80 and a quarterly cron, ~the whole warmed table is
+          # pass. With STALE_DAYS=150 and a semiannual cron, ~the whole warmed table is
           # stale each run, so a small cap (the old 500) would refresh only the first
           # ~500 ids and let the other ~49K rows drift — it cannot keep the table fresh.
           LIMIT="${{ github.event.inputs.limit }}"
@@ -125,12 +125,12 @@ jobs:
           db = SessionLocal()
           total = db.execute(text('SELECT count(*) FROM restaurant_poi')).scalar()
           enriched = db.execute(text('SELECT count(*) FROM restaurant_poi WHERE google_place_id IS NOT NULL')).scalar()
-          fresh = db.execute(text(\"\"\"SELECT count(*) FROM restaurant_poi WHERE google_fetched_at >= now() - interval '30 days'\"\"\")).scalar()
+          fresh = db.execute(text(\"\"\"SELECT count(*) FROM restaurant_poi WHERE google_fetched_at >= now() - interval '150 days'\"\"\")).scalar()
           cursor_row = db.execute(text('SELECT last_cursor FROM google_reviews_enrich_state WHERE id = 1')).first()
           last_cursor = cursor_row[0] if cursor_row else 'N/A'
           print(f'Total POIs: {total}')
           print(f'Google enriched: {enriched}')
-          print(f'Fresh (last 30d): {fresh}')
+          print(f'Fresh (last 150d): {fresh}')
           if total > 0:
               print(f'Coverage: {enriched/total*100:.1f}%')
           print(f'Last cursor: {last_cursor}')
