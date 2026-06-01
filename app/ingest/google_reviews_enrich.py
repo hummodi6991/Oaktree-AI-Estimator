@@ -53,7 +53,10 @@ logger = logging.getLogger(__name__)
 RIYADH_LON_MIN, RIYADH_LON_MAX = 46.20, 47.30
 RIYADH_LAT_MIN, RIYADH_LAT_MAX = 24.20, 25.10
 
-STALE_DAYS = 30
+# 25 (not 30) so a monthly enrichment cron always refreshes a row inside a
+# 30-day window: a 30-day gate can skip a row sitting at ~28 days and let it
+# drift to ~59 days before the next monthly run.
+STALE_DAYS = 25
 DEFAULT_BATCH_SIZE = 200
 
 

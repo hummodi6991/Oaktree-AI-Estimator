@@ -19,6 +19,8 @@ on:
         description: "Ignore previous progress, re-process all cells"
         type: boolean
         default: false
+  schedule:
+    - cron: "0 4 1 1,4,7,10 *"   # quarterly: Jan/Apr/Jul/Oct 1st @ 04:00 UTC
 
 concurrency:
   group: google-places-grid
@@ -63,7 +65,14 @@ jobs:
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          FLAGS="--types ${{ github.event.inputs.types }} --radius ${{ github.event.inputs.radius }}"
+          # workflow_dispatch input defaults do NOT apply to schedule events, so
+          # github.event.inputs.* are empty on the quarterly cron. Fall back to the
+          # dispatch defaults so the scheduled run uses valid types/radius and
+          # performs a REAL (non-dry-run) discovery pass. dry_run is left untouched:
+          # empty != "true", so the scheduled run never enters dry-run mode.
+          TYPES="${{ github.event.inputs.types || 'restaurant' }}"
+          RADIUS="${{ github.event.inputs.radius || '2000' }}"
+          FLAGS="--types ${TYPES} --radius ${RADIUS}"
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             FLAGS="${FLAGS} --dry-run"
           fi
