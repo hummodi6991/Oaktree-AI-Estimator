@@ -22,8 +22,8 @@ Usage::
     python -m app.ingest.google_reviews_enrich [--resume] [--reset] \\
         [--batch-size 200] [--limit N] [--force]
 
-Safe to re-run: skips rows already enriched within the last 30 days
-unless ``--force`` is passed.
+Safe to re-run: skips rows already enriched within the last ``STALE_DAYS``
+days unless ``--force`` is passed.
 """
 
 from __future__ import annotations
@@ -53,10 +53,14 @@ logger = logging.getLogger(__name__)
 RIYADH_LON_MIN, RIYADH_LON_MAX = 46.20, 47.30
 RIYADH_LAT_MIN, RIYADH_LAT_MAX = 24.20, 25.10
 
-# 25 (not 30) so a monthly enrichment cron always refreshes a row inside a
-# 30-day window: a 30-day gate can skip a row sitting at ~28 days and let it
-# drift to ~59 days before the next monthly run.
-STALE_DAYS = 25
+# 150 days, paired with the SEMIANNUAL enrichment cron (Jan 1 & Jul 1) and the
+# scheduled run's limit=0 (clear all stale per run). 150 < ~182-day semiannual
+# interval, so a row enriched on one semiannual run is reliably stale (and thus
+# re-fetched) on the next, giving a ≤6-month freshness window. Ratings/review_counts
+# are sticky; closures (business_status) are the only time-sensitive field, and a
+# 6-month worst-case lag is the accepted trade for ~1/6 the API cost of a monthly
+# cadence. (Supersedes both the monthly-25 and quarterly-80 values.)
+STALE_DAYS = 150
 DEFAULT_BATCH_SIZE = 200
 
 
