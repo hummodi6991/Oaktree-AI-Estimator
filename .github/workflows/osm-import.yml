@@ -85,6 +85,8 @@ jobs:
             relation["landcover"]({{bbox}});
             way["man_made"]({{bbox}});
             relation["man_made"]({{bbox}});
+            way["highway"]({{bbox}});
+            relation["highway"]({{bbox}});
           );
           (._;>;);
           out body;
