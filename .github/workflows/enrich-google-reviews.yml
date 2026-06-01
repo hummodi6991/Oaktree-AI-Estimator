@@ -19,6 +19,8 @@ on:
         description: "Reset resume cursor before starting (recommended for full refresh)"
         type: boolean
         default: false
+  schedule:
+    - cron: "0 4 1 * *"   # monthly, 1st @ 04:00 UTC — keeps ratings fresh within the STALE_DAYS window
 
 concurrency:
   group: enrich-google-reviews
@@ -65,11 +67,18 @@ jobs:
       - name: Resolve inputs
         id: inputs
         run: |
+          # On schedule events workflow_dispatch input defaults do NOT apply, so
+          # github.event.inputs.* are empty. Resolve safe defaults here so the
+          # monthly run performs a full stale-refresh (no-only-missing) without
+          # changing manual-dispatch behavior (where inputs are already populated).
           LIMIT="${{ github.event.inputs.limit }}"
           echo "limit=${LIMIT:-500}" >> "$GITHUB_OUTPUT"
-          echo "force=${{ github.event.inputs.force }}" >> "$GITHUB_OUTPUT"
-          echo "only_missing=${{ github.event.inputs.only_missing }}" >> "$GITHUB_OUTPUT"
-          echo "reset_cursor=${{ github.event.inputs.reset_cursor }}" >> "$GITHUB_OUTPUT"
+          FORCE="${{ github.event.inputs.force }}"
+          echo "force=${FORCE:-false}" >> "$GITHUB_OUTPUT"
+          ONLY_MISSING="${{ github.event.inputs.only_missing }}"
+          echo "only_missing=${ONLY_MISSING:-false}" >> "$GITHUB_OUTPUT"
+          RESET_CURSOR="${{ github.event.inputs.reset_cursor }}"
+          echo "reset_cursor=${RESET_CURSOR:-false}" >> "$GITHUB_OUTPUT"
 
       - name: Enrich restaurant POIs with Google Reviews
         env:
