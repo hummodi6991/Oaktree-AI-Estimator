@@ -20,7 +20,9 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: "0 4 1 * *"   # monthly, 1st @ 04:00 UTC — keeps ratings fresh within the STALE_DAYS window
+    - cron: "0 4 1 1,4,7,10 *"   # quarterly: Jan/Apr/Jul/Oct 1st @ 04:00 UTC. Paired with
+                                  # STALE_DAYS=80 + limit=0, this refreshes the whole warmed
+                                  # table 4×/year (≤3-month staleness) at a fraction of monthly cost.
 
 concurrency:
   group: enrich-google-reviews
@@ -69,10 +71,14 @@ jobs:
         run: |
           # On schedule events workflow_dispatch input defaults do NOT apply, so
           # github.event.inputs.* are empty. Resolve safe defaults here so the
-          # monthly run performs a full stale-refresh (no-only-missing) without
+          # quarterly run performs a full stale-refresh (no-only-missing) without
           # changing manual-dispatch behavior (where inputs are already populated).
+          # limit=0 (unlimited): the scheduled run must clear EVERY stale row in one
+          # pass. With STALE_DAYS=80 and a quarterly cron, ~the whole warmed table is
+          # stale each run, so a small cap (the old 500) would refresh only the first
+          # ~500 ids and let the other ~49K rows drift — it cannot keep the table fresh.
           LIMIT="${{ github.event.inputs.limit }}"
-          echo "limit=${LIMIT:-500}" >> "$GITHUB_OUTPUT"
+          echo "limit=${LIMIT:-0}" >> "$GITHUB_OUTPUT"
           FORCE="${{ github.event.inputs.force }}"
           echo "force=${FORCE:-false}" >> "$GITHUB_OUTPUT"
           ONLY_MISSING="${{ github.event.inputs.only_missing }}"
