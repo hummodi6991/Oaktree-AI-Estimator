@@ -19,10 +19,20 @@ on:
         description: "Reset resume cursor before starting (recommended for full refresh)"
         type: boolean
         default: false
-  schedule:
-    - cron: "0 4 1 1,7 *"   # semiannual: Jan 1 & Jul 1 @ 04:00 UTC (matches the parking-google
-                            # biannual cadence). Paired with STALE_DAYS=150 + limit=0, this
-                            # refreshes the whole warmed table 2×/year (≤6-month staleness).
+  # ── Scheduled Google reviews enrichment DISABLED (cost decision) ──
+  # Paid Google Places reviews enrichment was stopped: ratings/review_count
+  # have near-zero scoring impact, and the match rate (~58%) + cost (~$650
+  # backfill + ~$1,500/yr) don't justify it. Existing restaurant_poi rows and
+  # google_* columns/data are kept; the enrichment code stays dormant. Accepted
+  # trade-off: no fresh business_status (closure) tracking from this point on.
+  #
+  # To RE-ENABLE: un-comment the schedule block below. workflow_dispatch above
+  # is intentionally left active, so the job can still be run manually at any
+  # time without re-enabling the cron.
+  # schedule:
+  #   - cron: "0 4 1 1,7 *"   # semiannual: Jan 1 & Jul 1 @ 04:00 UTC (matches the parking-google
+  #                           # biannual cadence). Paired with STALE_DAYS=150 + limit=0, this
+  #                           # refreshes the whole warmed table 2×/year (≤6-month staleness).
 
 concurrency:
   group: enrich-google-reviews
