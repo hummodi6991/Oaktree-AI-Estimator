@@ -2,7 +2,7 @@ name: "Expansion Advisor Data — Google Places Parking"
 
 on:
   schedule:
-    - cron: "0 4 1 1,7 *"  # 04:00 UTC on Jan 1 and Jul 1 (6-month cadence)
+    - cron: "0 4 1 6,12 *"  # 04:00 UTC on Jun 1 and Dec 1 (6-month cadence)
   workflow_dispatch:
     inputs:
       replace_mode:
