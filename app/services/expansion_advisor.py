@@ -4570,6 +4570,23 @@ def _percentile_rent_burden(
 # Economics composite score
 # ---------------------------------------------------------------------------
 
+# Finding 2: price-tier multiplier applied to the ABSOLUTE rent ceilings only
+# (absolute_fallback 220 / absolute_legacy 180). A premium brand can sustain a
+# higher rent/m² before the burden penalty bites; a value brand less. The
+# percentile path is intentionally NOT tier-adjusted — it is peer-relative and
+# feeds value_score, which must stay tier-blind. Tier vocab matches
+# _IMPLIED_CHECK_SAR ("value"/"mid"/"premium"); unknown/None -> 1.0 (no change).
+_RENT_CEILING_TIER_MULT: dict[str, float] = {
+    "value": 0.85,
+    "mid": 1.0,
+    "premium": 1.30,
+}
+
+
+def _rent_ceiling_tier_multiplier(price_tier: str | None) -> float:
+    return _RENT_CEILING_TIER_MULT.get(str(price_tier or "").lower().strip(), 1.0)
+
+
 def _economics_score(
     *,
     estimated_revenue_index: float,
@@ -4583,8 +4600,13 @@ def _economics_score(
     district: str | None = None,
     listing_type: str | None = None,
     unit_neighborhood_raw: str | None = None,
+    price_tier: str | None = None,
 ) -> tuple[float, dict[str, Any]]:
     monthly_rent_per_m2 = estimated_annual_rent_sar / max(area_m2 * 12.0, 1.0)
+
+    _tier_mult = _rent_ceiling_tier_multiplier(price_tier)
+    _fallback_ceiling = 220.0 * _tier_mult
+    _legacy_ceiling = 180.0 * _tier_mult
 
     rent_burden_meta: dict[str, Any] = {"mode": "absolute_legacy"}
     rent_burden_score: float
@@ -4602,18 +4624,24 @@ def _economics_score(
             rent_burden_score = comp["burden_score"]
             rent_burden_meta = {"mode": "percentile", **comp}
         else:
-            rent_burden_score = _clamp(100.0 - (monthly_rent_per_m2 / 220.0) * 100.0)
+            rent_burden_score = _clamp(100.0 - (monthly_rent_per_m2 / _fallback_ceiling) * 100.0)
             rent_burden_meta = {
                 "mode": "absolute_fallback",
                 "listing_monthly_rent_per_m2": round(monthly_rent_per_m2, 2),
-                "ceiling": 220.0,
+                "ceiling": round(_fallback_ceiling, 2),
+                "ceiling_base": 220.0,
+                "ceiling_tier_multiplier": round(_tier_mult, 3),
+                "price_tier": (str(price_tier).lower().strip() if price_tier else None),
             }
     else:
-        rent_burden_score = _clamp(100.0 - (monthly_rent_per_m2 / 180.0) * 100.0)
+        rent_burden_score = _clamp(100.0 - (monthly_rent_per_m2 / _legacy_ceiling) * 100.0)
         rent_burden_meta = {
             "mode": "absolute_legacy",
             "monthly_rent_per_m2": round(monthly_rent_per_m2, 2),
-            "ceiling": 180.0,
+            "ceiling": round(_legacy_ceiling, 2),
+            "ceiling_base": 180.0,
+            "ceiling_tier_multiplier": round(_tier_mult, 3),
+            "price_tier": (str(price_tier).lower().strip() if price_tier else None),
         }
 
     fitout_cost_per_m2 = estimated_fitout_cost_sar / max(area_m2, 1.0)
@@ -7994,6 +8022,7 @@ def run_expansion_search(
             district=district,
             listing_type=row.get("unit_listing_type"),
             unit_neighborhood_raw=row.get("unit_neighborhood_raw"),
+            price_tier=effective_brand_profile.get("price_tier"),
         )
         _unit_street_width = _safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None
         frontage_score = _frontage_score(
@@ -8828,6 +8857,7 @@ def run_expansion_search(
             district=district,
             listing_type=row.get("unit_listing_type"),
             unit_neighborhood_raw=row.get("unit_neighborhood_raw"),
+            price_tier=effective_brand_profile.get("price_tier"),
         )
         effective_age_days, effective_age_source = _effective_listing_age_days(row)
         feature_snapshot_json = _candidate_feature_snapshot(

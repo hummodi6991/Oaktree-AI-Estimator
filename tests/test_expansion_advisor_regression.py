@@ -1882,6 +1882,94 @@ def test_economics_score_damps_rent_burden_on_city_fallback():
     assert abs(rev_w - 0.53) < 1e-9
 
 
+def test_economics_score_tier_aware_absolute_ceiling():
+    """Finding 2: price_tier scales the ABSOLUTE rent ceilings only.
+
+    Same rent/m²: a premium brand sustains a higher ceiling → higher
+    rent_burden_score than a value brand; price_tier=None / "mid" reproduce the
+    pre-patch ceiling (180 legacy) exactly; the percentile path stays tier-blind
+    (its rent_burden_score / value_score must not move with price_tier).
+    """
+    import app.services.expansion_advisor as adv
+    from app.services.expansion_advisor import (
+        _economics_score,
+        _rent_ceiling_tier_multiplier,
+    )
+
+    # Multiplier vocab + unknown/None/whitespace fallthrough to 1.0 (no change).
+    assert _rent_ceiling_tier_multiplier("premium") == 1.30
+    assert _rent_ceiling_tier_multiplier("value") == 0.85
+    assert _rent_ceiling_tier_multiplier("mid") == 1.0
+    assert _rent_ceiling_tier_multiplier(None) == 1.0
+    assert _rent_ceiling_tier_multiplier("  PREMIUM ") == 1.30  # case/space-insensitive
+    assert _rent_ceiling_tier_multiplier("luxury") == 1.0       # unknown -> 1.0
+
+    common = dict(
+        estimated_revenue_index=60.0,
+        estimated_annual_rent_sar=120_000.0,  # -> 100 SAR/m²/mo at 100 m²
+        estimated_fitout_cost_sar=300_000.0,
+        area_m2=100.0,
+        cannibalization_score=10.0,
+        fit_score=70.0,
+        db=None,            # forces the absolute_legacy path
+        is_listing=False,
+    )
+
+    none_meta = _economics_score(**common, price_tier=None)[1]
+    mid_meta = _economics_score(**common, price_tier="mid")[1]
+    value_meta = _economics_score(**common, price_tier="value")[1]
+    premium_meta = _economics_score(**common, price_tier="premium")[1]
+
+    assert none_meta["rent_burden"]["mode"] == "absolute_legacy"
+
+    # price_tier=None / "mid" reproduce the pre-patch ceiling (180) exactly.
+    assert none_meta["rent_burden"]["ceiling"] == 180.0
+    assert none_meta["rent_burden"]["ceiling_tier_multiplier"] == 1.0
+    assert none_meta["rent_burden_score"] == mid_meta["rent_burden_score"]
+
+    # premium ceiling lifts (180*1.30=234), value ceiling drops (180*0.85=153).
+    assert premium_meta["rent_burden"]["ceiling"] == 234.0
+    assert value_meta["rent_burden"]["ceiling"] == 153.0
+
+    # Same rent/m²: premium is less burdened than none, value more burdened.
+    assert (
+        premium_meta["rent_burden_score"]
+        > none_meta["rent_burden_score"]
+        > value_meta["rent_burden_score"]
+    )
+
+    # Percentile path stays tier-blind: stub _percentile_rent_burden to return a
+    # fixed peer-relative result and confirm price_tier does not leak in.
+    fixed_comp = {
+        "burden_score": 72.0,
+        "source_label": "district_band_type",
+        "n_comparable": 12,
+    }
+    orig = adv._percentile_rent_burden
+    adv._percentile_rent_burden = lambda *a, **k: dict(fixed_comp)
+    try:
+        pctl_common = dict(common)
+        pctl_common.update(db=object(), is_listing=True)
+        p_premium = _economics_score(**pctl_common, price_tier="premium")[1]
+        p_value = _economics_score(**pctl_common, price_tier="value")[1]
+        p_none = _economics_score(**pctl_common, price_tier=None)[1]
+    finally:
+        adv._percentile_rent_burden = orig
+
+    assert p_premium["rent_burden"]["mode"] == "percentile"
+    # rent_burden_score / value_score / value_band invariant to price_tier.
+    assert (
+        p_premium["rent_burden_score"]
+        == p_value["rent_burden_score"]
+        == p_none["rent_burden_score"]
+    )
+    assert p_premium["value_score"] == p_value["value_score"] == p_none["value_score"]
+    assert p_premium["value_band"] == p_value["value_band"] == p_none["value_band"]
+    # No tier metadata leaks onto the percentile branch.
+    assert "ceiling_tier_multiplier" not in p_premium["rent_burden"]
+    assert "price_tier" not in p_premium["rent_burden"]
+
+
 # ---------------------------------------------------------------------------
 # Patch 06: rebalanced _score_breakdown weights
 # ---------------------------------------------------------------------------
