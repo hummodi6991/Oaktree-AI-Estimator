@@ -618,6 +618,91 @@ def test_score_breakdown_matches_final_score():
     assert 0.0 <= breakdown["final_score"] <= 100.0
 
 
+def _baseline_breakdown_kwargs():
+    return dict(
+        demand_score=80,
+        whitespace_score=70,
+        brand_fit_score=75,
+        economics_score=60,
+        provider_intelligence_composite=65,
+        access_visibility_score=55,
+        confidence_score=50,
+        listing_quality_score=60,
+    )
+
+
+def test_brand_weight_reweight_neutral_profile_is_noop():
+    """Neutral / empty / all-medium profiles must leave weights byte-identical."""
+    baseline = expansion_service._score_breakdown(**_baseline_breakdown_kwargs())
+    static_weights = baseline["weights"]
+
+    # No profile at all.
+    assert (
+        expansion_service._score_breakdown(
+            **_baseline_breakdown_kwargs(), brand_profile=None, service_model="qsr"
+        )["weights"]
+        == static_weights
+    )
+
+    # Explicitly neutral knobs.
+    neutral = {
+        "parking_sensitivity": "medium",
+        "frontage_sensitivity": "medium",
+        "visibility_sensitivity": "medium",
+        "primary_channel": "balanced",
+        "expansion_goal": "balanced",
+    }
+    neutral_weights = expansion_service._score_breakdown(
+        **_baseline_breakdown_kwargs(), brand_profile=neutral, service_model="qsr"
+    )["weights"]
+    assert neutral_weights == static_weights
+    assert abs(sum(neutral_weights.values()) - 100) < 1e-3
+
+
+def test_brand_weight_reweight_gain_zero_disables(monkeypatch):
+    baseline = expansion_service._score_breakdown(**_baseline_breakdown_kwargs())
+    monkeypatch.setattr(
+        expansion_service.settings, "EXPANSION_BRAND_WEIGHT_GAIN", 0.0, raising=False
+    )
+    aggressive = {
+        "parking_sensitivity": "high",
+        "primary_channel": "delivery",
+        "expansion_goal": "delivery_led",
+    }
+    weights = expansion_service._score_breakdown(
+        **_baseline_breakdown_kwargs(), brand_profile=aggressive, service_model="qsr"
+    )["weights"]
+    assert weights == baseline["weights"]
+
+
+def test_brand_weight_reweight_high_parking_lifts_access_visibility(monkeypatch):
+    monkeypatch.setattr(
+        expansion_service.settings, "EXPANSION_BRAND_WEIGHT_GAIN", 0.35, raising=False
+    )
+    baseline = expansion_service._score_breakdown(**_baseline_breakdown_kwargs())
+    weights = expansion_service._score_breakdown(
+        **_baseline_breakdown_kwargs(),
+        brand_profile={"parking_sensitivity": "high"},
+        service_model="qsr",
+    )["weights"]
+    assert weights["access_visibility"] > baseline["weights"]["access_visibility"]
+    assert abs(sum(weights.values()) - 100) < 1e-3
+
+
+def test_brand_weight_reweight_delivery_channel_lifts_delivery_demand(monkeypatch):
+    monkeypatch.setattr(
+        expansion_service.settings, "EXPANSION_BRAND_WEIGHT_GAIN", 0.35, raising=False
+    )
+    baseline = expansion_service._score_breakdown(**_baseline_breakdown_kwargs())
+    weights = expansion_service._score_breakdown(
+        **_baseline_breakdown_kwargs(),
+        brand_profile={"primary_channel": "delivery"},
+        service_model="qsr",
+    )["weights"]
+    assert weights["delivery_demand"] > baseline["weights"]["delivery_demand"]
+    assert abs(sum(weights.values()) - 100) < 1e-3
+
+
 def test_compare_includes_v61_fields():
     db = FakeDB(
         compare_rows=[

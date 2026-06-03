@@ -2943,6 +2943,83 @@ def _landlord_signal_component(landlord_signal_score: int | float | None) -> flo
     return _clamp(float(landlord_signal_score))
 
 
+# Components whose weights brand-brief knobs may re-weight (Finding 1).
+_REWEIGHTABLE_COMPONENTS: tuple[str, ...] = (
+    "occupancy_economics",
+    "listing_quality",
+    "brand_fit",
+    "landlord_signal",
+    "competition_whitespace",
+    "chain_strength",
+    "demand_potential",
+    "access_visibility",
+    "delivery_demand",
+    "confidence",
+)
+
+
+def _brand_weight_multipliers(
+    brand_profile: dict[str, Any] | None,
+    service_model: str | None,
+) -> dict[str, float]:
+    """Per-component weight multipliers derived from brand-brief knobs.
+
+    Returns a multiplier (default 1.0) for each top-level scoring component.
+    A neutral/empty profile (all "medium"/"balanced") returns all 1.0, so the
+    reweighting is a no-op and scores stay byte-identical to the static-weight
+    behavior. Gain is env-tunable; 0.0 disables.
+
+    Mapping (product choice — see PR header):
+      * physical-site knobs (parking/frontage/visibility sensitivity) -> access_visibility,
+        using the strongest of the three (max), so caring about ANY of them lifts the
+        measured-access weight.
+      * primary_channel: "delivery" lifts delivery_demand (+g) and competition_whitespace
+        (+0.5g); "dine_in" lifts access_visibility (+0.6g) and trims delivery_demand (-0.5g).
+      * expansion_goal: "flagship" lifts access_visibility (+0.5g) and brand_fit (+0.5g);
+        "delivery_led" lifts delivery_demand (+g) and competition_whitespace (+0.5g);
+        "neighborhood" lifts demand_potential (+0.5g).
+      * cannibalization_tolerance_m has no clean top-level target; it keeps flowing
+        through brand_fit/occupancy_economics unchanged.
+    """
+    mult = {name: 1.0 for name in _REWEIGHTABLE_COMPONENTS}
+    g = float(getattr(settings, "EXPANSION_BRAND_WEIGHT_GAIN", 0.0) or 0.0)
+    if not brand_profile or g <= 0.0:
+        return mult
+
+    # _sensitivity_weight maps low->0.3, medium->0.6, high->1.0 (0.6 neutral).
+    # Normalize to a [-0.75, +1.0] signal around the medium baseline.
+    def _sig(level: str | None) -> float:
+        return (_sensitivity_weight(level) - 0.6) / 0.4
+
+    site_sig = max(
+        _sig(brand_profile.get("parking_sensitivity")),
+        _sig(brand_profile.get("frontage_sensitivity")),
+        _sig(brand_profile.get("visibility_sensitivity")),
+    )
+    mult["access_visibility"] *= 1.0 + g * site_sig
+
+    channel = str(brand_profile.get("primary_channel") or "balanced").lower()
+    if channel == "delivery":
+        mult["delivery_demand"] *= 1.0 + g
+        mult["competition_whitespace"] *= 1.0 + g * 0.5
+    elif channel == "dine_in":
+        mult["access_visibility"] *= 1.0 + g * 0.6
+        mult["delivery_demand"] *= max(0.0, 1.0 - g * 0.5)
+
+    goal = str(brand_profile.get("expansion_goal") or "balanced").lower()
+    if goal == "flagship":
+        mult["access_visibility"] *= 1.0 + g * 0.5
+        mult["brand_fit"] *= 1.0 + g * 0.5
+    elif goal == "delivery_led":
+        mult["delivery_demand"] *= 1.0 + g
+        mult["competition_whitespace"] *= 1.0 + g * 0.5
+    elif goal == "neighborhood":
+        mult["demand_potential"] *= 1.0 + g * 0.5
+
+    # Guard against any negative weight from stacked trims.
+    return {k: max(0.0, v) for k, v in mult.items()}
+
+
 def _score_breakdown(
     *,
     demand_score: float,
@@ -2956,6 +3033,8 @@ def _score_breakdown(
     landlord_signal_score: int | float | None = None,
     chain_strength_score: float = 50.0,
     chain_strength_max: float | None = None,
+    brand_profile: dict[str, Any] | None = None,
+    service_model: str | None = None,
 ) -> dict[str, Any]:
     """Listings-first weight distribution.
 
@@ -3021,6 +3100,25 @@ def _score_breakdown(
         "delivery_demand": 4.3820,
         "confidence": 4.3820,
     }
+    # Finding 1: brand-brief knobs re-weight components, then renormalize to 100.
+    _w_mult = _brand_weight_multipliers(brand_profile, service_model)
+    if any(abs(m - 1.0) > 1e-9 for m in _w_mult.values()):
+        _reweighted = {
+            name: component_weights[name] * _w_mult.get(name, 1.0)
+            for name in component_weights
+        }
+        _total = sum(_reweighted.values())
+        if _total > 0:
+            component_weights = {
+                name: round(w * 100.0 / _total, 4) for name, w in _reweighted.items()
+            }
+            # Absorb the rounding residual into the largest weight so the sum
+            # is exactly 100 and the assertion below holds.
+            _residual = round(100.0 - sum(component_weights.values()), 4)
+            _largest = max(component_weights, key=component_weights.get)
+            component_weights[_largest] = round(
+                component_weights[_largest] + _residual, 4
+            )
     # Invariant: weights must sum to 100 so final_score stays on a 0-100 scale.
     # Tolerance accommodates IEEE-754 rounding of 4-decimal float weights.
     # Catches misconfigured EXPANSION_CHAIN_STRENGTH_WEIGHT at startup
@@ -3044,20 +3142,8 @@ def _score_breakdown(
         "confidence": round(_safe_float(confidence_score), 2),
     }
     weighted_components = {
-        "occupancy_economics": round(_safe_float(economics_score) * 0.262924, 2),
-        "listing_quality": round(_safe_float(listing_quality_score) * 0.22, 2),
-        "brand_fit": round(_safe_float(brand_fit_score) * 0.096404, 2),
-        "landlord_signal": round(landlord_input * 0.070112, 2),
-        "competition_whitespace": round(
-            _safe_float(whitespace_score) * (_competition_whitespace_weight / 100.0), 2
-        ),
-        "chain_strength": round(
-            chain_strength_input * (_chain_strength_weight / 100.0), 2
-        ),
-        "demand_potential": round(_safe_float(demand_score) * 0.087640, 2),
-        "access_visibility": round(_safe_float(access_visibility_score) * 0.087640, 2),
-        "delivery_demand": round(_safe_float(provider_intelligence_composite) * 0.043820, 2),
-        "confidence": round(_safe_float(confidence_score) * 0.043820, 2),
+        name: round(_safe_float(raw_inputs[name]) * component_weights[name] / 100.0, 2)
+        for name in component_weights
     }
     final_score = round(sum(weighted_components.values()), 2)
     display = {
@@ -7993,6 +8079,8 @@ def run_expansion_search(
             landlord_signal_score=row.get("unit_llm_landlord_signal_score"),
             chain_strength_score=chain_strength_score,
             chain_strength_max=max_chain_strength,
+            brand_profile=effective_brand_profile,
+            service_model=service_model,
         )
         prepared.append(
             {
@@ -9044,6 +9132,8 @@ def run_expansion_search(
             landlord_signal_score=row.get("unit_llm_landlord_signal_score"),
             chain_strength_score=chain_strength_score,
             chain_strength_max=max_chain_strength,
+            brand_profile=effective_brand_profile,
+            service_model=service_model,
         )
         score_breakdown_json["inputs"]["rent_fallback_used"] = rent_fallback_used
         # F4: surface the whitespace confidence flag so the API response

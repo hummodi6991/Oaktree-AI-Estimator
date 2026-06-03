@@ -336,6 +336,17 @@ class Settings:
         os.getenv("EXPANSION_CHAIN_STRENGTH_WEIGHT", "3.0")
     )
 
+    # --- Expansion Advisor brand-weight reweighting (Finding 1) ---
+    # Brand-brief soft knobs (parking/frontage/visibility sensitivity, primary_channel,
+    # expansion_goal) re-weight the top-level component_weights in _score_breakdown
+    # instead of only nudging terms inside brand_fit (9.64% of final_score). The gain
+    # scales how strongly a "high"/"low" knob moves its target component weight before
+    # renormalization to 100. 0.0 disables the reweighting entirely (every multiplier
+    # becomes 1.0 → byte-identical to the pre-Finding-1 static weights).
+    EXPANSION_BRAND_WEIGHT_GAIN: float = float(
+        os.getenv("EXPANSION_BRAND_WEIGHT_GAIN", "0.35")
+    )
+
     # --- Expansion Advisor decision-memo pre-warm (Phase 3) ---
     # After POST /searches returns, schedule a background task that
     # generates structured decision memos for the top-N candidates so the
