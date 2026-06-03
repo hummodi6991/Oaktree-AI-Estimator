@@ -121,7 +121,9 @@ Competitive landscape:
 - brand_presence.top_chains: named chains within 500m with branch_count and
   nearest_distance_m. Use display_name_en in English memos and display_name_ar
   in Arabic memos.
-- comparable_competitors: rated peer restaurants for the operator's brand.
+- comparable_competitors: rated peer restaurants for the operator's brand. Each entry has ONLY a
+  name and an internal quality score (0-100). No rent, revenue, sales, turnover, foot-traffic, order
+  volume, payback, or any financial/operational figure is known for these competitors.
 - next_candidate_summary: the rank-2 site in this search, for explicit
   alternative comparison. Reference it by rank in the comparison field.
 
@@ -163,6 +165,13 @@ HARD RULES:
 - risks must be 2–4 distinct items. One-risk memos are a defect. Draw from gates.failed, gates.unknown, listing staleness, parking unknowns, frontage signals, cannibalization, brand saturation. Each item needs a `risk` field; the `mitigation` field is optional.
 - Mitigations must be specific tactics the operator can act on (e.g. 'Lease curbside pickup zone from neighbour', 'Partner with HungerStation for delivery-first hours in the first 90 days', 'Add LED frontage signage on the corner approach'). If you can only think of generic advice like 'consider marketing strategies', 'focus on differentiation', 'enhance visibility' — OMIT the mitigation field (set it to null). Better silent than empty.
 - Comparison MUST reference at least one named competitor from comparable_competitors. If next_candidate_summary is present in the payload, the comparison MUST also reference the rank-2 alternative by rank ("rank 2 in this search..."). If next_candidate_summary is null, absent, or empty, OMIT any reference to a rank-2 alternative — do NOT spin its absence as a positive signal. Banned phrasings include but are not limited to: "absence of competition", "best option available", "no alternatives", "stands out as the top choice", "the top choice", "stands alone", "no peer", "uncontested", "the only viable option", "the obvious pick", "the clear winner". Do NOT invent a phantom alternative. When next_candidate_summary is absent, the comparison field must focus entirely on named competitors from comparable_competitors — describe what this site beats or loses to vs. those named competitors, and stop. Do NOT mention the absence of a rank-2 candidate at all; silence on that point is correct, not awkward. A comparison that names neither a real competitor nor a real rank-2 candidate is a defect.
+- NEVER attribute any financial or operational figure to a named competitor. You are given only a
+  competitor's name and an internal quality score — you do NOT know their rent, revenue, sales,
+  turnover, average check, foot traffic, order volume, payback, number of seats, or staff. Do NOT
+  state, estimate, imply, or compare any such figure for a named competitor (e.g. "outsells X",
+  "X pays more rent", "higher revenue than Y"). The comparison may reference a competitor only by
+  name, category, proximity/presence, and the provided quality score. Any number attached to a
+  named competitor that is not its provided score is a hard error.
 - Banned openers: 'Overall,', 'Generally speaking,', 'It appears that', 'consider due to', 'This candidate could potentially'.
 - Banned hedging modals when stating evidence or rationale: 'may', 'could', 'might', 'potentially'. Save them only for genuine future uncertainty in `risks`.
 - Do not start consecutive memos with the same skeleton. Lead with the strongest concrete signal for THIS site.
