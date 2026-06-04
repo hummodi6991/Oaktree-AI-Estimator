@@ -336,6 +336,23 @@ class Settings:
         os.getenv("EXPANSION_CHAIN_STRENGTH_WEIGHT", "3.0")
     )
 
+    # Strong-chain SHARE calibration for the chain_strength leg input.
+    # Replaces the MAX-over-radius leg input (which saturated at 100 for any
+    # radius containing a single big chain) with the SHARE of same-category,
+    # ECQ-matched POIs in the radius whose chain_strength_score is "strong".
+    # EXPANSION_CHAIN_STRONG_THRESHOLD: an ECQ chain_strength_score at/above
+    #   this counts as a strong/established chain (default 60.0 ≈ a 5+ branch
+    #   chain on the ingest ladder LEAST(100, chain_size*12)).
+    # EXPANSION_CHAIN_MIN_MATCHED: minimum number of in-category ECQ-matched
+    #   POIs required before a share is trustworthy; below it the leg input is
+    #   NULL → Python None → _chain_strength_score keeps the neutral 50.0.
+    EXPANSION_CHAIN_STRONG_THRESHOLD: float = float(
+        os.getenv("EXPANSION_CHAIN_STRONG_THRESHOLD", "60.0")
+    )
+    EXPANSION_CHAIN_MIN_MATCHED: int = int(
+        os.getenv("EXPANSION_CHAIN_MIN_MATCHED", "3")
+    )
+
     # --- Expansion Advisor brand-weight reweighting (Finding 1) ---
     # Brand-brief soft knobs (parking/frontage/visibility sensitivity, primary_channel,
     # expansion_goal) re-weight the top-level component_weights in _score_breakdown

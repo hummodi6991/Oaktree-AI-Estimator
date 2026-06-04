@@ -6432,7 +6432,8 @@ def _bulk_enrich_competitors(
     """Bulk-compute competitor_count for a set of candidate locations.
 
     Returns ``{parcel_id: {"competitor_count": int, "confident": bool,
-    "max_chain_strength": float | None}}`` for all rows that have lat/lon.
+    "max_chain_strength": float | None, "chain_strength_share": float | None,
+    "top_chain_strength_name": str | None}}`` for all rows that have lat/lon.
     Uses a single SQL query with unnest + LATERAL to avoid N+1.
 
     Searches both restaurant_poi (Google Places data) and
@@ -6453,8 +6454,18 @@ def _bulk_enrich_competitors(
     category restaurant_poi rows in the radius. None when there are no
     same-category POI matches (or the join produces no chain_strength
     rows). Delivery_source_record rows do not contribute (no POI mapping
-    to chain quality), so the leg measures established-brand validation
-    via the Google Places side only.
+    to chain quality), so the signal is from the Google Places side only.
+    ``max_chain_strength`` is RETAINED only for the ``chain_strength_max``
+    JSON diagnostic — it is no longer the leg input because a MAX saturates
+    at 100 for any radius containing a single big chain.
+
+    ``chain_strength_share`` is the chain_strength leg input: among same-
+    category, ECQ-matched POIs in the radius (``chain_strength IS NOT NULL``
+    excludes the NULL delivery side), the percentage whose
+    ``chain_strength_score >= EXPANSION_CHAIN_STRONG_THRESHOLD``. NULL when
+    fewer than ``EXPANSION_CHAIN_MIN_MATCHED`` matched POIs are in radius, so
+    thin-evidence radii flow to Python None and ``_chain_strength_score``
+    keeps returning the neutral 50.0 (never COALESCE'd to 0).
 
     The competition radius follows the same priority as
     ``_bulk_enrich_population``'s demand radius: explicit arg >
@@ -6515,6 +6526,7 @@ def _bulk_enrich_competitors(
                         COALESCE(comp.competitor_count, 0) AS competitor_count,
                         COALESCE(comp.broader_count, 0) AS broader_count,
                         comp.max_chain_strength AS max_chain_strength,
+                        comp.chain_strength_share AS chain_strength_share,
                         comp.top_chain_strength_name AS top_chain_strength_name
                     FROM inputs i
                     LEFT JOIN LATERAL (
@@ -6522,6 +6534,26 @@ def _bulk_enrich_competitors(
                             COUNT(*) FILTER (WHERE in_category) AS competitor_count,
                             COUNT(*) AS broader_count,
                             MAX(chain_strength) FILTER (WHERE in_category) AS max_chain_strength,
+                            -- Strong-chain SHARE: among same-category POIs that
+                            -- carry an ECQ chain_strength_score (chain_strength
+                            -- IS NOT NULL excludes the NULL delivery side), the
+                            -- percentage that are "strong" (>= threshold). This
+                            -- is the chain_strength leg input; it replaces the
+                            -- MAX above, which saturated at 100 for any radius
+                            -- containing a single big chain. NULL when fewer
+                            -- than :chain_min_matched matched POIs exist, so
+                            -- thin-evidence radii flow to Python None and
+                            -- _chain_strength_score keeps its neutral 50.0 (no
+                            -- COALESCE). MAX is retained above purely for the
+                            -- chain_strength_max JSON diagnostic.
+                            CASE
+                              WHEN COUNT(*) FILTER (WHERE in_category AND chain_strength IS NOT NULL)
+                                   >= :chain_min_matched
+                              THEN 100.0
+                                   * COUNT(*) FILTER (WHERE in_category AND chain_strength >= :chain_strong_threshold)
+                                   / COUNT(*) FILTER (WHERE in_category AND chain_strength IS NOT NULL)
+                              ELSE NULL
+                            END AS chain_strength_share,
                             -- Brand provenance for the chain_strength leg:
                             -- the name attached to the same-category row that
                             -- carried the MAX chain_strength_score above.
@@ -6575,7 +6607,9 @@ def _bulk_enrich_competitors(
                 """),
                 {"pids": pids, "lons": lons, "lats": lats,
                  "category_keys": category_keys, "category_regex": category_regex,
-                 "radius_m": competition_radius_m},
+                 "radius_m": competition_radius_m,
+                 "chain_strong_threshold": float(settings.EXPANSION_CHAIN_STRONG_THRESHOLD),
+                 "chain_min_matched": int(settings.EXPANSION_CHAIN_MIN_MATCHED)},
             ).mappings().all()
 
         return {
@@ -6585,6 +6619,11 @@ def _bulk_enrich_competitors(
                 "max_chain_strength": (
                     float(r["max_chain_strength"])
                     if r["max_chain_strength"] is not None
+                    else None
+                ),
+                "chain_strength_share": (
+                    float(r["chain_strength_share"])
+                    if r["chain_strength_share"] is not None
                     else None
                 ),
                 "top_chain_strength_name": (
@@ -7229,6 +7268,7 @@ def run_expansion_search(
                     _r["competitor_count"] = _entry["competitor_count"]
                     _r["competitor_count_confident"] = _entry["confident"]
                     _r["max_chain_strength"] = _entry.get("max_chain_strength")
+                    _r["chain_strength_share"] = _entry.get("chain_strength_share")
                     _r["top_chain_strength_name"] = _entry.get("top_chain_strength_name")
             logger.info(
                 "expansion_search: bulk competitor enrichment applied to %d/%d candidates, search_id=%s",
@@ -7273,6 +7313,7 @@ def run_expansion_search(
                         _r["competitor_count"] = _entry["competitor_count"]
                         _r["competitor_count_confident"] = _entry["confident"]
                         _r["max_chain_strength"] = _entry.get("max_chain_strength")
+                        _r["chain_strength_share"] = _entry.get("chain_strength_share")
                         _r["top_chain_strength_name"] = _entry.get("top_chain_strength_name")
 
             # ── Resolve commercial unit districts to Arabic names ──────────
@@ -7771,14 +7812,25 @@ def run_expansion_search(
             bool(_cc_confident_raw) if _cc_confident_raw is not None else None
         )
         # Patch B: max chain_strength_score across same-category POIs in
-        # the candidate's competition radius. None when the bulk enrichment
-        # path was bypassed OR when no same-category POI rows joined to
-        # expansion_competitor_quality. _chain_strength_score() converts
-        # None to a neutral 50 so thin-data candidates aren't penalized.
+        # the candidate's competition radius. Retained ONLY for the
+        # chain_strength_max JSON diagnostic; it is NOT the leg input. None
+        # when the bulk enrichment path was bypassed OR when no same-category
+        # POI rows joined to expansion_competitor_quality.
         _max_chain_strength_raw = row.get("max_chain_strength")
         max_chain_strength: float | None = (
             float(_max_chain_strength_raw)
             if _max_chain_strength_raw is not None
+            else None
+        )
+        # Strong-chain SHARE: the chain_strength leg input. None when the
+        # bulk enrichment path was bypassed OR fewer than
+        # EXPANSION_CHAIN_MIN_MATCHED in-category ECQ-matched POIs were in
+        # radius. _chain_strength_score() converts None to a neutral 50 so
+        # thin-data candidates aren't penalized.
+        _chain_strength_share_raw = row.get("chain_strength_share")
+        chain_strength_share: float | None = (
+            float(_chain_strength_share_raw)
+            if _chain_strength_share_raw is not None
             else None
         )
         delivery_listing_count = _safe_int(row.get("delivery_listing_count"))
@@ -7837,7 +7889,7 @@ def run_expansion_search(
         whitespace_score = _competition_whitespace_score(
             competitor_count, confident=competitor_count_confident
         )
-        chain_strength_score = _chain_strength_score(max_chain_strength)
+        chain_strength_score = _chain_strength_score(chain_strength_share)
 
         area_fit = _area_fit(area_m2, target_area_m2, min_area_m2, max_area_m2)
         zoning_fit_score = _zoning_fit_score(landuse_label, landuse_code)
@@ -8119,6 +8171,7 @@ def run_expansion_search(
                 "competitor_count": competitor_count,
                 "competitor_count_confident": competitor_count_confident,
                 "max_chain_strength": max_chain_strength,
+                "chain_strength_share": chain_strength_share,
                 "chain_strength_score": chain_strength_score,
                 "delivery_listing_count": delivery_listing_count,
                 "provider_listing_count": provider_listing_count,
@@ -8761,9 +8814,11 @@ def run_expansion_search(
         competitor_count = prepared_item["competitor_count"]
         competitor_count_confident = prepared_item.get("competitor_count_confident")
         max_chain_strength = prepared_item.get("max_chain_strength")
+        chain_strength_share = prepared_item.get("chain_strength_share")
         chain_strength_score = prepared_item.get("chain_strength_score")
         if chain_strength_score is None:
-            chain_strength_score = _chain_strength_score(max_chain_strength)
+            # Leg input is the strong-chain SHARE (None → neutral 50.0).
+            chain_strength_score = _chain_strength_score(chain_strength_share)
         delivery_listing_count = prepared_item["delivery_listing_count"]
         provider_listing_count = prepared_item["provider_listing_count"]
         provider_platform_count = prepared_item["provider_platform_count"]
