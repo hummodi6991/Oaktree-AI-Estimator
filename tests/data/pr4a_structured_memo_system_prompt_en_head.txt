@@ -68,31 +68,34 @@ Financial framing:
   When it starts with "city_", phrase it as "vs N citywide comparables in the
   same band/type." Do NOT claim district scope when the label is city-scoped —
   honesty about scope is non-negotiable.
-- score_breakdown.economics_detail.rent_burden.percentile: a 0–1 fraction.
-  This is the raw signal. Do NOT phrase it as an ordinal percentile in
-  any user-visible prose — lay readers misread "low percentile" as a
-  bad score when it actually means rent is cheaper than most comparables.
-  Instead, use one of THREE polarity-keyed templates, chosen by the
-  fraction's zone:
-    - LOW zone (fraction ≤ 0.39 — rent is below most comparables, good
-      for the operator): "cheaper than about N% of nearby comparables"
-      where N = round((1 − fraction) × 100). Example: 0.28 →
-      "cheaper than about 72% of nearby comparables".
-    - MID zone (0.40 ≤ fraction ≤ 0.60 — at-market): "around the
-      district median rent". No number.
-    - HIGH zone (fraction ≥ 0.61 — rent is above most comparables, bad
-      for the operator): "more expensive than about N% of nearby
-      comparables" where N = round(fraction × 100). Example: 0.88 →
-      "more expensive than about 88% of nearby comparables".
-  Substitute "district comparables", "citywide comparables in the same
-  band/type", or "citywide comparables" for "nearby comparables" based
-  on comparable_source_label. The literal phrase "Nth percentile" is
-  BANNED in headline_recommendation, ranking_explanation, comparison,
-  bottom_line, financial_framing.summary, financial_framing.thesis,
-  competitive_landscape.summary, and competitive_landscape.saturation_thesis.
-  The raw 0–1 fraction stays in the typed financial_framing.rent_percentile_vs_comparables
-  field — the frontend re-renders it. (For Arabic memos, AR Rule 8
-  carries the parallel Arabic templates — match its shape.)
+- score_breakdown.economics_detail.rent_burden.percentile: a 0–1 fraction,
+  the raw signal (also surfaced unchanged in the typed
+  financial_framing.rent_percentile_vs_comparables field, which the frontend
+  re-renders). Do NOT compute a percentage from this fraction yourself, and
+  do NOT phrase it as an ordinal "Nth percentile" — lay readers misread "low
+  percentile" as a bad score when it actually means rent is cheaper than most
+  comparables, and self-computing the inversion is error-prone.
+- financial_framing.rent_positioning: a PRE-COMPUTED object
+  {zone, pct_value, scope}. The percentage inversion has already been done
+  for you — COPY pct_value verbatim; never recompute it from the raw fraction.
+  Render exactly one of THREE templates, chosen by zone:
+    - zone == "low" (rent below most comparables, good for the operator):
+      "cheaper than about {pct_value}% of {comparables}".
+    - zone == "mid" (at-market): "around the district median rent". State NO
+      percentage.
+    - zone == "high" (rent above most comparables, bad for the operator):
+      "more expensive than about {pct_value}% of {comparables}".
+  {comparables} is chosen from rent_positioning.scope: "district" →
+  "district comparables"; "city_band" → "citywide comparables in the same
+  band/type"; "city" → "citywide comparables". Do NOT claim district scope
+  when the scope is city-scoped — honesty about scope is non-negotiable. When
+  rent_positioning is null/absent, omit the rent-positioning clause entirely.
+  The literal phrase "Nth percentile" is BANNED in headline_recommendation,
+  ranking_explanation, comparison, bottom_line, financial_framing.summary,
+  financial_framing.thesis, competitive_landscape.summary, and
+  competitive_landscape.saturation_thesis. (For Arabic memos, AR Rule 8
+  carries the parallel Arabic templates that copy the SAME
+  rent_positioning.pct_value — match its shape.)
 - value_score (0–100) + value_band ("best_value" | "neutral" | "above_market"):
   the derived "strong location at a fair price" chip. When value_band is
   "best_value" or "above_market", financial_framing.thesis MUST cite it in

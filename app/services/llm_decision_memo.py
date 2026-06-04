@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from datetime import date
@@ -49,7 +50,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v10-competitor-econ-guardrail-2026-06"
+MEMO_PROMPT_VERSION = "v11-rent-positioning-deterministic-2026-06"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -1056,6 +1057,37 @@ def _scope_from_source_label(label: Any) -> str | None:
     return None
 
 
+def _rent_positioning(percentile: Any, scope: str | None) -> dict | None:
+    """Deterministic rent-positioning hint for the memo LLM.
+
+    Mirrors the frontend ``pctFromFraction``
+    (frontend/src/features/expansion-advisor/AdvisorySectionCards.tsx:28-39)
+    EXACTLY — same clamp to [0, 1], same JS ``Math.round`` (round-half-up)
+    rule, and the same three zones (LOW ``pct < 40``, MID ``40 <= pct <= 60``
+    inclusive, HIGH ``pct > 60``). The point is to move the ``1 − percentile``
+    inversion OUT of the LLM: the model copies ``pct_value`` verbatim instead
+    of recomputing it (and historically mis-inverting it, e.g. percentile
+    0.375 → "38%" instead of the correct "cheaper than ~62%").
+
+    Returns ``{zone, pct_value, scope}`` where ``pct_value`` is the
+    pre-inverted display integer (``None`` in the MID zone, which carries no
+    number), or ``None`` when percentile is absent so callers omit the clause.
+    """
+    frac = _safe_float(percentile)
+    if frac is None:
+        return None
+    clamped = max(0.0, min(1.0, frac))
+    # JS Math.round is round-half-up; Python's round() is banker's rounding,
+    # which diverges at .5 boundaries (e.g. 12.5 → JS 13, Python 12). Use
+    # floor(x + 0.5) to stay byte-for-byte aligned with the frontend.
+    pct = int(math.floor(clamped * 100.0 + 0.5))
+    if 40 <= pct <= 60:
+        return {"zone": "mid", "pct_value": None, "scope": scope}
+    if pct < 40:
+        return {"zone": "low", "pct_value": 100 - pct, "scope": scope}
+    return {"zone": "high", "pct_value": pct, "scope": scope}
+
+
 def _normalize_parking_evidence(raw: Any) -> str | None:
     """Normalize a parking-evidence band into the typed enum values.
 
@@ -1214,6 +1246,7 @@ def build_memo_advisory_sections(ctx: MemoContext) -> dict[str, Any]:
         "annual_rent_sar": annual_rent,
         "comparable_median_annual_rent_sar": comparable_median,
         "rent_percentile_vs_comparables": rent_percentile,
+        "rent_positioning": _rent_positioning(rent_percentile, comparable_scope),
         "comparable_n": comparable_n,
         "comparable_scope": comparable_scope,
         "spread_to_median_sar": spread_to_median,
@@ -1361,31 +1394,34 @@ Financial framing:
   When it starts with "city_", phrase it as "vs N citywide comparables in the
   same band/type." Do NOT claim district scope when the label is city-scoped —
   honesty about scope is non-negotiable.
-- score_breakdown.economics_detail.rent_burden.percentile: a 0–1 fraction.
-  This is the raw signal. Do NOT phrase it as an ordinal percentile in
-  any user-visible prose — lay readers misread "low percentile" as a
-  bad score when it actually means rent is cheaper than most comparables.
-  Instead, use one of THREE polarity-keyed templates, chosen by the
-  fraction's zone:
-    - LOW zone (fraction ≤ 0.39 — rent is below most comparables, good
-      for the operator): "cheaper than about N% of nearby comparables"
-      where N = round((1 − fraction) × 100). Example: 0.28 →
-      "cheaper than about 72% of nearby comparables".
-    - MID zone (0.40 ≤ fraction ≤ 0.60 — at-market): "around the
-      district median rent". No number.
-    - HIGH zone (fraction ≥ 0.61 — rent is above most comparables, bad
-      for the operator): "more expensive than about N% of nearby
-      comparables" where N = round(fraction × 100). Example: 0.88 →
-      "more expensive than about 88% of nearby comparables".
-  Substitute "district comparables", "citywide comparables in the same
-  band/type", or "citywide comparables" for "nearby comparables" based
-  on comparable_source_label. The literal phrase "Nth percentile" is
-  BANNED in headline_recommendation, ranking_explanation, comparison,
-  bottom_line, financial_framing.summary, financial_framing.thesis,
-  competitive_landscape.summary, and competitive_landscape.saturation_thesis.
-  The raw 0–1 fraction stays in the typed financial_framing.rent_percentile_vs_comparables
-  field — the frontend re-renders it. (For Arabic memos, AR Rule 8
-  carries the parallel Arabic templates — match its shape.)
+- score_breakdown.economics_detail.rent_burden.percentile: a 0–1 fraction,
+  the raw signal (also surfaced unchanged in the typed
+  financial_framing.rent_percentile_vs_comparables field, which the frontend
+  re-renders). Do NOT compute a percentage from this fraction yourself, and
+  do NOT phrase it as an ordinal "Nth percentile" — lay readers misread "low
+  percentile" as a bad score when it actually means rent is cheaper than most
+  comparables, and self-computing the inversion is error-prone.
+- financial_framing.rent_positioning: a PRE-COMPUTED object
+  {zone, pct_value, scope}. The percentage inversion has already been done
+  for you — COPY pct_value verbatim; never recompute it from the raw fraction.
+  Render exactly one of THREE templates, chosen by zone:
+    - zone == "low" (rent below most comparables, good for the operator):
+      "cheaper than about {pct_value}% of {comparables}".
+    - zone == "mid" (at-market): "around the district median rent". State NO
+      percentage.
+    - zone == "high" (rent above most comparables, bad for the operator):
+      "more expensive than about {pct_value}% of {comparables}".
+  {comparables} is chosen from rent_positioning.scope: "district" →
+  "district comparables"; "city_band" → "citywide comparables in the same
+  band/type"; "city" → "citywide comparables". Do NOT claim district scope
+  when the scope is city-scoped — honesty about scope is non-negotiable. When
+  rent_positioning is null/absent, omit the rent-positioning clause entirely.
+  The literal phrase "Nth percentile" is BANNED in headline_recommendation,
+  ranking_explanation, comparison, bottom_line, financial_framing.summary,
+  financial_framing.thesis, competitive_landscape.summary, and
+  competitive_landscape.saturation_thesis. (For Arabic memos, AR Rule 8
+  carries the parallel Arabic templates that copy the SAME
+  rent_positioning.pct_value — match its shape.)
 - value_score (0–100) + value_band ("best_value" | "neutral" | "above_market"):
   the derived "strong location at a fair price" chip. When value_band is
   "best_value" or "above_market", financial_framing.thesis MUST cite it in
@@ -1881,18 +1917,18 @@ _CRITICAL_BLOCK_AR = """══════════════════�
    العربية (0-9) كما في بقية المذكرة.
 #  "SAR <amount>/yr"
    - الإيجار السنوي: "<المبلغ> ريال سعودي/سنة"
-#  rent percentile vs comparables — three templates by polarity
-#  zone (PR #4f lay-friendly rephrase). The literal "النسبة المئوية N%"
-#  is BANNED in user-visible prose; use one of these three templates.
-   - نسبة الإيجار: استخدم القالب المناسب وفقاً للمنطقة:
-     - منطقة منخفضة (المئوية ≤ 39): "أقل من حوالي N% من <نطاق>"
-       حيث N = (100 − المئوية). مثال: 0.28 → "أقل من حوالي 72% من <نطاق>".
-     - منطقة وسطى (40 ≤ المئوية ≤ 60): "قريب من الإيجار الوسيط لـ<نطاق>".
-       بدون رقم.
-     - منطقة مرتفعة (المئوية ≥ 61): "أعلى من حوالي N% من <نطاق>"
-       حيث N = المئوية. مثال: 0.88 → "أعلى من حوالي 88% من <نطاق>".
-     <نطاق> هو "المقارنات في الحي" أو "المقارنات في نفس النطاق على
-     مستوى المدينة" أو "المقارنات على مستوى المدينة".
+#  rent percentile vs comparables — three templates keyed by the
+#  PRE-COMPUTED financial_framing.rent_positioning object {zone, pct_value}.
+#  Copy rent_positioning.pct_value verbatim; do NOT recompute it from the raw
+#  fraction. The literal "النسبة المئوية N%" is BANNED in user-visible prose.
+   - نسبة الإيجار: استخدم القالب المناسب وفقاً للحقل rent_positioning.zone،
+     وحيث N انسخ القيمة الجاهزة rent_positioning.pct_value دون احتسابها:
+     - عندما zone == "low": "أقل من حوالي N% من <نطاق>".
+     - عندما zone == "mid": "قريب من الإيجار الوسيط لـ<نطاق>". بدون رقم.
+     - عندما zone == "high": "أعلى من حوالي N% من <نطاق>".
+     <نطاق> يُختار من rent_positioning.scope: "district" → "المقارنات في الحي"؛
+     "city_band" → "المقارنات في نفس النطاق على مستوى المدينة"؛ "city" →
+     "المقارنات على مستوى المدينة".
 #  "<N>/100" — kept as-is in both locales
    - درجات الجودة: تبقى "<N>/100" كما هي
 #  "<N> m corner"
