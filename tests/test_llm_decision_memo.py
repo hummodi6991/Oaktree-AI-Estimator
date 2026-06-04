@@ -13,6 +13,7 @@ from app.services.llm_decision_memo import (
     MemoContext,
     _daily_cost_tracker,
     _format_rent_vs_median,
+    _rent_positioning,
     _today_key,
     build_memo_context,
     generate_decision_memo,
@@ -2170,3 +2171,74 @@ class TestRenderPromptBlockingFailureKeepsGateFailureAddendum:
 
         assert "GATE FAILURE" in system_content
         assert "zoning fit" in system_content
+
+
+def _pct_from_fraction_js(frac):
+    """Reference re-implementation of the frontend ``pctFromFraction``
+    (AdvisorySectionCards.tsx:28-39), using JS ``Math.round`` (round-half-up)
+    semantics, so the backend helper can be asserted against it byte-for-byte.
+    Returns ``(zone, value)`` where ``value`` is the integer shown to the user
+    (``None`` for the MID zone, which carries no number)."""
+    import math as _math
+
+    clamped = max(0.0, min(1.0, frac))
+    pct = int(_math.floor(clamped * 100.0 + 0.5))  # JS Math.round
+    if 40 <= pct <= 60:
+        return ("mid", None)
+    if pct < 40:
+        return ("low", 100 - pct)
+    return ("high", pct)
+
+
+class TestRentPositioning:
+    """``_rent_positioning`` moves the ``1 − percentile`` inversion out of the
+    LLM and MUST mirror the frontend ``pctFromFraction`` exactly (Finding 5)."""
+
+    def test_known_anchor_fractions(self):
+        cases = {
+            0.28: ("low", 72),
+            0.375: ("low", 62),   # production sample 6545795 → cheaper than ~62%
+            0.50: ("mid", None),
+            0.70: ("high", 70),
+        }
+        for frac, (zone, value) in cases.items():
+            out = _rent_positioning(frac, "district")
+            assert out is not None
+            assert (out["zone"], out["pct_value"]) == (zone, value), frac
+            assert out["scope"] == "district"
+
+    def test_agrees_with_frontend_pct_from_fraction_on_every_fraction(self):
+        # Sweep 0..1 at 0.001 resolution — every value (incl. the .5 rounding
+        # boundaries where banker's rounding would diverge, e.g. 0.125) must
+        # match the JS round-half-up reference.
+        for i in range(0, 1001):
+            frac = i / 1000.0
+            out = _rent_positioning(frac, "city")
+            assert (out["zone"], out["pct_value"]) == _pct_from_fraction_js(frac), frac
+
+    def test_banker_rounding_boundary_uses_round_half_up(self):
+        # 0.125 → JS Math.round(12.5)=13 → cheaper than 87%; Python round()
+        # would give 12 → 88. Confirm we follow the frontend, not round().
+        assert _rent_positioning(0.125, "district") == {
+            "zone": "low",
+            "pct_value": 87,
+            "scope": "district",
+        }
+
+    def test_none_percentile_returns_none(self):
+        assert _rent_positioning(None, "district") is None
+
+    def test_out_of_range_fractions_are_clamped(self):
+        assert _rent_positioning(-0.2, "city")["zone"] == "low"
+        assert _rent_positioning(1.7, "city") == {
+            "zone": "high",
+            "pct_value": 100,
+            "scope": "city",
+        }
+
+    def test_median_invariant_listing_below_median_is_cheaper_than_over_50pct(self):
+        # Invariant: listing rent < median  ⟺  rendered "cheaper than > 50%".
+        # Production sample: listing 141.47 < median 164.72, percentile 0.375.
+        out = _rent_positioning(0.375, "district")
+        assert out["zone"] == "low"
+        assert out["pct_value"] > 50
