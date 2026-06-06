@@ -58,7 +58,7 @@ LABELS: Dict[str, Dict[str, str]] = {
     "total_capex": {"en": "Total capex", "ar": "إجمالي النفقات الرأسمالية"},
     "annual_net_revenue": {"en": "Annual net revenue", "ar": "صافي الإيراد السنوي"},
     "annual_noi": {"en": "Annual NOI", "ar": "صافي الدخل التشغيلي السنوي"},
-    "unlevered_roi": {"en": "Unlevered ROI", "ar": "العائد غير الممول"},
+    "unlevered_roi": {"en": "Unlevered ROI", "ar": "ROI غير المموّل"},
 
     # ── Table headers ───────────────────────────────────────────────
     "header_item": {"en": "Item", "ar": "البند"},
@@ -84,13 +84,13 @@ LABELS: Dict[str, Dict[str, str]] = {
     "basement_bua": {"en": "Basement BUA", "ar": "مساحة البناء للقبو"},
     "upper_annex_non_far_bua": {
         "en": "Upper annex (non-FAR, +0.5 floor)",
-        "ar": "الملحق العلوي (غير محسوب في FAR، +0.5 طابق)",
+        "ar": "الملحق العلوي (غير محسوب في معامل الكثافة، +0.5 طابق)",
     },
     "land_cost": {"en": "Land cost", "ar": "تكلفة الأرض"},
     "construction_direct": {"en": "Construction (direct)", "ar": "الإنشاء (مباشر)"},
     "upper_annex_non_far_cost": {
         "en": "Upper annex construction cost (non-FAR)",
-        "ar": "تكلفة إنشاء الملحق العلوي (غير محسوب في FAR)",
+        "ar": "تكلفة إنشاء الملحق العلوي (غير محسوب في معامل الكثافة)",
     },
     "fitout": {"en": "Fit-out", "ar": "التجهيزات"},
     "contingency": {"en": "Contingency", "ar": "الاحتياطي"},
@@ -137,7 +137,7 @@ LABELS: Dict[str, Dict[str, str]] = {
     },
 
     # ── Key-assumptions special labels ──────────────────────────────
-    "far_model_prior": {"en": "FAR (model prior)", "ar": "FAR (الأولوية النموذجية)"},
+    "far_model_prior": {"en": "FAR (model prior)", "ar": "معامل الكثافة (القيمة المسبقة للنموذج)"},
 
     # ── Appendix: calculation trace ─────────────────────────────────
     "income_prefix": {"en": "Income:", "ar": "الدخل:"},
