@@ -1,18 +1,73 @@
+import os
 from typing import List, Dict, Any, Iterable
 
 from app.services.excel_method import DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR, _normalize_y1_income_effective_factor
+from app.services.estimator_i18n import t as _label, source_type_label
 
 try:  # pragma: no cover - dependency availability handled at runtime
     from fpdf import FPDF
 except ModuleNotFoundError:  # pragma: no cover
     FPDF = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - only needed on the Arabic render path
+    import arabic_reshaper
+
+    try:
+        from bidi.algorithm import get_display as _bidi_get_display
+    except ImportError:  # python-bidi >= 0.5 exposes get_display at top level
+        from bidi import get_display as _bidi_get_display
+except ModuleNotFoundError:  # pragma: no cover
+    arabic_reshaper = None  # type: ignore[assignment]
+    _bidi_get_display = None  # type: ignore[assignment]
+
 
 FONT_FAMILY = "Helvetica"
+# Arabic faces are vendored (committed) under assets/fonts so the server can
+# embed them at render time without any build-time download.
+AR_FONT_FAMILY = "NotoNaskh"
+_FONT_DIR = os.path.join(os.path.dirname(__file__), "assets", "fonts")
+_AR_FONT_REGULAR = os.path.join(_FONT_DIR, "NotoNaskhArabic-Regular.ttf")
+_AR_FONT_BOLD = os.path.join(_FONT_DIR, "NotoNaskhArabic-Bold.ttf")
 MARGIN_MM = 12
 SECTION_SPACING = 4
 ROW_HEIGHT = 6
 HEADER_ROW_HEIGHT = 7
+
+
+def _shape_ar(text: str) -> str:
+    """Reshape (contextual joining) + apply the BiDi algorithm so Arabic
+    renders correctly in fpdf (which has no native shaping/BiDi).
+
+    Must be applied to AR text *immediately before drawing* — after any
+    composition/ellipsizing — because BiDi reordering depends on the full,
+    final string. EN text is never shaped.
+    """
+    if not text:
+        return text
+    if arabic_reshaper is None or _bidi_get_display is None:  # pragma: no cover
+        return text
+    return _bidi_get_display(arabic_reshaper.reshape(text))
+
+
+def _register_ar_fonts(pdf: "FPDF") -> None:
+    """Register the vendored Naskh faces once for the AR render path."""
+    pdf.add_font(AR_FONT_FAMILY, "", _AR_FONT_REGULAR, uni=True)
+    pdf.add_font(AR_FONT_FAMILY, "B", _AR_FONT_BOLD, uni=True)
+
+
+def _doc_lang(pdf: "FPDF") -> str:
+    """Document language stamped on the pdf in ``build_memo_pdf`` (en/ar)."""
+    return getattr(pdf, "_oak_lang", "en")
+
+
+def _doc_family(pdf: "FPDF") -> str:
+    """Lang-appropriate font family: Helvetica for EN, NotoNaskh for AR."""
+    return getattr(pdf, "_oak_font_family", FONT_FAMILY)
+
+
+def _flip_align(align: str) -> str:
+    """Mirror a horizontal alignment for the RTL (AR) layout."""
+    return {"L": "R", "R": "L"}.get(align, align)
 
 
 def _fmt_money(x: float | None) -> str:
@@ -63,9 +118,12 @@ def _strip_non_ascii(text: str) -> str:
     return "".join(ch for ch in text if ord(ch) < 128)
 
 
-def _pdf_safe_text(value: Any) -> str:
+def _pdf_safe_text(value: Any, lang: str = "en") -> str:
     if value is None:
         return ""
+    if lang == "ar":
+        # AR path: keep Arabic + Latin/digits, shape immediately before drawing.
+        return _shape_ar(str(value))
     text = _strip_non_ascii(str(value))
     return text.encode("latin-1", errors="ignore").decode("latin-1")
 
@@ -76,10 +134,12 @@ def _ellipsize(text: str, limit: int) -> str:
     return f"{text[: max(0, limit - 3)].rstrip()}..."
 
 
-def _short_note(note: Any, limit: int = 72) -> str:
+def _short_note(note: Any, limit: int = 72, lang: str = "en") -> str:
     if not note:
         return ""
-    text = _strip_non_ascii(str(note))
+    # AR keeps Arabic through (shaping is applied later, at draw time); EN keeps
+    # the exact ASCII-strip behavior.
+    text = str(note) if lang == "ar" else _strip_non_ascii(str(note))
     if not text:
         return ""
     text = text.split("|")[0].strip()
@@ -95,12 +155,43 @@ def _ensure_space(pdf: "FPDF", height: float) -> None:
 
 
 def _draw_section_title(pdf: "FPDF", title: str) -> None:
+    lang = _doc_lang(pdf)
     _ensure_space(pdf, HEADER_ROW_HEIGHT + SECTION_SPACING)
-    pdf.set_font(FONT_FAMILY, "B", 12)
+    pdf.set_font(_doc_family(pdf), "B", 12)
     pdf.set_text_color(23, 74, 63)
-    pdf.cell(0, HEADER_ROW_HEIGHT, _pdf_safe_text(title), ln=True)
+    if lang == "ar":
+        pdf.cell(0, HEADER_ROW_HEIGHT, _pdf_safe_text(title, lang), ln=True, align="R")
+    else:
+        pdf.cell(0, HEADER_ROW_HEIGHT, _pdf_safe_text(title), ln=True)
     pdf.set_text_color(0, 0, 0)
     pdf.ln(1)
+
+
+def _draw_rtl_paragraph(pdf: "FPDF", text: str, line_height: float) -> None:
+    """Render an Arabic narrative as right-aligned, per-line-shaped lines.
+
+    fpdf's ``multi_cell`` wraps in logical order and cannot BiDi-reorder, so we
+    greedily wrap the logical (unshaped) text by rendered width, shape each line
+    independently, then draw it right-aligned. Minimum-viable RTL (no
+    justification / right-origin rework).
+    """
+    width = pdf.w - pdf.l_margin - pdf.r_margin
+    words = str(text).split()
+
+    def _flush(line_words: List[str]) -> None:
+        if not line_words:
+            return
+        pdf.cell(width, line_height, _shape_ar(" ".join(line_words)), align="R", ln=True)
+
+    line: List[str] = []
+    for word in words:
+        candidate = line + [word]
+        if line and pdf.get_string_width(_shape_ar(" ".join(candidate))) > width:
+            _flush(line)
+            line = [word]
+        else:
+            line = candidate
+    _flush(line)
 
 
 def _draw_table(
@@ -113,37 +204,73 @@ def _draw_table(
     header_height: float = HEADER_ROW_HEIGHT,
     max_chars: List[int] | None = None,
 ) -> None:
+    lang = _doc_lang(pdf)
+    family = _doc_family(pdf)
     headers_list = list(headers)
-    pdf.set_font(FONT_FAMILY, "B", 9)
+    col_widths = list(col_widths)
+    aligns = list(aligns)
+    max_chars_list = list(max_chars) if max_chars else None
+    if lang == "ar":
+        # Minimum-viable RTL: mirror column order + widths and swap L/R cell
+        # alignment so the label column sits on the right. Per-cell BiDi
+        # handles intra-cell ordering.
+        headers_list.reverse()
+        col_widths.reverse()
+        aligns = [_flip_align(a) for a in reversed(aligns)]
+        if max_chars_list:
+            max_chars_list.reverse()
+
+    pdf.set_font(family, "B", 9)
     pdf.set_fill_color(229, 240, 236)
     _ensure_space(pdf, header_height)
     for idx, header in enumerate(headers_list):
-        text = _pdf_safe_text(header)
+        text = _pdf_safe_text(header, lang)
         pdf.cell(col_widths[idx], header_height, text, border=1, align=aligns[idx], fill=True)
     pdf.ln(header_height)
 
     for row in rows:
         _ensure_space(pdf, row_height)
         font_style = "B" if row.get("bold") else ""
-        pdf.set_font(FONT_FAMILY, font_style, 9)
-        cells = row.get("cells", [])
+        pdf.set_font(family, font_style, 9)
+        cells = list(row.get("cells", []))
+        if lang == "ar":
+            cells = list(reversed(cells))
         for idx, cell in enumerate(cells):
-            cell_text = _pdf_safe_text(cell)
-            if max_chars:
-                cell_text = _ellipsize(cell_text, max_chars[idx])
+            if lang == "ar":
+                # Ellipsize the raw (logical) string, then shape — shaping after
+                # truncation keeps the BiDi/joining correct.
+                raw = "" if cell is None else str(cell)
+                if max_chars_list:
+                    raw = _ellipsize(raw, max_chars_list[idx])
+                cell_text = _pdf_safe_text(raw, lang)
+            else:
+                cell_text = _pdf_safe_text(cell)
+                if max_chars_list:
+                    cell_text = _ellipsize(cell_text, max_chars_list[idx])
             pdf.cell(col_widths[idx], row_height, cell_text, border=1, align=aligns[idx])
         pdf.ln(row_height)
 
 
-def _resolve_explanations(excel_breakdown: Dict[str, Any]) -> Dict[str, Any]:
-    explanations = excel_breakdown.get("explanations_en") or excel_breakdown.get("explanations") or {}
+def _resolve_explanations(excel_breakdown: Dict[str, Any], lang: str = "en") -> Dict[str, Any]:
+    if lang == "ar":
+        explanations = (
+            excel_breakdown.get("explanations_ar")
+            or excel_breakdown.get("explanations_en")
+            or excel_breakdown.get("explanations")
+            or {}
+        )
+    else:
+        explanations = excel_breakdown.get("explanations_en") or excel_breakdown.get("explanations") or {}
     return explanations if isinstance(explanations, dict) else {}
 
 
-def _resolve_ascii(value: Any) -> str:
+def _resolve_ascii(value: Any, lang: str = "en") -> str:
     if value is None:
         return ""
     text = str(value)
+    if lang == "ar":
+        # AR path passes non-ASCII (Arabic) through; shaping happens at draw time.
+        return text
     if not _is_ascii(text):
         return ""
     return text
@@ -159,6 +286,7 @@ def _build_cost_breakdown_rows(
     excel_breakdown: Dict[str, Any],
     cost_breakdown: Dict[str, Any],
     explanations: Dict[str, Any],
+    lang: str = "en",
 ) -> List[Dict[str, Any]]:
     far_above_ground = excel_breakdown.get("far_above_ground")
     built_area = excel_breakdown.get("built_area")
@@ -176,20 +304,20 @@ def _build_cost_breakdown_rows(
         rows.append(
             {
                 "cells": [
-                    "Effective FAR (above-ground)",
+                    _label("effective_far_above_ground", lang),
                     _fmt_decimal(far_above_ground, 3),
-                    _short_note(explanations.get("far_above_ground")),
+                    _short_note(explanations.get("far_above_ground"), lang=lang),
                 ]
             }
         )
     built_rows = [
-        ("Residential BUA", "residential", "residential_bua"),
-        ("Retail BUA", "retail", "retail_bua"),
-        ("Office BUA", "office", "office_bua"),
-        ("Basement BUA", "basement", "basement_bua"),
-        ("Upper annex (non-FAR, +0.5 floor)", "upper_annex_non_far", "upper_annex_non_far_bua"),
+        ("residential_bua", "residential", "residential_bua"),
+        ("retail_bua", "retail", "retail_bua"),
+        ("office_bua", "office", "office_bua"),
+        ("basement_bua", "basement", "basement_bua"),
+        ("upper_annex_non_far_bua", "upper_annex_non_far", "upper_annex_non_far_bua"),
     ]
-    for label, key, explanation_key in built_rows:
+    for label_token, key, explanation_key in built_rows:
         if key not in built_area:
             continue
         amount = built_area.get(key)
@@ -198,9 +326,9 @@ def _build_cost_breakdown_rows(
         rows.append(
             {
                 "cells": [
-                    label,
+                    _label(label_token, lang),
                     _format_amount(amount, "m2"),
-                    _short_note(explanations.get(explanation_key)),
+                    _short_note(explanations.get(explanation_key), lang=lang),
                 ]
             }
         )
@@ -209,16 +337,16 @@ def _build_cost_breakdown_rows(
         [
             {
                 "cells": [
-                    "Land cost",
+                    _label("land_cost", lang),
                     _format_amount(cost_breakdown.get("land_cost"), "SAR"),
-                    _short_note(explanations.get("land_cost")),
+                    _short_note(explanations.get("land_cost"), lang=lang),
                 ]
             },
             {
                 "cells": [
-                    "Construction (direct)",
+                    _label("construction_direct", lang),
                     _format_amount(construction_direct, "SAR"),
-                    _short_note(explanations.get("construction_direct")),
+                    _short_note(explanations.get("construction_direct"), lang=lang),
                 ]
             },
         ]
@@ -228,9 +356,9 @@ def _build_cost_breakdown_rows(
         rows.append(
             {
                 "cells": [
-                    "Upper annex construction cost (non-FAR)",
+                    _label("upper_annex_non_far_cost", lang),
                     _format_amount(direct_cost.get("upper_annex_non_far"), "SAR"),
-                    _short_note(explanations.get("upper_annex_non_far_cost")),
+                    _short_note(explanations.get("upper_annex_non_far_cost"), lang=lang),
                 ]
             }
         )
@@ -238,44 +366,44 @@ def _build_cost_breakdown_rows(
         [
             {
                 "cells": [
-                    "Fit-out",
+                    _label("fitout", lang),
                     _format_amount(cost_breakdown.get("fitout_cost"), "SAR"),
-                    _short_note(explanations.get("fitout")),
+                    _short_note(explanations.get("fitout"), lang=lang),
                 ]
             },
             {
                 "cells": [
-                    "Contingency",
+                    _label("contingency", lang),
                     _format_amount(cost_breakdown.get("contingency_cost"), "SAR"),
-                    _short_note(explanations.get("contingency")),
+                    _short_note(explanations.get("contingency"), lang=lang),
                 ]
             },
             {
                 "cells": [
-                    "Consultants",
+                    _label("consultants", lang),
                     _format_amount(cost_breakdown.get("consultants_cost"), "SAR"),
-                    _short_note(explanations.get("consultants")),
+                    _short_note(explanations.get("consultants"), lang=lang),
                 ]
             },
             {
                 "cells": [
-                    "Feasibility fee",
+                    _label("feasibility_fee", lang),
                     _format_amount(cost_breakdown.get("feasibility_fee"), "SAR"),
-                    _short_note(explanations.get("feasibility_fee")),
+                    _short_note(explanations.get("feasibility_fee"), lang=lang),
                 ]
             },
             {
                 "cells": [
-                    "Transaction costs",
+                    _label("transaction_costs", lang),
                     _format_amount(cost_breakdown.get("transaction_cost"), "SAR"),
-                    _short_note(explanations.get("transaction_cost")),
+                    _short_note(explanations.get("transaction_cost"), lang=lang),
                 ]
             },
             {
                 "cells": [
-                    "Total capex",
+                    _label("total_capex", lang),
                     _format_amount(cost_breakdown.get("grand_total_capex"), "SAR"),
-                    _short_note(explanations.get("grand_total_capex")),
+                    _short_note(explanations.get("grand_total_capex"), lang=lang),
                 ],
                 "bold": True,
             },
@@ -287,6 +415,7 @@ def _build_cost_breakdown_rows(
 def _build_revenue_breakdown_rows(
     excel_breakdown: Dict[str, Any],
     cost_breakdown: Dict[str, Any],
+    lang: str = "en",
 ) -> List[Dict[str, Any]]:
     income_components = excel_breakdown.get("y1_income_components")
     income_components = income_components if isinstance(income_components, dict) else {}
@@ -299,7 +428,7 @@ def _build_revenue_breakdown_rows(
                 "cells": [
                     label,
                     _format_amount(amount, "SAR"),
-                    "NLA * rent rate",
+                    _label("rev_nla_rent_rate", lang),
                 ]
             }
         )
@@ -330,37 +459,37 @@ def _build_revenue_breakdown_rows(
         [
             {
                 "cells": [
-                    "Annual net revenue",
+                    _label("annual_net_revenue", lang),
                     _format_amount(y1_income, "SAR"),
-                    "Sum of income components",
+                    _label("rev_sum_income_components", lang),
                 ]
             },
             {
                 "cells": [
-                    "Annual net income",
+                    _label("annual_net_income", lang),
                     _format_amount(y1_income_effective, "SAR"),
-                    f"{_fmt_percent(y1_income_effective_factor, 0)} effective",
+                    f"{_fmt_percent(y1_income_effective_factor, 0)} {_label('rev_effective_suffix', lang)}",
                 ]
             },
             {
                 "cells": [
-                    "OPEX",
+                    _label("opex", lang),
                     _format_amount(opex_cost, "SAR"),
-                    f"{_fmt_percent(opex_pct, 0)} of annual net income",
+                    f"{_fmt_percent(opex_pct, 0)} {_label('rev_of_annual_net_income', lang)}",
                 ]
             },
             {
                 "cells": [
-                    "Annual NOI",
+                    _label("annual_noi", lang),
                     _format_amount(y1_noi, "SAR"),
-                    "Annual net income - OPEX",
+                    _label("rev_annual_net_income_minus_opex", lang),
                 ]
             },
             {
                 "cells": [
-                    "Unlevered ROI",
+                    _label("unlevered_roi", lang),
                     _fmt_percent(roi, 1),
-                    "NOI / total capex",
+                    _label("rev_noi_over_capex", lang),
                 ],
                 "bold": True,
             },
@@ -369,25 +498,27 @@ def _build_revenue_breakdown_rows(
     return rows
 
 
-def _build_assumption_rows(assumptions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _build_assumption_rows(
+    assumptions: List[Dict[str, Any]], lang: str = "en"
+) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for item in assumptions:
         if not isinstance(item, dict):
             continue
-        key = _resolve_ascii(item.get("key") or "")
+        key = _resolve_ascii(item.get("key") or "", lang)
         if not key:
             continue
         if key.lower() == "far":
-            key = "FAR (model prior)"
+            key = _label("far_model_prior", lang)
         value = item.get("value")
         unit = item.get("unit") or ""
-        source_type = _resolve_ascii(item.get("source_type") or "")
+        source_type = _resolve_ascii(item.get("source_type") or "", lang)
         if isinstance(value, (int, float)):
             value_text = _fmt_number(value)
         else:
-            value_text = _resolve_ascii(value) or "N/A"
+            value_text = _resolve_ascii(value, lang) or _label("na", lang)
         if unit:
-            unit_text = _resolve_ascii(unit)
+            unit_text = _resolve_ascii(unit, lang)
             if unit_text:
                 value_text = f"{value_text} {unit_text}"
         rows.append(
@@ -395,7 +526,7 @@ def _build_assumption_rows(assumptions: List[Dict[str, Any]]) -> List[Dict[str, 
                 "cells": [
                     key,
                     value_text,
-                    source_type or "N/A",
+                    source_type_label(source_type, lang) or _label("na", lang),
                 ]
             }
         )
@@ -405,58 +536,60 @@ def _build_assumption_rows(assumptions: List[Dict[str, Any]]) -> List[Dict[str, 
 def _build_appendix_rows(
     explanations: Dict[str, Any],
     excel_breakdown: Dict[str, Any],
+    lang: str = "en",
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
+    # explanation key -> estimator_i18n label token
     label_map = {
-        "residential_bua": "Residential BUA",
-        "retail_bua": "Retail BUA",
-        "office_bua": "Office BUA",
-        "basement_bua": "Basement BUA",
-        "land_cost": "Land cost",
-        "construction_direct": "Construction (direct)",
-        "fitout": "Fit-out",
-        "contingency": "Contingency",
-        "consultants": "Consultants",
-        "feasibility_fee": "Feasibility fee",
-        "transaction_cost": "Transaction costs",
-        "grand_total_capex": "Total capex",
-        "y1_income": "Annual net revenue",
-        "y1_income_effective": "Annual net income",
-        "opex": "OPEX",
-        "y1_noi": "Annual NOI",
+        "residential_bua": "residential_bua",
+        "retail_bua": "retail_bua",
+        "office_bua": "office_bua",
+        "basement_bua": "basement_bua",
+        "land_cost": "land_cost",
+        "construction_direct": "construction_direct",
+        "fitout": "fitout",
+        "contingency": "contingency",
+        "consultants": "consultants",
+        "feasibility_fee": "feasibility_fee",
+        "transaction_cost": "transaction_costs",
+        "grand_total_capex": "total_capex",
+        "y1_income": "annual_net_revenue",
+        "y1_income_effective": "annual_net_income",
+        "opex": "opex",
+        "y1_noi": "annual_noi",
     }
-    for key, label in label_map.items():
+    for key, token in label_map.items():
         note = explanations.get(key)
-        note_text = _resolve_ascii(note)
+        note_text = _resolve_ascii(note, lang)
         if not note_text:
             continue
         rows.append(
             {
-                "cells": [label, _ellipsize(note_text, 160)],
+                "cells": [_label(token, lang), _ellipsize(note_text, 160)],
             }
         )
 
     income_components = excel_breakdown.get("y1_income_components")
     if isinstance(income_components, dict):
         for key in income_components.keys():
-            label = f"Income: {str(key).replace('_', ' ')}"
+            label = f"{_label('income_prefix', lang)} {str(key).replace('_', ' ')}"
             rows.append(
                 {
-                    "cells": [label, "NLA * rent rate"],
+                    "cells": [label, _label("rev_nla_rent_rate", lang)],
                 }
             )
     return rows
 
 
-def _build_comps_rows(top_comps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _build_comps_rows(top_comps: List[Dict[str, Any]], lang: str = "en") -> List[Dict[str, Any]]:
     rows = []
     for comp in top_comps:
         if not isinstance(comp, dict):
             continue
-        comp_id = _resolve_ascii(comp.get("id") or "")
-        comp_date = _resolve_ascii(comp.get("date") or "")
-        city = _resolve_ascii(comp.get("city") or "")
-        district = _resolve_ascii(comp.get("district") or "")
+        comp_id = _resolve_ascii(comp.get("id") or "", lang)
+        comp_date = _resolve_ascii(comp.get("date") or "", lang)
+        city = _resolve_ascii(comp.get("city") or "", lang)
+        district = _resolve_ascii(comp.get("district") or "", lang)
         location = ""
         if city and district:
             location = f"{city}/{district}"
@@ -470,8 +603,8 @@ def _build_comps_rows(top_comps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         rows.append(
             {
                 "cells": [
-                    comp_id or "N/A",
-                    comp_date or "N/A",
+                    comp_id or _label("na", lang),
+                    comp_date or _label("na", lang),
                     location or "",
                     f"{price} SAR/m2",
                 ]
@@ -496,6 +629,7 @@ def build_memo_pdf(
     excel_breakdown: Dict[str, Any] | None = None,
     cost_breakdown: Dict[str, Any] | None = None,
     notes: Dict[str, Any] | None = None,
+    lang: str = "en",
 ) -> bytes:
     if FPDF is None:
         raise RuntimeError("fpdf library is not installed")
@@ -510,36 +644,52 @@ def build_memo_pdf(
     pdf.set_margins(MARGIN_MM, MARGIN_MM, MARGIN_MM)
     pdf.set_auto_page_break(auto=True, margin=MARGIN_MM)
     pdf.set_compression(False)
+    # Stamp the document language + font family so the draw helpers resolve the
+    # lang-appropriate face. EN keeps Helvetica (unchanged); AR embeds NotoNaskh.
+    pdf._oak_lang = lang
+    pdf._oak_font_family = AR_FONT_FAMILY if lang == "ar" else FONT_FAMILY
+    if lang == "ar":
+        _register_ar_fonts(pdf)
     pdf.add_page()
     pdf.set_title(title)
 
-    pdf.set_font(FONT_FAMILY, "B", 16)
-    pdf.cell(0, 10, _pdf_safe_text(title), ln=True)
+    pdf.set_font(_doc_family(pdf), "B", 16)
+    if lang == "ar":
+        pdf.cell(0, 10, _pdf_safe_text(title, lang), ln=True, align="R")
+    else:
+        pdf.cell(0, 10, _pdf_safe_text(title), ln=True)
 
-    _draw_section_title(pdf, "Totals (SAR)")
+    _draw_section_title(pdf, _label("totals_section", lang))
     metrics = [
-        ("Land value", _fmt_money(cost_breakdown.get("land_cost") or totals.get("land_value"))),
-        ("Total capex", _fmt_money(cost_breakdown.get("grand_total_capex"))),
-        ("Annual net revenue", _fmt_money(cost_breakdown.get("y1_income") or totals.get("revenues"))),
-        ("Annual NOI", _fmt_money(cost_breakdown.get("y1_noi"))),
-        ("Unlevered ROI", _fmt_percent(cost_breakdown.get("roi"), 1)),
+        (_label("land_value", lang), _fmt_money(cost_breakdown.get("land_cost") or totals.get("land_value"))),
+        (_label("total_capex", lang), _fmt_money(cost_breakdown.get("grand_total_capex"))),
+        (_label("annual_net_revenue", lang), _fmt_money(cost_breakdown.get("y1_income") or totals.get("revenues"))),
+        (_label("annual_noi", lang), _fmt_money(cost_breakdown.get("y1_noi"))),
+        (_label("unlevered_roi", lang), _fmt_percent(cost_breakdown.get("roi"), 1)),
     ]
     metric_width = (pdf.w - pdf.l_margin - pdf.r_margin) / len(metrics)
-    pdf.set_font(FONT_FAMILY, "", 8)
+    # RTL: draw the metric strip right-to-left (cells are center-aligned, so only
+    # the order is mirrored). EN order is untouched.
+    metrics_draw = list(reversed(metrics)) if lang == "ar" else metrics
+    pdf.set_font(_doc_family(pdf), "", 8)
     pdf.set_fill_color(229, 240, 236)
-    for label, _value in metrics:
-        pdf.cell(metric_width, 5, _pdf_safe_text(label), border=1, align="C", fill=True)
+    for label, _value in metrics_draw:
+        pdf.cell(metric_width, 5, _pdf_safe_text(label, lang), border=1, align="C", fill=True)
     pdf.ln(5)
-    pdf.set_font(FONT_FAMILY, "B", 10)
-    for _label, value in metrics:
-        pdf.cell(metric_width, 7, _pdf_safe_text(value), border=1, align="C")
+    pdf.set_font(_doc_family(pdf), "B", 10)
+    for _name, value in metrics_draw:
+        pdf.cell(metric_width, 7, _pdf_safe_text(value, lang), border=1, align="C")
     pdf.ln(10)
 
-    explanations = _resolve_explanations(excel_breakdown)
+    explanations = _resolve_explanations(excel_breakdown, lang)
 
-    _draw_section_title(pdf, "Cost breakdown")
-    cost_rows = _build_cost_breakdown_rows(excel_breakdown, cost_breakdown, explanations)
-    cost_headers = ["Item", "Amount", "How calculated"]
+    _draw_section_title(pdf, _label("cost_breakdown_section", lang))
+    cost_rows = _build_cost_breakdown_rows(excel_breakdown, cost_breakdown, explanations, lang)
+    cost_headers = [
+        _label("header_item", lang),
+        _label("header_amount", lang),
+        _label("header_how_calculated", lang),
+    ]
     table_width = pdf.w - pdf.l_margin - pdf.r_margin
     cost_col_widths = [55, 35, table_width - 90]
     _draw_table(
@@ -552,8 +702,8 @@ def build_memo_pdf(
     )
     pdf.ln(SECTION_SPACING)
 
-    _draw_section_title(pdf, "Revenue breakdown")
-    revenue_rows = _build_revenue_breakdown_rows(excel_breakdown, cost_breakdown)
+    _draw_section_title(pdf, _label("revenue_breakdown_section", lang))
+    revenue_rows = _build_revenue_breakdown_rows(excel_breakdown, cost_breakdown, lang)
     revenue_col_widths = [55, 35, table_width - 90]
     _draw_table(
         pdf,
@@ -580,37 +730,62 @@ def build_memo_pdf(
         if compliant is None:
             compliant = parking_notes.get("compliant")
         parking_summary = [
-            ("Required spaces", _fmt_number(required)),
-            ("Provided spaces", _fmt_number(provided)),
-            ("Deficit", _fmt_number(deficit)),
-            ("Compliant", "Yes" if compliant is True else "No" if compliant is False else "N/A"),
+            (_label("parking_required_spaces", lang), _fmt_number(required)),
+            (_label("parking_provided_spaces", lang), _fmt_number(provided)),
+            (_label("parking_deficit", lang), _fmt_number(deficit)),
+            (
+                _label("parking_compliant", lang),
+                _label("yes", lang)
+                if compliant is True
+                else _label("no", lang)
+                if compliant is False
+                else _label("na", lang),
+            ),
         ]
 
-    if any(value for _label, value in parking_summary if value != "N/A"):
+    if any(value for _name, value in parking_summary if value != _label("na", lang)):
         pdf.ln(SECTION_SPACING)
-        _draw_section_title(pdf, "Parking summary")
+        _draw_section_title(pdf, _label("parking_summary_section", lang))
         box_width = pdf.w - pdf.l_margin - pdf.r_margin
         pdf.set_fill_color(245, 248, 247)
         pdf.set_draw_color(200, 220, 214)
         pdf.rect(pdf.l_margin, pdf.get_y(), box_width, ROW_HEIGHT * len(parking_summary) + 4)
         pdf.set_xy(pdf.l_margin + 2, pdf.get_y() + 2)
-        pdf.set_font(FONT_FAMILY, "", 9)
+        pdf.set_font(_doc_family(pdf), "", 9)
         for label, value in parking_summary:
-            pdf.cell(box_width * 0.6, ROW_HEIGHT, _pdf_safe_text(label), align="L")
-            pdf.cell(box_width * 0.35, ROW_HEIGHT, _pdf_safe_text(value), align="R", ln=True)
+            if lang == "ar":
+                # Mirror: value on the left, label on the right.
+                pdf.cell(box_width * 0.35, ROW_HEIGHT, _pdf_safe_text(value, lang), align="L")
+                pdf.cell(box_width * 0.6, ROW_HEIGHT, _pdf_safe_text(label, lang), align="R", ln=True)
+            else:
+                pdf.cell(box_width * 0.6, ROW_HEIGHT, _pdf_safe_text(label), align="L")
+                pdf.cell(box_width * 0.35, ROW_HEIGHT, _pdf_safe_text(value), align="R", ln=True)
 
-    summary_text = _resolve_ascii(notes.get("summary_en") or notes.get("summary") or "")
+    if lang == "ar":
+        summary_text = _resolve_ascii(
+            notes.get("summary_ar") or notes.get("summary_en") or notes.get("summary") or "",
+            lang,
+        )
+    else:
+        summary_text = _resolve_ascii(notes.get("summary_en") or notes.get("summary") or "")
     if summary_text:
         pdf.ln(SECTION_SPACING)
-        _draw_section_title(pdf, "Executive summary")
-        pdf.set_font(FONT_FAMILY, "", 9)
-        pdf.multi_cell(0, 5, _pdf_safe_text(summary_text))
+        _draw_section_title(pdf, _label("executive_summary_section", lang))
+        pdf.set_font(_doc_family(pdf), "", 9)
+        if lang == "ar":
+            _draw_rtl_paragraph(pdf, summary_text, 5)
+        else:
+            pdf.multi_cell(0, 5, _pdf_safe_text(summary_text))
 
     pdf.add_page()
-    _draw_section_title(pdf, "Key assumptions")
-    assumption_rows = _build_assumption_rows(assumptions)
+    _draw_section_title(pdf, _label("key_assumptions_section", lang))
+    assumption_rows = _build_assumption_rows(assumptions, lang)
     if assumption_rows:
-        assumption_headers = ["Assumption", "Value", "Source"]
+        assumption_headers = [
+            _label("header_assumption", lang),
+            _label("header_value", lang),
+            _label("header_source", lang),
+        ]
         assumption_col_widths = [60, 60, table_width - 120]
         _draw_table(
             pdf,
@@ -621,14 +796,23 @@ def build_memo_pdf(
             max_chars=[30, 26, 26],
         )
     else:
-        pdf.set_font(FONT_FAMILY, "", 9)
-        pdf.cell(0, ROW_HEIGHT, "No assumptions available.", ln=True)
+        pdf.set_font(_doc_family(pdf), "", 9)
+        if lang == "ar":
+            pdf.cell(
+                0,
+                ROW_HEIGHT,
+                _pdf_safe_text(_label("no_assumptions_available", lang), lang),
+                ln=True,
+                align="R",
+            )
+        else:
+            pdf.cell(0, ROW_HEIGHT, _label("no_assumptions_available", lang), ln=True)
 
-    appendix_rows = _build_appendix_rows(explanations, excel_breakdown)
+    appendix_rows = _build_appendix_rows(explanations, excel_breakdown, lang)
     if appendix_rows:
         pdf.ln(SECTION_SPACING)
-        _draw_section_title(pdf, "Appendix: calculation trace")
-        appendix_headers = ["Item", "Detail"]
+        _draw_section_title(pdf, _label("appendix_calc_trace_section", lang))
+        appendix_headers = [_label("header_item", lang), _label("header_detail", lang)]
         appendix_col_widths = [60, table_width - 60]
         _draw_table(
             pdf,
@@ -639,11 +823,16 @@ def build_memo_pdf(
             max_chars=[30, 120],
         )
 
-    comps_rows = _build_comps_rows(top_comps)
+    comps_rows = _build_comps_rows(top_comps, lang)
     if comps_rows:
         pdf.ln(SECTION_SPACING)
-        _draw_section_title(pdf, "Appendix: top comps")
-        comps_headers = ["ID", "Date", "Location", "Price (SAR/m2)"]
+        _draw_section_title(pdf, _label("appendix_top_comps_section", lang))
+        comps_headers = [
+            _label("header_id", lang),
+            _label("header_date", lang),
+            _label("header_location", lang),
+            _label("header_price_sar_m2", lang),
+        ]
         comps_col_widths = [30, 30, 60, table_width - 120]
         _draw_table(
             pdf,

@@ -130,9 +130,11 @@ def test_export_pdf_includes_excel_breakdown_from_wrapped_notes(monkeypatch):
         excel_breakdown=None,
         cost_breakdown=None,
         notes=None,
+        lang="en",
     ):
         captured["excel_breakdown"] = excel_breakdown
         captured["cost_breakdown"] = cost_breakdown
+        captured["lang"] = lang
         return b"%PDF-1.4\n%%EOF"
 
     monkeypatch.setattr("app.api.estimates.build_memo_pdf", fake_build_memo_pdf)

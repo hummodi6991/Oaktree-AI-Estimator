@@ -29,6 +29,7 @@ from app.services.explain import (
     to_comp_dict,
 )
 from app.services.pdf import build_memo_pdf
+from app.services.estimator_i18n import t as estimator_label
 from app.services.land_price_engine import quote_land_price_blended_v1
 from app.services.pricing import price_from_kaggle_hedonic, price_from_aqar
 from app.services.simulate import p_bands
@@ -2452,7 +2453,11 @@ def get_ledger(estimate_id: str, db: Session = Depends(get_db)) -> dict[str, Any
 
 
 @router.get("/estimates/{estimate_id}/memo.pdf")
-def export_pdf(estimate_id: str, db: Session = Depends(get_db)):
+def export_pdf(
+    estimate_id: str,
+    lang: Literal["en", "ar"] = "en",
+    db: Session = Depends(get_db),
+):
     base = get_estimate(estimate_id, db)
     comps_rows = top_sale_comps(db, city=None, district=None, asset_type="land", since=None, limit=8)
     comps = [to_comp_dict(r) for r in comps_rows]
@@ -2470,13 +2475,14 @@ def export_pdf(estimate_id: str, db: Session = Depends(get_db)):
                 cost_breakdown = nested_notes.get("cost_breakdown")
     try:
         pdf_bytes = build_memo_pdf(
-            title=f"Estimate {estimate_id}",
+            title=f"{estimator_label('doc_title_prefix', lang)} {estimate_id}",
             totals=base["totals"],
             assumptions=base.get("assumptions", []),
             top_comps=comps,
             excel_breakdown=excel_breakdown,
             cost_breakdown=cost_breakdown,
             notes=notes,
+            lang=lang,
         )
     except Exception as exc:
         logger.exception("PDF generation failed for estimate %s", estimate_id)
