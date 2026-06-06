@@ -1,4 +1,5 @@
 import type { Geometry } from "geojson";
+import i18n from "./i18n";
 
 const RAW_BASE = (import.meta.env.VITE_API_BASE_URL || "") as string;
 const API_BASE = typeof RAW_BASE === "string" ? RAW_BASE.replace(/\/+$/, "") : "";
@@ -531,9 +532,16 @@ export function exportCsvUrl(estimateId: string, options?: Record<string, string
   return withBase(path);
 }
 
+function normalizeLang(language?: string): "en" | "ar" {
+  return (language || "").toLowerCase().startsWith("ar") ? "ar" : "en";
+}
+
 export function memoPdfUrl(estimateId: string) {
   const encodedId = encodeURIComponent(estimateId);
-  return withBase(`/v1/estimates/${encodedId}/memo.pdf`);
+  // Mirror exportCsvUrl: pass the active locale so an Arabic-locale user's link
+  // serves the Arabic PDF (the backend gates every AR change on lang=="ar").
+  const lang = normalizeLang(i18n.language);
+  return withBase(`/v1/estimates/${encodedId}/memo.pdf?lang=${lang}`);
 }
 
 export async function downloadMemoPdf(estimateId: string): Promise<Blob> {

@@ -2,7 +2,12 @@ import os
 from typing import List, Dict, Any, Iterable
 
 from app.services.excel_method import DEFAULT_Y1_INCOME_EFFECTIVE_FACTOR, _normalize_y1_income_effective_factor
-from app.services.estimator_i18n import t as _label, source_type_label
+from app.services.estimator_i18n import (
+    t as _label,
+    source_type_label,
+    income_component_label,
+    assumption_key_label,
+)
 
 try:  # pragma: no cover - dependency availability handled at runtime
     from fpdf import FPDF
@@ -70,40 +75,88 @@ def _flip_align(align: str) -> str:
     return {"L": "R", "R": "L"}.get(align, align)
 
 
-def _fmt_money(x: float | None) -> str:
+# Eastern Arabic numerals (٠١٢٣٤٥٦٧٨٩). The AR PDF renders every digit with
+# these; grouping (",") and decimal (".") separators are kept for legibility.
+_AR_DIGITS = str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩")
+
+# AR unit tokens. Crucially the squared-metre superscript renders as a baseline
+# ``٢`` (never U+00B2 — the embedded Naskh face lacks the superscript glyph).
+_AR_UNIT_MAP = {
+    "SAR": "ر.س",
+    "m2": "م٢",
+    "m²": "م٢",
+    "SAR/m2": "ر.س/م٢",
+    "SAR/m²": "ر.س/م٢",
+    "SAR/m2/yr": "ر.س/م٢/سنة",
+    "SAR/m2/mo": "ر.س/م٢/شهر",
+    "%": "٪",
+}
+
+
+def _ar_digits(text: str) -> str:
+    """Map ASCII digits to Eastern Arabic numerals (separators untouched)."""
+    return text.translate(_AR_DIGITS)
+
+
+def _localize_unit(unit: Any, lang: str = "en") -> str:
+    """Localize an inline unit token for the AR path; EN passes through.
+
+    Never emits U+00B2: a known token resolves via the map (baseline ``٢``), and
+    the general fallback rewrites ``SAR``/``m²``/``m2`` and replaces any stray
+    superscript-two with a baseline ``٢`` before converting digits.
+    """
+    if unit is None:
+        return ""
+    text = str(unit)
+    if lang != "ar":
+        return text
+    if text in _AR_UNIT_MAP:
+        return _AR_UNIT_MAP[text]
+    text = text.replace("SAR", "ر.س").replace("m²", "م٢").replace("m2", "م٢")
+    text = text.replace("²", "٢").replace("/yr", "/سنة").replace("/mo", "/شهر")
+    return _ar_digits(text)
+
+
+def _fmt_money(x: float | None, lang: str = "en") -> str:
     if x is None:
-        return "N/A"
+        return _label("na", lang)
     try:
-        return f"{float(x):,.0f}"
+        out = f"{float(x):,.0f}"
+        return _ar_digits(out) if lang == "ar" else out
     except Exception:
-        return "N/A"
+        return _label("na", lang)
 
 
-def _fmt_number(x: float | None) -> str:
+def _fmt_number(x: float | None, lang: str = "en") -> str:
     if x is None:
-        return "N/A"
+        return _label("na", lang)
     try:
-        return f"{float(x):,.0f}"
+        out = f"{float(x):,.0f}"
+        return _ar_digits(out) if lang == "ar" else out
     except Exception:
-        return "N/A"
+        return _label("na", lang)
 
 
-def _fmt_percent(x: float | None, digits: int = 1) -> str:
+def _fmt_percent(x: float | None, digits: int = 1, lang: str = "en") -> str:
     if x is None:
-        return "N/A"
+        return _label("na", lang)
     try:
-        return f"{float(x) * 100:.{digits}f}%"
+        out = f"{float(x) * 100:.{digits}f}%"
+        if lang == "ar":
+            return _ar_digits(out).replace("%", "٪")
+        return out
     except Exception:
-        return "N/A"
+        return _label("na", lang)
 
 
-def _fmt_decimal(x: float | None, digits: int = 3) -> str:
+def _fmt_decimal(x: float | None, digits: int = 3, lang: str = "en") -> str:
     if x is None:
-        return "N/A"
+        return _label("na", lang)
     try:
-        return f"{float(x):,.{digits}f}"
+        out = f"{float(x):,.{digits}f}"
+        return _ar_digits(out) if lang == "ar" else out
     except Exception:
-        return "N/A"
+        return _label("na", lang)
 
 
 def _is_ascii(value: str) -> bool:
@@ -210,7 +263,25 @@ def _draw_table(
     col_widths = list(col_widths)
     aligns = list(aligns)
     max_chars_list = list(max_chars) if max_chars else None
+    table_font_size = 9
     if lang == "ar":
+        # Arabic labels run longer than the EN labels these column widths were
+        # tuned for, so the standard label set was truncating mid-word. Drop the
+        # AR table font one step, widen the label column (logical col 0) by
+        # borrowing from the widest trailing column, and raise its char budget so
+        # the standard labels fit cleanly. Done on logical-order lists, before the
+        # RTL mirroring below.
+        table_font_size = 8
+        if len(col_widths) >= 2:
+            label_min_w = 80.0
+            if col_widths[0] < label_min_w:
+                donor = max(range(1, len(col_widths)), key=lambda i: col_widths[i])
+                extra = label_min_w - col_widths[0]
+                if col_widths[donor] - extra >= 20.0:
+                    col_widths[0] = label_min_w
+                    col_widths[donor] -= extra
+            if max_chars_list:
+                max_chars_list[0] = max(max_chars_list[0], 50)
         # Minimum-viable RTL: mirror column order + widths and swap L/R cell
         # alignment so the label column sits on the right. Per-cell BiDi
         # handles intra-cell ordering.
@@ -220,7 +291,7 @@ def _draw_table(
         if max_chars_list:
             max_chars_list.reverse()
 
-    pdf.set_font(family, "B", 9)
+    pdf.set_font(family, "B", table_font_size)
     pdf.set_fill_color(229, 240, 236)
     _ensure_space(pdf, header_height)
     for idx, header in enumerate(headers_list):
@@ -231,7 +302,7 @@ def _draw_table(
     for row in rows:
         _ensure_space(pdf, row_height)
         font_style = "B" if row.get("bold") else ""
-        pdf.set_font(family, font_style, 9)
+        pdf.set_font(family, font_style, table_font_size)
         cells = list(row.get("cells", []))
         if lang == "ar":
             cells = list(reversed(cells))
@@ -276,10 +347,10 @@ def _resolve_ascii(value: Any, lang: str = "en") -> str:
     return text
 
 
-def _format_amount(value: Any, unit: str = "SAR") -> str:
+def _format_amount(value: Any, unit: str = "SAR", lang: str = "en") -> str:
     if unit == "SAR":
-        return _fmt_money(value)
-    return f"{_fmt_number(value)} {unit}"
+        return _fmt_money(value, lang)
+    return f"{_fmt_number(value, lang)} {_localize_unit(unit, lang)}"
 
 
 def _build_cost_breakdown_rows(
@@ -305,7 +376,7 @@ def _build_cost_breakdown_rows(
             {
                 "cells": [
                     _label("effective_far_above_ground", lang),
-                    _fmt_decimal(far_above_ground, 3),
+                    _fmt_decimal(far_above_ground, 3, lang),
                     _short_note(explanations.get("far_above_ground"), lang=lang),
                 ]
             }
@@ -327,7 +398,7 @@ def _build_cost_breakdown_rows(
             {
                 "cells": [
                     _label(label_token, lang),
-                    _format_amount(amount, "m2"),
+                    _format_amount(amount, "m2", lang),
                     _short_note(explanations.get(explanation_key), lang=lang),
                 ]
             }
@@ -338,14 +409,14 @@ def _build_cost_breakdown_rows(
             {
                 "cells": [
                     _label("land_cost", lang),
-                    _format_amount(cost_breakdown.get("land_cost"), "SAR"),
+                    _format_amount(cost_breakdown.get("land_cost"), "SAR", lang),
                     _short_note(explanations.get("land_cost"), lang=lang),
                 ]
             },
             {
                 "cells": [
                     _label("construction_direct", lang),
-                    _format_amount(construction_direct, "SAR"),
+                    _format_amount(construction_direct, "SAR", lang),
                     _short_note(explanations.get("construction_direct"), lang=lang),
                 ]
             },
@@ -357,7 +428,7 @@ def _build_cost_breakdown_rows(
             {
                 "cells": [
                     _label("upper_annex_non_far_cost", lang),
-                    _format_amount(direct_cost.get("upper_annex_non_far"), "SAR"),
+                    _format_amount(direct_cost.get("upper_annex_non_far"), "SAR", lang),
                     _short_note(explanations.get("upper_annex_non_far_cost"), lang=lang),
                 ]
             }
@@ -367,42 +438,42 @@ def _build_cost_breakdown_rows(
             {
                 "cells": [
                     _label("fitout", lang),
-                    _format_amount(cost_breakdown.get("fitout_cost"), "SAR"),
+                    _format_amount(cost_breakdown.get("fitout_cost"), "SAR", lang),
                     _short_note(explanations.get("fitout"), lang=lang),
                 ]
             },
             {
                 "cells": [
                     _label("contingency", lang),
-                    _format_amount(cost_breakdown.get("contingency_cost"), "SAR"),
+                    _format_amount(cost_breakdown.get("contingency_cost"), "SAR", lang),
                     _short_note(explanations.get("contingency"), lang=lang),
                 ]
             },
             {
                 "cells": [
                     _label("consultants", lang),
-                    _format_amount(cost_breakdown.get("consultants_cost"), "SAR"),
+                    _format_amount(cost_breakdown.get("consultants_cost"), "SAR", lang),
                     _short_note(explanations.get("consultants"), lang=lang),
                 ]
             },
             {
                 "cells": [
                     _label("feasibility_fee", lang),
-                    _format_amount(cost_breakdown.get("feasibility_fee"), "SAR"),
+                    _format_amount(cost_breakdown.get("feasibility_fee"), "SAR", lang),
                     _short_note(explanations.get("feasibility_fee"), lang=lang),
                 ]
             },
             {
                 "cells": [
                     _label("transaction_costs", lang),
-                    _format_amount(cost_breakdown.get("transaction_cost"), "SAR"),
+                    _format_amount(cost_breakdown.get("transaction_cost"), "SAR", lang),
                     _short_note(explanations.get("transaction_cost"), lang=lang),
                 ]
             },
             {
                 "cells": [
                     _label("total_capex", lang),
-                    _format_amount(cost_breakdown.get("grand_total_capex"), "SAR"),
+                    _format_amount(cost_breakdown.get("grand_total_capex"), "SAR", lang),
                     _short_note(explanations.get("grand_total_capex"), lang=lang),
                 ],
                 "bold": True,
@@ -422,12 +493,12 @@ def _build_revenue_breakdown_rows(
 
     rows: List[Dict[str, Any]] = []
     for key, amount in income_components.items():
-        label = str(key).replace("_", " ")
+        label = income_component_label(key, lang)
         rows.append(
             {
                 "cells": [
                     label,
-                    _format_amount(amount, "SAR"),
+                    _format_amount(amount, "SAR", lang),
                     _label("rev_nla_rent_rate", lang),
                 ]
             }
@@ -460,35 +531,35 @@ def _build_revenue_breakdown_rows(
             {
                 "cells": [
                     _label("annual_net_revenue", lang),
-                    _format_amount(y1_income, "SAR"),
+                    _format_amount(y1_income, "SAR", lang),
                     _label("rev_sum_income_components", lang),
                 ]
             },
             {
                 "cells": [
                     _label("annual_net_income", lang),
-                    _format_amount(y1_income_effective, "SAR"),
-                    f"{_fmt_percent(y1_income_effective_factor, 0)} {_label('rev_effective_suffix', lang)}",
+                    _format_amount(y1_income_effective, "SAR", lang),
+                    f"{_fmt_percent(y1_income_effective_factor, 0, lang)} {_label('rev_effective_suffix', lang)}",
                 ]
             },
             {
                 "cells": [
                     _label("opex", lang),
-                    _format_amount(opex_cost, "SAR"),
-                    f"{_fmt_percent(opex_pct, 0)} {_label('rev_of_annual_net_income', lang)}",
+                    _format_amount(opex_cost, "SAR", lang),
+                    f"{_fmt_percent(opex_pct, 0, lang)} {_label('rev_of_annual_net_income', lang)}",
                 ]
             },
             {
                 "cells": [
                     _label("annual_noi", lang),
-                    _format_amount(y1_noi, "SAR"),
+                    _format_amount(y1_noi, "SAR", lang),
                     _label("rev_annual_net_income_minus_opex", lang),
                 ]
             },
             {
                 "cells": [
                     _label("unlevered_roi", lang),
-                    _fmt_percent(roi, 1),
+                    _fmt_percent(roi, 1, lang),
                     _label("rev_noi_over_capex", lang),
                 ],
                 "bold": True,
@@ -510,15 +581,19 @@ def _build_assumption_rows(
             continue
         if key.lower() == "far":
             key = _label("far_model_prior", lang)
+        else:
+            key = assumption_key_label(key, lang)
         value = item.get("value")
         unit = item.get("unit") or ""
         source_type = _resolve_ascii(item.get("source_type") or "", lang)
         if isinstance(value, (int, float)):
-            value_text = _fmt_number(value)
+            value_text = _fmt_number(value, lang)
         else:
             value_text = _resolve_ascii(value, lang) or _label("na", lang)
         if unit:
-            unit_text = _resolve_ascii(unit, lang)
+            # AR localizes the unit token (and kills any U+00B2); EN keeps the
+            # exact ASCII-strip behavior so "m²" still drops as it did before.
+            unit_text = _localize_unit(unit, lang) if lang == "ar" else _resolve_ascii(unit, lang)
             if unit_text:
                 value_text = f"{value_text} {unit_text}"
         rows.append(
@@ -572,7 +647,7 @@ def _build_appendix_rows(
     income_components = excel_breakdown.get("y1_income_components")
     if isinstance(income_components, dict):
         for key in income_components.keys():
-            label = f"{_label('income_prefix', lang)} {str(key).replace('_', ' ')}"
+            label = f"{_label('income_prefix', lang)} {income_component_label(key, lang)}"
             rows.append(
                 {
                     "cells": [label, _label("rev_nla_rent_rate", lang)],
@@ -597,7 +672,7 @@ def _build_comps_rows(top_comps: List[Dict[str, Any]], lang: str = "en") -> List
             location = city
         elif district:
             location = district
-        price = _fmt_money(comp.get("price_per_m2"))
+        price = _fmt_money(comp.get("price_per_m2"), lang)
         if not any([comp_id, comp_date, location, price]):
             continue
         rows.append(
@@ -606,7 +681,7 @@ def _build_comps_rows(top_comps: List[Dict[str, Any]], lang: str = "en") -> List
                     comp_id or _label("na", lang),
                     comp_date or _label("na", lang),
                     location or "",
-                    f"{price} SAR/m2",
+                    f"{price} {_localize_unit('SAR/m2', lang)}",
                 ]
             }
         )
@@ -661,11 +736,11 @@ def build_memo_pdf(
 
     _draw_section_title(pdf, _label("totals_section", lang))
     metrics = [
-        (_label("land_value", lang), _fmt_money(cost_breakdown.get("land_cost") or totals.get("land_value"))),
-        (_label("total_capex", lang), _fmt_money(cost_breakdown.get("grand_total_capex"))),
-        (_label("annual_net_revenue", lang), _fmt_money(cost_breakdown.get("y1_income") or totals.get("revenues"))),
-        (_label("annual_noi", lang), _fmt_money(cost_breakdown.get("y1_noi"))),
-        (_label("unlevered_roi", lang), _fmt_percent(cost_breakdown.get("roi"), 1)),
+        (_label("land_value", lang), _fmt_money(cost_breakdown.get("land_cost") or totals.get("land_value"), lang)),
+        (_label("total_capex", lang), _fmt_money(cost_breakdown.get("grand_total_capex"), lang)),
+        (_label("annual_net_revenue", lang), _fmt_money(cost_breakdown.get("y1_income") or totals.get("revenues"), lang)),
+        (_label("annual_noi", lang), _fmt_money(cost_breakdown.get("y1_noi"), lang)),
+        (_label("unlevered_roi", lang), _fmt_percent(cost_breakdown.get("roi"), 1, lang)),
     ]
     metric_width = (pdf.w - pdf.l_margin - pdf.r_margin) / len(metrics)
     # RTL: draw the metric strip right-to-left (cells are center-aligned, so only
@@ -730,9 +805,9 @@ def build_memo_pdf(
         if compliant is None:
             compliant = parking_notes.get("compliant")
         parking_summary = [
-            (_label("parking_required_spaces", lang), _fmt_number(required)),
-            (_label("parking_provided_spaces", lang), _fmt_number(provided)),
-            (_label("parking_deficit", lang), _fmt_number(deficit)),
+            (_label("parking_required_spaces", lang), _fmt_number(required, lang)),
+            (_label("parking_provided_spaces", lang), _fmt_number(provided, lang)),
+            (_label("parking_deficit", lang), _fmt_number(deficit, lang)),
             (
                 _label("parking_compliant", lang),
                 _label("yes", lang)
