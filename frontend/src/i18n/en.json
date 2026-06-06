@@ -197,6 +197,8 @@
     "parkingNotesWarnings": "Notes / warnings",
     "parkingAutoAdjustment": "Auto-adjustment applied: {{detail}}",
     "parkingAutoAdjustmentIncrease": "Auto-adjustment applied: increased basement/parking area from {{from}} m² to {{to}} m² (×{{factor}})",
+    "parkingWarnAvgM2Missing": "Average unit size missing for some unit types; residential parking approximated from total residential area.",
+    "parkingWarnUnitMixMissing": "Unit mix not provided; residential parking approximated at one space per unit (assuming ~{{avg_unit_m2}} m² per unit).",
     "yieldBand": {
       "negative": "Negative",
       "lowSingleDigit": "Low single digit",

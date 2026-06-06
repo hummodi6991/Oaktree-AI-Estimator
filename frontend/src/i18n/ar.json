@@ -197,6 +197,8 @@
     "parkingNotesWarnings": "الملاحظات / التنبيهات",
     "parkingAutoAdjustment": "تم تطبيق تعديل تلقائي: {{detail}}",
     "parkingAutoAdjustmentIncrease": "تم تطبيق تعديل تلقائي: زيادة مساحة القبو/المواقف من {{from}} m² إلى {{to}} m² (×{{factor}})",
+    "parkingWarnAvgM2Missing": "متوسط مساحة الوحدة غير متوفر لبعض أنواع الوحدات؛ تم تقدير مواقف السكني من إجمالي المساحة السكنية.",
+    "parkingWarnUnitMixMissing": "مزيج الوحدات غير متوفر؛ تم تقدير مواقف السكني بموقف واحد لكل وحدة (بافتراض ~{{avg_unit_m2}} m² لكل وحدة).",
     "yieldBand": {
       "negative": "سلبي",
       "lowSingleDigit": "أحادي الرقم منخفض",
