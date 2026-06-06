@@ -279,6 +279,9 @@ def required_spaces_riyadh(
       - meta (dict) with rule provenance and warnings
     """
     warnings: List[str] = []
+    # Structured, presentation-agnostic mirror of `warnings` (Option C hybrid).
+    # Codes are semantic only; i18n key mapping/rendering happens on the frontend.
+    warning_items: List[Dict[str, Any]] = []
     by_component: Dict[str, int] = {}
 
     rule_map = {**DEFAULT_COMPONENT_RULE_MAP, **(component_rule_map or {})}
@@ -319,6 +322,7 @@ def required_spaces_riyadh(
                 if avg_m2 <= 0:
                     avg_m2 = approx_avg
                     warnings.append("unit_mix.avg_m2 missing; approximated from residential GFA ÷ total units")
+                    warning_items.append({"code": "avg_m2_missing", "params": {}})
                 if rule.get("type") == "apartments_size_threshold":
                     thr = _float(rule.get("threshold_m2"), 180.0)
                     spaces_per_unit = int(rule.get("spaces_large") if avg_m2 >= thr else rule.get("spaces_small"))
@@ -334,6 +338,9 @@ def required_spaces_riyadh(
             warnings.append(
                 "unit_mix missing/empty; residential parking approximated as 1 space per estimated unit "
                 f"(units≈ceil(residential_gfa/avg_unit_m2) with avg_unit_m2={avg_unit:g})"
+            )
+            warning_items.append(
+                {"code": "unit_mix_missing", "params": {"avg_unit_m2": avg_unit}}
             )
 
     # --- Non-residential components (per m2 GFA) ---
@@ -366,6 +373,7 @@ def required_spaces_riyadh(
         "ruleset_name": RIYADH_PARKING_RULESET_NAME,
         "source_url": RIYADH_PARKING_RULESET_SOURCE_URL,
         "warnings": warnings,
+        "warning_items": warning_items,
     }
     return total_required, by_component, meta
 

@@ -1595,7 +1595,15 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     const totals = (result?.totals ?? {}) as Record<string, unknown>;
     const resultNotes = (result?.notes ?? {}) as Record<string, unknown>;
     const breakdown = (resultNotes?.excel_breakdown ?? {}) as Record<string, unknown>;
-    const parkingMeta = (resultNotes?.parking ?? {}) as Record<string, unknown>;
+    // GET /estimates/{id} double-wraps as { notes: { ...actual notes... } }; POST is flat.
+    // Unwrap so parking lookups work for both shapes (mirrors ParkingSummary.unwrapNotes).
+    const nestedNotes =
+      resultNotes && typeof (resultNotes as any).notes === "object" && (resultNotes as any).notes
+        ? ((resultNotes as any).notes as Record<string, unknown>)
+        : undefined;
+    const parkingMeta = (resultNotes?.parking ??
+      nestedNotes?.parking ??
+      {}) as Record<string, unknown>;
 
     const firstString = (...vals: unknown[]): string | null => {
       for (const v of vals) {
@@ -1703,16 +1711,55 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
         ? (breakdown.parking_required_by_component as Record<string, unknown>)
         : null;
 
-    const warningCandidates = [
-      parkingMeta.warnings,
-      parkingMeta.warning,
-      resultNotes.parking_warnings,
-      breakdown.parking_warnings,
-      breakdown.warnings,
-    ];
-    const warnings = warningCandidates
-      .flatMap((candidate) => (Array.isArray(candidate) ? candidate : [candidate]))
-      .filter((candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0);
+    // Warnings live at parking.requirement_meta. Prefer structured warning_items
+    // (code → localized t()), fall back to the retained English `warnings` strings
+    // for legacy persisted rows or unknown codes. Never blank/crash.
+    const requirementMeta =
+      parkingMeta.requirement_meta && typeof parkingMeta.requirement_meta === "object"
+        ? (parkingMeta.requirement_meta as Record<string, unknown>)
+        : {};
+
+    const warningCodeKeyMap: Record<string, string> = {
+      avg_m2_missing: "excel.parkingWarnAvgM2Missing",
+      unit_mix_missing: "excel.parkingWarnUnitMixMissing",
+    };
+
+    const warningItems = Array.isArray(requirementMeta.warning_items)
+      ? (requirementMeta.warning_items as Array<Record<string, unknown>>)
+      : [];
+    const rawWarnings = Array.isArray(requirementMeta.warnings)
+      ? (requirementMeta.warnings as unknown[])
+      : [];
+
+    let resolvedWarnings: string[];
+    if (warningItems.length) {
+      resolvedWarnings = warningItems
+        .map((item, idx) => {
+          const code = typeof item?.code === "string" ? item.code : "";
+          const key = warningCodeKeyMap[code];
+          if (key) {
+            const params =
+              item?.params && typeof item.params === "object"
+                ? ({ ...(item.params as Record<string, unknown>) } as Record<string, unknown>)
+                : {};
+            // Match the parking tab's area formatting (integer, locale-aware).
+            if (typeof params.avg_unit_m2 === "number") {
+              params.avg_unit_m2 = formatNumberValue(params.avg_unit_m2, 0);
+            }
+            return t(key, params as Record<string, unknown>);
+          }
+          // Unknown code → raw English entry at the same index, if present; else skip.
+          const raw = rawWarnings[idx];
+          return typeof raw === "string" && raw.trim().length ? raw : null;
+        })
+        .filter((s): s is string => typeof s === "string" && s.trim().length > 0);
+    } else {
+      resolvedWarnings = rawWarnings.filter(
+        (s): s is string => typeof s === "string" && s.trim().length > 0,
+      );
+    }
+    // De-duplicate identical entries (producer :321 can append duplicates per unit row).
+    const warnings = Array.from(new Set(resolvedWarnings));
 
     return {
       required,
