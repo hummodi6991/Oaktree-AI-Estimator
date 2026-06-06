@@ -270,3 +270,92 @@ commit as its base.
 
 Mergeable after PR-5a (#1278) lands. The EN lock + parity tests are green, the AR render is
 verified from the rasterized output, and the diff is additive and AR-gated.
+
+---
+
+## 8. Addendum — Review Round 1 (git state, rebase plan, red-test, 5c note)
+
+### 8.1 Git state — verified against `origin/main`
+
+`origin/main` is at `ac5a8b435`. **PR-5a (#1278) is NOT merged to main**: `estimator_i18n.py`
+does not exist on main and `pdf.py` has no `lang` parameter / no `_shape_ar`. Verified:
+
+```
+git ls-tree origin/main -- app/services/estimator_i18n.py      # (empty → file absent)
+git grep -c 'lang: str = "en"' origin/main -- app/services/pdf.py   # no lang param on main
+git merge-base --is-ancestor ad6d300a0 origin/main             # NO — 5a commit not on main
+```
+
+Clarification of "merged 5a": last round I `git merge --ff-only`'d the **5a branch into this
+working branch**, i.e. carried the 5a commit `ad6d300a0` onto the stack — **not** a merge of
+5a into main. The branch is therefore a correct stack:
+
+```
+ac5a8b435  (origin/main HEAD)
+   └─ ad6d300a0  PR-5a: Arabic PDF scaffolding (carried; == #1278 head)
+        └─ 67cecfffc  PR-5b: font + shaping + RTL
+             └─ a75e247ec  docs: PR-5b report
+```
+
+**5b-only delta is clean** — `git diff --stat ad6d300a0 HEAD` shows only 5b files, and
+`estimator_i18n.py` appears as a **4-value modification**, not a re-introduction of the file
+(proof it sits on top of 5a, not a re-application of it):
+
+```
+ app/services/assets/fonts/NotoNaskhArabic-Bold.ttf    | Bin
+ app/services/assets/fonts/NotoNaskhArabic-Regular.ttf | Bin
+ app/services/assets/fonts/OFL.txt                     |  93 ++
+ app/services/estimator_i18n.py                        |   8 +-
+ app/services/pdf.py                                   | 246 ++++--
+ docs/PR-5b-arabic-pdf-render-core.md                  | 272 ++++++
+ requirements.txt                                      |   2 +
+ tests/test_export_pdf.py                              |   2 +
+ tests/test_pr5b_arabic_pdf_render.py                  | 139 +++
+```
+
+I deliberately did **not** rebase onto current main: with 5a still open, a rebase would *drop*
+`ad6d300a0`, leaving 5b's `pdf.py` importing a non-existent `estimator_i18n.py` — broken.
+
+### 8.2 Rebase plan (run when #1278 lands)
+
+If #1278 is **squash-merged**, main gets a new SHA ≠ `ad6d300a0`, so merging 5b as-is could
+re-apply / conflict on 5a's content. Correct procedure:
+
+```bash
+git fetch origin main
+# Replant ONLY the 5b commits; 5a's content now arrives via main's squash:
+git rebase --onto origin/main ad6d300a0 claude/arabic-pdf-font-shaping-rtl-OsZhe
+git diff origin/main...HEAD --stat   # confirm delta == 5b files only (no 5a re-application)
+make test                            # full suite in Codespace (see 8.3)
+git push --force-with-lease
+```
+
+(If #1278 is merge-committed rather than squashed, `ad6d300a0` becomes an ancestor of main and
+a plain `git merge origin/main` / fast-forward is enough; the `--onto` rebase is still safe.)
+
+### 8.3 "Red test on main" nuance
+
+`test_export_pdf.py::test_export_pdf_includes_excel_breakdown_from_wrapped_notes` only goes red
+**once 5a is on main** — 5a added `lang=lang` to the real `export_pdf` call but did not update
+the test's `build_memo_pdf` double. Today main is green there (5a unmerged); 5b carries the
+fix. Note this test runs **without a real DB** (it overrides `get_db` with a `DummySession`),
+so it *was* executable in this environment and passes — the full PDF/i18n slice is **212
+passed**. Action: run full `make test` in Codespace immediately after the rebase to confirm the
+entire suite (not just the PDF slice).
+
+### 8.4 `م²` / U+00B2 — confirmed font-coverage, queued for 5c
+
+This is **font coverage, not AR-vs-Latin**: Noto Naskh has no U+00B2, so even a Latin `m²`
+would drop its superscript in the AR document. The 5c fix is to **avoid U+00B2 entirely** and
+render the unit with a **baseline 2** — ASCII `2` or Arabic-Indic `٢` per the digit policy,
+both present in the vendored font. Folded into the 5c scope alongside the digit/unit policy.
+
+### 8.5 Still-open inputs for 5c (the final PR)
+
+1. **Digit/unit policy** — Arabic-Indic vs Latin digits; reconcile `ر.س`/`م²` vs `SAR`/`m²`
+   across labels + formatters; now also absorbing the U+00B2 → baseline-2 fix.
+2. **The `_ar [DB]` check** — confirm the AR narrative source columns.
+3. After both: the frontend `memoPdfUrl` `?lang` exposure that flips AR live (kept unexposed
+   through 5b).
+
+`python-bidi` (LGPL) remains flagged for the deps-review decision.
