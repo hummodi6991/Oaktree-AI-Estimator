@@ -250,7 +250,7 @@ export function memoPdfUrl(estimateId: string) {
 `downloadMemoPdf` calls `memoPdfUrl`, so it inherits `?lang`. The caller at
 `App.tsx:444` is unchanged. EN locale → `?lang=en` (unchanged PDF); AR locale →
 `?lang=ar` (the Arabic PDF). The backend endpoint already accepts
-`lang: Literal["en","ad"]` (`app/api/estimates.py`).
+`lang: Literal["en", "ar"]` (`app/api/estimates.py:2458`).
 
 ## 4. Files touched
 
@@ -342,12 +342,33 @@ green. CI runs `pytest` only — there is no black/flake8 gate, and the committe
 HEAD files are not black-formatted, so the patch deliberately matches the
 surrounding style instead of reformatting (smallest reviewable diff).
 
-### 5.5 Frontend
+### 5.5 Frontend build (run)
 
-`memoPdfUrl` / `downloadMemoPdf` now append `?lang=<en|ar>`; no other frontend
-code or test references them. (Local `tsc` not run — `node_modules` absent in the
-sandbox — but the import resolves to the existing default export in
-`src/i18n/index.ts`.)
+`npm ci && npm run build` (`tsc && vite build`) → **clean**:
+
+```
+✓ 578 modules transformed.
+dist/assets/index-*.js  1,713.51 kB │ gzip: 481.77 kB
+✓ built in 1m 12s
+```
+
+The new `import i18n from "./i18n"` resolves to the default export in
+`src/i18n/index.ts` and type-checks. `memoPdfUrl` / `downloadMemoPdf` now append
+`?lang=<en|ar>`; no other frontend code or test references them. Only output is
+the pre-existing chunk-size advisory (unrelated).
+
+### 5.6 Backend `lang` Literal (verified)
+
+The `?lang=ar` switch only works if the endpoint's `Literal` actually contains
+`"ar"`. Grepped the real signature:
+
+```
+app/api/estimates.py:2458:    lang: Literal["en", "ar"] = "en",
+```
+
+✓ Correct — `?lang=ar` validates. (An earlier draft of this report mistyped it
+as `Literal["en","ad"]`; the **code was always right**, the typo was only in the
+writeup and is fixed.)
 
 ## 6. Risk / tradeoffs
 
@@ -361,9 +382,35 @@ sandbox — but the import resolves to the existing default export in
 - **Document title** localization (`doc_title_prefix` → `تقدير`) was already
   wired in `app/api/estimates.py` and is untouched.
 
-## 7. Merge recommendation
+## 7. Pre-merge checklist
+
+| Check | Status |
+|---|---|
+| EN byte-identical (metadata-normalized `cmp`) | ✓ |
+| AR rasterize + eyeball (digits/units/leaks/truncation/RTL) | ✓ |
+| AR byte hygiene (0× U+06CC/U+06BE; no U+00B2 in output) | ✓ |
+| Backend `lang: Literal["en", "ar"]` (the `?lang=ar` gate) | ✓ verified |
+| Backend tests (`pytest`, 5 PDF/i18n modules) | ✓ 299 passed |
+| Frontend `npm ci && npm run build` (`tsc && vite build`) | ✓ clean |
+| Live two-locale smoke (AR link → AR PDF, EN → EN) | ⏳ post-deploy |
+
+The live smoke can only run after merge → deploy (deploy triggers on push to
+`main` per CLAUDE.md); it is the end-to-end proof and the place the `ar`/`ad`
+class of bug would surface — verified non-issue here at the source level.
+
+## 8. Merge recommendation
 
 **Recommend merge — low risk.** Solves all four reported AR-render problems,
 keeps EN byte-identical, flips the frontend go-live switch, and is validated
-against both a fixture and a rasterized AR page. Frontend/backend/test contracts
-stay aligned.
+against a fixture, a rasterized AR page, the backend `Literal`, the test suite,
+and a clean frontend build. Frontend/backend/test contracts stay aligned. The
+only remaining gate is the post-deploy live smoke.
+
+## 9. Parked follow-ups (optional, non-blocking)
+
+- On-screen formatting pass to apply this Arabic-units convention app-wide
+  (screen surface), matching the PDF.
+- `الإنشاء` / `التنفيذ` (construction/execution) term reconciliation.
+- `assumption.excel_method → طريقة إكسل` is a transliteration; if "excel method"
+  is a user-facing provenance value, `طريقة الحساب التفصيلية` reads better. It is
+  a fallback-tier label, fine to leave.
