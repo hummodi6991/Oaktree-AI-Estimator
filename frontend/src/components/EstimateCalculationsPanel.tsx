@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+
 type AnyObj = Record<string, unknown>;
 
 function fmtMoney(x: unknown): string {
@@ -32,6 +34,7 @@ type Props = {
 };
 
 export default function EstimateCalculationsPanel({ estimate }: Props) {
+  const { t } = useTranslation();
   if (!estimate) return null;
 
   const notes = (estimate.notes && typeof estimate.notes === "object" ? (estimate.notes as AnyObj) : {}) as AnyObj;
@@ -49,15 +52,15 @@ export default function EstimateCalculationsPanel({ estimate }: Props) {
   const roi = excel.roi ?? cost.roi;
 
   const rows: Array<{ label: string; value: string }> = [
-    { label: "Effective FAR (above-ground)", value: fmtNumber(farAbove) },
+    { label: t("excel.effectiveFar"), value: fmtNumber(farAbove) },
   ];
 
   const buas: Array<{ key: string; label: string }> = [
-    { key: "residential", label: "Residential BUA" },
-    { key: "retail", label: "Retail BUA" },
-    { key: "office", label: "Office BUA" },
-    { key: "basement", label: "Basement BUA" },
-    { key: "upper_annex_non_far", label: "Upper annex (non-FAR, +0.5 floor)" },
+    { key: "residential", label: t("excel.residentialBua") },
+    { key: "retail", label: t("excel.retailBua") },
+    { key: "office", label: t("excel.officeBua") },
+    { key: "basement", label: t("excel.basementBua") },
+    { key: "upper_annex_non_far", label: t("excel.upperAnnexNonFarBua") },
   ];
   for (const row of buas) {
     const value = builtArea[row.key];
@@ -85,8 +88,8 @@ export default function EstimateCalculationsPanel({ estimate }: Props) {
   const transaction = excel.transaction_cost ?? cost.transaction_cost;
   const totalCapex = excel.grand_total_capex ?? cost.grand_total_capex;
 
-  rows.push({ label: "Land cost", value: fmtMoney(landCost) });
-  rows.push({ label: "Construction (direct)", value: fmtMoney(constructionDirect) });
+  rows.push({ label: t("excel.landCost"), value: fmtMoney(landCost) });
+  rows.push({ label: t("excel.calcConstructionDirect"), value: fmtMoney(constructionDirect) });
 
   const upperAnnexArea = builtArea.upper_annex_non_far;
   const upperAnnexUnit = unitCost.upper_annex_non_far;
@@ -102,15 +105,15 @@ export default function EstimateCalculationsPanel({ estimate }: Props) {
   }
 
   if (Number.isFinite(upperAreaN) && upperAreaN > 0 && upperComputed !== undefined) {
-    rows.push({ label: "Upper annex construction cost (non-FAR)", value: fmtMoney(upperComputed) });
+    rows.push({ label: t("excel.upperAnnexNonFarCost"), value: fmtMoney(upperComputed) });
   }
 
-  rows.push({ label: "Fit-out", value: fmtMoney(fitout) });
-  rows.push({ label: "Contingency", value: fmtMoney(contingency) });
-  rows.push({ label: "Consultants", value: fmtMoney(consultants) });
-  rows.push({ label: "Feasibility fee", value: fmtMoney(feasibility) });
-  rows.push({ label: "Transaction costs", value: fmtMoney(transaction) });
-  rows.push({ label: "Total capex", value: fmtMoney(totalCapex) });
+  rows.push({ label: t("excel.fitout"), value: fmtMoney(fitout) });
+  rows.push({ label: t("excel.contingency"), value: fmtMoney(contingency) });
+  rows.push({ label: t("excel.consultants"), value: fmtMoney(consultants) });
+  rows.push({ label: t("excel.feasibilityFee"), value: fmtMoney(feasibility) });
+  rows.push({ label: t("excel.transactionCosts"), value: fmtMoney(transaction) });
+  rows.push({ label: t("excel.totalCapex"), value: fmtMoney(totalCapex) });
 
   const y1Income = excel.y1_income ?? cost.y1_income;
   const y1IncomeEff = excel.y1_income_effective ?? cost.y1_income_effective;
@@ -118,17 +121,17 @@ export default function EstimateCalculationsPanel({ estimate }: Props) {
   const opex = excel.opex_cost ?? cost.opex_cost;
   const y1Noi = excel.y1_noi ?? cost.y1_noi;
 
-  if (y1Income !== undefined) rows.push({ label: "Year-1 income", value: fmtMoney(y1Income) });
-  if (y1IncomeEff !== undefined) rows.push({ label: "Year-1 effective income", value: fmtMoney(y1IncomeEff) });
-  if (opexPct !== undefined) rows.push({ label: "OPEX %", value: fmtPct01(opexPct) });
-  if (opex !== undefined) rows.push({ label: "OPEX", value: fmtMoney(opex) });
-  if (y1Noi !== undefined) rows.push({ label: "Year-1 NOI", value: fmtMoney(y1Noi) });
-  if (roi !== undefined) rows.push({ label: "ROI", value: fmtPct01(roi) });
+  if (y1Income !== undefined) rows.push({ label: t("excel.calcYear1Income"), value: fmtMoney(y1Income) });
+  if (y1IncomeEff !== undefined) rows.push({ label: t("excel.calcYear1IncomeEffective"), value: fmtMoney(y1IncomeEff) });
+  if (opexPct !== undefined) rows.push({ label: t("excel.calcOpexPct"), value: fmtPct01(opexPct) });
+  if (opex !== undefined) rows.push({ label: t("excel.opex"), value: fmtMoney(opex) });
+  if (y1Noi !== undefined) rows.push({ label: t("excel.calcYear1Noi"), value: fmtMoney(y1Noi) });
+  if (roi !== undefined) rows.push({ label: t("excel.unleveredRoi"), value: fmtPct01(roi) });
 
   return (
-    <div className="ot-card calc-panel" aria-label="Calculations panel">
-      <h3 className="unit-cost-panel__title">Calculations</h3>
-      <div className="calc-panel__subtitle">Auto-populated from the estimate output</div>
+    <div className="ot-card calc-panel" aria-label={t("excel.calcPanelAria")}>
+      <h3 className="unit-cost-panel__title">{t("excel.calculationsTitle")}</h3>
+      <div className="calc-panel__subtitle">{t("excel.calcAutoPopulated")}</div>
       <div className="calc-panel__rows">
         {rows.map((row, idx) => (
           <div key={row.label} className={`calc-panel__row ${idx === 0 ? "is-first" : ""}`}>

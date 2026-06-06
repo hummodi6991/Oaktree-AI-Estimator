@@ -1207,9 +1207,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const fmtM2 = (value: number) =>
     new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
   const upperAnnexHintText = showUpperAnnexHint
-    ? `Includes upper annex: +${fmtM2(upperAnnexAreaM2)} m²${
-      upperAnnexNlaAddedM2 > 1e-6 ? ` (≈ ${fmtM2(upperAnnexNlaAddedM2)} m² NLA)` : ""
-    }`
+    ? t("excel.includesUpperAnnex", { area: fmtM2(upperAnnexAreaM2) }) +
+      (upperAnnexNlaAddedM2 > 1e-6 ? t("excel.upperAnnexNla", { nla: fmtM2(upperAnnexNlaAddedM2) }) : "")
     : "";
   const explanations =
     (isArabic
@@ -1819,7 +1818,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
     <span className="ui-v2-info">
       <button type="button" className="ui-v2-info__icon" aria-label={label}>i</button>
       <span className="ui-v2-info__tip" role="tooltip">
-        <strong>How we calculated:</strong>
+        <strong>{t("excel.howWeCalculated")}</strong>
         <span>{body || "—"}</span>
       </span>
     </span>
@@ -2022,11 +2021,11 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
             ? "uncertain"
             : "mid-single-digit";
   const yieldBandLabel: Record<string, string> = {
-    negative: "Negative",
-    "low-single-digit": "Low single digit",
-    "mid-single-digit": "Mid single digit",
-    "double-digit": "Double digit",
-    uncertain: "Uncertain",
+    negative: t("excel.yieldBand.negative"),
+    "low-single-digit": t("excel.yieldBand.lowSingleDigit"),
+    "mid-single-digit": t("excel.yieldBand.midSingleDigit"),
+    "double-digit": t("excel.yieldBand.doubleDigit"),
+    uncertain: t("excel.yieldBand.uncertain"),
   };
   const selectedResultsTab: ResultTab = mode === "v2" ? activeV2Tab : activeCalcTab;
 
@@ -2406,8 +2405,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
         <section className={mode === "v2" ? "calc-section ui-v2-results calc-shell oak-container" : "calc-section"}>
           {mode === "v2" ? (
             <>
-              <div className="ui-v2-results__titlebar calc-shell__header">Estimated Calculations</div>
-              <div className="ui-v2-results__tabs calc-shell__tabs calc-tabs" role="tablist" aria-label="Estimated calculations tabs">
+              <div className="ui-v2-results__titlebar calc-shell__header">{t("excel.estimatedCalculations")}</div>
+              <div className="ui-v2-results__tabs calc-shell__tabs calc-tabs" role="tablist" aria-label={t("excel.estimatedCalculationsTabs")}>
                 <button
                   type="button"
                   role="tab"
@@ -2500,7 +2499,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                     <div className="ui2-card atlas-summary-card atlas-card ui-v2-summary-card ui-v2-card ui-v2-card--elevated">
                       <div className="ui2-card__title atlas-card__title ui-v2-summary-card__title">{isArabic ? "العائد" : "Yield"}</div>
                       <div className="atlas-yield-main ui2-card__value">{yieldBandLabel[yieldBand]}</div>
-                      <div className="atlas-yield-helper ui2-card__sub">Unlevered Year 1 yield on cost</div>
+                      <div className="atlas-yield-helper ui2-card__sub">{t("excel.unleveredY1YieldOnCost")}</div>
                     </div>
                   </div>
                 </div>
@@ -2582,7 +2581,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       const builtUpRows = [
                         {
                           key: "residential",
-                          label: "Residential BUA",
+                          label: t("excel.residentialBua"),
                           value: resolveBuiltUpArea(
                             notesExcelBreakdown.bua_residential_m2,
                             breakdownBua.residential,
@@ -2594,7 +2593,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         },
                         {
                           key: "retail",
-                          label: "Retail BUA",
+                          label: t("excel.retailBua"),
                           value: resolveBuiltUpArea(
                             notesExcelBreakdown.bua_retail_m2,
                             breakdownBua.retail,
@@ -2606,7 +2605,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         },
                         {
                           key: "office",
-                          label: "Office BUA",
+                          label: t("excel.officeBua"),
                           value: resolveBuiltUpArea(
                             notesExcelBreakdown.bua_office_m2,
                             breakdownBua.office,
@@ -2618,7 +2617,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         },
                         {
                           key: "upperAnnex",
-                          label: "Upper annex non FAR +0.5 floor",
+                          label: t("excel.builtUpUpperAnnex"),
                           value: resolveBuiltUpArea(
                             notesExcelBreakdown.bua_upper_annex_non_far_m2,
                             breakdownBua.upper_annex_non_far,
@@ -2630,7 +2629,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         },
                         {
                           key: "basement",
-                          label: "Basement BUA",
+                          label: t("excel.basementBua"),
                           value: resolveBuiltUpArea(
                             notesExcelBreakdown.bua_basement_m2,
                             breakdownBua.basement,
@@ -2701,7 +2700,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                               <div className="ui-v2-accordion__body">
                                 <div className="ui-v2-rowList">
                                   <div className="ui-v2-row">
-                                    <span className="ui-v2-row__label">Coverage</span>
+                                    <span className="ui-v2-row__label">{t("excel.coverage")}</span>
                                     <span className="ui-v2-row__val ui-v2-costRow__controls">
                                       <Input
                                         type="number"
@@ -2721,7 +2720,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                             commitCoverage();
                                           }
                                         }}
-                                        aria-label="Coverage"
+                                        aria-label={t("excel.coverage")}
                                         className="ui-v2-costInput"
                                       />
                                       <span className="ui-v2-chip">%</span>
@@ -2729,7 +2728,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         {t("excel.apply")}
                                       </Button>
                                     </span>
-                                    <V2InfoTip label="Coverage info" body={coverageCalculationNote} />
+                                    <V2InfoTip label={t("excel.labelInfo", { label: t("excel.coverage") })} body={coverageCalculationNote} />
                                   </div>
                                   {coverageEditError && (
                                     <div className="ui-v2-costRow__error">
@@ -2738,7 +2737,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                   )}
 
                                   <div className="ui-v2-row">
-                                    <span className="ui-v2-row__label">Effective FAR above ground</span>
+                                    <span className="ui-v2-row__label">{t("excel.effectiveFarAboveGround")}</span>
                                     <span className="ui-v2-row__val ui-v2-costRow__controls">
                                       <Input
                                         type="text"
@@ -2768,7 +2767,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                             resetFarDraft();
                                           }
                                         }}
-                                        aria-label="Effective FAR above ground"
+                                        aria-label={t("excel.effectiveFarAboveGround")}
                                         className="ui-v2-costInput"
                                       />
                                       <Button type="button" size="sm" variant="secondary" onClick={applyFarEdit} disabled={farApplyDisabled}>
@@ -2776,7 +2775,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                       </Button>
                                     </span>
                                     <V2InfoTip
-                                      label="Effective FAR info"
+                                      label={t("excel.labelInfo", { label: t("excel.effectiveFarAboveGround") })}
                                       body={farNote}
                                     />
                                   </div>
@@ -2787,7 +2786,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                   )}
 
                                   <div className="ui-v2-row">
-                                    <span className="ui-v2-row__label">Floors above ground</span>
+                                    <span className="ui-v2-row__label">{t("excel.floorsAboveGround")}</span>
                                     <span className="ui-v2-row__val ui-v2-costRow__controls">
                                       <Input
                                         type="number"
@@ -2805,7 +2804,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                             commitFloors();
                                           }
                                         }}
-                                        aria-label="Floors above ground"
+                                        aria-label={t("excel.floorsAboveGround")}
                                         className="ui-v2-costInput"
                                       />
                                       <Button type="button" size="sm" variant="secondary" onClick={commitFloors} disabled={floorsApplyDisabled}>
@@ -2813,7 +2812,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                       </Button>
                                     </span>
                                     <V2InfoTip
-                                      label="Floors above ground info"
+                                      label={t("excel.labelInfo", { label: t("excel.floorsAboveGround") })}
                                       body={floorsNote}
                                     />
                                   </div>
@@ -2824,8 +2823,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                   )}
 
                                   <div className="ui-v2-row">
-                                    <span className="ui-v2-row__label">Massing locks</span>
-                                    <span className="ui-v2-row__val ui-v2-costRow__controls ui-v2-lockPills" role="radiogroup" aria-label="Massing locks">
+                                    <span className="ui-v2-row__label">{t("excel.massingLocks")}</span>
+                                    <span className="ui-v2-row__val ui-v2-costRow__controls ui-v2-lockPills" role="radiogroup" aria-label={t("excel.massingLocks")}>
                                       <button
                                         type="button"
                                         className={`ui-v2-lockPill ${massingLock === "floors" ? "is-active" : ""}`}
@@ -2835,7 +2834,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         onKeyDown={(event) => handleMassingLockArrowNav("floors", event)}
                                         onClick={() => applyInputPatch({ massing_lock: "floors" }, true)}
                                       >
-                                        Lock Floors
+                                        {t("excel.lockFloors")}
                                       </button>
                                       <button
                                         type="button"
@@ -2846,7 +2845,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         onKeyDown={(event) => handleMassingLockArrowNav("far", event)}
                                         onClick={() => applyInputPatch({ massing_lock: "far" }, true)}
                                       >
-                                        Lock FAR
+                                        {t("excel.lockFar")}
                                       </button>
                                       <button
                                         type="button"
@@ -2857,10 +2856,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         onKeyDown={(event) => handleMassingLockArrowNav("coverage", event)}
                                         onClick={() => applyInputPatch({ massing_lock: "coverage" }, true)}
                                       >
-                                        Lock Coverage
+                                        {t("excel.lockCoverage")}
                                       </button>
                                     </span>
-                                    <V2InfoTip label="Massing locks info" body={massingLockCalculationNote} />
+                                    <V2InfoTip label={t("excel.labelInfo", { label: t("excel.massingLocks") })} body={massingLockCalculationNote} />
                                   </div>
                                 </div>
                               </div>
@@ -2892,7 +2891,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                       <span className="ui-v2-row__val">
                                         {row.value != null ? formatAreaM2(row.value) : "—"}
                                       </span>
-                                      <V2InfoTip label={`Info for ${row.label}`} body={buaNote(row.key)} />
+                                      <V2InfoTip label={t("excel.infoFor", { label: row.label })} body={buaNote(row.key)} />
                                     </div>
                                   ))}
                                 </div>
@@ -2923,7 +2922,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                     <span className="ui-v2-row__label">{t("excel.landCost")}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(landCostAmount)}</span>
                                     <V2InfoTip
-                                      label={`${t("excel.landCost")} info`}
+                                      label={t("excel.labelInfo", { label: t("excel.landCost") })}
                                       body={landNote}
                                     />
                                   </div>
@@ -2931,7 +2930,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                     <span className="ui-v2-row__label">{directConstructionLabel}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(directConstruction)}</span>
                                     <V2InfoTip
-                                      label={`${directConstructionLabel} info`}
+                                      label={t("excel.labelInfo", { label: directConstructionLabel })}
                                       body={directConstructionCalculationNote}
                                     />
                                   </div>
@@ -2942,7 +2941,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         {upperAnnexConstruction != null ? formatCurrencySAR(upperAnnexConstruction) : "—"}
                                       </span>
                                       <V2InfoTip
-                                        label={`${upperAnnexConstructionLabel} info`}
+                                        label={t("excel.labelInfo", { label: upperAnnexConstructionLabel })}
                                         body={upperAnnexCostNote ?? "—"}
                                       />
                                     </div>
@@ -2953,7 +2952,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         {upperAnnexConstruction != null ? formatCurrencySAR(upperAnnexConstruction) : "—"}
                                       </span>
                                       <V2InfoTip
-                                        label={`${upperAnnexConstructionLabel} info`}
+                                        label={t("excel.labelInfo", { label: upperAnnexConstructionLabel })}
                                         body={upperAnnexCostNote ?? "—"}
                                       />
                                     </div>
@@ -2961,13 +2960,13 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">{fitoutLabel}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(fitoutCost)}</span>
-                                    <V2InfoTip label={`${fitoutLabel} info`} body={fitoutNote} />
+                                    <V2InfoTip label={t("excel.labelInfo", { label: fitoutLabel })} body={fitoutNote} />
                                   </div>
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">{t("excel.transactionCosts")}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(transactionCost)}</span>
                                     <V2InfoTip
-                                      label={`${t("excel.transactionCosts")} info`}
+                                      label={t("excel.labelInfo", { label: t("excel.transactionCosts") })}
                                       body={transactionNote}
                                     />
                                   </div>
@@ -2998,17 +2997,17 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">{t("excel.contingency")}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(contingencyCost)}</span>
-                                    <V2InfoTip label={`${t("excel.contingency")} info`} body={contingencyNote} />
+                                    <V2InfoTip label={t("excel.labelInfo", { label: t("excel.contingency") })} body={contingencyNote} />
                                   </div>
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">{t("excel.consultants")}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(consultantsCost)}</span>
-                                    <V2InfoTip label={`${t("excel.consultants")} info`} body={consultantsNote} />
+                                    <V2InfoTip label={t("excel.labelInfo", { label: t("excel.consultants") })} body={consultantsNote} />
                                   </div>
                                   <div className="ui-v2-row">
                                     <span className="ui-v2-row__label">{feasibilityFeeLabel}</span>
                                     <span className="ui-v2-row__val">{formatCurrencySAR(feasibilityFee)}</span>
-                                    <V2InfoTip label={`${feasibilityFeeLabel} info`} body={feasibilityNote} />
+                                    <V2InfoTip label={t("excel.labelInfo", { label: feasibilityFeeLabel })} body={feasibilityNote} />
                                   </div>
                                 </div>
                               </div>
@@ -3406,7 +3405,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       ) : (
                         <ChevronRightIcon className="ui-v2-accordion__chev" />
                       )}
-                      <span className="ui-v2-accordion__title">Rental Revenue by Asset Class</span>
+                      <span className="ui-v2-accordion__title">{t("excel.rentalRevenueByAssetClass")}</span>
                     </button>
                     {v2RevenueSections.rental && (
                       <div className="ui-v2-accordion__body">
@@ -3420,15 +3419,15 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                   {item?.key && !["residential", "retail", "office"].includes(item.key) && hasIncludedComponent(item.key) ? includedBadge : null}
                                 </span>
                                 <span className="ui-v2-row__val">{formatCurrencySAR(item?.amount || 0)}</span>
-                                <V2InfoTip label={`Info ${key}`} body={(item?.note || "").trim() || "—"} />
+                                <V2InfoTip label={t("excel.infoFor", { label: prettifyRevenueKey(item?.label || key) })} body={(item?.note || "").trim() || "—"} />
                               </div>
                             );
                           })}
                         </div>
                         {revenueItems.find((item) => item.upperAnnexHint)?.upperAnnexHint && (
                           <div className="ui-v2-revNote">
-                            Note: {revenueItems.find((item) => item.upperAnnexHint)?.upperAnnexHint}
-                            {upperAnnexAllocatedLabel ? ` — allocated to ${upperAnnexAllocatedLabel}` : ""}
+                            {t("excel.revenueNotePrefix")} {revenueItems.find((item) => item.upperAnnexHint)?.upperAnnexHint}
+                            {upperAnnexAllocatedLabel ? t("excel.revenueAllocatedTo", { target: upperAnnexAllocatedLabel }) : ""}
                           </div>
                         )}
                       </div>
@@ -3452,18 +3451,18 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       ) : (
                         <ChevronRightIcon className="ui-v2-accordion__chev" />
                       )}
-                      <span className="ui-v2-accordion__title">Income Summary</span>
+                      <span className="ui-v2-accordion__title">{t("excel.incomeSummary")}</span>
                     </button>
                     {v2RevenueSections.income && (
                       <div className="ui-v2-accordion__body">
                         <div className="ui-v2-rowList">
                           <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">Annual Net Revenue</span>
+                            <span className="ui-v2-row__label">{t("excel.year1Income")}</span>
                             <span className="ui-v2-row__val">{formatCurrencySAR(excelResult.costs.y1_income)}</span>
-                            <V2InfoTip label="Annual Net Revenue info" body={incomeNote || "—"} />
+                            <V2InfoTip label={t("excel.labelInfo", { label: t("excel.year1Income") })} body={incomeNote || "—"} />
                           </div>
                           <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">Annual Net Income</span>
+                            <span className="ui-v2-row__label">{t("excel.annualNetIncome")}</span>
                             <span className="ui-v2-row__val ui-v2-costRow__controls">
                               {formatCurrencySAR(excelResult.costs.y1_income_effective ?? effectiveIncome)}
                               <Input
@@ -3494,10 +3493,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                 {t("common.apply")}
                               </Button>
                             </span>
-                            <V2InfoTip label="Annual Net Income info" body={y1IncomeEffectiveNote || "—"} />
+                            <V2InfoTip label={t("excel.labelInfo", { label: t("excel.annualNetIncome") })} body={y1IncomeEffectiveNote || "—"} />
                           </div>
                           <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">OPEX</span>
+                            <span className="ui-v2-row__label">{t("excel.opex")}</span>
                             <span className="ui-v2-row__val ui-v2-costRow__controls">
                               {formatCurrencySAR(opexCostResolved)}
                               <button
@@ -3537,12 +3536,12 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                 {t("common.apply")}
                               </Button>
                             </span>
-                            <V2InfoTip label="OPEX info" body={opexNote || "—"} />
+                            <V2InfoTip label={t("excel.labelInfo", { label: t("excel.opex") })} body={opexNote || "—"} />
                           </div>
                           <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">Annual NOI</span>
+                            <span className="ui-v2-row__label">{t("excel.noiYear1")}</span>
                             <span className="ui-v2-row__val">{formatCurrencySAR(y1NoiUiClamped)}</span>
-                            <V2InfoTip label="Annual NOI info" body={t("excelNotes.noiYear1")} />
+                            <V2InfoTip label={t("excel.labelInfo", { label: t("excel.noiYear1") })} body={t("excelNotes.noiYear1")} />
                           </div>
                         </div>
                       </div>
@@ -3566,20 +3565,20 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       ) : (
                         <ChevronRightIcon className="ui-v2-accordion__chev" />
                       )}
-                      <span className="ui-v2-accordion__title">Investment Performance</span>
+                      <span className="ui-v2-accordion__title">{t("excel.investmentPerformance")}</span>
                     </button>
                     {v2RevenueSections.performance && (
                       <div className="ui-v2-accordion__body">
                         <div className="ui-v2-rowList">
                           <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">ROI</span>
+                            <span className="ui-v2-row__label">{t("excel.unleveredRoi")}</span>
                             <span className="ui-v2-row__val">{formatPercentValue(roiNoiUi)}</span>
-                            <V2InfoTip label="ROI info" body={t("excelNotes.roiNoiFormula")} />
+                            <V2InfoTip label={t("excel.labelInfo", { label: t("excel.unleveredRoi") })} body={t("excelNotes.roiNoiFormula")} />
                           </div>
                           <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">Yield</span>
+                            <span className="ui-v2-row__label">{t("excel.yield")}</span>
                             <span className="ui-v2-row__val">{formatPercentValue(yieldNoi, 1)}</span>
-                            <V2InfoTip label="Yield info" body="Yield is annual NOI divided by total CAPEX." />
+                            <V2InfoTip label={t("excel.labelInfo", { label: t("excel.yield") })} body={t("excel.yieldInfoBody")} />
                           </div>
                         </div>
                       </div>
@@ -3750,73 +3749,74 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
                     return (
                       <div>
-                        <div className="ui-v2-sectionTitle">Parking</div>
+                        <div className="ui-v2-sectionTitle">{t("parking.title")}</div>
 
                         <div className="ui-v2-rowList">
                           <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">Required spaces (Riyadh minimum)</span>
+                            <span className="ui-v2-row__label">{t("excel.parkingRequiredSpaces")}</span>
                             <span className="ui-v2-row__val">
                               {parking.required == null ? "—" : formatNumberValue(parking.required, 0)}
                             </span>
                             <V2InfoTip
-                              label="Required spaces info"
-                              body="Calculated from Riyadh municipality minimum parking ratios per use."
+                              label={t("excel.labelInfo", { label: t("excel.parkingRequiredSpaces") })}
+                              body={t("excel.parkingRequiredSpacesBody")}
                             />
                           </div>
 
                           <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">Provided spaces (from basement/parking area)</span>
+                            <span className="ui-v2-row__label">{t("excel.parkingProvidedSpaces")}</span>
                             <span className="ui-v2-row__val">
                               {parking.provided == null ? "—" : formatNumberValue(parking.provided, 0)}
                             </span>
                             <V2InfoTip
-                              label="Provided spaces info"
-                              body="Derived from allocated basement/parking area divided by m² per space."
+                              label={t("excel.labelInfo", { label: t("excel.parkingProvidedSpaces") })}
+                              body={t("excel.parkingProvidedSpacesBody")}
                             />
                           </div>
 
                           <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">Deficit</span>
+                            <span className="ui-v2-row__label">{t("excel.parkingDeficit")}</span>
                             <span className="ui-v2-row__val">
                               {parking.deficit == null ? "—" : formatNumberValue(parking.deficit, 0)}
                             </span>
-                            <V2InfoTip label="Deficit info" body="Required spaces minus provided spaces." />
+                            <V2InfoTip label={t("excel.labelInfo", { label: t("excel.parkingDeficit") })} body={t("excel.parkingDeficitBody")} />
                           </div>
 
                           <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">Compliant</span>
+                            <span className="ui-v2-row__label">{t("excel.parkingCompliant")}</span>
                             <span className="ui-v2-row__val">
-                              {parking.compliant == null ? "—" : parking.compliant ? "Yes" : "No"}
+                              {parking.compliant == null ? "—" : parking.compliant ? t("common.yes") : t("common.no")}
                             </span>
                             <V2InfoTip
-                              label="Compliance info"
-                              body="Project is compliant when parking deficit is 0."
+                              label={t("excel.labelInfo", { label: t("excel.parkingCompliant") })}
+                              body={t("excel.parkingComplianceBody")}
                             />
                           </div>
 
                           <div className="ui-v2-row">
-                            <span className="ui-v2-row__label">Parking area counted (m²)</span>
+                            <span className="ui-v2-row__label">{t("excel.parkingAreaCounted")}</span>
                             <span className="ui-v2-row__val">
                               {parking.parkingAreaM2 == null ? "—" : formatNumberValue(parking.parkingAreaM2, 0)}
                             </span>
                             <V2InfoTip
-                              label="Parking area info"
-                              body="Total parking area counted in compliance calculation."
+                              label={t("excel.labelInfo", { label: t("excel.parkingAreaCounted") })}
+                              body={t("excel.parkingAreaBody")}
                             />
                           </div>
 
                         </div>
 
                         {parking.autoAdjustment ? (
-                          <div className="ui2-parking-auto-note">Auto-adjustment applied: {parking.autoAdjustment}</div>
+                          <div className="ui2-parking-auto-note">{t("excel.parkingAutoAdjustment", { detail: parking.autoAdjustment })}</div>
                         ) : parking.basementIncreased &&
                           parking.baselineBasementAreaM2 != null &&
                           parking.parkingAreaM2 != null ? (
                           <div className="ui2-parking-auto-note">
-                            Auto-adjustment applied: increased basement/parking area from{" "}
-                            {formatNumberValue(parking.baselineBasementAreaM2, 0)} m² to{" "}
-                            {formatNumberValue(parking.parkingAreaM2, 0)} m² (×
-                            {parking.basementIncreaseFactor!.toFixed(3)})
+                            {t("excel.parkingAutoAdjustmentIncrease", {
+                              from: formatNumberValue(parking.baselineBasementAreaM2, 0),
+                              to: formatNumberValue(parking.parkingAreaM2, 0),
+                              factor: parking.basementIncreaseFactor!.toFixed(3),
+                            })}
                           </div>
                         ) : null}
 
@@ -3838,7 +3838,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                               ) : (
                                 <ChevronRightIcon className="ui-v2-accordion__chev" />
                               )}
-                              <span className="ui-v2-accordion__title">Required by component</span>
+                              <span className="ui-v2-accordion__title">{t("excel.parkingRequiredByComponent")}</span>
                             </button>
                             {v2ParkingSections.requiredByComponent ? (
                               <div className="ui-v2-accordion__body">
@@ -3874,7 +3874,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             ) : (
                               <ChevronRightIcon className="ui-v2-accordion__chev" />
                             )}
-                            <span className="ui-v2-accordion__title">Notes / warnings</span>
+                            <span className="ui-v2-accordion__title">{t("excel.parkingNotesWarnings")}</span>
                           </button>
                           {v2ParkingSections.notes ? (
                             <div className="ui-v2-accordion__body">
@@ -3887,7 +3887,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                               ) : (
                                 <div className="ui-v2-rowList">
                                   <div className="ui-v2-row">
-                                    <span className="ui-v2-row__label">No parking warnings reported.</span>
+                                    <span className="ui-v2-row__label">{t("excel.noParkingWarnings")}</span>
                                   </div>
                                 </div>
                               )}
