@@ -27,6 +27,11 @@
       "residential": "Residential",
       "mixed": "Mixed/Commercial"
     },
+    "landuseMethod": {
+      "parcelLabel": "ArcGIS parcel label",
+      "suhailZoning": "Suhail zoning",
+      "osmOverlay": "OSM overlay"
+    },
     "modeExpansion": "Expansion Advisor",
     "modeFeasibility": "Development Feasibility",
     "expansionSubtitle": "Find the best next branch for your F&B brand"
@@ -79,6 +84,7 @@
     "componentResidential": "Residential",
     "componentRetail": "Retail",
     "componentOffice": "Office",
+    "componentBasement": "Basement",
     "financialBreakdown": "Financial breakdown",
     "calculationsTitle": "Calculations",
     "financialSummaryTitle": "Financial Summary",

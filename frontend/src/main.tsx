@@ -92,11 +92,11 @@ function App() {
   const formatLanduseMethod = (method?: string | null): string => {
     switch (method) {
       case "parcel_label":
-        return "ArcGIS parcel label";
+        return t("app.landuseMethod.parcelLabel");
       case "suhail_overlay":
-        return "Suhail zoning";
+        return t("app.landuseMethod.suhailZoning");
       case "osm_overlay":
-        return "OSM overlay";
+        return t("app.landuseMethod.osmOverlay");
       default:
         return "—";
     }
@@ -105,16 +105,10 @@ function App() {
   const codeLabel = (() => {
     const selectedLandUse = parcel?.landuse_code?.trim().toLowerCase();
     if (selectedLandUse === "s") {
-      return t("app.landUseCodeLabel", {
-        code: "s",
-        label: t("app.landUse.residential"),
-      });
+      return t("app.landUse.residential");
     }
     if (selectedLandUse === "m") {
-      return t("app.landUseCodeLabel", {
-        code: "m",
-        label: t("app.landUse.mixed"),
-      });
+      return t("app.landUse.mixed");
     }
     return t("common.notAvailable");
   })();

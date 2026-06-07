@@ -27,6 +27,11 @@
       "residential": "سكني",
       "mixed": "مختلط/تجاري"
     },
+    "landuseMethod": {
+      "parcelLabel": "وسم قطعة ArcGIS",
+      "suhailZoning": "تقسيم مناطق Suhail",
+      "osmOverlay": "طبقة OSM"
+    },
     "modeExpansion": "مستشار التوسع",
     "modeFeasibility": "جدوى التطوير",
     "expansionSubtitle": "اعثر على أفضل فرع تالي لعلامتك التجارية"
@@ -79,6 +84,7 @@
     "componentResidential": "سكني",
     "componentRetail": "تجاري",
     "componentOffice": "مكتبي",
+    "componentBasement": "قبو",
     "financialBreakdown": "التفصيل المالي",
     "calculationsTitle": "الحسابات",
     "financialSummaryTitle": "الملخص المالي",
@@ -99,7 +105,7 @@
     "residentialBua": "مساحة البناء السكنية",
     "retailBua": "مساحة البناء التجارية",
     "officeBua": "مساحة البناء المكتبية",
-    "upperAnnexNonFarBua": "الملحق العلوي (غير محسوب في FAR، +0.5 طابق)",
+    "upperAnnexNonFarBua": "الملحق العلوي (غير محسوب في معامل الكثافة، +0.5 طابق)",
     "basementBua": "مساحة البناء للقبو",
     "landCost": "تكلفة الأرض",
     "constructionDirect": "الإنشاء (مباشر)",
@@ -109,8 +115,8 @@
     "unitCostRetail": "تجاري (ر.س/م²)",
     "unitCostOffice": "مكتبي (ر.س/م²)",
     "unitCostBasement": "قبو (ر.س/م²)",
-    "unitCostUpperAnnexNonFar": "تكلفة وحدة الملحق العلوي (غير محسوب في FAR)",
-    "upperAnnexNonFarCost": "تكلفة إنشاء الملحق العلوي (غير محسوب في FAR)",
+    "unitCostUpperAnnexNonFar": "تكلفة وحدة الملحق العلوي (غير محسوب في معامل الكثافة)",
+    "upperAnnexNonFarCost": "تكلفة إنشاء الملحق العلوي (غير محسوب في معامل الكثافة)",
     "fitout": "التجهيزات",
     "fitoutIncluded": "مشمولة",
     "fitoutExcluded": "مستبعدة",
@@ -231,7 +237,7 @@
     "revenueNoteDash": "—",
     "totalCapexFormula": "{{pct}} من صافي دخل السنة الأولى ÷ إجمالي النفقات الرأسمالية",
     "roiNoiFormula": "NOI للسنة الأولى ÷ إجمالي النفقات الرأسمالية",
-    "coverageMassing": "تُستخدم مع FAR لاستنتاج عدد الأدوار فوق الأرض.",
+    "coverageMassing": "تُستخدم مع معامل الكثافة لاستنتاج عدد الأدوار فوق الأرض.",
     "massingLocks": "اختر مُحرّكًا واحدًا فقط لتحديثات الكتلة."
   },
   "parking": {

@@ -1321,7 +1321,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
   useEffect(() => {
     if (!isEditingFar && displayedFar != null) {
-      setFarDraft(String(displayedFar));
+      setFarDraft(String(roundTo(Number(displayedFar), 2)));
     }
   }, [displayedFar, isEditingFar]);
 
@@ -1777,7 +1777,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   };
 
   const resetFarDraft = () => {
-    setFarDraft(displayedFar != null ? String(displayedFar) : "");
+    setFarDraft(displayedFar != null ? String(roundTo(Number(displayedFar), 2)) : "");
   };
 
   const cancelFarEdit = () => {
@@ -1822,7 +1822,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const startFarEdit = () => {
     if (displayedFar == null) return;
     setFarEditError(null);
-    setFarDraft(String(displayedFar));
+    setFarDraft(String(roundTo(Number(displayedFar), 2)));
     setIsEditingFar(true);
   };
   const normalizedFarDraft = normalize2Decimals(farDraft);
@@ -1861,6 +1861,20 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   });
   const includedBadge = <span className="ui-v2-pill">{isArabic ? "مُدرج" : "Included"}</span>;
   const prettifyRevenueKey = (key: string) => key.replace(/_/g, " ");
+  // Asset-class / parking component labels. Reuses the same component vocabulary
+  // as the summary unit-mix cards and construction panel so Revenue and Parking
+  // rows render سكني/تجاري/مكتبي/قبو instead of raw English keys. Any key not in
+  // the map falls back to the prettified key so an unknown component never blanks.
+  const componentLabelKeys: Record<string, string> = {
+    residential: "excel.componentResidential",
+    retail: "excel.componentRetail",
+    office: "excel.componentOffice",
+    basement: "excel.componentBasement",
+  };
+  const componentLabel = (key: string) => {
+    const translationKey = componentLabelKeys[key];
+    return translationKey ? t(translationKey) : prettifyRevenueKey(key);
+  };
   const V2InfoTip = ({ label, body }: { label: string; body: ReactNode }) => (
     <span className="ui-v2-info">
       <button type="button" className="ui-v2-info__icon" aria-label={label}>i</button>
@@ -2601,7 +2615,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       const directConstructionLabel = i18n.exists("excel.directConstruction")
                         ? t("excel.directConstruction")
                         : isArabic
-                          ? "التنفيذ المباشر"
+                          ? "الإنشاء (مباشر)"
                           : "Direct construction";
                       const fitoutLabel = i18n.exists("excel.fitout")
                         ? t("excel.fitout")
@@ -2719,10 +2733,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                         directCostUpperAnnex != null ||
                         (upperAnnexConstruction != null && directConstruction >= upperAnnexConstruction && directConstruction > 0);
                       const upperAnnexConstructionLabel = isArabic
-                        ? "تكلفة إنشاء الملحق العلوي (غير محتسب في FAR)"
+                        ? "تكلفة إنشاء الملحق العلوي (غير محتسب في معامل الكثافة)"
                         : "Upper annex construction (non-FAR)";
                       const upperAnnexIncludedLabel = isArabic
-                        ? "↳ تكلفة الملحق العلوي (مضمنة ضمن التنفيذ المباشر)"
+                        ? "↳ تكلفة الملحق العلوي (مضمنة ضمن الإنشاء (مباشر))"
                         : "↳ Upper annex construction (included in Direct construction)";
 
                       return (
@@ -3462,11 +3476,11 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             return (
                               <div key={key} className="ui-v2-row">
                                 <span className="ui-v2-row__label">
-                                  <span>{prettifyRevenueKey(item?.label || key)}</span>
+                                  <span>{componentLabel(key)}</span>
                                   {item?.key && !["residential", "retail", "office"].includes(item.key) && hasIncludedComponent(item.key) ? includedBadge : null}
                                 </span>
                                 <span className="ui-v2-row__val">{formatCurrencySAR(item?.amount || 0)}</span>
-                                <V2InfoTip label={t("excel.infoFor", { label: prettifyRevenueKey(item?.label || key) })} body={(item?.note || "").trim() || "—"} />
+                                <V2InfoTip label={t("excel.infoFor", { label: componentLabel(key) })} body={(item?.note || "").trim() || "—"} />
                               </div>
                             );
                           })}
@@ -3892,7 +3906,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                 <div className="ui-v2-rowList">
                                   {Object.entries(parking.requiredByComponent).map(([key, value]) => (
                                     <div key={key} className="ui-v2-row">
-                                      <span className="ui-v2-row__label">{key}</span>
+                                      <span className="ui-v2-row__label">{componentLabel(key)}</span>
                                       <span className="ui-v2-row__val">
                                         {toNumericOrNull(value) == null ? "—" : formatNumberValue(toNumericOrNull(value), 0)}
                                       </span>
