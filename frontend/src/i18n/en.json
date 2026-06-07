@@ -214,6 +214,9 @@
     }
   },
   "excelNotes": {
+    "upperAnnexCost": "{{area}} m² × {{cost}} SAR/m².",
+    "floorsScaling": "Used to scale above-ground area ratios when FAR is not manually overridden.",
+    "floorsScalingDisabled": "Skipped because FAR was manually overridden.",
     "siteAreaRatio": "{{area}} m² × ratio {{ratio}}",
     "buaFallback": "Built-up area from ratios",
     "landCost": "{{area}} m² × {{price}} SAR/m² ({{source}})",

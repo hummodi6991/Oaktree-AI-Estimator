@@ -30,11 +30,22 @@ export const formatInteger = (value: number | string | null | undefined, fallbac
 export const formatCurrencySAR = (value: number | string | null | undefined, fallback = FALLBACK_VALUE) => {
   const num = parseNumber(value);
   if (num == null) return fallback;
-  return new Intl.NumberFormat(resolveNumberLocale(), {
+  const formatter = new Intl.NumberFormat(resolveNumberLocale(), {
     style: "currency",
     currency: "SAR",
     maximumFractionDigits: 0,
-  }).format(num);
+  });
+  if (!isArabicLocale(i18n.language)) {
+    return formatter.format(num);
+  }
+  // AR: keep Intl's Arabic-Indic digit shaping and the directional marks it
+  // injects for correct RTL ordering, but render the bare `ر.س` symbol instead
+  // of Intl's trailing-dot `ر.س.` form, for parity with the PDF and the unit
+  // strings (`ر.س/م²`).
+  return formatter
+    .formatToParts(num)
+    .map((part) => (part.type === "currency" ? "ر.س" : part.value))
+    .join("");
 };
 
 export const formatAreaM2 = (value: number | string | null | undefined, options?: Intl.NumberFormatOptions, fallback = FALLBACK_VALUE) => {

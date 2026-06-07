@@ -183,8 +183,8 @@
     "investmentPerformance": "أداء الاستثمار",
     "yieldInfoBody": "العائد = صافي الدخل التشغيلي السنوي ÷ إجمالي النفقات الرأسمالية.",
     "noParkingWarnings": "لا توجد تنبيهات بشأن المواقف.",
-    "includesUpperAnnex": "يشمل الملحق العلوي: +{{area}} m²",
-    "upperAnnexNla": " (≈ {{nla}} m² NLA)",
+    "includesUpperAnnex": "يشمل الملحق العلوي: +{{area}} م²",
+    "upperAnnexNla": " (≈ {{nla}} م² NLA)",
     "revenueNotePrefix": "ملاحظة:",
     "revenueAllocatedTo": " — مخصّص إلى {{target}}",
     "labelInfo": "معلومات {{label}}",
@@ -202,7 +202,7 @@
     "parkingRequiredByComponent": "المطلوب حسب المكوّن",
     "parkingNotesWarnings": "الملاحظات / التنبيهات",
     "parkingAutoAdjustment": "تم تطبيق تعديل تلقائي: {{detail}}",
-    "parkingAutoAdjustmentIncrease": "تم تطبيق تعديل تلقائي: زيادة مساحة القبو/المواقف من {{from}} m² إلى {{to}} m² (×{{factor}})",
+    "parkingAutoAdjustmentIncrease": "تم تطبيق تعديل تلقائي: زيادة مساحة القبو/المواقف من {{from}} م² إلى {{to}} م² (×{{factor}})",
     "parkingWarnAvgM2Missing": "متوسط مساحة الوحدة غير متوفر لبعض أنواع الوحدات؛ تم تقدير مواقف السكني من إجمالي المساحة السكنية.",
     "parkingWarnUnitMixMissing": "مزيج الوحدات غير متوفر؛ تم تقدير مواقف السكني بموقف واحد لكل وحدة (بافتراض ~{{avg_unit_m2}} m² لكل وحدة).",
     "yieldBand": {
@@ -214,6 +214,9 @@
     }
   },
   "excelNotes": {
+    "upperAnnexCost": "{{area}} م² × {{cost}} ر.س/م².",
+    "floorsScaling": "يُستخدم لقياس نسب المساحة فوق الأرض عند عدم تجاوز معامل البناء يدويًا.",
+    "floorsScalingDisabled": "تم التخطي لأن معامل البناء تم تجاوزه يدويًا.",
     "siteAreaRatio": "مساحة الموقع {{area}} م² × نسبة المساحة {{ratio}}",
     "buaFallback": "مساحة البناء بناءً على النسب المُدخلة",
     "landCost": "مساحة الموقع {{area}} م² × {{price}} ر.س/م² ({{source}})",
