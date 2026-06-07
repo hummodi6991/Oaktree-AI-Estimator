@@ -245,6 +245,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const notAvailable = t("common.notAvailable");
   const providerLabel = t(`excel.providers.${provider}`);
   const isArabic = i18n.language?.toLowerCase().startsWith("ar");
+  // Scenario/scale notes below are debug instrumentation; only surface them in dev builds.
+  const isDevBuild = typeof import.meta !== "undefined" && Boolean((import.meta as any)?.env?.DEV);
   const scenarioProviders = PROVIDERS.map((item) => ({
     value: item.value,
     label: t(item.labelKey),
@@ -1204,8 +1206,9 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const showUpperAnnexHint =
     upperAnnexAreaM2 > 1e-6 &&
     (upperAnnexSink === "residential" || upperAnnexSink === "office");
-  const fmtM2 = (value: number) =>
-    new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
+  // Route through the lang-aware formatter so digits are Arabic-Indic in AR.
+  // The unit (`م²`/`m²`) is supplied by the surrounding translation string.
+  const fmtM2 = (value: number) => formatNumberValue(value, 0);
   const upperAnnexHintText = showUpperAnnexHint
     ? t("excel.includesUpperAnnex", { area: fmtM2(upperAnnexAreaM2) }) +
       (upperAnnexNlaAddedM2 > 1e-6 ? t("excel.upperAnnexNla", { nla: fmtM2(upperAnnexNlaAddedM2) }) : "")
@@ -1351,7 +1354,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
 
   const buaNote = (key: string) => {
     const noteKey = `${key}_bua`;
-    const showScenarioScale = scenarioAreaRatio != null && key !== "basement";
+    const showScenarioScale = isDevBuild && scenarioAreaRatio != null && key !== "basement";
     if (explanationsDisplay[noteKey]) {
       return (
         <>
@@ -1404,7 +1407,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       })
       : t("excelNotes.landCostFallback"));
   const landNote =
-    scenarioLandPrice != null
+    scenarioLandPrice != null && isDevBuild
       ? (
         <>
           <div>{landNoteBase}</div>
@@ -1418,7 +1421,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const farNote = (
     <>
       <div>{farNoteBase || t("excel.effectiveFarDefault")}</div>
-      {scenarioAreaRatio != null && (
+      {scenarioAreaRatio != null && isDevBuild && (
         <>
           {scenarioFar != null && (
             <div style={{ marginTop: 4 }}>
@@ -1432,9 +1435,8 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
       )}
     </>
   );
-  const floorsNoteBase =
-    "Used to scale above-ground area ratios when FAR is not manually overridden.";
-  const floorsDisabledNote = "Skipped because FAR was manually overridden.";
+  const floorsNoteBase = t("excelNotes.floorsScaling");
+  const floorsDisabledNote = t("excelNotes.floorsScalingDisabled");
   const farManuallyOverridden =
     inputsRef.current?.disable_floors_scaling === true &&
     resolveMassingLock(inputsRef.current?.massing_lock ?? null) === "far";
@@ -1497,7 +1499,10 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
   const upperAnnexCostNote =
     (typeof explanationsDisplay.upper_annex_non_far_cost === "string" && explanationsDisplay.upper_annex_non_far_cost.trim()) ||
     (upperAnnexArea != null
-      ? `${formatNumberValue(upperAnnexArea, 0)} m² × ${formatNumberValue(upperAnnexUnitCost, 0)} SAR/m².`
+      ? t("excelNotes.upperAnnexCost", {
+        area: formatNumberValue(upperAnnexArea, 0),
+        cost: formatNumberValue(upperAnnexUnitCost, 0),
+      })
       : null);
   const feasibilityNote = feasibilityExcluded
     ? t("excelNotes.feasibilityExcluded")
@@ -1982,7 +1987,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
             onBlur={(event) => commitUnitCostEdit(key, event)}
             onChange={(event) => handleUnitCostChange(key, event.target.value)}
           />
-          <span className="unit-cost-panel__value-unit">SAR</span>
+          <span className="unit-cost-panel__value-unit">{isArabic ? "ر.س" : "SAR"}</span>
           {isEdited && <span className="unit-cost-panel__edited">{t("excel.manualEdited")}</span>}
         </div>
       </div>
@@ -2550,7 +2555,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                       <div className="ui-v2-metric-grid" role="list" aria-label={isArabic ? "متوسط مساحة الوحدة" : "Average unit size"}>
                         {averageUnitSizeItems.map((item) => (
                           <div key={item.key} className="ui-v2-metric-grid__item" role="listitem">
-                            <div className="ui-v2-metric-grid__value">{formatNumberValue(item.value, 0)} m²</div>
+                            <div className="ui-v2-metric-grid__value">{formatArea(item.value)}</div>
                             <div className="ui-v2-metric-grid__label">{item.label}</div>
                           </div>
                         ))}
@@ -2784,7 +2789,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                         aria-label={t("excel.coverage")}
                                         className="ui-v2-costInput"
                                       />
-                                      <span className="ui-v2-chip">%</span>
+                                      <span className="ui-v2-chip">{isArabic ? "٪" : "%"}</span>
                                       <Button type="button" size="sm" variant="secondary" onClick={commitCoverage}>
                                         {t("excel.apply")}
                                       </Button>
@@ -3122,7 +3127,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                           className="calc-input-coverage"
                           aria-label="Coverage ratio"
                         />
-                        <span>%</span>
+                        <span>{isArabic ? "٪" : "%"}</span>
                         <Button type="button" size="sm" variant="secondary" onClick={commitCoverage} disabled={coverageApplyDisabled}>
                           {t("common.apply")}
                         </Button>
@@ -3543,7 +3548,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                 className="ui-v2-costInput"
                                 aria-label={t("excel.effectiveIncomePct")}
                               />
-                              <span className="ui-v2-chip">%</span>
+                              <span className="ui-v2-chip">{isArabic ? "٪" : "%"}</span>
                               <Button
                                 type="button"
                                 size="sm"
@@ -3586,7 +3591,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                                 className="ui-v2-costInput"
                                 aria-label={t("excel.opex")}
                               />
-                              <span className="ui-v2-chip">%</span>
+                              <span className="ui-v2-chip">{isArabic ? "٪" : "%"}</span>
                               <Button
                                 type="button"
                                 size="sm"
@@ -3712,7 +3717,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             className="calc-input-coverage"
                             aria-label={t("excel.effectiveIncomePct")}
                           />
-                          <span>%</span>
+                          <span>{isArabic ? "٪" : "%"}</span>
                         </label>
                         <Button
                           type="button"
@@ -3759,7 +3764,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             className="calc-input-coverage"
                             aria-label={t("excel.opex")}
                           />
-                          <span>%</span>
+                          <span>{isArabic ? "٪" : "%"}</span>
                           <Button
                             type="button"
                             size="sm"
@@ -3876,7 +3881,7 @@ export default function ExcelForm({ parcel, landUseOverride, mode = "legacy" }: 
                             {t("excel.parkingAutoAdjustmentIncrease", {
                               from: formatNumberValue(parking.baselineBasementAreaM2, 0),
                               to: formatNumberValue(parking.parkingAreaM2, 0),
-                              factor: parking.basementIncreaseFactor!.toFixed(3),
+                              factor: formatNumberValue(parking.basementIncreaseFactor, 3),
                             })}
                           </div>
                         ) : null}
