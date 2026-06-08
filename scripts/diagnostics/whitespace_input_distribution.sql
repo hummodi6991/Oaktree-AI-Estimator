@@ -221,5 +221,31 @@ FROM ws_recompute
 GROUP BY district
 ORDER BY avg_recompute_3000m DESC;
 
+-- ── E) City-wide 1000 m percentile distribution (recalibration reference) ──
+-- Exists to set the recalibrated _competition_whitespace_score reference: the
+-- per-district ladder (block D) showed the same-category count collapses into
+-- the curve's 0-25 design range at ~1000 m, so this block reports the city-wide
+-- percentile distribution of that SAME recompute_1000m column (same category-
+-- match approximation, same restaurant_poi UNION ALL delivery_source_record
+-- set, same ST_DWithin(..., 1000)) over the same sampled candidates already in
+-- ws_recompute -- no re-sampling. pct_in_design_range = share with count <= 25
+-- (the curve's current domain); pct_le_15 = share with count <= 15 (where the
+-- current curve still has headroom above the 15.00 floor).
+SELECT
+    'recompute_1000m_citywide'                                              AS label,
+    COUNT(*)                                                                AS n,
+    COUNT(*) FILTER (WHERE recompute_1000m = 0)                             AS n_zero,
+    round(percentile_cont(0.05) WITHIN GROUP (ORDER BY recompute_1000m)::numeric,1) AS p5,
+    round(percentile_cont(0.25) WITHIN GROUP (ORDER BY recompute_1000m)::numeric,1) AS p25,
+    round(percentile_cont(0.50) WITHIN GROUP (ORDER BY recompute_1000m)::numeric,1) AS p50,
+    round(percentile_cont(0.75) WITHIN GROUP (ORDER BY recompute_1000m)::numeric,1) AS p75,
+    round(percentile_cont(0.90) WITHIN GROUP (ORDER BY recompute_1000m)::numeric,1) AS p90,
+    round(percentile_cont(0.95) WITHIN GROUP (ORDER BY recompute_1000m)::numeric,1) AS p95,
+    round(percentile_cont(0.99) WITHIN GROUP (ORDER BY recompute_1000m)::numeric,1) AS p99,
+    MAX(recompute_1000m)                                                    AS max,
+    round(100.0*COUNT(*) FILTER (WHERE recompute_1000m <= 25)/NULLIF(COUNT(*),0),1) AS pct_in_design_range,
+    round(100.0*COUNT(*) FILTER (WHERE recompute_1000m <= 15)/NULLIF(COUNT(*),0),1) AS pct_le_15
+FROM ws_recompute;
+
 DROP TABLE IF EXISTS ws_recompute;
 DROP TABLE IF EXISTS ws_sample;
