@@ -119,6 +119,25 @@ class Settings:
         os.getenv("EXPANSION_REALIZED_DEMAND_REFERENCE", "263.0")
     )
 
+    # --- Expansion Advisor L1 modeled demand-generator index (PR-1) ---
+    # Additive, emit-only feature: builds a per-candidate demand-generator
+    # index (catchment population + OSM trip generators + Overture building
+    # floor-density + free review_count-weighted F&B density) and writes it
+    # into feature_snapshot_json["demand_generator_index"] for validation.
+    # It is a demand NUMERATOR only and is NOT read by scoring in PR-1.
+    # Default OFF: when false the whole enrich path is inert and rankings /
+    # feature_snapshot_json are byte-for-byte unchanged.
+    EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED: bool = (
+        os.getenv("EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED", "false").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    # Dine-in demand catchment radius (metres). Single configurable constant so
+    # validation can retune without a code change. Matches
+    # _CATCHMENT_RADII_M["dine_in"]["demand"] (3500 m).
+    EXPANSION_DEMAND_GENERATOR_RADIUS_M: int = int(
+        os.getenv("EXPANSION_DEMAND_GENERATOR_RADIUS_M", "3500")
+    )
+
     # --- Expansion Advisor structured decision memo (Phase 1) ---
     # Model/token/temperature controls for the new structured memo path in
     # ``app.services.llm_decision_memo``. When ``EXPANSION_MEMO_STRUCTURED_ENABLED``

@@ -1794,6 +1794,124 @@ def _foot_traffic_score(nearby_amenity_count: int) -> float:
     return min(90.0, max(30.0, raw))
 
 
+# ── L1 modeled demand-generator index (PR-1, emit-only) ─────────────────────
+# Per-candidate demand NUMERATOR built entirely from data we already own:
+# catchment population + OSM trip generators + Overture building floor-density +
+# a free review_count-weighted F&B-density term (the zero-cost stand-in for
+# BestTime busyness — it captures "venues people actually visit"; its only real
+# gap vs a paid busyness feed is temporal shape). For dine_in this replaces the
+# effectively-absent foot_traffic signal (_foot_traffic_score is a cafe-only
+# nudge today). PR-1 only EMITS it into feature_snapshot_json; nothing here is
+# read by scoring (that is PR-2).
+#
+# NET-OF-SUPPLY DISCIPLINE: this index is a demand numerator only. Competition /
+# POI density stays in _competition_whitespace_score as the denominator and is
+# NOT subtracted here. The F&B review-weighted term correlates with competitor
+# count by construction (busy venues ⇒ more nearby F&B); that correlation is
+# expected and is exactly why the denominator must stay separate — the index
+# must not double as a saturation signal.
+_DEMAND_GENERATOR_WEIGHTS_VERSION = "l1_v1_2026-06"
+
+# Per-generator-type weights for the OSM sub-score. Seeded from the heatmap
+# path's _ANCHOR_WEIGHTS (restaurant_scoring_factors.py:772-784), regrouped onto
+# the seven generator buckets enriched here; transit/mosque buckets (absent from
+# the anchor table) take conservative mid/low values. Used as Σ(count·weight) →
+# sigmoid, mirroring _demand_anchor_score. Module constant + emitted
+# weights_version so PR-2 can recalibrate without re-running enrich.
+_DEMAND_GENERATOR_OSM_WEIGHTS: dict[str, float] = {
+    "offices": 2.0,
+    "malls_retail": 4.0,
+    "transit": 2.0,
+    "mosques": 1.5,
+    "schools": 1.75,
+    "hospitals": 2.0,
+    "hotels": 2.5,
+}
+
+# Top-level composite weights over the four normalized sub-signals (sum 1.0).
+_DEMAND_GENERATOR_COMPOSITE_WEIGHTS: dict[str, float] = {
+    "population": 0.30,
+    "fnb_review_weighted": 0.25,
+    "osm_generators": 0.25,
+    "building_floors": 0.20,
+}
+
+
+def _demand_generator_osm_subscore(osm_counts: dict[str, int]) -> float:
+    """Σ(count·weight) over generator buckets → 0-100 via the _demand_anchor_score sigmoid."""
+    weighted_total = 0.0
+    for _kind, _w in _DEMAND_GENERATOR_OSM_WEIGHTS.items():
+        weighted_total += _w * float(osm_counts.get(_kind, 0) or 0)
+    # Same saturating curve as restaurant_scoring_factors._demand_anchor_score.
+    return _clamp(10.0 + 85.0 * (1.0 - math.exp(-weighted_total / 20.0)))
+
+
+def _demand_generator_index(
+    *,
+    population_reach: float,
+    osm_counts: dict[str, int],
+    building_floors_proxy_sum: float,
+    fnb_review_weighted: float,
+    fnb_venue_count: int,
+    radius_m: int,
+) -> dict[str, Any]:
+    """Compose the emit-only L1 demand-generator index for one candidate.
+
+    Each sub-signal is normalized to 0-100 with the same log/sqrt-scaled family
+    used by _population_score / _foot_traffic_score (so a single busy outlier
+    cannot dominate), then combined with the top-level composite weights. ALL raw
+    sub-values are retained in the returned dict so PR-2 can recalibrate weights
+    against real data without re-running the bulk enrich.
+
+    NOTE on review_count staleness: Google review enrichment is currently
+    disabled, so review_count is a stale snapshot. That is acceptable here — the
+    term is used only for RELATIVE cross-candidate ranking, not as a live count.
+    """
+    # Population: reuse the dine-in saturation reference (250k @ 3.5 km).
+    pop_sub = _population_score(_safe_float(population_reach), service_model="dine_in")
+    # OSM generators: weighted-count sigmoid.
+    osm_sub = _demand_generator_osm_subscore(osm_counts)
+    # Building floor-density daytime proxy (log-scaled; ref ~2000 floor-equiv).
+    _floors = max(0.0, _safe_float(building_floors_proxy_sum))
+    floors_sub = _clamp(math.log1p(_floors) / math.log1p(2000.0) * 100.0)
+    # Free F&B review-weighted density (log-scaled; ref ~5000 summed reviews).
+    _rw = max(0.0, _safe_float(fnb_review_weighted))
+    fnb_sub = _clamp(math.log1p(_rw) / math.log1p(5000.0) * 100.0)
+
+    w = _DEMAND_GENERATOR_COMPOSITE_WEIGHTS
+    composite = _clamp(
+        pop_sub * w["population"]
+        + fnb_sub * w["fnb_review_weighted"]
+        + osm_sub * w["osm_generators"]
+        + floors_sub * w["building_floors"]
+    )
+    return {
+        "composite_0_100": round(composite, 2),
+        "weights_version": _DEMAND_GENERATOR_WEIGHTS_VERSION,
+        "radius_m": int(radius_m),
+        "population_reach": int(round(_safe_float(population_reach))),
+        "osm_generators": {
+            "offices": int(osm_counts.get("offices", 0) or 0),
+            "malls_retail": int(osm_counts.get("malls_retail", 0) or 0),
+            "transit": int(osm_counts.get("transit", 0) or 0),
+            "mosques": int(osm_counts.get("mosques", 0) or 0),
+            "schools": int(osm_counts.get("schools", 0) or 0),
+            "hospitals": int(osm_counts.get("hospitals", 0) or 0),
+            "hotels": int(osm_counts.get("hotels", 0) or 0),
+        },
+        "building_floors_proxy_sum": round(_floors, 2),
+        "fnb_review_weighted_density": round(_rw, 2),
+        "fnb_venue_count": int(fnb_venue_count or 0),
+        # Derived 0-100 sub-scores retained for transparency / PR-2 calibration.
+        "subscores": {
+            "population": round(pop_sub, 2),
+            "osm_generators": round(osm_sub, 2),
+            "building_floors": round(floors_sub, 2),
+            "fnb_review_weighted": round(fnb_sub, 2),
+        },
+    }
+
+
 def _parking_score(*, area_m2: float, service_model: str, nearby_parking_count: int, access_score: float, parking_context_available: bool = True) -> float:
     area_signal = _clamp((area_m2 / 300.0) * 100.0)
     if not parking_context_available:
@@ -7406,6 +7524,11 @@ def run_expansion_search(
     # ── Bulk delivery enrichment (replaces per-candidate N+1 pattern) ──
     _bulk_delivery: dict[str, dict[str, int]] = {}
     _bulk_foot_traffic: dict[str, int] = {}
+    # L1 demand-generator index (PR-1, emit-only). Populated only when the
+    # feature flag is on; otherwise these stay empty and nothing is emitted.
+    _bulk_osm_generators: dict[str, dict[str, int]] = {}
+    _bulk_building_floors: dict[str, float] = {}
+    _bulk_fnb_density: dict[str, dict[str, float]] = {}
     if ea_delivery_populated:
         try:
             # Build a VALUES list of (parcel_id, lon, lat) for all candidates
@@ -8503,6 +8626,195 @@ def run_expansion_search(
         logger.info("expansion_search timing: bulk_foot_traffic=%.2fs search_id=%s",
                      t_ft_done - t_ft_start, search_id)
 
+    # ── L1 demand-generator index enrichment (PR-1, emit-only, flag-gated) ──
+    # Builds the per-candidate demand NUMERATOR signals for
+    # feature_snapshot_json["demand_generator_index"]. Coordinate-based (the
+    # _shortlist_coords / ST_MakePoint pattern), one bulk query per source (no
+    # per-candidate N+1), each independently guarded by _cached_table_available
+    # so a missing externally-imported table no-ops without affecting the rest.
+    # NOTHING here feeds scoring (PR-2 wires it in).
+    if settings.EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED and _shortlist_coords:
+        t_dg_start = time.monotonic()
+        _dg_radius = float(settings.EXPANSION_DEMAND_GENERATOR_RADIUS_M)
+        # Shared VALUES list of (parcel_id, lon, lat) for the whole shortlist.
+        _dg_value_parts: list[str] = []
+        _dg_coord_params: dict[str, Any] = {}
+        for _dgi, (_dg_pid, _dg_co) in enumerate(_shortlist_coords.items()):
+            _dg_value_parts.append(
+                f"(:dgp_{_dgi}, CAST(:dgx_{_dgi} AS double precision), CAST(:dgy_{_dgi} AS double precision))"
+            )
+            _dg_coord_params[f"dgp_{_dgi}"] = _dg_pid
+            _dg_coord_params[f"dgx_{_dgi}"] = _dg_co[0]
+            _dg_coord_params[f"dgy_{_dgi}"] = _dg_co[1]
+        _dg_values_sql = ", ".join(_dg_value_parts)
+
+        # 1) OSM trip generators (planet_osm_point + planet_osm_polygon; way=4326
+        #    via osm2pgsql --latlong, but ST_Transform(...,4326) is applied
+        #    defensively to mirror restaurant_scoring_factors._demand_anchor_score).
+        _dg_osm_point_ok = _cached_table_available(db, "public.planet_osm_point")
+        _dg_osm_poly_ok = _cached_table_available(db, "public.planet_osm_polygon")
+        if _dg_values_sql and (_dg_osm_point_ok or _dg_osm_poly_ok):
+            # CASE tags each feature with its generator bucket using the
+            # default.style dedicated columns the repo already relies on
+            # (amenity/shop/building) plus standard office/railway/tourism.
+            # TODO(L1): public_transport lives only in the hstore `tags` column;
+            # excluded here to avoid an hstore dependency. Add later via
+            # tags->'public_transport' behind an hstore-safe guard.
+            _dg_osm_case = """
+                CASE
+                  WHEN (lower(COALESCE(office,'')) <> '' OR lower(COALESCE(building,'')) IN ('office','commercial')) THEN 'offices'
+                  WHEN (lower(COALESCE(shop,'')) IN ('mall','supermarket','department_store','wholesale') OR lower(COALESCE(amenity,'')) = 'marketplace') THEN 'malls_retail'
+                  WHEN (lower(COALESCE(railway,'')) IN ('station','halt','tram_stop','subway_entrance','stop') OR lower(COALESCE(amenity,'')) IN ('bus_station')) THEN 'transit'
+                  WHEN (lower(COALESCE(amenity,'')) IN ('place_of_worship','mosque') OR lower(COALESCE(building,'')) = 'mosque') THEN 'mosques'
+                  WHEN (lower(COALESCE(amenity,'')) IN ('school','college','university','kindergarten') OR lower(COALESCE(building,'')) IN ('school','university')) THEN 'schools'
+                  WHEN (lower(COALESCE(amenity,'')) IN ('hospital','clinic','doctors')) THEN 'hospitals'
+                  WHEN (lower(COALESCE(tourism,'')) IN ('hotel','motel','hostel','guest_house') OR lower(COALESCE(building,'')) = 'hotel') THEN 'hotels'
+                  ELSE NULL
+                END
+            """
+            _dg_osm_union: list[str] = []
+            if _dg_osm_point_ok:
+                _dg_osm_union.append(f"""
+                    SELECT {_dg_osm_case} AS kind
+                    FROM planet_osm_point p
+                    WHERE p.way IS NOT NULL
+                      AND ST_DWithin(
+                          ST_Transform(p.way, 4326)::geography,
+                          ST_SetSRID(ST_MakePoint(c.lon, c.lat), 4326)::geography,
+                          :dg_radius)
+                """)
+            if _dg_osm_poly_ok:
+                _dg_osm_union.append(f"""
+                    SELECT {_dg_osm_case} AS kind
+                    FROM planet_osm_polygon pg
+                    WHERE pg.way IS NOT NULL
+                      AND ST_DWithin(
+                          ST_Transform(pg.way, 4326)::geography,
+                          ST_SetSRID(ST_MakePoint(c.lon, c.lat), 4326)::geography,
+                          :dg_radius)
+                """)
+            _dg_osm_query = f"""
+                WITH cand(parcel_id, lon, lat) AS (VALUES {_dg_values_sql})
+                SELECT c.parcel_id,
+                    COUNT(*) FILTER (WHERE g.kind = 'offices')      AS offices,
+                    COUNT(*) FILTER (WHERE g.kind = 'malls_retail') AS malls_retail,
+                    COUNT(*) FILTER (WHERE g.kind = 'transit')      AS transit,
+                    COUNT(*) FILTER (WHERE g.kind = 'mosques')      AS mosques,
+                    COUNT(*) FILTER (WHERE g.kind = 'schools')      AS schools,
+                    COUNT(*) FILTER (WHERE g.kind = 'hospitals')    AS hospitals,
+                    COUNT(*) FILTER (WHERE g.kind = 'hotels')       AS hotels
+                FROM cand c
+                LEFT JOIN LATERAL ({" UNION ALL ".join(_dg_osm_union)}) g
+                    ON g.kind IS NOT NULL
+                GROUP BY c.parcel_id
+            """
+            try:
+                with db.begin_nested():
+                    _dg_osm_rows = db.execute(
+                        text(_dg_osm_query),
+                        {**_dg_coord_params, "dg_radius": _dg_radius},
+                    ).mappings().all()
+                for _r in _dg_osm_rows:
+                    _bulk_osm_generators[str(_r["parcel_id"])] = {
+                        "offices": _safe_int(_r.get("offices")),
+                        "malls_retail": _safe_int(_r.get("malls_retail")),
+                        "transit": _safe_int(_r.get("transit")),
+                        "mosques": _safe_int(_r.get("mosques")),
+                        "schools": _safe_int(_r.get("schools")),
+                        "hospitals": _safe_int(_r.get("hospitals")),
+                        "hotels": _safe_int(_r.get("hotels")),
+                    }
+                logger.info("expansion_search L1 osm_generators: enriched=%d/%d search_id=%s",
+                            len(_bulk_osm_generators), len(_shortlist_coords), search_id)
+            except Exception:
+                logger.debug("expansion_search L1 osm_generators failed", exc_info=True)
+
+        # 2) Overture building floor-density (daytime-population proxy). geom is
+        #    declared SRID 32638; ST_Transform(...,4326) handles it either way.
+        #    floors_proxy mirrors overture_buildings_metrics.py:43-46; buildings
+        #    without floor/height tags contribute 1 (footprint presence).
+        if _dg_values_sql and _cached_table_available(db, "public.overture_buildings"):
+            _dg_floors_query = f"""
+                WITH cand(parcel_id, lon, lat) AS (VALUES {_dg_values_sql})
+                SELECT c.parcel_id, COALESCE(b.floors_sum, 0) AS floors_sum
+                FROM cand c
+                LEFT JOIN LATERAL (
+                    SELECT SUM(
+                        CASE
+                          WHEN o.num_floors IS NOT NULL AND o.num_floors > 0 THEN LEAST(60, GREATEST(1, round(o.num_floors)::int))
+                          WHEN o.height IS NOT NULL AND o.height > 0 THEN LEAST(60, GREATEST(1, round(o.height / 3.2)::int))
+                          ELSE 1
+                        END
+                    ) AS floors_sum
+                    FROM overture_buildings o
+                    WHERE o.geom IS NOT NULL
+                      AND ST_DWithin(
+                          ST_Transform(o.geom, 4326)::geography,
+                          ST_SetSRID(ST_MakePoint(c.lon, c.lat), 4326)::geography,
+                          :dg_radius)
+                ) b ON TRUE
+            """
+            try:
+                with db.begin_nested():
+                    _dg_fl_rows = db.execute(
+                        text(_dg_floors_query),
+                        {**_dg_coord_params, "dg_radius": _dg_radius},
+                    ).mappings().all()
+                for _r in _dg_fl_rows:
+                    _bulk_building_floors[str(_r["parcel_id"])] = _safe_float(_r.get("floors_sum"))
+                logger.info("expansion_search L1 building_floors: enriched=%d/%d search_id=%s",
+                            len(_bulk_building_floors), len(_shortlist_coords), search_id)
+            except Exception:
+                logger.debug("expansion_search L1 building_floors failed", exc_info=True)
+
+        # 3) Free review_count-weighted F&B density (zero-cost BestTime stand-in).
+        #    Uses the Advisor's own F&B category filter (keys from
+        #    _expand_category) and excludes permanently-closed venues. Numerator
+        #    only — competitor density stays in _competition_whitespace_score.
+        _dg_category_keys = list(_cat_expanded["keys"] or [])
+        if _dg_values_sql and _dg_category_keys and _cached_table_available(db, "public.restaurant_poi"):
+            _dg_fnb_query = f"""
+                WITH cand(parcel_id, lon, lat) AS (VALUES {_dg_values_sql})
+                SELECT c.parcel_id,
+                    COALESCE(f.review_weighted, 0) AS review_weighted,
+                    COALESCE(f.venue_count, 0) AS venue_count
+                FROM cand c
+                LEFT JOIN LATERAL (
+                    SELECT SUM(COALESCE(rp.review_count, 0)) AS review_weighted,
+                           COUNT(*) AS venue_count
+                    FROM restaurant_poi rp
+                    WHERE rp.geom IS NOT NULL
+                      AND rp.business_status IS DISTINCT FROM 'CLOSED_PERMANENTLY'
+                      AND lower(rp.category) = ANY(:dg_category_keys)
+                      AND ST_DWithin(
+                          rp.geom::geography,
+                          ST_SetSRID(ST_MakePoint(c.lon, c.lat), 4326)::geography,
+                          :dg_radius)
+                ) f ON TRUE
+            """
+            try:
+                with db.begin_nested():
+                    _dg_fnb_rows = db.execute(
+                        text(_dg_fnb_query),
+                        {
+                            **_dg_coord_params,
+                            "dg_radius": _dg_radius,
+                            "dg_category_keys": _dg_category_keys,
+                        },
+                    ).mappings().all()
+                for _r in _dg_fnb_rows:
+                    _bulk_fnb_density[str(_r["parcel_id"])] = {
+                        "review_weighted": _safe_float(_r.get("review_weighted")),
+                        "venue_count": _safe_int(_r.get("venue_count")),
+                    }
+                logger.info("expansion_search L1 fnb_density: enriched=%d/%d search_id=%s",
+                            len(_bulk_fnb_density), len(_shortlist_coords), search_id)
+            except Exception:
+                logger.debug("expansion_search L1 fnb_density failed", exc_info=True)
+
+        logger.info("expansion_search timing: bulk_demand_generator=%.2fs search_id=%s",
+                     time.monotonic() - t_dg_start, search_id)
+
     _bulk_competitors: dict[str, list[dict[str, Any]]] = {}
     t_comp_start = time.monotonic()
     if _shortlist_parcel_ids:
@@ -8939,6 +9251,20 @@ def run_expansion_search(
             bulk_roads=_bulk_roads.get(_pid_str),
             bulk_parking=_bulk_parking.get(_pid_str),
         )
+        # ── L1 demand-generator index (PR-1, emit-only; flag-gated) ──
+        # Numerator-only composite written for validation. NOT read by scoring;
+        # when the flag is off the bulk dicts are empty and no key is emitted,
+        # so feature_snapshot_json and rankings are byte-for-byte unchanged.
+        if settings.EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED:
+            _dg_fnb = _bulk_fnb_density.get(_pid_str, {})
+            feature_snapshot_json["demand_generator_index"] = _demand_generator_index(
+                population_reach=population_reach,
+                osm_counts=_bulk_osm_generators.get(_pid_str, {}),
+                building_floors_proxy_sum=_bulk_building_floors.get(_pid_str, 0.0),
+                fnb_review_weighted=_dg_fnb.get("review_weighted", 0.0),
+                fnb_venue_count=_dg_fnb.get("venue_count", 0),
+                radius_m=settings.EXPANSION_DEMAND_GENERATOR_RADIUS_M,
+            )
         # Compute the two raw ages independently so the pill logic on the
         # frontend and in _top_positives_and_risks can decide "New" vs
         # "Updated" without relying on which timestamp won the GREATEST()
