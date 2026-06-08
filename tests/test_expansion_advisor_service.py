@@ -504,6 +504,73 @@ def test_competition_whitespace_unknown_confidence_is_neutral_not_open():
         assert 15.0 <= score < 100.0
 
 
+def test_competition_whitespace_dine_in_reference_varies_off_floor():
+    """dine_in uses REF=50 so the tighter 1000 m count band spreads.
+
+    Under the default REF=25 the dine_in p50 count (~16) sat at the 15.0
+    floor, collapsing the p50–p75 band to a constant. REF=50 keeps that band
+    off the floor and floors only the genuinely saturated count ≥ ~40 tail.
+    """
+    import pytest
+
+    from app.services.expansion_advisor import _competition_whitespace_score
+
+    counts = [0, 6, 16, 24, 40]
+    scores = [
+        _competition_whitespace_score(c, confident=True, service_model="dine_in")
+        for c in counts
+    ]
+    # Whitespace varies across the band — not a constant 15.
+    assert len(set(scores)) > 1
+    # p50 count (16) is off the floor under REF=50.
+    assert _competition_whitespace_score(
+        16, confident=True, service_model="dine_in"
+    ) == pytest.approx(27.9, abs=0.5)
+    # Saturated tail (40) still floors.
+    assert _competition_whitespace_score(
+        40, confident=True, service_model="dine_in"
+    ) == 15.0
+
+
+def test_competition_whitespace_cafe_qsr_reference_unchanged():
+    """Blast-radius guard: non-dine_in models keep REF=25 exactly.
+
+    These must match the pre-change behaviour bit-for-bit so the dine_in
+    recalibration cannot leak into cafe / qsr / delivery_first rankings.
+    """
+    import math
+
+    import pytest
+
+    from app.services.expansion_advisor import _competition_whitespace_score
+
+    def _legacy_ref25(count: int) -> float:
+        raw = 100.0 * (1.0 - (math.log1p(count) / math.log1p(25)))
+        return max(15.0, raw)
+
+    for count in (1, 3, 6, 8, 12, 16, 25, 40):
+        for model in ("cafe", "qsr", "delivery_first", None):
+            assert _competition_whitespace_score(
+                count, confident=True, service_model=model
+            ) == pytest.approx(_legacy_ref25(count))
+
+
+def test_competition_whitespace_f4_path_unchanged_per_model():
+    """F4 zero-count logic is independent of the service-model reference."""
+    from app.services.expansion_advisor import _competition_whitespace_score
+
+    for model in ("dine_in", "cafe", "qsr", None):
+        assert _competition_whitespace_score(
+            0, confident=True, service_model=model
+        ) == 100.0
+        assert _competition_whitespace_score(
+            0, confident=False, service_model=model
+        ) == 50.0
+        assert _competition_whitespace_score(
+            0, confident=None, service_model=model
+        ) == 50.0
+
+
 def test_comparable_competitors_payload_shape():
     class _DB:
         def begin_nested(self):
