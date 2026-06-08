@@ -137,6 +137,15 @@ class Settings:
     EXPANSION_DEMAND_GENERATOR_RADIUS_M: int = int(
         os.getenv("EXPANSION_DEMAND_GENERATOR_RADIUS_M", "3500")
     )
+    # Population sub-term catchment radius (metres) for the L1 index (PR-1a).
+    # At the 3500 m demand radius the population term is near-constant in dense
+    # Riyadh (~250k everywhere) and barely discriminates, so the index's
+    # population SUB-SCORE is computed at a tighter radius where it actually
+    # varies. The full 3500 m population_reach is still retained raw in the
+    # snapshot for continuity. Default 1500 m.
+    EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M: int = int(
+        os.getenv("EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M", "1500")
+    )
 
     # --- Expansion Advisor structured decision memo (Phase 1) ---
     # Model/token/temperature controls for the new structured memo path in

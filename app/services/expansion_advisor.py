@@ -1810,14 +1810,23 @@ def _foot_traffic_score(nearby_amenity_count: int) -> float:
 # count by construction (busy venues ⇒ more nearby F&B); that correlation is
 # expected and is exactly why the denominator must stay separate — the index
 # must not double as a saturation signal.
-_DEMAND_GENERATOR_WEIGHTS_VERSION = "l1_v1_2026-06"
+#
+# PR-1a RECALIBRATION (l1_v2_2026-06): the v1 index pinned at the ceiling — every
+# normalization reference sat far below real Riyadh catchment values, so all four
+# sub-scores saturated and the composite barely varied (stddev 1.92, 5 distinct
+# values; competitor_count 60 scored the same as competitor_count 270). The fix is
+# pure calibration: re-anchor every sub-signal to the REAL city-wide distribution
+# (winsorize at p99, map p5→p95 onto 0-100, log-transform the wide-spread signals),
+# compute the population sub-term at a tighter radius where it actually varies, and
+# rebalance the composite onto the discriminating signals. No new sub-signals, no
+# new data sources, still emit-only.
+_DEMAND_GENERATOR_WEIGHTS_VERSION = "l1_v2_2026-06"
 
 # Per-generator-type weights for the OSM sub-score. Seeded from the heatmap
 # path's _ANCHOR_WEIGHTS (restaurant_scoring_factors.py:772-784), regrouped onto
 # the seven generator buckets enriched here; transit/mosque buckets (absent from
-# the anchor table) take conservative mid/low values. Used as Σ(count·weight) →
-# sigmoid, mirroring _demand_anchor_score. Module constant + emitted
-# weights_version so PR-2 can recalibrate without re-running enrich.
+# the anchor table) take conservative mid/low values. Combined as Σ(count·weight)
+# then normalized against the city-wide weighted-total anchors below.
 _DEMAND_GENERATOR_OSM_WEIGHTS: dict[str, float] = {
     "offices": 2.0,
     "malls_retail": 4.0,
@@ -1828,22 +1837,71 @@ _DEMAND_GENERATOR_OSM_WEIGHTS: dict[str, float] = {
     "hotels": 2.5,
 }
 
+# ── PR-1a NORMALIZATION ANCHORS (one clearly-marked, versioned block) ──────────
+# Each raw sub-signal is winsorized at p99 then mapped p5→p95 onto 0-100. Tuple is
+# (p5, p95, p99, log?). Wide-spread signals (F&B reviews, building floors, the OSM
+# weighted total) are log-transformed; the tighter-radius population is mapped
+# linearly. Mapping the top anchor to p95 (not the max) leaves headroom so dense
+# areas land ~80-90 instead of all pegging at 100.
+#
+# Set from the Phase A probe (scripts/diagnostics/l1_signal_distributions.sql,
+# 538 city-wide Tier-1 primary candidates). The OSM anchors are on the SAME
+# Σ(count·weight) the probe reports, so they drop in directly.
+_DEMAND_GENERATOR_NORM_ANCHORS: dict[str, tuple[float, float, float, bool]] = {
+    #  signal                 p5         p95         p99        log
+    "fnb_review_weighted": (4210.0, 224576.0, 241965.0, True),
+    "building_floors":     (6805.0,  35612.0,  40102.0, True),
+    "osm_weighted_total":  (3.4,      3351.0,   3943.0, True),
+    # Population at the tighter EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M (~1500 m).
+    "population_local":    (8281.0,   52010.0,  53393.0, False),
+}
+
 # Top-level composite weights over the four normalized sub-signals (sum 1.0).
+# PR-1a rebalance: the discriminating signals (OSM trip generators + free F&B
+# review density) drive the spread. Phase A showed the 1500 m population radius
+# does NOT discriminate (spread_ratio_1500=1.108 ≈ spread_ratio_3500=1.109), so
+# population is cut to a token 0.05 and its weight redistributed to OSM + F&B.
 _DEMAND_GENERATOR_COMPOSITE_WEIGHTS: dict[str, float] = {
-    "population": 0.30,
-    "fnb_review_weighted": 0.25,
-    "osm_generators": 0.25,
+    "osm_generators": 0.40,
+    "fnb_review_weighted": 0.35,
     "building_floors": 0.20,
+    "population": 0.05,
 }
 
 
+def _demand_generator_normalize(signal: str, value: float) -> float:
+    """Winsorize at p99 then map the p5→p95 anchor band onto 0-100.
+
+    Robust 0-100 normalization shared by every L1 sub-signal: a single busy
+    outlier cannot dominate (winsorized at p99) and the dense end keeps headroom
+    (top anchor is p95, not the max). Wide-spread signals are log-transformed so
+    the bulk of the distribution spreads instead of bunching near zero. Anchors
+    live in _DEMAND_GENERATOR_NORM_ANCHORS (PR-1a, set from the Phase A probe).
+    """
+    p5, p95, p99, use_log = _DEMAND_GENERATOR_NORM_ANCHORS[signal]
+    v = min(max(0.0, _safe_float(value)), p99)  # winsorize the top tail at p99
+    if use_log:
+        v = math.log1p(v)
+        lo = math.log1p(p5)
+        hi = math.log1p(p95)
+    else:
+        lo, hi = p5, p95
+    if hi <= lo:
+        return 0.0
+    return _clamp((v - lo) / (hi - lo) * 100.0)
+
+
 def _demand_generator_osm_subscore(osm_counts: dict[str, int]) -> float:
-    """Σ(count·weight) over generator buckets → 0-100 via the _demand_anchor_score sigmoid."""
+    """Σ(count·weight) over generator buckets → 0-100 against the city-wide anchor.
+
+    PR-1a: the v1 sigmoid (ref /20) saturated to ~95 for every candidate because
+    real Riyadh catchments hold hundreds of offices. The weighted total is now
+    log-normalized against the empirical p5→p95 band so offices/retail — the
+    strongest raw discriminators — actually drive spread."""
     weighted_total = 0.0
     for _kind, _w in _DEMAND_GENERATOR_OSM_WEIGHTS.items():
         weighted_total += _w * float(osm_counts.get(_kind, 0) or 0)
-    # Same saturating curve as restaurant_scoring_factors._demand_anchor_score.
-    return _clamp(10.0 + 85.0 * (1.0 - math.exp(-weighted_total / 20.0)))
+    return _demand_generator_normalize("osm_weighted_total", weighted_total)
 
 
 def _demand_generator_index(
@@ -1854,29 +1912,44 @@ def _demand_generator_index(
     fnb_review_weighted: float,
     fnb_venue_count: int,
     radius_m: int,
+    population_local_reach: float | None = None,
+    pop_radius_m: int | None = None,
 ) -> dict[str, Any]:
     """Compose the emit-only L1 demand-generator index for one candidate.
 
-    Each sub-signal is normalized to 0-100 with the same log/sqrt-scaled family
-    used by _population_score / _foot_traffic_score (so a single busy outlier
-    cannot dominate), then combined with the top-level composite weights. ALL raw
-    sub-values are retained in the returned dict so PR-2 can recalibrate weights
-    against real data without re-running the bulk enrich.
+    PR-1a: each sub-signal is normalized to 0-100 against the real city-wide
+    distribution (winsorize at p99, map p5→p95, log-transform wide signals) via
+    _demand_generator_normalize, then combined with the top-level composite
+    weights. ALL raw sub-values are retained in the returned dict — including BOTH
+    the full ``population_reach`` (radius_m) and the tighter ``population_local_reach``
+    (pop_radius_m) used for the sub-score — so the next calibration never needs a
+    re-enrich.
+
+    The population sub-score uses ``population_local_reach`` at the tighter
+    pop_radius_m (default 1500 m): at 3.5 km every dense-Riyadh catchment holds
+    ~250k people, so the wide-radius value barely discriminates by construction.
+    When the tighter value is not supplied the wide ``population_reach`` is used as
+    a fallback so the function stays self-contained.
 
     NOTE on review_count staleness: Google review enrichment is currently
     disabled, so review_count is a stale snapshot. That is acceptable here — the
     term is used only for RELATIVE cross-candidate ranking, not as a live count.
     """
-    # Population: reuse the dine-in saturation reference (250k @ 3.5 km).
-    pop_sub = _population_score(_safe_float(population_reach), service_model="dine_in")
-    # OSM generators: weighted-count sigmoid.
+    # Population: normalize the tighter-radius reach (falls back to the wide one).
+    _pop_local = (
+        _safe_float(population_local_reach)
+        if population_local_reach is not None
+        else _safe_float(population_reach)
+    )
+    pop_sub = _demand_generator_normalize("population_local", _pop_local)
+    # OSM generators: log-normalized weighted count.
     osm_sub = _demand_generator_osm_subscore(osm_counts)
-    # Building floor-density daytime proxy (log-scaled; ref ~2000 floor-equiv).
+    # Building floor-density daytime proxy (log-normalized).
     _floors = max(0.0, _safe_float(building_floors_proxy_sum))
-    floors_sub = _clamp(math.log1p(_floors) / math.log1p(2000.0) * 100.0)
-    # Free F&B review-weighted density (log-scaled; ref ~5000 summed reviews).
+    floors_sub = _demand_generator_normalize("building_floors", _floors)
+    # Free F&B review-weighted density (log-normalized).
     _rw = max(0.0, _safe_float(fnb_review_weighted))
-    fnb_sub = _clamp(math.log1p(_rw) / math.log1p(5000.0) * 100.0)
+    fnb_sub = _demand_generator_normalize("fnb_review_weighted", _rw)
 
     w = _DEMAND_GENERATOR_COMPOSITE_WEIGHTS
     composite = _clamp(
@@ -1890,6 +1963,8 @@ def _demand_generator_index(
         "weights_version": _DEMAND_GENERATOR_WEIGHTS_VERSION,
         "radius_m": int(radius_m),
         "population_reach": int(round(_safe_float(population_reach))),
+        "pop_radius_m": int(pop_radius_m) if pop_radius_m is not None else int(radius_m),
+        "population_local_reach": int(round(_pop_local)),
         "osm_generators": {
             "offices": int(osm_counts.get("offices", 0) or 0),
             "malls_retail": int(osm_counts.get("malls_retail", 0) or 0),
@@ -7529,6 +7604,7 @@ def run_expansion_search(
     _bulk_osm_generators: dict[str, dict[str, int]] = {}
     _bulk_building_floors: dict[str, float] = {}
     _bulk_fnb_density: dict[str, dict[str, float]] = {}
+    _bulk_dg_pop_local: dict[str, float] = {}
     if ea_delivery_populated:
         try:
             # Build a VALUES list of (parcel_id, lon, lat) for all candidates
@@ -8812,6 +8888,57 @@ def run_expansion_search(
             except Exception:
                 logger.debug("expansion_search L1 fnb_density failed", exc_info=True)
 
+        # 4) Tighter-radius catchment population (PR-1a). The index's population
+        #    SUB-SCORE is computed at EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M
+        #    (~1500 m) where population actually varies; at the 3500 m demand
+        #    radius every dense-Riyadh catchment holds ~250k people and the term
+        #    barely discriminates. Mirrors _bulk_enrich_population's SQL but reuses
+        #    the shared coord VALUES list. The full 3500 m population_reach is still
+        #    retained raw in the snapshot.
+        _dg_pop_radius = float(settings.EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M)
+        if _dg_values_sql and _cached_table_available(db, "public.population_density"):
+            # population_density may be stored as a geom column or as lat/lon.
+            _dg_pd_has_geom = False
+            try:
+                _dg_pd_has_geom = bool(db.execute(text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'population_density' AND column_name = 'geom' LIMIT 1"
+                )).scalar())
+            except Exception:
+                pass
+            if _dg_pd_has_geom:
+                _dg_pd_geo = "pd.geom::geography"
+                _dg_pd_where = "pd.geom IS NOT NULL"
+            else:
+                _dg_pd_geo = "ST_SetSRID(ST_MakePoint(pd.lon::double precision, pd.lat::double precision), 4326)::geography"
+                _dg_pd_where = "pd.lat IS NOT NULL AND pd.lon IS NOT NULL"
+            _dg_pop_query = f"""
+                WITH cand(parcel_id, lon, lat) AS (VALUES {_dg_values_sql})
+                SELECT c.parcel_id, COALESCE(p.population_reach, 0) AS population_reach
+                FROM cand c
+                LEFT JOIN LATERAL (
+                    SELECT COALESCE(SUM(pd.population), 0) AS population_reach
+                    FROM population_density pd
+                    WHERE {_dg_pd_where}
+                      AND ST_DWithin(
+                          ST_SetSRID(ST_MakePoint(c.lon, c.lat), 4326)::geography,
+                          {_dg_pd_geo},
+                          :dg_pop_radius)
+                ) p ON TRUE
+            """
+            try:
+                with db.begin_nested():
+                    _dg_pop_rows = db.execute(
+                        text(_dg_pop_query),
+                        {**_dg_coord_params, "dg_pop_radius": _dg_pop_radius},
+                    ).mappings().all()
+                for _r in _dg_pop_rows:
+                    _bulk_dg_pop_local[str(_r["parcel_id"])] = _safe_float(_r.get("population_reach"))
+                logger.info("expansion_search L1 pop_local: enriched=%d/%d search_id=%s",
+                            len(_bulk_dg_pop_local), len(_shortlist_coords), search_id)
+            except Exception:
+                logger.debug("expansion_search L1 pop_local failed", exc_info=True)
+
         logger.info("expansion_search timing: bulk_demand_generator=%.2fs search_id=%s",
                      time.monotonic() - t_dg_start, search_id)
 
@@ -9259,11 +9386,13 @@ def run_expansion_search(
             _dg_fnb = _bulk_fnb_density.get(_pid_str, {})
             feature_snapshot_json["demand_generator_index"] = _demand_generator_index(
                 population_reach=population_reach,
+                population_local_reach=_bulk_dg_pop_local.get(_pid_str),
                 osm_counts=_bulk_osm_generators.get(_pid_str, {}),
                 building_floors_proxy_sum=_bulk_building_floors.get(_pid_str, 0.0),
                 fnb_review_weighted=_dg_fnb.get("review_weighted", 0.0),
                 fnb_venue_count=_dg_fnb.get("venue_count", 0),
                 radius_m=settings.EXPANSION_DEMAND_GENERATOR_RADIUS_M,
+                pop_radius_m=settings.EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M,
             )
         # Compute the two raw ages independently so the pill logic on the
         # frontend and in _top_positives_and_risks can decide "New" vs
