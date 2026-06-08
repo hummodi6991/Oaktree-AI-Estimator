@@ -1844,32 +1844,28 @@ _DEMAND_GENERATOR_OSM_WEIGHTS: dict[str, float] = {
 # linearly. Mapping the top anchor to p95 (not the max) leaves headroom so dense
 # areas land ~80-90 instead of all pegging at 100.
 #
-# PROVISIONAL — these are seeded from the 15-row validation sample plus the task's
-# hints (fnb p95≈150k, floors p95≈32k, offices p95≈1400, pop@1500m unknown). REPLACE
-# from scripts/diagnostics/l1_signal_distributions.sql (Phase A) before trusting the
-# absolute spread. The OSM anchors are on the SAME Σ(count·weight) the Phase A probe
-# reports, so they drop in directly.
+# Set from the Phase A probe (scripts/diagnostics/l1_signal_distributions.sql,
+# 538 city-wide Tier-1 primary candidates). The OSM anchors are on the SAME
+# Σ(count·weight) the probe reports, so they drop in directly.
 _DEMAND_GENERATOR_NORM_ANCHORS: dict[str, tuple[float, float, float, bool]] = {
-    #  signal                 p5        p95         p99        log
-    "fnb_review_weighted": (2000.0, 150000.0, 200000.0, True),
-    "building_floors":     (3000.0,  32000.0,  40000.0, True),
-    "osm_weighted_total":  (150.0,    3500.0,   6000.0, True),
+    #  signal                 p5         p95         p99        log
+    "fnb_review_weighted": (4210.0, 224576.0, 241965.0, True),
+    "building_floors":     (6805.0,  35612.0,  40102.0, True),
+    "osm_weighted_total":  (3.4,      3351.0,   3943.0, True),
     # Population at the tighter EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M (~1500 m).
-    # Provisional: ~250k at 3.5 km scaled by the (1500/3500)^2 area ratio plus a
-    # density spread. Fill p5/p95 from the Phase A pop_reach_1500 column.
-    "population_local":    (8000.0,   80000.0, 120000.0, False),
+    "population_local":    (8281.0,   52010.0,  53393.0, False),
 }
 
 # Top-level composite weights over the four normalized sub-signals (sum 1.0).
 # PR-1a rebalance: the discriminating signals (OSM trip generators + free F&B
-# review density) drive the spread; population — even at the tighter radius — is
-# the weakest discriminator in dense Riyadh, so it carries the least weight (down
-# from v1's top weight of 0.30).
+# review density) drive the spread. Phase A showed the 1500 m population radius
+# does NOT discriminate (spread_ratio_1500=1.108 ≈ spread_ratio_3500=1.109), so
+# population is cut to a token 0.05 and its weight redistributed to OSM + F&B.
 _DEMAND_GENERATOR_COMPOSITE_WEIGHTS: dict[str, float] = {
-    "osm_generators": 0.35,
-    "fnb_review_weighted": 0.30,
+    "osm_generators": 0.40,
+    "fnb_review_weighted": 0.35,
     "building_floors": 0.20,
-    "population": 0.15,
+    "population": 0.05,
 }
 
 
@@ -1880,7 +1876,7 @@ def _demand_generator_normalize(signal: str, value: float) -> float:
     outlier cannot dominate (winsorized at p99) and the dense end keeps headroom
     (top anchor is p95, not the max). Wide-spread signals are log-transformed so
     the bulk of the distribution spreads instead of bunching near zero. Anchors
-    live in _DEMAND_GENERATOR_NORM_ANCHORS (PR-1a, provisional until Phase A).
+    live in _DEMAND_GENERATOR_NORM_ANCHORS (PR-1a, set from the Phase A probe).
     """
     p5, p95, p99, use_log = _DEMAND_GENERATOR_NORM_ANCHORS[signal]
     v = min(max(0.0, _safe_float(value)), p99)  # winsorize the top tail at p99

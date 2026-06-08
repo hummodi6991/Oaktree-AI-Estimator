@@ -35,49 +35,51 @@ wide-spread signals. Anchors live in one clearly-marked, versioned block
 
 | signal | p5 | p95 | p99 | transform |
 |---|---|---|---|---|
-| `fnb_review_weighted` | 2,000 | 150,000 | 200,000 | log |
-| `building_floors` | 3,000 | 32,000 | 40,000 | log |
-| `osm_weighted_total` | 150 | 3,500 | 6,000 | log |
-| `population_local` (1500 m) | 8,000 | 80,000 | 120,000 | linear |
+| `fnb_review_weighted` | 4,210 | 224,576 | 241,965 | log |
+| `building_floors` | 6,805 | 35,612 | 40,102 | log |
+| `osm_weighted_total` | 3.4 | 3,351 | 3,943 | log |
+| `population_local` (1500 m) | 8,281 | 52,010 | 53,393 | linear |
 
-**These anchors are PROVISIONAL** — seeded from the 15-row validation sample plus the task's hints
-(fnb p95≈150k, floors p95≈32k, offices p95≈1400; pop@1500 m estimated from the (1500/3500)² area
-ratio + a density spread). **Replace them from Phase A** (`l1_signal_distributions.sql`) before
-trusting the absolute spread. The OSM anchors are on the *same* `Σ(count·weight)` the Phase A probe
-reports, so they drop in directly.
+**These anchors are SET from Phase A** — `scripts/diagnostics/l1_signal_distributions.sql` run over
+**538 city-wide Tier-1 primary candidates**. The OSM anchors are on the *same* `Σ(count·weight)` the
+Phase A probe reports, so they dropped in directly.
 
 The OSM sub-score (`_demand_generator_osm_subscore`) now log-normalizes the weighted total against
 those anchors instead of the saturating `/20` sigmoid. Per-generator weights are unchanged
 (offices 2.0, malls_retail 4.0, transit 2.0, mosques 1.5, schools 1.75, hospitals 2.0, hotels 2.5).
 
-### 2. Population term — decision: **(a) tighter radius**
-Chosen **(a)** over (b) because the data we need already exists and re-deriving it is cheap: the L1
-enrich block already has the candidate coords, and `population_density` is the same table
-`_bulk_enrich_population` uses. Cutting the weight (option b) would have discarded a usable signal;
-recomputing at a radius where it varies *keeps* the signal and is the cleaner fix.
+### 2. Population term — implemented **(a) tighter radius**, then Phase A demoted it
+Implemented **(a)** (recompute population at a tighter radius) because the data already exists and
+re-deriving it is cheap: the L1 enrich block already has the candidate coords, and
+`population_density` is the same table `_bulk_enrich_population` uses.
 
 - New setting `EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M` (default **1500**).
 - New 4th bulk-enrich block (block "4)" in the L1 section) computes catchment population at the
   tighter radius via the shared coord VALUES list, guarded by `_cached_table_available` and a
   geom-vs-lat/lon column probe (mirrors `_bulk_enrich_population`). One bulk query, no N+1.
-- The population **sub-score** now normalizes this tighter `population_local_reach`; the full
-  3500 m `population_reach` is **still retained raw** in the snapshot for continuity.
-- Phase A reports `pop_reach` at 1000/1500/3500 m + a `p95/p50` spread ratio so we can confirm the
-  tighter radius actually discriminates before locking the anchors.
+- The population **sub-score** normalizes this tighter `population_local_reach`; the full 3500 m
+  `population_reach` is **still retained raw** in the snapshot for continuity.
+
+**Phase A verdict: 1500 m did NOT help.** The probe's spread ratios came back
+`spread_ratio_1500 = 1.108 ≈ spread_ratio_3500 = 1.109` — population is near-constant at *both*
+radii in dense Riyadh, so the tighter catchment buys no discrimination. We keep computing it (the
+plumbing is cheap and the raw value stays in the snapshot), but in the weight rebalance below
+population is cut to a **token 0.05** and that weight redistributed to the signals that actually
+discriminate (effectively the fall-back of option **b**, now justified by data rather than assumed).
 
 ### 3. Rebalanced composite weights onto the discriminators
 Same versioned constants block; the *number* of sub-signals is unchanged.
 
 | sub-signal | v1 | v2 |
 |---|---|---|
-| osm_generators | 0.25 | **0.35** |
-| fnb_review_weighted | 0.25 | **0.30** |
+| osm_generators | 0.25 | **0.40** |
+| fnb_review_weighted | 0.25 | **0.35** |
 | building_floors | 0.20 | 0.20 |
-| population | **0.30** | **0.15** |
+| population | **0.30** | **0.05** |
 
-OSM trip generators + free F&B review density (the strong raw discriminators) now drive the spread;
-population — weakest discriminator even at the tighter radius in dense Riyadh — carries the least.
-Sum still 1.0 (`test_composite_weights_sum_to_one`).
+OSM trip generators + free F&B review density (the strong raw discriminators) drive the spread;
+population — shown by Phase A to be near-constant at every radius in dense Riyadh — carries a token
+weight only. Sum still 1.0 (`test_composite_weights_sum_to_one`).
 
 ### 4. Raw sub-values still fully retained
 Every raw sub-value stays in the snapshot (unchanged) **plus** the new `population_local_reach` and
@@ -108,9 +110,10 @@ Every raw sub-value stays in the snapshot (unchanged) **plus** the new `populati
   `tests/test_expansion_advisor_service.py` **156 passed**.
 
 ## Validation (Ahmed, Codespace, after diff review)
-1. Run **Phase A** first: `psql "$DATABASE_URL" -f scripts/diagnostics/l1_signal_distributions.sql`
-   and replace the provisional anchors in `_DEMAND_GENERATOR_NORM_ANCHORS` with the reported
-   p5/p95 (and `population_local` from the `pop_reach_1500` column).
+1. **Phase A is done** — `scripts/diagnostics/l1_signal_distributions.sql` was run over 538 city-wide
+   Tier-1 primaries and `_DEMAND_GENERATOR_NORM_ANCHORS` is now set from those p5/p95/p99 (the
+   `population_local` anchors come from the `pop_reach_1500` column). Re-run it only if the candidate
+   universe shifts materially.
 2. Re-run `scripts/diagnostics/l1_index_validation.sql` against a **fresh dine-in search** (flag on;
    old searches won't backfill). Success criteria:
    - **Spread:** composite stddev materially up; uses most of 0–100; **≥10 distinct rounded values**
