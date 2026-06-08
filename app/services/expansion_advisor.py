@@ -815,7 +815,11 @@ _EXPANSION_BULK_PERSIST_CHUNK_SIZE = max(
 # materially under-scores dine-in and delivery-first candidates.
 # ---------------------------------------------------------------------------
 _CATCHMENT_RADII_M: dict[str, dict[str, float]] = {
-    "dine_in":        {"demand": 3500.0, "competition": 3000.0, "provider": 3500.0},
+    # dine_in competition tightened to 1000 m: a direct-competition trade area
+    # distinct from the 3500 m demand catchment, so net-of-supply differencing
+    # spans two genuinely different scopes (same-category counts at 3000 m
+    # saturated the whitespace curve — p50 ~230 vs a domain ending at 25).
+    "dine_in":        {"demand": 3500.0, "competition": 1000.0, "provider": 3500.0},
     "delivery_first": {"demand": 3000.0, "competition": 2500.0, "provider": 3000.0},
     "qsr":            {"demand": 1500.0, "competition": 1200.0, "provider": 1500.0},
     "cafe":           {"demand": 1000.0, "competition":  800.0, "provider": 1000.0},
@@ -2530,26 +2534,42 @@ def _demand_blend_weights(service_model: str) -> tuple[float, float]:
     return _BLENDS.get(service_model, (0.60, 0.40))
 
 
+_WHITESPACE_LOG_REF: dict[str, float] = {
+    # Per-service-model reference count where the curve reaches the 15.0 floor
+    # (``raw = 100·(1 − log1p(count)/log1p(REF))`` floors structurally at
+    # ``count = REF``). dine_in scores same-category competitors over a tight
+    # 1000 m trade area where in-range counts run p50 ~16 / p75 ~24 / p90 ~32;
+    # under the default REF=25 the p50 already sits at the floor, collapsing
+    # the whole p50–p75 band to a flat 15. REF=50 keeps that band spread and
+    # floors only the genuinely saturated count ≥ ~40 tail. All other service
+    # models keep the default 25.
+    "dine_in": 50.0,
+}
+_WHITESPACE_LOG_REF_DEFAULT: float = 25.0
+
+
 def _competition_whitespace_score(
     competitor_count: int,
     *,
     confident: bool | None = None,
+    service_model: str | None = None,
 ) -> float:
-    """Whitespace score with tighter calibration for Riyadh F&B density.
+    """Log-decay whitespace score over same-category competitor counts.
 
-    Riyadh districts typically have 0-8 same-category competitors within
-    the scoring radius.  The curve must produce meaningful spread across
-    this range, not just penalize counts > 15.
+    The curve is ``raw = 100·(1 − log1p(count)/log1p(REF))`` clamped to a
+    15.0 floor, so it decays steeply at low counts and gently at high ones,
+    reaching the floor structurally at ``count = REF``. ``REF`` is
+    service-model-aware via ``_WHITESPACE_LOG_REF`` (``dine_in`` → 50, all
+    other models → 25 default), because dine_in scores its competitors over
+    a tighter 1000 m trade area whose in-range counts are large enough that
+    the default REF=25 would floor the p50.
 
-    Targets:
-      0 competitors -> 100  (wide open)
-      1              -> 88
-      2              -> 78
-      3              -> 69
-      5              -> 55
-      8              -> 40
-      12             -> 28
-      20+            -> 15  (floor)
+    Representative outputs (count → score):
+      REF=25 (default):  0→100*, 1→79, 3→57, 6→40, 16→15 (floored at ≤16),
+                         25→15 (floor).
+      REF=50 (dine_in):  0→100*, 1→82, 6→50, 16→28, 24→18, 32→15, 40→15,
+                         50→15 (floor).
+    (*count 0 only when ``confident``; see F4 below.)
 
     F4 (defensive): ``count=0`` only earns the wide-open 100 when
     ``confident`` is truthy — i.e. the competitor scan actually observed
@@ -2566,8 +2586,11 @@ def _competition_whitespace_score(
         return 50.0
     if competitor_count <= 0:
         return 100.0
+    ref = _WHITESPACE_LOG_REF.get(
+        (service_model or "").lower(), _WHITESPACE_LOG_REF_DEFAULT
+    )
     # Log-scaled decay: steeper at low counts, gentler at high counts.
-    raw = 100.0 * (1.0 - (math.log1p(competitor_count) / math.log1p(25)))
+    raw = 100.0 * (1.0 - (math.log1p(competitor_count) / math.log1p(ref)))
     # Floor at 15 — even saturated areas get some score so rankings remain
     # distinguishable.
     return _clamp(max(15.0, raw))
@@ -8086,7 +8109,9 @@ def run_expansion_search(
         demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
 
         whitespace_score = _competition_whitespace_score(
-            competitor_count, confident=competitor_count_confident
+            competitor_count,
+            confident=competitor_count_confident,
+            service_model=service_model,
         )
         chain_strength_score = _chain_strength_score(chain_strength_share)
 
