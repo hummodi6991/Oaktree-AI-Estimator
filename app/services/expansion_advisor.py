@@ -820,7 +820,13 @@ _CATCHMENT_RADII_M: dict[str, dict[str, float]] = {
     # spans two genuinely different scopes (same-category counts at 3000 m
     # saturated the whitespace curve — p50 ~230 vs a domain ending at 25).
     "dine_in":        {"demand": 3500.0, "competition": 1000.0, "provider": 3500.0},
-    "delivery_first": {"demand": 3000.0, "competition": 2500.0, "provider": 3000.0},
+    # delivery_first competition tightened 2500 -> 1000 m for the same reason
+    # as dine_in: same-category counts at 2500 m are both enormous and nearly
+    # constant (probe p50/p75/p90 all ~145, max 149, 0% within the curve REF),
+    # so the whitespace component floored 100% of the shortlist at 15.0 — dead
+    # signal. The discriminating variation lives at 1000 m (probe p50 ~16, p90
+    # ~29). demand/provider stay at 3000 m (platform delivery radius).
+    "delivery_first": {"demand": 3000.0, "competition": 1000.0, "provider": 3000.0},
     "qsr":            {"demand": 1500.0, "competition": 1200.0, "provider": 1500.0},
     "cafe":           {"demand": 1000.0, "competition":  800.0, "provider": 1000.0},
 }
@@ -2560,9 +2566,19 @@ _WHITESPACE_LOG_REF: dict[str, float] = {
     # 1000 m trade area where in-range counts run p50 ~16 / p75 ~24 / p90 ~32;
     # under the default REF=25 the p50 already sits at the floor, collapsing
     # the whole p50–p75 band to a flat 15. REF=50 keeps that band spread and
-    # floors only the genuinely saturated count ≥ ~40 tail. All other service
-    # models keep the default 25.
+    # floors only the genuinely saturated count ≥ ~40 tail.
+    #
+    # delivery_first has the identical signature once its competition radius is
+    # tightened to 1000 m: probe counts run p50 ~16 / p90 ~29 / max ~32, so the
+    # default REF=25 would re-floor the p50. REF=50 spreads that band (count
+    # 16 → ~28). The 1000 m probe counts are the under-counting approximation
+    # (simplified category match, no alias expansion), so true production counts
+    # run somewhat higher — REF=50 (matching dine_in) deliberately avoids
+    # re-flooring on the alias-expanded counts rather than sizing lower.
+    #
+    # All other service models keep the default 25.
     "dine_in": 50.0,
+    "delivery_first": 50.0,
 }
 _WHITESPACE_LOG_REF_DEFAULT: float = 25.0
 
@@ -2578,10 +2594,10 @@ def _competition_whitespace_score(
     The curve is ``raw = 100·(1 − log1p(count)/log1p(REF))`` clamped to a
     15.0 floor, so it decays steeply at low counts and gently at high ones,
     reaching the floor structurally at ``count = REF``. ``REF`` is
-    service-model-aware via ``_WHITESPACE_LOG_REF`` (``dine_in`` → 50, all
-    other models → 25 default), because dine_in scores its competitors over
-    a tighter 1000 m trade area whose in-range counts are large enough that
-    the default REF=25 would floor the p50.
+    service-model-aware via ``_WHITESPACE_LOG_REF`` (``dine_in`` and
+    ``delivery_first`` → 50, all other models → 25 default), because both
+    score their competitors over a tighter 1000 m trade area whose in-range
+    counts are large enough that the default REF=25 would floor the p50.
 
     Representative outputs (count → score):
       REF=25 (default):  0→100*, 1→79, 3→57, 6→40, 16→15 (floored at ≤16),
