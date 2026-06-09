@@ -511,9 +511,15 @@ def test_competition_whitespace_dine_in_reference_varies_off_floor():
     floor, collapsing the p50–p75 band to a constant. REF=50 keeps that band
     off the floor and floors only the genuinely saturated count ≥ ~40 tail.
     """
+    import math
+
     import pytest
 
     from app.services.expansion_advisor import _competition_whitespace_score
+
+    def _ref50(count: int) -> float:
+        raw = 100.0 * (1.0 - (math.log1p(count) / math.log1p(50)))
+        return max(15.0, raw)
 
     counts = [0, 6, 16, 24, 40]
     scores = [
@@ -522,6 +528,12 @@ def test_competition_whitespace_dine_in_reference_varies_off_floor():
     ]
     # Whitespace varies across the band — not a constant 15.
     assert len(set(scores)) > 1
+    # Blast-radius guard: dine_in stays bit-for-bit on the REF=50 curve at the
+    # representative counts (the delivery_first fix must not perturb it).
+    for count in (6, 16, 25, 50, 145):
+        assert _competition_whitespace_score(
+            count, confident=True, service_model="dine_in"
+        ) == pytest.approx(_ref50(count))
     # p50 count (16) is off the floor under REF=50.
     assert _competition_whitespace_score(
         16, confident=True, service_model="dine_in"
@@ -533,10 +545,12 @@ def test_competition_whitespace_dine_in_reference_varies_off_floor():
 
 
 def test_competition_whitespace_cafe_qsr_reference_unchanged():
-    """Blast-radius guard: non-dine_in models keep REF=25 exactly.
+    """Blast-radius guard: qsr / cafe (REF=25 default) are unchanged.
 
-    These must match the pre-change behaviour bit-for-bit so the dine_in
-    recalibration cannot leak into cafe / qsr / delivery_first rankings.
+    These must match the pre-change behaviour bit-for-bit so neither the
+    dine_in nor the delivery_first recalibration can leak into cafe / qsr
+    rankings. delivery_first is deliberately NOT in this loop any more — it
+    now uses REF=50 (see the dedicated test below).
     """
     import math
 
@@ -548,18 +562,67 @@ def test_competition_whitespace_cafe_qsr_reference_unchanged():
         raw = 100.0 * (1.0 - (math.log1p(count) / math.log1p(25)))
         return max(15.0, raw)
 
-    for count in (1, 3, 6, 8, 12, 16, 25, 40):
-        for model in ("cafe", "qsr", "delivery_first", None):
+    # Representative competitor counts spanning empty -> saturated, including
+    # the probe percentiles called out in the fix report.
+    for count in (1, 3, 6, 8, 12, 16, 24, 25, 40, 50, 145):
+        for model in ("cafe", "qsr", None):
             assert _competition_whitespace_score(
                 count, confident=True, service_model=model
             ) == pytest.approx(_legacy_ref25(count))
+
+
+def test_competition_whitespace_delivery_first_reference_varies_off_floor():
+    """delivery_first uses REF=50 so its tightened 1000 m count band spreads.
+
+    Before the fix delivery_first scored same-category competitors over a
+    2500 m radius whose counts were both huge and nearly constant (probe
+    p50/p75/p90 all ~145), so the whitespace component floored 100% of the
+    shortlist at 15.0. Tightening the competition radius to 1000 m surfaces
+    real variation (probe p50 ~16 / p90 ~29), but under the default REF=25
+    the p50 (~16) would still floor — so delivery_first now matches dine_in's
+    REF=50, which keeps that band off the floor.
+    """
+    import math
+
+    import pytest
+
+    from app.services.expansion_advisor import _competition_whitespace_score
+
+    def _ref50(count: int) -> float:
+        raw = 100.0 * (1.0 - (math.log1p(count) / math.log1p(50)))
+        return max(15.0, raw)
+
+    # delivery_first follows the REF=50 curve exactly (NOT the legacy REF=25).
+    for count in (1, 3, 6, 16, 24, 32, 40, 50, 145):
+        assert _competition_whitespace_score(
+            count, confident=True, service_model="delivery_first"
+        ) == pytest.approx(_ref50(count))
+
+    scores = [
+        _competition_whitespace_score(c, confident=True, service_model="delivery_first")
+        for c in (0, 6, 16, 24, 40)
+    ]
+    # Component carries signal again — not a constant floor.
+    assert len(set(scores)) > 1
+    # p50 count (16) sits well off the floor under REF=50 (~28) where REF=25
+    # would have floored it at 15.
+    assert _competition_whitespace_score(
+        16, confident=True, service_model="delivery_first"
+    ) == pytest.approx(27.9, abs=0.5)
+    # Genuine saturation still floors at 15.
+    assert _competition_whitespace_score(
+        50, confident=True, service_model="delivery_first"
+    ) == 15.0
+    assert _competition_whitespace_score(
+        145, confident=True, service_model="delivery_first"
+    ) == 15.0
 
 
 def test_competition_whitespace_f4_path_unchanged_per_model():
     """F4 zero-count logic is independent of the service-model reference."""
     from app.services.expansion_advisor import _competition_whitespace_score
 
-    for model in ("dine_in", "cafe", "qsr", None):
+    for model in ("dine_in", "delivery_first", "cafe", "qsr", None):
         assert _competition_whitespace_score(
             0, confident=True, service_model=model
         ) == 100.0
