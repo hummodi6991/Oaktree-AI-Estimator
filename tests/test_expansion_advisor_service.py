@@ -833,6 +833,41 @@ def test_brand_weight_reweight_delivery_channel_lifts_delivery_demand(monkeypatc
     assert abs(sum(weights.values()) - 100) < 1e-3
 
 
+def test_access_visibility_score_is_pure_site_measurement():
+    """Weight-audit Item 4b: the score-domain visibility multiplier is removed.
+
+    Sensitivity preference is expressed in the weight domain only
+    (_brand_weight_multipliers); the raw score is a pure site measurement:
+    - a medium-sensitivity profile with perfect inputs reaches 100.0 (the old
+      `· (0.75 + vw·0.25)` multiplier capped it at 90.0);
+    - the score is invariant to visibility_sensitivity;
+    - frontage_sensitivity still steers the frontage/access blend.
+    """
+    assert expansion_service._access_visibility_score(
+        frontage_score=100.0,
+        access_score=100.0,
+        brand_profile={"visibility_sensitivity": "medium"},
+    ) == 100.0
+
+    scores = {
+        level: expansion_service._access_visibility_score(
+            frontage_score=80.0,
+            access_score=40.0,
+            brand_profile={"visibility_sensitivity": level},
+        )
+        for level in ("low", "medium", "high")
+    }
+    assert scores["low"] == scores["medium"] == scores["high"] == 64.8
+
+    # High frontage sensitivity: blend = 0.5 + 1.0*0.2 = 0.7
+    # -> 80*0.7 + 40*0.3 = 68.0 (vs 64.8 at the medium-blend 0.62).
+    assert expansion_service._access_visibility_score(
+        frontage_score=80.0,
+        access_score=40.0,
+        brand_profile={"frontage_sensitivity": "high"},
+    ) == 68.0
+
+
 def test_compare_includes_v61_fields():
     db = FakeDB(
         compare_rows=[

@@ -2222,12 +2222,21 @@ def _parking_evidence_band_for_listing(
 
 
 def _access_visibility_score(*, frontage_score: float, access_score: float, brand_profile: dict[str, Any]) -> float:
-    visibility_weight = _sensitivity_weight(brand_profile.get("visibility_sensitivity"))
+    """Blend frontage and access into a pure site measurement on 0-100.
+
+    Brand sensitivity preference is expressed in the WEIGHT domain only
+    (``_brand_weight_multipliers`` lifts/trims the access_visibility
+    top-level weight from the site-sensitivity knobs). The raw score here
+    is deliberately NOT scaled by visibility_sensitivity — a previous
+    ``· (0.75 + visibility_weight·0.25)`` multiplier capped medium-
+    sensitivity brands at 90 and all-low brands at 82.5, compressing the
+    component's spread and skewing cross-brand comparability (weight-audit
+    Item 4b). frontage_sensitivity still steers the frontage/access blend.
+    """
     frontage_weight = _sensitivity_weight(brand_profile.get("frontage_sensitivity"))
     blend = 0.5 + frontage_weight * 0.2
     access_blend = 1.0 - blend
-    weighted = frontage_score * blend + access_score * access_blend
-    return _clamp(weighted * (0.75 + visibility_weight * 0.25))
+    return _clamp(frontage_score * blend + access_score * access_blend)
 
 
 def _ea_table_has_rows(db: Session, table_name: str) -> bool:
@@ -2655,7 +2664,8 @@ def _demand_blend_weights(service_model: str) -> tuple[float, float]:
 
     - delivery_first: delivery density is the primary demand signal (0.40 / 0.60)
     - dine_in: population/foot-traffic dominates (0.75 / 0.25)
-    - cafe: moderate population bias (0.70 / 0.30)
+    - cafe: moderate population bias (0.55 / 0.45 — shifted from 0.70/0.30 to
+      reduce score compression from uniform population signals)
     - qsr (default): balanced with slight population lean (0.60 / 0.40)
     """
     _BLENDS: dict[str, tuple[float, float]] = {
