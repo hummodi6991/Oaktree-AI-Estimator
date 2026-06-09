@@ -16,11 +16,17 @@ from __future__ import annotations
 
 from app.services import expansion_advisor as expansion_service
 from app.services.expansion_advisor import (
+    _CATCHMENT_RADII_M,
     _DEMAND_GENERATOR_COMPOSITE_WEIGHTS,
+    _DEMAND_GENERATOR_NORM_ANCHORS,
+    _DEMAND_GENERATOR_NORM_ANCHORS_QSR,
     _DEMAND_GENERATOR_OSM_WEIGHTS,
     _demand_blend_weights,
+    _demand_generator_anchors,
     _demand_generator_index,
+    _demand_generator_normalize,
     _demand_generator_osm_subscore,
+    _demand_generator_radius_m,
     clear_expansion_caches,
     run_expansion_search as _run_expansion_search_raw,
 )
@@ -370,8 +376,12 @@ def test_flag_on_emits_index_without_changing_scores(
 # ---------------------------------------------------------------------------
 
 
-def _run_flags(monkeypatch, *, index, scoring, service_model="dine_in"):
-    """Run the FakeDB search with the two demand-generator flags set."""
+def _run_flags(monkeypatch, *, index, scoring, service_model="dine_in", scoring_qsr=False):
+    """Run the FakeDB search with the demand-generator flags set.
+
+    ``scoring`` drives the dine-in scoring flag; ``scoring_qsr`` drives the
+    SEPARATE QSR scoring flag. Both default to the production-safe OFF state.
+    """
     monkeypatch.setattr(
         expansion_service.settings, "EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED", index
     )
@@ -379,6 +389,12 @@ def _run_flags(monkeypatch, *, index, scoring, service_model="dine_in"):
         expansion_service.settings,
         "EXPANSION_DEMAND_GENERATOR_SCORING_ENABLED",
         scoring,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        expansion_service.settings,
+        "EXPANSION_DEMAND_GENERATOR_SCORING_QSR_ENABLED",
+        scoring_qsr,
         raising=False,
     )
     clear_expansion_caches()
@@ -484,3 +500,176 @@ def test_pr2_non_dine_in_unchanged_with_flag_on(
         for it in on:
             fs = it.get("feature_snapshot_json") or {}
             assert fs.get("demand_score_source") == "pop_score"
+
+
+# ---------------------------------------------------------------------------
+# QSR l1_v3 re-anchor — Change 1 (service-model-aware enrich radius),
+# Change 2 (l1_v3 anchor selection), Change 3 (gated QSR blend swap)
+# ---------------------------------------------------------------------------
+
+
+def test_demand_generator_radius_is_service_model_aware():
+    """Change-1: enrich radius reads each model's demand catchment. dine_in is
+    UNCHANGED at 3500; qsr is now 1500; unknown models fall back to the flat
+    setting (NOT qsr's 1500)."""
+    assert _demand_generator_radius_m("dine_in") == 3500.0
+    assert _demand_generator_radius_m("dine_in") == _CATCHMENT_RADII_M["dine_in"]["demand"]
+    assert _demand_generator_radius_m("qsr") == 1500.0
+    assert _demand_generator_radius_m("qsr") == _CATCHMENT_RADII_M["qsr"]["demand"]
+    assert _demand_generator_radius_m("cafe") == 1000.0
+    assert _demand_generator_radius_m("delivery_first") == 3000.0
+    # Unknown model → flat fallback, never qsr's 1500.
+    assert _demand_generator_radius_m("space_station") == float(
+        expansion_service.settings.EXPANSION_DEMAND_GENERATOR_RADIUS_M
+    )
+
+
+def test_anchor_selection_qsr_vs_dine_in():
+    """Change-2: qsr selects the l1_v3 anchor set, every other model l1_v2; a
+    representative input maps DIFFERENTLY under the two sets (l1_v3's tighter
+    1500 m anchors normalize the same count higher)."""
+    assert _demand_generator_anchors("qsr") is _DEMAND_GENERATOR_NORM_ANCHORS_QSR
+    assert _demand_generator_anchors("dine_in") is _DEMAND_GENERATOR_NORM_ANCHORS
+    assert _demand_generator_anchors("cafe") is _DEMAND_GENERATOR_NORM_ANCHORS
+    assert _demand_generator_anchors(None) is _DEMAND_GENERATOR_NORM_ANCHORS
+
+    val = 50000.0
+    qsr_norm = _demand_generator_normalize(
+        "fnb_review_weighted", val, service_model="qsr"
+    )
+    dine_norm = _demand_generator_normalize(
+        "fnb_review_weighted", val, service_model="dine_in"
+    )
+    default_norm = _demand_generator_normalize("fnb_review_weighted", val)
+    # Default (no service_model) stays on l1_v2 → identical to dine_in.
+    assert default_norm == dine_norm
+    # Same raw count, different normalization; l1_v3's smaller anchors map higher.
+    assert qsr_norm != dine_norm
+    assert qsr_norm > dine_norm
+
+
+def test_dine_in_index_unchanged_by_qsr_refactor():
+    """dine_in scored signal must be bit-identical: threading service_model must
+    not perturb the dine-in composite, and the version tag stays l1_v2. The qsr
+    path threads l1_v3 and a different version tag."""
+    common = dict(
+        population_reach=250000.0,
+        population_local_reach=45000.0,
+        osm_counts=_FULL_OSM,
+        building_floors_proxy_sum=20000.0,
+        fnb_review_weighted=80000.0,
+        fnb_venue_count=70,
+        pop_radius_m=1500,
+    )
+    idx_default = _demand_generator_index(radius_m=3500, **common)
+    idx_dine = _demand_generator_index(radius_m=3500, service_model="dine_in", **common)
+    assert idx_dine["composite_0_100"] == idx_default["composite_0_100"]
+    assert idx_dine["weights_version"] == "l1_v2_2026-06"
+    assert idx_dine["radius_m"] == 3500
+
+    idx_qsr = _demand_generator_index(radius_m=1500, service_model="qsr", **common)
+    assert idx_qsr["weights_version"] == "l1_v3_qsr_2026-06"
+    assert idx_qsr["radius_m"] == 1500
+    # l1_v3 re-anchors the SAME inputs to the 1500 m distribution → composite moves.
+    assert idx_qsr["composite_0_100"] != idx_dine["composite_0_100"]
+
+
+def test_qsr_scoring_flag_off_is_inert(disable_market_viability_floors, monkeypatch):
+    """Change-3: with the QSR scoring flag OFF, a QSR search's final_score +
+    ordering is byte-for-byte identical to the both-flags-off baseline and emits
+    no demand_score_source key."""
+    off = _run_flags(
+        monkeypatch, index=False, scoring=False, scoring_qsr=False, service_model="qsr"
+    )
+    off_scores = [(it["parcel_id"], it["final_score"]) for it in off]
+
+    inert = _run_flags(
+        monkeypatch, index=True, scoring=False, scoring_qsr=False, service_model="qsr"
+    )
+    inert_scores = [(it["parcel_id"], it["final_score"]) for it in inert]
+    assert inert_scores == off_scores
+    for it in inert:
+        fs = it.get("feature_snapshot_json") or {}
+        assert "demand_score_source" not in fs
+
+
+def test_qsr_scoring_on_uses_dg_index(disable_market_viability_floors, monkeypatch):
+    """QSR scoring flag ON + composite present → blend swaps pop_score for the
+    l1_v3 composite at 0.60/0.40, demand_score_source == 'dg_index', the emitted
+    index carries the l1_v3 tag, and the final score actually moves."""
+    baseline = _run_flags(
+        monkeypatch, index=True, scoring=False, scoring_qsr=False, service_model="qsr"
+    )
+    base_scores = {it["parcel_id"]: it["final_score"] for it in baseline}
+
+    on = _run_flags(
+        monkeypatch, index=True, scoring=False, scoring_qsr=True, service_model="qsr"
+    )
+    on_by_pid = {it["parcel_id"]: it for it in on}
+
+    for it in on:
+        fs = it.get("feature_snapshot_json") or {}
+        assert fs.get("demand_score_source") == "dg_index"
+        idx = fs.get("demand_generator_index")
+        assert idx is not None
+        assert idx["weights_version"] == "l1_v3_qsr_2026-06"
+
+    moved = any(
+        abs(on_by_pid[pid]["final_score"] - base_scores[pid]) > 1e-9
+        for pid in base_scores
+        if pid in on_by_pid
+    )
+    assert moved
+
+
+def test_qsr_scoring_on_index_off_falls_back_to_pop_score(
+    disable_market_viability_floors, monkeypatch
+):
+    """QSR scoring flag ON but index flag OFF → composite absent → silent
+    fallback to pop_score (no exception), source 'pop_score', scores identical to
+    the feature-absent baseline."""
+    off = _run_flags(
+        monkeypatch, index=False, scoring=False, scoring_qsr=False, service_model="qsr"
+    )
+    off_scores = [(it["parcel_id"], it["final_score"]) for it in off]
+
+    fallback = _run_flags(
+        monkeypatch, index=False, scoring=False, scoring_qsr=True, service_model="qsr"
+    )
+    fb_scores = [(it["parcel_id"], it["final_score"]) for it in fallback]
+    assert fb_scores == off_scores
+    for it in fallback:
+        fs = it.get("feature_snapshot_json") or {}
+        assert fs.get("demand_score_source") == "pop_score"
+        assert "demand_generator_index" not in fs
+
+
+def test_qsr_flag_does_not_touch_other_models(
+    disable_market_viability_floors, monkeypatch
+):
+    """Hard constraint: flipping the QSR flag ON must leave dine_in / cafe /
+    delivery_first scored output identical and emit no source key for them (the
+    QSR flag governs only qsr candidates)."""
+    for service_model in ("dine_in", "cafe", "delivery_first"):
+        base = _run_flags(
+            monkeypatch,
+            index=True,
+            scoring=False,
+            scoring_qsr=False,
+            service_model=service_model,
+        )
+        base_scores = [(it["parcel_id"], it["final_score"]) for it in base]
+
+        on = _run_flags(
+            monkeypatch,
+            index=True,
+            scoring=False,
+            scoring_qsr=True,
+            service_model=service_model,
+        )
+        on_scores = [(it["parcel_id"], it["final_score"]) for it in on]
+
+        assert on_scores == base_scores, f"{service_model} must ignore the QSR flag"
+        for it in on:
+            fs = it.get("feature_snapshot_json") or {}
+            assert "demand_score_source" not in fs

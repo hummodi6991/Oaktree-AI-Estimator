@@ -864,6 +864,27 @@ def _population_reference(service_model: str | None) -> float:
     )
 
 
+def _demand_generator_radius_m(service_model: str | None) -> float:
+    """Demand-generator enrich/index radius (metres) for this service model.
+
+    Change-1 (Phase-A discrepancy E.2): the L1 demand-generator index must be
+    computed at the SAME catchment the model is scored at, so read each model's
+    demand radius from ``_CATCHMENT_RADII_M[model]['demand']`` instead of the
+    flat ``EXPANSION_DEMAND_GENERATOR_RADIUS_M``:
+
+        dine_in -> 3500 (UNCHANGED — already equal to the flat default),
+        qsr     -> 1500, cafe -> 1000, delivery_first -> 3000.
+
+    Any model absent from ``_CATCHMENT_RADII_M`` falls back to the flat
+    ``EXPANSION_DEMAND_GENERATOR_RADIUS_M`` (mirrors ``_catchment_radii``'s
+    fallback intent without forcing qsr's 1500 m onto an unknown model).
+    """
+    radii = _CATCHMENT_RADII_M.get((service_model or "").lower())
+    if radii and "demand" in radii:
+        return float(radii["demand"])
+    return float(settings.EXPANSION_DEMAND_GENERATOR_RADIUS_M)
+
+
 def _chunked(seq: list[Any], size: int):
     for i in range(0, len(seq), size):
         yield seq[i : i + size]
@@ -1832,6 +1853,15 @@ def _foot_traffic_score(nearby_amenity_count: int) -> float:
 # new data sources, still emit-only.
 _DEMAND_GENERATOR_WEIGHTS_VERSION = "l1_v2_2026-06"
 
+# l1_v3 (QSR re-anchor): the dine-in l1_v2 anchors above were gathered at the
+# 3500 m demand radius. At QSR's tighter 1500 m demand radius the raw counts are
+# genuinely smaller (QSR fnb p95 ~72k vs dine-in 225k; floors p95 ~6.9k vs 35.6k),
+# so reusing l1_v2 would map nearly every QSR candidate near 0. l1_v3 re-anchors
+# the SAME four sub-signals (and the SAME 0.40/0.35/0.20/0.05 mix) to the QSR
+# 1500 m distribution — a clean re-anchor, NOT a re-mix. QSR-keyed; dine-in keeps
+# l1_v2 untouched.
+_DEMAND_GENERATOR_WEIGHTS_VERSION_QSR = "l1_v3_qsr_2026-06"
+
 # Per-generator-type weights for the OSM sub-score. Seeded from the heatmap
 # path's _ANCHOR_WEIGHTS (restaurant_scoring_factors.py:772-784), regrouped onto
 # the seven generator buckets enriched here; transit/mosque buckets (absent from
@@ -1866,6 +1896,45 @@ _DEMAND_GENERATOR_NORM_ANCHORS: dict[str, tuple[float, float, float, bool]] = {
     "population_local":    (8281.0,   52010.0,  53393.0, False),
 }
 
+# l1_v3 QSR anchors — gathered at QSR's 1500 m demand radius (Phase-A probe, 548
+# city-wide candidates). Same tuple shape (p5, p95, p99, log?) and same transforms
+# as l1_v2; only the anchor values differ, fit to the 1500 m counts.
+#   - fnb_review_weighted: n_zero 26/548 (~5%), healthy spread (keeps 0.35).
+#   - building_floors:     n_zero 0, clean (keeps 0.20).
+#   - osm_weighted_total:  n_zero 45 (~8%), discriminating (keeps 0.40). KNOWN
+#       LIMITATION: p95==p99==951.8 is a winsorization plateau, so the highest-OSM
+#       QSR candidates won't separate from EACH OTHER at the top; the mid band
+#       (p25=15 -> p75=657) still discriminates. Acceptable for v3, revisit later.
+#       osm p5: the probe p5 was 0.0; a log anchor needs a positive floor, so we
+#       use p5=3.4 (matching l1_v2's positive osm floor). _demand_generator_normalize
+#       also clamps a 0 p5 safely (log1p(0)=0, and hi>lo still holds), but 3.4 keeps
+#       the low tail from pegging at exactly 0.
+#   - population_local:    spread ratio ~1.1 at 1000/1200/1500 m (flat everywhere),
+#       so it keeps only the token 0.05 weight; anchors ~= l1_v2 (pop barely differs
+#       at 1500 m vs the l1_v2 pop sub-radius, which is also 1500 m).
+_DEMAND_GENERATOR_NORM_ANCHORS_QSR: dict[str, tuple[float, float, float, bool]] = {
+    #  signal                 p5         p95         p99       log
+    "fnb_review_weighted": (186.5,   72026.0, 94509.0, True),
+    "building_floors":     (1262.9,   6898.0,  9483.7, True),
+    "osm_weighted_total":  (3.4,       951.8,   951.8, True),   # see osm caveat above
+    "population_local":    (7410.4,  51979.7, 53392.6, False),  # ~= l1_v2 at 1500 m
+}
+
+
+def _demand_generator_anchors(
+    service_model: str | None,
+) -> dict[str, tuple[float, float, float, bool]]:
+    """Select the L1 normalization anchor set by service model.
+
+    qsr -> l1_v3 (gathered at QSR's 1500 m demand radius); every other model ->
+    l1_v2 (the dine-in anchors at 3500 m, UNCHANGED). Defaulting non-qsr to l1_v2
+    keeps dine_in / cafe / delivery_first byte-for-byte on the existing anchors.
+    """
+    if (service_model or "").lower() == "qsr":
+        return _DEMAND_GENERATOR_NORM_ANCHORS_QSR
+    return _DEMAND_GENERATOR_NORM_ANCHORS
+
+
 # Top-level composite weights over the four normalized sub-signals (sum 1.0).
 # PR-1a rebalance: the discriminating signals (OSM trip generators + free F&B
 # review density) drive the spread. Phase A showed the 1500 m population radius
@@ -1879,16 +1948,20 @@ _DEMAND_GENERATOR_COMPOSITE_WEIGHTS: dict[str, float] = {
 }
 
 
-def _demand_generator_normalize(signal: str, value: float) -> float:
+def _demand_generator_normalize(
+    signal: str, value: float, *, service_model: str | None = None
+) -> float:
     """Winsorize at p99 then map the p5→p95 anchor band onto 0-100.
 
     Robust 0-100 normalization shared by every L1 sub-signal: a single busy
     outlier cannot dominate (winsorized at p99) and the dense end keeps headroom
     (top anchor is p95, not the max). Wide-spread signals are log-transformed so
     the bulk of the distribution spreads instead of bunching near zero. Anchors
-    live in _DEMAND_GENERATOR_NORM_ANCHORS (PR-1a, set from the Phase A probe).
+    are selected per service model (qsr -> l1_v3 at 1500 m, else l1_v2 at 3500 m);
+    ``service_model=None`` keeps the l1_v2 default so existing callers are
+    unchanged.
     """
-    p5, p95, p99, use_log = _DEMAND_GENERATOR_NORM_ANCHORS[signal]
+    p5, p95, p99, use_log = _demand_generator_anchors(service_model)[signal]
     v = min(max(0.0, _safe_float(value)), p99)  # winsorize the top tail at p99
     if use_log:
         v = math.log1p(v)
@@ -1901,17 +1974,22 @@ def _demand_generator_normalize(signal: str, value: float) -> float:
     return _clamp((v - lo) / (hi - lo) * 100.0)
 
 
-def _demand_generator_osm_subscore(osm_counts: dict[str, int]) -> float:
+def _demand_generator_osm_subscore(
+    osm_counts: dict[str, int], *, service_model: str | None = None
+) -> float:
     """Σ(count·weight) over generator buckets → 0-100 against the city-wide anchor.
 
     PR-1a: the v1 sigmoid (ref /20) saturated to ~95 for every candidate because
     real Riyadh catchments hold hundreds of offices. The weighted total is now
     log-normalized against the empirical p5→p95 band so offices/retail — the
-    strongest raw discriminators — actually drive spread."""
+    strongest raw discriminators — actually drive spread. The OSM bucket weights
+    are unchanged; only the normalization anchor band is service-model-aware."""
     weighted_total = 0.0
     for _kind, _w in _DEMAND_GENERATOR_OSM_WEIGHTS.items():
         weighted_total += _w * float(osm_counts.get(_kind, 0) or 0)
-    return _demand_generator_normalize("osm_weighted_total", weighted_total)
+    return _demand_generator_normalize(
+        "osm_weighted_total", weighted_total, service_model=service_model
+    )
 
 
 # PR-2: one-time warning guard for the "scoring flag on, index flag off"
@@ -1933,6 +2011,25 @@ def _warn_dg_scoring_without_index() -> None:
         )
 
 
+# QSR analogue of the guard above: the QSR scoring flag is separate from the
+# dine-in one, so it gets its own one-time warning when it is on without the
+# index flag (mirrors the dine-in misconfiguration path; QSR falls back to
+# pop_score).
+_DG_SCORING_QSR_WITHOUT_INDEX_WARNED = False
+
+
+def _warn_dg_scoring_qsr_without_index() -> None:
+    global _DG_SCORING_QSR_WITHOUT_INDEX_WARNED
+    if not _DG_SCORING_QSR_WITHOUT_INDEX_WARNED:
+        _DG_SCORING_QSR_WITHOUT_INDEX_WARNED = True
+        logger.warning(
+            "EXPANSION_DEMAND_GENERATOR_SCORING_QSR_ENABLED is true but "
+            "EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED is false; the demand-"
+            "generator composite is not computed, so QSR demand scoring falls "
+            "back to pop_score. Enable the index flag to activate QSR scoring."
+        )
+
+
 def _demand_generator_index(
     *,
     population_reach: float,
@@ -1943,6 +2040,7 @@ def _demand_generator_index(
     radius_m: int,
     population_local_reach: float | None = None,
     pop_radius_m: int | None = None,
+    service_model: str | None = None,
 ) -> dict[str, Any]:
     """Compose the emit-only L1 demand-generator index for one candidate.
 
@@ -1970,15 +2068,21 @@ def _demand_generator_index(
         if population_local_reach is not None
         else _safe_float(population_reach)
     )
-    pop_sub = _demand_generator_normalize("population_local", _pop_local)
+    pop_sub = _demand_generator_normalize(
+        "population_local", _pop_local, service_model=service_model
+    )
     # OSM generators: log-normalized weighted count.
-    osm_sub = _demand_generator_osm_subscore(osm_counts)
+    osm_sub = _demand_generator_osm_subscore(osm_counts, service_model=service_model)
     # Building floor-density daytime proxy (log-normalized).
     _floors = max(0.0, _safe_float(building_floors_proxy_sum))
-    floors_sub = _demand_generator_normalize("building_floors", _floors)
+    floors_sub = _demand_generator_normalize(
+        "building_floors", _floors, service_model=service_model
+    )
     # Free F&B review-weighted density (log-normalized).
     _rw = max(0.0, _safe_float(fnb_review_weighted))
-    fnb_sub = _demand_generator_normalize("fnb_review_weighted", _rw)
+    fnb_sub = _demand_generator_normalize(
+        "fnb_review_weighted", _rw, service_model=service_model
+    )
 
     w = _DEMAND_GENERATOR_COMPOSITE_WEIGHTS
     composite = _clamp(
@@ -1989,7 +2093,11 @@ def _demand_generator_index(
     )
     return {
         "composite_0_100": round(composite, 2),
-        "weights_version": _DEMAND_GENERATOR_WEIGHTS_VERSION,
+        "weights_version": (
+            _DEMAND_GENERATOR_WEIGHTS_VERSION_QSR
+            if (service_model or "").lower() == "qsr"
+            else _DEMAND_GENERATOR_WEIGHTS_VERSION
+        ),
         "radius_m": int(radius_m),
         "population_reach": int(round(_safe_float(population_reach))),
         "pop_radius_m": int(pop_radius_m) if pop_radius_m is not None else int(radius_m),
@@ -8775,7 +8883,11 @@ def run_expansion_search(
     # NOTHING here feeds scoring (PR-2 wires it in).
     if settings.EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED and _shortlist_coords:
         t_dg_start = time.monotonic()
-        _dg_radius = float(settings.EXPANSION_DEMAND_GENERATOR_RADIUS_M)
+        # Change-1 (E.2): enrich at THIS service model's demand catchment, not the
+        # flat EXPANSION_DEMAND_GENERATOR_RADIUS_M. dine_in stays 3500 (identical),
+        # qsr -> 1500, cafe -> 1000, delivery_first -> 3000. Required so QSR's l1_v3
+        # 1500 m anchors are applied to 1500 m counts (not 3500 m counts).
+        _dg_radius = _demand_generator_radius_m(service_model)
         # Shared VALUES list of (parcel_id, lon, lat) for the whole shortlist.
         _dg_value_parts: list[str] = []
         _dg_coord_params: dict[str, Any] = {}
@@ -9359,8 +9471,12 @@ def run_expansion_search(
                 building_floors_proxy_sum=_bulk_building_floors.get(_pid_str, 0.0),
                 fnb_review_weighted=_dg_fnb.get("review_weighted", 0.0),
                 fnb_venue_count=_dg_fnb.get("venue_count", 0),
-                radius_m=settings.EXPANSION_DEMAND_GENERATOR_RADIUS_M,
+                # Change-1: emit the model's true enrich radius (dine_in 3500 —
+                # unchanged) so the snapshot radius_m matches the counts above.
+                radius_m=int(_demand_generator_radius_m(service_model)),
                 pop_radius_m=settings.EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M,
+                # Change-2: select l1_v3 anchors for qsr, l1_v2 for everything else.
+                service_model=service_model,
             )
 
         # ── PR-2: gated swap of pop_score → dg_composite in the DINE-IN demand
@@ -9377,6 +9493,34 @@ def run_expansion_search(
         ):
             if not settings.EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED:
                 _warn_dg_scoring_without_index()
+            else:
+                _dg_composite = (
+                    _dg_index_result.get("composite_0_100")
+                    if _dg_index_result
+                    else None
+                )
+                if _dg_composite is not None:
+                    _pop_w, _del_w = _demand_blend_weights(service_model)
+                    demand_score = _clamp(
+                        float(_dg_composite) * _pop_w
+                        + prepared_item["delivery_score"] * _del_w
+                    )
+                    _demand_score_source = "dg_index"
+        # ── Change-3: gated swap of pop_score → dg_composite in the QSR demand
+        # blend, mirroring the dine-in swap above but behind a SEPARATE flag
+        # (EXPANSION_DEMAND_GENERATOR_SCORING_QSR_ENABLED) so QSR deploys inert and
+        # is flipped to validate independently of the already-live dine-in flag.
+        # QSR uses l1_v3 anchors (selected in the composite above) and the same
+        # blend shape: demand_score = _clamp(dg_composite·_pop_w +
+        # delivery_score·_del_w), (_pop_w,_del_w)=_demand_blend_weights("qsr")=0.60/0.40.
+        # Reuses the in-memory composite; falls back SILENTLY to pop_score when the
+        # composite is missing or the index flag is off (logged once).
+        elif (
+            settings.EXPANSION_DEMAND_GENERATOR_SCORING_QSR_ENABLED
+            and service_model == "qsr"
+        ):
+            if not settings.EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED:
+                _warn_dg_scoring_qsr_without_index()
             else:
                 _dg_composite = (
                     _dg_index_result.get("composite_0_100")
@@ -9498,7 +9642,14 @@ def run_expansion_search(
         # (off → snapshot unchanged) and is never read by scoring.
         if _dg_index_result is not None:
             feature_snapshot_json["demand_generator_index"] = _dg_index_result
-        if settings.EXPANSION_DEMAND_GENERATOR_SCORING_ENABLED:
+        # Emit the transparency field when the flag governing THIS candidate's
+        # service model is on: the dine-in flag (existing behaviour for all models)
+        # or the QSR flag for qsr searches. Both-flags-off → no key (snapshot
+        # unchanged); QSR flag off → no qsr key from the QSR path.
+        if settings.EXPANSION_DEMAND_GENERATOR_SCORING_ENABLED or (
+            settings.EXPANSION_DEMAND_GENERATOR_SCORING_QSR_ENABLED
+            and service_model == "qsr"
+        ):
             feature_snapshot_json["demand_score_source"] = _demand_score_source
         # Compute the two raw ages independently so the pill logic on the
         # frontend and in _top_positives_and_risks can decide "New" vs
