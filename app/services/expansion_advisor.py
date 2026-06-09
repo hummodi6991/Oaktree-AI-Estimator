@@ -827,7 +827,13 @@ _CATCHMENT_RADII_M: dict[str, dict[str, float]] = {
     # signal. The discriminating variation lives at 1000 m (probe p50 ~16, p90
     # ~29). demand/provider stay at 3000 m (platform delivery radius).
     "delivery_first": {"demand": 3000.0, "competition": 1000.0, "provider": 3000.0},
-    "qsr":            {"demand": 1500.0, "competition": 1200.0, "provider": 1500.0},
+    # qsr competition tightened 1200 -> 1000 m for the same reason as dine_in
+    # and delivery_first: same-category counts at 1200 m run p50 35 / p75 62
+    # on broad scopes — too large for the log-decay domain, flooring 67-82%
+    # of a city-wide probe at 15.0. The discriminating variation lives at
+    # 1000 m (burger-scope probe p25 4 / p50 16 / p75 24 / p90 34).
+    # demand/provider stay at 1500 m (convenience walk/drive-thru catchment).
+    "qsr":            {"demand": 1500.0, "competition": 1000.0, "provider": 1500.0},
     "cafe":           {"demand": 1000.0, "competition":  800.0, "provider": 1000.0},
 }
 
@@ -2694,9 +2700,19 @@ _WHITESPACE_LOG_REF: dict[str, float] = {
     # run somewhat higher — REF=50 (matching dine_in) deliberately avoids
     # re-flooring on the alias-expanded counts rather than sizing lower.
     #
+    # qsr has the same settlement shape as dine_in and delivery_first once its
+    # competition radius is tightened to 1000 m, but its counts run higher, so
+    # it takes REF=75 instead of 50: floors only count >= 39 (c* exact 38.69);
+    # at the 1000 m counts this spreads the p25–p75 band to ~26–63 (burger
+    # scope) and floors 4.9%. KNOWN LIMITATION: broad `fast_food`-scope briefs
+    # still floor ~32% at this setting (probe record 15); acceptable because
+    # production briefs are narrow-scope; the structural fix would be
+    # scope-aware REF — future work, not this PR.
+    #
     # All other service models keep the default 25.
     "dine_in": 50.0,
     "delivery_first": 50.0,
+    "qsr": 75.0,
 }
 _WHITESPACE_LOG_REF_DEFAULT: float = 25.0
 
@@ -2713,15 +2729,18 @@ def _competition_whitespace_score(
     15.0 floor, so it decays steeply at low counts and gently at high ones,
     reaching the floor structurally at ``count = REF``. ``REF`` is
     service-model-aware via ``_WHITESPACE_LOG_REF`` (``dine_in`` and
-    ``delivery_first`` → 50, all other models → 25 default), because both
-    score their competitors over a tighter 1000 m trade area whose in-range
-    counts are large enough that the default REF=25 would floor the p50.
+    ``delivery_first`` → 50, ``qsr`` → 75, all other models → 25 default),
+    because those three score their competitors over a tighter 1000 m trade
+    area whose in-range counts are large enough that the default REF=25
+    would floor the p50 (qsr's counts run higher still, hence 75).
 
     Representative outputs (count → score):
       REF=25 (default):  0→100*, 1→79, 3→57, 6→40, 16→15 (floored at ≤16),
                          25→15 (floor).
       REF=50 (dine_in):  0→100*, 1→82, 6→50, 16→28, 24→18, 32→15, 40→15,
                          50→15 (floor).
+      REF=75 (qsr):      0→100*, 4→63, 16→35, 24→26, 32→19, 39→15 (floor
+                         onset), 75→15 (floor).
     (*count 0 only when ``confident``; see F4 below.)
 
     F4 (defensive): ``count=0`` only earns the wide-open 100 when
@@ -6914,7 +6933,13 @@ def _bulk_enrich_competitors(
                             -- thin-evidence radii flow to Python None and
                             -- _chain_strength_score keeps its neutral 50.0 (no
                             -- COALESCE). MAX is retained above purely for the
-                            -- chain_strength_max JSON diagnostic.
+                            -- chain_strength_max JSON diagnostic. The
+                            -- competition radius also bounds these share
+                            -- counts: tightening it (qsr 1200 -> 1000 m, like
+                            -- delivery_first before it) shrinks matched counts
+                            -- and pushes a few more candidates under
+                            -- :chain_min_matched into the neutral 50 —
+                            -- expected and accepted.
                             CASE
                               WHEN COUNT(*) FILTER (WHERE in_category AND chain_strength IS NOT NULL)
                                    >= :chain_min_matched
