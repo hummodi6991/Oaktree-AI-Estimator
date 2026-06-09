@@ -1908,6 +1908,25 @@ def _demand_generator_osm_subscore(osm_counts: dict[str, int]) -> float:
     return _demand_generator_normalize("osm_weighted_total", weighted_total)
 
 
+# PR-2: one-time warning guard for the "scoring flag on, index flag off"
+# misconfiguration. We cannot score a composite that was never computed, so we
+# fall back to pop_score and log exactly once per process to avoid log spam in
+# the per-candidate scoring loop.
+_DG_SCORING_WITHOUT_INDEX_WARNED = False
+
+
+def _warn_dg_scoring_without_index() -> None:
+    global _DG_SCORING_WITHOUT_INDEX_WARNED
+    if not _DG_SCORING_WITHOUT_INDEX_WARNED:
+        _DG_SCORING_WITHOUT_INDEX_WARNED = True
+        logger.warning(
+            "EXPANSION_DEMAND_GENERATOR_SCORING_ENABLED is true but "
+            "EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED is false; the demand-"
+            "generator composite is not computed, so dine-in demand scoring "
+            "falls back to pop_score. Enable the index flag to activate PR-2."
+        )
+
+
 def _demand_generator_index(
     *,
     population_reach: float,
@@ -8405,6 +8424,10 @@ def run_expansion_search(
                 "landuse_code": landuse_code,
                 "district": district,
                 "demand_score": demand_score,
+                # PR-2: the final first-pass delivery term, kept so the second
+                # pass can re-blend demand_score with the L1 composite numerator
+                # without recomputing _delivery_score.
+                "delivery_score": delivery_score,
                 "whitespace_score": whitespace_score,
                 "fit_score": fit_score,
                 "area_fit": area_fit,
@@ -9305,6 +9328,53 @@ def run_expansion_search(
         district_norm_final = normalize_district_key(district) if district else None
         demand_score = prepared_item["demand_score"]
 
+        # ── L1 demand-generator index (PR-1 emit + PR-2 dine-in scoring) ──
+        # Compute the composite ONCE here, when the index flag is on, so the
+        # single in-memory result feeds BOTH the snapshot transparency emit
+        # (below) and — when the PR-2 scoring flag is on for dine_in — the
+        # demand blend. Numerator-only; no re-read from the JSON snapshot.
+        _dg_index_result: dict[str, Any] | None = None
+        if settings.EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED:
+            _dg_fnb = _bulk_fnb_density.get(_pid_str, {})
+            _dg_index_result = _demand_generator_index(
+                population_reach=population_reach,
+                population_local_reach=_bulk_dg_pop_local.get(_pid_str),
+                osm_counts=_bulk_osm_generators.get(_pid_str, {}),
+                building_floors_proxy_sum=_bulk_building_floors.get(_pid_str, 0.0),
+                fnb_review_weighted=_dg_fnb.get("review_weighted", 0.0),
+                fnb_venue_count=_dg_fnb.get("venue_count", 0),
+                radius_m=settings.EXPANSION_DEMAND_GENERATOR_RADIUS_M,
+                pop_radius_m=settings.EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M,
+            )
+
+        # ── PR-2: gated swap of pop_score → dg_composite in the DINE-IN demand
+        # blend. Default OFF, dine-in only. Keeps the blend weights and delivery
+        # term unchanged: demand_score = _clamp(dg_composite·_pop_w +
+        # delivery_score·_del_w). Falls back SILENTLY to the first-pass
+        # pop_score blend when the scoring flag is off, the service model is not
+        # dine_in, the index flag is off (logged once), or the composite is
+        # missing — a missing composite never zeroes out demand.
+        _demand_score_source = "pop_score"
+        if (
+            settings.EXPANSION_DEMAND_GENERATOR_SCORING_ENABLED
+            and service_model == "dine_in"
+        ):
+            if not settings.EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED:
+                _warn_dg_scoring_without_index()
+            else:
+                _dg_composite = (
+                    _dg_index_result.get("composite_0_100")
+                    if _dg_index_result
+                    else None
+                )
+                if _dg_composite is not None:
+                    _pop_w, _del_w = _demand_blend_weights(service_model)
+                    demand_score = _clamp(
+                        float(_dg_composite) * _pop_w
+                        + prepared_item["delivery_score"] * _del_w
+                    )
+                    _demand_score_source = "dg_index"
+
         # Café foot-traffic amenity bonus (applied in second pass
         # after bulk enrichment has populated _bulk_foot_traffic).
         if service_model == "cafe" and _pid_str in _bulk_foot_traffic:
@@ -9403,22 +9473,17 @@ def run_expansion_search(
             bulk_roads=_bulk_roads.get(_pid_str),
             bulk_parking=_bulk_parking.get(_pid_str),
         )
-        # ── L1 demand-generator index (PR-1, emit-only; flag-gated) ──
-        # Numerator-only composite written for validation. NOT read by scoring;
-        # when the flag is off the bulk dicts are empty and no key is emitted,
-        # so feature_snapshot_json and rankings are byte-for-byte unchanged.
-        if settings.EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED:
-            _dg_fnb = _bulk_fnb_density.get(_pid_str, {})
-            feature_snapshot_json["demand_generator_index"] = _demand_generator_index(
-                population_reach=population_reach,
-                population_local_reach=_bulk_dg_pop_local.get(_pid_str),
-                osm_counts=_bulk_osm_generators.get(_pid_str, {}),
-                building_floors_proxy_sum=_bulk_building_floors.get(_pid_str, 0.0),
-                fnb_review_weighted=_dg_fnb.get("review_weighted", 0.0),
-                fnb_venue_count=_dg_fnb.get("venue_count", 0),
-                radius_m=settings.EXPANSION_DEMAND_GENERATOR_RADIUS_M,
-                pop_radius_m=settings.EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M,
-            )
+        # ── L1 demand-generator index emit (PR-1) + scoring transparency (PR-2) ──
+        # Reuse the composite computed ONCE at the top of this iteration (do not
+        # recompute / re-query). When the index flag is off it is None and no
+        # key is emitted, so feature_snapshot_json and rankings are byte-for-byte
+        # unchanged. The demand_score_source field records which numerator fed
+        # the demand blend; it is emitted only when the PR-2 scoring flag is on
+        # (off → snapshot unchanged) and is never read by scoring.
+        if _dg_index_result is not None:
+            feature_snapshot_json["demand_generator_index"] = _dg_index_result
+        if settings.EXPANSION_DEMAND_GENERATOR_SCORING_ENABLED:
+            feature_snapshot_json["demand_score_source"] = _demand_score_source
         # Compute the two raw ages independently so the pill logic on the
         # frontend and in _top_positives_and_risks can decide "New" vs
         # "Updated" without relying on which timestamp won the GREATEST()
