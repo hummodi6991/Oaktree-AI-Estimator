@@ -40,6 +40,7 @@ SELECT
     ec.final_score,
     ec.competitor_count,
     ec.whitespace_score                                                   AS competition_whitespace,
+    (ec.feature_snapshot_json ->> 'demand_score_source')                  AS demand_score_source,
     (ec.feature_snapshot_json -> 'demand_generator_index' ->> 'composite_0_100')::numeric AS dg_composite,
     (ec.feature_snapshot_json -> 'demand_generator_index' ->> 'population_reach')::numeric AS pop_reach,
     (ec.feature_snapshot_json -> 'demand_generator_index' ->> 'fnb_review_weighted_density')::numeric AS fnb_review_weighted,
@@ -104,10 +105,25 @@ SELECT
 FROM l1_val
 WHERE dg_composite IS NOT NULL;
 
+-- ── PR-2: which numerator fed the dine-in demand blend? ──
+-- One-line tally of feature_snapshot_json->>'demand_score_source' across the
+-- candidates of the latest dine-in search. With the PR-2 scoring flag ON and a
+-- composite present, every dine-in candidate should score off 'dg_index'.
+--   n_dg_index    -> scored off the demand-generator composite (expected: all)
+--   n_pop_score   -> fell back to pop_score (flag off on serving pod, or no composite)
+--   n_source_null -> emit not landing in the read snapshot (real wiring bug)
+SELECT
+    count(*) FILTER (WHERE demand_score_source = 'dg_index')   AS n_dg_index,
+    count(*) FILTER (WHERE demand_score_source = 'pop_score')  AS n_pop_score,
+    count(*) FILTER (WHERE demand_score_source IS NULL)        AS n_source_null
+FROM l1_val;
+
 -- ── Eyeball: top candidate per district (geographic spread, 3+ districts) ──
 SELECT DISTINCT ON (district)
     district,
     parcel_id,
+    demand_score_source,
+    final_score,
     dg_composite,
     competitor_count,
     competition_whitespace,
@@ -124,6 +140,8 @@ ORDER BY district, dg_composite DESC NULLS LAST;
 SELECT
     parcel_id,
     district,
+    demand_score_source,
+    final_score,
     dg_composite,
     competitor_count,
     competition_whitespace,
