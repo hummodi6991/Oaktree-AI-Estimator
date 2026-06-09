@@ -159,6 +159,25 @@ class Settings:
         os.getenv("EXPANSION_DEMAND_GENERATOR_SCORING_ENABLED", "false").strip().lower()
         in {"1", "true", "yes", "on"}
     )
+    # --- Expansion Advisor L1 demand-generator index SCORING — QSR (l1_v3) ---
+    # Wires the L1 index composite into the QSR demand blend, swapping the
+    # near-constant pop_score numerator for the demand-generator composite
+    # (demand_score = composite·0.60 + delivery_score·0.40). QSR is re-anchored
+    # against the l1_v3 anchor set read at QSR's 1500 m demand radius. Real scoring
+    # change → changes QSR rankings when enabled. SEPARATE from the dine-in flag on
+    # purpose: the dine-in flag is already ON in prod, so reusing it would take QSR
+    # live the instant this deploys with no flag-off→flag-on validation window.
+    # Default OFF: when false QSR final_score and ordering are byte-for-byte
+    # identical to production. Only takes effect when
+    # EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED is ALSO true (the composite must be
+    # computed to be scored); if this is on while the index flag is off, the service
+    # logs once and falls back to pop_score.
+    EXPANSION_DEMAND_GENERATOR_SCORING_QSR_ENABLED: bool = (
+        os.getenv("EXPANSION_DEMAND_GENERATOR_SCORING_QSR_ENABLED", "false")
+        .strip()
+        .lower()
+        in {"1", "true", "yes", "on"}
+    )
 
     # --- Expansion Advisor structured decision memo (Phase 1) ---
     # Model/token/temperature controls for the new structured memo path in
