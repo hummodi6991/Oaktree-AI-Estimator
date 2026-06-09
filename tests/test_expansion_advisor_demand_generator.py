@@ -363,3 +363,124 @@ def test_flag_on_emits_index_without_changing_scores(
         assert "population_local_reach" in idx
         assert idx["pop_radius_m"] == 1500
         assert idx["weights_version"] == "l1_v2_2026-06"
+
+
+# ---------------------------------------------------------------------------
+# PR-2 — gated dine-in demand-blend swap (pop_score → dg_composite)
+# ---------------------------------------------------------------------------
+
+
+def _run_flags(monkeypatch, *, index, scoring, service_model="dine_in"):
+    """Run the FakeDB search with the two demand-generator flags set."""
+    monkeypatch.setattr(
+        expansion_service.settings, "EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED", index
+    )
+    monkeypatch.setattr(
+        expansion_service.settings,
+        "EXPANSION_DEMAND_GENERATOR_SCORING_ENABLED",
+        scoring,
+        raising=False,
+    )
+    clear_expansion_caches()
+    return run_expansion_search(
+        FakeDB(candidate_rows=_candidate_rows()),
+        search_id="search-pr2",
+        brand_name="Brand X",
+        category="burger",
+        service_model=service_model,
+        min_area_m2=100,
+        max_area_m2=400,
+        target_area_m2=220,
+        limit=10,
+    )
+
+
+def test_pr2_scoring_flag_off_is_inert(disable_market_viability_floors, monkeypatch):
+    """Scoring flag OFF → dine-in final_score + ordering byte-for-byte identical
+    to the feature-absent (both-flags-off) baseline, and no transparency field."""
+    off = _run_flags(monkeypatch, index=False, scoring=False)
+    off_scores = [(it["parcel_id"], it["final_score"]) for it in off]
+
+    # Index ON but scoring OFF must not perturb scores or emit the source field.
+    inert = _run_flags(monkeypatch, index=True, scoring=False)
+    inert_scores = [(it["parcel_id"], it["final_score"]) for it in inert]
+    assert inert_scores == off_scores
+    for it in inert:
+        fs = it.get("feature_snapshot_json") or {}
+        assert "demand_score_source" not in fs
+
+
+def test_pr2_scoring_on_dine_in_uses_dg_index(
+    disable_market_viability_floors, monkeypatch
+):
+    """Scoring flag ON + dine_in + composite present → blend uses dg_composite,
+    demand_score_source == 'dg_index', and the final score actually moves."""
+    baseline = _run_flags(monkeypatch, index=True, scoring=False)
+    base_scores = {it["parcel_id"]: it["final_score"] for it in baseline}
+
+    on = _run_flags(monkeypatch, index=True, scoring=True)
+    on_by_pid = {it["parcel_id"]: it for it in on}
+
+    for it in on:
+        fs = it.get("feature_snapshot_json") or {}
+        assert fs.get("demand_score_source") == "dg_index"
+        # The swapped blend equals composite·0.75 + delivery·0.25; assert the
+        # population numerator is the composite, not the saturated pop_score.
+        idx = fs.get("demand_generator_index")
+        assert idx is not None
+        composite = idx["composite_0_100"]
+        pop_score = expansion_service._population_score(
+            fs["population_reach"], service_model="dine_in"
+        )
+        # In dense Riyadh the 250k-ref pop_score saturates (~98); the spread-out
+        # composite must differ, otherwise the swap would be a no-op.
+        assert abs(composite - pop_score) > 1.0
+
+    # At least one candidate's final_score moved vs the pop_score baseline.
+    moved = any(
+        abs(on_by_pid[pid]["final_score"] - base_scores[pid]) > 1e-9
+        for pid in base_scores
+        if pid in on_by_pid
+    )
+    assert moved
+
+
+def test_pr2_scoring_on_index_off_falls_back_to_pop_score(
+    disable_market_viability_floors, monkeypatch
+):
+    """Scoring flag ON but index flag OFF → composite absent → fall back to
+    pop_score silently (no exception), demand_score_source == 'pop_score',
+    and final_score is identical to the feature-absent baseline."""
+    off = _run_flags(monkeypatch, index=False, scoring=False)
+    off_scores = [(it["parcel_id"], it["final_score"]) for it in off]
+
+    fallback = _run_flags(monkeypatch, index=False, scoring=True)
+    fb_scores = [(it["parcel_id"], it["final_score"]) for it in fallback]
+    assert fb_scores == off_scores
+    for it in fallback:
+        fs = it.get("feature_snapshot_json") or {}
+        assert fs.get("demand_score_source") == "pop_score"
+        # Index never computed → no index key emitted.
+        assert "demand_generator_index" not in fs
+
+
+def test_pr2_non_dine_in_unchanged_with_flag_on(
+    disable_market_viability_floors, monkeypatch
+):
+    """Blast-radius guard: with the scoring flag ON, cafe and qsr keep the
+    pop_score demand path — scores identical to scoring-off, source 'pop_score'."""
+    for service_model in ("cafe", "qsr"):
+        base = _run_flags(
+            monkeypatch, index=True, scoring=False, service_model=service_model
+        )
+        base_scores = [(it["parcel_id"], it["final_score"]) for it in base]
+
+        on = _run_flags(
+            monkeypatch, index=True, scoring=True, service_model=service_model
+        )
+        on_scores = [(it["parcel_id"], it["final_score"]) for it in on]
+
+        assert on_scores == base_scores, f"{service_model} demand path must not swap"
+        for it in on:
+            fs = it.get("feature_snapshot_json") or {}
+            assert fs.get("demand_score_source") == "pop_score"

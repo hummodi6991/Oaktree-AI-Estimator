@@ -146,6 +146,19 @@ class Settings:
     EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M: int = int(
         os.getenv("EXPANSION_DEMAND_GENERATOR_POP_RADIUS_M", "1500")
     )
+    # --- Expansion Advisor L1 demand-generator index SCORING (PR-2) ---
+    # Wires the L1 index composite into the DINE-IN demand blend, swapping the
+    # near-constant pop_score numerator for the demand-generator composite
+    # (demand_score = composite·_pop_w + delivery_score·_del_w). Real scoring
+    # change → changes dine-in rankings when enabled. Default OFF: when false the
+    # dine-in final_score and ordering are byte-for-byte identical to production.
+    # Only takes effect when EXPANSION_DEMAND_GENERATOR_INDEX_ENABLED is ALSO
+    # true (the composite must be computed to be scored); if this is on while the
+    # index flag is off, the service logs once and falls back to pop_score.
+    EXPANSION_DEMAND_GENERATOR_SCORING_ENABLED: bool = (
+        os.getenv("EXPANSION_DEMAND_GENERATOR_SCORING_ENABLED", "false").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
 
     # --- Expansion Advisor structured decision memo (Phase 1) ---
     # Model/token/temperature controls for the new structured memo path in
