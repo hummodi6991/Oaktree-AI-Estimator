@@ -1674,6 +1674,8 @@ def test_memo_whitelist_is_superset_of_rerank_whitelist():
         "comparable_median_annual_rent_sar",
         "comparable_n",
         "comparable_source_label",
+        "demand_generator_index",
+        "demand_score_source",
     }
 
 
@@ -1685,6 +1687,168 @@ def test_memo_whitelist_includes_comparable_rent_keys():
     assert "comparable_median_annual_rent_sar" in _MEMO_WHITELIST
     assert "comparable_n" in _MEMO_WHITELIST
     assert "comparable_source_label" in _MEMO_WHITELIST
+
+
+def test_memo_whitelist_includes_demand_engine_keys():
+    """PR-E — the demand-generator evidence must survive the 4,000-char
+    snapshot truncation so dg_index memos can cite the engine that scored
+    Demand Strength. Memo-only: rerank's signal surface stays constant."""
+    from app.services.llm_decision_memo import _MEMO_WHITELIST, _RERANK_WHITELIST
+
+    assert "demand_generator_index" in _MEMO_WHITELIST
+    assert "demand_score_source" in _MEMO_WHITELIST
+    assert "demand_generator_index" not in _RERANK_WHITELIST
+    assert "demand_score_source" not in _RERANK_WHITELIST
+
+
+# ---------------------------------------------------------------------------
+# PR-E — engine-aware demand evidence: payload plumbing + prompt rules.
+# ---------------------------------------------------------------------------
+
+
+_DG_INDEX_SNAPSHOT_FIELDS = {
+    "demand_score_source": "dg_index",
+    "demand_generator_index": {
+        "composite_0_100": 74.2,
+        "weights_version": "dg-v1",
+        "radius_m": 3500,
+        "population_reach": 248000,
+        "pop_radius_m": 1500,
+        "population_local_reach": 41250,
+        "osm_generators": {
+            "offices": 120,
+            "malls_retail": 14,
+            "transit": 9,
+            "mosques": 22,
+            "schools": 17,
+            "hospitals": 3,
+            "hotels": 6,
+        },
+        "building_floors_proxy_sum": 18432.5,
+        "fnb_review_weighted_density": 18400.0,
+        "fnb_venue_count": 86,
+        "subscores": {
+            "population": 61.0,
+            "osm_generators": 70.5,
+            "building_floors": 66.2,
+            "fnb_review_weighted": 81.3,
+        },
+    },
+}
+
+
+class TestSerializePayloadDemandEngine:
+    """PR-E: dg_index evidence reaches the memo LLM — including through
+    the whitelist-truncation path — and absent fields stay absent."""
+
+    def _user_content(self, snapshot_extra: dict) -> str:
+        cand = dict(BASE_STRUCTURED_CANDIDATE)
+        cand["feature_snapshot_json"] = {
+            **BASE_STRUCTURED_CANDIDATE["feature_snapshot_json"],
+            **snapshot_extra,
+        }
+        ctx = build_memo_context(candidate=cand, brief=BASE_STRUCTURED_BRIEF, lang="en")
+        messages = render_structured_memo_prompt(ctx)
+        return messages[1]["content"]
+
+    def test_payload_includes_dg_fields_when_present(self):
+        user_content = self._user_content(dict(_DG_INDEX_SNAPSHOT_FIELDS))
+        assert '"demand_score_source": "dg_index"' in user_content
+        assert '"composite_0_100": 74.2' in user_content
+        assert '"fnb_review_weighted_density": 18400.0' in user_content
+        assert '"building_floors_proxy_sum": 18432.5' in user_content
+        assert '"population_local_reach": 41250' in user_content
+
+    def test_truncation_path_retains_dg_fields(self):
+        # Oversize the snapshot past _FEATURE_SNAPSHOT_SOFT_LIMIT so the
+        # whitelist filter fires; the dg evidence must survive it while the
+        # junk key is dropped.
+        from app.services.llm_decision_memo import _FEATURE_SNAPSHOT_SOFT_LIMIT
+
+        junk = {"non_whitelisted_blob": "x" * (_FEATURE_SNAPSHOT_SOFT_LIMIT + 100)}
+        user_content = self._user_content({**_DG_INDEX_SNAPSHOT_FIELDS, **junk})
+        assert "non_whitelisted_blob" not in user_content
+        assert '"demand_score_source": "dg_index"' in user_content
+        assert '"composite_0_100": 74.2' in user_content
+        assert '"fnb_review_weighted_density": 18400.0' in user_content
+
+    def test_absent_dg_fields_leave_payload_unchanged(self):
+        user_content = self._user_content({})
+        assert "demand_score_source" not in user_content
+        assert "demand_generator_index" not in user_content
+
+
+class TestDemandEnginePromptRules:
+    """PR-E: string-pins on the system prompt for the engine conditional,
+    the rent-positioning phrase mandate, and the AR glossary entries."""
+
+    def test_en_prompt_carries_engine_conditional(self):
+        from app.services.llm_decision_memo import _compose_structured_system_prompt
+
+        en = _compose_structured_system_prompt("en")
+        assert "feature_snapshot.demand_score_source" in en
+        assert '"dg_index"' in en
+        assert "demand-generator composite" in en
+        assert "demand_generator_index.fnb_review_weighted_density" in en
+        assert "demand_generator_index.osm_generators" in en
+        assert "demand_generator_index.building_floors_proxy_sum" in en
+        assert "demand_generator_index.population_local_reach" in en
+        # population reach is the anchor ONLY for pop_score / legacy rows.
+        assert '"pop_score" or the field is absent (legacy rows)' in en
+        # Example C caveat: dg_index memos must not anchor demand on
+        # population reach.
+        assert "MUST NOT be the demand anchor" in en
+        # Thin-market fallback is engine-dependent.
+        assert "What it leans on next is engine-dependent" in en
+
+    def test_en_prompt_mandates_phrase_en_verbatim_copy(self):
+        from app.services.llm_decision_memo import _compose_structured_system_prompt
+
+        en = _compose_structured_system_prompt("en")
+        assert "{zone, pct_value, scope, phrase_en, phrase_ar}" in en
+        assert "COPY phrase_en" in en
+        assert "percentile RANK" in en
+        # The anti-anchoring worked inversion from the production defect.
+        assert "A listing at rank 0.09 is cheaper than about 91%" in en
+        assert "comparables, not 9%" in en
+
+    def test_ar_prompt_carries_dg_glossary_and_units(self):
+        from app.services.llm_decision_memo import _compose_structured_system_prompt
+
+        ar = _compose_structured_system_prompt("ar")
+        # Rule 7 glossary — fixed Arabic terms (PR-D card vocabulary).
+        for term in [
+            "مركب مولدات الطلب",
+            "كتلة تقييمات المطاعم والمقاهي",
+            "مولدات الرحلات",
+            "الكثافة العمرانية",
+        ]:
+            assert term in ar, f"AR dg glossary missing: {term}"
+        # Rule 8 unit tokens for the new evidence values.
+        assert "تقييماً موزوناً" in ar
+        assert "مولد رحلات" in ar
+        assert "طابقاً (مؤشر تقريبي)" in ar
+
+    def test_ar_prompt_mandates_phrase_ar_verbatim_copy(self):
+        from app.services.llm_decision_memo import _compose_structured_system_prompt
+
+        ar = _compose_structured_system_prompt("ar")
+        assert "rent_positioning.phrase_ar" in ar
+        assert "انسخ العبارة الجاهزة" in ar
+        # The worked anti-inversion example: rank 0.09 → cheaper than ~91%.
+        assert "أرخص من حوالي 91% من المقارنات" in ar
+
+    def test_ar_dg_glossary_absent_from_en_prompt(self):
+        from app.services.llm_decision_memo import _compose_structured_system_prompt
+
+        en = _compose_structured_system_prompt("en")
+        for term in [
+            "مركب مولدات الطلب",
+            "كتلة تقييمات المطاعم والمقاهي",
+            "مولدات الرحلات",
+            "الكثافة العمرانية",
+        ]:
+            assert term not in en, f"AR dg glossary leaked into EN prompt: {term}"
 
 
 def test_feature_snapshot_whitelist_alias_points_at_memo_whitelist():
@@ -2223,6 +2387,8 @@ class TestRentPositioning:
             "zone": "low",
             "pct_value": 87,
             "scope": "district",
+            "phrase_en": "cheaper than about 87% of district comparables",
+            "phrase_ar": "أقل من حوالي 87% من المقارنات في الحي",
         }
 
     def test_none_percentile_returns_none(self):
@@ -2234,6 +2400,8 @@ class TestRentPositioning:
             "zone": "high",
             "pct_value": 100,
             "scope": "city",
+            "phrase_en": "more expensive than about 100% of citywide comparables",
+            "phrase_ar": "أعلى من حوالي 100% من المقارنات على مستوى المدينة",
         }
 
     def test_median_invariant_listing_below_median_is_cheaper_than_over_50pct(self):
@@ -2242,3 +2410,46 @@ class TestRentPositioning:
         out = _rent_positioning(0.375, "district")
         assert out["zone"] == "low"
         assert out["pct_value"] > 50
+
+    # ── PR-E Change 2 — pre-rendered phrase (production inversion fix) ──
+
+    def test_below_median_rank_renders_cheapness_in_en_and_ar(self):
+        # Production defect: rank 0.09 (cheaper than ~91% of 9 district
+        # comparables) was rendered "cheaper than about 9%" — the raw rank
+        # slotted into the v11 template. The pre-rendered phrase pins the
+        # corrected, internally consistent wording in both locales.
+        out = _rent_positioning(0.09, "district")
+        assert out["zone"] == "low"
+        assert out["pct_value"] == 91
+        assert out["phrase_en"] == "cheaper than about 91% of district comparables"
+        assert out["phrase_ar"] == "أقل من حوالي 91% من المقارنات في الحي"
+        # The contradictory raw-rank rendering must not appear.
+        assert "9%" not in out["phrase_en"].replace("91%", "")
+        assert "9%" not in out["phrase_ar"].replace("91%", "")
+
+    def test_phrase_number_always_matches_pct_value(self):
+        # Phrase and number agree by construction in every non-mid zone.
+        for i in range(0, 101):
+            out = _rent_positioning(i / 100.0, "district")
+            if out["zone"] == "mid":
+                assert out["pct_value"] is None
+                assert "%" not in out["phrase_en"]
+                assert "%" not in out["phrase_ar"]
+            else:
+                assert f"{out['pct_value']}%" in out["phrase_en"]
+                assert f"{out['pct_value']}%" in out["phrase_ar"]
+                verb = "cheaper than about" if out["zone"] == "low" else "more expensive than about"
+                assert out["phrase_en"].startswith(verb)
+
+    def test_mid_zone_phrase_has_no_percentage(self):
+        out = _rent_positioning(0.50, "district")
+        assert out["phrase_en"] == "around the median rent of district comparables"
+        assert out["phrase_ar"] == "قريب من الإيجار الوسيط بين المقارنات في الحي"
+
+    def test_phrase_scope_labels(self):
+        assert "citywide comparables in the same band/type" in _rent_positioning(0.2, "city_band")["phrase_en"]
+        assert "المقارنات في نفس النطاق على مستوى المدينة" in _rent_positioning(0.2, "city_band")["phrase_ar"]
+        assert _rent_positioning(0.2, "city")["phrase_en"].endswith("citywide comparables")
+        # Unrecognized / absent scope makes no scope claim.
+        assert _rent_positioning(0.2, None)["phrase_en"] == "cheaper than about 80% of comparables"
+        assert _rent_positioning(0.2, None)["phrase_ar"] == "أقل من حوالي 80% من المقارنات"
