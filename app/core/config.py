@@ -107,13 +107,18 @@ class Settings:
     EXPANSION_REALIZED_DEMAND_BLEND: float = float(
         os.getenv("EXPANSION_REALIZED_DEMAND_BLEND", "0.5")
     )
-    # Reference point for the square-root-scaled realized-demand score in
-    # _delivery_score(): realized_demand == this value maps to a score of 100.
-    # Calibrated 2026-05-15 from the trailing-90d realized_demand_30d
-    # distribution across 3,128 populated candidates (median 133, p75 263,
-    # p90 496, p95 840). Anchor at p75: a candidate at the 75th percentile of
-    # measured demand saturates the demand leg, median candidates score ~71,
-    # only the top quartile maxes out. See
+    # FALLBACK reference point for the square-root-scaled realized-demand
+    # score in _delivery_score(): realized_demand == this value maps to a
+    # score of 100. Since 2026-06-10 the search pipeline uses per-service-
+    # model anchors (_REALIZED_DEMAND_REFERENCE in
+    # app/services/expansion_advisor.py: delivery_first 307 / dine_in 402 /
+    # qsr 327); this env value applies only to models absent from that dict
+    # (e.g. cafe) and to callers that don't pass an explicit reference.
+    # Originally calibrated 2026-05-15 from the trailing-90d
+    # realized_demand_30d distribution across 3,128 populated candidates
+    # (median 133, p75 263, p90 496, p95 840). Anchor at p75: a candidate at
+    # the 75th percentile of measured demand saturates the demand leg, median
+    # candidates score ~71, only the top quartile maxes out. See
     # scripts/diagnostics/realized_demand_calibration.sql.
     EXPANSION_REALIZED_DEMAND_REFERENCE: float = float(
         os.getenv("EXPANSION_REALIZED_DEMAND_REFERENCE", "263.0")
