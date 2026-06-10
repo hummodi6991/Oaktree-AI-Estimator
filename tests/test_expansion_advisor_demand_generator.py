@@ -673,3 +673,95 @@ def test_qsr_flag_does_not_touch_other_models(
         for it in on:
             fs = it.get("feature_snapshot_json") or {}
             assert "demand_score_source" not in fs
+
+
+# ---------------------------------------------------------------------------
+# PR-D rider — demand_blend transparency emit (display-only)
+# ---------------------------------------------------------------------------
+
+
+def test_demand_blend_emitted_alongside_demand_score_source(
+    disable_market_viability_floors, monkeypatch
+):
+    """When the dine-in scoring flag is on, every candidate that gets
+    demand_score_source also gets the demand_blend transparency block with the
+    service model's blend weights, the pass-1 delivery leg score, and the
+    LIVE listing/realized split setting."""
+    monkeypatch.setattr(
+        expansion_service.settings,
+        "EXPANSION_REALIZED_DEMAND_BLEND",
+        0.7,
+        raising=False,
+    )
+    items = _run_flags(monkeypatch, index=True, scoring=True)
+    assert items
+    for it in items:
+        fs = it.get("feature_snapshot_json") or {}
+        assert fs.get("demand_score_source") == "dg_index"
+        blend = fs.get("demand_blend")
+        assert blend is not None
+        assert set(blend) == {
+            "pop_or_index_weight",
+            "delivery_weight",
+            "delivery_score",
+            "listing_realized_split",
+        }
+        # dine_in blend weights from _demand_blend_weights.
+        assert blend["pop_or_index_weight"] == 0.75
+        assert blend["delivery_weight"] == 0.25
+        assert 0.0 <= blend["delivery_score"] <= 100.0
+        # Reads the LIVE setting (monkeypatched here), never a hardcoded value.
+        assert blend["listing_realized_split"] == 0.7
+
+
+def test_demand_blend_follows_live_split_setting(
+    disable_market_viability_floors, monkeypatch
+):
+    """The emitted listing_realized_split tracks the live
+    EXPANSION_REALIZED_DEMAND_BLEND — change the setting, the snapshot
+    follows."""
+    monkeypatch.setattr(
+        expansion_service.settings,
+        "EXPANSION_REALIZED_DEMAND_BLEND",
+        0.3,
+        raising=False,
+    )
+    items = _run_flags(monkeypatch, index=True, scoring=True)
+    assert items
+    for it in items:
+        fs = it.get("feature_snapshot_json") or {}
+        assert fs["demand_blend"]["listing_realized_split"] == 0.3
+
+
+def test_demand_blend_qsr_weights(
+    disable_market_viability_floors, monkeypatch
+):
+    """QSR path emits the qsr blend weights (0.60 / 0.40)."""
+    items = _run_flags(
+        monkeypatch,
+        index=True,
+        scoring=False,
+        scoring_qsr=True,
+        service_model="qsr",
+    )
+    assert items
+    for it in items:
+        fs = it.get("feature_snapshot_json") or {}
+        assert fs.get("demand_score_source") == "dg_index"
+        blend = fs.get("demand_blend")
+        assert blend is not None
+        assert blend["pop_or_index_weight"] == 0.60
+        assert blend["delivery_weight"] == 0.40
+
+
+def test_demand_blend_absent_when_scoring_flags_off(
+    disable_market_viability_floors, monkeypatch
+):
+    """Scoring flags off → no demand_blend key (snapshot byte-for-byte
+    unchanged, matching the demand_score_source contract)."""
+    items = _run_flags(monkeypatch, index=True, scoring=False)
+    assert items
+    for it in items:
+        fs = it.get("feature_snapshot_json") or {}
+        assert "demand_blend" not in fs
+        assert "demand_score_source" not in fs

@@ -346,3 +346,69 @@ describe("restartInLocale — persist + reload from the click site", () => {
     }
   });
 });
+
+/* ─── PR-D: dg_index Demand Strength keys — en/ar parity ─────────────── */
+
+describe("PR-D — dg_index demand keys exist in BOTH locales", () => {
+  const NEW_INPUT_KEYS = [
+    "dg_composite",
+    "fnb_review_weighted_density",
+    "fnb_venue_count",
+    "osm_generators_total",
+    "building_floors_proxy_sum",
+    "population_local_reach",
+    "delivery_score",
+    "blend_weights",
+    "listing_realized_split",
+    "radius_m",
+    "weights_version",
+  ] as const;
+
+  const NEW_SOURCE_TOKENS = ["fnb_reviews", "building_density"] as const;
+
+  function demandBlock(locale: typeof en | typeof ar) {
+    return (locale.expansionAdvisor.scoreComponents as Record<string, any>)
+      .demand_potential;
+  }
+
+  it("definition_dg_index is present and non-empty in en and ar", () => {
+    for (const locale of [en, ar]) {
+      const def = demandBlock(locale).definition_dg_index;
+      expect(typeof def).toBe("string");
+      expect(def.length).toBeGreaterThan(0);
+    }
+  });
+
+  for (const key of NEW_INPUT_KEYS) {
+    it(`inputs.${key}.label is present and non-empty in en and ar`, () => {
+      for (const locale of [en, ar]) {
+        const label = demandBlock(locale).inputs?.[key]?.label;
+        expect(typeof label).toBe("string");
+        expect(label.length).toBeGreaterThan(0);
+      }
+    });
+  }
+
+  for (const token of NEW_SOURCE_TOKENS) {
+    it(`scoreSources.${token} is present and non-empty in en and ar`, () => {
+      for (const locale of [en, ar]) {
+        const label = (locale.expansionAdvisor.scoreSources as Record<string, string>)[
+          token
+        ];
+        expect(typeof label).toBe("string");
+        expect(label.length).toBeGreaterThan(0);
+      }
+    });
+  }
+
+  it("ar labels are not byte-identical English leftovers", () => {
+    const arBlock = demandBlock(ar);
+    const enBlock = demandBlock(en);
+    expect(arBlock.definition_dg_index).not.toBe(enBlock.definition_dg_index);
+    for (const key of NEW_INPUT_KEYS) {
+      // weights_version values are version strings, but the LABELS must
+      // still be localized.
+      expect(arBlock.inputs[key].label).not.toBe(enBlock.inputs[key].label);
+    }
+  });
+});

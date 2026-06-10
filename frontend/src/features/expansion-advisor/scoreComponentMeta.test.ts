@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PER_COMPONENT_INPUTS } from "./scoreComponentMeta";
+import {
+  DEMAND_DG_INPUTS,
+  PER_COMPONENT_INPUTS,
+  isDgIndexDemand,
+} from "./scoreComponentMeta";
 import type { ResolveCtx } from "./scoreComponentMeta";
 
 function ctx(overrides: Partial<ResolveCtx>): ResolveCtx {
@@ -67,5 +71,120 @@ describe("scoreComponentMeta — listing-derived source attributes to the candid
   it("attributes listing_quality has_image to aqar when platform is missing", () => {
     const out = hasImageInput.resolve(ctx({ candidate: { image_url: "https://example.com/x.jpg" } }));
     expect(out.source).toBe("aqar");
+  });
+});
+
+/* ─── PR-D: dg_index demand inputs ───────────────────────────────────────── */
+
+function dgSnapshot(): Record<string, unknown> {
+  return {
+    demand_score_source: "dg_index",
+    demand_generator_index: {
+      composite_0_100: 61.45,
+      weights_version: "l1_v2_2026-06",
+      radius_m: 3500,
+      population_reach: 180000,
+      pop_radius_m: 1500,
+      population_local_reach: 42000,
+      osm_generators: {
+        offices: 12,
+        malls_retail: 3,
+        transit: 5,
+        mosques: 8,
+        schools: 4,
+        hospitals: 1,
+        hotels: 2,
+      },
+      building_floors_proxy_sum: 18234.5,
+      fnb_review_weighted_density: 98321.25,
+      fnb_venue_count: 57,
+      subscores: {
+        population: 55.1,
+        osm_generators: 62.3,
+        building_floors: 48.7,
+        fnb_review_weighted: 70.2,
+      },
+    },
+    demand_blend: {
+      pop_or_index_weight: 0.75,
+      delivery_weight: 0.25,
+      delivery_score: 64.2,
+      listing_realized_split: 0.7,
+    },
+  };
+}
+
+function dgInput(key: string) {
+  return DEMAND_DG_INPUTS.find((d) => d.key === key)!;
+}
+
+describe("scoreComponentMeta — DEMAND_DG_INPUTS resolvers", () => {
+  it("resolves every descriptor from a full dg snapshot", () => {
+    const c = ctx({ featureSnapshot: dgSnapshot() });
+    expect(dgInput("dg_composite").resolve(c).value).toBe(61.45);
+    expect(dgInput("fnb_review_weighted_density").resolve(c).value).toBe(98321.25);
+    expect(dgInput("fnb_venue_count").resolve(c).value).toBe(57);
+    // osm_generators_total = sum of the seven per-kind counts.
+    expect(dgInput("osm_generators_total").resolve(c).value).toBe(35);
+    expect(dgInput("building_floors_proxy_sum").resolve(c).value).toBe(18234.5);
+    expect(dgInput("population_local_reach").resolve(c).value).toBe(42000);
+    expect(dgInput("delivery_score").resolve(c).value).toBe(64.2);
+    expect(dgInput("blend_weights").resolve(c).value).toBe("0.75 / 0.25");
+    expect(dgInput("listing_realized_split").resolve(c).value).toBe(0.7);
+    expect(dgInput("radius_m").resolve(c).value).toBe(3500);
+    expect(dgInput("weights_version").resolve(c).value).toBe("l1_v2_2026-06");
+  });
+
+  it("attributes sources per descriptor", () => {
+    const c = ctx({ featureSnapshot: dgSnapshot() });
+    expect(dgInput("dg_composite").resolve(c).source).toBe("oaktree_internal");
+    expect(dgInput("fnb_review_weighted_density").resolve(c).source).toBe("fnb_reviews");
+    expect(dgInput("fnb_venue_count").resolve(c).source).toBe("fnb_reviews");
+    expect(dgInput("osm_generators_total").resolve(c).source).toBe("osm");
+    expect(dgInput("building_floors_proxy_sum").resolve(c).source).toBe("building_density");
+    expect(dgInput("population_local_reach").resolve(c).source).toBe("population_grid");
+    expect(dgInput("delivery_score").resolve(c).source).toBe("expansion_delivery_market");
+  });
+
+  it("honors the delivery_source override for the delivery leg", () => {
+    const c = ctx({
+      featureSnapshot: dgSnapshot(),
+      contextSources: { delivery_source: "hungerstation" },
+    });
+    expect(dgInput("delivery_score").resolve(c).source).toBe("hungerstation");
+  });
+
+  it("resolves every descriptor to null when the dg blocks are absent", () => {
+    const c = ctx({ featureSnapshot: { demand_score_source: "dg_index" } });
+    for (const d of DEMAND_DG_INPUTS) {
+      expect(d.resolve(c).value).toBeNull();
+    }
+  });
+
+  it("resolves a partially-missing dg block field-by-field", () => {
+    const c = ctx({
+      featureSnapshot: {
+        demand_score_source: "dg_index",
+        demand_generator_index: { composite_0_100: 40.0 },
+      },
+    });
+    expect(dgInput("dg_composite").resolve(c).value).toBe(40.0);
+    expect(dgInput("fnb_review_weighted_density").resolve(c).value).toBeNull();
+    expect(dgInput("osm_generators_total").resolve(c).value).toBeNull();
+    // demand_blend absent (pre-rider dg_index rows) → delivery rows null.
+    expect(dgInput("delivery_score").resolve(c).value).toBeNull();
+    expect(dgInput("blend_weights").resolve(c).value).toBeNull();
+  });
+});
+
+describe("scoreComponentMeta — isDgIndexDemand engine selector", () => {
+  it("is true only for demand_score_source === 'dg_index'", () => {
+    expect(isDgIndexDemand({ demand_score_source: "dg_index" })).toBe(true);
+    expect(isDgIndexDemand({ demand_score_source: "pop_score" })).toBe(false);
+  });
+
+  it("treats absence as pop_score — never an error", () => {
+    expect(isDgIndexDemand({})).toBe(false);
+    expect(isDgIndexDemand(undefined)).toBe(false);
   });
 });

@@ -9,8 +9,10 @@ import type {
 } from "../../lib/api/expansionAdvisor";
 import { humanGateLabel } from "./formatHelpers";
 import {
+  DEMAND_DG_INPUTS,
   PER_COMPONENT_INPUTS,
   VIABILITY_LEG_ORDER,
+  isDgIndexDemand,
   type ResolvedInputValue,
   type SourceToken,
 } from "./scoreComponentMeta";
@@ -339,10 +341,23 @@ function ContributionsSection({
     const label = t(`expansionAdvisor.scoreComponents.${c.key}.label`, {
       defaultValue: c.key.replace(/_/g, " "),
     });
-    const definition = t(`expansionAdvisor.scoreComponents.${c.key}.definition`, {
-      defaultValue: "",
-    });
-    const descriptors = PER_COMPONENT_INPUTS[c.key] ?? [];
+    // Demand Strength is engine-aware: candidates whose demand component was
+    // scored off the L1 demand-generator composite (demand_score_source ===
+    // "dg_index") show the dg input set and its definition. A missing field
+    // or "pop_score" selects the legacy rows unchanged (cafe, delivery_first,
+    // flags-off environments, historical rows).
+    const dgDemand =
+      c.key === "demand_potential" &&
+      isDgIndexDemand(featureSnapshot as Record<string, unknown> | undefined);
+    const definition = t(
+      dgDemand
+        ? `expansionAdvisor.scoreComponents.${c.key}.definition_dg_index`
+        : `expansionAdvisor.scoreComponents.${c.key}.definition`,
+      { defaultValue: "" },
+    );
+    const descriptors = dgDemand
+      ? DEMAND_DG_INPUTS
+      : PER_COMPONENT_INPUTS[c.key] ?? [];
     const resolved = descriptors.map((d) => ({
       key: d.key,
       ...d.resolve({

@@ -9744,6 +9744,23 @@ def run_expansion_search(
             and service_model == "qsr"
         ):
             feature_snapshot_json["demand_score_source"] = _demand_score_source
+            # PR-D rider: persist the demand-blend transparency block alongside
+            # demand_score_source so the frontend Demand Strength card can show
+            # the delivery leg and the weights actually used. Display-only —
+            # never read by scoring. listing_realized_split reads the LIVE
+            # setting (repo default 0.5; production overrides via env), never a
+            # hardcoded constant.
+            _blend_pop_w, _blend_del_w = _demand_blend_weights(service_model)
+            feature_snapshot_json["demand_blend"] = {
+                "pop_or_index_weight": _blend_pop_w,
+                "delivery_weight": _blend_del_w,
+                "delivery_score": round(
+                    _safe_float(prepared_item["delivery_score"]), 2
+                ),
+                "listing_realized_split": float(
+                    settings.EXPANSION_REALIZED_DEMAND_BLEND
+                ),
+            }
         # Compute the two raw ages independently so the pill logic on the
         # frontend and in _top_positives_and_risks can decide "New" vs
         # "Updated" without relying on which timestamp won the GREATEST()
