@@ -7,6 +7,7 @@ import en from "../../i18n/en.json";
 import ar from "../../i18n/ar.json";
 import DecisionLogicCard from "./DecisionLogicCard";
 import type {
+  CandidateFeatureSnapshot,
   CandidateGateReasons,
   CandidateScoreBreakdown,
   RerankReason,
@@ -652,5 +653,172 @@ describe("DecisionLogicCard i18n rendering", () => {
     expect(html).toContain(ar.expansionAdvisor.decisionLogicContributions);
     expect(html).toContain(ar.expansionAdvisor.decisionLogicRanking);
     expect(html).toContain(ar.expansionAdvisor.decisionLogicDeterministicOnly);
+  });
+});
+
+/* ─── 12. PR-D: engine-aware Demand Strength inputs ─────────────────────── */
+
+const LEGACY_DEMAND_INPUT_KEYS = [
+  "population_reach",
+  "realized_demand_30d",
+  "realized_demand_branches",
+  "radiance_growth_pct",
+] as const;
+
+const DG_DEMAND_INPUT_KEYS = [
+  "dg_composite",
+  "fnb_review_weighted_density",
+  "fnb_venue_count",
+  "osm_generators_total",
+  "building_floors_proxy_sum",
+  "population_local_reach",
+  "delivery_score",
+  "blend_weights",
+  "listing_realized_split",
+  "radius_m",
+  "weights_version",
+] as const;
+
+function dgFeatureSnapshot(overrides?: {
+  weights_version?: string;
+  demand_score_source?: string | undefined;
+  omit_fnb_density?: boolean;
+}): Record<string, unknown> {
+  const idx: Record<string, unknown> = {
+    composite_0_100: 61.45,
+    weights_version: overrides?.weights_version ?? "l1_v2_2026-06",
+    radius_m: 3500,
+    pop_radius_m: 1500,
+    population_reach: 180000,
+    population_local_reach: 42000,
+    osm_generators: {
+      offices: 12,
+      malls_retail: 3,
+      transit: 5,
+      mosques: 8,
+      schools: 4,
+      hospitals: 1,
+      hotels: 2,
+    },
+    building_floors_proxy_sum: 18234.5,
+    fnb_review_weighted_density: 98321.25,
+    fnb_venue_count: 57,
+  };
+  if (overrides?.omit_fnb_density) delete idx.fnb_review_weighted_density;
+  const fs: Record<string, unknown> = {
+    context_sources: {},
+    missing_context: [],
+    data_completeness_score: 80,
+    population_reach: 180000,
+    realized_demand_30d: 380,
+    realized_demand_branches: 6,
+    radiance_growth: { value_yoy_pct: 4.2 },
+    demand_generator_index: idx,
+    demand_blend: {
+      pop_or_index_weight: 0.75,
+      delivery_weight: 0.25,
+      delivery_score: 64.2,
+      listing_realized_split: 0.7,
+    },
+  };
+  if (overrides && "demand_score_source" in overrides) {
+    if (overrides.demand_score_source !== undefined) {
+      fs.demand_score_source = overrides.demand_score_source;
+    }
+  } else {
+    fs.demand_score_source = "dg_index";
+  }
+  return fs;
+}
+
+function renderWithSnapshot(fs: Record<string, unknown>): string {
+  return renderToStaticMarkup(
+    <DecisionLogicCard
+      gateReasons={productionGateReasons()}
+      scoreBreakdown={fullBreakdown()}
+      deterministicRank={1}
+      finalRank={1}
+      rerankStatus={"flag_off" as RerankStatus}
+      candidate={{ feature_snapshot_json: fs as CandidateFeatureSnapshot }}
+    />,
+  );
+}
+
+function inputValueFor(html: string, key: string): string | null {
+  const re = new RegExp(
+    `data-input="${key}"[\\s\\S]*?ea-decision-logic__component-input-value">([^<]*)<`,
+  );
+  const m = html.match(re);
+  return m ? m[1] : null;
+}
+
+describe("DecisionLogicCard PR-D — dg_index demand inputs (dine_in)", () => {
+  it("renders the dg input rows and none of the legacy demand rows", () => {
+    const html = renderWithSnapshot(dgFeatureSnapshot());
+    for (const key of DG_DEMAND_INPUT_KEYS) {
+      expect(html).toContain(`data-input="${key}"`);
+    }
+    for (const key of LEGACY_DEMAND_INPUT_KEYS) {
+      expect(html).not.toContain(`data-input="${key}"`);
+    }
+  });
+
+  it("renders the dg definition and resolved values", () => {
+    const html = renderWithSnapshot(dgFeatureSnapshot());
+    expect(html).toContain(
+      en.expansionAdvisor.scoreComponents.demand_potential.inputs.dg_composite.label,
+    );
+    expect(html).toContain("blended with realized delivery demand");
+    expect(html).not.toContain("nighttime-light growth trend");
+    expect(inputValueFor(html, "dg_composite")).toBe("61.45");
+    expect(inputValueFor(html, "osm_generators_total")).toBe("35");
+    expect(inputValueFor(html, "blend_weights")).toBe("0.75 / 0.25");
+    expect(inputValueFor(html, "delivery_score")).toBe("64.20");
+  });
+});
+
+describe("DecisionLogicCard PR-D — dg_index demand inputs (qsr)", () => {
+  it("renders the l1_v3 weights_version", () => {
+    const html = renderWithSnapshot(
+      dgFeatureSnapshot({ weights_version: "l1_v3_qsr_2026-06" }),
+    );
+    expect(inputValueFor(html, "weights_version")).toBe("l1_v3_qsr_2026-06");
+  });
+});
+
+describe("DecisionLogicCard PR-D — pop_score and legacy fallbacks", () => {
+  it("pop_score candidate (cafe) keeps the legacy rows byte-identical", () => {
+    const html = renderWithSnapshot(
+      dgFeatureSnapshot({ demand_score_source: "pop_score" }),
+    );
+    for (const key of LEGACY_DEMAND_INPUT_KEYS) {
+      expect(html).toContain(`data-input="${key}"`);
+    }
+    for (const key of DG_DEMAND_INPUT_KEYS) {
+      expect(html).not.toContain(`data-input="${key}"`);
+    }
+    expect(html).toContain(
+      en.expansionAdvisor.scoreComponents.demand_potential.inputs.population_reach.label,
+    );
+    expect(html).toContain("nighttime-light growth trend");
+    expect(html).not.toContain("blended with realized delivery demand");
+  });
+
+  it("absent demand_score_source (flags off / historical rows) → legacy rows", () => {
+    const html = renderWithSnapshot(
+      dgFeatureSnapshot({ demand_score_source: undefined }),
+    );
+    for (const key of LEGACY_DEMAND_INPUT_KEYS) {
+      expect(html).toContain(`data-input="${key}"`);
+    }
+    for (const key of DG_DEMAND_INPUT_KEYS) {
+      expect(html).not.toContain(`data-input="${key}"`);
+    }
+  });
+
+  it("missing dg sub-field renders an em-dash, not an error", () => {
+    const html = renderWithSnapshot(dgFeatureSnapshot({ omit_fnb_density: true }));
+    expect(inputValueFor(html, "fnb_review_weighted_density")).toBe("—");
+    expect(inputValueFor(html, "dg_composite")).toBe("61.45");
   });
 });

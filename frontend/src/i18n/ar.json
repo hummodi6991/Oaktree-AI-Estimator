@@ -1252,11 +1252,23 @@
       "demand_potential": {
         "label": "قوة الطلب",
         "definition": "أدلة الطلب المركبة: السكان ضمن نطاق المشي/القيادة، الطلب الفعلي للتوصيل خلال 30 يومًا، واتجاه نمو إضاءة الحي ليلًا.",
+        "definition_dg_index": "مؤشر مولدات الطلب: مركب من كتلة تقييمات المطاعم والمقاهي، ومولدات الرحلات، والكثافة العمرانية، والسكان المحليين — يقاس عند نطاق النموذج ويُمزج مع الطلب الفعلي للتوصيل.",
         "inputs": {
           "population_reach": { "label": "نطاق السكان" },
           "realized_demand_30d": { "label": "سرعة تقييمات التوصيل (30 يومًا)" },
           "realized_demand_branches": { "label": "الفروع المساهمة بالتقييمات" },
-          "radiance_growth_pct": { "label": "نمو الإضاءة سنويًا (٪)" }
+          "radiance_growth_pct": { "label": "نمو الإضاءة سنويًا (٪)" },
+          "dg_composite": { "label": "مركب مولدات الطلب (0–100)" },
+          "fnb_review_weighted_density": { "label": "كتلة تقييمات المطاعم والمقاهي (موزونة)" },
+          "fnb_venue_count": { "label": "منشآت المطاعم والمقاهي ضمن النطاق" },
+          "osm_generators_total": { "label": "مولدات الرحلات (عدد OSM)" },
+          "building_floors_proxy_sum": { "label": "الكثافة العمرانية (مؤشر الطوابق)" },
+          "population_local_reach": { "label": "نطاق السكان المحلي" },
+          "delivery_score": { "label": "درجة جزء التوصيل" },
+          "blend_weights": { "label": "أوزان المزج (المؤشر / التوصيل)" },
+          "listing_realized_split": { "label": "حصة الطلب الفعلي في جزء التوصيل" },
+          "radius_m": { "label": "نصف قطر النطاق (م)" },
+          "weights_version": { "label": "إصدار أوزان المؤشر" }
         }
       },
       "access_visibility": {
@@ -1314,7 +1326,9 @@
       "oaktree_internal": "Oaktree الداخلي",
       "expansion_road_context": "سياق الطرق",
       "expansion_parking_asset": "أصول المواقف",
-      "expansion_delivery_market": "سوق التوصيل"
+      "expansion_delivery_market": "سوق التوصيل",
+      "fnb_reviews": "بيانات تقييمات المطاعم والمقاهي",
+      "building_density": "بيانات الكثافة العمرانية"
     },
     "bonuses": {
       "bestValue": "أفضل قيمة",

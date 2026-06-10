@@ -1272,11 +1272,23 @@
       "demand_potential": {
         "label": "Demand Strength",
         "definition": "Combined demand evidence: population reach within a walking/driving catchment, realized 30-day delivery demand, and the district's nighttime-light growth trend.",
+        "definition_dg_index": "Demand-generator index: a composite of F&B review mass, trip generators, built density, and local population — measured at the model's catchment radius and blended with realized delivery demand.",
         "inputs": {
           "population_reach": { "label": "Population reach" },
           "realized_demand_30d": { "label": "Delivery rating velocity (30d)" },
           "realized_demand_branches": { "label": "Rating-contributing branches" },
-          "radiance_growth_pct": { "label": "Radiance YoY growth (%)" }
+          "radiance_growth_pct": { "label": "Radiance YoY growth (%)" },
+          "dg_composite": { "label": "Demand-generator composite (0–100)" },
+          "fnb_review_weighted_density": { "label": "F&B review mass (weighted)" },
+          "fnb_venue_count": { "label": "F&B venues in catchment" },
+          "osm_generators_total": { "label": "Trip generators (OSM count)" },
+          "building_floors_proxy_sum": { "label": "Built density (floors proxy)" },
+          "population_local_reach": { "label": "Local population reach" },
+          "delivery_score": { "label": "Delivery leg score" },
+          "blend_weights": { "label": "Blend weights (index / delivery)" },
+          "listing_realized_split": { "label": "Delivery leg realized share" },
+          "radius_m": { "label": "Catchment radius (m)" },
+          "weights_version": { "label": "Index weights version" }
         }
       },
       "access_visibility": {
@@ -1334,7 +1346,9 @@
       "oaktree_internal": "Oaktree internal",
       "expansion_road_context": "Expansion road context",
       "expansion_parking_asset": "Expansion parking asset",
-      "expansion_delivery_market": "Expansion delivery market"
+      "expansion_delivery_market": "Expansion delivery market",
+      "fnb_reviews": "F&B review data",
+      "building_density": "Building footprint data"
     },
     "bonuses": {
       "bestValue": "Best Value",

@@ -29,7 +29,9 @@ export type SourceToken =
   | "oaktree_internal"
   | "expansion_road_context"
   | "expansion_parking_asset"
-  | "expansion_delivery_market";
+  | "expansion_delivery_market"
+  | "fnb_reviews"
+  | "building_density";
 
 export type ResolvedInputValue = string | number | boolean | null;
 
@@ -487,6 +489,140 @@ export const PER_COMPONENT_INPUTS: Record<string, InputDescriptor[]> = {
     },
   ],
 };
+
+/* ─── Demand Strength — dg_index engine inputs ───────────────────────────── */
+
+// Alternate input set for the demand_potential component, used when the
+// backend scored the demand leg off the L1 demand-generator composite
+// (feature_snapshot_json.demand_score_source === "dg_index"). All paths read
+// the persisted feature_snapshot_json.demand_generator_index block (emitted
+// by app/services/expansion_advisor.py:_demand_generator_index) plus the
+// demand_blend transparency block. Absence of any field resolves to null and
+// renders as an em-dash, matching the legacy rows — dg_index candidates from
+// before the demand_blend rider simply skip those values.
+export const DEMAND_DG_INPUTS: InputDescriptor[] = [
+  {
+    key: "dg_composite",
+    resolve: ({ featureSnapshot }) => ({
+      value: asNumber(
+        readNested(featureSnapshot, "demand_generator_index", "composite_0_100"),
+      ),
+      source: "oaktree_internal",
+    }),
+  },
+  {
+    key: "fnb_review_weighted_density",
+    resolve: ({ featureSnapshot }) => ({
+      value: asNumber(
+        readNested(featureSnapshot, "demand_generator_index", "fnb_review_weighted_density"),
+      ),
+      source: "fnb_reviews",
+    }),
+  },
+  {
+    key: "fnb_venue_count",
+    resolve: ({ featureSnapshot }) => ({
+      value: asNumber(
+        readNested(featureSnapshot, "demand_generator_index", "fnb_venue_count"),
+      ),
+      source: "fnb_reviews",
+    }),
+  },
+  {
+    key: "osm_generators_total",
+    resolve: ({ featureSnapshot }) => {
+      const kinds = readNested(featureSnapshot, "demand_generator_index", "osm_generators");
+      if (!kinds || typeof kinds !== "object" || Array.isArray(kinds)) {
+        return { value: null, source: "osm" };
+      }
+      let total = 0;
+      let seen = false;
+      for (const v of Object.values(kinds as Record<string, unknown>)) {
+        const n = asNumber(v);
+        if (n != null) {
+          total += n;
+          seen = true;
+        }
+      }
+      return { value: seen ? total : null, source: "osm" };
+    },
+  },
+  {
+    key: "building_floors_proxy_sum",
+    resolve: ({ featureSnapshot }) => ({
+      value: asNumber(
+        readNested(featureSnapshot, "demand_generator_index", "building_floors_proxy_sum"),
+      ),
+      source: "building_density",
+    }),
+  },
+  {
+    key: "population_local_reach",
+    resolve: ({ featureSnapshot }) => ({
+      value: asNumber(
+        readNested(featureSnapshot, "demand_generator_index", "population_local_reach"),
+      ),
+      source: "population_grid",
+    }),
+  },
+  {
+    key: "delivery_score",
+    resolve: ({ featureSnapshot, contextSources }) => ({
+      value: asNumber(readNested(featureSnapshot, "demand_blend", "delivery_score")),
+      source: overrideSource(contextSources, "delivery_source", "expansion_delivery_market"),
+    }),
+  },
+  {
+    key: "blend_weights",
+    resolve: ({ featureSnapshot }) => {
+      const popW = asNumber(
+        readNested(featureSnapshot, "demand_blend", "pop_or_index_weight"),
+      );
+      const delW = asNumber(readNested(featureSnapshot, "demand_blend", "delivery_weight"));
+      return {
+        value: popW != null && delW != null ? `${popW} / ${delW}` : null,
+        source: "oaktree_internal",
+      };
+    },
+  },
+  {
+    key: "listing_realized_split",
+    resolve: ({ featureSnapshot }) => ({
+      value: asNumber(
+        readNested(featureSnapshot, "demand_blend", "listing_realized_split"),
+      ),
+      source: "oaktree_internal",
+    }),
+  },
+  {
+    key: "radius_m",
+    resolve: ({ featureSnapshot }) => ({
+      value: asNumber(readNested(featureSnapshot, "demand_generator_index", "radius_m")),
+      source: "oaktree_internal",
+    }),
+  },
+  {
+    key: "weights_version",
+    resolve: ({ featureSnapshot }) => ({
+      value: asString(
+        readNested(featureSnapshot, "demand_generator_index", "weights_version"),
+      ),
+      source: "oaktree_internal",
+    }),
+  },
+];
+
+/**
+ * True when this candidate's demand component was scored off the L1
+ * demand-generator composite. Absence of demand_score_source (flags off,
+ * historical rows) or "pop_score" both select the legacy input rows —
+ * absence is NEVER an error.
+ */
+export function isDgIndexDemand(
+  featureSnapshot: Record<string, unknown> | undefined,
+): boolean {
+  return readNested(featureSnapshot, "demand_score_source") === "dg_index";
+}
 
 /* ─── Canonical viability legs (stable order, matches backend) ───────────── */
 
