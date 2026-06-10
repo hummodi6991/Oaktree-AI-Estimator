@@ -50,7 +50,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v12-demand-engine-evidence-2026-06"
+MEMO_PROMPT_VERSION = "v12.1-demand-evidence-enforced-2026-06"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -2658,6 +2658,201 @@ def _corrective_retry_preamble(locale: str, reason: str) -> str:
     return template.format(reason=reason)
 
 
+# ── v12.1 (PR-E2) — dg-index composite evidence enforcement ─────────
+#
+# Two production v12 regenerations on confirmed dg_index candidates produced
+# key_evidence with no demand-generator composite row despite the prompt
+# mandate (Market-context block + the Example C inline note). v12.1 makes
+# the mandate bind with two layers riding the existing machinery:
+#   1. a soft validity check feeding the one-retry corrective loop;
+#   2. a deterministic server-side injection when the retry still lacks the
+#      row, so the composite always reaches persistence for dg_index
+#      candidates.
+
+# Rule-7 signal terms, reused verbatim from the v12 prompt vocabulary.
+_DG_COMPOSITE_SIGNAL_EN = "demand-generator composite"
+_DG_COMPOSITE_SIGNAL_AR = "مركب مولدات الطلب"
+
+# Injected-row implication templates. One template per locale, phrased as
+# engine attribution so it stays truthful at any composite value (the
+# value field carries the magnitude); polarity is banded below so the
+# polarity-discipline rule holds without LLM involvement. Latin digits
+# only (Rule 8 — the value string is "<N>/100" in both locales).
+_DG_INJECTED_IMPLICATION_EN = (
+    "venue activity and trip generators are the measured demand evidence "
+    "for this catchment; population reach is supporting context only"
+)
+# AR gloss: same sentence — "venue activity and trip generators are the
+# measured demand evidence for this catchment; population reach is
+# supporting context only". Reuses the Rule-7 terms مولدات الرحلات and
+# عدد السكان القابلين للوصول verbatim.
+_DG_INJECTED_IMPLICATION_AR = (
+    "نشاط المرافق ومولدات الرحلات هما دليل الطلب المقاس لهذا النطاق؛ "
+    "عدد السكان القابلين للوصول سياق داعم فقط"
+)
+
+
+def _dg_required_composite(feature_snapshot: Any) -> int | None:
+    """Return the rounded demand-generator composite when the v12.1
+    dg-evidence mandate applies to this candidate, else None.
+
+    The mandate applies only when the snapshot says Demand Strength was
+    scored by the dg_index engine AND demand_generator_index carries a
+    numeric composite_0_100. Absent or malformed blocks return None
+    (defensive: both enforcement layers are skipped)."""
+    if not isinstance(feature_snapshot, dict):
+        return None
+    if feature_snapshot.get("demand_score_source") != "dg_index":
+        return None
+    block = feature_snapshot.get("demand_generator_index")
+    if not isinstance(block, dict):
+        return None
+    composite = block.get("composite_0_100")
+    if isinstance(composite, bool) or not isinstance(composite, (int, float)):
+        return None
+    return int(round(composite))
+
+
+def _dg_evidence_invalid_reason(
+    parsed: dict[str, Any], composite_rounded: int
+) -> str | None:
+    """Return a short reason string when no key_evidence row in ``parsed``
+    references the demand-generator composite; None when compliant.
+
+    A row matches when its signal or value mentions the EN signal phrase,
+    the AR Rule-7 term, or a "/100" value equal to the rounded composite."""
+    needles = (
+        _DG_COMPOSITE_SIGNAL_EN,
+        _DG_COMPOSITE_SIGNAL_AR,
+        f"{composite_rounded}/100",
+    )
+    rows = parsed.get("key_evidence")
+    if isinstance(rows, list):
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            haystack = (
+                f"{row.get('signal') or ''} {row.get('value') or ''}".lower()
+            )
+            if any(n.lower() in haystack for n in needles):
+                return None
+    return (
+        "demand_score_source is dg_index but key_evidence has no "
+        "demand-generator composite row"
+    )
+
+
+def _dg_required_evidence_row(
+    composite_rounded: int, locale: str
+) -> dict[str, Any]:
+    """Build the locale-correct composite evidence row.
+
+    Used verbatim in the corrective preamble (so the LLM sees the exact
+    required shape with this candidate's value filled in) and as the base
+    of the deterministic injection. Polarity is banded on the composite so
+    implication and polarity never contradict the rendered value."""
+    if composite_rounded >= 60:
+        polarity = "positive"
+    elif composite_rounded >= 40:
+        polarity = "neutral"
+    else:
+        polarity = "negative"
+    is_ar = locale == "ar"
+    return {
+        "signal": (
+            _DG_COMPOSITE_SIGNAL_AR if is_ar else _DG_COMPOSITE_SIGNAL_EN
+        ),
+        "value": f"{composite_rounded}/100",
+        "implication": (
+            _DG_INJECTED_IMPLICATION_AR if is_ar
+            else _DG_INJECTED_IMPLICATION_EN
+        ),
+        "polarity": polarity,
+    }
+
+
+def _inject_dg_evidence_row(
+    parsed: dict[str, Any], *, composite_rounded: int, locale: str
+) -> bool:
+    """Deterministically insert the composite row into ``parsed`` when it
+    is still missing after the corrective retry. Returns True when a row
+    was injected.
+
+    Position 2 (index 1, after the rent anchor): the frontend narrative
+    renders only the top 4 key_evidence rows (DecisionMemoNarrative.tsx
+    slices to 4), so the row must sit inside that window. Idempotent — a
+    memo that already matches the detector is left untouched. An empty
+    key_evidence list only occurs on the headline local-rewrite null-out
+    path, where the body is intentionally cleared; injecting a lone row
+    there would undo the null-out invariant, so it is skipped."""
+    rows = parsed.get("key_evidence")
+    if not isinstance(rows, list) or not rows:
+        return False
+    if _dg_evidence_invalid_reason(parsed, composite_rounded) is None:
+        return False
+    row = _dg_required_evidence_row(composite_rounded, locale)
+    # Internal marker — harmless to consumers: the frontend reads only
+    # signal/value/implication/polarity and the text renderer reads
+    # signal/value/implication.
+    row["source"] = "deterministic_injection"
+    rows.insert(1, row)
+    return True
+
+
+# dg-evidence corrective preamble. Same loop semantics as the headline
+# preamble: ``{reason}`` and ``{row_json}`` are substituted via .format()
+# on the template only, so braces inside the JSON row are inserted
+# verbatim without being parsed.
+_DG_CORRECTIVE_RETRY_PREAMBLE_EN = (
+    "PREVIOUS RESPONSE WAS REJECTED. Reason: {reason}.\n\n"
+    "feature_snapshot.demand_score_source == \"dg_index\" for this "
+    "candidate, so the demand evidence MUST cite the demand-generator "
+    "composite. key_evidence MUST include this row (copy signal and value "
+    "exactly; you may sharpen the implication):\n"
+    "{row_json}\n\n"
+    "Population reach is supporting context only — it MUST NOT be "
+    "presented as the demand anchor in key_evidence or in body prose. "
+    "Re-emit the full structured memo."
+)
+
+# Arabic dg-evidence corrective preamble. Inline ``#`` glosses give the
+# English meaning of each line for review.
+_DG_CORRECTIVE_RETRY_PREAMBLE_AR = (
+    # "PREVIOUS RESPONSE WAS REJECTED. Reason: {reason}."
+    "تم رفض الاستجابة السابقة. السبب: {reason}.\n\n"
+    # "demand_score_source == "dg_index" for this candidate, so the demand
+    #  evidence MUST cite the demand-generator composite."
+    "feature_snapshot.demand_score_source == \"dg_index\" لهذا المرشح، "
+    "لذا يجب أن تستشهد أدلة الطلب بمركب مولدات الطلب. "
+    # "key_evidence MUST include this row (copy signal and value exactly;
+    #  you may sharpen the implication):"
+    "يجب أن يتضمن key_evidence هذا الصف (انسخ signal و value كما هما؛ "
+    "يمكنك تحسين صياغة implication):\n"
+    "{row_json}\n\n"
+    # "Population reach is supporting context only — it MUST NOT be the
+    #  demand anchor in key_evidence or in body prose. Re-emit the full
+    #  structured memo."
+    "عدد السكان القابلين للوصول سياق داعم فقط — يجب ألا يُقدَّم كمرتكز "
+    "الطلب في key_evidence ولا في نص المذكرة. أعد إصدار المذكرة المنظمة "
+    "كاملة."
+)
+
+
+def _dg_corrective_retry_preamble(
+    locale: str, reason: str, required_row: dict[str, Any]
+) -> str:
+    """Build the dg-evidence retry preamble for ``locale``, embedding the
+    exact required row (with this candidate's composite value) as JSON."""
+    template = (
+        _DG_CORRECTIVE_RETRY_PREAMBLE_AR if locale == "ar"
+        else _DG_CORRECTIVE_RETRY_PREAMBLE_EN
+    )
+    return template.format(
+        reason=reason,
+        row_json=json.dumps(required_row, ensure_ascii=False),
+    )
+
+
 def generate_structured_memo(ctx: MemoContext) -> dict | None:
     """Call the LLM for a structured memo, or return None on any failure.
 
@@ -2733,24 +2928,51 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
         locale=ctx.locale,
     )
 
+    # v12.1 dg-evidence mandate — applies only when the snapshot says the
+    # dg_index engine scored Demand Strength AND the composite is present.
+    dg_composite = _dg_required_composite(ctx.feature_snapshot)
+    dg_reason = (
+        _dg_evidence_invalid_reason(parsed, dg_composite)
+        if dg_composite is not None
+        else None
+    )
+
     usage = getattr(response, "usage", None)
     input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
     output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
 
-    if headline_reason is not None:
-        logger.warning(
-            "Structured memo headline rejected for %s: %s | headline=%r",
-            ctx.candidate_id,
-            headline_reason,
-            parsed.get("headline_recommendation"),
-        )
+    if headline_reason is not None or dg_reason is not None:
+        if headline_reason is not None:
+            logger.warning(
+                "Structured memo headline rejected for %s: %s | headline=%r",
+                ctx.candidate_id,
+                headline_reason,
+                parsed.get("headline_recommendation"),
+            )
+        if dg_reason is not None:
+            logger.warning(
+                "Structured memo dg-evidence rejected for %s: %s",
+                ctx.candidate_id,
+                dg_reason,
+            )
+        preamble_parts: list[str] = []
+        if headline_reason is not None:
+            preamble_parts.append(
+                _corrective_retry_preamble(ctx.locale, headline_reason)
+            )
+        if dg_reason is not None:
+            preamble_parts.append(
+                _dg_corrective_retry_preamble(
+                    ctx.locale,
+                    dg_reason,
+                    _dg_required_evidence_row(dg_composite, ctx.locale),
+                )
+            )
         retry_messages = [
             messages[0],
             {
                 "role": "user",
-                "content": _corrective_retry_preamble(
-                    ctx.locale, headline_reason
-                ),
+                "content": "\n\n".join(preamble_parts),
             },
             messages[1],
         ]
@@ -2784,6 +3006,11 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
                     deterministic_verdict=ctx.deterministic_verdict,
                     locale=ctx.locale,
                 )
+                retry_dg_reason = (
+                    _dg_evidence_invalid_reason(retry_parsed, dg_composite)
+                    if dg_composite is not None
+                    else None
+                )
                 retry_usage = getattr(retry_response, "usage", None)
                 input_tokens += int(
                     getattr(retry_usage, "prompt_tokens", 0) or 0
@@ -2791,9 +3018,20 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
                 output_tokens += int(
                     getattr(retry_usage, "completion_tokens", 0) or 0
                 )
-                if retry_reason is None:
+                if headline_reason is None and retry_reason is not None:
+                    # dg-only retry whose headline regressed: keep the
+                    # first response (its headline already passed) and
+                    # fall through to the deterministic injection below.
+                    logger.warning(
+                        "Structured memo dg retry produced an invalid "
+                        "headline for %s: %s — keeping first response",
+                        ctx.candidate_id,
+                        retry_reason,
+                    )
+                elif retry_reason is None:
                     parsed = retry_parsed
                     headline_reason = None
+                    dg_reason = retry_dg_reason
                 else:
                     logger.error(
                         "Structured memo retry headline still invalid for "
@@ -2804,6 +3042,7 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
                     )
                     # Use the retry's body but rewrite the headline locally.
                     parsed = retry_parsed
+                    dg_reason = retry_dg_reason
 
         if headline_reason is not None:
             rewritten = _rewrite_headline_locally(
@@ -2833,6 +3072,21 @@ def generate_structured_memo(ctx: MemoContext) -> dict | None:
             parsed["risks"] = []
             parsed["comparison"] = ""
             parsed["bottom_line"] = ""
+
+    # v12.1 layer 2 — deterministic fallback. If the corrective retry still
+    # lacks the composite row, inject it server-side before the caller
+    # persists the memo (no-op when the headline null-out emptied the body).
+    if dg_reason is not None and dg_composite is not None:
+        if _inject_dg_evidence_row(
+            parsed, composite_rounded=dg_composite, locale=ctx.locale
+        ):
+            logger.warning(
+                "Structured memo dg composite row deterministically "
+                "injected for %s (composite=%d/100, locale=%s)",
+                ctx.candidate_id,
+                dg_composite,
+                ctx.locale,
+            )
 
     cost = _record_cost(input_tokens, output_tokens)
 
