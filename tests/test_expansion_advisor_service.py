@@ -545,12 +545,13 @@ def test_competition_whitespace_dine_in_reference_varies_off_floor():
 
 
 def test_competition_whitespace_cafe_qsr_reference_unchanged():
-    """Blast-radius guard: qsr / cafe (REF=25 default) are unchanged.
+    """Blast-radius guard: cafe / unknown models (REF=25 default) unchanged.
 
-    These must match the pre-change behaviour bit-for-bit so neither the
-    dine_in nor the delivery_first recalibration can leak into cafe / qsr
-    rankings. delivery_first is deliberately NOT in this loop any more — it
-    now uses REF=50 (see the dedicated test below).
+    These must match the pre-change behaviour bit-for-bit so none of the
+    dine_in / delivery_first / qsr recalibrations can leak into cafe (or an
+    unknown service model's) rankings. delivery_first and qsr are
+    deliberately NOT in this loop any more — they now use REF=50 and REF=75
+    respectively (see the dedicated tests below).
     """
     import math
 
@@ -565,7 +566,7 @@ def test_competition_whitespace_cafe_qsr_reference_unchanged():
     # Representative competitor counts spanning empty -> saturated, including
     # the probe percentiles called out in the fix report.
     for count in (1, 3, 6, 8, 12, 16, 24, 25, 40, 50, 145):
-        for model in ("cafe", "qsr", None):
+        for model in ("cafe", None):
             assert _competition_whitespace_score(
                 count, confident=True, service_model=model
             ) == pytest.approx(_legacy_ref25(count))
@@ -616,6 +617,64 @@ def test_competition_whitespace_delivery_first_reference_varies_off_floor():
     assert _competition_whitespace_score(
         145, confident=True, service_model="delivery_first"
     ) == 15.0
+
+
+def test_competition_whitespace_qsr_reference_varies_off_floor():
+    """qsr uses REF=75 so its tightened 1000 m count band spreads.
+
+    Before the fix qsr scored same-category competitors over a 1200 m radius
+    whose counts overflowed the default REF=25 curve (city-wide probe: 67.2%
+    of burger-scope / 81.6% of fast_food-scope candidates floored at 15.0 —
+    confirmed live by a 10/15-flat search). The discriminating variation
+    lives at 1000 m (burger-scope p25 4 / p50 16 / p75 24), but qsr counts
+    run higher than dine_in's / delivery_first's, so REF=75 (not 50) keeps
+    the p25–p75 band spread to ~26–63 and floors only count >= 39
+    (c* exact 38.69; burger-scope floored share ~4.9%).
+    """
+    import math
+
+    import pytest
+
+    from app.services.expansion_advisor import _competition_whitespace_score
+
+    def _ref75(count: int) -> float:
+        raw = 100.0 * (1.0 - (math.log1p(count) / math.log1p(75)))
+        return max(15.0, raw)
+
+    # qsr follows the REF=75 curve exactly (NOT the legacy REF=25).
+    for count in (1, 3, 4, 6, 16, 24, 32, 38, 39, 50, 75, 145):
+        assert _competition_whitespace_score(
+            count, confident=True, service_model="qsr"
+        ) == pytest.approx(_ref75(count))
+
+    # Exact curve pins at the probe percentiles (burger scope p25/p50/p75).
+    assert _competition_whitespace_score(
+        4, confident=True, service_model="qsr"
+    ) == pytest.approx(62.84, abs=0.01)
+    assert _competition_whitespace_score(
+        16, confident=True, service_model="qsr"
+    ) == pytest.approx(34.58, abs=0.01)
+    assert _competition_whitespace_score(
+        24, confident=True, service_model="qsr"
+    ) == pytest.approx(25.67, abs=0.01)
+    # Floor onset: count 38 is still (barely) off the floor, 39 floors.
+    assert _competition_whitespace_score(
+        38, confident=True, service_model="qsr"
+    ) == pytest.approx(15.41, abs=0.01)
+    assert _competition_whitespace_score(
+        39, confident=True, service_model="qsr"
+    ) == 15.0
+    # Confirmed greenfield is still wide open.
+    assert _competition_whitespace_score(
+        0, confident=True, service_model="qsr"
+    ) == 100.0
+
+    scores = [
+        _competition_whitespace_score(c, confident=True, service_model="qsr")
+        for c in (0, 4, 16, 24, 39)
+    ]
+    # Component carries signal — not a constant floor.
+    assert len(set(scores)) > 1
 
 
 def test_competition_whitespace_f4_path_unchanged_per_model():
