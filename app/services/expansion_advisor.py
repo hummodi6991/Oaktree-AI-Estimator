@@ -2627,6 +2627,7 @@ def _delivery_score(
     *,
     realized_demand: float | None = None,
     blend_weight: float = 0.5,
+    reference: float | None = None,
 ) -> float:
     """Square-root scaled delivery score for wider dynamic range.
 
@@ -2645,6 +2646,13 @@ def _delivery_score(
     When realized demand is available, blend it with the listing-count
     signal: ``score = (1-w) · listing + w · realized``.  Otherwise fall
     back to today's supply-count behavior unchanged.
+
+    ``reference`` is the realized-demand saturation point (realized_demand
+    == reference maps to 100).  Callers in the search pipeline pass the
+    service-model-aware anchor from ``_realized_demand_reference()``; when
+    omitted it falls back to the global
+    ``EXPANSION_REALIZED_DEMAND_REFERENCE`` setting, preserving the legacy
+    behavior for any caller that hasn't been updated.
     """
     listing_score = (
         0.0
@@ -2653,14 +2661,15 @@ def _delivery_score(
     )
     if realized_demand is None or realized_demand <= 0:
         return listing_score
-    # Reference point (EXPANSION_REALIZED_DEMAND_REFERENCE): realized_demand
-    # equal to the reference maps to a score of 100.  Square-root scaling
-    # mirrors the listing-count term so the two blend cleanly.  Calibrate via
+    # Reference point: realized_demand equal to the reference maps to a
+    # score of 100.  Square-root scaling mirrors the listing-count term so
+    # the two blend cleanly.  Calibrate per service model via
+    # scripts/diagnostics/delivery_demand_legs_probe.sql
+    # (_REALIZED_DEMAND_REFERENCE), global fallback via
     # scripts/diagnostics/realized_demand_calibration.sql.
-    realized_score = _clamp(
-        (realized_demand / settings.EXPANSION_REALIZED_DEMAND_REFERENCE) ** 0.5
-        * 100.0
-    )
+    if reference is None:
+        reference = settings.EXPANSION_REALIZED_DEMAND_REFERENCE
+    realized_score = _clamp((realized_demand / reference) ** 0.5 * 100.0)
     bw = max(0.0, min(1.0, blend_weight))
     return _clamp(listing_score * (1.0 - bw) + realized_score * bw)
 
@@ -2715,6 +2724,43 @@ _WHITESPACE_LOG_REF: dict[str, float] = {
     "qsr": 75.0,
 }
 _WHITESPACE_LOG_REF_DEFAULT: float = 25.0
+
+
+_REALIZED_DEMAND_REFERENCE: dict[str, float] = {
+    # Per-service-model saturation reference for the realized-demand leg of
+    # _delivery_score (realized_demand == REF maps to a score of 100 on the
+    # square-root curve). Re-anchored 2026-06-10 from a 1,220-candidate /
+    # trailing-30d probe (scripts/diagnostics/delivery_demand_legs_probe.sql)
+    # using the SAME rule as the original 2026-05-15 calibration of
+    # EXPANSION_REALIZED_DEMAND_REFERENCE: anchor at each model's
+    # realized_demand_30d p75 so the median lands in the ~70s and only the
+    # top quartile saturates. The global p75=263 anchor had drifted low —
+    # 62.5% of qsr candidates sat at/over it, pinning the realized leg at 100
+    # (probe realized_p50 score: qsr 100, dine_in 98.5).
+    #
+    # These anchors are calibrated to counts measured at the 1200 m
+    # EXPANSION_REALIZED_DEMAND_RADIUS_M catchment — re-derive them from the
+    # probe if that radius ever changes.
+    #
+    # cafe is deliberately absent (no cafe rows in the probe window) and any
+    # model not listed here falls back to the
+    # EXPANSION_REALIZED_DEMAND_REFERENCE env default (263.0).
+    "delivery_first": 307.0,
+    "dine_in": 402.0,
+    "qsr": 327.0,
+}
+
+
+def _realized_demand_reference(service_model: str | None) -> float:
+    """Realized-demand saturation reference for this service model.
+
+    Models absent from ``_REALIZED_DEMAND_REFERENCE`` (e.g. ``cafe``) fall
+    back to the ``EXPANSION_REALIZED_DEMAND_REFERENCE`` env default.
+    """
+    return _REALIZED_DEMAND_REFERENCE.get(
+        (service_model or "").lower(),
+        settings.EXPANSION_REALIZED_DEMAND_REFERENCE,
+    )
 
 
 def _competition_whitespace_score(
@@ -7819,6 +7865,16 @@ def run_expansion_search(
                 f"cat_{i}": f"%{term}%"
                 for i, term in enumerate(_cat_terms)
             }
+            # Delivery-market count radius. This bulk enrichment deliberately
+            # overrides the pool SQL's model-aware :demand_radius_m count for
+            # ALL service models: both delivery legs (this listing count and
+            # the realized-demand Δrating_count below) share the single
+            # EXPANSION_REALIZED_DEMAND_RADIUS_M catchment (default 1200 m).
+            # The _REALIZED_DEMAND_REFERENCE anchors are calibrated to counts
+            # at THIS radius — re-anchor them if it ever changes.
+            _del_params["del_radius_m"] = int(
+                settings.EXPANSION_REALIZED_DEMAND_RADIUS_M
+            )
             for _idx, _r in enumerate(rows):
                 _pid = str(_r.get("parcel_id") or "")
                 _lon = _safe_float(_r.get("lon"))
@@ -7849,7 +7905,7 @@ def run_expansion_search(
                              AND ST_DWithin(
                                  d.geom::geography,
                                  ST_SetSRID(ST_MakePoint(c.lon::double precision, c.lat::double precision), 4326)::geography,
-                                 1200
+                                 :del_radius_m
                              )
                             GROUP BY c.parcel_id
                         """),
@@ -8282,6 +8338,7 @@ def run_expansion_search(
             delivery_listing_count,
             realized_demand=_realized_demand_30d,
             blend_weight=settings.EXPANSION_REALIZED_DEMAND_BLEND,
+            reference=_realized_demand_reference(service_model),
         )
         _pop_w, _del_w = _demand_blend_weights(service_model)
         demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
@@ -8402,6 +8459,7 @@ def run_expansion_search(
             delivery_listing_count,
             realized_demand=_realized_demand_30d,
             blend_weight=settings.EXPANSION_REALIZED_DEMAND_BLEND,
+            reference=_realized_demand_reference(service_model),
         )
         demand_score = _clamp(pop_score * _pop_w + delivery_score * _del_w)
 

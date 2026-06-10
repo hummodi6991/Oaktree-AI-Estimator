@@ -2358,6 +2358,77 @@ def test_delivery_score_realized_low_demand_pulls_score_down():
     assert saturated_with_low_demand < saturated_listing_only
 
 
+def test_realized_demand_reference_per_service_model():
+    """Known models read the probe-derived anchors; others fall back to env."""
+    from app.core.config import settings
+    from app.services.expansion_advisor import _realized_demand_reference
+
+    assert _realized_demand_reference("delivery_first") == 307.0
+    assert _realized_demand_reference("dine_in") == 402.0
+    assert _realized_demand_reference("qsr") == 327.0
+    # cafe is deliberately unanchored (no probe rows); unknown / missing
+    # models also fall back to the global env default.
+    fallback = settings.EXPANSION_REALIZED_DEMAND_REFERENCE
+    assert _realized_demand_reference("cafe") == fallback
+    assert _realized_demand_reference(None) == fallback
+    assert _realized_demand_reference("weird") == fallback
+
+
+def test_delivery_score_explicit_reference():
+    """An explicit reference re-anchors the realized leg's 100-point."""
+    from app.services.expansion_advisor import _delivery_score
+
+    # realized_demand == reference saturates the realized leg at 100.
+    assert _delivery_score(
+        10, realized_demand=327.0, blend_weight=1.0, reference=327.0
+    ) == pytest.approx(100.0, abs=0.01)
+    # Exact mid value: rd=216, ref=327 → √(216/327)·100 = 81.274...,
+    # blended at w=0.5 with the listing score for count 10 (exactly 50.0)
+    # → 0.5·50 + 0.5·81.274 = 65.637.
+    assert _delivery_score(
+        10, realized_demand=216.0, blend_weight=1.0, reference=327.0
+    ) == pytest.approx(81.274, abs=0.01)
+    assert _delivery_score(
+        10, realized_demand=216.0, blend_weight=0.5, reference=327.0
+    ) == pytest.approx(65.637, abs=0.01)
+    # Omitting reference preserves the legacy global-setting behavior.
+    from app.core.config import settings
+
+    legacy = _delivery_score(10, realized_demand=216.0, blend_weight=0.5)
+    explicit_global = _delivery_score(
+        10,
+        realized_demand=216.0,
+        blend_weight=0.5,
+        reference=settings.EXPANSION_REALIZED_DEMAND_REFERENCE,
+    )
+    assert legacy == pytest.approx(explicit_global, abs=1e-9)
+
+
+def test_bulk_delivery_radius_reads_settings_not_literal():
+    """The bulk delivery-count SQL must take its radius from settings.
+
+    Guards against the magic-number regression: the listing-count leg and the
+    realized-demand leg share the EXPANSION_REALIZED_DEMAND_RADIUS_M
+    catchment, and the _REALIZED_DEMAND_REFERENCE anchors are calibrated to
+    counts at that radius.
+    """
+    import inspect
+
+    import app.services.expansion_advisor as svc
+
+    source = inspect.getsource(svc.run_expansion_search)
+    start = source.index("Bulk delivery enrichment")
+    end = source.index("Bulk realized-demand enrichment")
+    bulk_block = source[start:end]
+    assert "EXPANSION_REALIZED_DEMAND_RADIUS_M" in bulk_block
+    # The SQL itself (not comments) must bind the radius, not inline it.
+    sql_start = bulk_block.index('text(f"""')
+    sql_end = bulk_block.index('""")', sql_start)
+    bulk_sql = bulk_block[sql_start:sql_end]
+    assert ":del_radius_m" in bulk_sql
+    assert "1200" not in bulk_sql
+
+
 # ---------------------------------------------------------------------------
 # Phase 2 — bounded LLM shortlist reranking integration
 #
