@@ -2302,6 +2302,384 @@ class TestHeadlineNoRetryWhenAllGatesPassRecommend:
         assert client.chat.completions.create.call_count == 1
 
 
+# ---------------------------------------------------------------------------
+# v12.1 (PR-E2) — dg-index composite evidence enforcement: detector,
+# corrective retry, and deterministic injection fallback.
+# ---------------------------------------------------------------------------
+
+_DG_SIGNAL_EN = "demand-generator composite"
+_DG_SIGNAL_AR = "مركب مولدات الطلب"
+
+# _DG_INDEX_SNAPSHOT_FIELDS (above) carries composite_0_100 = 74.2 → 74.
+_DG_RANK1_CANDIDATE = {
+    **_RANK1_ALL_PASS_CANDIDATE,
+    "id": "dg-rank1",
+    "parcel_id": "dg-rank1",
+    "feature_snapshot_json": {
+        **_RANK1_ALL_PASS_CANDIDATE["feature_snapshot_json"],
+        **_DG_INDEX_SNAPSHOT_FIELDS,
+    },
+}
+
+_POP_SCORE_RANK1_CANDIDATE = {
+    **_RANK1_ALL_PASS_CANDIDATE,
+    "id": "pop-rank1",
+    "parcel_id": "pop-rank1",
+    "feature_snapshot_json": {
+        **_RANK1_ALL_PASS_CANDIDATE["feature_snapshot_json"],
+        "demand_score_source": "pop_score",
+    },
+}
+
+# dg_index source but no demand_generator_index block (defensive case —
+# both enforcement layers must skip).
+_DG_SOURCE_NO_BLOCK_CANDIDATE = {
+    **_RANK1_ALL_PASS_CANDIDATE,
+    "id": "dg-no-block",
+    "parcel_id": "dg-no-block",
+    "feature_snapshot_json": {
+        **_RANK1_ALL_PASS_CANDIDATE["feature_snapshot_json"],
+        "demand_score_source": "dg_index",
+    },
+}
+
+
+def _memo_with_dg_row(headline: str, *, signal: str = _DG_SIGNAL_EN,
+                      value: str = "74/100") -> dict:
+    """A headline-valid memo whose key_evidence includes a composite row."""
+    memo = _memo_with_headline(headline)
+    memo["key_evidence"] = list(memo["key_evidence"]) + [
+        {"signal": signal, "value": value,
+         "implication": "venue activity and trip generators carry the catchment",
+         "polarity": "positive"},
+    ]
+    return memo
+
+
+class TestDgRequiredComposite:
+    """Layer gating — the mandate applies only to dg_index candidates
+    carrying a numeric composite."""
+
+    def test_dg_index_with_block_returns_rounded_composite(self):
+        from app.services.llm_decision_memo import _dg_required_composite
+
+        assert _dg_required_composite(dict(_DG_INDEX_SNAPSHOT_FIELDS)) == 74
+
+    def test_pop_score_returns_none(self):
+        from app.services.llm_decision_memo import _dg_required_composite
+
+        snap = {**_DG_INDEX_SNAPSHOT_FIELDS, "demand_score_source": "pop_score"}
+        assert _dg_required_composite(snap) is None
+
+    def test_absent_source_returns_none(self):
+        from app.services.llm_decision_memo import _dg_required_composite
+
+        snap = {"demand_generator_index": {"composite_0_100": 74.2}}
+        assert _dg_required_composite(snap) is None
+
+    def test_dg_index_without_block_returns_none(self):
+        from app.services.llm_decision_memo import _dg_required_composite
+
+        assert _dg_required_composite({"demand_score_source": "dg_index"}) is None
+
+    def test_non_numeric_composite_returns_none(self):
+        from app.services.llm_decision_memo import _dg_required_composite
+
+        snap = {
+            "demand_score_source": "dg_index",
+            "demand_generator_index": {"composite_0_100": "74"},
+        }
+        assert _dg_required_composite(snap) is None
+
+
+class TestDgEvidenceDetector:
+    """Detector — a memo is compliant when any key_evidence row's
+    signal/value mentions the EN phrase, the AR Rule-7 term, or a /100
+    value equal to the rounded composite."""
+
+    def test_compliant_by_en_signal_phrase(self):
+        from app.services.llm_decision_memo import _dg_evidence_invalid_reason
+
+        memo = _memo_with_dg_row("Recommend — x", value="74.2/100")
+        assert _dg_evidence_invalid_reason(memo, 74) is None
+
+    def test_compliant_by_ar_signal_term(self):
+        from app.services.llm_decision_memo import _dg_evidence_invalid_reason
+
+        memo = _memo_with_dg_row("نوصي — x", signal=_DG_SIGNAL_AR, value="74/100")
+        assert _dg_evidence_invalid_reason(memo, 74) is None
+
+    def test_compliant_by_value_match_alone(self):
+        from app.services.llm_decision_memo import _dg_evidence_invalid_reason
+
+        memo = _memo_with_dg_row("Recommend — x", signal="demand composite",
+                                 value="74/100")
+        assert _dg_evidence_invalid_reason(memo, 74) is None
+
+    def test_non_compliant_returns_reason(self):
+        from app.services.llm_decision_memo import _dg_evidence_invalid_reason
+
+        memo = _memo_with_headline("Recommend — x")
+        reason = _dg_evidence_invalid_reason(memo, 74)
+        assert reason is not None
+        assert "demand-generator composite" in reason
+
+    def test_other_score_value_does_not_match(self):
+        from app.services.llm_decision_memo import _dg_evidence_invalid_reason
+
+        # The base body carries a "80/100" final_score row — must not
+        # satisfy a composite of 74.
+        memo = _memo_with_headline("Recommend — x")
+        assert _dg_evidence_invalid_reason(memo, 74) is not None
+        assert _dg_evidence_invalid_reason(memo, 80) is None
+
+
+class TestDgEvidenceRetry:
+    """Layer 1 — missing composite row triggers the existing one-retry
+    corrective loop with the dg preamble."""
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_missing_row_triggers_retry_and_keeps_llm_row(
+        self, mock_get_client, monkeypatch
+    ):
+        _enable_structured_memo(monkeypatch)
+        first = _memo_with_headline("Recommend — strong site, demand from reach")
+        second = _memo_with_dg_row("Recommend — strong site, evidenced demand")
+        client = _two_response_client(first, second)
+        mock_get_client.return_value = client
+
+        ctx = build_memo_context(
+            candidate=_DG_RANK1_CANDIDATE, brief=BASE_STRUCTURED_BRIEF, lang="en"
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        assert client.chat.completions.create.call_count == 2
+        rows = memo["key_evidence"]
+        assert any(_DG_SIGNAL_EN in str(r.get("signal", "")) for r in rows)
+        # LLM-authored row, not the deterministic injection.
+        assert all(r.get("source") != "deterministic_injection" for r in rows)
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_retry_preamble_carries_mandate_and_exact_row(
+        self, mock_get_client, monkeypatch
+    ):
+        _enable_structured_memo(monkeypatch)
+        first = _memo_with_headline("Recommend — strong site")
+        second = _memo_with_dg_row("Recommend — strong site")
+        client = _two_response_client(first, second)
+        mock_get_client.return_value = client
+
+        ctx = build_memo_context(
+            candidate=_DG_RANK1_CANDIDATE, brief=BASE_STRUCTURED_BRIEF, lang="en"
+        )
+        generate_structured_memo(ctx)
+
+        retry_call = client.chat.completions.create.call_args_list[1]
+        retry_messages = retry_call.kwargs.get("messages") or retry_call[1]["messages"]
+        preamble = retry_messages[1]["content"]
+        assert retry_messages[1]["role"] == "user"
+        assert "PREVIOUS RESPONSE WAS REJECTED" in preamble
+        assert '"dg_index"' in preamble
+        # The exact required row with THIS candidate's composite filled in.
+        assert f'"signal": "{_DG_SIGNAL_EN}"' in preamble
+        assert '"value": "74/100"' in preamble
+        # Body prose must not anchor demand on population reach.
+        assert "MUST NOT be presented as the demand anchor" in preamble
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_pop_score_candidate_never_triggers(self, mock_get_client, monkeypatch):
+        _enable_structured_memo(monkeypatch)
+        good = _memo_with_headline("Recommend — strong economics, no dg row")
+        client = _mock_client_returning(good)
+        mock_get_client.return_value = client
+
+        ctx = build_memo_context(
+            candidate=_POP_SCORE_RANK1_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        assert client.chat.completions.create.call_count == 1
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_dg_source_without_block_skips_both_layers(
+        self, mock_get_client, monkeypatch
+    ):
+        _enable_structured_memo(monkeypatch)
+        good = _memo_with_headline("Recommend — strong economics, no dg row")
+        client = _mock_client_returning(good)
+        mock_get_client.return_value = client
+
+        ctx = build_memo_context(
+            candidate=_DG_SOURCE_NO_BLOCK_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        assert client.chat.completions.create.call_count == 1
+        assert all(
+            r.get("source") != "deterministic_injection"
+            for r in memo["key_evidence"]
+        )
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_compliant_first_response_no_retry(self, mock_get_client, monkeypatch):
+        _enable_structured_memo(monkeypatch)
+        good = _memo_with_dg_row("Recommend — evidenced demand")
+        client = _mock_client_returning(good)
+        mock_get_client.return_value = client
+
+        ctx = build_memo_context(
+            candidate=_DG_RANK1_CANDIDATE, brief=BASE_STRUCTURED_BRIEF, lang="en"
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        assert client.chat.completions.create.call_count == 1
+
+
+class TestDgEvidenceInjectionFallback:
+    """Layer 2 — when the retry still lacks the row, the deterministic
+    row is injected at position 2 (index 1) before persistence."""
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_retry_still_missing_injects_en_row_at_position_2(
+        self, mock_get_client, monkeypatch
+    ):
+        _enable_structured_memo(monkeypatch)
+        first = _memo_with_headline("Recommend — strong site")
+        second = _memo_with_headline("Recommend — strong site again")
+        client = _two_response_client(first, second)
+        mock_get_client.return_value = client
+
+        ctx = build_memo_context(
+            candidate=_DG_RANK1_CANDIDATE, brief=BASE_STRUCTURED_BRIEF, lang="en"
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        assert client.chat.completions.create.call_count == 2
+        injected = memo["key_evidence"][1]
+        assert injected["signal"] == _DG_SIGNAL_EN
+        assert injected["value"] == "74/100"
+        assert injected["polarity"] == "positive"
+        assert injected["source"] == "deterministic_injection"
+        assert injected["implication"]
+        # Exactly one injected row.
+        assert sum(
+            1 for r in memo["key_evidence"]
+            if r.get("source") == "deterministic_injection"
+        ) == 1
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_ar_injection_uses_rule7_term_with_latin_digits(
+        self, mock_get_client, monkeypatch
+    ):
+        _enable_structured_memo(monkeypatch)
+        first = _memo_with_headline("نوصي — موقع قوي")
+        second = _memo_with_headline("نوصي — موقع قوي مجدداً")
+        client = _two_response_client(first, second)
+        mock_get_client.return_value = client
+
+        ctx = build_memo_context(
+            candidate=_DG_RANK1_CANDIDATE, brief=BASE_STRUCTURED_BRIEF, lang="ar"
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        injected = memo["key_evidence"][1]
+        assert injected["signal"] == _DG_SIGNAL_AR
+        assert injected["value"] == "74/100"  # Latin digits (Rule 8)
+        assert injected["source"] == "deterministic_injection"
+        # Implication is Arabic with no Eastern-Arabic digits.
+        assert any("؀" <= ch <= "ۿ" for ch in injected["implication"])
+        assert not any("٠" <= ch <= "٩" for ch in injected["value"])
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_dg_retry_with_regressed_headline_keeps_first_and_injects(
+        self, mock_get_client, monkeypatch
+    ):
+        """Edge: first response has a valid headline but no dg row; the
+        retry produces the row but an invalid headline. The first response
+        wins and the row is injected deterministically."""
+        _enable_structured_memo(monkeypatch)
+        first = _memo_with_headline("Recommend — strong site, valid headline")
+        second = _memo_with_dg_row("consider due to mixed signals")
+        client = _two_response_client(first, second)
+        mock_get_client.return_value = client
+
+        ctx = build_memo_context(
+            candidate=_DG_RANK1_CANDIDATE, brief=BASE_STRUCTURED_BRIEF, lang="en"
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        assert memo["headline_recommendation"] == (
+            "Recommend — strong site, valid headline"
+        )
+        assert memo["key_evidence"][1]["source"] == "deterministic_injection"
+
+
+class TestDgInjectionHelper:
+    """Direct unit tests on the injection primitive — idempotence and the
+    null-out guard."""
+
+    def test_injects_at_index_1_after_rent_anchor(self):
+        from app.services.llm_decision_memo import _inject_dg_evidence_row
+
+        memo = {"key_evidence": [
+            {"signal": "annual rent", "value": "SAR 480,000/yr",
+             "implication": "x", "polarity": "positive"},
+            {"signal": "frontage", "value": "24 m corner",
+             "implication": "x", "polarity": "positive"},
+        ]}
+        assert _inject_dg_evidence_row(memo, composite_rounded=74, locale="en")
+        assert memo["key_evidence"][0]["signal"] == "annual rent"
+        assert memo["key_evidence"][1]["signal"] == _DG_SIGNAL_EN
+        assert memo["key_evidence"][2]["signal"] == "frontage"
+
+    def test_idempotent_never_double_injects(self):
+        from app.services.llm_decision_memo import _inject_dg_evidence_row
+
+        memo = {"key_evidence": [
+            {"signal": "annual rent", "value": "SAR 480,000/yr",
+             "implication": "x", "polarity": "positive"},
+        ]}
+        assert _inject_dg_evidence_row(memo, composite_rounded=74, locale="en")
+        assert not _inject_dg_evidence_row(memo, composite_rounded=74, locale="en")
+        assert len(memo["key_evidence"]) == 2
+
+    def test_skips_empty_key_evidence_null_out_path(self):
+        from app.services.llm_decision_memo import _inject_dg_evidence_row
+
+        memo = {"key_evidence": []}
+        assert not _inject_dg_evidence_row(memo, composite_rounded=74, locale="en")
+        assert memo["key_evidence"] == []
+
+    def test_polarity_bands(self):
+        from app.services.llm_decision_memo import _dg_required_evidence_row
+
+        assert _dg_required_evidence_row(74, "en")["polarity"] == "positive"
+        assert _dg_required_evidence_row(60, "en")["polarity"] == "positive"
+        assert _dg_required_evidence_row(45, "en")["polarity"] == "neutral"
+        assert _dg_required_evidence_row(30, "en")["polarity"] == "negative"
+
+
+class TestMemoPromptVersionBumpedForV121:
+    """The two non-compliant production memos are cached at v12; the bump
+    forces regeneration on next view."""
+
+    def test_version_is_v12_1(self):
+        from app.services.llm_decision_memo import MEMO_PROMPT_VERSION
+
+        assert MEMO_PROMPT_VERSION == "v12.1-demand-evidence-enforced-2026-06"
+
+
 class TestRenderPromptAdvisoryFailureNoGateFailureAddendum:
     """Bug 1 prompt-side fix — an advisory-only gate failure must NOT
     inject the "GATE FAILURE ... overall_pass=False" addendum."""
