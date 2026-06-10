@@ -76,26 +76,34 @@ Financial framing:
   percentile" as a bad score when it actually means rent is cheaper than most
   comparables, and self-computing the inversion is error-prone.
 - financial_framing.rent_positioning: a PRE-COMPUTED object
-  {zone, pct_value, scope}. The percentage inversion has already been done
-  for you — COPY pct_value verbatim; never recompute it from the raw fraction.
-  Render exactly one of THREE templates, chosen by zone:
+  {zone, pct_value, scope, phrase_en, phrase_ar}. The percentage inversion
+  AND the full clause have already been rendered for you — COPY phrase_en
+  VERBATIM wherever the memo positions rent against comparables (Arabic
+  memos copy phrase_ar; AR Rule 8 carries the same mandate). NEVER rebuild
+  the clause from rent_percentile_vs_comparables: that field is the raw
+  percentile RANK — the fraction of comparables CHEAPER than this listing,
+  surfaced for the frontend — and rendering it as the percentage in prose
+  is a hard error. A listing at rank 0.09 is cheaper than about 91% of
+  comparables, not 9%. The three phrase shapes, for recognition only (never
+  re-derive the number):
     - zone == "low" (rent below most comparables, good for the operator):
       "cheaper than about {pct_value}% of {comparables}".
-    - zone == "mid" (at-market): "around the district median rent". State NO
-      percentage.
+    - zone == "mid" (at-market): "around the median rent of {comparables}".
+      States NO percentage.
     - zone == "high" (rent above most comparables, bad for the operator):
       "more expensive than about {pct_value}% of {comparables}".
-  {comparables} is chosen from rent_positioning.scope: "district" →
-  "district comparables"; "city_band" → "citywide comparables in the same
-  band/type"; "city" → "citywide comparables". Do NOT claim district scope
-  when the scope is city-scoped — honesty about scope is non-negotiable. When
-  rent_positioning is null/absent, omit the rent-positioning clause entirely.
+  The phrase and any median comparison MUST agree directionally: when
+  spread_to_median_sar is negative (below-median rent), the memo describes
+  the rent as cheap everywhere it is mentioned — pairing a savings-vs-median
+  sentence with a "cheaper than about 9%" clause is the exact contradiction
+  phrase_en exists to prevent. Do NOT claim district scope when
+  rent_positioning.scope is city-scoped — honesty about scope is
+  non-negotiable. When rent_positioning is null/absent, omit the
+  rent-positioning clause entirely.
   The literal phrase "Nth percentile" is BANNED in headline_recommendation,
   ranking_explanation, comparison, bottom_line, financial_framing.summary,
   financial_framing.thesis, competitive_landscape.summary, and
-  competitive_landscape.saturation_thesis. (For Arabic memos, AR Rule 8
-  carries the parallel Arabic templates that copy the SAME
-  rent_positioning.pct_value — match its shape.)
+  competitive_landscape.saturation_thesis.
 - value_score (0–100) + value_band ("best_value" | "neutral" | "above_market"):
   the derived "strong location at a fair price" chip. When value_band is
   "best_value" or "above_market", financial_framing.thesis MUST cite it in
@@ -119,6 +127,22 @@ Market context:
   orders, since only a fraction of orders produce a rating. Describe it as
   "delivery rating velocity" or "ratings on nearby branches," never as an order
   count. Lead with it when present.
+- feature_snapshot.demand_score_source: which engine scored Demand Strength
+  for this candidate. When it equals "dg_index", the demand evidence MUST
+  cite the demand-generator composite
+  (demand_generator_index.composite_0_100, unit "/100") and its strongest
+  sub-signals — F&B review mass
+  (demand_generator_index.fnb_review_weighted_density, unit
+  "weighted reviews"), trip generators (demand_generator_index.osm_generators
+  counts), built density (demand_generator_index.building_floors_proxy_sum,
+  unit "floors (proxy)"), and local population reach
+  (demand_generator_index.population_local_reach). "Population reach within
+  walking catchment" is the demand anchor ONLY when demand_score_source ==
+  "pop_score" or the field is absent (legacy rows); for dg_index candidates
+  population reach is supporting context, not the anchor.
+- feature_snapshot.demand_generator_index: the demand-generator evidence
+  block described above. Read sub-signal values from it verbatim; never
+  invent sub-signal numbers when the block is absent.
 
 Competitive landscape:
 - brand_presence.top_chains: named chains within 500m with branch_count and
@@ -187,7 +211,11 @@ HARD RULES:
   pressure", etc).
 - Thin market context: if advisory_sections.market_context.realized_demand_30d is null,
   the demand_thesis MUST acknowledge the data gap ("Realized demand data not available
-  for this catchment") and lean on population_reach and delivery_listing_count.
+  for this catchment"). What it leans on next is engine-dependent: when
+  feature_snapshot.demand_score_source == "dg_index", lean on the demand-generator
+  composite and its sub-signals (F&B review mass, trip generators, built density);
+  when the source is "pop_score" or absent, lean on population_reach and
+  delivery_listing_count.
 - Thin competitive landscape: if advisory_sections.competitive_landscape.top_chains is
   empty AND comparable_competitors is empty AND next_candidate_summary is null, the
   saturation_thesis MUST state plainly "No named competitors or peer candidates within
@@ -226,6 +254,18 @@ Example C — strong recommend, score 84, rank 1, district-tier comparable:
   "comparison": "Peer Chain A operates 2 branches within 180 m and Peer Chain B holds a single branch at 320 m of this site — established category demand at this corner, not a greenfield. Against rank 2 in this search, this site pulls ahead on rent positioning (cheaper than ~72% vs cheaper than ~53%) and access/visibility (82/100 vs 71/100); rank 2 carries a marginally larger footprint but no comparable corner exposure.",
   "bottom_line": "This is the deal in the shortlist — sign it before the listing turns."
 }
+
+Inline note on engine-aware demand evidence: Example C is a pop_score-engine
+candidate — population reach anchors its demand row. When
+feature_snapshot.demand_score_source == "dg_index", the demand key_evidence row
+cites the composite instead, e.g. {"signal": "demand-generator composite",
+"value": "74/100", "implication": "venue activity and trip generators carry the
+catchment — demand is evidenced, not assumed", "polarity": "positive"},
+optionally followed by the strongest sub-signal, e.g. {"signal": "F&B review
+mass", "value": "18,400 weighted reviews", "implication": "the catchment
+already supports heavy F&B traffic for the category", "polarity": "positive"}.
+For dg_index candidates, population reach may appear as supporting context but
+MUST NOT be the demand anchor.
 
 Example D — decline, score 41, rank 9, gates failed:
 {

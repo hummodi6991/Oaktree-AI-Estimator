@@ -50,7 +50,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v11-rent-positioning-deterministic-2026-06"
+MEMO_PROMPT_VERSION = "v12-demand-engine-evidence-2026-06"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -448,6 +448,13 @@ _MEMO_WHITELIST: tuple[str, ...] = _RERANK_WHITELIST + (
     "comparable_median_annual_rent_sar",
     "comparable_n",
     "comparable_source_label",
+    # PR-E — engine-aware demand evidence. The demand-generator index
+    # (composite + sub-signals) and the source marker must survive the
+    # whitelist truncation so dg_index memos can cite the engine that
+    # actually scored Demand Strength. Memo-only: the rerank signal
+    # surface stays constant.
+    "demand_generator_index",
+    "demand_score_source",
 )
 
 # Back-compat alias for existing memo call sites (:730, :901, :932).
@@ -1057,6 +1064,22 @@ def _scope_from_source_label(label: Any) -> str | None:
     return None
 
 
+_RENT_SCOPE_LABELS_EN = {
+    "district": "district comparables",
+    "city_band": "citywide comparables in the same band/type",
+    "city": "citywide comparables",
+}
+_RENT_SCOPE_LABELS_AR = {
+    "district": "المقارنات في الحي",
+    "city_band": "المقارنات في نفس النطاق على مستوى المدينة",
+    "city": "المقارنات على مستوى المدينة",
+}
+# Unrecognized / absent scope falls back to a plain "comparables" noun
+# with no scope claim — honesty about scope is non-negotiable.
+_RENT_SCOPE_FALLBACK_EN = "comparables"
+_RENT_SCOPE_FALLBACK_AR = "المقارنات"
+
+
 def _rent_positioning(percentile: Any, scope: str | None) -> dict | None:
     """Deterministic rent-positioning hint for the memo LLM.
 
@@ -1069,9 +1092,16 @@ def _rent_positioning(percentile: Any, scope: str | None) -> dict | None:
     of recomputing it (and historically mis-inverting it, e.g. percentile
     0.375 → "38%" instead of the correct "cheaper than ~62%").
 
-    Returns ``{zone, pct_value, scope}`` where ``pct_value`` is the
-    pre-inverted display integer (``None`` in the MID zone, which carries no
-    number), or ``None`` when percentile is absent so callers omit the clause.
+    v12 also pre-renders the FULL clause (``phrase_en`` / ``phrase_ar``):
+    in production the model kept the v11 template but slotted the raw rank
+    fraction into it (rank 0.09 → "cheaper than about 9%" instead of 91%),
+    so the prompt now mandates copying the whole pre-rendered phrase rather
+    than assembling template + number.
+
+    Returns ``{zone, pct_value, scope, phrase_en, phrase_ar}`` where
+    ``pct_value`` is the pre-inverted display integer (``None`` in the MID
+    zone, which carries no number), or ``None`` when percentile is absent so
+    callers omit the clause.
     """
     frac = _safe_float(percentile)
     if frac is None:
@@ -1081,11 +1111,32 @@ def _rent_positioning(percentile: Any, scope: str | None) -> dict | None:
     # which diverges at .5 boundaries (e.g. 12.5 → JS 13, Python 12). Use
     # floor(x + 0.5) to stay byte-for-byte aligned with the frontend.
     pct = int(math.floor(clamped * 100.0 + 0.5))
+    scope_en = _RENT_SCOPE_LABELS_EN.get(scope or "", _RENT_SCOPE_FALLBACK_EN)
+    scope_ar = _RENT_SCOPE_LABELS_AR.get(scope or "", _RENT_SCOPE_FALLBACK_AR)
     if 40 <= pct <= 60:
-        return {"zone": "mid", "pct_value": None, "scope": scope}
+        return {
+            "zone": "mid",
+            "pct_value": None,
+            "scope": scope,
+            "phrase_en": f"around the median rent of {scope_en}",
+            "phrase_ar": f"قريب من الإيجار الوسيط بين {scope_ar}",
+        }
     if pct < 40:
-        return {"zone": "low", "pct_value": 100 - pct, "scope": scope}
-    return {"zone": "high", "pct_value": pct, "scope": scope}
+        value = 100 - pct
+        return {
+            "zone": "low",
+            "pct_value": value,
+            "scope": scope,
+            "phrase_en": f"cheaper than about {value}% of {scope_en}",
+            "phrase_ar": f"أقل من حوالي {value}% من {scope_ar}",
+        }
+    return {
+        "zone": "high",
+        "pct_value": pct,
+        "scope": scope,
+        "phrase_en": f"more expensive than about {pct}% of {scope_en}",
+        "phrase_ar": f"أعلى من حوالي {pct}% من {scope_ar}",
+    }
 
 
 def _normalize_parking_evidence(raw: Any) -> str | None:
@@ -1402,26 +1453,34 @@ Financial framing:
   percentile" as a bad score when it actually means rent is cheaper than most
   comparables, and self-computing the inversion is error-prone.
 - financial_framing.rent_positioning: a PRE-COMPUTED object
-  {zone, pct_value, scope}. The percentage inversion has already been done
-  for you — COPY pct_value verbatim; never recompute it from the raw fraction.
-  Render exactly one of THREE templates, chosen by zone:
+  {zone, pct_value, scope, phrase_en, phrase_ar}. The percentage inversion
+  AND the full clause have already been rendered for you — COPY phrase_en
+  VERBATIM wherever the memo positions rent against comparables (Arabic
+  memos copy phrase_ar; AR Rule 8 carries the same mandate). NEVER rebuild
+  the clause from rent_percentile_vs_comparables: that field is the raw
+  percentile RANK — the fraction of comparables CHEAPER than this listing,
+  surfaced for the frontend — and rendering it as the percentage in prose
+  is a hard error. A listing at rank 0.09 is cheaper than about 91% of
+  comparables, not 9%. The three phrase shapes, for recognition only (never
+  re-derive the number):
     - zone == "low" (rent below most comparables, good for the operator):
       "cheaper than about {pct_value}% of {comparables}".
-    - zone == "mid" (at-market): "around the district median rent". State NO
-      percentage.
+    - zone == "mid" (at-market): "around the median rent of {comparables}".
+      States NO percentage.
     - zone == "high" (rent above most comparables, bad for the operator):
       "more expensive than about {pct_value}% of {comparables}".
-  {comparables} is chosen from rent_positioning.scope: "district" →
-  "district comparables"; "city_band" → "citywide comparables in the same
-  band/type"; "city" → "citywide comparables". Do NOT claim district scope
-  when the scope is city-scoped — honesty about scope is non-negotiable. When
-  rent_positioning is null/absent, omit the rent-positioning clause entirely.
+  The phrase and any median comparison MUST agree directionally: when
+  spread_to_median_sar is negative (below-median rent), the memo describes
+  the rent as cheap everywhere it is mentioned — pairing a savings-vs-median
+  sentence with a "cheaper than about 9%" clause is the exact contradiction
+  phrase_en exists to prevent. Do NOT claim district scope when
+  rent_positioning.scope is city-scoped — honesty about scope is
+  non-negotiable. When rent_positioning is null/absent, omit the
+  rent-positioning clause entirely.
   The literal phrase "Nth percentile" is BANNED in headline_recommendation,
   ranking_explanation, comparison, bottom_line, financial_framing.summary,
   financial_framing.thesis, competitive_landscape.summary, and
-  competitive_landscape.saturation_thesis. (For Arabic memos, AR Rule 8
-  carries the parallel Arabic templates that copy the SAME
-  rent_positioning.pct_value — match its shape.)
+  competitive_landscape.saturation_thesis.
 - value_score (0–100) + value_band ("best_value" | "neutral" | "above_market"):
   the derived "strong location at a fair price" chip. When value_band is
   "best_value" or "above_market", financial_framing.thesis MUST cite it in
@@ -1445,6 +1504,22 @@ Market context:
   orders, since only a fraction of orders produce a rating. Describe it as
   "delivery rating velocity" or "ratings on nearby branches," never as an order
   count. Lead with it when present.
+- feature_snapshot.demand_score_source: which engine scored Demand Strength
+  for this candidate. When it equals "dg_index", the demand evidence MUST
+  cite the demand-generator composite
+  (demand_generator_index.composite_0_100, unit "/100") and its strongest
+  sub-signals — F&B review mass
+  (demand_generator_index.fnb_review_weighted_density, unit
+  "weighted reviews"), trip generators (demand_generator_index.osm_generators
+  counts), built density (demand_generator_index.building_floors_proxy_sum,
+  unit "floors (proxy)"), and local population reach
+  (demand_generator_index.population_local_reach). "Population reach within
+  walking catchment" is the demand anchor ONLY when demand_score_source ==
+  "pop_score" or the field is absent (legacy rows); for dg_index candidates
+  population reach is supporting context, not the anchor.
+- feature_snapshot.demand_generator_index: the demand-generator evidence
+  block described above. Read sub-signal values from it verbatim; never
+  invent sub-signal numbers when the block is absent.
 
 Competitive landscape:
 - brand_presence.top_chains: named chains within 500m with branch_count and
@@ -1513,7 +1588,11 @@ HARD RULES:
   pressure", etc).
 - Thin market context: if advisory_sections.market_context.realized_demand_30d is null,
   the demand_thesis MUST acknowledge the data gap ("Realized demand data not available
-  for this catchment") and lean on population_reach and delivery_listing_count.
+  for this catchment"). What it leans on next is engine-dependent: when
+  feature_snapshot.demand_score_source == "dg_index", lean on the demand-generator
+  composite and its sub-signals (F&B review mass, trip generators, built density);
+  when the source is "pop_score" or absent, lean on population_reach and
+  delivery_listing_count.
 - Thin competitive landscape: if advisory_sections.competitive_landscape.top_chains is
   empty AND comparable_competitors is empty AND next_candidate_summary is null, the
   saturation_thesis MUST state plainly "No named competitors or peer candidates within
@@ -1552,6 +1631,18 @@ Example C — strong recommend, score 84, rank 1, district-tier comparable:
   "comparison": "Peer Chain A operates 2 branches within 180 m and Peer Chain B holds a single branch at 320 m of this site — established category demand at this corner, not a greenfield. Against rank 2 in this search, this site pulls ahead on rent positioning (cheaper than ~72% vs cheaper than ~53%) and access/visibility (82/100 vs 71/100); rank 2 carries a marginally larger footprint but no comparable corner exposure.",
   "bottom_line": "This is the deal in the shortlist — sign it before the listing turns."
 }
+
+Inline note on engine-aware demand evidence: Example C is a pop_score-engine
+candidate — population reach anchors its demand row. When
+feature_snapshot.demand_score_source == "dg_index", the demand key_evidence row
+cites the composite instead, e.g. {"signal": "demand-generator composite",
+"value": "74/100", "implication": "venue activity and trip generators carry the
+catchment — demand is evidenced, not assumed", "polarity": "positive"},
+optionally followed by the strongest sub-signal, e.g. {"signal": "F&B review
+mass", "value": "18,400 weighted reviews", "implication": "the catchment
+already supports heavy F&B traffic for the category", "polarity": "positive"}.
+For dg_index candidates, population reach may appear as supporting context but
+MUST NOT be the demand anchor.
 
 Example D — decline, score 41, rank 9, gates failed:
 {
@@ -1911,24 +2002,37 @@ _CRITICAL_BLOCK_AR = """══════════════════�
    - عمر الإعلان (تاريخ النشر)
 #  realized delivery-rating demand signal
    - التقييمات على الفروع المجاورة
+#  "demand-generator composite"
+   - مركب مولدات الطلب
+#  "F&B review mass"
+   - كتلة تقييمات المطاعم والمقاهي
+#  "trip generators"
+   - مولدات الرحلات
+#  "built density"
+   - الكثافة العمرانية
 
 # Rule 8: "key_evidence value field — Arabic unit-token policy."
 8. حقل `value`: اتبع سياسة الوحدات التالية. تبقى الأرقام بالأرقام
    العربية (0-9) كما في بقية المذكرة.
 #  "SAR <amount>/yr"
    - الإيجار السنوي: "<المبلغ> ريال سعودي/سنة"
-#  rent percentile vs comparables — three templates keyed by the
-#  PRE-COMPUTED financial_framing.rent_positioning object {zone, pct_value}.
-#  Copy rent_positioning.pct_value verbatim; do NOT recompute it from the raw
-#  fraction. The literal "النسبة المئوية N%" is BANNED in user-visible prose.
-   - نسبة الإيجار: استخدم القالب المناسب وفقاً للحقل rent_positioning.zone،
-     وحيث N انسخ القيمة الجاهزة rent_positioning.pct_value دون احتسابها:
+#  rent percentile vs comparables — copy the PRE-RENDERED Arabic clause
+#  rent_positioning.phrase_ar verbatim. NEVER rebuild it from the raw
+#  rent_percentile_vs_comparables fraction: that is a percentile RANK (the
+#  share of comparables cheaper than this listing) — a listing at rank 0.09
+#  is cheaper than about 91% of comparables, not 9%. The literal
+#  "النسبة المئوية N%" is BANNED in user-visible prose.
+   - نسبة الإيجار: انسخ العبارة الجاهزة rent_positioning.phrase_ar حرفياً،
+     ولا تُعِد بناءها أبداً من الكسر الخام rent_percentile_vs_comparables —
+     فهو رتبة مئوية (حصة المقارنات الأرخص من هذا الإعلان): إعلان عند الرتبة
+     0.09 أرخص من حوالي 91% من المقارنات، وليس من 9%. أشكال العبارة الجاهزة
+     للتعرّف فقط (لا تُعِد اشتقاق الرقم):
      - عندما zone == "low": "أقل من حوالي N% من <نطاق>".
-     - عندما zone == "mid": "قريب من الإيجار الوسيط لـ<نطاق>". بدون رقم.
+     - عندما zone == "mid": "قريب من الإيجار الوسيط بين <نطاق>". بدون رقم.
      - عندما zone == "high": "أعلى من حوالي N% من <نطاق>".
-     <نطاق> يُختار من rent_positioning.scope: "district" → "المقارنات في الحي"؛
-     "city_band" → "المقارنات في نفس النطاق على مستوى المدينة"؛ "city" →
-     "المقارنات على مستوى المدينة".
+     <نطاق> يأتي جاهزاً داخل العبارة من rent_positioning.scope: "district" →
+     "المقارنات في الحي"؛ "city_band" → "المقارنات في نفس النطاق على مستوى
+     المدينة"؛ "city" → "المقارنات على مستوى المدينة".
 #  "<N>/100" — kept as-is in both locales
    - درجات الجودة: تبقى "<N>/100" كما هي
 #  "<N> m corner"
@@ -1942,6 +2046,14 @@ _CRITICAL_BLOCK_AR = """══════════════════�
    - عمر الإعلان: "<N> يوماً"
 #  "ratings/30d"
    - سرعة التقييمات: "تقييم/30 يوم"
+#  demand-generator composite "<N>/100" — kept as-is like other quality scores
+   - مركب مولدات الطلب: تبقى "<N>/100" كما هي
+#  "<N> weighted reviews" (F&B review mass)
+   - كتلة تقييمات المطاعم والمقاهي: "<N> تقييماً موزوناً"
+#  "<N> trip generators"
+   - مولدات الرحلات: "<N> مولد رحلات"
+#  "<N> floors (proxy)" (built density)
+   - الكثافة العمرانية: "<N> طابقاً (مؤشر تقريبي)"
 #  "failed" — feminine past tense agreeing with بوابة
    - حالة البوابة الفاشلة: "فشلت"
 
