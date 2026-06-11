@@ -57,6 +57,24 @@ const EXPANSION_GOAL_MAP: Record<string, "flagship" | "neighborhood" | "delivery
   balanced: "balanced",
 };
 
+type BrandArchetype = "delivery_led" | "street_flagship" | "neighborhood_local" | "balanced";
+
+// Accepts archetype values plus legacy expansion_goal spellings so restoring
+// an old saved search keeps its intent (normalizeEnum silently drops unknown
+// enums, which would otherwise lose the field on restore).
+const BRAND_ARCHETYPE_MAP: Record<string, BrandArchetype> = {
+  delivery_led: "delivery_led",
+  "delivery led": "delivery_led",
+  street_flagship: "street_flagship",
+  "street flagship": "street_flagship",
+  neighborhood_local: "neighborhood_local",
+  "neighborhood local": "neighborhood_local",
+  balanced: "balanced",
+  // Legacy expansion_goal values
+  flagship: "street_flagship",
+  neighborhood: "neighborhood_local",
+};
+
 const SENSITIVITY_MAP: Record<string, "low" | "medium" | "high"> = {
   low: "low",
   medium: "medium",
@@ -84,6 +102,14 @@ export function normalizeBriefPayload(raw: ExpansionBrief): ExpansionBrief {
   profile.price_tier = normalizeEnum(profile.price_tier, PRICE_TIER_MAP);
   profile.primary_channel = normalizeEnum(profile.primary_channel, PRIMARY_CHANNEL_MAP);
   profile.expansion_goal = normalizeEnum(profile.expansion_goal, EXPANSION_GOAL_MAP);
+  // brand_archetype: explicit value wins; otherwise derive from a legacy
+  // non-default expansion_goal (old saved searches). A "balanced" goal is the
+  // silent profile default, so it stays null and the backend seeds from
+  // service_model — mirrors resolve_brand_archetype server-side.
+  const legacyGoal = profile.expansion_goal;
+  profile.brand_archetype =
+    normalizeEnum(profile.brand_archetype, BRAND_ARCHETYPE_MAP) ??
+    (legacyGoal && legacyGoal !== "balanced" ? BRAND_ARCHETYPE_MAP[legacyGoal] ?? null : null);
   profile.parking_sensitivity = normalizeEnum(profile.parking_sensitivity, SENSITIVITY_MAP);
   profile.frontage_sensitivity = normalizeEnum(profile.frontage_sensitivity, SENSITIVITY_MAP);
   profile.visibility_sensitivity = normalizeEnum(profile.visibility_sensitivity, SENSITIVITY_MAP);

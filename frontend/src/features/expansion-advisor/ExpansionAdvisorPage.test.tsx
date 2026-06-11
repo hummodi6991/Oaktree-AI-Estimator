@@ -3278,6 +3278,65 @@ describe("Expansion Advisor payload normalization regression", () => {
     expect(result.brand_profile?.expansion_goal).toBe("delivery_led");
   });
 
+  it("normalizes brand_archetype enums and keeps null for auto-seeding", () => {
+    const result = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      brand_profile: { brand_archetype: "Street Flagship" as any },
+    });
+    expect(result.brand_profile?.brand_archetype).toBe("street_flagship");
+
+    // No archetype and no legacy goal → null so the backend seeds from
+    // service_model.
+    const auto = normalizeBriefPayload({ ...defaultBrief, brand_name: "Test" });
+    expect(auto.brand_profile?.brand_archetype).toBeNull();
+
+    // Unknown values are dropped to null, not passed through.
+    const unknown = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      brand_profile: { brand_archetype: "mall_kiosk" as any },
+    });
+    expect(unknown.brand_profile?.brand_archetype).toBeNull();
+  });
+
+  it("derives brand_archetype from legacy non-default expansion_goal on restore", () => {
+    const restored = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      brand_profile: { expansion_goal: "flagship" as any },
+    });
+    expect(restored.brand_profile?.brand_archetype).toBe("street_flagship");
+    expect(restored.brand_profile?.expansion_goal).toBe("flagship");
+
+    const neighborhood = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      brand_profile: { expansion_goal: "neighborhood" as any },
+    });
+    expect(neighborhood.brand_profile?.brand_archetype).toBe("neighborhood_local");
+
+    // "balanced" is the silent profile default — stays null so the backend
+    // service_model seed wins (mirrors resolve_brand_archetype server-side).
+    const balanced = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      brand_profile: { expansion_goal: "balanced" as any },
+    });
+    expect(balanced.brand_profile?.brand_archetype).toBeNull();
+
+    // Explicit archetype beats the legacy goal.
+    const explicit = normalizeBriefPayload({
+      ...defaultBrief,
+      brand_name: "Test",
+      brand_profile: {
+        brand_archetype: "balanced" as any,
+        expansion_goal: "flagship" as any,
+      },
+    });
+    expect(explicit.brand_profile?.brand_archetype).toBe("balanced");
+  });
+
   it("coerces existing branch empty name/district to undefined (not empty string)", () => {
     const result = normalizeBriefPayload({
       ...defaultBrief,
