@@ -272,6 +272,33 @@ export const PER_COMPONENT_INPUTS: Record<string, InputDescriptor[]> = {
     },
   ],
 
+  // Weight stack v2: district momentum as its own top-level component.
+  // Reads the same feature_snapshot_json.district_momentum block that the
+  // listing_quality input row uses for v1 candidates.
+  district_momentum: [
+    {
+      key: "momentum_score",
+      resolve: ({ featureSnapshot }) => ({
+        value: asNumber(readNested(featureSnapshot, "district_momentum", "momentum_score")),
+        source: "oaktree_internal",
+      }),
+    },
+    {
+      key: "activity_30d",
+      resolve: ({ featureSnapshot }) => ({
+        value: asNumber(readNested(featureSnapshot, "district_momentum", "activity_30d")),
+        source: "aqar",
+      }),
+    },
+    {
+      key: "sample_floor_applied",
+      resolve: ({ featureSnapshot }) => ({
+        value: asBool(readNested(featureSnapshot, "district_momentum", "sample_floor_applied")),
+        source: "oaktree_internal",
+      }),
+    },
+  ],
+
   brand_fit: [
     {
       key: "district",

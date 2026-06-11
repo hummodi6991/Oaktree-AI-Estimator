@@ -700,6 +700,7 @@
       "listingQuality": "Listing Quality",
       "landlordSignal": "Landlord Signal",
       "chainStrength": "Chain Strength",
+      "districtMomentum": "District Momentum",
       "providerDensity": "Provider Density",
       "marketGap": "Market Gap",
       "multiPlatform": "Multi-platform",
@@ -1241,6 +1242,15 @@
           "is_furnished": { "label": "Furnished" },
           "has_drive_thru": { "label": "Drive-thru" },
           "district_momentum_score": { "label": "District momentum score" }
+        }
+      },
+      "district_momentum": {
+        "label": "District Momentum",
+        "definition": "How active the district's commercial listing market has been over the trailing 30 days, percentile-ranked across Riyadh districts. Districts below the sample floor read as neutral.",
+        "inputs": {
+          "momentum_score": { "label": "District momentum score" },
+          "activity_30d": { "label": "Listings active in last 30 days" },
+          "sample_floor_applied": { "label": "Below sample floor" }
         }
       },
       "brand_fit": {

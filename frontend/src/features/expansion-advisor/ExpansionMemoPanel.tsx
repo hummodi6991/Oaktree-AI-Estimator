@@ -27,6 +27,7 @@ const SCORE_LABEL_KEYS: Record<string, string> = {
   listing_quality: "expansionAdvisor.scoreLabel.listingQuality",
   landlord_signal: "expansionAdvisor.scoreLabel.landlordSignal",
   chain_strength: "expansionAdvisor.scoreLabel.chainStrength",
+  district_momentum: "expansionAdvisor.scoreLabel.districtMomentum",
   provider_density: "expansionAdvisor.scoreLabel.providerDensity",
   provider_whitespace: "expansionAdvisor.scoreLabel.marketGap",
   multi_platform_presence: "expansionAdvisor.scoreLabel.multiPlatform",

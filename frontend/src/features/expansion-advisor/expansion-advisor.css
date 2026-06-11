@@ -4334,6 +4334,7 @@
   --oak-ea-seg-delivery_demand: #a86ba8;
   --oak-ea-seg-confidence: #7f7f7f;
   --oak-ea-seg-chain_strength: #b8553a;
+  --oak-ea-seg-district_momentum: #2f9e8f;
 
   margin-block: 12px;
   padding-block: 12px;
@@ -4472,6 +4473,7 @@
 .ea-decision-logic__bar-segment--delivery_demand       { background: var(--oak-ea-seg-delivery_demand); }
 .ea-decision-logic__bar-segment--confidence            { background: var(--oak-ea-seg-confidence); }
 .ea-decision-logic__bar-segment--chain_strength        { background: var(--oak-ea-seg-chain_strength); }
+.ea-decision-logic__bar-segment--district_momentum     { background: var(--oak-ea-seg-district_momentum); }
 .ea-decision-logic__legend {
   margin: 0;
   padding: 0;
