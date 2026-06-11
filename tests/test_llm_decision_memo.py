@@ -632,6 +632,92 @@ class TestBuildMemoAdvisorySections:
         assert build_memo_advisory_sections(ctx)["financial_framing"]["spread_to_median_sar"] is None
 
 
+class TestListingOldRelativeToPeersBoolean:
+    """PR-F: the relative listing-age percentile surfaces to the LLM only as an
+    INTERNAL boolean derived at the 0.75 (top-quartile) threshold — never as a
+    spoken number — and degrades safely when age_percentile is absent."""
+
+    def _sections_for(self, age_percentile):
+        from app.services.llm_decision_memo import build_memo_advisory_sections
+        cand = _make_full_advisory_candidate()
+        cand["feature_snapshot_json"]["listing_age"] = {
+            "created_days": 64,
+            "age_percentile": age_percentile,
+        }
+        ctx = build_memo_context(candidate=cand, brief=_make_brief(), lang="en")
+        return build_memo_advisory_sections(ctx)
+
+    def test_true_at_and_above_threshold(self):
+        assert self._sections_for(0.75)["property_overview"]["listing_old_relative_to_peers"] is True
+        assert self._sections_for(0.92)["property_overview"]["listing_old_relative_to_peers"] is True
+
+    def test_false_below_threshold(self):
+        assert self._sections_for(0.74)["property_overview"]["listing_old_relative_to_peers"] is False
+        assert self._sections_for(0.20)["property_overview"]["listing_old_relative_to_peers"] is False
+
+    def test_false_when_absent_or_null(self):
+        # Null age_percentile (small comparable set / non-percentile mode).
+        assert self._sections_for(None)["property_overview"]["listing_old_relative_to_peers"] is False
+        # Key entirely absent — must not crash, derives false.
+        from app.services.llm_decision_memo import build_memo_advisory_sections
+        cand = _make_full_advisory_candidate()
+        cand["feature_snapshot_json"]["listing_age"] = {"created_days": 64}
+        ctx = build_memo_context(candidate=cand, brief=_make_brief(), lang="en")
+        sections = build_memo_advisory_sections(ctx)
+        assert sections["property_overview"]["listing_old_relative_to_peers"] is False
+
+    def test_age_percentile_never_surfaced_as_number(self):
+        # The raw percentile must not leak into any property_overview field.
+        po = self._sections_for(0.88)["property_overview"]
+        assert 0.88 not in po.values()
+        assert "age_percentile" not in po
+
+
+class TestListingAgeLeveragePromptRules:
+    """PR-F: the staleness reframe rules must be string-pinned in the prompts —
+    data-conditional relativity (EN), zone-conditioned hedged leverage (EN),
+    and the fixed Arabic Rule 7/8b terms (AR), with no AR vocab leaking into
+    the EN prompt."""
+
+    def _en(self):
+        from app.services.llm_decision_memo import _compose_structured_system_prompt
+        return _compose_structured_system_prompt("en")
+
+    def _ar(self):
+        from app.services.llm_decision_memo import _compose_structured_system_prompt
+        return _compose_structured_system_prompt("ar")
+
+    def test_en_data_conditional_relativity_rule(self):
+        en = self._en()
+        assert "listing_old_relative_to_peers" in en
+        assert "longer than comparable listings" in en
+        # Must forbid claiming peer-relativity when the flag is false/absent.
+        assert "you MUST NOT claim it is longer than peers" in en
+        # The age percentile stays internal — never spoken as a number.
+        assert "never state it as a number" in en
+
+    def test_en_zone_conditioned_leverage_clauses(self):
+        en = self._en()
+        assert "negotiating leverage" in en
+        # Each rent zone has an explicit branch.
+        assert "mid zone" in en
+        assert "high zone" in en
+        assert "low zone" in en
+        assert "zone null/absent" in en
+        # Low zone must NOT imply an easy further discount.
+        assert "do NOT imply an easy further discount" in en
+
+    def test_ar_rule_terms_present(self):
+        ar = self._ar()
+        assert "قوة تفاوضية للمستأجر" in ar
+        assert "أطول من المعتاد مقارنةً بالإعلانات المماثلة" in ar
+
+    def test_ar_vocab_absent_from_en_prompt(self):
+        en = self._en()
+        assert "قوة تفاوضية" not in en
+        assert "أطول من المعتاد" not in en
+
+
 class TestGenerateStructuredMemoHappyPath:
     """Step 8, test 1 — service level."""
 
@@ -2766,7 +2852,7 @@ class TestMemoPromptVersionBumpedForV121:
     def test_version_is_v12_1(self):
         from app.services.llm_decision_memo import MEMO_PROMPT_VERSION
 
-        assert MEMO_PROMPT_VERSION == "v12.1-demand-evidence-enforced-2026-06"
+        assert MEMO_PROMPT_VERSION == "v12.2-listing-age-leverage-2026-06"
 
 
 class TestRenderPromptAdvisoryFailureNoGateFailureAddendum:
