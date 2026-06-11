@@ -570,6 +570,72 @@ class TestMemoWeightsMatchScorer:
             assert memo_v2[comp] * 100 == pytest.approx(pct, abs=1e-6), comp
 
 
+class TestMemoPrefersPersistedWeights:
+    """Findings §1.3 fix: build_memo_context must cite the per-candidate
+    effective weights persisted by the scorer (which include brand-brief
+    reweighting), not the static nominal stack — falling back to the
+    static stack only for legacy rows without persisted weights."""
+
+    def test_persisted_reweighted_weights_win(self, monkeypatch):
+        from app.services import expansion_advisor as expansion_service
+
+        monkeypatch.setattr(
+            expansion_service.settings,
+            "EXPANSION_BRAND_WEIGHT_GAIN",
+            0.35,
+            raising=False,
+        )
+        breakdown = _scorer_breakdown(
+            brand_profile={"parking_sensitivity": "high"}, service_model="qsr"
+        )
+        # Reweighting actually fired — persisted weights differ from nominal.
+        assert breakdown["weights"]["access_visibility"] != 8.7640
+
+        candidate = {"id": "cand-w-1", "score_breakdown_json": breakdown}
+        ctx = build_memo_context(
+            candidate=candidate, brief=BASE_STRUCTURED_BRIEF, lang="en"
+        )
+        memo_weights = ctx.score_breakdown["weights"]
+        assert set(memo_weights.keys()) == set(breakdown["weights"].keys())
+        for comp, pct in breakdown["weights"].items():
+            assert memo_weights[comp] == pytest.approx(pct / 100.0, abs=1e-6), comp
+        # Contributions derive from the same persisted weights.
+        for comp, frac in memo_weights.items():
+            expected = round(frac * breakdown["inputs"][comp], 3)
+            assert ctx.score_breakdown["contributions"][comp] == expected, comp
+
+    def test_legacy_row_without_weights_falls_back(self):
+        ctx = build_memo_context(
+            candidate=BASE_STRUCTURED_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        from app.services.llm_decision_memo import _active_component_weights
+
+        assert ctx.score_breakdown["weights"] == dict(_active_component_weights())
+
+    def test_malformed_persisted_weights_fall_back(self):
+        from app.services.llm_decision_memo import (
+            _active_component_weights,
+            _persisted_memo_weights,
+        )
+
+        assert _persisted_memo_weights(None) is None
+        assert _persisted_memo_weights({}) is None
+        assert _persisted_memo_weights({"weights": {}}) is None
+        assert _persisted_memo_weights({"weights": {"brand_fit": "9.6"}}) is None
+        assert _persisted_memo_weights({"weights": {"brand_fit": True}}) is None
+
+        candidate = {
+            "id": "cand-w-2",
+            "score_breakdown_json": {"weights": {"brand_fit": "broken"}},
+        }
+        ctx = build_memo_context(
+            candidate=candidate, brief=BASE_STRUCTURED_BRIEF, lang="en"
+        )
+        assert ctx.score_breakdown["weights"] == dict(_active_component_weights())
+
+
 # ── PR #3: typed advisory-section assembly ──────────────────────────
 
 
@@ -2989,10 +3055,10 @@ class TestMemoPromptVersionBumpedForV121:
     """The two non-compliant production memos are cached at v12; the bump
     forces regeneration on next view."""
 
-    def test_version_is_v12_1(self):
+    def test_version_is_v12_4(self):
         from app.services.llm_decision_memo import MEMO_PROMPT_VERSION
 
-        assert MEMO_PROMPT_VERSION == "v12.3-component-lookup-2026-06"
+        assert MEMO_PROMPT_VERSION == "v12.4-persisted-weights-2026-06"
 
 
 class TestRenderPromptAdvisoryFailureNoGateFailureAddendum:
