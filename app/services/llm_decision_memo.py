@@ -50,7 +50,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v12.1-demand-evidence-enforced-2026-06"
+MEMO_PROMPT_VERSION = "v12.2-listing-age-leverage-2026-06"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -1251,6 +1251,16 @@ def build_memo_advisory_sections(ctx: MemoContext) -> dict[str, Any]:
 
     vacancy_status = _format_vacancy_status(candidate_loc)
 
+    # Relative listing-age signal → INTERNAL boolean only. age_percentile is
+    # the share of comparables as old or older than this listing (HIGH = old
+    # vs peers). The raw number is deliberately NOT surfaced in prose: a
+    # spoken age percentile would re-open the rent-percentile inversion class
+    # (investigation §D2 / discrepancy 5). 0.75 mirrors the rent p75
+    # convention (top quartile = old vs peers). False when age_percentile is
+    # absent (small comparable set / non-percentile mode) — never crashes.
+    _age_percentile = _safe_float(listing_age.get("age_percentile"))
+    listing_old_relative_to_peers = _age_percentile is not None and _age_percentile >= 0.75
+
     property_overview = {
         "summary": "",  # LLM fills
         "area_m2": _safe_float(snapshot.get("area_m2") or snapshot.get("unit_area_sqm")),
@@ -1262,6 +1272,8 @@ def build_memo_advisory_sections(ctx: MemoContext) -> dict[str, Any]:
         "visibility_score": _safe_int(snapshot.get("access_visibility_score")),
         "listing_age_days": _safe_int(listing_age.get("created_days")),
         "vacancy_status": vacancy_status,
+        # Internal flag the staleness prompt rule reads — never spoken as a number.
+        "listing_old_relative_to_peers": listing_old_relative_to_peers,
     }
 
     # financial_framing
@@ -1534,6 +1546,12 @@ Competitive landscape:
 Risk signals:
 - gates.failed and gates.unknown: enumerate these as candidate risks.
 - listing_age.created_days / updated_days: flag stale listings (>90 days).
+- advisory_sections.property_overview.listing_old_relative_to_peers: a BOOLEAN
+  that is true only when this listing is older than ~75% of comparable listings
+  (top quartile by age). It gates whether you may claim the listing is "longer
+  than comparable listings" and whether a tenant-side negotiating-leverage point
+  applies — see the listing-staleness HARD RULE below. The underlying age
+  percentile is INTERNAL: never state it as a number in any prose field.
 - landlord_signal: counterparty / landlord behaviour score.
 
 TYPED ADVISORY SECTIONS — ground truth, do not invent:
@@ -1566,7 +1584,14 @@ HARD RULES:
 - Polarity discipline: 'neutral' is rare. If the implication mentions a concern, drawback, or risk, polarity is 'negative'. If it strengthens the investment case, 'positive'. The implication and polarity must agree.
 - Neutral-case honesty: for the rent-vs-comparables percentile specifically, treat the MID zone (fraction 0.40–0.60) as essentially at-market — neither a discount nor a premium. Do NOT spin a fraction 0.45–0.55 result as "competitive rent" or "favorable pricing." Phrase it plainly: "asking rent of SAR X/yr is around the district median across N comparables — essentially at market." Polarity for an at-market rent signal MUST be 'neutral'. The investment case must rest on other signals (demand, frontage, demographics, competition density), not on rent being something it isn't. This ban applies to the implication string of any rent or rent-percentile evidence item, not just the headline or ranking_explanation. Banned vocabulary anywhere in the rent or rent-percentile signal — including its implication string — for MID-zone rows: "competitive", "favorable", "well-positioned", "attractive pricing", "market-friendly", "advantageous". Replace with neutral phrasing: "essentially at market", "market-clearing", "neither premium nor discount", "at the median for comparable listings". The implication for an at-market rent must name an investment consequence ("offers no entry advantage; margin must come from operations", "deal pricing is market-clearing"), not editorialize the price.
 - Implication phrasing: name the investment consequence in one clause, not a description. Write "the spread justifies the entry rent" — not "rent is below median". Write "signage works in both traffic directions" — not "site is on a corner".
-- risks must be 2–4 distinct items. One-risk memos are a defect. Draw from gates.failed, gates.unknown, listing staleness, parking unknowns, frontage signals, cannibalization, brand saturation. Each item needs a `risk` field; the `mitigation` field is optional.
+- risks must be 2–4 distinct items. One-risk memos are a defect. Draw from gates.failed, gates.unknown, listing staleness, parking unknowns, frontage signals, cannibalization, brand saturation. Each item needs a `risk` field; the `mitigation` field is optional. Listing staleness and any tenant-side negotiating-leverage point derived from it are ONE folded risk item (see the listing-staleness rule below), never two.
+- Listing-staleness & relative-age discipline (data-conditional — violations are errors): the staleness risk item must be grounded in the data, not invented.
+  • Only assert the listing has been live "longer than comparable listings" / "longer than peers" / "longer than typical" when advisory_sections.property_overview.listing_old_relative_to_peers is true. When it is false or absent, you MAY note the absolute listing age (listing_age.created_days, e.g. "listed 64 days ago") but you MUST NOT claim it is longer than peers — that relative comparison is unbacked. NEVER state the age percentile as a number.
+  • When listing_old_relative_to_peers is true, FOLD a single HEDGED tenant-side negotiating-leverage point into the SAME staleness risk item (do not add a second risk), conditioned on advisory_sections.financial_framing.rent_positioning.zone:
+    – mid zone → cleanest case: a unit vacant notably longer than peers at an at-market ask MAY afford the operator stronger lease-negotiating leverage. Hedge it ("may", "possible") — this is the one place hedging modals are allowed in a risk.
+    – high zone → the leverage COMPOUNDS the existing over-priced finding; phrase it consistently with the high-rent risk (a market that has not cleared at this ask strengthens the tenant's hand), not as a fresh discovery.
+    – low zone → do NOT imply an easy further discount. Reframe as a DILIGENCE caveat: the unit is vacant long despite an already-below-market ask — pressure-test why it has not cleared (latent defect, access, landlord) before assuming soft leverage.
+    – zone null/absent → plain staleness caveat only, no leverage framing.
 - Mitigations must be specific tactics the operator can act on (e.g. 'Lease curbside pickup zone from neighbour', 'Partner with HungerStation for delivery-first hours in the first 90 days', 'Add LED frontage signage on the corner approach'). If you can only think of generic advice like 'consider marketing strategies', 'focus on differentiation', 'enhance visibility' — OMIT the mitigation field (set it to null). Better silent than empty.
 - Comparison MUST reference at least one named competitor from comparable_competitors. If next_candidate_summary is present in the payload, the comparison MUST also reference the rank-2 alternative by rank ("rank 2 in this search..."). If next_candidate_summary is null, absent, or empty, OMIT any reference to a rank-2 alternative — do NOT spin its absence as a positive signal. Banned phrasings include but are not limited to: "absence of competition", "best option available", "no alternatives", "stands out as the top choice", "the top choice", "stands alone", "no peer", "uncontested", "the only viable option", "the obvious pick", "the clear winner". Do NOT invent a phantom alternative. When next_candidate_summary is absent, the comparison field must focus entirely on named competitors from comparable_competitors — describe what this site beats or loses to vs. those named competitors, and stop. Do NOT mention the absence of a rank-2 candidate at all; silence on that point is correct, not awkward. A comparison that names neither a real competitor nor a real rank-2 candidate is a defect.
 - NEVER attribute any financial or operational figure to a named competitor. You are given only a
@@ -1626,7 +1651,7 @@ Example C — strong recommend, score 84, rank 1, district-tier comparable:
   "risks": [
     {"risk": "Three established chains operate within 500 m, including two with strong delivery presence — undifferentiated entry will compete on price.", "mitigation": "Lead with a single-SKU hero menu and a sharper delivery price point in the first 90 days; revisit the dine-in mix once order velocity stabilises."},
     {"risk": "Parking provision could not be verified from current data — typical for Aqar listings, not a site defect.", "mitigation": "Walk the block at peak hours during diligence; lease two adjacent street stalls from the neighbour if curbside turnover is constrained."},
-    {"risk": "Listing has been live for 102 days, longer than is typical for prime corner units in this district.", "mitigation": "Open negotiation 8–12% below asking and ask the landlord to absorb fit-out contribution."}
+    {"risk": "Listing has been live for 102 days — longer than comparable listings in this district, yet the ask already sits below about 72% of peers; pressure-test why a below-market corner has not cleared (access, latent fit-out, landlord terms) before reading the long vacancy as soft pricing.", "mitigation": "Walk the unit and the block at peak hours during diligence and confirm there is no structural reason for the stale listing; treat any rent concession as upside, not the base case."}
   ],
   "comparison": "Peer Chain A operates 2 branches within 180 m and Peer Chain B holds a single branch at 320 m of this site — established category demand at this corner, not a greenfield. Against rank 2 in this search, this site pulls ahead on rent positioning (cheaper than ~72% vs cheaper than ~53%) and access/visibility (82/100 vs 71/100); rank 2 carries a marginally larger footprint but no comparable corner exposure.",
   "bottom_line": "This is the deal in the shortlist — sign it before the listing turns."
@@ -1660,7 +1685,7 @@ Example D — decline, score 41, rank 9, gates failed:
     {"risk": "Economics gate failure — current rent leaves no margin for under-performance against forecast.", "mitigation": "Walk unless the landlord accepts a 25%+ rent reduction with a documented break clause."},
     {"risk": "Frontage gate could not be verified from current data; signage potential is unclear.", "mitigation": null},
     {"risk": "Two saturated chain operators within 500 m increase cannibalisation risk for any value-format entry.", "mitigation": "Reposition the brief towards a differentiated dayparting strategy if the operator chooses to override the recommendation."},
-    {"risk": "Listing has been on market for 147 days — pricing has not cleared, suggesting the asking is structurally above the catchment's willingness-to-pay.", "mitigation": null}
+    {"risk": "Listing has been on market for 147 days — longer than comparable listings, and at an ask already more expensive than about 88% of peers the market has plainly not cleared; this compounds the over-priced finding and may hand a tenant real negotiating leverage, but only if the structural mispricing can be closed.", "mitigation": null}
   ],
   "comparison": "Two named chains operate within 500 m of this site, confirming the catchment validates the category but not at this asking — rent is more expensive than ~88% of comparable peer listings. Rank 2 in this search clears the economics gate while sitting cheaper than ~51% of comparables, with a slightly larger footprint and a stronger access/visibility profile; there is no scenario in which this site is the rational shortlist pick over rank 2.",
   "bottom_line": "Walk this one and redeploy the capital into rank 2 — the math on this listing does not work."
@@ -1701,7 +1726,7 @@ Example F — strong recommend with the four typed advisory sections fully popul
   ],
   "risks": [
     {"risk": "Three established chains operate within 500 m, including two with strong delivery presence — undifferentiated entry will compete on price.", "mitigation": "Lead with a single-SKU hero menu and a sharper delivery price point in the first 90 days."},
-    {"risk": "Listing has been live for 64 days, longer than is typical for prime corner units in this district.", "mitigation": "Open negotiation 8–12% below asking and ask the landlord to absorb fit-out contribution."}
+    {"risk": "Listing has been live for 64 days; comparable-listing age context does not flag it as older than peers, so this is a routine freshness note rather than a market-clearing concern.", "mitigation": "Re-check the listing status before signing; a 64-day vacancy alone is not grounds to expect a discount."}
   ],
   "comparison": "Peer Chain A operates 2 branches within 180 m and Peer Chain B holds a single branch at 320 m of this site — established category demand at this corner, not a greenfield. Against rank 2 in this search, this site pulls ahead on rent positioning (cheaper than ~72% vs cheaper than ~53%) and access/visibility (82/100 vs 71/100); rank 2 carries a marginally larger footprint but no comparable corner exposure.",
   "bottom_line": "This is the deal in the shortlist — sign it before the listing turns.",
@@ -2057,6 +2082,23 @@ _CRITICAL_BLOCK_AR = """══════════════════�
 #  "failed" — feminine past tense agreeing with بوابة
    - حالة البوابة الفاشلة: "فشلت"
 
+# Rule 8b: "listing staleness & tenant-leverage prose — fixed Arabic terms."
+8ب. صياغة ركود الإعلان وقوة التفاوض في حقل `risks`: استخدم المصطلحات
+   العربية الثابتة التالية حصراً، دون أي تسرّب إنجليزي. تظل نسبة عمر
+   الإعلان المئوية داخلية ولا تُذكر رقماً أبداً.
+#  "longer than comparable listings / longer than peers" (relative age)
+   - أطول من المعتاد مقارنةً بالإعلانات المماثلة
+     (لا تؤكّد هذه الصيغة النسبية إلا عندما
+     property_overview.listing_old_relative_to_peers = true؛ وإلا اذكر العمر
+     المطلق بـ "منذ <N> يوماً" فقط دون ادّعاء المقارنة بالنظراء.)
+#  "tenant-side negotiating leverage" (hedged, folded into the same risk)
+   - قوة تفاوضية للمستأجر
+     (مشروطة بـ rent_positioning.zone: في النطاق المتوسط "mid" تُصاغ
+     باحتمالٍ مثل "قد" أو "ربما"؛ في النطاق المرتفع "high" تتراكم مع نتيجة
+     الإيجار المرتفع؛ في النطاق المنخفض "low" لا تلمّح إلى خصم إضافي سهل بل
+     اجعلها تحفظاً تدقيقياً؛ وعند غياب النطاق اكتفِ بتحفّظ الركود دون قوة
+     تفاوضية.)
+
 # Example AR-1 — strong recommend, score 84, rank 1, district-tier
 # comparable (Arabic mirror of Example C). Imitate this row shape for
 # key_evidence whenever lang=ar — every signal and value is Arabic.
@@ -2074,7 +2116,7 @@ _CRITICAL_BLOCK_AR = """══════════════════�
   "risks": [
     {"risk": "تعمل ثلاث سلاسل راسخة ضمن 500 م، اثنتان منها بحضور توصيل قوي — الدخول غير المتمايز سينافس على السعر.", "mitigation": "ابدأ بقائمة بطل من صنف واحد ونقطة سعر توصيل أكثر حدة في أول 90 يوماً؛ أعد النظر في مزيج تناول الطعام في الموقع بعد استقرار سرعة الطلبات."},
     {"risk": "تعذّر التحقق من توفّر مواقف السيارات من البيانات الحالية — أمر معتاد لإعلانات عقار وليس عيباً في الموقع.", "mitigation": "تجوّل في الحي في ساعات الذروة أثناء الفحص؛ استأجر موقفين مجاورين على الشارع من الجار إذا كان معدل دوران الرصيف محدوداً."},
-    {"risk": "الإعلان منشور منذ 102 يوماً، أطول من المعتاد للوحدات الزاوية المميزة في هذا الحي.", "mitigation": "افتح التفاوض بنسبة 8–12% أقل من السعر المطلوب واطلب من المالك تحمّل مساهمة في التجهيز."}
+    {"risk": "الإعلان منشور منذ 102 يوماً — أطول من المعتاد مقارنةً بالإعلانات المماثلة في هذا الحي، ومع ذلك فإن السعر المطلوب أقل من حوالي 72% من النظراء؛ تحقّق من سبب عدم تأجير وحدة أقل من السوق (الوصول، تجهيزات خفية، شروط المالك) قبل اعتبار الشغور الطويل تسعيراً ليّناً، فقد يمنح ذلك قوة تفاوضية للمستأجر إن لم يكن هناك سبب هيكلي.", "mitigation": "تجوّل في الوحدة والحي في ساعات الذروة أثناء الفحص وتأكّد من عدم وجود سبب هيكلي للإعلان الراكد؛ اعتبر أي تنازل في الإيجار مكسباً إضافياً وليس الأساس."}
   ],
   "comparison": "تشغّل سلسلة النظراء أ فرعين ضمن 180 م وتملك سلسلة النظراء ب فرعاً واحداً على بُعد 320 م من هذا الموقع — طلب فئوي راسخ عند هذه الزاوية وليس موقعاً جديداً. مقابل المرتبة 2 في هذا البحث، يتقدّم هذا الموقع في نسبة الإيجار (أقل من ~72% مقابل أقل من ~53%) وفي الوصول والرؤية (82/100 مقابل 71/100)؛ تحمل المرتبة 2 مساحة أكبر هامشياً لكن دون تعرّض زاوية مماثل.",
   "bottom_line": "هذه هي الصفقة في القائمة المختصرة — وقّعها قبل أن يتغيّر الإعلان."

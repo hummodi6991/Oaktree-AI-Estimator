@@ -1840,6 +1840,111 @@ def test_percentile_rent_burden_falls_through_without_neighborhood():
     assert db.calls[0]["params"].get("neighborhood") == "العليا"
 
 
+class _FakeAgeBurdenDB:
+    """Fake DB returning a canned aggregate that includes ``n_older`` so the
+    relative listing-age percentile path in ``_percentile_rent_burden`` can be
+    exercised deterministically."""
+
+    def __init__(self, n_rows: int = 12, median: float = 80.0, n_older: int = 9):
+        self._n = n_rows
+        self._median = median
+        self._n_older = n_older
+        self.calls: list[dict] = []
+
+    def begin_nested(self):
+        return _FakeNestedTransaction()
+
+    def execute(self, stmt, params=None):
+        sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+        self.calls.append({"sql": sql, "params": dict(params or {})})
+        return _Result([
+            {
+                "median_monthly_per_m2": self._median,
+                "n": self._n,
+                "n_below": self._n // 2,
+                "n_older": self._n_older,
+            }
+        ])
+
+
+def test_percentile_rent_burden_computes_age_percentile():
+    """age_percentile = n_older / n over the same >= min-N comparable set,
+    persisted alongside n_comparables; cand_age_days is bound into the SQL."""
+    db = _FakeAgeBurdenDB(n_rows=12, median=80.0, n_older=9)
+    result = _percentile_rent_burden(
+        db,
+        listing_monthly_rent_per_m2=80.0,
+        district="حي العليا",
+        area_m2=180.0,
+        listing_type="store",
+        unit_neighborhood_raw="Olaya",
+        cand_age_days=120,
+    )
+    assert result is not None
+    # 9 of 12 comparables are as old or older → 0.75.
+    assert result["age_percentile"] == 0.75
+    assert result["n_comparables"] == 12
+    # The candidate age is bound into the aggregate query verbatim.
+    assert db.calls[0]["params"].get("cand_age_days") == 120
+
+
+def test_percentile_rent_burden_age_percentile_null_without_cand_age():
+    """When the candidate has no created/first_seen basis date, age_percentile
+    is null (never inferred off a NULL comparison) but the rent burden still
+    computes normally."""
+    db = _FakeAgeBurdenDB(n_rows=12, median=80.0, n_older=9)
+    result = _percentile_rent_burden(
+        db,
+        listing_monthly_rent_per_m2=80.0,
+        district="حي العليا",
+        area_m2=180.0,
+        listing_type="store",
+        unit_neighborhood_raw="Olaya",
+        cand_age_days=None,
+    )
+    assert result is not None
+    assert result["age_percentile"] is None
+    assert result["n_comparables"] == 12  # n it was computed over still surfaced
+    assert result["percentile"] is not None  # rent burden unaffected
+
+
+def test_percentile_rent_burden_age_percentile_null_below_min_n():
+    """Below the rent percentile's min-N gate the whole function returns None,
+    so no age_percentile is ever emitted off an under-supported set."""
+    db = _FakeAgeBurdenDB(n_rows=3, median=80.0, n_older=3)
+    result = _percentile_rent_burden(
+        db,
+        listing_monthly_rent_per_m2=80.0,
+        district=None,
+        area_m2=180.0,
+        listing_type="store",
+        unit_neighborhood_raw=None,
+        cand_age_days=120,
+    )
+    assert result is None
+
+
+def test_created_basis_age_days_is_created_first_floor_not_greatest():
+    """The relative-age basis must rest on aqar_created_at (first_seen_at as a
+    null-guard floor only) — NOT the GREATEST-of-three basis a re-post would
+    reset to. A stale created date with a fresh updated date stays old."""
+    from app.services.expansion_advisor import _created_basis_age_days
+
+    now = datetime.utcnow()
+    row = {
+        "unit_aqar_created_at": now - timedelta(days=300),
+        "unit_aqar_updated_at": now - timedelta(days=2),   # re-post — ignored
+        "unit_first_seen_at": now - timedelta(days=60),
+    }
+    assert _created_basis_age_days(row) == 300
+    # first_seen_at is the floor only when created is null.
+    assert _created_basis_age_days(
+        {"unit_aqar_created_at": None, "unit_first_seen_at": now - timedelta(days=40)}
+    ) == 40
+    # Nothing populated → None (so age_percentile stays null downstream).
+    assert _created_basis_age_days({}) is None
+
+
 def test_economics_score_damps_rent_burden_on_city_fallback():
     """When _percentile_rent_burden returns citywide labels, the rent_burden
     slot must be damped and the deficit redirected to revenue_weight. Other

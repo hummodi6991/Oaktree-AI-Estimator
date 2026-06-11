@@ -2922,6 +2922,36 @@ def _effective_listing_age_days(
     return days, tag
 
 
+def _created_basis_age_days(row: Mapping[str, Any]) -> int | None:
+    """Return listing age (days) on the ORIGINAL-listing-date basis.
+
+    Uses ``aqar_created_at`` with ``first_seen_at`` as a COALESCE null-guard
+    floor ONLY — deliberately NOT the GREATEST-of-three basis of
+    ``_effective_listing_age_days``. A long-vacant listing that gets re-posted
+    or re-priced is still stale (often more telling), and a GREATEST-of-three
+    basis would reset its age to the re-post date and erase exactly the
+    staleness signal the relative listing-age percentile is built on. The
+    candidate's age and the comparable CASE in ``_percentile_rent_burden`` MUST
+    share this created-at basis or the percentile is meaningless. Other callers
+    keep ``_effective_listing_age_days``; this is a parallel created-basis age.
+    """
+    basis = row.get("unit_aqar_created_at")
+    if basis is None:
+        basis = row.get("unit_first_seen_at")
+    if basis is None:
+        return None
+    now = datetime.utcnow()
+    try:
+        if getattr(basis, "tzinfo", None) is not None:
+            basis = basis.replace(tzinfo=None)
+        if basis > now + timedelta(days=1):
+            return None
+        days = (now - basis).days
+    except (TypeError, ValueError):
+        return None
+    return max(0, days)
+
+
 # ---------------------------------------------------------------------------
 # Phase 3b — district momentum
 # ---------------------------------------------------------------------------
@@ -4813,12 +4843,22 @@ def _percentile_rent_burden(
     area_m2: float,
     listing_type: str | None = None,
     unit_neighborhood_raw: str | None = None,
+    cand_age_days: int | None = None,
 ) -> dict[str, Any] | None:
     """Score a listing's rent/m² against comparable real listings.
 
     Returns a dict with burden_score, percentile, n_comparable,
     source_label, median_monthly_rent_per_m2, listing_monthly_rent_per_m2.
     Returns None when no comparable cell meets the minimum N threshold.
+
+    When ``cand_age_days`` (the candidate's age on the ORIGINAL-listing-date
+    basis — created_at with first_seen_at as a null-guard floor; see
+    ``_created_basis_age_days``) is supplied, the same comparable aggregate
+    also yields ``age_percentile`` = share of comparables AS OLD OR OLDER than
+    the candidate (HIGH = old relative to peers) and ``n_comparables`` (the n
+    it was computed over). Both are emitted only off the >= min-N comparable
+    set the rent percentile uses; ``age_percentile`` is null when
+    ``cand_age_days`` is None.
     """
     if listing_monthly_rent_per_m2 <= 0 or area_m2 <= 0:
         return None
@@ -4946,7 +4986,17 @@ def _percentile_rent_burden(
                         SELECT
                             PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY (price_sar_annual / area_sqm / 12.0)) AS median_monthly_per_m2,
                             COUNT(*) AS n,
-                            SUM(CASE WHEN (price_sar_annual / area_sqm / 12.0) <= :listing_rate THEN 1 ELSE 0 END) AS n_below
+                            SUM(CASE WHEN (price_sar_annual / area_sqm / 12.0) <= :listing_rate THEN 1 ELSE 0 END) AS n_below,
+                            -- Relative listing-age signal: comparables AS OLD OR
+                            -- OLDER than the candidate on the ORIGINAL-listing-date
+                            -- basis (aqar_created_at, first_seen_at as null-guard
+                            -- floor only). NOT GREATEST-of-three: a re-posted
+                            -- long-vacant listing is still stale, and resetting its
+                            -- age to the re-post date would erase the signal.
+                            -- Candidate and comparables share the created_at basis
+                            -- (cand_age_days from _created_basis_age_days) or the
+                            -- percentile would be meaningless.
+                            SUM(CASE WHEN EXTRACT(DAY FROM now() - COALESCE(aqar_created_at, first_seen_at)) >= :cand_age_days THEN 1 ELSE 0 END) AS n_older
                         {base_where}
                         {extra_where}
                     """),
@@ -4956,6 +5006,7 @@ def _percentile_rent_burden(
                         "rent_floor": _RENT_COMP_MIN_SAR_M2_MONTH,
                         "rent_ceiling": _RENT_COMP_MAX_SAR_M2_MONTH,
                         "max_comp_area": _RENT_COMP_MAX_AREA_SQM,
+                        "cand_age_days": cand_age_days,
                     },
                 ).mappings().first()
         except Exception:
@@ -4968,6 +5019,16 @@ def _percentile_rent_burden(
         n = int(agg["n"])
         n_below = int(agg["n_below"] or 0)
         percentile = max(0.0, min(1.0, n_below / n))
+
+        # Relative listing-age percentile, computed off the SAME >= min-N
+        # comparable set as the rent percentile (so it is honest about its
+        # support). HIGH = old relative to peers. Null when the candidate has
+        # no created/first_seen basis date to compare against.
+        if cand_age_days is not None:
+            n_older = int(agg["n_older"] or 0)
+            age_percentile: float | None = round(max(0.0, min(1.0, n_older / n)), 3)
+        else:
+            age_percentile = None
 
         # Map percentile → burden score using anchor interpolation:
         #   p10 → 92, p50 → 60, p90 → 18.
@@ -4989,6 +5050,8 @@ def _percentile_rent_burden(
             "source_label": label,
             "median_monthly_rent_per_m2": round(float(agg["median_monthly_per_m2"] or 0.0), 2),
             "listing_monthly_rent_per_m2": round(float(listing_monthly_rent_per_m2), 2),
+            "age_percentile": age_percentile,
+            "n_comparables": n,
             "comparable_bounds": {
                 "min_sar_m2_month": _RENT_COMP_MIN_SAR_M2_MONTH,
                 "max_sar_m2_month": _RENT_COMP_MAX_SAR_M2_MONTH,
@@ -5035,6 +5098,7 @@ def _economics_score(
     listing_type: str | None = None,
     unit_neighborhood_raw: str | None = None,
     price_tier: str | None = None,
+    cand_age_days: int | None = None,
 ) -> tuple[float, dict[str, Any]]:
     monthly_rent_per_m2 = estimated_annual_rent_sar / max(area_m2 * 12.0, 1.0)
 
@@ -5053,6 +5117,7 @@ def _economics_score(
             area_m2=area_m2,
             listing_type=listing_type,
             unit_neighborhood_raw=unit_neighborhood_raw,
+            cand_age_days=cand_age_days,
         )
         if comp is not None:
             rent_burden_score = comp["burden_score"]
@@ -9700,6 +9765,7 @@ def run_expansion_search(
             listing_type=row.get("unit_listing_type"),
             unit_neighborhood_raw=row.get("unit_neighborhood_raw"),
             price_tier=effective_brand_profile.get("price_tier"),
+            cand_age_days=_created_basis_age_days(row),
         )
         effective_age_days, effective_age_source = _effective_listing_age_days(row)
         feature_snapshot_json = _candidate_feature_snapshot(
@@ -9786,11 +9852,26 @@ def run_expansion_search(
         _created_days = _raw_age_days(row.get("unit_aqar_created_at"))
         _updated_days = _raw_age_days(row.get("unit_aqar_updated_at"))
 
+        # Relative listing-age percentile (parallel created-basis signal — does
+        # NOT alter effective_age_days/created_days/updated_days above). Only
+        # populated when rent burden ran in percentile mode off the >= min-N
+        # comparable set; otherwise null (never emit a percentile off a set
+        # smaller than the rent percentile's min-N gate).
+        _rent_burden_meta = economics_meta.get("rent_burden") if isinstance(economics_meta, dict) else None
+        if isinstance(_rent_burden_meta, dict) and _rent_burden_meta.get("mode") == "percentile":
+            _age_percentile = _rent_burden_meta.get("age_percentile")
+            _n_comparables = _rent_burden_meta.get("n_comparables")
+        else:
+            _age_percentile = None
+            _n_comparables = None
+
         feature_snapshot_json["listing_age"] = {
             "effective_age_days": effective_age_days,
             "source": effective_age_source,
             "created_days": _created_days,
             "updated_days": _updated_days,
+            "age_percentile": _age_percentile,
+            "n_comparables": _n_comparables,
         }
         # Phase 3b — district momentum snapshot. Districts below the
         # sample floor, blank-district candidates, and any normalization
