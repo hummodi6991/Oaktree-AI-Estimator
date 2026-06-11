@@ -50,7 +50,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v12.2-listing-age-leverage-2026-06"
+MEMO_PROMPT_VERSION = "v12.3-component-lookup-2026-06"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -381,22 +381,26 @@ def generate_decision_memo(
 
 # ── Structured decision memo (Phase 1) ──────────────────────────────
 #
-# The structured memo path is additive: it sits on top of the 9-component
-# deterministic scorer, does NOT modify scoring/gating/ranking, and can be
+# The structured memo path is additive: it sits on top of the deterministic
+# component scorer, does NOT modify scoring/gating/ranking, and can be
 # toggled off via ``settings.EXPANSION_MEMO_STRUCTURED_ENABLED`` to revert
 # to the legacy ``generate_decision_memo`` output byte-for-byte.
 
-# Deterministic scorer weights — kept in sync with the 9-component weights
+# Deterministic scorer weights — kept in sync with the v1 component weights
 # in ``app.services.expansion_advisor`` (see _score_breakdown). Editing
 # these here does NOT change scoring; these are used only to compute
 # memo-display contributions. 2026-05-07 rebalance: listing_quality lifted
 # 0.11 → 0.22 to elevate CEO-directive recency and momentum signals; every
-# other component rescaled by 78/89 = 0.8764045.
+# other component rescaled by 78/89 = 0.8764045. Patch B then carved
+# chain_strength out of competition_whitespace (values below assume the
+# EXPANSION_CHAIN_STRENGTH_WEIGHT default of 3.0; _active_component_weights
+# applies the live env-driven split so memo weights track the scorer).
 COMPONENT_WEIGHTS: dict[str, float] = {
     "occupancy_economics": 0.262924,
     "listing_quality": 0.22,
     "brand_fit": 0.096404,
-    "competition_whitespace": 0.087640,
+    "competition_whitespace": 0.05764,
+    "chain_strength": 0.03,
     "demand_potential": 0.087640,
     "access_visibility": 0.087640,
     "landlord_signal": 0.070112,
@@ -422,11 +426,18 @@ COMPONENT_WEIGHTS_V2: dict[str, float] = {
 
 
 def _active_component_weights() -> dict[str, float]:
-    """Memo-display weights for the active weight stack. v1 (default)
-    returns COMPONENT_WEIGHTS unchanged so memo output stays byte-identical."""
+    """Memo-display weights for the active weight stack, aligned with the
+    scorer's ``_score_breakdown`` dicts. Under v1 the chain_strength /
+    competition_whitespace split mirrors the scorer's env-driven Patch-B
+    carve-out (EXPANSION_CHAIN_STRENGTH_WEIGHT, v1-only) so memo weights
+    track the scorer even when the env var is recalibrated."""
     if str(getattr(settings, "EXPANSION_WEIGHT_STACK", "v1")) == "v2":
         return COMPONENT_WEIGHTS_V2
-    return COMPONENT_WEIGHTS
+    weights = dict(COMPONENT_WEIGHTS)
+    _chain_pct = float(getattr(settings, "EXPANSION_CHAIN_STRENGTH_WEIGHT", 3.0))
+    weights["chain_strength"] = round(_chain_pct / 100.0, 6)
+    weights["competition_whitespace"] = round((8.7640 - _chain_pct) / 100.0, 6)
+    return weights
 
 # Feature-snapshot fields that actually drive a decision. Used to truncate
 # oversized snapshots to a compact LLM-friendly payload.
@@ -841,9 +852,18 @@ def _component_score_value(
     candidate: dict | None,
     comp: str,
 ) -> float:
-    """Best-effort lookup of a per-component score (0..100) by trying the
-    canonical key, then ``<comp>_score``, then the flat candidate dict."""
+    """Best-effort lookup of a per-component raw input score (0..100).
+
+    Precedence: ``score_breakdown["inputs"][comp]`` (the canonical
+    ``_score_breakdown`` shape — covers every component of both weight
+    stacks, including v2's ``district_momentum`` and the display-only
+    ``confidence``), then the legacy top-level / ``<comp>_score`` /
+    ``components`` shapes, then the flat candidate dict, then 0.
+    """
     bd = score_breakdown or {}
+    inputs = bd.get("inputs")
+    if isinstance(inputs, dict) and isinstance(inputs.get(comp), (int, float)):
+        return float(inputs[comp])
     if isinstance(bd.get(comp), (int, float)):
         return float(bd[comp])
     score_key = f"{comp}_score"
@@ -1416,7 +1436,7 @@ _STRUCTURED_MEMO_PREAMBLE = """You are a senior real-estate advisor in Riyadh wr
 
 Write like an advisor, not a junior analyst. Lead with the strongest investment argument grounded in a specific number. Synthesize the score breakdown into a thesis — never restate the breakdown back at the reader as a list of percentages. Be direct. Be specific to this candidate, this listing, this catchment. Density beats length.
 
-You will receive a JSON object describing the brand profile, the candidate's feature snapshot, the score_breakdown (9 components with weights and contributions), the gate buckets (gates.passed / gates.failed / gates.unknown — tri-state), deterministic anchors (overall_pass, final_rank, final_score, deterministic_verdict), comparable competitors, the rank-2 alternative (next_candidate_summary), and optionally a realized_demand block.
+You will receive a JSON object describing the brand profile, the candidate's feature snapshot, the score_breakdown (weighted components with weights and contributions), the gate buckets (gates.passed / gates.failed / gates.unknown — tri-state), deterministic anchors (overall_pass, final_rank, final_score, deterministic_verdict), comparable competitors, the rank-2 alternative (next_candidate_summary), and optionally a realized_demand block.
 
 Return ONLY a single JSON object — no markdown fences, no commentary before or after. The object must contain EXACTLY these ten top-level keys:
 
