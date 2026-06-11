@@ -442,6 +442,17 @@ class Settings:
         os.getenv("EXPANSION_BRAND_WEIGHT_GAIN", "0.35")
     )
 
+    # Brand archetype weight profiles (v2 stack only) — see the brand-brief
+    # redesign findings (investigation claude/investigate-brand-brief-redesign-av2ty8).
+    # When true, the resolved brand_archetype selects the base component-weight
+    # profile in _score_breakdown before knob multipliers apply. Default OFF:
+    # weights stay byte-identical to the static v2/v1 stacks (the archetype is
+    # still resolved and persisted for observability).
+    EXPANSION_ARCHETYPE_PROFILES: bool = (
+        os.getenv("EXPANSION_ARCHETYPE_PROFILES", "false").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
     # --- Expansion Advisor decision-memo pre-warm (Phase 3) ---
     # After POST /searches returns, schedule a background task that
     # generates structured decision memos for the top-N candidates so the

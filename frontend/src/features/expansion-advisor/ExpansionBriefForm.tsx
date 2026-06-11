@@ -29,7 +29,10 @@ export const defaultBrief: ExpansionBrief = {
     parking_sensitivity: "medium",
     frontage_sensitivity: "medium",
     visibility_sensitivity: "medium",
-    expansion_goal: "balanced",
+    // null ⇒ the backend seeds the archetype from service_model
+    // (qsr/dine_in → balanced, delivery_first → delivery_led,
+    // cafe → neighborhood_local).
+    brand_archetype: null,
   },
 };
 
@@ -140,6 +143,21 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
             <option value="dine_in">{t("expansionAdvisor.serviceModelDineIn")}</option>
             <option value="delivery_first">{t("expansionAdvisor.serviceModelDelivery")}</option>
             <option value="cafe">{t("expansionAdvisor.serviceModelCafe")}</option>
+          </select>
+        </div>
+        <div className="ea-form__field">
+          <label className="ea-form__label">{t("expansionAdvisor.brandArchetype")}</label>
+          <select
+            className="ea-form__select"
+            value={brief.brand_profile?.brand_archetype || ""}
+            onChange={(e) => setProfile("brand_archetype", e.target.value || null)}
+            disabled={loading}
+          >
+            <option value="">{t("expansionAdvisor.archetypeAuto")}</option>
+            <option value="balanced">{t("expansionAdvisor.archetypeBalanced")}</option>
+            <option value="delivery_led">{t("expansionAdvisor.archetypeDeliveryLed")}</option>
+            <option value="street_flagship">{t("expansionAdvisor.archetypeStreetFlagship")}</option>
+            <option value="neighborhood_local">{t("expansionAdvisor.archetypeNeighborhoodLocal")}</option>
           </select>
         </div>
       </div>
@@ -261,7 +279,8 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
             </div>
           </div>
 
-          {/* Operating strategy */}
+          {/* Operating strategy — expansion_goal retired in favor of the
+              brand-archetype selector in the essential section above */}
           <div className="ea-form__section">
             <h4 className="ea-form__section-title">{t("expansionAdvisor.operatingStrategy")}</h4>
             <div className="ea-form__row">
@@ -274,20 +293,11 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
                 </select>
               </div>
               <div className="ea-form__field">
-                <label className="ea-form__label">{t("expansionAdvisor.expansionGoal")}</label>
-                <select className="ea-form__select" value={brief.brand_profile?.expansion_goal || "balanced"} onChange={(e) => setProfile("expansion_goal", e.target.value)} disabled={loading}>
-                  <option value="balanced">{t("expansionAdvisor.balanced")}</option>
-                  <option value="flagship">{t("expansionAdvisor.flagship")}</option>
-                  <option value="neighborhood">{t("expansionAdvisor.neighborhood")}</option>
-                  <option value="delivery_led">{t("expansionAdvisor.deliveryLed")}</option>
-                </select>
-              </div>
-            </div>
-            <div className="ea-form__row">
-              <div className="ea-form__field">
                 <label className="ea-form__label">{t("expansionAdvisor.cannibalizationTolerance")}</label>
                 <input className="ea-form__input" type="number" value={brief.brand_profile?.cannibalization_tolerance_m ?? ""} onChange={(e) => setProfile("cannibalization_tolerance_m", Number(e.target.value) || null)} disabled={loading} />
               </div>
+            </div>
+            <div className="ea-form__row">
               <div className="ea-form__field">
                 <label className="ea-form__label">{t("expansionAdvisor.searchLimit")}</label>
                 <input className="ea-form__input" type="number" value={brief.limit} onChange={(e) => set("limit", Number(e.target.value) || 15)} disabled={loading} min={1} max={100} />

@@ -50,7 +50,7 @@ TEMPERATURE = 0.3
 # Bumped whenever STRUCTURED_MEMO_SYSTEM_PROMPT changes meaningfully.
 # Cached memos with a different version are treated as cache-miss and
 # regenerated lazily on next view.
-MEMO_PROMPT_VERSION = "v12.3-component-lookup-2026-06"
+MEMO_PROMPT_VERSION = "v12.4-persisted-weights-2026-06"
 
 # Soft daily ceiling in USD.  Raises RuntimeError before calling OpenAI
 # if the running total for today exceeds this value.
@@ -883,15 +883,44 @@ def _component_score_value(
     return 0.0
 
 
+def _persisted_memo_weights(raw_breakdown: dict | None) -> dict[str, float] | None:
+    """Per-candidate effective weights from the persisted ``_score_breakdown``
+    JSON, converted from the scorer's percent scale (sums to 100) to the memo
+    fraction scale (sums to 1.0).
+
+    The persisted dict is authoritative: it reflects whatever reweighting the
+    scorer actually applied to THIS candidate (brand-brief knob multipliers,
+    archetype profiles), which the static ``_active_component_weights()``
+    snapshot cannot — the memo previously cited nominal weights that diverged
+    from the candidate's real ones whenever a non-neutral brand profile was in
+    play (findings §1.3). Returns None when the breakdown carries no usable
+    weights dict (legacy rows) so callers fall back to the static snapshot.
+    """
+    if not isinstance(raw_breakdown, dict):
+        return None
+    weights = raw_breakdown.get("weights")
+    if not isinstance(weights, dict) or not weights:
+        return None
+    out: dict[str, float] = {}
+    for comp, pct in weights.items():
+        if isinstance(pct, bool) or not isinstance(pct, (int, float)):
+            return None
+        out[str(comp)] = round(float(pct) / 100.0, 6)
+    return out
+
+
 def _build_contributions(
     score_breakdown: dict,
     candidate: dict | None = None,
+    weights: dict[str, float] | None = None,
 ) -> dict[str, float]:
     """Return ``{component: weight × component_score}`` for every component
-    of the active weight stack."""
+    of ``weights`` (fraction scale), defaulting to the active weight stack."""
+    if weights is None:
+        weights = _active_component_weights()
     return {
         comp: round(weight * _component_score_value(score_breakdown, candidate, comp), 3)
-        for comp, weight in _active_component_weights().items()
+        for comp, weight in weights.items()
     }
 
 
@@ -935,7 +964,10 @@ def build_memo_context(
     Pure: never raises on missing fields. Missing optional fields become
     None or an empty list. Always enriches ``score_breakdown`` with
     ``weights`` and ``contributions`` (``weight × component_score``) so the
-    LLM can cite per-component impact directly.
+    LLM can cite per-component impact directly. Weights prefer the
+    candidate's persisted ``score_breakdown_json["weights"]`` (the effective
+    per-candidate weights the scorer actually applied) and fall back to
+    ``_active_component_weights()`` only for legacy rows without them.
     """
     candidate_id = str(
         candidate.get("id")
@@ -957,10 +989,13 @@ def build_memo_context(
         }
 
     raw_breakdown = _as_dict(candidate.get("score_breakdown_json"))
-    contributions = _build_contributions(raw_breakdown, candidate)
+    memo_weights = _persisted_memo_weights(raw_breakdown) or dict(
+        _active_component_weights()
+    )
+    contributions = _build_contributions(raw_breakdown, candidate, weights=memo_weights)
     # Do not mutate caller's dict.
     score_breakdown = dict(raw_breakdown)
-    score_breakdown["weights"] = dict(_active_component_weights())
+    score_breakdown["weights"] = memo_weights
     score_breakdown["contributions"] = contributions
 
     # Tri-state-preserving gate verdicts. When the candidate carries both
@@ -1023,6 +1058,7 @@ def build_memo_context(
         "category",
         "service_model",
         "expansion_goal",
+        "brand_archetype",
         "target_area_m2",
         "min_area_m2",
         "max_area_m2",

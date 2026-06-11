@@ -69,7 +69,11 @@ export type ExpansionBrandProfile = {
   parking_sensitivity?: "low" | "medium" | "high" | null;
   frontage_sensitivity?: "low" | "medium" | "high" | null;
   visibility_sensitivity?: "low" | "medium" | "high" | null;
+  /** Legacy knob — retired from the UI; still accepted by the backend so old
+   * saved payloads replay (non-default values map onto brand_archetype). */
   expansion_goal?: "flagship" | "neighborhood" | "delivery_led" | "balanced" | null;
+  /** null ⇒ seeded server-side from service_model. */
+  brand_archetype?: "delivery_led" | "street_flagship" | "neighborhood_local" | "balanced" | null;
   cannibalization_tolerance_m?: number | null;
   preferred_districts?: string[] | null;
   excluded_districts?: string[] | null;

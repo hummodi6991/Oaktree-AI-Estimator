@@ -1524,6 +1524,7 @@ def _default_brand_profile(brand_profile: dict[str, Any] | None = None) -> dict[
         "frontage_sensitivity": "medium",
         "visibility_sensitivity": "medium",
         "expansion_goal": "balanced",
+        "brand_archetype": None,
         "cannibalization_tolerance_m": 1800.0,
         "preferred_districts": [],
         "excluded_districts": [],
@@ -1531,6 +1532,90 @@ def _default_brand_profile(brand_profile: dict[str, Any] | None = None) -> dict[
     if brand_profile:
         base.update({k: v for k, v in brand_profile.items() if v is not None})
     return base
+
+
+# Brand archetypes — legible weight-profile presets decoupled from
+# service_model (brand-brief redesign, investigation
+# claude/investigate-brand-brief-redesign-av2ty8).
+BRAND_ARCHETYPES = (
+    "delivery_led",
+    "street_flagship",
+    "neighborhood_local",
+    "balanced",
+)
+
+# Legacy expansion_goal values map onto archetypes at read time so old
+# saved searches keep their intent. "balanced" is excluded from the
+# resolution shortcut below because every persisted profile carries it as
+# the _default_brand_profile fill — it is indistinguishable from "the user
+# never touched the goal knob", so the service_model seed must win.
+_LEGACY_GOAL_TO_ARCHETYPE = {
+    "delivery_led": "delivery_led",
+    "flagship": "street_flagship",
+    "neighborhood": "neighborhood_local",
+    "balanced": "balanced",
+}
+
+_SERVICE_MODEL_TO_ARCHETYPE = {
+    "qsr": "balanced",
+    "delivery_first": "delivery_led",
+    "cafe": "neighborhood_local",
+    "dine_in": "balanced",
+}
+
+
+def resolve_brand_archetype(
+    brand_profile: dict[str, Any] | None,
+    service_model: str | None,
+) -> str:
+    """Resolve the effective brand archetype for a search.
+
+    Resolution order:
+      1. explicit ``brand_archetype`` in the profile (user choice);
+      2. legacy NON-default ``expansion_goal`` (old saved searches —
+         "balanced" is skipped because it is the silent default fill);
+      3. seeded from ``service_model`` per _SERVICE_MODEL_TO_ARCHETYPE,
+         falling back to "balanced" for unknown models.
+
+    Deterministic and pure; safe to call from both the API persistence
+    path and the scoring path so the two always agree.
+    """
+    profile = brand_profile or {}
+    explicit = str(profile.get("brand_archetype") or "").strip().lower()
+    if explicit in BRAND_ARCHETYPES:
+        return explicit
+    goal = str(profile.get("expansion_goal") or "").strip().lower()
+    if goal in _LEGACY_GOAL_TO_ARCHETYPE and goal != "balanced":
+        return _LEGACY_GOAL_TO_ARCHETYPE[goal]
+    return _SERVICE_MODEL_TO_ARCHETYPE.get(
+        str(service_model or "").strip().lower(), "balanced"
+    )
+
+
+# One-time warning guard for the "archetype flag on, weight stack v1"
+# misconfiguration: archetype profiles are defined on the v2 component set
+# (district_momentum, no weighted confidence), so under v1 they are ignored.
+# Mirrors the demand-generator log-once pattern above.
+_ARCHETYPE_ON_V1_WARNED = False
+
+
+def _archetype_profiles_active() -> bool:
+    """True when archetype weight profiles should drive _score_breakdown:
+    EXPANSION_ARCHETYPE_PROFILES on AND weight stack v2. Logs once (and
+    returns False) when the flag is on under v1."""
+    global _ARCHETYPE_ON_V1_WARNED
+    if not bool(getattr(settings, "EXPANSION_ARCHETYPE_PROFILES", False)):
+        return False
+    if str(getattr(settings, "EXPANSION_WEIGHT_STACK", "v1")) != "v2":
+        if not _ARCHETYPE_ON_V1_WARNED:
+            _ARCHETYPE_ON_V1_WARNED = True
+            logger.warning(
+                "EXPANSION_ARCHETYPE_PROFILES is true but EXPANSION_WEIGHT_STACK "
+                "is not v2; archetype weight profiles are defined on the v2 "
+                "component set, so they are ignored under v1."
+            )
+        return False
+    return True
 
 
 def _sensitivity_weight(level: str | None) -> float:
@@ -1563,7 +1648,16 @@ def _brand_fit_score(*, district: str | None, area_m2: float, demand_score: floa
     tolerance = _safe_float(brand_profile.get("cannibalization_tolerance_m"), 1800.0)
     overlap_fit = _clamp(100.0 - abs(cannibalization_score - _clamp((2500.0 - tolerance) / 25.0, 0, 100)) * 0.8)
 
-    goal = (brand_profile.get("expansion_goal") or "balanced").lower()
+    if _archetype_profiles_active():
+        # Archetype mode: expansion_goal is retired; the same three branches
+        # below key off the resolved archetype instead of the goal knob.
+        goal = {
+            "street_flagship": "flagship",
+            "neighborhood_local": "neighborhood",
+            "delivery_led": "delivery_led",
+        }.get(resolve_brand_archetype(brand_profile, service_model), "balanced")
+    else:
+        goal = (brand_profile.get("expansion_goal") or "balanced").lower()
     goal_component = 60.0
     if goal == "flagship":
         # Flagship goal rewards listings close to the operator's target
@@ -3446,9 +3540,69 @@ _REWEIGHTABLE_COMPONENTS: tuple[str, ...] = (
 )
 
 
+# Archetype base weight profiles (EXPANSION_ARCHETYPE_PROFILES, v2 stack
+# only). "balanced" IS the v2 stack; the other three move mass toward the
+# archetype's decision-driving components while keeping the sum at exactly
+# 100. Pathology guard: no profile sets brand_fit above 8 — its
+# demand-inverse rank dominance makes higher weights actively harmful until
+# the brand_fit de-dup lands (separate queued PR). Backtested (Probe F):
+# avg top-5 overlap 4.7–4.8, rank corr 0.96–0.97 vs the balanced control.
+_ARCHETYPE_WEIGHT_PROFILES: dict[str, dict[str, float]] = {
+    "balanced": {
+        "occupancy_economics": 20.0,
+        "demand_potential": 18.0,
+        "competition_whitespace": 12.0,
+        "access_visibility": 11.0,
+        "listing_quality": 9.0,
+        "brand_fit": 8.0,
+        "district_momentum": 7.0,
+        "delivery_demand": 6.0,
+        "landlord_signal": 5.0,
+        "chain_strength": 4.0,
+    },
+    "delivery_led": {
+        "occupancy_economics": 20.0,
+        "demand_potential": 18.0,
+        "competition_whitespace": 13.0,
+        "access_visibility": 6.0,
+        "listing_quality": 8.0,
+        "brand_fit": 6.0,
+        "district_momentum": 7.0,
+        "delivery_demand": 13.0,
+        "landlord_signal": 5.0,
+        "chain_strength": 4.0,
+    },
+    "street_flagship": {
+        "occupancy_economics": 19.0,
+        "demand_potential": 19.0,
+        "competition_whitespace": 11.0,
+        "access_visibility": 17.0,
+        "listing_quality": 8.0,
+        "brand_fit": 8.0,
+        "district_momentum": 6.0,
+        "delivery_demand": 2.0,
+        "landlord_signal": 5.0,
+        "chain_strength": 5.0,
+    },
+    "neighborhood_local": {
+        "occupancy_economics": 22.0,
+        "demand_potential": 21.0,
+        "competition_whitespace": 10.0,
+        "access_visibility": 9.0,
+        "listing_quality": 10.0,
+        "brand_fit": 7.0,
+        "district_momentum": 11.0,
+        "delivery_demand": 4.0,
+        "landlord_signal": 4.0,
+        "chain_strength": 2.0,
+    },
+}
+
+
 def _brand_weight_multipliers(
     brand_profile: dict[str, Any] | None,
-    service_model: str | None,
+    *,
+    archetype_mode: bool = False,
 ) -> dict[str, float]:
     """Per-component weight multipliers derived from brand-brief knobs.
 
@@ -3457,7 +3611,8 @@ def _brand_weight_multipliers(
     reweighting is a no-op and scores stay byte-identical to the static-weight
     behavior. Gain is env-tunable; 0.0 disables.
 
-    Mapping (product choice — see PR header):
+    Legacy mapping (``archetype_mode=False`` — byte-identical to the
+    pre-archetype behavior; product choice — see PR header):
       * physical-site knobs (parking/frontage/visibility sensitivity) -> access_visibility,
         using the strongest of the three (max), so caring about ANY of them lifts the
         measured-access weight.
@@ -3468,6 +3623,15 @@ def _brand_weight_multipliers(
         "neighborhood" lifts demand_potential (+0.5g).
       * cannibalization_tolerance_m has no clean top-level target; it keeps flowing
         through brand_fit/occupancy_economics unchanged.
+
+    Archetype mapping (``archetype_mode=True`` — EXPANSION_ARCHETYPE_PROFILES
+    on under the v2 stack): channel/goal multipliers are retired — that mass
+    now lives in the archetype base profile itself — and only the three
+    site-sensitivity knobs remain, composed on top of the archetype weights.
+    The legacy ``max()`` asymmetry is also fixed here: the signal of the
+    strongest-MAGNITUDE knob wins, so a single "low" knob (signal −0.75)
+    now trims access_visibility instead of being masked by the two neutral
+    "medium" signals (0.0) under a plain max().
     """
     mult = {name: 1.0 for name in _REWEIGHTABLE_COMPONENTS}
     g = float(getattr(settings, "EXPANSION_BRAND_WEIGHT_GAIN", 0.0) or 0.0)
@@ -3479,12 +3643,24 @@ def _brand_weight_multipliers(
     def _sig(level: str | None) -> float:
         return (_sensitivity_weight(level) - 0.6) / 0.4
 
-    site_sig = max(
+    site_signals = (
         _sig(brand_profile.get("parking_sensitivity")),
         _sig(brand_profile.get("frontage_sensitivity")),
         _sig(brand_profile.get("visibility_sensitivity")),
     )
+    if archetype_mode:
+        # Signed signal of the strongest-magnitude knob ("high" +1.0 beats
+        # "low" −0.75 on a tie of intent strength).
+        site_sig = max(site_signals, key=abs)
+    else:
+        site_sig = max(site_signals)
     mult["access_visibility"] *= 1.0 + g * site_sig
+
+    if archetype_mode:
+        # Channel/goal weight roles retired — the archetype base profile
+        # carries them. primary_channel keeps its gate and
+        # _channel_fit_score raw-score roles elsewhere, unchanged.
+        return {k: max(0.0, v) for k, v in mult.items()}
 
     channel = str(brand_profile.get("primary_channel") or "balanced").lower()
     if channel == "delivery":
@@ -3589,11 +3765,16 @@ def _score_breakdown(
     # it can be calibrated without a code change; competition_whitespace
     # absorbs the equal-and-opposite move so the total stays at 100.
     _stack_v2 = str(getattr(settings, "EXPANSION_WEIGHT_STACK", "v1")) == "v2"
+    # Archetype profiles (EXPANSION_ARCHETYPE_PROFILES): only meaningful
+    # under v2 — under v1 the helper logs once and stays False.
+    _archetypes_on = _archetype_profiles_active()
     if _stack_v2:
         # Weight stack v2 — 2026-06 probe-driven rebalance (see docstring).
         # confidence is intentionally absent: weight 0, display-only.
         # chain_strength is the fixed 4.0 of the v2 stack; the
         # EXPANSION_CHAIN_STRENGTH_WEIGHT env var is v1-only.
+        # _ARCHETYPE_WEIGHT_PROFILES["balanced"] is this exact dict, so a
+        # flag-on balanced search stays byte-identical to flag-off v2.
         component_weights = {
             "occupancy_economics": 20.0,
             "demand_potential": 18.0,
@@ -3606,6 +3787,9 @@ def _score_breakdown(
             "landlord_signal": 5.0,
             "chain_strength": 4.0,
         }
+        if _archetypes_on:
+            _archetype = resolve_brand_archetype(brand_profile, service_model)
+            component_weights = dict(_ARCHETYPE_WEIGHT_PROFILES[_archetype])
     else:
         _chain_strength_weight = float(settings.EXPANSION_CHAIN_STRENGTH_WEIGHT)
         _competition_whitespace_weight = round(8.7640 - _chain_strength_weight, 4)
@@ -3622,7 +3806,7 @@ def _score_breakdown(
             "confidence": 4.3820,
         }
     # Finding 1: brand-brief knobs re-weight components, then renormalize to 100.
-    _w_mult = _brand_weight_multipliers(brand_profile, service_model)
+    _w_mult = _brand_weight_multipliers(brand_profile, archetype_mode=_archetypes_on)
     if any(abs(m - 1.0) > 1e-9 for m in _w_mult.values()):
         _reweighted = {
             name: component_weights[name] * _w_mult.get(name, 1.0)
@@ -3693,6 +3877,10 @@ def _score_breakdown(
         "display": display,
         "final_score": round(_clamp(final_score), 2),
     }
+    if _stack_v2 and _archetypes_on:
+        # Additive, flag-on only: lets the UI card and memo name the weight
+        # profile that produced these weights. Flag-off JSON is unchanged.
+        breakdown["brand_archetype"] = _archetype
     if _stack_v2:
         # Confidence is computed and surfaced (inputs.confidence + this
         # block) but contributes 0 weighted points — the UI renders it as
@@ -6429,12 +6617,12 @@ def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, 
                     INSERT INTO expansion_brand_profile (
                         id, search_id, price_tier, average_check_sar, primary_channel,
                         parking_sensitivity, frontage_sensitivity, visibility_sensitivity,
-                        expansion_goal, cannibalization_tolerance_m,
+                        expansion_goal, brand_archetype, cannibalization_tolerance_m,
                         preferred_districts_json, excluded_districts_json
                     ) VALUES (
                         :id, :search_id, :price_tier, :average_check_sar, :primary_channel,
                         :parking_sensitivity, :frontage_sensitivity, :visibility_sensitivity,
-                        :expansion_goal, :cannibalization_tolerance_m,
+                        :expansion_goal, :brand_archetype, :cannibalization_tolerance_m,
                         CAST(:preferred_districts_json AS jsonb), CAST(:excluded_districts_json AS jsonb)
                     )
                     ON CONFLICT (search_id) DO UPDATE SET
@@ -6445,6 +6633,7 @@ def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, 
                         frontage_sensitivity = EXCLUDED.frontage_sensitivity,
                         visibility_sensitivity = EXCLUDED.visibility_sensitivity,
                         expansion_goal = EXCLUDED.expansion_goal,
+                        brand_archetype = EXCLUDED.brand_archetype,
                         cannibalization_tolerance_m = EXCLUDED.cannibalization_tolerance_m,
                         preferred_districts_json = EXCLUDED.preferred_districts_json,
                         excluded_districts_json = EXCLUDED.excluded_districts_json,
@@ -6461,6 +6650,7 @@ def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, 
                     "frontage_sensitivity": profile.get("frontage_sensitivity"),
                     "visibility_sensitivity": profile.get("visibility_sensitivity"),
                     "expansion_goal": profile.get("expansion_goal"),
+                    "brand_archetype": profile.get("brand_archetype"),
                     "cannibalization_tolerance_m": profile.get("cannibalization_tolerance_m"),
                     "preferred_districts_json": json.dumps(profile.get("preferred_districts") or [], ensure_ascii=False),
                     "excluded_districts_json": json.dumps(profile.get("excluded_districts") or [], ensure_ascii=False),
@@ -6477,7 +6667,7 @@ def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, 
 def get_brand_profile(db: Session, search_id: str) -> dict[str, Any] | None:
     row = db.execute(text("""
         SELECT price_tier, average_check_sar, primary_channel, parking_sensitivity, frontage_sensitivity,
-               visibility_sensitivity, expansion_goal, cannibalization_tolerance_m,
+               visibility_sensitivity, expansion_goal, brand_archetype, cannibalization_tolerance_m,
                preferred_districts_json, excluded_districts_json
         FROM expansion_brand_profile WHERE search_id = :search_id
     """), {"search_id": search_id}).mappings().first()
@@ -7256,6 +7446,12 @@ def run_expansion_search(
     target_districts = target_districts or []
     target_district_norm = {normalize_district_key(item) for item in target_districts if normalize_district_key(item)}
     effective_brand_profile = _default_brand_profile(brand_profile)
+    # Resolve the archetype here (not only in the API layer) so scoring sees
+    # the same resolved value regardless of caller — flag state does not
+    # matter for resolution, only for whether weights consume it.
+    effective_brand_profile["brand_archetype"] = resolve_brand_archetype(
+        effective_brand_profile, service_model
+    )
 
     # ArcGIS-only candidate generation.
     # Build optional target-district SQL filter when districts are specified.
