@@ -397,9 +397,22 @@ class Settings:
     # Set to 0 to disable the chain_strength leg without code changes; if
     # changed, EXPANSION_COMPETITION_WHITESPACE_WEIGHT must be adjusted in
     # lockstep — the runtime assertion in _score_breakdown catches drift.
+    # v1-only: under EXPANSION_WEIGHT_STACK=v2 the chain_strength weight is
+    # the fixed 4.0 of the v2 stack and this env var is ignored.
     EXPANSION_CHAIN_STRENGTH_WEIGHT: float = float(
         os.getenv("EXPANSION_CHAIN_STRENGTH_WEIGHT", "3.0")
     )
+
+    # Weight-stack selector for the Expansion Advisor scoring composite.
+    # "v1" (default) keeps the production stack byte-identical; "v2" applies
+    # the 2026-06 rebalance: district_momentum becomes its own single-paid
+    # top-level component (removed from listing_quality and from the +2
+    # sort-time bonus), confidence becomes display-only (weight 0), and
+    # weight mass moves toward the high-discrimination components.
+    # Evidence: June 2026 production probes (scripts/diagnostics/
+    # weight_discrimination.sql et al.) — confidence p90−p10 = 0.00,
+    # momentum double-paid, discrimination inverted vs nominal weights.
+    EXPANSION_WEIGHT_STACK: str = os.getenv("EXPANSION_WEIGHT_STACK", "v1")
 
     # Strong-chain SHARE calibration for the chain_strength leg input.
     # Replaces the MAX-over-radius leg input (which saturated at 100 for any

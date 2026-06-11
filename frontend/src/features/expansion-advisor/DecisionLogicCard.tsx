@@ -45,9 +45,14 @@ type Props = {
 // Canonical component order + labels matching
 // app/services/expansion_advisor.py:_score_breakdown (10 components summing
 // to 100% after the Patch B chain_strength split-off).
+// Rows render only for keys present in weighted_components, so the union
+// covers both weight stacks: district_momentum appears under
+// EXPANSION_WEIGHT_STACK=v2 and confidence (weight 0, display-only under
+// v2) automatically drops out of the weighted rows.
 const SCORE_COMPONENT_ORDER: readonly string[] = [
   "occupancy_economics",
   "listing_quality",
+  "district_momentum",
   "brand_fit",
   "landlord_signal",
   "competition_whitespace",

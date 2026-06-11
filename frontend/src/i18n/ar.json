@@ -752,6 +752,7 @@
       "listingQuality": "جودة الإعلان",
       "landlordSignal": "سلوك المالك",
       "chainStrength": "قوة السلاسل المنافسة",
+      "districtMomentum": "زخم الحي",
       "providerDensity": "كثافة مزودي التوصيل",
       "marketGap": "الفجوة السوقية",
       "multiPlatform": "تعدد المنصات",
@@ -1221,6 +1222,15 @@
           "is_furnished": { "label": "مفروش" },
           "has_drive_thru": { "label": "خدمة السيارات" },
           "district_momentum_score": { "label": "درجة زخم الحي" }
+        }
+      },
+      "district_momentum": {
+        "label": "زخم الحي",
+        "definition": "مدى نشاط سوق القوائم التجارية في الحي خلال آخر 30 يومًا، مرتبًا مئويًا عبر أحياء الرياض. الأحياء دون الحد الأدنى للعينة تُقرأ كقيمة محايدة.",
+        "inputs": {
+          "momentum_score": { "label": "درجة زخم الحي" },
+          "activity_30d": { "label": "القوائم النشطة خلال آخر 30 يومًا" },
+          "sample_floor_applied": { "label": "دون الحد الأدنى للعينة" }
         }
       },
       "brand_fit": {

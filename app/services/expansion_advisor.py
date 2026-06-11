@@ -2985,6 +2985,17 @@ _MOMENTUM_SAMPLE_FLOOR = 20
 # threshold and math are unchanged.
 _MOMENTUM_DISPLAY_THRESHOLD = 70.0
 
+# Weight stack v2: district momentum is paid once, as its own top-level
+# component (see _score_breakdown). This helper is the extracted momentum
+# sub-signal historically embedded in _listing_quality_score — same 0-100
+# raw value (district-level 30-day Aqar activity percentile), with unknown
+# (None) resolving to a neutral 50.0 per the tri-state convention.
+def _district_momentum_component(district_momentum_score: float | None) -> float:
+    if district_momentum_score is None:
+        return 50.0
+    return _clamp(float(district_momentum_score))
+
+
 # Phase 4 display-only freshness window. Phase 4.1: a listing earns
 # "New" when aqar_created_at is within this window, and "Updated" when
 # it is older than the window but aqar_updated_at is within it.
@@ -3103,7 +3114,20 @@ def _listing_quality_score(
     # Furnished: faster open, lower risk
     furnished_signal = 100.0 if is_furnished else 50.0
 
-    if _MOMENTUM_ENABLED:
+    if str(getattr(settings, "EXPANSION_WEIGHT_STACK", "v1")) == "v2":
+        # Weight stack v2: momentum is paid once, as the top-level
+        # district_momentum component in _score_breakdown — it no longer
+        # contributes here. The remaining momentum-enabled sub-weights
+        # (0.30 / 0.20 / 0.10 / 0.05) renormalize by /0.65 so the tuple
+        # still sums to 1.0 (≈ 0.4615 / 0.3077 / 0.1538 / 0.0769). The
+        # +5 drive-thru bump and the parcel neutral-50 path are unchanged.
+        composite = (
+            freshness * (0.30 / 0.65)
+            + suitability * (0.20 / 0.65)
+            + image_signal * (0.10 / 0.65)
+            + furnished_signal * (0.05 / 0.65)
+        )
+    elif _MOMENTUM_ENABLED:
         # Sub-weight rebalance — 2026-05-07 (CEO directive elevation).
         # Audit (branch claude/audit-advisor-ranking-4prR3) found momentum
         # contributing only ~1.65% and freshness only ~2.81% of final_score,
@@ -3119,10 +3143,7 @@ def _listing_quality_score(
         # rises from ~1.65% to ~7.7% and freshness from ~2.81% to ~6.6%.
         # Unknown momentum → neutral 50.0 per the tri-state convention
         # used by freshness and suitability above.
-        if district_momentum_score is None:
-            momentum_signal = 50.0
-        else:
-            momentum_signal = _clamp(float(district_momentum_score))
+        momentum_signal = _district_momentum_component(district_momentum_score)
         composite = (
             freshness * 0.30
             + suitability * 0.20
@@ -3419,6 +3440,9 @@ _REWEIGHTABLE_COMPONENTS: tuple[str, ...] = (
     "access_visibility",
     "delivery_demand",
     "confidence",
+    # Weight stack v2 component. No brand-brief knob maps to it yet, so its
+    # multiplier stays 1.0; it still participates in the renormalization.
+    "district_momentum",
 )
 
 
@@ -3499,6 +3523,7 @@ def _score_breakdown(
     chain_strength_max: float | None = None,
     brand_profile: dict[str, Any] | None = None,
     service_model: str | None = None,
+    district_momentum_score: float | None = None,
 ) -> dict[str, Any]:
     """Listings-first weight distribution.
 
@@ -3523,6 +3548,19 @@ def _score_breakdown(
     sum to 100. Patch B then carved 3.0 points out of competition_whitespace
     for the new chain_strength leg (pro-presence: established-brand
     validation), keeping the total at 100.
+
+    Weight stack v2 (``EXPANSION_WEIGHT_STACK=v2``, 2026-06): district
+    momentum becomes its own single-paid top-level component
+    (``district_momentum``, raw input via ``district_momentum_score``),
+    confidence is excluded from the weighted sum (raw value kept in the
+    breakdown JSON for the UI data-quality grade), and weight mass moves
+    toward the high-discrimination components:
+      occupancy_economics 20, demand_potential 18, competition_whitespace 12,
+      access_visibility 11, listing_quality 9, brand_fit 8,
+      district_momentum 7, delivery_demand 6, landlord_signal 5,
+      chain_strength 4 (fixed — EXPANSION_CHAIN_STRENGTH_WEIGHT is v1-only).
+    Under v1 (default) ``district_momentum_score`` is ignored and the
+    output is byte-identical to the pre-v2 behavior.
     """
     # Top-level weight rebalance — 2026-05-07 (CEO directive elevation).
     # Audit (branch claude/audit-advisor-ranking-4prR3) found that even
@@ -3550,20 +3588,39 @@ def _score_breakdown(
     # competition_whitespace. The chain_strength weight is env-driven so
     # it can be calibrated without a code change; competition_whitespace
     # absorbs the equal-and-opposite move so the total stays at 100.
-    _chain_strength_weight = float(settings.EXPANSION_CHAIN_STRENGTH_WEIGHT)
-    _competition_whitespace_weight = round(8.7640 - _chain_strength_weight, 4)
-    component_weights = {
-        "occupancy_economics": 26.2924,
-        "listing_quality": 22.0,
-        "brand_fit": 9.6404,
-        "landlord_signal": 7.0112,
-        "competition_whitespace": _competition_whitespace_weight,
-        "chain_strength": _chain_strength_weight,
-        "demand_potential": 8.7640,
-        "access_visibility": 8.7640,
-        "delivery_demand": 4.3820,
-        "confidence": 4.3820,
-    }
+    _stack_v2 = str(getattr(settings, "EXPANSION_WEIGHT_STACK", "v1")) == "v2"
+    if _stack_v2:
+        # Weight stack v2 — 2026-06 probe-driven rebalance (see docstring).
+        # confidence is intentionally absent: weight 0, display-only.
+        # chain_strength is the fixed 4.0 of the v2 stack; the
+        # EXPANSION_CHAIN_STRENGTH_WEIGHT env var is v1-only.
+        component_weights = {
+            "occupancy_economics": 20.0,
+            "demand_potential": 18.0,
+            "competition_whitespace": 12.0,
+            "access_visibility": 11.0,
+            "listing_quality": 9.0,
+            "brand_fit": 8.0,
+            "district_momentum": 7.0,
+            "delivery_demand": 6.0,
+            "landlord_signal": 5.0,
+            "chain_strength": 4.0,
+        }
+    else:
+        _chain_strength_weight = float(settings.EXPANSION_CHAIN_STRENGTH_WEIGHT)
+        _competition_whitespace_weight = round(8.7640 - _chain_strength_weight, 4)
+        component_weights = {
+            "occupancy_economics": 26.2924,
+            "listing_quality": 22.0,
+            "brand_fit": 9.6404,
+            "landlord_signal": 7.0112,
+            "competition_whitespace": _competition_whitespace_weight,
+            "chain_strength": _chain_strength_weight,
+            "demand_potential": 8.7640,
+            "access_visibility": 8.7640,
+            "delivery_demand": 4.3820,
+            "confidence": 4.3820,
+        }
     # Finding 1: brand-brief knobs re-weight components, then renormalize to 100.
     _w_mult = _brand_weight_multipliers(brand_profile, service_model)
     if any(abs(m - 1.0) > 1e-9 for m in _w_mult.values()):
@@ -3605,6 +3662,10 @@ def _score_breakdown(
         "delivery_demand": round(_safe_float(provider_intelligence_composite), 2),
         "confidence": round(_safe_float(confidence_score), 2),
     }
+    if _stack_v2:
+        raw_inputs["district_momentum"] = round(
+            _district_momentum_component(district_momentum_score), 2
+        )
     weighted_components = {
         name: round(_safe_float(raw_inputs[name]) * component_weights[name] / 100.0, 2)
         for name in component_weights
@@ -3618,7 +3679,7 @@ def _score_breakdown(
         }
         for name in component_weights
     }
-    return {
+    breakdown = {
         "weights": component_weights,
         "inputs": {
             **raw_inputs,
@@ -3632,6 +3693,17 @@ def _score_breakdown(
         "display": display,
         "final_score": round(_clamp(final_score), 2),
     }
+    if _stack_v2:
+        # Confidence is computed and surfaced (inputs.confidence + this
+        # block) but contributes 0 weighted points — the UI renders it as
+        # a data-quality grade, not a weighted row.
+        breakdown["display_only"] = {
+            "confidence": {
+                "raw_input_score": raw_inputs["confidence"],
+                "weight_percent": 0.0,
+            }
+        }
+    return breakdown
 
 
 def _top_positives_and_risks(
@@ -5302,7 +5374,13 @@ def _apply_score_deltas_and_sort(
 
     Sort is strict: ``(-final_score, parcel_id)``. The parcel_id tie-break
     guarantees identical orderings on re-runs even when scores collide.
+
+    Weight stack v2: the +2 momentum bonus is removed (momentum is paid
+    once, via the district_momentum component in ``_score_breakdown``) and
+    ``bonus_detail`` omits the ``momentum_bonus`` key. All other deltas
+    (freshness, value band, viability) are unchanged in both stacks.
     """
+    _stack_v2 = str(getattr(settings, "EXPANSION_WEIGHT_STACK", "v1")) == "v2"
     for _c in candidates:
         base = _safe_float(_c.get("final_score"), 0.0)
 
@@ -5339,17 +5417,22 @@ def _apply_score_deltas_and_sort(
             freshness_bonus = 0.0
             freshness_label = None
 
-        momentum = fs.get("district_momentum") or {}
-        momentum_score = momentum.get("momentum_score")
-        if (
-            isinstance(momentum_score, (int, float))
-            and not isinstance(momentum_score, bool)
-            and float(momentum_score) >= _MOMENTUM_DISPLAY_THRESHOLD
-            and momentum.get("sample_floor_applied") is False
-        ):
-            momentum_bonus = 2.0
-        else:
+        if _stack_v2:
+            # v2: momentum is already paid via the district_momentum
+            # component; the +2 bonus would double-pay it.
             momentum_bonus = 0.0
+        else:
+            momentum = fs.get("district_momentum") or {}
+            momentum_score = momentum.get("momentum_score")
+            if (
+                isinstance(momentum_score, (int, float))
+                and not isinstance(momentum_score, bool)
+                and float(momentum_score) >= _MOMENTUM_DISPLAY_THRESHOLD
+                and momentum.get("sample_floor_applied") is False
+            ):
+                momentum_bonus = 2.0
+            else:
+                momentum_bonus = 0.0
 
         total_delta = (
             value_band_delta + viability_delta + freshness_bonus + momentum_bonus
@@ -5369,7 +5452,8 @@ def _apply_score_deltas_and_sort(
             "viability_delta": float(viability_delta),
             "freshness_bonus": float(freshness_bonus),
             "freshness_label": freshness_label,
-            "momentum_bonus": float(momentum_bonus),
+            # v2 omits momentum_bonus entirely — the leg no longer exists.
+            **({} if _stack_v2 else {"momentum_bonus": float(momentum_bonus)}),
             "total_delta": float(total_delta),
             "final_score_clamped": bool(final_clamped),
         }
@@ -8687,6 +8771,7 @@ def run_expansion_search(
             chain_strength_max=max_chain_strength,
             brand_profile=effective_brand_profile,
             service_model=service_model,
+            district_momentum_score=_district_momentum_score_val,
         )
         prepared.append(
             {
@@ -10122,6 +10207,7 @@ def run_expansion_search(
             chain_strength_max=max_chain_strength,
             brand_profile=effective_brand_profile,
             service_model=service_model,
+            district_momentum_score=_final_momentum_score_val,
         )
         score_breakdown_json["inputs"]["rent_fallback_used"] = rent_fallback_used
         # F4: surface the whitespace confidence flag so the API response

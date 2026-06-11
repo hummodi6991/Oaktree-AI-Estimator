@@ -404,6 +404,30 @@ COMPONENT_WEIGHTS: dict[str, float] = {
     "confidence": 0.043820,
 }
 
+# Weight stack v2 (EXPANSION_WEIGHT_STACK=v2) — mirrors the v2 dict in
+# _score_breakdown: district_momentum is its own single-paid component and
+# confidence is display-only (weight 0, hence absent from the weighted set).
+COMPONENT_WEIGHTS_V2: dict[str, float] = {
+    "occupancy_economics": 0.20,
+    "demand_potential": 0.18,
+    "competition_whitespace": 0.12,
+    "access_visibility": 0.11,
+    "listing_quality": 0.09,
+    "brand_fit": 0.08,
+    "district_momentum": 0.07,
+    "delivery_demand": 0.06,
+    "landlord_signal": 0.05,
+    "chain_strength": 0.04,
+}
+
+
+def _active_component_weights() -> dict[str, float]:
+    """Memo-display weights for the active weight stack. v1 (default)
+    returns COMPONENT_WEIGHTS unchanged so memo output stays byte-identical."""
+    if str(getattr(settings, "EXPANSION_WEIGHT_STACK", "v1")) == "v2":
+        return COMPONENT_WEIGHTS_V2
+    return COMPONENT_WEIGHTS
+
 # Feature-snapshot fields that actually drive a decision. Used to truncate
 # oversized snapshots to a compact LLM-friendly payload.
 #
@@ -843,10 +867,11 @@ def _build_contributions(
     score_breakdown: dict,
     candidate: dict | None = None,
 ) -> dict[str, float]:
-    """Return ``{component: weight × component_score}`` for all 9 components."""
+    """Return ``{component: weight × component_score}`` for every component
+    of the active weight stack."""
     return {
         comp: round(weight * _component_score_value(score_breakdown, candidate, comp), 3)
-        for comp, weight in COMPONENT_WEIGHTS.items()
+        for comp, weight in _active_component_weights().items()
     }
 
 
@@ -915,7 +940,7 @@ def build_memo_context(
     contributions = _build_contributions(raw_breakdown, candidate)
     # Do not mutate caller's dict.
     score_breakdown = dict(raw_breakdown)
-    score_breakdown["weights"] = dict(COMPONENT_WEIGHTS)
+    score_breakdown["weights"] = dict(_active_component_weights())
     score_breakdown["contributions"] = contributions
 
     # Tri-state-preserving gate verdicts. When the candidate carries both
