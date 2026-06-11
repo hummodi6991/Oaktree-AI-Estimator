@@ -371,6 +371,7 @@ BASE_STRUCTURED_CANDIDATE = {
         "listing_quality": 70,
         "brand_fit": 80,
         "competition_whitespace": 60,
+        "chain_strength": 40,
         "demand_potential": 75,
         "access_visibility": 65,
         "landlord_signal": 55,
@@ -409,7 +410,7 @@ def _mock_client_returning(content, input_tokens: int = 400, output_tokens: int 
 class TestBuildMemoContextContributionsMath:
     """Step 8, test 9."""
 
-    def test_contributions_equal_weight_times_score_for_all_nine(self):
+    def test_contributions_equal_weight_times_score_for_all_components(self):
         ctx = build_memo_context(
             candidate=BASE_STRUCTURED_CANDIDATE,
             brief=BASE_STRUCTURED_BRIEF,
@@ -417,7 +418,7 @@ class TestBuildMemoContextContributionsMath:
         )
         scores = BASE_STRUCTURED_CANDIDATE["score_breakdown_json"]
         contributions = ctx.score_breakdown["contributions"]
-        # All nine components represented
+        # Every weighted component represented
         assert set(contributions.keys()) == set(COMPONENT_WEIGHTS.keys())
         for comp, weight in COMPONENT_WEIGHTS.items():
             expected = round(weight * scores[comp], 3)
@@ -428,6 +429,145 @@ class TestBuildMemoContextContributionsMath:
         assert contributions["occupancy_economics"] == 23.663
         # Weights sub-dict carried through for the LLM
         assert ctx.score_breakdown["weights"] == dict(COMPONENT_WEIGHTS)
+
+
+# ── Component-score lookup: inputs precedence + weight parity ───────
+
+
+def _scorer_breakdown(**overrides):
+    """Call the deterministic scorer's _score_breakdown with neutral
+    inputs; pure function, no DB."""
+    from app.services import expansion_advisor as expansion_service
+
+    kwargs = dict(
+        demand_score=80,
+        whitespace_score=70,
+        brand_fit_score=75,
+        economics_score=60,
+        provider_intelligence_composite=65,
+        access_visibility_score=55,
+        confidence_score=50,
+        listing_quality_score=60,
+        landlord_signal_score=40,
+        chain_strength_score=30,
+    )
+    kwargs.update(overrides)
+    return expansion_service._score_breakdown(**kwargs)
+
+
+def _set_weight_stack(monkeypatch, value: str) -> None:
+    # Patch the settings instance each module actually holds, not the
+    # canonical app.core.config.settings: test_parcel_table_overrides
+    # reloads app.core.config mid-suite, replacing the singleton, while
+    # these modules keep their pre-reload reference (see conftest note).
+    import app.services.llm_decision_memo as memo_mod
+    from app.services import expansion_advisor as expansion_service
+
+    monkeypatch.setattr(
+        memo_mod.settings, "EXPANSION_WEIGHT_STACK", value, raising=False
+    )
+    monkeypatch.setattr(
+        expansion_service.settings, "EXPANSION_WEIGHT_STACK", value, raising=False
+    )
+
+
+class TestComponentLookupReadsInputs:
+    """`_component_score_value` must read the canonical
+    ``score_breakdown["inputs"]`` shape produced by the scorer — not fall
+    through to the flat-candidate fallback and report 0."""
+
+    def test_memo_component_lookup_reads_inputs(self):
+        breakdown = _scorer_breakdown()
+        candidate = {
+            "id": "cand-inputs-v1",
+            "score_breakdown_json": breakdown,
+        }
+        ctx = build_memo_context(
+            candidate=candidate, brief=BASE_STRUCTURED_BRIEF, lang="en"
+        )
+        contributions = ctx.score_breakdown["contributions"]
+        inputs = breakdown["inputs"]
+        # The two components that previously zeroed out via the flat
+        # fallback now carry the real raw input scores.
+        assert contributions["occupancy_economics"] == round(
+            0.262924 * inputs["occupancy_economics"], 3
+        )
+        assert contributions["demand_potential"] == round(
+            0.087640 * inputs["demand_potential"], 3
+        )
+        assert contributions["occupancy_economics"] > 0
+        assert contributions["demand_potential"] > 0
+
+    def test_memo_component_lookup_reads_inputs_v2(self, monkeypatch):
+        from app.services.llm_decision_memo import (
+            COMPONENT_WEIGHTS_V2,
+            _component_score_value,
+        )
+
+        _set_weight_stack(monkeypatch, "v2")
+        breakdown = _scorer_breakdown(district_momentum_score=72.0)
+        candidate = {
+            "id": "cand-inputs-v2",
+            "score_breakdown_json": breakdown,
+        }
+        ctx = build_memo_context(
+            candidate=candidate, brief=BASE_STRUCTURED_BRIEF, lang="en"
+        )
+        contributions = ctx.score_breakdown["contributions"]
+        assert set(contributions.keys()) == set(COMPONENT_WEIGHTS_V2.keys())
+        # district_momentum carries the real value, not the zero fallback.
+        assert contributions["district_momentum"] == round(0.07 * 72.0, 3)
+        # confidence is unweighted under v2 (display-only) — absent from
+        # contributions, but a direct lookup still reads the real value.
+        assert "confidence" not in contributions
+        assert _component_score_value(breakdown, candidate, "confidence") == 50.0
+
+    def test_memo_lookup_fallback_order(self):
+        from app.services.llm_decision_memo import _component_score_value
+
+        # inputs takes precedence over the legacy top-level key.
+        both = {"inputs": {"brand_fit": 81.0}, "brand_fit": 12.0}
+        assert _component_score_value(both, None, "brand_fit") == 81.0
+        # Missing from inputs → legacy top-level / <comp>_score lookups.
+        legacy = {"inputs": {}, "brand_fit": 66.0, "demand_potential_score": 44.0}
+        assert _component_score_value(legacy, None, "brand_fit") == 66.0
+        assert _component_score_value(legacy, None, "demand_potential") == 44.0
+        # Missing from the breakdown entirely → flat candidate fallback.
+        candidate = {"listing_quality_score": 58.0}
+        assert _component_score_value({}, candidate, "listing_quality") == 58.0
+        # Fully missing → 0.0, no exception (existing behavior unchanged).
+        assert _component_score_value({}, None, "occupancy_economics") == 0.0
+        assert _component_score_value(None, None, "occupancy_economics") == 0.0
+
+
+class TestMemoWeightsMatchScorer:
+    """Memo-display weights must equal the scorer's component weights for
+    both stacks — drift here renders fabricated contributions."""
+
+    def test_memo_weights_match_scorer(self, monkeypatch):
+        from app.services.llm_decision_memo import (
+            COMPONENT_WEIGHTS_V2,
+            _active_component_weights,
+        )
+
+        # v1 (default stack), including the chain_strength Patch-B split.
+        scorer_v1 = _scorer_breakdown()["weights"]
+        memo_v1 = _active_component_weights()
+        assert set(memo_v1.keys()) == set(scorer_v1.keys())
+        assert "chain_strength" in memo_v1
+        for comp, pct in scorer_v1.items():
+            assert memo_v1[comp] * 100 == pytest.approx(pct, abs=1e-6), comp
+
+        # v2 stack.
+        _set_weight_stack(monkeypatch, "v2")
+        scorer_v2 = _scorer_breakdown(district_momentum_score=70.0)["weights"]
+        memo_v2 = _active_component_weights()
+        assert memo_v2 == COMPONENT_WEIGHTS_V2
+        assert set(memo_v2.keys()) == set(scorer_v2.keys())
+        assert "district_momentum" in memo_v2
+        assert "confidence" not in memo_v2
+        for comp, pct in scorer_v2.items():
+            assert memo_v2[comp] * 100 == pytest.approx(pct, abs=1e-6), comp
 
 
 # ── PR #3: typed advisory-section assembly ──────────────────────────
@@ -2852,7 +2992,7 @@ class TestMemoPromptVersionBumpedForV121:
     def test_version_is_v12_1(self):
         from app.services.llm_decision_memo import MEMO_PROMPT_VERSION
 
-        assert MEMO_PROMPT_VERSION == "v12.2-listing-age-leverage-2026-06"
+        assert MEMO_PROMPT_VERSION == "v12.3-component-lookup-2026-06"
 
 
 class TestRenderPromptAdvisoryFailureNoGateFailureAddendum:
