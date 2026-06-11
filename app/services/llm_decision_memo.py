@@ -1058,6 +1058,7 @@ def build_memo_context(
         "category",
         "service_model",
         "expansion_goal",
+        "brand_archetype",
         "target_area_m2",
         "min_area_m2",
         "max_area_m2",

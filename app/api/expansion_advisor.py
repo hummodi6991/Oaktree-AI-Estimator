@@ -36,6 +36,7 @@ from app.services.expansion_advisor import (
     list_saved_searches,
     persist_brand_profile,
     persist_existing_branches,
+    resolve_brand_archetype,
     run_expansion_search,
     update_saved_search,
 )
@@ -108,7 +109,14 @@ class ExpansionBrandProfileInput(BaseModel):
     parking_sensitivity: Literal["low", "medium", "high"] | None = None
     frontage_sensitivity: Literal["low", "medium", "high"] | None = None
     visibility_sensitivity: Literal["low", "medium", "high"] | None = None
+    # Legacy knob — retired from the UI in favor of brand_archetype but still
+    # accepted so old saved-search payloads replay; non-default values map to
+    # an archetype in resolve_brand_archetype.
     expansion_goal: Literal["flagship", "neighborhood", "delivery_led", "balanced"] | None = None
+    # None ⇒ seeded from service_model server-side (resolve_brand_archetype).
+    brand_archetype: Literal[
+        "delivery_led", "street_flagship", "neighborhood_local", "balanced"
+    ] | None = None
     cannibalization_tolerance_m: float | None = None
     preferred_districts: list[str] | None = None
     excluded_districts: list[str] | None = None
@@ -947,6 +955,15 @@ def create_expansion_search(
     bbox_json = req.bbox.model_dump() if req.bbox else None
     existing_branches_payload = [branch.model_dump() for branch in req.existing_branches]
     brand_profile_payload = req.brand_profile.model_dump() if req.brand_profile else None
+    if brand_profile_payload is not None:
+        # Persist the RESOLVED archetype (explicit > legacy expansion_goal >
+        # service_model seed) so prewarm/DB-read paths agree with search-time
+        # scoring. When no brand profile was sent, persistence is skipped
+        # below as before — run_expansion_search resolves independently, so
+        # scoring still sees the seeded archetype.
+        brand_profile_payload["brand_archetype"] = resolve_brand_archetype(
+            brand_profile_payload, req.service_model
+        )
 
     try:
         db.execute(
