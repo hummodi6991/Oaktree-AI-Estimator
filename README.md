@@ -138,7 +138,7 @@ Endpoints:
 - `comparison_candidate_ids` (optional string array for client workflows)
 - `bbox` (`min_lon`, `min_lat`, `max_lon`, `max_lat`)
 - `limit` (1..100)
-- `brand_profile` (optional object) with fields: `price_tier`, `average_check_sar`, `primary_channel`, `parking_sensitivity`, `frontage_sensitivity`, `visibility_sensitivity`, `expansion_goal`, `cannibalization_tolerance_m`, `preferred_districts`, `excluded_districts`
+- `brand_profile` (optional object) with fields: `price_tier`, `average_check_sar`, `primary_channel`, `parking_sensitivity`, `frontage_sensitivity`, `visibility_sensitivity`, `brand_archetype` (`delivery_led` | `street_flagship` | `neighborhood_local` | `balanced`; omitted/null is seeded server-side from `service_model`), `expansion_goal` (legacy — retired from the UI; non-default values map onto `brand_archetype`), `cannibalization_tolerance_m`, `preferred_districts`, `excluded_districts`. The resolved archetype is persisted with the search; with `EXPANSION_ARCHETYPE_PROFILES=true` (default false, v2 weight stack only) it selects the base component-weight profile.
 
 Search/candidate responses now include (v6.1 adds on top of v5):
 - `existing_branches` in search payloads
