@@ -2719,22 +2719,26 @@ def _dg_evidence_invalid_reason(
     """Return a short reason string when no key_evidence row in ``parsed``
     references the demand-generator composite; None when compliant.
 
-    A row matches when its signal or value mentions the EN signal phrase,
-    the AR Rule-7 term, or a "/100" value equal to the rounded composite."""
-    needles = (
-        _DG_COMPOSITE_SIGNAL_EN,
-        _DG_COMPOSITE_SIGNAL_AR,
-        f"{composite_rounded}/100",
-    )
+    A row matches when its signal or value mentions the EN signal phrase or
+    the AR Rule-7 term. A bare ``"<composite>/100"`` value counts ONLY when
+    the same row's signal attributes the number to the generator engine
+    (signal contains "generator" or "مولدات"); without that attribution the
+    value collides with composite-dominated scores rendered at the same
+    rounded value (e.g. dine_in demand_score) and must not be accepted."""
+    phrase_needles = (_DG_COMPOSITE_SIGNAL_EN, _DG_COMPOSITE_SIGNAL_AR)
+    value_needle = f"{composite_rounded}/100"
     rows = parsed.get("key_evidence")
     if isinstance(rows, list):
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            haystack = (
-                f"{row.get('signal') or ''} {row.get('value') or ''}".lower()
-            )
-            if any(n.lower() in haystack for n in needles):
+            signal = (row.get("signal") or "").lower()
+            haystack = f"{signal} {(row.get('value') or '').lower()}"
+            if any(n.lower() in haystack for n in phrase_needles):
+                return None
+            if value_needle in haystack and (
+                "generator" in signal or "مولدات" in signal
+            ):
                 return None
     return (
         "demand_score_source is dg_index but key_evidence has no "

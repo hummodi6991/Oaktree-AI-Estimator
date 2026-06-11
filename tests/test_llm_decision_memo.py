@@ -2344,6 +2344,23 @@ _DG_SOURCE_NO_BLOCK_CANDIDATE = {
 }
 
 
+# Composite rounds to 60 — the production collision shape: a non-generator
+# score (e.g. dine_in demand_score) can also render "60/100".
+_DG_COMPOSITE_60_CANDIDATE = {
+    **_RANK1_ALL_PASS_CANDIDATE,
+    "id": "dg-comp60",
+    "parcel_id": "dg-comp60",
+    "feature_snapshot_json": {
+        **_RANK1_ALL_PASS_CANDIDATE["feature_snapshot_json"],
+        **_DG_INDEX_SNAPSHOT_FIELDS,
+        "demand_generator_index": {
+            **_DG_INDEX_SNAPSHOT_FIELDS["demand_generator_index"],
+            "composite_0_100": 59.82,
+        },
+    },
+}
+
+
 def _memo_with_dg_row(headline: str, *, signal: str = _DG_SIGNAL_EN,
                       value: str = "74/100") -> dict:
     """A headline-valid memo whose key_evidence includes a composite row."""
@@ -2409,12 +2426,33 @@ class TestDgEvidenceDetector:
         memo = _memo_with_dg_row("نوصي — x", signal=_DG_SIGNAL_AR, value="74/100")
         assert _dg_evidence_invalid_reason(memo, 74) is None
 
-    def test_compliant_by_value_match_alone(self):
+    def test_value_match_requires_generator_attribution_en(self):
         from app.services.llm_decision_memo import _dg_evidence_invalid_reason
 
-        memo = _memo_with_dg_row("Recommend — x", signal="demand composite",
+        # Value-only match WITH generator attribution (EN signal containing
+        # "generator") ⇒ compliant.
+        memo = _memo_with_dg_row("Recommend — x",
+                                 signal="demand generator composite",
                                  value="74/100")
         assert _dg_evidence_invalid_reason(memo, 74) is None
+
+    def test_value_match_requires_generator_attribution_ar(self):
+        from app.services.llm_decision_memo import _dg_evidence_invalid_reason
+
+        # Value-only match WITH generator attribution (AR signal containing
+        # "مولدات") ⇒ compliant.
+        memo = _memo_with_dg_row("نوصي — x", signal="مولدات الطلب",
+                                 value="74/100")
+        assert _dg_evidence_invalid_reason(memo, 74) is None
+
+    def test_value_match_without_generator_attribution_is_invalid(self):
+        from app.services.llm_decision_memo import _dg_evidence_invalid_reason
+
+        # Bare "74/100" with no generator attribution must NOT satisfy the
+        # mandate — it collides with composite-dominated scores.
+        memo = _memo_with_dg_row("Recommend — x", signal="demand composite",
+                                 value="74/100")
+        assert _dg_evidence_invalid_reason(memo, 74) is not None
 
     def test_non_compliant_returns_reason(self):
         from app.services.llm_decision_memo import _dg_evidence_invalid_reason
@@ -2427,11 +2465,27 @@ class TestDgEvidenceDetector:
     def test_other_score_value_does_not_match(self):
         from app.services.llm_decision_memo import _dg_evidence_invalid_reason
 
-        # The base body carries a "80/100" final_score row — must not
-        # satisfy a composite of 74.
+        # The base body carries a "80/100" final_score row — it must not
+        # satisfy a composite of 74 (unchanged) AND, now that value-only
+        # matches require generator attribution, it must not satisfy a
+        # composite of 80 either: the row's signal is "final_score", which
+        # carries no generator attribution. Flips the v12.1 false-accept.
         memo = _memo_with_headline("Recommend — x")
         assert _dg_evidence_invalid_reason(memo, 74) is not None
-        assert _dg_evidence_invalid_reason(memo, 80) is None
+        assert _dg_evidence_invalid_reason(memo, 80) is not None
+
+    def test_production_collision_demand_strength_row_is_invalid(self):
+        from app.services.llm_decision_memo import _dg_evidence_invalid_reason
+
+        # Regression from production (parcel-6706340 shape): composite 60
+        # with a "Demand Strength"/"60/100" row — coincidental collision,
+        # no generator attribution ⇒ invalid.
+        memo = _memo_with_headline("Recommend — x")
+        memo["key_evidence"] = list(memo["key_evidence"]) + [
+            {"signal": "Demand Strength", "value": "60/100",
+             "implication": "demand looks adequate", "polarity": "positive"},
+        ]
+        assert _dg_evidence_invalid_reason(memo, 60) is not None
 
 
 class TestDgEvidenceRetry:
@@ -2623,6 +2677,41 @@ class TestDgEvidenceInjectionFallback:
             "Recommend — strong site, valid headline"
         )
         assert memo["key_evidence"][1]["source"] == "deterministic_injection"
+
+
+    @patch("app.services.llm_decision_memo._get_client")
+    def test_colliding_value_row_still_retries_then_injects(
+        self, mock_get_client, monkeypatch
+    ):
+        """Production collision (parcel-6706340 shape): composite rounds to
+        60 and the first response carries only a coincidental "60/100" row
+        with no generator attribution. The detector must NOT accept it —
+        the retry fires, the retry is still non-compliant, and the
+        deterministic row is injected at index 1 with the marker."""
+        _enable_structured_memo(monkeypatch)
+        colliding = _memo_with_headline("Recommend — strong site")
+        colliding["key_evidence"] = list(colliding["key_evidence"]) + [
+            {"signal": "Demand Strength", "value": "60/100",
+             "implication": "demand looks adequate", "polarity": "positive"},
+        ]
+        second = _memo_with_headline("Recommend — strong site again")
+        client = _two_response_client(colliding, second)
+        mock_get_client.return_value = client
+
+        ctx = build_memo_context(
+            candidate=_DG_COMPOSITE_60_CANDIDATE,
+            brief=BASE_STRUCTURED_BRIEF,
+            lang="en",
+        )
+        memo = generate_structured_memo(ctx)
+
+        assert memo is not None
+        # Retry fired (the colliding row did not satisfy the mandate).
+        assert client.chat.completions.create.call_count == 2
+        injected = memo["key_evidence"][1]
+        assert injected["signal"] == _DG_SIGNAL_EN
+        assert injected["value"] == "60/100"
+        assert injected["source"] == "deterministic_injection"
 
 
 class TestDgInjectionHelper:
