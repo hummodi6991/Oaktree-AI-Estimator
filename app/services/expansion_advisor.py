@@ -5700,6 +5700,60 @@ def _value_band_score_delta(c: dict[str, Any]) -> float:
     return 0.0
 
 
+def _select_final_candidates(
+    candidates: list[dict[str, Any]],
+    target_districts: list[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Final shortlist selection over the score-sorted viability survivors.
+
+    City-wide / single-district searches (fewer than 2 target districts)
+    take the plain top-``limit`` slice — identical to the pre-balancing
+    behavior.
+
+    Multi-district searches apply a per-district quota of
+    ``max(1, limit // len(target_districts))``. The representation
+    guarantee is best-effort-within-limit and applies to hard-floor
+    SURVIVORS only: a district whose every candidate fails a hard floor in
+    ``_apply_market_viability_pass`` is legitimately unrepresented.
+    Candidates whose district does not normalize to a usable key
+    (``_unknown``) get NO quota — they compete only in the fill phase.
+
+    Selection happens in two walks over the sorted input, and the output is
+    emitted in input order (a filtered subsequence of the sorted list), so
+    the result stays in final_score order by construction:
+
+      1. Quota walk: accept a candidate when its district's quota is
+         unfilled, never exceeding ``limit`` total.
+      2. Fill walk: top up the remaining slots strictly by rank, skipping
+         already-selected candidates.
+    """
+    if len(target_districts) < 2:
+        return candidates[:limit]
+
+    quota = max(1, limit // len(target_districts))
+    taken_per_district: dict[str, int] = {}
+    chosen: set[int] = set()
+
+    for idx, c in enumerate(candidates):
+        if len(chosen) >= limit:
+            break
+        dk = normalize_district_key(c.get("district")) or "_unknown"
+        if dk == "_unknown":
+            continue
+        if taken_per_district.get(dk, 0) >= quota:
+            continue
+        chosen.add(idx)
+        taken_per_district[dk] = taken_per_district.get(dk, 0) + 1
+
+    for idx in range(len(candidates)):
+        if len(chosen) >= limit:
+            break
+        chosen.add(idx)
+
+    return [candidates[idx] for idx in sorted(chosen)]
+
+
 def _apply_market_viability_pass(
     candidates: list[dict[str, Any]],
     *,
@@ -10874,46 +10928,21 @@ def run_expansion_search(
             search_id, _pre_score_dedup, len(candidates),
         )
 
-    # ── District balancing: ensure multi-district searches get representation ──
-    # When target_districts has 2+ districts, guarantee at least min_per_district
-    # candidates from each district that has qualifying parcels, before filling
-    # remaining slots by rank.
-    if len(target_districts) >= 2 and len(candidates) > 0:
-        _min_per_district = max(2, limit // len(target_districts))
-        _by_district: dict[str, list[dict]] = {}
-        for c in candidates:
-            _dk = normalize_district_key(c.get("district")) or "_unknown"
-            _by_district.setdefault(_dk, []).append(c)
-
-        _balanced: list[dict] = []
-        _seen_ids: set[str] = set()
-
-        # First pass: take min_per_district from each district
-        for _dk in _by_district:
-            for c in _by_district[_dk][:_min_per_district]:
-                cid = c.get("parcel_id") or c.get("id") or id(c)
-                if cid not in _seen_ids:
-                    _balanced.append(c)
-                    _seen_ids.add(cid)
-
-        # Second pass: fill remaining slots from the global ranked list
-        for c in candidates:
-            if len(_balanced) >= limit:
-                break
-            cid = c.get("parcel_id") or c.get("id") or id(c)
-            if cid not in _seen_ids:
-                _balanced.append(c)
-                _seen_ids.add(cid)
-
-        candidates = _balanced
-
     # ── Score-delta refactor ──
-    # The viability pass now applies hard-floor drops AND attaches per-leg
+    # The viability pass applies hard-floor drops AND attaches per-leg
     # decisions (viability_legs_fired, viability_delta) on each survivor,
     # without any positional reorder. We then fold the value_band, viability,
     # freshness, and momentum deltas into final_score and re-sort strictly
     # by (final_score DESC, parcel_id ASC). The LLM rerank pass that follows
     # is a no-op in production (EXPANSION_LLM_RERANK_ENABLED=False).
+    #
+    # Pipeline-order fix (2026-06): both passes run on the FULL deduped pool,
+    # BEFORE any truncation or district selection, so that (a) hard-floor
+    # drops are backfilled from the rest of the pool instead of under-filling
+    # the response, (b) the viability percentile cohorts carry the same
+    # statistical meaning for multi-district and city-wide searches, and
+    # (c) district selection operates on final post-delta scores and cannot
+    # be voided by a later re-sort.
     viability_diagnostics: dict[str, Any] = {}
     candidates = _apply_market_viability_pass(
         candidates,
@@ -10923,7 +10952,14 @@ def run_expansion_search(
 
     candidates = _apply_score_deltas_and_sort(candidates)
 
-    candidates = candidates[:limit]
+    # ── Final selection ──
+    # City-wide / single-district: plain top-``limit`` slice, identical to
+    # the pre-balancing behavior. Multi-district: per-district quota over
+    # the score-sorted hard-floor survivors. The representation guarantee
+    # is best-effort-within-limit and applies to floor SURVIVORS only — a
+    # district whose every candidate fails a hard floor is legitimately
+    # unrepresented.
+    candidates = _select_final_candidates(candidates, target_districts, limit)
 
     # Phase 2: bounded LLM shortlist reranking. Annotates every candidate
     # with rerank metadata (deterministic_rank, final_rank, rerank_applied,
