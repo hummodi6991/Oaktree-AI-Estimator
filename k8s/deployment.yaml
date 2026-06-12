@@ -37,6 +37,18 @@ spec:
             # entries override values from the oaktree-app-env secret.
             - name: EXPANSION_MEMO_PREWARM_ENABLED
               value: "false"
+            # Declared here (not via kubectl set env) so deploys that
+            # re-apply k8s/ never revert them. v2 weight stack and
+            # archetype profiles are the live production scoring config.
+            - name: EXPANSION_WEIGHT_STACK
+              value: "v2"
+            - name: EXPANSION_ARCHETYPE_PROFILES
+              value: "true"
+            # "Describe your brand" LLM brief extraction (backend flag;
+            # the matching frontend flag is baked at image build time via
+            # VITE_EXPANSION_BRIEF_EXTRACTION_ENABLED in deploy-sccc.yml).
+            - name: EXPANSION_BRIEF_EXTRACTION_ENABLED
+              value: "true"
           envFrom:
             - secretRef:
                 name: oaktree-db-env

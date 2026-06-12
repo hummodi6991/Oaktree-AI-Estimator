@@ -142,7 +142,10 @@ jobs:
         run: |
           IMAGE="ghcr.io/${{ github.repository_owner }}/oaktree-estimator:${{ github.sha }}"
           echo "Using image: $IMAGE"
-          docker build --build-arg VITE_PARCEL_TILE_TABLE=public.riyadh_parcels_arcgis_proxy -t "$IMAGE" .
+          docker build \
+            --build-arg VITE_PARCEL_TILE_TABLE=public.riyadh_parcels_arcgis_proxy \
+            --build-arg VITE_EXPANSION_BRIEF_EXTRACTION_ENABLED=true \
+            -t "$IMAGE" .
 
           echo "=== Verify models inside Docker image ==="
           docker run --rm "$IMAGE" ls -la /app/models/ || true
