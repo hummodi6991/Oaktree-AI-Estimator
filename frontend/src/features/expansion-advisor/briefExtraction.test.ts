@@ -33,7 +33,7 @@ const RESULT: BriefExtractionResult = {
   conflicts: [],
   memo_color: ["family seating"],
   model: "gpt-4o-mini-2024-07-18",
-  prompt_version: "brief-extract-v1.0-2026-06",
+  prompt_version: "brief-extract-v1.3-2026-06",
 };
 
 describe("proposalToProfileDelta", () => {
@@ -62,7 +62,7 @@ describe("applyExtractionToBrief", () => {
     expect(next.brand_profile?.brief_text).toBe("my brief text");
     expect(next.brand_profile?.brief_extraction?.accepted).toBe(true);
     expect(next.brand_profile?.brief_extraction?.prompt_version).toBe(
-      "brief-extract-v1.0-2026-06",
+      "brief-extract-v1.3-2026-06",
     );
     expect(delta.brand_archetype).toBe("neighborhood_local");
     // Pure: the input brief is untouched (L2 — only Apply writes state).
