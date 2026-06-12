@@ -77,6 +77,19 @@ export type ExpansionBrandProfile = {
   cannibalization_tolerance_m?: number | null;
   preferred_districts?: string[] | null;
   excluded_districts?: string[] | null;
+  /** "Describe your brand" raw text + extraction audit metadata. Only sent
+   * when the user typed a brief and pressed Apply — otherwise both keys are
+   * omitted so the request payload stays byte-identical to today. */
+  brief_text?: string | null;
+  brief_extraction?: BriefExtractionMeta | null;
+};
+
+export type BriefExtractionMeta = {
+  extraction_json?: Record<string, unknown> | null;
+  model?: string | null;
+  prompt_version?: string | null;
+  accepted?: boolean | null;
+  edited_fields?: string[] | null;
 };
 
 export type ExpansionBrief = {
@@ -857,6 +870,51 @@ export async function listSavedExpansionSearches(status?: "draft" | "final", lim
 export async function getSavedExpansionSearch(savedId: string): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}?lang=${currentLang()}`)); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); }
 export async function updateSavedExpansionSearch(savedId: string, payload: Partial<SavedExpansionSearch>): Promise<SavedExpansionSearch> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, lang: currentLang() }) }); return normalizeSavedSearch(await readJson<SavedExpansionSearch>(res)); } // PR-FE-AR: locale per request
 export async function deleteSavedExpansionSearch(savedId: string): Promise<{ deleted: boolean }> { const res = await fetchWithAuth(buildApiUrl(`/v1/expansion-advisor/saved-searches/${savedId}`), { method: "DELETE" }); return readJson<{ deleted: boolean }>(res); }
+
+// ── LLM brief extraction ("describe your brand") ────────────────────
+
+export type BriefProposalConfidence = "high" | "medium" | "low";
+
+export type BriefProposalEntry = {
+  value: string | number | string[];
+  confidence?: BriefProposalConfidence;
+  evidence?: string;
+};
+
+export type BriefExtractionConflict = {
+  field: string;
+  evidence?: string;
+  note?: string;
+};
+
+export type BriefExtractionResult = {
+  proposal: Record<string, BriefProposalEntry>;
+  unrecognized_districts: string[];
+  conflicts: BriefExtractionConflict[];
+  memo_color: string[];
+  model?: string | null;
+  prompt_version?: string | null;
+};
+
+export async function extractBrief(
+  briefText: string,
+  formContext: { brand_name?: string; category?: string; service_model?: string },
+): Promise<BriefExtractionResult> {
+  const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/brief-extraction"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ brief_text: briefText, form_context: formContext, lang: currentLang() }),
+  });
+  const data = await readJson<BriefExtractionResult>(res);
+  return {
+    proposal: data.proposal || {},
+    unrecognized_districts: data.unrecognized_districts || [],
+    conflicts: data.conflicts || [],
+    memo_color: data.memo_color || [],
+    model: data.model ?? null,
+    prompt_version: data.prompt_version ?? null,
+  };
+}
 
 export async function getExpansionDistricts(): Promise<DistrictOption[]> {
   const res = await fetchWithAuth(buildApiUrl("/v1/expansion-advisor/districts"));
