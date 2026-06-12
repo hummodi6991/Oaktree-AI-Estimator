@@ -1,0 +1,43 @@
+{
+  "id": "ar_05_exclusions_region_unmatched",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "نريد التوسع في شمال الرياض لكن نتجنب حي الملز والديرة لأنها لا تناسب جمهورنا.",
+  "form_context": {
+    "brand_name": "دجاج ذهبي",
+    "category": "fried_chicken",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {
+    "district_mentions": [
+      {
+        "text": "شمال الرياض",
+        "polarity": "preferred",
+        "confidence": "medium",
+        "evidence": "نريد التوسع في شمال الرياض"
+      },
+      {
+        "text": "حي الملز",
+        "polarity": "excluded",
+        "confidence": "high",
+        "evidence": "نتجنب حي الملز والديرة"
+      },
+      {
+        "text": "الديرة",
+        "polarity": "excluded",
+        "confidence": "high",
+        "evidence": "نتجنب حي الملز والديرة"
+      }
+    ]
+  },
+  "expected_applied": {
+    "excluded_districts": [
+      "الملز",
+      "الديرة"
+    ]
+  },
+  "expected_unrecognized_districts": [
+    "شمال الرياض"
+  ],
+  "rationale": "A region phrase (north Riyadh) is not a district key — surfaced as unrecognized; the two vocabulary exclusions are applied."
+}

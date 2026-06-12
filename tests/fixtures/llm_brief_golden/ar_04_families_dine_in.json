@@ -1,0 +1,26 @@
+{
+  "id": "ar_04_families_dine_in",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "مطعمنا يستهدف العوائل أولاً، بجلسات داخلية مريحة وقسم خاص للعوائل.",
+  "form_context": {
+    "brand_name": "بيت المشويات",
+    "category": "grills",
+    "service_model": "dine_in"
+  },
+  "expected_extraction": {
+    "primary_channel": {
+      "value": "dine_in",
+      "confidence": "medium",
+      "evidence": "جلسات داخلية مريحة"
+    },
+    "memo_color": [
+      "family seating (عوائل)"
+    ]
+  },
+  "expected_applied": {
+    "primary_channel": "dine_in"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "عوائل (families) has no scored home — memo color only; indoor seating supports a medium dine_in channel signal."
+}

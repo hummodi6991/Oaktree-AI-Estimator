@@ -1,0 +1,23 @@
+{
+  "id": "adv_08_self_contradiction",
+  "lang": "en",
+  "kind": "adversarial",
+  "brief_text": "A luxury fine-dining experience at the cheapest prices in town.",
+  "form_context": {
+    "brand_name": "Gold Spoon",
+    "category": "casual_dining",
+    "service_model": "dine_in"
+  },
+  "expected_extraction": {
+    "conflicts": [
+      {
+        "field": "price_tier",
+        "evidence": "luxury fine-dining experience at the cheapest prices",
+        "note": "Text claims both luxury positioning and lowest prices — price tier omitted rather than picking a side."
+      }
+    ]
+  },
+  "expected_applied": {},
+  "expected_unrecognized_districts": [],
+  "rationale": "Internal contradiction on price — the field is omitted and the conflict flagged instead of guessing a tier."
+}

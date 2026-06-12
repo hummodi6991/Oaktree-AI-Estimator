@@ -1,0 +1,19 @@
+{
+  "id": "en_11_daypart_extract_nothing",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "We're strongest at breakfast and weekend brunch crowds.",
+  "form_context": {
+    "brand_name": "Sunny Side",
+    "category": "breakfast",
+    "service_model": "cafe"
+  },
+  "expected_extraction": {
+    "memo_color": [
+      "breakfast/brunch daypart"
+    ]
+  },
+  "expected_applied": {},
+  "expected_unrecognized_districts": [],
+  "rationale": "Daypart has no home in the scored surface — honest no-op plus memo color."
+}

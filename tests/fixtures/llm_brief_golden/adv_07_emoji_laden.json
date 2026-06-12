@@ -1,0 +1,35 @@
+{
+  "id": "adv_07_emoji_laden",
+  "lang": "ar",
+  "kind": "adversarial",
+  "brief_text": "🔥🍔 برجر سماش 🔥 أسعار اقتصادية 💸 توصيل فقط 🛵",
+  "form_context": {
+    "brand_name": "سماشي",
+    "category": "burgers",
+    "service_model": "delivery_first"
+  },
+  "expected_extraction": {
+    "price_tier": {
+      "value": "value",
+      "confidence": "high",
+      "evidence": "أسعار اقتصادية"
+    },
+    "primary_channel": {
+      "value": "delivery",
+      "confidence": "high",
+      "evidence": "توصيل فقط"
+    },
+    "brand_archetype": {
+      "value": "delivery_led",
+      "confidence": "medium",
+      "evidence": "توصيل فقط"
+    }
+  },
+  "expected_applied": {
+    "price_tier": "value",
+    "primary_channel": "delivery",
+    "brand_archetype": "delivery_led"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Emoji noise must not block extraction of the real signals between the emoji."
+}

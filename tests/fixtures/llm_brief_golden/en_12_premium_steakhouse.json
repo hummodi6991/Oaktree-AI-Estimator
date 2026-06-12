@@ -1,0 +1,38 @@
+{
+  "id": "en_12_premium_steakhouse",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "Upscale steakhouse, destination dining — guests drive to us and valet matters. We never do delivery.",
+  "form_context": {
+    "brand_name": "Ember & Oak",
+    "category": "steakhouse",
+    "service_model": "dine_in"
+  },
+  "expected_extraction": {
+    "price_tier": {
+      "value": "premium",
+      "confidence": "high",
+      "evidence": "Upscale steakhouse"
+    },
+    "primary_channel": {
+      "value": "dine_in",
+      "confidence": "high",
+      "evidence": "We never do delivery"
+    },
+    "parking_sensitivity": {
+      "value": "high",
+      "confidence": "medium",
+      "evidence": "guests drive to us and valet matters"
+    },
+    "memo_color": [
+      "destination dining / valet"
+    ]
+  },
+  "expected_applied": {
+    "price_tier": "premium",
+    "primary_channel": "dine_in",
+    "parking_sensitivity": "high"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Premium dine-in with a car-borne guest base; 'destination dining' itself has no archetype home and rides to the memo."
+}

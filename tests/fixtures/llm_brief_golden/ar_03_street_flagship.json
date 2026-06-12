@@ -1,0 +1,35 @@
+{
+  "id": "ar_03_street_flagship",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "مطعم شاورما بمفهوم عصري، نبحث عن موقع رئيسي بواجهة عريضة على شارع تجاري حيوي ولافتة واضحة يراها الجميع.",
+  "form_context": {
+    "brand_name": "شاورما البلد",
+    "category": "shawarma",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {
+    "brand_archetype": {
+      "value": "street_flagship",
+      "confidence": "high",
+      "evidence": "موقع رئيسي بواجهة عريضة على شارع تجاري حيوي"
+    },
+    "frontage_sensitivity": {
+      "value": "high",
+      "confidence": "high",
+      "evidence": "واجهة عريضة"
+    },
+    "visibility_sensitivity": {
+      "value": "high",
+      "confidence": "high",
+      "evidence": "لافتة واضحة يراها الجميع"
+    }
+  },
+  "expected_applied": {
+    "brand_archetype": "street_flagship",
+    "frontage_sensitivity": "high",
+    "visibility_sensitivity": "high"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Flagship/main-street/signage vocabulary maps to street_flagship with high frontage and visibility sensitivities."
+}

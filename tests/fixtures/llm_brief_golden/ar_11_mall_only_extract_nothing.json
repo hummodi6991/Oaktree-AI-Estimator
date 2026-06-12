@@ -1,0 +1,19 @@
+{
+  "id": "ar_11_mall_only_extract_nothing",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "نستهدف المولات الكبيرة وممرات الفود كورت فقط، لا مواقع شوارع.",
+  "form_context": {
+    "brand_name": "حلا وسط المول",
+    "category": "desserts",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {
+    "memo_color": [
+      "mall / food-court placement only"
+    ]
+  },
+  "expected_applied": {},
+  "expected_unrecognized_districts": [],
+  "rationale": "Mall vs street has no home in the scored surface — memo color only; structurally an 'extract nothing' case."
+}

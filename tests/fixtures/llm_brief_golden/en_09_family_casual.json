@@ -1,0 +1,33 @@
+{
+  "id": "en_09_family_casual",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "Family-friendly casual dining with big group tables and a kids corner.",
+  "form_context": {
+    "brand_name": "Table Tales",
+    "category": "casual_dining",
+    "service_model": "dine_in"
+  },
+  "expected_extraction": {
+    "price_tier": {
+      "value": "mid",
+      "confidence": "medium",
+      "evidence": "casual dining"
+    },
+    "primary_channel": {
+      "value": "dine_in",
+      "confidence": "medium",
+      "evidence": "big group tables"
+    },
+    "memo_color": [
+      "family seating",
+      "kids area"
+    ]
+  },
+  "expected_applied": {
+    "price_tier": "mid",
+    "primary_channel": "dine_in"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Casual implies mid at medium confidence; family/kids descriptors have no scored home and go to the memo."
+}

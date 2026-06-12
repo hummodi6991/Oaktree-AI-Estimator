@@ -1,0 +1,26 @@
+{
+  "id": "ar_09_drive_thru_parking",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "قهوة درايف ثرو بالدرجة الأولى، نحتاج مواقف سيارات سهلة ودخولاً وخروجاً سريعاً.",
+  "form_context": {
+    "brand_name": "قهوة عابر",
+    "category": "coffee",
+    "service_model": "cafe"
+  },
+  "expected_extraction": {
+    "parking_sensitivity": {
+      "value": "high",
+      "confidence": "high",
+      "evidence": "نحتاج مواقف سيارات سهلة"
+    },
+    "memo_color": [
+      "drive-thru format"
+    ]
+  },
+  "expected_applied": {
+    "parking_sensitivity": "high"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Drive-thru has no channel enum — only its parking implication is homed; the format itself rides to the memo."
+}

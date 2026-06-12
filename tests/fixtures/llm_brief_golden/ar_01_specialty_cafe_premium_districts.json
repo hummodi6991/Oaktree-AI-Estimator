@@ -1,0 +1,47 @@
+{
+  "id": "ar_01_specialty_cafe_premium_districts",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "نحن علامة قهوة مختصة، نركز على تجربة هادئة داخل الأحياء السكنية وأسعارنا أعلى من المتوسط. نفضل أحياء مثل الياسمين والنرجس.",
+  "form_context": {
+    "brand_name": "محمصة ورد",
+    "category": "coffee",
+    "service_model": "cafe"
+  },
+  "expected_extraction": {
+    "brand_archetype": {
+      "value": "neighborhood_local",
+      "confidence": "high",
+      "evidence": "داخل الأحياء السكنية"
+    },
+    "price_tier": {
+      "value": "premium",
+      "confidence": "high",
+      "evidence": "أسعارنا أعلى من المتوسط"
+    },
+    "district_mentions": [
+      {
+        "text": "الياسمين",
+        "polarity": "preferred",
+        "confidence": "high",
+        "evidence": "نفضل أحياء مثل الياسمين والنرجس"
+      },
+      {
+        "text": "النرجس",
+        "polarity": "preferred",
+        "confidence": "high",
+        "evidence": "نفضل أحياء مثل الياسمين والنرجس"
+      }
+    ]
+  },
+  "expected_applied": {
+    "brand_archetype": "neighborhood_local",
+    "price_tier": "premium",
+    "preferred_districts": [
+      "الياسمين",
+      "النرجس"
+    ]
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Specialty-café neighborhood language maps to neighborhood_local + premium; both districts are exact vocabulary matches."
+}
