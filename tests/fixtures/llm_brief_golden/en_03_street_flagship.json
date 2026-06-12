@@ -1,0 +1,35 @@
+{
+  "id": "en_03_street_flagship",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "We want a flagship presence: a wide storefront on a major commercial street with strong signage and maximum drive-by visibility.",
+  "form_context": {
+    "brand_name": "Beit Mezza",
+    "category": "lebanese",
+    "service_model": "dine_in"
+  },
+  "expected_extraction": {
+    "brand_archetype": {
+      "value": "street_flagship",
+      "confidence": "high",
+      "evidence": "flagship presence"
+    },
+    "frontage_sensitivity": {
+      "value": "high",
+      "confidence": "high",
+      "evidence": "a wide storefront"
+    },
+    "visibility_sensitivity": {
+      "value": "high",
+      "confidence": "high",
+      "evidence": "maximum drive-by visibility"
+    }
+  },
+  "expected_applied": {
+    "brand_archetype": "street_flagship",
+    "frontage_sensitivity": "high",
+    "visibility_sensitivity": "high"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Flagship/storefront/signage vocabulary maps to street_flagship with high frontage and visibility sensitivities."
+}

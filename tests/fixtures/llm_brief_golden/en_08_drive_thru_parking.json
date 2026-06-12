@@ -1,0 +1,27 @@
+{
+  "id": "en_08_drive_thru_parking",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "Drive-thru-first coffee format. Easy car access and parking are critical; we don't really need indoor seating.",
+  "form_context": {
+    "brand_name": "Lane Coffee",
+    "category": "coffee",
+    "service_model": "cafe"
+  },
+  "expected_extraction": {
+    "parking_sensitivity": {
+      "value": "high",
+      "confidence": "high",
+      "evidence": "Easy car access and parking are critical"
+    },
+    "memo_color": [
+      "drive-thru format",
+      "minimal indoor seating"
+    ]
+  },
+  "expected_applied": {
+    "parking_sensitivity": "high"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Drive-thru is not a primary_channel value — only the parking implication is homed; the format rides to the memo."
+}

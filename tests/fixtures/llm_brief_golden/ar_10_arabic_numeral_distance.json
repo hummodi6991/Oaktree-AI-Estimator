@@ -1,0 +1,23 @@
+{
+  "id": "ar_10_arabic_numeral_distance",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "لدينا ثلاثة فروع حالياً ولا نريد أي فرع جديد أقرب من ٢ كم من فروعنا القائمة.",
+  "form_context": {
+    "brand_name": "ساندوتشات السريع",
+    "category": "sandwiches",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {
+    "cannibalization_tolerance_m": {
+      "value": 2000,
+      "confidence": "high",
+      "evidence": "أقرب من ٢ كم"
+    }
+  },
+  "expected_applied": {
+    "cannibalization_tolerance_m": 2000
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Arabic-Indic numerals (٢ كم) must parse to 2000 m."
+}

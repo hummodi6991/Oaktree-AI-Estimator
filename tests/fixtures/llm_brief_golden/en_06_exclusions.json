@@ -1,0 +1,35 @@
+{
+  "id": "en_06_exclusions",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "Avoid Al Olaya and Al Malaz for now — the rents there don't work for our margins.",
+  "form_context": {
+    "brand_name": "Wrap Theory",
+    "category": "sandwiches",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {
+    "district_mentions": [
+      {
+        "text": "Al Olaya",
+        "polarity": "excluded",
+        "confidence": "high",
+        "evidence": "Avoid Al Olaya and Al Malaz"
+      },
+      {
+        "text": "Al Malaz",
+        "polarity": "excluded",
+        "confidence": "high",
+        "evidence": "Avoid Al Olaya and Al Malaz"
+      }
+    ]
+  },
+  "expected_applied": {
+    "excluded_districts": [
+      "العليا",
+      "الملز"
+    ]
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Exclusion polarity from 'avoid'; both English labels resolve to Arabic vocabulary keys."
+}

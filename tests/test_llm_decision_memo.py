@@ -3053,12 +3053,14 @@ class TestDgInjectionHelper:
 
 class TestMemoPromptVersionBumpedForV121:
     """The two non-compliant production memos are cached at v12; the bump
-    forces regeneration on next view."""
+    forces regeneration on next view. Bumped again to v12.5 when the
+    operator_brief line was added to the rendered prompt (brief-extraction
+    PR) so cached memos regenerate against the new prompt."""
 
-    def test_version_is_v12_4(self):
+    def test_version_is_v12_5(self):
         from app.services.llm_decision_memo import MEMO_PROMPT_VERSION
 
-        assert MEMO_PROMPT_VERSION == "v12.4-persisted-weights-2026-06"
+        assert MEMO_PROMPT_VERSION == "v12.5-operator-brief-2026-06"
 
 
 class TestRenderPromptAdvisoryFailureNoGateFailureAddendum:

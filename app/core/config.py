@@ -200,6 +200,18 @@ class Settings:
         in {"1", "true", "yes", "on"}
     )
 
+    # --- Expansion Advisor LLM brief extraction ---
+    # "Describe your brand" free-text field on the brief form. When false
+    # (default) the endpoint returns 404, the frontend renders no textarea,
+    # and the search request path is byte-identical to today. Model, daily
+    # ceiling, and prompt version live in app.services.llm_brief_extraction
+    # (BRIEF_EXTRACTION_MODEL / BRIEF_EXTRACTION_DAILY_CEILING_USD env vars),
+    # mirroring the decision-memo module's env conventions.
+    EXPANSION_BRIEF_EXTRACTION_ENABLED: bool = (
+        os.getenv("EXPANSION_BRIEF_EXTRACTION_ENABLED", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
     # --- Expansion Advisor LLM shortlist reranking (Phase 2) ---
     # Bounded LLM reranking on the top deterministic shortlist. Default OFF.
     # When enabled, after the deterministic scorer + sort + LLM fuzzy tiebreak +

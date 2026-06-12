@@ -1,0 +1,35 @@
+{
+  "id": "en_01_specialty_coffee",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "We are a specialty coffee brand with a calm neighborhood feel; pricing sits at the premium end and most of our guests are walk-in regulars.",
+  "form_context": {
+    "brand_name": "Ward Roasters",
+    "category": "coffee",
+    "service_model": "cafe"
+  },
+  "expected_extraction": {
+    "brand_archetype": {
+      "value": "neighborhood_local",
+      "confidence": "high",
+      "evidence": "calm neighborhood feel"
+    },
+    "price_tier": {
+      "value": "premium",
+      "confidence": "high",
+      "evidence": "pricing sits at the premium end"
+    },
+    "primary_channel": {
+      "value": "dine_in",
+      "confidence": "medium",
+      "evidence": "walk-in regulars"
+    }
+  },
+  "expected_applied": {
+    "brand_archetype": "neighborhood_local",
+    "price_tier": "premium",
+    "primary_channel": "dine_in"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Neighborhood specialty-coffee phrasing seeds neighborhood_local + premium; walk-in regulars is a medium dine_in signal."
+}

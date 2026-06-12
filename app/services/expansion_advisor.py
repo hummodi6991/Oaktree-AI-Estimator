@@ -6609,6 +6609,13 @@ def persist_existing_branches(db: Session, search_id: str, existing_branches: li
 
 def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, Any]) -> None:
     profile = _default_brand_profile(brand_profile)
+    # "Describe your brand" extraction audit metadata (design §6.1). Present
+    # only when the user typed a brief; columns stay NULL otherwise.
+    extraction_meta = profile.get("brief_extraction") or {}
+    if not isinstance(extraction_meta, dict):
+        extraction_meta = {}
+    extraction_json = extraction_meta.get("extraction_json")
+    edited_fields = extraction_meta.get("edited_fields")
     try:
         with db.begin_nested():
             db.execute(
@@ -6618,12 +6625,18 @@ def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, 
                         id, search_id, price_tier, average_check_sar, primary_channel,
                         parking_sensitivity, frontage_sensitivity, visibility_sensitivity,
                         expansion_goal, brand_archetype, cannibalization_tolerance_m,
-                        preferred_districts_json, excluded_districts_json
+                        preferred_districts_json, excluded_districts_json,
+                        brief_text, brief_extraction_json, brief_extraction_model,
+                        brief_extraction_prompt_version, brief_extraction_accepted,
+                        brief_extraction_edited_fields_json
                     ) VALUES (
                         :id, :search_id, :price_tier, :average_check_sar, :primary_channel,
                         :parking_sensitivity, :frontage_sensitivity, :visibility_sensitivity,
                         :expansion_goal, :brand_archetype, :cannibalization_tolerance_m,
-                        CAST(:preferred_districts_json AS jsonb), CAST(:excluded_districts_json AS jsonb)
+                        CAST(:preferred_districts_json AS jsonb), CAST(:excluded_districts_json AS jsonb),
+                        :brief_text, CAST(:brief_extraction_json AS jsonb), :brief_extraction_model,
+                        :brief_extraction_prompt_version, :brief_extraction_accepted,
+                        CAST(:brief_extraction_edited_fields_json AS jsonb)
                     )
                     ON CONFLICT (search_id) DO UPDATE SET
                         price_tier = EXCLUDED.price_tier,
@@ -6637,6 +6650,12 @@ def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, 
                         cannibalization_tolerance_m = EXCLUDED.cannibalization_tolerance_m,
                         preferred_districts_json = EXCLUDED.preferred_districts_json,
                         excluded_districts_json = EXCLUDED.excluded_districts_json,
+                        brief_text = EXCLUDED.brief_text,
+                        brief_extraction_json = EXCLUDED.brief_extraction_json,
+                        brief_extraction_model = EXCLUDED.brief_extraction_model,
+                        brief_extraction_prompt_version = EXCLUDED.brief_extraction_prompt_version,
+                        brief_extraction_accepted = EXCLUDED.brief_extraction_accepted,
+                        brief_extraction_edited_fields_json = EXCLUDED.brief_extraction_edited_fields_json,
                         updated_at = now()
                     """
                 ),
@@ -6654,6 +6673,20 @@ def persist_brand_profile(db: Session, search_id: str, brand_profile: dict[str, 
                     "cannibalization_tolerance_m": profile.get("cannibalization_tolerance_m"),
                     "preferred_districts_json": json.dumps(profile.get("preferred_districts") or [], ensure_ascii=False),
                     "excluded_districts_json": json.dumps(profile.get("excluded_districts") or [], ensure_ascii=False),
+                    "brief_text": profile.get("brief_text"),
+                    "brief_extraction_json": (
+                        json.dumps(extraction_json, ensure_ascii=False)
+                        if extraction_json is not None
+                        else None
+                    ),
+                    "brief_extraction_model": extraction_meta.get("model"),
+                    "brief_extraction_prompt_version": extraction_meta.get("prompt_version"),
+                    "brief_extraction_accepted": extraction_meta.get("accepted"),
+                    "brief_extraction_edited_fields_json": (
+                        json.dumps(edited_fields, ensure_ascii=False)
+                        if edited_fields is not None
+                        else None
+                    ),
                 },
             )
     except Exception:
@@ -6668,7 +6701,7 @@ def get_brand_profile(db: Session, search_id: str) -> dict[str, Any] | None:
     row = db.execute(text("""
         SELECT price_tier, average_check_sar, primary_channel, parking_sensitivity, frontage_sensitivity,
                visibility_sensitivity, expansion_goal, brand_archetype, cannibalization_tolerance_m,
-               preferred_districts_json, excluded_districts_json
+               preferred_districts_json, excluded_districts_json, brief_text
         FROM expansion_brand_profile WHERE search_id = :search_id
     """), {"search_id": search_id}).mappings().first()
     if not row:
@@ -6676,6 +6709,10 @@ def get_brand_profile(db: Session, search_id: str) -> dict[str, Any] | None:
     data = dict(row)
     data["preferred_districts"] = data.pop("preferred_districts_json") or []
     data["excluded_districts"] = data.pop("excluded_districts_json") or []
+    # brief_text rides into memo context as operator color (design §6.2);
+    # dropped when NULL so legacy profiles keep their exact shape.
+    if data.get("brief_text") is None:
+        data.pop("brief_text", None)
     return data
 
 

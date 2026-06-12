@@ -1,0 +1,23 @@
+{
+  "id": "en_04_value_qsr",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "Budget-friendly fried chicken, quick service, we win on price not on ambiance.",
+  "form_context": {
+    "brand_name": "Cluck Express",
+    "category": "fried_chicken",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {
+    "price_tier": {
+      "value": "value",
+      "confidence": "high",
+      "evidence": "we win on price"
+    }
+  },
+  "expected_applied": {
+    "price_tier": "value"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Only price is clearly supported; the archetype stays on the qsr seed (balanced) because nothing implies otherwise."
+}

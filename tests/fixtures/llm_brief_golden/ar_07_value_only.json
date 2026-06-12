@@ -1,0 +1,23 @@
+{
+  "id": "ar_07_value_only",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "مطعم بروست وأسعارنا في متناول الجميع، نركز على سرعة التحضير.",
+  "form_context": {
+    "brand_name": "بروستد البيت",
+    "category": "fried_chicken",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {
+    "price_tier": {
+      "value": "value",
+      "confidence": "high",
+      "evidence": "أسعارنا في متناول الجميع"
+    }
+  },
+  "expected_applied": {
+    "price_tier": "value"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Only price is clearly supported; preparation speed maps to nothing, and the archetype is left to the qsr seed."
+}

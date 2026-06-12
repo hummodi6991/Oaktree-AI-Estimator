@@ -1,10 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { DistrictOption, ExpansionBrief } from "../../lib/api/expansionAdvisor";
-import { getExpansionDistricts } from "../../lib/api/expansionAdvisor";
+import type {
+  BriefExtractionResult,
+  DistrictOption,
+  ExpansionBrandProfile,
+  ExpansionBrief,
+} from "../../lib/api/expansionAdvisor";
+import { extractBrief, getExpansionDistricts } from "../../lib/api/expansionAdvisor";
 import CategorySelect from "./CategorySelect";
 import DistrictMultiSelect from "./DistrictMultiSelect";
 import BranchLocationPicker from "./BranchLocationPicker";
+import BriefExtractionPanel from "./BriefExtractionPanel";
+import {
+  applyExtractionToBrief,
+  BRIEF_EXTRACTION_MAX_CALLS,
+  BRIEF_TEXT_MAX_LENGTH,
+  deltaTouchesAdvancedSection,
+  editedFieldsSinceApply,
+  isBriefExtractionEnabled,
+} from "./briefExtraction";
 
 // Hide the Advanced "GEOGRAPHY" section (preferred/excluded districts).
 // Target districts in the main brief body is the operator's real lever;
@@ -74,6 +88,52 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showBranches, setShowBranches] = useState(false);
 
+  // ── "Describe your brand" extraction state (flag-gated, design §5.1) ──
+  const briefExtractionEnabled = isBriefExtractionEnabled();
+  const [briefText, setBriefText] = useState("");
+  const [extractionResult, setExtractionResult] = useState<BriefExtractionResult | null>(null);
+  const [extractionLoading, setExtractionLoading] = useState(false);
+  const [extractionError, setExtractionError] = useState(false);
+  const [extractionCalls, setExtractionCalls] = useState(0);
+  const [discardedChips, setDiscardedChips] = useState<Set<string>>(new Set());
+  const [appliedDelta, setAppliedDelta] = useState<Partial<ExpansionBrandProfile> | null>(null);
+
+  const handleExtract = async () => {
+    if (!briefText.trim() || extractionLoading) return;
+    if (extractionCalls >= BRIEF_EXTRACTION_MAX_CALLS) return;
+    setExtractionLoading(true);
+    setExtractionError(false);
+    setExtractionResult(null);
+    setDiscardedChips(new Set());
+    setExtractionCalls((n) => n + 1);
+    try {
+      const result = await extractBrief(briefText.trim(), {
+        brand_name: brief.brand_name || undefined,
+        category: brief.category || undefined,
+        service_model: brief.service_model,
+      });
+      setExtractionResult(result);
+    } catch {
+      setExtractionError(true);
+    } finally {
+      setExtractionLoading(false);
+    }
+  };
+
+  const handleApplyExtraction = () => {
+    if (!extractionResult) return;
+    const { next, delta } = applyExtractionToBrief(
+      brief,
+      extractionResult,
+      briefText.trim(),
+      discardedChips,
+    );
+    setBrief(next);
+    setAppliedDelta(delta);
+    setExtractionResult(null);
+    if (deltaTouchesAdvancedSection(delta)) setShowAdvanced(true);
+  };
+
   useEffect(() => setBrief(initialValue), [initialValue]);
 
   useEffect(() => {
@@ -103,8 +163,21 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
     const cleanedBranches = (brief.existing_branches || []).filter(
       (b) => (b.lat !== 0 || b.lon !== 0) || (b.name && b.name.trim()),
     );
+    let profile = brief.brand_profile;
+    if (profile?.brief_extraction && appliedDelta) {
+      // Audit: record which applied fields the user edited afterwards
+      // (design §6.1) — computed at submit so late edits are captured.
+      profile = {
+        ...profile,
+        brief_extraction: {
+          ...profile.brief_extraction,
+          edited_fields: editedFieldsSinceApply(profile, appliedDelta),
+        },
+      };
+    }
     onSubmit({
       ...brief,
+      brand_profile: profile,
       min_area_m2: brief.min_area_m2 || 100,
       max_area_m2: brief.max_area_m2 || 500,
       existing_branches: cleanedBranches,
@@ -160,6 +233,66 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
             <option value="neighborhood_local">{t("expansionAdvisor.archetypeNeighborhoodLocal")}</option>
           </select>
         </div>
+
+        {/* "Describe your brand" — flag off ⇒ nothing rendered, payload
+            byte-identical to today (locked decisions L1/L6). */}
+        {briefExtractionEnabled && (
+          <div className="ea-form__field">
+            <label className="ea-form__label">{t("expansionAdvisor.briefTextLabel")}</label>
+            <textarea
+              className="ea-form__input ea-brief-textarea"
+              value={briefText}
+              onChange={(e) => setBriefText(e.target.value)}
+              disabled={loading}
+              maxLength={BRIEF_TEXT_MAX_LENGTH}
+              rows={3}
+              placeholder={t("expansionAdvisor.briefTextHelp")}
+            />
+            <div className="ea-brief-actions">
+              <button
+                type="button"
+                className="oak-btn oak-btn--sm oak-btn--secondary"
+                onClick={handleExtract}
+                disabled={
+                  loading ||
+                  extractionLoading ||
+                  !briefText.trim() ||
+                  extractionCalls >= BRIEF_EXTRACTION_MAX_CALLS
+                }
+              >
+                {extractionLoading
+                  ? t("expansionAdvisor.briefExtracting")
+                  : t("expansionAdvisor.briefExtractCta")}
+              </button>
+              {extractionCalls >= BRIEF_EXTRACTION_MAX_CALLS && (
+                <span className="ea-brief-actions__note">{t("expansionAdvisor.briefExtractLimit")}</span>
+              )}
+              {appliedDelta && !extractionResult && (
+                <span className="ea-brief-actions__note">{t("expansionAdvisor.briefAppliedNote")}</span>
+              )}
+            </div>
+            {extractionError && (
+              <span className="ea-form__error">{t("expansionAdvisor.briefExtractionFailed")}</span>
+            )}
+            {extractionResult && (
+              <BriefExtractionPanel
+                result={extractionResult}
+                discarded={discardedChips}
+                onToggleDiscard={(field) =>
+                  setDiscardedChips((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(field)) next.delete(field);
+                    else next.add(field);
+                    return next;
+                  })
+                }
+                onApply={handleApplyExtraction}
+                onDismiss={() => setExtractionResult(null)}
+                disabled={loading}
+              />
+            )}
+          </div>
+        )}
       </div>
 
       {/* Area — 3-column compact row */}
@@ -336,8 +469,13 @@ export default function ExpansionBriefForm({ initialValue, onSubmit, loading }: 
             </div>
           </div>
 
-          {/* Preferred / excluded districts */}
-          {SHOW_ADVANCED_GEOGRAPHY_SECTION && (
+          {/* Preferred / excluded districts. Normally hidden (see flag
+              above), but a brief extraction that applied districts must
+              land in VISIBLE, editable controls — nothing changes
+              invisibly (design §5.1). */}
+          {(SHOW_ADVANCED_GEOGRAPHY_SECTION ||
+            (brief.brand_profile?.preferred_districts || []).length > 0 ||
+            (brief.brand_profile?.excluded_districts || []).length > 0) && (
             <div className="ea-form__section">
               <h4 className="ea-form__section-title">{t("expansionAdvisor.geography")}</h4>
               <div className="ea-form__row">

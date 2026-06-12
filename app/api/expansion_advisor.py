@@ -50,6 +50,7 @@ from app.services.llm_decision_memo import (
     render_structured_memo_as_text,
 )
 from app.services.aqar_district_match import normalize_district_key
+from app.services.llm_brief_extraction import extract_brief
 from app.api.search import normalize_search_text
 
 router = APIRouter(prefix="/expansion-advisor", tags=["expansion-advisor"])
@@ -102,6 +103,21 @@ class ExistingBranchInput(BaseModel):
     district: str | None = Field(default=None, min_length=1, max_length=128)
 
 
+class BriefExtractionMetaInput(BaseModel):
+    """Audit metadata for an applied brief extraction (design §6.1).
+
+    Sent by the frontend alongside ``brief_text`` when the user pressed
+    Apply on the "Reading your brief as" panel; persisted verbatim on
+    ``expansion_brand_profile``. Never read by scoring.
+    """
+
+    extraction_json: dict[str, Any] | None = None
+    model: str | None = Field(default=None, max_length=64)
+    prompt_version: str | None = Field(default=None, max_length=32)
+    accepted: bool | None = None
+    edited_fields: list[str] | None = None
+
+
 class ExpansionBrandProfileInput(BaseModel):
     price_tier: Literal["value", "mid", "premium"] | None = None
     average_check_sar: float | None = None
@@ -120,6 +136,12 @@ class ExpansionBrandProfileInput(BaseModel):
     cannibalization_tolerance_m: float | None = None
     preferred_districts: list[str] | None = None
     excluded_districts: list[str] | None = None
+    # "Describe your brand" free-text brief + extraction audit metadata
+    # (EXPANSION_BRIEF_EXTRACTION_ENABLED). Both optional; when None they
+    # are omitted from the persisted payload so the request path stays
+    # byte-identical to the pre-feature shape (locked decision L6).
+    brief_text: str | None = Field(default=None, max_length=1000)
+    brief_extraction: BriefExtractionMetaInput | None = None
 
 
 
@@ -567,6 +589,63 @@ def list_districts(db: Session = Depends(get_db)) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# LLM brief extraction ("describe your brand", EXPANSION_BRIEF_EXTRACTION_ENABLED)
+# ---------------------------------------------------------------------------
+
+
+class BriefExtractionFormContext(BaseModel):
+    brand_name: str | None = Field(default=None, max_length=256)
+    category: str | None = Field(default=None, max_length=128)
+    service_model: Literal["qsr", "dine_in", "delivery_first", "cafe"] | None = None
+
+
+class BriefExtractionRequest(BaseModel):
+    # max_length mirrors llm_brief_extraction.MAX_BRIEF_CHARS — oversized
+    # payloads fail Pydantic validation with 422 (design §4.5).
+    brief_text: str = Field(..., max_length=1000)
+    form_context: BriefExtractionFormContext | None = None
+    lang: str = "en"
+
+
+class BriefExtractionResponse(StrictResponseModel):
+    proposal: dict[str, Any] = Field(default_factory=dict)
+    unrecognized_districts: list[str] = Field(default_factory=list)
+    conflicts: list[dict[str, Any]] = Field(default_factory=list)
+    memo_color: list[str] = Field(default_factory=list)
+    model: str | None = None
+    prompt_version: str | None = None
+
+
+@router.post("/brief-extraction", response_model=BriefExtractionResponse)
+def create_brief_extraction(
+    req: BriefExtractionRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Map a free-text brand brief onto the existing brand-profile surface.
+
+    The response is a PROPOSAL: nothing here touches form state or any
+    persisted profile until the user presses Apply in the confirm panel
+    (locked decision L2 — no auto-apply path exists).
+    """
+    if not settings.EXPANSION_BRIEF_EXTRACTION_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    form_context = req.form_context.model_dump() if req.form_context else None
+    district_lookup = _cached_district_lookup(db)
+    try:
+        return extract_brief(req.brief_text, form_context, district_lookup)
+    except RuntimeError as exc:
+        # Daily cost ceiling or missing API key — degrade, never block the
+        # form: the user can always fill the structured fields manually.
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Brief extraction is temporarily unavailable — please fill "
+                f"the form manually. ({exc})"
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Riyadh bounding box for branch suggestion spatial filter
 # ---------------------------------------------------------------------------
 _RIYADH_BBOX = {"min_lon": 46.0, "min_lat": 24.2, "max_lon": 47.5, "max_lat": 25.2}
@@ -902,6 +981,28 @@ def _build_prewarm_specs(
     return [dict(item) for item in ranked]
 
 
+_BRIEF_EXTRACTION_PAYLOAD_KEYS = ("brief_text", "brief_extraction")
+
+
+def _brand_profile_request_payload(
+    brand_profile: ExpansionBrandProfileInput | None,
+) -> dict[str, Any] | None:
+    """Dump the brand profile, omitting unused brief-extraction keys.
+
+    With the textarea unused (or the feature flag off) the persisted
+    request_json / brand-profile payload must stay byte-identical to the
+    pre-feature shape (locked decision L6; pinned by
+    tests/test_llm_brief_extraction_golden.py::TestFlagOffInertness).
+    """
+    if brand_profile is None:
+        return None
+    payload = brand_profile.model_dump()
+    for key in _BRIEF_EXTRACTION_PAYLOAD_KEYS:
+        if payload.get(key) is None:
+            payload.pop(key, None)
+    return payload
+
+
 @router.post("/searches", response_model=ExpansionSearchResponse)
 def create_expansion_search(
     req: ExpansionAdvisorSearchRequest,
@@ -954,7 +1055,13 @@ def create_expansion_search(
     request_json = req.model_dump(exclude={"lang"})
     bbox_json = req.bbox.model_dump() if req.bbox else None
     existing_branches_payload = [branch.model_dump() for branch in req.existing_branches]
-    brand_profile_payload = req.brand_profile.model_dump() if req.brand_profile else None
+    brand_profile_payload = _brand_profile_request_payload(req.brand_profile)
+    if request_json.get("brand_profile") is not None:
+        # Keep the persisted request_json aligned with the cleaned payload
+        # (no brief_text/brief_extraction nulls when the field was unused).
+        request_json["brand_profile"] = (
+            dict(brand_profile_payload) if brand_profile_payload else None
+        )
     if brand_profile_payload is not None:
         # Persist the RESOLVED archetype (explicit > legacy expansion_goal >
         # service_model seed) so prewarm/DB-read paths agree with search-time

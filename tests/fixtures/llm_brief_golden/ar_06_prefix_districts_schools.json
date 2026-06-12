@@ -1,0 +1,38 @@
+{
+  "id": "ar_06_prefix_districts_schools",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "نفضل الافتتاح في حي النرجس أو حي الياسمين، ويفضل قرب المدارس.",
+  "form_context": {
+    "brand_name": "مخبز الصباح",
+    "category": "bakery",
+    "service_model": "cafe"
+  },
+  "expected_extraction": {
+    "district_mentions": [
+      {
+        "text": "حي النرجس",
+        "polarity": "preferred",
+        "confidence": "high",
+        "evidence": "نفضل الافتتاح في حي النرجس أو حي الياسمين"
+      },
+      {
+        "text": "حي الياسمين",
+        "polarity": "preferred",
+        "confidence": "high",
+        "evidence": "نفضل الافتتاح في حي النرجس أو حي الياسمين"
+      }
+    ],
+    "memo_color": [
+      "proximity to schools"
+    ]
+  },
+  "expected_applied": {
+    "preferred_districts": [
+      "النرجس",
+      "الياسمين"
+    ]
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "The 'حي' prefix variants must resolve through normalize_district_key; school proximity has no scored home."
+}
