@@ -1,0 +1,28 @@
+{
+  "id": "adv_04_service_model_conflict",
+  "lang": "ar",
+  "kind": "adversarial",
+  "brief_text": "نحن مقهى قهوة مختصة بتجربة جلوس هادئة وتحميص داخلي.",
+  "form_context": {
+    "brand_name": "كوب",
+    "category": "coffee",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {
+    "brand_archetype": {
+      "value": "neighborhood_local",
+      "confidence": "medium",
+      "evidence": "تجربة جلوس هادئة"
+    },
+    "conflicts": [
+      {
+        "field": "service_model",
+        "evidence": "مقهى قهوة مختصة",
+        "note": "Text describes a specialty café but the form selects quick service (qsr)."
+      }
+    ]
+  },
+  "expected_applied": {},
+  "expected_unrecognized_districts": [],
+  "rationale": "Brief contradicts the chosen service_model — flagged for the user to resolve, never silently applied."
+}

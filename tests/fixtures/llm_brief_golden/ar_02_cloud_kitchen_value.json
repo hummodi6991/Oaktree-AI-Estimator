@@ -1,0 +1,41 @@
+{
+  "id": "ar_02_cloud_kitchen_value",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "علامة برجر تعمل بنظام المطبخ السحابي، كل مبيعاتنا توصيل عبر التطبيقات وأسعارنا اقتصادية، ولا مانع لدينا من تقارب الفروع.",
+  "form_context": {
+    "brand_name": "برجر سحاب",
+    "category": "burgers",
+    "service_model": "delivery_first"
+  },
+  "expected_extraction": {
+    "brand_archetype": {
+      "value": "delivery_led",
+      "confidence": "high",
+      "evidence": "المطبخ السحابي"
+    },
+    "primary_channel": {
+      "value": "delivery",
+      "confidence": "high",
+      "evidence": "كل مبيعاتنا توصيل عبر التطبيقات"
+    },
+    "price_tier": {
+      "value": "value",
+      "confidence": "high",
+      "evidence": "أسعارنا اقتصادية"
+    },
+    "cannibalization_tolerance_m": {
+      "value": 800,
+      "confidence": "medium",
+      "evidence": "لا مانع لدينا من تقارب الفروع"
+    }
+  },
+  "expected_applied": {
+    "brand_archetype": "delivery_led",
+    "primary_channel": "delivery",
+    "price_tier": "value",
+    "cannibalization_tolerance_m": 800
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Cloud-kitchen delivery-only brief; the qualitative clustering statement maps to the 800 m anchor at medium confidence, not an invented number."
+}

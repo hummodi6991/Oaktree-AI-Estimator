@@ -1,0 +1,35 @@
+{
+  "id": "en_10_balanced_explicit",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "Mid-priced sandwich shop; half our sales are delivery and half dine-in. We don't optimise for any one thing — we just want broadly solid locations.",
+  "form_context": {
+    "brand_name": "Stacked",
+    "category": "sandwiches",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {
+    "price_tier": {
+      "value": "mid",
+      "confidence": "high",
+      "evidence": "Mid-priced"
+    },
+    "primary_channel": {
+      "value": "balanced",
+      "confidence": "high",
+      "evidence": "half our sales are delivery and half dine-in"
+    },
+    "brand_archetype": {
+      "value": "balanced",
+      "confidence": "medium",
+      "evidence": "We don't optimise for any one thing"
+    }
+  },
+  "expected_applied": {
+    "price_tier": "mid",
+    "primary_channel": "balanced",
+    "brand_archetype": "balanced"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Explicit generalist intent supports a medium balanced archetype — distinguishable from the seed because the proposal is explicit."
+}

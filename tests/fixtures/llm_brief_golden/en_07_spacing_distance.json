@@ -1,0 +1,23 @@
+{
+  "id": "en_07_spacing_distance",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "We already run six branches across Riyadh; keep any new site at least 3 km away from existing ones.",
+  "form_context": {
+    "brand_name": "Bun House",
+    "category": "burgers",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {
+    "cannibalization_tolerance_m": {
+      "value": 3000,
+      "confidence": "high",
+      "evidence": "at least 3 km away"
+    }
+  },
+  "expected_applied": {
+    "cannibalization_tolerance_m": 3000
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Explicit distance converts to meters; the branch count itself is not an extractable field."
+}

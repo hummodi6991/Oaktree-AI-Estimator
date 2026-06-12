@@ -1,0 +1,15 @@
+{
+  "id": "adv_03_gibberish",
+  "lang": "en",
+  "kind": "adversarial",
+  "brief_text": "asdf jkl 12333 zzzz بلابلا ؟؟؟ ----- ####",
+  "form_context": {
+    "brand_name": "X",
+    "category": "burgers",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {},
+  "expected_applied": {},
+  "expected_unrecognized_districts": [],
+  "rationale": "Gibberish supports no field — empty extraction, defaults untouched."
+}

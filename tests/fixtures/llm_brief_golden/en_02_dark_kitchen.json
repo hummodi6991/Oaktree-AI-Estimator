@@ -1,0 +1,35 @@
+{
+  "id": "en_02_dark_kitchen",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "Delivery-only smash burger concept running from dark kitchens — every order comes through the apps. Branches can sit close together, that's fine.",
+  "form_context": {
+    "brand_name": "Smash Cloud",
+    "category": "burgers",
+    "service_model": "delivery_first"
+  },
+  "expected_extraction": {
+    "brand_archetype": {
+      "value": "delivery_led",
+      "confidence": "high",
+      "evidence": "Delivery-only smash burger concept"
+    },
+    "primary_channel": {
+      "value": "delivery",
+      "confidence": "high",
+      "evidence": "every order comes through the apps"
+    },
+    "cannibalization_tolerance_m": {
+      "value": 800,
+      "confidence": "medium",
+      "evidence": "Branches can sit close together"
+    }
+  },
+  "expected_applied": {
+    "brand_archetype": "delivery_led",
+    "primary_channel": "delivery",
+    "cannibalization_tolerance_m": 800
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Dark-kitchen delivery-only brief; clustering tolerance maps to the 800 m anchor at medium confidence."
+}

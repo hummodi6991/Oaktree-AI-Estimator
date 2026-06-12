@@ -1,0 +1,32 @@
+{
+  "id": "ar_08_mid_balanced_channel",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "مطعم مشويات عائلي بأسعار متوسطة، ومبيعاتنا متوازنة بين الصالة والتوصيل.",
+  "form_context": {
+    "brand_name": "مشويات نار",
+    "category": "grills",
+    "service_model": "dine_in"
+  },
+  "expected_extraction": {
+    "price_tier": {
+      "value": "mid",
+      "confidence": "high",
+      "evidence": "بأسعار متوسطة"
+    },
+    "primary_channel": {
+      "value": "balanced",
+      "confidence": "high",
+      "evidence": "متوازنة بين الصالة والتوصيل"
+    },
+    "memo_color": [
+      "family positioning (عائلي)"
+    ]
+  },
+  "expected_applied": {
+    "price_tier": "mid",
+    "primary_channel": "balanced"
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Explicit mid pricing and an explicit dine-in/delivery split; the family positioning rides to the memo only."
+}

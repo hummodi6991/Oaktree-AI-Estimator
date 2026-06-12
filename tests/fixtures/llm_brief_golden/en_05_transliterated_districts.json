@@ -1,0 +1,38 @@
+{
+  "id": "en_05_transliterated_districts",
+  "lang": "en",
+  "kind": "standard",
+  "brief_text": "We'd prefer Al Malqa and Al Yasmin — quiet family neighborhoods suit our concept.",
+  "form_context": {
+    "brand_name": "Crumb & Co",
+    "category": "bakery",
+    "service_model": "cafe"
+  },
+  "expected_extraction": {
+    "district_mentions": [
+      {
+        "text": "Al Malqa",
+        "polarity": "preferred",
+        "confidence": "high",
+        "evidence": "We'd prefer Al Malqa and Al Yasmin"
+      },
+      {
+        "text": "Al Yasmin",
+        "polarity": "preferred",
+        "confidence": "high",
+        "evidence": "We'd prefer Al Malqa and Al Yasmin"
+      }
+    ],
+    "memo_color": [
+      "family neighborhoods"
+    ]
+  },
+  "expected_applied": {
+    "preferred_districts": [
+      "الملقا",
+      "الياسمين"
+    ]
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "English transliterations resolve through the crosswalk's label_en path on the server, never via LLM translation."
+}

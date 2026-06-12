@@ -1,0 +1,43 @@
+{
+  "id": "adv_05_non_riyadh_districts",
+  "lang": "en",
+  "kind": "adversarial",
+  "brief_text": "We want Jeddah Corniche and Dubai Marina first, plus Al Olaya in Riyadh.",
+  "form_context": {
+    "brand_name": "Salt",
+    "category": "burgers",
+    "service_model": "qsr"
+  },
+  "expected_extraction": {
+    "district_mentions": [
+      {
+        "text": "Jeddah Corniche",
+        "polarity": "preferred",
+        "confidence": "medium",
+        "evidence": "We want Jeddah Corniche and Dubai Marina first"
+      },
+      {
+        "text": "Dubai Marina",
+        "polarity": "preferred",
+        "confidence": "medium",
+        "evidence": "We want Jeddah Corniche and Dubai Marina first"
+      },
+      {
+        "text": "Al Olaya",
+        "polarity": "preferred",
+        "confidence": "high",
+        "evidence": "plus Al Olaya in Riyadh"
+      }
+    ]
+  },
+  "expected_applied": {
+    "preferred_districts": [
+      "العليا"
+    ]
+  },
+  "expected_unrecognized_districts": [
+    "Jeddah Corniche",
+    "Dubai Marina"
+  ],
+  "rationale": "Non-Riyadh places fail the vocabulary match and surface as unrecognized — never guessed into Riyadh keys."
+}

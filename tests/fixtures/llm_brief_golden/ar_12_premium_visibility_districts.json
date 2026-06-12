@@ -1,0 +1,47 @@
+{
+  "id": "ar_12_premium_visibility_districts",
+  "lang": "ar",
+  "kind": "standard",
+  "brief_text": "مخبز فرنسي راقٍ يقدم تجربة فاخرة، نستهدف العليا وحي النخيل، والظهور على الشارع مهم جداً لنا.",
+  "form_context": {
+    "brand_name": "لو بان",
+    "category": "bakery",
+    "service_model": "cafe"
+  },
+  "expected_extraction": {
+    "price_tier": {
+      "value": "premium",
+      "confidence": "high",
+      "evidence": "تجربة فاخرة"
+    },
+    "visibility_sensitivity": {
+      "value": "high",
+      "confidence": "high",
+      "evidence": "الظهور على الشارع مهم جداً"
+    },
+    "district_mentions": [
+      {
+        "text": "العليا",
+        "polarity": "preferred",
+        "confidence": "high",
+        "evidence": "نستهدف العليا وحي النخيل"
+      },
+      {
+        "text": "حي النخيل",
+        "polarity": "preferred",
+        "confidence": "high",
+        "evidence": "نستهدف العليا وحي النخيل"
+      }
+    ]
+  },
+  "expected_applied": {
+    "price_tier": "premium",
+    "visibility_sensitivity": "high",
+    "preferred_districts": [
+      "العليا",
+      "النخيل"
+    ]
+  },
+  "expected_unrecognized_districts": [],
+  "rationale": "Premium positioning plus explicit street visibility; mixed bare/prefixed district forms both resolve."
+}

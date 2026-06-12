@@ -1,0 +1,15 @@
+{
+  "id": "adv_06_empty",
+  "lang": "en",
+  "kind": "adversarial",
+  "brief_text": "   ",
+  "form_context": {
+    "brand_name": "Quiet Brand",
+    "category": "coffee",
+    "service_model": "cafe"
+  },
+  "expected_extraction": {},
+  "expected_applied": {},
+  "expected_unrecognized_districts": [],
+  "rationale": "Whitespace-only briefs short-circuit before any LLM call — today's flow, byte-identical."
+}
