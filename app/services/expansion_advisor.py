@@ -12520,33 +12520,71 @@ def get_recommendation_report(db: Session, search_id: str, lang: str = "en") -> 
 
     # Build recommendation language — consistent with strict pass_count.
     # Three states: pass (gates clear), validation-clear (no blocking failures but unresolved), fail.
+    # Each string is routed through expansion_advisor_i18n.render() for the
+    # requested lang; render() returns "" on any failure, in which case we
+    # fall back to the English f-string below. The fallback path keeps the
+    # English output byte-identical to HEAD (F5 Stage 2 — AR parity only).
+    from app.services.expansion_advisor_i18n import render as _render_i18n
+
+    def _localized(template_id: str, params: dict[str, Any], fallback: str) -> str:
+        rendered = _render_i18n({"id": template_id, "params": params}, lang)
+        return rendered or fallback
+
     best_district = best.get("district_display") or best.get("district") or "the top district"
     runner_district = (runner_item.get("district_display") or runner_item.get("district")) if runner_item else "backup options"
     if pass_candidates:
         # At least one candidate truly passes all gates
-        why_best = f"Highest blended final score with brand fit {_safe_float(best.get('brand_fit_score')):.1f}/100 and economics {_safe_float(best.get('economics_score')):.1f}/100."
-        summary_text = f"Recommend {best_district} first, then sequence {runner_district} as runner-up."
+        _bf = _safe_float(best.get("brand_fit_score"))
+        _ec = _safe_float(best.get("economics_score"))
+        why_best = _localized(
+            "report.why_best.pass",
+            {"bf": _bf, "ec": _ec},
+            f"Highest blended final score with brand fit {_bf:.1f}/100 and economics {_ec:.1f}/100.",
+        )
+        summary_text = _localized(
+            "report.summary.pass",
+            {"best": best_district, "runner": runner_district},
+            f"Recommend {best_district} first, then sequence {runner_district} as runner-up.",
+        )
         report_summary_text = summary_text
     elif unknown_candidates:
         # No strict passes, but some candidates have no blocking failures — needs field validation
-        why_best = (
-            f"Top-ranked candidate scores {_safe_float(best.get('final_score')):.1f}/100 "
-            f"with {validation_clear_count} candidate(s) pending gate validation."
+        _fs = _safe_float(best.get("final_score"))
+        why_best = _localized(
+            "report.why_best.validation_clear",
+            {"fs": _fs, "n": validation_clear_count},
+            (
+                f"Top-ranked candidate scores {_fs:.1f}/100 "
+                f"with {validation_clear_count} candidate(s) pending gate validation."
+            ),
         )
-        summary_text = (
-            f"No candidate has fully passed all gates yet. "
-            f"{validation_clear_count} candidate(s) have no blocking failures but need field validation. "
-            f"Consider {best_district} as the exploratory lead."
+        summary_text = _localized(
+            "report.summary.validation_clear",
+            {"n": validation_clear_count, "best": best_district},
+            (
+                f"No candidate has fully passed all gates yet. "
+                f"{validation_clear_count} candidate(s) have no blocking failures but need field validation. "
+                f"Consider {best_district} as the exploratory lead."
+            ),
         )
         report_summary_text = summary_text
     else:
-        why_best = (
-            f"Top-ranked candidate scores {_safe_float(best.get('final_score')):.1f}/100 "
-            f"but does not yet pass all gates — unresolved items need validation."
+        _fs = _safe_float(best.get("final_score"))
+        why_best = _localized(
+            "report.why_best.fail",
+            {"fs": _fs},
+            (
+                f"Top-ranked candidate scores {_fs:.1f}/100 "
+                f"but does not yet pass all gates — unresolved items need validation."
+            ),
         )
-        summary_text = (
-            f"No candidate currently passes all required gates ({pass_count} of {len(normalized_candidates)} pass). "
-            f"Consider {best_district} as an exploratory lead pending further validation."
+        summary_text = _localized(
+            "report.summary.fail",
+            {"pc": pass_count, "total": len(normalized_candidates), "best": best_district},
+            (
+                f"No candidate currently passes all required gates ({pass_count} of {len(normalized_candidates)} pass). "
+                f"Consider {best_district} as an exploratory lead pending further validation."
+            ),
         )
         report_summary_text = summary_text
 
@@ -12587,7 +12625,12 @@ def get_recommendation_report(db: Session, search_id: str, lang: str = "en") -> 
             "pass_count": pass_count,
             "validation_clear_count": validation_clear_count,
             "why_best": why_best,
-            "main_risk": (best.get("key_risks_json") or ["Validate lease and execution assumptions"])[0],
+            # Primary value is key_risks_json[0] (already AR-localized
+            # upstream); only the fallback literal is localized here.
+            "main_risk": (
+                best.get("key_risks_json")
+                or [_localized("report.main_risk_fallback", {}, "Validate lease and execution assumptions")]
+            )[0],
             "best_format": _recommended_use_case(str(search.get("service_model") or "qsr"), _safe_float(best.get("area_m2")), lang=lang),
             "summary": summary_text,
             "report_summary": report_summary_text,
