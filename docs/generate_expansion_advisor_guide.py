@@ -11,10 +11,16 @@ Output:
     docs/Expansion-Advisor-User-Guide.pptx
 """
 
+import os
+
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from PIL import Image
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SHOTS = os.path.join(HERE, "assets", "expansion-advisor")
 
 # ---------------------------------------------------------------------------
 # Brand palette (calm, professional, F&B-friendly)
@@ -154,6 +160,49 @@ def card(slide, x, y, w, h, title, body_lines, accent=LEAF, title_size=16,
          paras, space_after=Pt(4), line_spacing=1.0)
 
 
+def screenshot_slide(kicker, title, img_file, blurb, annotations,
+                     frame_max_h=5.35, frame_max_w=5.6):
+    """A slide pairing a real product screenshot with plain-English callouts."""
+    s = add_slide(SAND)
+    section_header(s, kicker, title)
+
+    path = os.path.join(SHOTS, img_file)
+    iw, ih = Image.open(path).size
+    aspect = iw / ih
+    # Fit the screenshot within the frame box, preserving aspect ratio.
+    h = frame_max_h
+    w = h * aspect
+    if w > frame_max_w:
+        w = frame_max_w
+        h = w / aspect
+    img_x = Inches(0.7)
+    img_y = Inches(1.45) + Inches((frame_max_h - h) / 2)
+    # Soft "screen" frame behind the screenshot.
+    rect(s, img_x - Inches(0.12), Inches(1.4), Inches(w) + Inches(0.24),
+         Inches(frame_max_h + 0.1), fill=WHITE, line=RGBColor(0xE2, 0xDD, 0xD2),
+         line_w=Pt(1.2), radius=True)
+    s.shapes.add_picture(path, img_x, img_y, height=Inches(h))
+
+    # Annotation column to the right of the screenshot.
+    ax = img_x + Inches(w) + Inches(0.55)
+    aw = SLIDE_W - ax - Inches(0.55)
+    text(s, ax, Inches(1.5), aw, Inches(0.9), [P(blurb, 15, INK)], line_spacing=1.1)
+    ay = Inches(2.5)
+    for head, body, accent in annotations:
+        rect(s, ax, ay, aw, Inches(0.86), fill=WHITE,
+             line=RGBColor(0xE2, 0xDD, 0xD2), radius=True)
+        rect(s, ax, ay, Inches(0.1), Inches(0.86), fill=accent, radius=True)
+        text(s, ax + Inches(0.28), ay + Inches(0.05), aw - Inches(0.45), Inches(0.78),
+             [[(head + "  ", Pt(15), OAK_GREEN, True, False),
+               (body, Pt(13), SLATE, False, False)]],
+             anchor=MSO_ANCHOR.MIDDLE, line_spacing=0.95)
+        ay += Inches(0.98)
+    text(s, ax, Inches(6.5), aw, Inches(0.4),
+         [P("Real Expansion Advisor screen · sample Riyadh data", 11, SLATE, italic=True)])
+    footer(s, page())
+    return s
+
+
 PAGE = 0
 
 
@@ -280,6 +329,22 @@ text(s, Inches(1.95), Inches(6.75), Inches(10.4), Inches(0.5),
 footer(s, page())
 
 # ===========================================================================
+# SCREENSHOT — The brief form
+# ===========================================================================
+screenshot_slide(
+    "STEP 1 · THE REAL SCREEN", "This is the brief form you fill in",
+    "ui-brief-form.png",
+    "Everything the Advisor needs fits on one short form. Fill it in once and press the button at the bottom.",
+    [
+        ("Brand & category", "Who you are and what you sell.", LEAF),
+        ("Service model", "QSR, dine-in, delivery-first or café.", OAK_GREEN),
+        ("Area range", "The smallest and largest unit you'd take.", AMBER),
+        ("Target districts", "Optional — pick areas or leave blank for all.", LEAF),
+        ("Existing branches", "Add them so the Advisor protects your stores.", RED),
+    ],
+)
+
+# ===========================================================================
 # SLIDE 5 — What you get back (results overview)
 # ===========================================================================
 s = add_slide(WHITE)
@@ -328,6 +393,22 @@ for head, body, accent in legend:
          anchor=MSO_ANCHOR.MIDDLE, line_spacing=0.95)
     ly += Inches(0.86)
 footer(s, page())
+
+# ===========================================================================
+# SCREENSHOT — The ranked results list
+# ===========================================================================
+screenshot_slide(
+    "STEP 2 · THE REAL SCREEN", "Your ranked shortlist of sites",
+    "ui-results.png",
+    "Each site is a card, sorted best-first. The coloured tags give you the headline at a glance.",
+    [
+        ("Rank & score", "#1, #2, #3 … with a score out of 100.", OAK_GREEN),
+        ("Lead Site / Premier", "Flags the standout, highest-quality sites.", LEAF),
+        ("Pass / data grade", "Confidence grade and the safety-check result.", AMBER),
+        ("Rent & size", "Annual rent, area and fit-out at a glance.", LEAF),
+        ("+ / ! lines", "One key strength and one key risk per site.", RED),
+    ],
+)
 
 # ===========================================================================
 # SLIDE 6 — The traffic-light "gate" check
@@ -430,6 +511,21 @@ text(s, Inches(0.85), Inches(5.55), Inches(11.6), Inches(1.2),
 footer(s, page())
 
 # ===========================================================================
+# SCREENSHOT — The comparison table
+# ===========================================================================
+screenshot_slide(
+    "STEP 4 · THE REAL SCREEN", "Sites compared side-by-side",
+    "ui-compare.png",
+    "Pick 2–6 sites and the Advisor lays them out in one table. Green cells mark the winner on each row.",
+    [
+        ("Winner badges", "Best Overall, Best Value, Highest Demand…", OAK_GREEN),
+        ("Grouped rows", "Demand, economics, rent and site quality.", LEAF),
+        ("Green = best", "The strongest site per row is highlighted.", AMBER),
+        ("Lead Site tag", "Marks the overall front-runner.", LEAF),
+    ],
+)
+
+# ===========================================================================
 # SLIDE 9 — Executive report / saving
 # ===========================================================================
 s = add_slide(WHITE)
@@ -453,6 +549,21 @@ for head, lines, accent in colB:
          body_size=14)
     y += Inches(2.5)
 footer(s, page())
+
+# ===========================================================================
+# SCREENSHOT — The executive report
+# ===========================================================================
+screenshot_slide(
+    "STEP 5 · THE REAL SCREEN", "The one-page executive report",
+    "ui-report.png",
+    "When you're ready to decide, the report sums everything up on one screen — ideal to share with partners.",
+    [
+        ("Recommendation", "The headline call in one sentence.", OAK_GREEN),
+        ("Why it wins / risk", "The single biggest plus and minus.", LEAF),
+        ("Top candidates", "Your best 3 sites, side by side.", AMBER),
+        ("Copy & Presentation", "Export or switch to a clean slideshow.", LEAF),
+    ],
+)
 
 # ===========================================================================
 # SLIDE 10 — Glossary
