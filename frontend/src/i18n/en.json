@@ -734,6 +734,20 @@
       "parking": "Parking",
       "cannibalization": "Cannibalization"
     },
+    "gateLabel": {
+      "zoningFit": "Zoning fit",
+      "areaFit": "Area fit",
+      "frontageAccess": "Frontage / access",
+      "parking": "Parking",
+      "district": "District",
+      "cannibalization": "Cannibalization",
+      "deliveryMarket": "Delivery market",
+      "economics": "Economics",
+      "radianceGrowth": "Radiance growth",
+      "populationFloor": "Population floor",
+      "commercialFloor": "Commercial floor",
+      "constructionProximity": "Construction proximity"
+    },
     "selectCandidates": "Select 2\u20134 candidates to compare",
     "compareSelected": "Compare ({{count}})",
     "executiveReport": "Executive Report",
