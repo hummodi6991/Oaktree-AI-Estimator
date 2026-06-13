@@ -67,6 +67,14 @@ _MINIMAL_PARAMS: dict[str, dict] = {
         "risk_kind": "execution",
         "risk_text_en": "",
     },
+    # F5 Stage 2: get_recommendation_report recommendation strings.
+    "report.why_best.pass": {"bf": 78.5, "ec": 62.3},
+    "report.summary.pass": {"best": "Al Olaya", "runner": "Al Malaz"},
+    "report.why_best.validation_clear": {"fs": 71.2, "n": 3},
+    "report.summary.validation_clear": {"n": 3, "best": "Al Olaya"},
+    "report.why_best.fail": {"fs": 55.0},
+    "report.summary.fail": {"pc": 0, "total": 5, "best": "Al Olaya"},
+    "report.main_risk_fallback": {},
 }
 
 

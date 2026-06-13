@@ -231,6 +231,57 @@ TEMPLATES: dict[str, dict[str, str]] = {
             " أبرز مخاطر تجارية: مخاطر التنفيذ تستلزم الإدارة خلال "
             "مرحلتَي التأجير والتصميم."),
     },
+    # ── F5 Stage 2: get_recommendation_report recommendation strings ──
+    # why_best / summary / report_summary across the three report
+    # branches (pass / validation-clear / fail), plus the main_risk
+    # English fallback. The en side is byte-identical to the producer's
+    # f-strings in get_recommendation_report at HEAD (same placeholders,
+    # formatting, punctuation, and the U+2014 em-dash). The ar side
+    # follows the module conventions: Latin digits, em-dash preserved,
+    # district names ({best}/{runner}) pass through already-localized.
+    # report.summary.* doubles as report_summary (identical at HEAD).
+    "report.why_best.pass": {
+        "en": "Highest blended final score with brand fit {bf:.1f}/100 and economics {ec:.1f}/100.",
+        "ar": "أعلى نتيجة نهائية مركّبة مع ملاءمة علامة تجارية {bf:.1f}/100 وجدوى اقتصادية {ec:.1f}/100.",
+    },
+    "report.summary.pass": {
+        "en": "Recommend {best} first, then sequence {runner} as runner-up.",
+        "ar": "يُوصى بـ{best} أولاً، ثم {runner} كخيار ثانٍ.",
+    },
+    "report.why_best.validation_clear": {
+        "en": "Top-ranked candidate scores {fs:.1f}/100 with {n} candidate(s) pending gate validation.",
+        "ar": "المرشّح الأعلى ترتيباً يسجّل {fs:.1f}/100 مع {n} مرشّح بانتظار التحقق من المعايير.",
+    },
+    "report.summary.validation_clear": {
+        "en": (
+            "No candidate has fully passed all gates yet. "
+            "{n} candidate(s) have no blocking failures but need field validation. "
+            "Consider {best} as the exploratory lead."
+        ),
+        "ar": (
+            "لم يجتَز أي مرشّح كل المعايير بالكامل بعد. "
+            "{n} مرشّح بلا إخفاقات حاجبة لكن يحتاج تحققاً ميدانياً. "
+            "يمكن اعتبار {best} الخيار الاستكشافي الأول."
+        ),
+    },
+    "report.why_best.fail": {
+        "en": "Top-ranked candidate scores {fs:.1f}/100 but does not yet pass all gates — unresolved items need validation.",
+        "ar": "المرشّح الأعلى ترتيباً يسجّل {fs:.1f}/100 لكنه لا يجتاز كل المعايير بعد — هناك بنود غير محسومة تحتاج تحققاً.",
+    },
+    "report.summary.fail": {
+        "en": (
+            "No candidate currently passes all required gates ({pc} of {total} pass). "
+            "Consider {best} as an exploratory lead pending further validation."
+        ),
+        "ar": (
+            "لا يجتاز أي مرشّح حالياً كل المعايير المطلوبة ({pc} من {total}). "
+            "يمكن اعتبار {best} خياراً استكشافياً بانتظار مزيد من التحقق."
+        ),
+    },
+    "report.main_risk_fallback": {
+        "en": "Validate lease and execution assumptions",
+        "ar": "تحقّق من افتراضات الإيجار والتنفيذ",
+    },
 }
 
 
