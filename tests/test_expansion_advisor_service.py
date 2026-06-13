@@ -5538,3 +5538,19 @@ def test_pipeline_city_wide_output_matches_pre_fix_order():
         copy.deepcopy(pool), target_districts=[], limit=4
     )
     assert fixed == legacy
+
+
+def test_expand_category_cafe_coffee_keys_match_real_poi_categories():
+    """F8: cafe/coffee POI ``keys`` must be the granular categories actually
+    stored in ``restaurant_poi.category`` — not the ``coffee_bakery`` meta
+    bucket, which ``normalize_category()`` never emits. The old keys matched
+    a near-empty greenfield, darkening the cafe brick-and-mortar competitor
+    leg.
+    """
+    from app.services.expansion_advisor import _expand_category
+
+    expected = ["cafe", "coffee", "bakery", "dessert"]
+    for category in ("cafe", "coffee"):
+        keys = _expand_category(category)["keys"]
+        assert keys == expected
+        assert "coffee_bakery" not in keys
