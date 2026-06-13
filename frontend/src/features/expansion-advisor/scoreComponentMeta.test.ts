@@ -74,6 +74,30 @@ describe("scoreComponentMeta — listing-derived source attributes to the candid
   });
 });
 
+const populationReachInput = PER_COMPONENT_INPUTS.demand_potential.find(
+  (d) => d.key === "population_reach",
+)!;
+
+describe("scoreComponentMeta — population_reach distinguishes unmeasured from zero", () => {
+  it("resolves a measured population_reach (including 0) to that number", () => {
+    expect(
+      populationReachInput.resolve(ctx({ featureSnapshot: { population_reach: 41000 } })).value,
+    ).toBe(41000);
+    // A measured zero stays a number (not coerced to null/em-dash).
+    expect(
+      populationReachInput.resolve(ctx({ featureSnapshot: { population_reach: 0 } })).value,
+    ).toBe(0);
+  });
+
+  it("resolves a null population_reach (no grid coverage) to null, not 0", () => {
+    // PR-3: an unmeasured candidate carries null; the demand card renders an
+    // em-dash for null and must never paper over it with a fabricated 0.
+    expect(
+      populationReachInput.resolve(ctx({ featureSnapshot: { population_reach: null } })).value,
+    ).toBeNull();
+  });
+});
+
 /* ─── PR-D: dg_index demand inputs ───────────────────────────────────────── */
 
 function dgSnapshot(): Record<string, unknown> {

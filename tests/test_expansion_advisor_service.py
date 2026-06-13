@@ -4297,6 +4297,101 @@ def test_viability_pass_diagnostics_records_hard_floor_drops_per_leg(monkeypatch
     }
 
 
+def test_hard_floor_distinguishes_measured_zero_from_unmeasured(monkeypatch):
+    """PR-3 / Finding 5: a measured 0.0 population is a real value and must
+    FAIL the population hard floor exactly like a 19,999 site, while a
+    truly unmeasured (None — no population-grid coverage) candidate still
+    passes the floor defensively. Pre-fix, None and measured-0.0 were merged
+    at 0.0 and the ``pop_val <= 0 → pass`` branch let a 0-pop site bypass the
+    floor that drops a 19,999-pop site.
+    """
+    import app.services.expansion_advisor as svc
+
+    monkeypatch.setattr(
+        svc.settings, "EXPANSION_VIABILITY_POPULATION_HARD_FLOOR", 20000
+    )
+    monkeypatch.setattr(
+        svc.settings, "EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", 0
+    )
+    monkeypatch.setattr(
+        svc.settings, "EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M", 0
+    )
+
+    def _cand(cid: str, pop):
+        fs: dict = {}
+        # Mirror production: an unmeasured candidate carries an explicit
+        # null population_reach (no grid coverage), not an absent key.
+        fs["population_reach"] = pop
+        return {
+            "id": cid,
+            "parcel_id": cid,
+            "final_score": 80.0,
+            "score_breakdown_json": {},
+            "feature_snapshot_json": fs,
+        }
+
+    cohort = [
+        _cand("at_floor", 20000.0),       # meets floor → survives
+        _cand("below_floor", 19999.0),    # below floor → dropped
+        _cand("measured_zero", 0.0),      # measured 0.0 → dropped (the fix)
+        _cand("unmeasured", None),        # no coverage → defensive pass
+    ]
+
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    survivors = {c["id"] for c in out}
+    assert survivors == {"at_floor", "unmeasured"}
+
+
+def test_soft_pop_leg_demotes_measured_zero_but_not_unmeasured(
+    disable_market_viability_floors,
+):
+    """With the hard floor disabled, the soft percentile pop leg can demote a
+    MEASURED 0.0 (confidence is now "value present", not ">0"), but leaves a
+    truly unmeasured (None) candidate alone (defensive — pop_demote stays
+    False when there is no coverage).
+    """
+    # Measured zero: below the cohort p25 (~7000) → soft pop leg fires.
+    cohort_zero = _viability_cohort(target_pop_reach=0.0, target_rent_pct=0.40)
+    out_zero = _apply_market_viability_pass(list(cohort_zero), search_id="t")
+    target_zero = next(c for c in out_zero if c["id"] == "target")
+    flag_zero = target_zero["score_breakdown_json"].get("market_viability_flag")
+    assert flag_zero is not None and flag_zero["population_demote"] is True
+    assert "population_below_quartile" in target_zero["viability_legs_fired"]
+
+    # Unmeasured: population_reach absent/None → pop leg defensively skipped.
+    cohort_none = _viability_cohort(target_pop_reach=4500.0, target_rent_pct=0.40)
+    target_in = next(c for c in cohort_none if c["id"] == "target")
+    target_in["feature_snapshot_json"]["population_reach"] = None
+    out_none = _apply_market_viability_pass(list(cohort_none), search_id="t")
+    target_none = next(c for c in out_none if c["id"] == "target")
+    # No leg fired at all → no flag block, pop leg did not demote.
+    assert "population_below_quartile" not in target_none.get(
+        "viability_legs_fired", []
+    )
+    flag_none = target_none["score_breakdown_json"].get("market_viability_flag")
+    assert flag_none is None or flag_none.get("population_demote") is False
+
+
+def test_unmeasured_population_snapshot_roundtrips_with_none(monkeypatch):
+    """A feature snapshot whose population_reach is None survives the
+    normalize + JSON dump + reload round-trip as null (never coerced to 0),
+    so the persisted contract preserves the unmeasured signal.
+    """
+    import json
+
+    snapshot = expansion_service._normalize_feature_snapshot(
+        {"population_reach": None, "area_m2": 120.0}
+    )
+    assert snapshot["population_reach"] is None
+
+    dumped = expansion_service._safe_json_dumps(snapshot)
+    reloaded = json.loads(dumped)
+    assert reloaded["population_reach"] is None
+
+    # Scoring reads keep coalescing null → 0.0 (ranking unchanged).
+    assert expansion_service._safe_float(reloaded.get("population_reach")) == 0.0
+
+
 def test_viability_pass_diagnostics_unchanged_when_caller_omits_kwarg(
     disable_market_viability_floors,
 ):
