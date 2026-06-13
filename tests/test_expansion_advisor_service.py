@@ -5203,3 +5203,243 @@ def test_get_recommendation_report_best_format_arabic(monkeypatch):
         )
         report = get_recommendation_report(FakeDB(), "search-1", lang="ar")
         assert report["recommendation"]["best_format"] == expected, (service_model, area_m2)
+
+
+# ===========================================================================
+# Pipeline-order fix: hard floors and score deltas run on the FULL deduped
+# pool BEFORE final selection. The tests below compose the same post-scoring
+# stages run_expansion_search uses — _apply_market_viability_pass on the
+# full pool, _apply_score_deltas_and_sort, then _select_final_candidates —
+# and pin: (1) floor drops are backfilled to limit, (2) per-district quota
+# math, (3) viability cohorts identical regardless of target_districts,
+# (4) city-wide selection byte-identical to the bare [:limit] slice.
+# ===========================================================================
+
+import copy  # noqa: E402
+
+from app.services.expansion_advisor import _select_final_candidates  # noqa: E402
+
+
+def _ps_candidate(
+    *,
+    parcel_id: str,
+    district: str | None,
+    final_score: float,
+    pop_reach: float | None = None,
+) -> dict:
+    fs: dict = {}
+    if pop_reach is not None:
+        fs["population_reach"] = pop_reach
+    return {
+        "id": parcel_id,
+        "parcel_id": parcel_id,
+        "district": district,
+        "final_score": final_score,
+        "score_breakdown_json": {},
+        "feature_snapshot_json": fs,
+    }
+
+
+def _run_post_scoring_pipeline(
+    pool: list[dict],
+    *,
+    target_districts: list[str],
+    limit: int,
+    diagnostics: dict | None = None,
+    population_hard_floor: int = 0,
+    commercial_hard_floor: int = 0,
+    construction_buffer_m: float = 0.0,
+) -> list[dict]:
+    """Mirror run_expansion_search's post-scoring stages in the fixed order:
+    viability pass (hard floors + leg annotation) on the FULL pool, score
+    deltas folded + sorted, then final selection."""
+    out = _apply_market_viability_pass(
+        list(pool),
+        search_id="t",
+        diagnostics=diagnostics,
+        population_hard_floor=population_hard_floor,
+        commercial_hard_floor=commercial_hard_floor,
+        construction_buffer_m=construction_buffer_m,
+    )
+    out = _apply_score_deltas_and_sort(out)
+    return _select_final_candidates(out, target_districts, limit)
+
+
+def test_pipeline_order_floor_drops_are_backfilled_to_limit():
+    # District A's candidates ALL fail the population hard floor. Pre-fix,
+    # balancing truncated to ~limit BEFORE the floors ran, so the floor
+    # drops left the response under-filled. Post-fix the floors run on the
+    # full pool and selection backfills from B/C survivors.
+    pool = (
+        [_ps_candidate(parcel_id=f"a{i}", district="Alpha", final_score=95.0 - i,
+                       pop_reach=1000.0) for i in range(3)]
+        + [_ps_candidate(parcel_id=f"b{i}", district="Beta", final_score=90.0 - 2 * i,
+                         pop_reach=50000.0) for i in range(5)]
+        + [_ps_candidate(parcel_id=f"c{i}", district="Gamma", final_score=89.0 - 2 * i,
+                         pop_reach=50000.0) for i in range(5)]
+    )
+    pool.sort(key=lambda c: -c["final_score"])
+    out = _run_post_scoring_pipeline(
+        pool,
+        target_districts=["Alpha", "Beta", "Gamma"],
+        limit=6,
+        population_hard_floor=20000,
+    )
+    assert len(out) == 6  # backfilled despite 3 floor drops
+    districts = {c["district"] for c in out}
+    assert "Alpha" not in districts  # every Alpha candidate failed the floor
+    assert {"Beta", "Gamma"} <= districts
+    # Transient viability working fields must not leak past the delta fold.
+    assert all("viability_legs_fired" not in c for c in out)
+    assert all("viability_delta" not in c for c in out)
+
+
+def test_pipeline_order_district_with_survivor_is_represented():
+    # Same shape, but Alpha has ONE floor survivor with the lowest score in
+    # the pool. The quota walk must still seat it within limit.
+    pool = (
+        [_ps_candidate(parcel_id=f"a{i}", district="Alpha", final_score=95.0 - i,
+                       pop_reach=1000.0) for i in range(2)]
+        + [_ps_candidate(parcel_id="a-survivor", district="Alpha",
+                         final_score=70.0, pop_reach=50000.0)]
+        + [_ps_candidate(parcel_id=f"b{i}", district="Beta", final_score=90.0 - 2 * i,
+                         pop_reach=50000.0) for i in range(5)]
+        + [_ps_candidate(parcel_id=f"c{i}", district="Gamma", final_score=89.0 - 2 * i,
+                         pop_reach=50000.0) for i in range(5)]
+    )
+    pool.sort(key=lambda c: -c["final_score"])
+    out = _run_post_scoring_pipeline(
+        pool,
+        target_districts=["Alpha", "Beta", "Gamma"],
+        limit=6,
+        population_hard_floor=20000,
+    )
+    assert len(out) == 6
+    assert any(c["parcel_id"] == "a-survivor" for c in out)
+
+
+def test_select_final_candidates_quota_math_8_districts_limit_15():
+    # 8 districts, limit 15 → quota = max(1, 15 // 8) = 1. Every
+    # survivor-bearing district gets its first slot before any district
+    # gets a second one via the fill walk, total never exceeds limit, and
+    # the output stays in final_score order (filtered subsequence).
+    pool = [
+        _ps_candidate(parcel_id=f"d1-{i}", district="D1", final_score=99.0 - i)
+        for i in range(5)
+    ]
+    score = 80.0
+    for d in range(2, 9):
+        for i in range(2):
+            pool.append(_ps_candidate(
+                parcel_id=f"d{d}-{i}", district=f"D{d}", final_score=score
+            ))
+            score -= 1.0
+    pool.sort(key=lambda c: (-c["final_score"], c["parcel_id"]))
+
+    out = _select_final_candidates(pool, [f"D{d}" for d in range(1, 9)], 15)
+
+    assert len(out) == 15
+    counts: dict[str, int] = {}
+    for c in out:
+        counts[c["district"]] = counts.get(c["district"], 0) + 1
+    # Every survivor-bearing district seated at least once.
+    assert all(counts.get(f"D{d}", 0) >= 1 for d in range(1, 9))
+    # D1's 4 extra rows came from the fill walk, after all 8 districts had
+    # their quota slot: 8 quota picks + 7 fill picks by rank.
+    assert counts["D1"] == 5
+    scores = [c["final_score"] for c in out]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_select_final_candidates_unknown_district_gets_no_quota():
+    # An unknown-district candidate cannot claim a quota slot even with the
+    # top score — it competes only in the fill walk.
+    pool = [
+        _ps_candidate(parcel_id="u1", district=None, final_score=95.0),
+        _ps_candidate(parcel_id="a1", district="Alpha", final_score=90.0),
+        _ps_candidate(parcel_id="b1", district="Beta", final_score=85.0),
+        _ps_candidate(parcel_id="a2", district="Alpha", final_score=80.0),
+        _ps_candidate(parcel_id="b2", district="Beta", final_score=75.0),
+    ]
+    out = _select_final_candidates(pool, ["Alpha", "Beta"], 3)
+    assert [c["parcel_id"] for c in out] == ["u1", "a1", "b1"]
+    # With limit 2 the quota walk fills both slots and the unknown-district
+    # candidate is excluded entirely.
+    out2 = _select_final_candidates(pool, ["Alpha", "Beta"], 2)
+    assert [c["parcel_id"] for c in out2] == ["a1", "b1"]
+
+
+def test_viability_cohort_identical_for_city_wide_and_multi_district():
+    # Pre-fix, multi-district searches truncated to ~limit BEFORE the
+    # viability pass, so its percentile cohorts had a different statistical
+    # meaning than city-wide ones. Post-fix the pass always sees the full
+    # pool: thresholds and per-candidate flags must be identical whether or
+    # not target_districts has 2+ entries.
+    pops = [5000.0, 10000.0, 20000.0, 40000.0, 60000.0, 80000.0, 100000.0, 120000.0]
+    pool = [
+        _ps_candidate(
+            parcel_id=f"p{i}",
+            district="Alpha" if i % 2 == 0 else "Beta",
+            final_score=90.0 - i,
+            pop_reach=p,
+        )
+        for i, p in enumerate(pops)
+    ]
+    diag_city: dict = {}
+    out_city = _run_post_scoring_pipeline(
+        copy.deepcopy(pool), target_districts=[], limit=4, diagnostics=diag_city
+    )
+    diag_multi: dict = {}
+    out_multi = _run_post_scoring_pipeline(
+        copy.deepcopy(pool), target_districts=["Alpha", "Beta"], limit=4,
+        diagnostics=diag_multi,
+    )
+    assert diag_city["demote_legs"]["thresholds"] == diag_multi["demote_legs"]["thresholds"]
+    assert diag_city["hard_floors"] == diag_multi["hard_floors"]
+    # Per-candidate viability annotations agree wherever both shortlists
+    # carry the same parcel.
+    flags_city = {
+        c["parcel_id"]: c["score_breakdown_json"].get("market_viability_flag")
+        for c in out_city
+    }
+    for c in out_multi:
+        if c["parcel_id"] in flags_city:
+            assert (
+                c["score_breakdown_json"].get("market_viability_flag")
+                == flags_city[c["parcel_id"]]
+            )
+
+
+def test_select_final_candidates_city_wide_is_bare_limit_slice():
+    # City-wide (no target districts) and single-district selection must be
+    # byte-identical to candidates[:limit] — same objects, same order.
+    pool = [
+        _ps_candidate(parcel_id=f"p{i}", district="Olaya", final_score=90.0 - i)
+        for i in range(10)
+    ]
+    for tds in ([], ["Olaya"]):
+        out = _select_final_candidates(pool, tds, 5)
+        assert len(out) == 5
+        assert all(a is b for a, b in zip(out, pool[:5]))
+
+
+def test_pipeline_city_wide_output_matches_pre_fix_order():
+    # The pre-fix city-wide pipeline was: viability → deltas → [:limit]
+    # (the balancing block only ran with 2+ target districts). The fixed
+    # pipeline must produce byte-identical output for that case.
+    pops = [5000.0, 10000.0, 20000.0, 40000.0, 60000.0, 80000.0]
+    pool = [
+        _ps_candidate(parcel_id=f"p{i}", district="Olaya",
+                      final_score=90.0 - i, pop_reach=p)
+        for i, p in enumerate(pops)
+    ]
+    legacy = _apply_market_viability_pass(
+        copy.deepcopy(pool), search_id="t",
+        population_hard_floor=0, commercial_hard_floor=0,
+        construction_buffer_m=0.0,
+    )
+    legacy = _apply_score_deltas_and_sort(legacy)[:4]
+    fixed = _run_post_scoring_pipeline(
+        copy.deepcopy(pool), target_districts=[], limit=4
+    )
+    assert fixed == legacy
