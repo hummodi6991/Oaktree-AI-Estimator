@@ -173,14 +173,14 @@ _CATEGORY_ALIAS_MAP: dict[str, dict] = {
         "raw_patterns": ["chicken", "broasted", "fried.chicken", "wings", "دجاج"],
     },
     "cafe": {
-        "keys": ["coffee_bakery"],
+        "keys": ["cafe", "coffee", "bakery", "dessert"],
         "raw_patterns": [
             "cafe", "coffee", "bakery", "dessert", "pastry",
             "قهوة", "مقهى", "كافيه", "مخبز", "حلويات",
         ],
     },
     "coffee": {
-        "keys": ["coffee_bakery"],
+        "keys": ["cafe", "coffee", "bakery", "dessert"],
         "raw_patterns": [
             "coffee", "cafe", "قهوة", "مقهى", "كافيه",
         ],
