@@ -5929,9 +5929,13 @@ def _apply_market_viability_pass(
     for c in candidates:
         fs = c.get("feature_snapshot_json") if isinstance(c, dict) else None
 
-        # Population floor: pass when disabled, when value is missing/zero
-        # (don't drop on absent data — the soft pop leg below already
-        # handles low-population demotion), or when value meets the floor.
+        # Population floor: pass when disabled, or when the value is truly
+        # unmeasured (None — no population-grid coverage in the catchment;
+        # don't drop on absent data, the soft pop leg handles low-pop
+        # demotion). A MEASURED value — including a genuine 0.0 — is
+        # evaluated against the floor: a 0-pop covered site must fail the
+        # same floor that drops a 19,999-pop site (it no longer bypasses it
+        # via a None-vs-0 merge). The rpc/soft legs keep their own guards.
         pop_raw = fs.get("population_reach") if isinstance(fs, dict) else None
         if pop_floor <= 0:
             population_floor_pass = True
@@ -5941,8 +5945,7 @@ def _apply_market_viability_pass(
             try:
                 pop_val = float(pop_raw)
             except (TypeError, ValueError):
-                pop_val = 0.0
-            if pop_val <= 0:
+                # Unparseable measured value → treat as unmeasured (pass).
                 population_floor_pass = True
             else:
                 population_floor_pass = pop_val >= pop_floor
@@ -6264,7 +6267,10 @@ def _apply_market_viability_pass(
             pop_raw = fs.get("population_reach")
             if pop_raw is not None:
                 pop_reach = _safe_float(pop_raw, default=-1.0)
-                pop_confident = pop_reach > 0
+                # Confident when a value is PRESENT (not None), so a measured
+                # 0.0 can demote. -1.0 is the parse-failure sentinel from
+                # _safe_float and stays non-confident (treated as unmeasured).
+                pop_confident = pop_reach >= 0
                 pop_low = pop_reach < pop_threshold
                 pop_demote = bool(
                     pop_confident and pop_low and not growth_rescue
@@ -6994,7 +7000,10 @@ def _query_candidate_location_pool(
                 0 AS delivery_listing_count,
                 0 AS delivery_cat_count,
                 0 AS delivery_platform_count,
-                0 AS population_reach,
+                -- Placeholder; overwritten by _bulk_enrich_population. NULL
+                -- (not 0) so a row that never gets enriched reads as
+                -- "unmeasured", never "measured zero", on the viability path.
+                CAST(NULL AS double precision) AS population_reach,
                 ROW_NUMBER() OVER (
                     PARTITION BY cl.district_ar
                     ORDER BY
@@ -7210,7 +7219,10 @@ def _query_commercial_unit_candidates(
             0 AS delivery_listing_count,
             0 AS delivery_cat_count,
             0 AS delivery_platform_count,
-            0 AS population_reach
+            -- Placeholder; overwritten by _bulk_enrich_population. NULL
+            -- (not 0) so a row that never gets enriched reads as
+            -- "unmeasured", never "measured zero", on the viability path.
+            CAST(NULL AS double precision) AS population_reach
         FROM commercial_unit cu
         WHERE {where_clause}
         ORDER BY cu.restaurant_score DESC NULLS LAST, cu.price_sar_annual ASC NULLS LAST
@@ -7228,10 +7240,16 @@ def _bulk_enrich_population(
     demand_radius_m: float | None = None,
     *,
     service_model: str | None = None,
-) -> dict[str, float]:
+) -> dict[str, float | None]:
     """Bulk-compute population_reach for a set of candidate locations.
 
-    Returns {parcel_id: population_reach} for all rows that have lat/lon.
+    Returns ``{parcel_id: population_reach}`` for all rows that have
+    lat/lon. ``population_reach`` is ``None`` when the catchment has **no**
+    population-grid coverage (zero grid rows), and a real summed value
+    (including a genuine ``0.0``) when at least one grid row is in range.
+    This lets callers distinguish "unmeasured" from "measured zero" — the
+    viability floor/soft-leg must treat them differently. Scoring reads
+    coalesce ``None`` → ``0.0`` via ``_safe_float`` and are unaffected.
     Uses a single SQL query with unnest + LATERAL to avoid N+1.
 
     The catchment radius comes from one of three sources, in priority
@@ -7296,10 +7314,13 @@ def _bulk_enrich_population(
                     )
                     SELECT
                         i.parcel_id,
-                        COALESCE(pop.population_reach, 0) AS population_reach
+                        COALESCE(pop.population_reach, 0) AS population_reach,
+                        COALESCE(pop.coverage_count, 0) AS coverage_count
                     FROM inputs i
                     LEFT JOIN LATERAL (
-                        SELECT COALESCE(SUM(pd.population), 0) AS population_reach
+                        SELECT
+                            COALESCE(SUM(pd.population), 0) AS population_reach,
+                            COUNT(*) AS coverage_count
                         FROM population_density pd
                         WHERE {_pd_where}
                           AND ST_DWithin(
@@ -7312,7 +7333,16 @@ def _bulk_enrich_population(
                 {"pids": pids, "lons": lons, "lats": lats, "radius_m": demand_radius_m},
             ).mappings().all()
 
-        return {str(r["parcel_id"]): float(r["population_reach"]) for r in result}
+        # coverage_count == 0 → no grid rows in catchment → unmeasured (None).
+        # coverage_count > 0 → measured sum (which may legitimately be 0.0).
+        return {
+            str(r["parcel_id"]): (
+                float(r["population_reach"])
+                if int(r["coverage_count"] or 0) > 0
+                else None
+            )
+            for r in result
+        }
     except Exception as exc:
         logger.warning("Bulk population enrichment failed: %s", exc, exc_info=True)
         return {}
@@ -8727,7 +8757,15 @@ def run_expansion_search(
         _source_tier = row.get("source_tier")
         if _source_tier == 3 and max_area_m2 and area_m2 and area_m2 > max_area_m2:
             area_m2 = max_area_m2
+        # Scoring read: None/garbage → 0.0 (ranking math byte-identical).
         population_reach = _safe_float(row.get("population_reach"))
+        # Snapshot read: preserve None (no population-grid coverage) so the
+        # persisted feature_snapshot_json distinguishes "unmeasured" from a
+        # genuine "measured 0.0". Only the viability pass keys off this.
+        _pop_reach_raw = row.get("population_reach")
+        population_reach_measured: float | None = (
+            population_reach if _pop_reach_raw is not None else None
+        )
         competitor_count = _safe_int(row.get("competitor_count"))
         # F4: confidence flag emitted by _bulk_enrich_competitors. Falls
         # through as None on the ARCGIS-fallback candidate-pool SQL path
@@ -9100,6 +9138,7 @@ def run_expansion_search(
                 "row": dict(row),
                 "area_m2": area_m2,
                 "population_reach": population_reach,
+                "population_reach_measured": population_reach_measured,
                 "competitor_count": competitor_count,
                 "competitor_count_confident": competitor_count_confident,
                 "max_chain_strength": max_chain_strength,
@@ -9991,6 +10030,9 @@ def run_expansion_search(
         _pid_str = str(row.get("parcel_id") or "")
         area_m2 = prepared_item["area_m2"]
         population_reach = prepared_item["population_reach"]
+        # None when the catchment had no population-grid coverage; the
+        # scoring `population_reach` above is the 0.0-coalesced counterpart.
+        population_reach_measured = prepared_item.get("population_reach_measured")
         competitor_count = prepared_item["competitor_count"]
         competitor_count_confident = prepared_item.get("competitor_count_confident")
         max_chain_strength = prepared_item.get("max_chain_strength")
@@ -10711,8 +10753,12 @@ def run_expansion_search(
             feature_snapshot_json["display_annual_rent_sar"] = round(
                 estimated_annual_rent_sar, 2
             )
-        if population_reach is not None:
-            feature_snapshot_json["population_reach"] = population_reach
+        # Persist the MEASURED value (null when no population-grid coverage)
+        # so the viability floor/soft-leg can tell "unmeasured" from
+        # "measured zero". Scoring readers (_population_score, demand blend,
+        # dg-index, _safe_float reads) keep coalescing null → 0.0, so
+        # ranking is byte-identical for covered candidates.
+        feature_snapshot_json["population_reach"] = population_reach_measured
         if delivery_listing_count is not None:
             feature_snapshot_json["delivery_listing_count"] = delivery_listing_count
         if access_visibility_score is not None:
