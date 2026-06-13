@@ -4910,7 +4910,8 @@ def _estimate_revenue_index(
     delivery_listing_count: int = 0,
     population_reach: float = 0.0,
     road_context: dict | None = None,
-) -> float:
+    return_detail: bool = False,
+) -> float | tuple[float, dict[str, float]]:
     """Listings-grounded revenue index.
 
     Primary inputs: listing-level features (street width as drive-by
@@ -4921,6 +4922,13 @@ def _estimate_revenue_index(
     For parcels: street width and listing_type fall to neutral defaults
     and the district inputs effectively dominate, preserving legacy
     behavior for the parcel path.
+
+    With return_detail=True, returns ``(index, detail)`` where detail
+    carries ``tier_blind_index`` — clamp(base × category_factor), i.e.
+    everything except the price-tier-driven ticket multiplier — and the
+    excluded ``ticket_multiplier``. The tier-blind index is the basis for
+    value_score, which must stay tier-blind (see _RENT_CEILING_TIER_MULT
+    note). The scalar return path is byte-identical to the legacy behavior.
     """
     # Street width as drive-by traffic proxy (35% of base)
     if unit_street_width_m is not None and unit_street_width_m > 0:
@@ -4996,7 +5004,15 @@ def _estimate_revenue_index(
     implied_check = _implied_average_check(price_tier, category)
     ticket_multiplier = max(0.5, min(2.5, implied_check / _IMPLIED_CHECK_BASELINE_SAR))
 
-    return _clamp(base * factor * ticket_multiplier)
+    index = _clamp(base * factor * ticket_multiplier)
+    if return_detail:
+        # Category throughput stays in the tier-blind index: it is
+        # category-driven and constant within a search, not a tier leak.
+        return index, {
+            "tier_blind_index": _clamp(base * factor),
+            "ticket_multiplier": ticket_multiplier,
+        }
+    return index
 
 
 # ---------------------------------------------------------------------------
@@ -5359,8 +5375,21 @@ def _economics_score(
     unit_neighborhood_raw: str | None = None,
     price_tier: str | None = None,
     cand_age_days: int | None = None,
+    revenue_index_detail: dict[str, Any] | None = None,
 ) -> tuple[float, dict[str, Any]]:
     monthly_rent_per_m2 = estimated_annual_rent_sar / max(area_m2 * 12.0, 1.0)
+
+    # value_score must stay tier-blind: use the tier-blind revenue index
+    # (ticket multiplier excluded) from _estimate_revenue_index detail when
+    # the caller provides it. Callers that don't pass the detail fall back
+    # to the tier-multiplied index (legacy behavior). The composite score
+    # below keeps using the tier-multiplied estimated_revenue_index —
+    # ranking semantics outside value_score are unchanged.
+    _rev_detail = revenue_index_detail if isinstance(revenue_index_detail, dict) else {}
+    value_revenue_basis = _safe_float(
+        _rev_detail.get("tier_blind_index"), estimated_revenue_index
+    )
+    _ticket_multiplier = _rev_detail.get("ticket_multiplier")
 
     _tier_mult = _rent_ceiling_tier_multiplier(price_tier)
     _fallback_ceiling = 220.0 * _tier_mult
@@ -5437,7 +5466,7 @@ def _economics_score(
         and isinstance(rent_burden_meta, dict)
         and rent_burden_meta.get("mode") == "percentile"
     ):
-        value_score = _value_score(estimated_revenue_index, rent_burden_score)
+        value_score = _value_score(value_revenue_basis, rent_burden_score)
         value_band = _classify_value_band(value_score)
         value_band_low_confidence = _value_band_is_low_confidence(
             rent_burden_meta.get("source_label"),
@@ -5458,6 +5487,10 @@ def _economics_score(
         "value_score": round(value_score, 2) if value_score is not None else None,
         "value_band": value_band,
         "value_band_low_confidence": value_band_low_confidence,
+        "value_revenue_basis": round(value_revenue_basis, 2),
+        "ticket_multiplier": (
+            round(float(_ticket_multiplier), 4) if _ticket_multiplier is not None else None
+        ),
     }
 
 
@@ -8948,7 +8981,7 @@ def run_expansion_search(
                 rent_source = f"{rent_source}+micro"
             estimated_annual_rent_sar = round(area_m2 * estimated_rent_sar_m2_year)
         estimated_fitout_cost_sar = round(_estimate_fitout_cost_sar(area_m2, service_model, is_furnished=bool(row.get("unit_is_furnished"))))
-        estimated_revenue_index = _estimate_revenue_index(
+        estimated_revenue_index, _revenue_index_detail = _estimate_revenue_index(
             area_m2=area_m2,
             target_area_m2=target_area_m2,
             unit_street_width_m=_safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None,
@@ -8957,6 +8990,7 @@ def run_expansion_search(
             whitespace_score=whitespace_score,
             category=category,
             price_tier=effective_brand_profile.get("price_tier"),
+            return_detail=True,
         )
         economics_score, economics_meta = _economics_score(
             estimated_revenue_index=estimated_revenue_index,
@@ -8971,6 +9005,7 @@ def run_expansion_search(
             listing_type=row.get("unit_listing_type"),
             unit_neighborhood_raw=row.get("unit_neighborhood_raw"),
             price_tier=effective_brand_profile.get("price_tier"),
+            revenue_index_detail=_revenue_index_detail,
         )
         _unit_street_width = _safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None
         frontage_score = _frontage_score(
@@ -10097,7 +10132,7 @@ def run_expansion_search(
         # so the first scoring pass runs without it. Recompute here for
         # final scores using the road signal.
         _road_ctx = _bulk_roads.get(_pid_str)
-        estimated_revenue_index = _estimate_revenue_index(
+        estimated_revenue_index, _revenue_index_detail = _estimate_revenue_index(
             area_m2=area_m2,
             target_area_m2=target_area_m2,
             unit_street_width_m=_safe_float(row.get("unit_street_width_m")) if row.get("unit_street_width_m") else None,
@@ -10106,6 +10141,7 @@ def run_expansion_search(
             whitespace_score=whitespace_score,
             category=category,
             price_tier=effective_brand_profile.get("price_tier"),
+            return_detail=True,
         )
         if rent_source != "commercial_unit_actual":
             _base_rent_sar_m2_year = prepared_item.get("rent_base_sar_m2_year", estimated_rent_sar_m2_year)
@@ -10138,6 +10174,7 @@ def run_expansion_search(
             unit_neighborhood_raw=row.get("unit_neighborhood_raw"),
             price_tier=effective_brand_profile.get("price_tier"),
             cand_age_days=_created_basis_age_days(row),
+            revenue_index_detail=_revenue_index_detail,
         )
         effective_age_days, effective_age_source = _effective_listing_age_days(row)
         feature_snapshot_json = _candidate_feature_snapshot(
