@@ -4297,6 +4297,156 @@ def test_viability_pass_diagnostics_records_hard_floor_drops_per_leg(monkeypatch
     }
 
 
+# ── PR-3: measured-zero population vs missing-coverage (Finding 5) ──────
+# _bulk_enrich_population now distinguishes "no population-grid coverage in
+# the catchment" (None → unmeasured, defensive floor pass) from a genuine
+# "measured 0.0" (a real value evaluated against the floor / demotable).
+
+
+def test_bulk_enrich_population_none_when_no_coverage():
+    """coverage == 0 → population_reach is None (unmeasured); coverage > 0 →
+    a float, including a genuine measured 0.0."""
+    from app.services.expansion_advisor import _bulk_enrich_population
+
+    class _PopDB:
+        def begin_nested(self):
+            return _FakeNestedTransaction()
+
+        def execute(self, stmt, params=None):
+            sql = stmt.text if hasattr(stmt, "text") else str(stmt)
+            if "information_schema.columns" in sql:
+                return _Result([])  # no geom column → lat/lon coordinate path
+            return _Result(
+                [
+                    {"parcel_id": "covered", "population_reach": 12345.0, "coverage": 7},
+                    {"parcel_id": "measured_zero", "population_reach": 0.0, "coverage": 3},
+                    {"parcel_id": "no_coverage", "population_reach": 0.0, "coverage": 0},
+                ]
+            )
+
+    rows = [
+        {"parcel_id": "covered", "lon": 46.7, "lat": 24.7},
+        {"parcel_id": "measured_zero", "lon": 46.8, "lat": 24.8},
+        {"parcel_id": "no_coverage", "lon": 46.9, "lat": 24.9},
+    ]
+    out = _bulk_enrich_population(_PopDB(), rows, demand_radius_m=1200.0)
+    assert out["covered"] == 12345.0
+    assert out["measured_zero"] == 0.0  # grid cells exist → real measured zero
+    assert out["no_coverage"] is None  # zero coverage → unmeasured
+
+
+def _floor_candidate(id_, pop):
+    """Viability candidate carrying only a population signal. ``pop=None``
+    omits the key entirely (zero-coverage / unmeasured)."""
+    fs: dict = {} if pop is None else {"population_reach": pop}
+    return {
+        "id": id_,
+        "parcel_id": id_,
+        "final_score": 80.0,
+        "score_breakdown_json": {},
+        "feature_snapshot_json": fs,
+    }
+
+
+def _set_population_floor(monkeypatch, value):
+    import app.services.expansion_advisor as svc
+
+    monkeypatch.setattr(
+        svc.settings, "EXPANSION_VIABILITY_POPULATION_HARD_FLOOR", value
+    )
+    # Neutralize the unrelated hard floors so single-signal cohorts isolate
+    # the population gate under test.
+    monkeypatch.setattr(
+        svc.settings, "EXPANSION_VIABILITY_BRAND_PRESENCE_HARD_FLOOR", 0
+    )
+    monkeypatch.setattr(
+        svc.settings, "EXPANSION_VIABILITY_CONSTRUCTION_BUFFER_M", 0
+    )
+
+
+def test_viability_floor_passes_unmeasured_population(monkeypatch):
+    """Zero-coverage candidate (population_reach absent → None) is a defensive
+    pass even with the hard floor enabled: unmeasured is not a measured zero,
+    and scoring still reads it as 0.0."""
+    _set_population_floor(monkeypatch, 20000)
+    out = _apply_market_viability_pass(
+        [_floor_candidate("unmeasured", None)], search_id="t"
+    )
+    assert {c["id"] for c in out} == {"unmeasured"}
+    # Scoring read is byte-identical to today (None → 0.0).
+    assert (
+        expansion_service._safe_float(
+            out[0]["feature_snapshot_json"].get("population_reach")
+        )
+        == 0.0
+    )
+
+
+def test_viability_floor_drops_measured_zero_population(monkeypatch):
+    """A measured 0.0 (grid coverage exists, population is zero) FAILS a
+    positive hard floor — it no longer bypasses the gate that drops a
+    19,999-pop site."""
+    _set_population_floor(monkeypatch, 20000)
+    out = _apply_market_viability_pass(
+        [_floor_candidate("measured_zero", 0.0)], search_id="t"
+    )
+    assert out == []  # dropped by the population hard floor
+
+
+def test_viability_floor_boundary_only_at_floor_and_unmeasured_survive(monkeypatch):
+    """19,999 vs 20,000 vs measured-0 vs None against a 20,000 floor: only the
+    at-floor site clears it; the unmeasured (None) site is a defensive pass."""
+    _set_population_floor(monkeypatch, 20000)
+    cohort = [
+        _floor_candidate("just_under", 19999.0),
+        _floor_candidate("at_floor", 20000.0),
+        _floor_candidate("measured_zero", 0.0),
+        _floor_candidate("unmeasured", None),
+    ]
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    assert {c["id"] for c in out} == {"at_floor", "unmeasured"}
+
+
+def test_viability_soft_leg_demotes_measured_zero(disable_market_viability_floors):
+    """With the hard floor disabled, the soft below-quartile leg can demote a
+    measured 0.0 (pop_confident is now 'value present', not '> 0')."""
+    cohort = _viability_cohort(target_pop_reach=0.0, target_rent_pct=0.40)
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    assert "population_below_quartile" in target.get("viability_legs_fired", [])
+
+
+def test_viability_soft_leg_skips_unmeasured_population(disable_market_viability_floors):
+    """A zero-coverage (None) candidate does not fire the soft pop leg — the
+    None-branch defensive pass survives the floor-disabled path too."""
+    cohort = _viability_cohort(target_pop_reach=7000.0, target_rent_pct=0.40)
+    # Replace the target's population_reach with an unmeasured (absent) signal.
+    target_in = next(c for c in cohort if c["id"] == "target")
+    target_in["feature_snapshot_json"].pop("population_reach", None)
+    out = _apply_market_viability_pass(list(cohort), search_id="t")
+    target = next(c for c in out if c["id"] == "target")
+    assert "population_below_quartile" not in target.get("viability_legs_fired", [])
+
+
+def test_none_population_reach_round_trips_through_snapshot_helpers():
+    """Snapshot serialization with a None population_reach round-trips through
+    _normalize_feature_snapshot / _safe_json_dumps and reads back as None."""
+    import json
+
+    from app.services.expansion_advisor import (
+        _normalize_feature_snapshot,
+        _safe_json_dumps,
+    )
+
+    snap = {"population_reach": None, "data_completeness_score": 5}
+    normalized = _normalize_feature_snapshot(snap)
+    assert normalized["population_reach"] is None
+    reloaded = json.loads(_safe_json_dumps(normalized))
+    assert reloaded["population_reach"] is None
+    # Scoring read path coerces None → 0.0 (ranking math unchanged).
+    assert expansion_service._safe_float(reloaded.get("population_reach")) == 0.0
+
+
 def test_viability_pass_diagnostics_unchanged_when_caller_omits_kwarg(
     disable_market_viability_floors,
 ):
