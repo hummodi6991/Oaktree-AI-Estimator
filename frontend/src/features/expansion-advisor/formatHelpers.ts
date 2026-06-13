@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import { formatCurrencySAR, formatNumber, formatInteger } from "../../i18n/format";
 import { toNumeric } from "../../lib/api/coerceNumeric";
 
@@ -228,8 +229,45 @@ const GATE_LABEL_MAP: Record<string, string> = {
   economics: "Economics",
 };
 
-/** Return a clean human-readable label for a gate key. */
-export function humanGateLabel(key: string): string {
+/**
+ * Maps the 12 canonical gate keys to i18n resource keys so the chip label
+ * follows the current locale. Mirrors GATE_LABELS in
+ * app/services/expansion_advisor_i18n.py (single backend source of truth for
+ * the AR strings). The en.json values are byte-identical to the legacy
+ * English output of humanGateLabel below, so EN rendering is unchanged.
+ */
+const GATE_LABEL_I18N_KEYS: Record<string, string> = {
+  zoning_fit_pass: "expansionAdvisor.gateLabel.zoningFit",
+  area_fit_pass: "expansionAdvisor.gateLabel.areaFit",
+  frontage_access_pass: "expansionAdvisor.gateLabel.frontageAccess",
+  parking_pass: "expansionAdvisor.gateLabel.parking",
+  district_pass: "expansionAdvisor.gateLabel.district",
+  cannibalization_pass: "expansionAdvisor.gateLabel.cannibalization",
+  delivery_market_pass: "expansionAdvisor.gateLabel.deliveryMarket",
+  economics_pass: "expansionAdvisor.gateLabel.economics",
+  radiance_growth_pass: "expansionAdvisor.gateLabel.radianceGrowth",
+  population_floor_pass: "expansionAdvisor.gateLabel.populationFloor",
+  commercial_floor_pass: "expansionAdvisor.gateLabel.commercialFloor",
+  construction_proximity_pass: "expansionAdvisor.gateLabel.constructionProximity",
+};
+
+/**
+ * Return a clean human-readable label for a gate key.
+ *
+ * When a locale-bound `t` (from useTranslation) is supplied, canonical gate
+ * keys are localized via the i18n resources (same mechanism as
+ * humanizeScoreLabel). Without `t` — or for keys absent from the i18n map —
+ * the legacy English derivation is used, so existing callers stay
+ * byte-identical and unknown keys never crash.
+ */
+export function humanGateLabel(key: string, t?: TFunction): string {
+  if (t) {
+    const i18nKey = GATE_LABEL_I18N_KEYS[key];
+    if (i18nKey) {
+      const translated = t(i18nKey);
+      if (translated !== i18nKey) return translated;
+    }
+  }
   if (GATE_LABEL_MAP[key]) return GATE_LABEL_MAP[key];
   return key
     .replace(/_/g, " ")

@@ -33,9 +33,9 @@ export default function GateSummary({ gates, unknownGates }: GateSummaryProps) {
           <span
             key={key}
             className={`ea-gate-item ea-gate-item--${status}`}
-            title={humanGateLabel(key)}
+            title={humanGateLabel(key, t)}
           >
-            {gateIcon(status)} {humanGateLabel(key)}
+            {gateIcon(status)} {humanGateLabel(key, t)}
           </span>
         );
       })}

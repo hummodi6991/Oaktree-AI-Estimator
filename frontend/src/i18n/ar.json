@@ -786,6 +786,20 @@
       "parking": "مواقف السيارات",
       "cannibalization": "التهام الفروع"
     },
+    "gateLabel": {
+      "zoningFit": "ملاءمة التنطيق",
+      "areaFit": "ملاءمة المساحة",
+      "frontageAccess": "الواجهة/الوصول",
+      "parking": "مواقف السيارات",
+      "district": "الحي",
+      "cannibalization": "التهام المبيعات",
+      "deliveryMarket": "سوق التوصيل",
+      "economics": "الجدوى الاقتصادية",
+      "radianceGrowth": "إشارة نمو السوق",
+      "populationFloor": "الحد الأدنى للوصول السكاني",
+      "commercialFloor": "الحد الأدنى للنشاط التجاري",
+      "constructionProximity": "الحد الأدنى للقرب الإنشائي"
+    },
     "selectCandidates": "اختر ٢\u2013٤ مرشحين للمقارنة",
     "compareSelected": "مقارنة ({{count}})",
     "executiveReport": "التقرير التنفيذي",
