@@ -5842,10 +5842,15 @@ def _apply_market_viability_pass(
         ``EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED=false``; the
         advisory ``radiance_growth_pass`` gate emission remains intact —
         only the soft-demote behavior is suppressed. Ships at the
-        calibrated default ``2.0`` (2026-05-06 calibration: sits in the
-        empirical 1.5–3.0% YoY gap and demotes ~45% of confident
-        candidates, matching Faisal's "below 2% is not strong growth"
-        directive against ~5% typical citywide growth).
+        calibrated default ``0.0`` (recalibrated 2026-05-10, superseding
+        the original 2026-05-06 default of ``2.0``): the 2.0 default
+        demoted ~49% of confident candidates and compressed top scores,
+        so the leg was re-anchored to ``0.0`` to isolate only the
+        "confidently shrinking" tier (value_yoy_pct strictly below 0%).
+        Env-overridable; the live production value is this ``0.0``
+        default (not set in the deployment secret). See the
+        ``EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD`` block in
+        ``app/core/config.py`` for the full recalibration rationale.
 
     The growth-rescue signal reads ``feature_snapshot_json["radiance_growth"]``
     (NASA Black Marble VNP46A3). When that signal is confident and YoY growth
@@ -5895,7 +5900,7 @@ def _apply_market_viability_pass(
         settings, "EXPANSION_VIABILITY_DEMAND_LEG_ENABLED", True
     ))
     radiance_yoy_demote_threshold = float(getattr(
-        settings, "EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD", 2.0
+        settings, "EXPANSION_VIABILITY_RADIANCE_YOY_DEMOTE_THRESHOLD", 0.0
     ))
     radiance_growth_leg_enabled = bool(getattr(
         settings, "EXPANSION_VIABILITY_RADIANCE_GROWTH_LEG_ENABLED", True
@@ -8874,8 +8879,8 @@ def run_expansion_search(
         # meaningful.  A single incidental listing (e.g. one non-category
         # restaurant) is noise, not a market signal — it would otherwise drive
         # provider_whitespace_score to ~100, indistinguishable from a genuinely
-        # uncontested area.  Thresholds: ≥3 total listings OR ≥2 platforms OR
-        # ≥1 same-category competitor in the delivery radius.
+        # uncontested area.  Thresholds: ≥5 total listings OR ≥2 platforms OR
+        # ≥2 same-category competitors in the delivery radius.
         _delivery_observed = (
             provider_listing_count >= 5
             or provider_platform_count >= 2
