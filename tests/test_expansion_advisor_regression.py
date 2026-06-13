@@ -2076,6 +2076,262 @@ def test_economics_score_tier_aware_absolute_ceiling():
 
 
 # ---------------------------------------------------------------------------
+# Finding 2 (scoring audit 2026-06): value_score uses the tier-blind revenue
+# basis — the price-tier ticket multiplier no longer leaks into value_band.
+# ---------------------------------------------------------------------------
+
+def _economics_with_stubbed_percentile(burden_score: float, **kwargs):
+    """Run _economics_score on the percentile path with a fixed peer-relative
+    rent burden so value_score publishes deterministically."""
+    import app.services.expansion_advisor as adv
+
+    fixed_comp = {
+        "burden_score": float(burden_score),
+        "source_label": "district_band_type",
+        "n_comparable": 12,
+    }
+    orig = adv._percentile_rent_burden
+    adv._percentile_rent_burden = lambda *a, **k: dict(fixed_comp)
+    try:
+        return adv._economics_score(
+            estimated_annual_rent_sar=120_000.0,
+            estimated_fitout_cost_sar=300_000.0,
+            area_m2=100.0,
+            cannibalization_score=10.0,
+            fit_score=70.0,
+            db=object(),
+            is_listing=True,
+            **kwargs,
+        )
+    finally:
+        adv._percentile_rent_burden = orig
+
+
+def test_value_score_premium_multiplier_no_longer_pins_best_value():
+    """A premium burger brief with a mediocre tier-blind base (≈50) and a
+    median-ish rent burden must NOT classify best_value.
+
+    Pre-fix, the 1.9× premium-burger ticket multiplier pinned
+    estimated_revenue_index at the 100 clamp, collapsing value_score to
+    sqrt(100 × rent_burden) — best_value became rent-burden-only.
+    """
+    from app.services.expansion_advisor import _value_score
+
+    index, detail = _estimate_revenue_index(
+        area_m2=80.0,  # ratio 80/225 ≈ 0.36 → mediocre area signal
+        demand_score=50.0,
+        whitespace_score=50.0,
+        category="burger",
+        price_tier="premium",
+        return_detail=True,
+    )
+    # The tier-multiplied index is pinned at the clamp by the multiplier;
+    # the tier-blind basis stays mediocre.
+    assert index == 100.0
+    assert detail["ticket_multiplier"] == pytest.approx(1.9)
+    assert detail["tier_blind_index"] < 60.0
+
+    meta = _economics_with_stubbed_percentile(
+        58.0,
+        estimated_revenue_index=index,
+        price_tier="premium",
+        revenue_index_detail=detail,
+    )[1]
+    assert meta["value_band"] != "best_value"
+    assert meta["value_score"] < 75.0
+    assert meta["value_revenue_basis"] == pytest.approx(
+        detail["tier_blind_index"], abs=0.01
+    )
+    # The pre-fix basis (the pinned index) would have crossed the
+    # best_value line on the same rent burden.
+    assert _value_score(index, 58.0) >= 75.0
+
+
+def test_value_score_value_tier_cafe_can_reach_best_value():
+    """A value-tier cafe with a strong tier-blind base (≥85) and strong rent
+    burden (≥70) CAN reach best_value.
+
+    Pre-fix, the 0.5× value-cafe ticket multiplier capped
+    estimated_revenue_index at clamp(100 × 1.05 × 0.5) = 52.5, so even a
+    perfect base under a perfect rent burden gave sqrt(52.5 × 100) ≈ 72.5
+    < 75 — best_value was mathematically unreachable.
+    """
+    from app.services.expansion_advisor import _clamp, _value_score
+
+    index, detail = _estimate_revenue_index(
+        area_m2=225.0,
+        unit_street_width_m=40.0,
+        unit_listing_type="showroom",
+        demand_score=92.0,
+        whitespace_score=90.0,
+        category="cafe",
+        price_tier="value",
+        return_detail=True,
+    )
+    assert detail["ticket_multiplier"] == pytest.approx(0.5)
+    assert detail["tier_blind_index"] >= 85.0
+
+    # Mathematical unreachability of the old basis: a perfect base under
+    # the 0.5× multiplier cannot cross the 75-point best_value line.
+    assert _value_score(_clamp(100.0 * 1.05 * 0.5), 100.0) < 75.0
+
+    meta = _economics_with_stubbed_percentile(
+        72.0,
+        estimated_revenue_index=index,
+        price_tier="value",
+        revenue_index_detail=detail,
+    )[1]
+    assert meta["value_band"] == "best_value"
+    assert meta["value_score"] >= 75.0
+
+
+def test_value_score_tier_invariant_for_same_listing():
+    """The same synthetic listing scored under value/mid/premium briefs gets
+    an identical value_score and value_band; the ticket multiplier keeps
+    moving only the ranking-side estimated_revenue_index (out of scope)."""
+    results = {}
+    indexes = {}
+    for tier in ("value", "mid", "premium"):
+        index, detail = _estimate_revenue_index(
+            area_m2=225.0,
+            unit_street_width_m=40.0,
+            unit_listing_type="showroom",
+            demand_score=92.0,
+            whitespace_score=90.0,
+            category="cafe",
+            price_tier=tier,
+            return_detail=True,
+        )
+        meta = _economics_with_stubbed_percentile(
+            65.0,
+            estimated_revenue_index=index,
+            price_tier=tier,
+            revenue_index_detail=detail,
+        )[1]
+        indexes[tier] = index
+        results[tier] = (
+            detail["tier_blind_index"],
+            meta["value_score"],
+            meta["value_band"],
+        )
+
+    assert results["value"] == results["mid"] == results["premium"]
+    # Ranking-side index still moves with tier (cafe: 0.5× / 0.96× / 1.6×).
+    assert indexes["value"] < indexes["mid"] < indexes["premium"]
+
+
+def test_value_score_mid_tier_near_identical_pre_post_fix():
+    """mid-tier briefs with ticket multiplier == 1.0 (mid pizza: 50/50 SAR)
+    see identical value_scores pre/post fix — the tier-blind basis equals
+    the tier-multiplied index exactly."""
+    from app.services.expansion_advisor import _value_score
+
+    index, detail = _estimate_revenue_index(
+        area_m2=225.0,
+        demand_score=50.0,
+        whitespace_score=50.0,
+        category="pizza",
+        price_tier="mid",
+        return_detail=True,
+    )
+    assert detail["ticket_multiplier"] == pytest.approx(1.0)
+    assert detail["tier_blind_index"] == pytest.approx(index)
+    assert _value_score(detail["tier_blind_index"], 60.0) == pytest.approx(
+        _value_score(index, 60.0)
+    )
+
+
+def test_economics_detail_value_transparency_fields():
+    """economics_detail gains value_revenue_basis + ticket_multiplier without
+    removing any existing key; callers that don't pass revenue_index_detail
+    fall back to the tier-multiplied basis (legacy behavior)."""
+    index, detail = _estimate_revenue_index(
+        area_m2=225.0,
+        demand_score=60.0,
+        whitespace_score=60.0,
+        category="burger",
+        price_tier="premium",
+        return_detail=True,
+    )
+    meta = _economics_with_stubbed_percentile(
+        60.0,
+        estimated_revenue_index=index,
+        price_tier="premium",
+        revenue_index_detail=detail,
+    )[1]
+    for key in (
+        "rent_burden_score",
+        "rent_burden",
+        "rent_burden_confidence",
+        "rent_burden_weight",
+        "revenue_weight",
+        "fitout_burden_score",
+        "monthly_rent_per_m2",
+        "value_score",
+        "value_band",
+        "value_band_low_confidence",
+    ):
+        assert key in meta
+    assert meta["value_revenue_basis"] == pytest.approx(
+        detail["tier_blind_index"], abs=0.01
+    )
+    assert meta["ticket_multiplier"] == pytest.approx(
+        detail["ticket_multiplier"], abs=1e-4
+    )
+
+    legacy = _economics_with_stubbed_percentile(
+        60.0,
+        estimated_revenue_index=index,
+        price_tier="premium",
+    )[1]
+    assert legacy["value_revenue_basis"] == pytest.approx(index, abs=0.01)
+    assert legacy["ticket_multiplier"] is None
+
+
+def test_estimated_revenue_index_scalar_unchanged_over_matrix():
+    """The legacy scalar return is unchanged: pinned golden values for fixed
+    inputs, and scalar == detail-path index across a tier × category × area
+    matrix."""
+    # Neutral physicals: street None→50, area at 225 sweet spot→100,
+    # type None→50, demand/whitespace 50 → base = 60.0, no multipliers.
+    assert _estimate_revenue_index(
+        area_m2=225.0, demand_score=50.0, whitespace_score=50.0
+    ) == pytest.approx(60.0)
+    # Premium burger: 60 × 1.10 × (95/50) = 125.4 → clamped to 100.
+    assert _estimate_revenue_index(
+        area_m2=225.0,
+        demand_score=50.0,
+        whitespace_score=50.0,
+        category="burger",
+        price_tier="premium",
+    ) == pytest.approx(100.0)
+    # Value coffee: multiplier 18/50 = 0.36 floors at 0.5 → 60 × 1.08 × 0.5.
+    assert _estimate_revenue_index(
+        area_m2=225.0,
+        demand_score=50.0,
+        whitespace_score=50.0,
+        category="coffee",
+        price_tier="value",
+    ) == pytest.approx(32.4)
+
+    for tier in (None, "value", "mid", "premium"):
+        for category in (None, "burger", "cafe", "coffee", "pizza", "grills"):
+            for area in (60.0, 225.0, 500.0):
+                kwargs = dict(
+                    area_m2=area,
+                    unit_street_width_m=20.0,
+                    unit_listing_type="store",
+                    demand_score=65.0,
+                    whitespace_score=55.0,
+                    category=category,
+                    price_tier=tier,
+                )
+                scalar = _estimate_revenue_index(**kwargs)
+                index, _detail = _estimate_revenue_index(**kwargs, return_detail=True)
+                assert scalar == index
+
+
+# ---------------------------------------------------------------------------
 # Patch 06: rebalanced _score_breakdown weights
 # ---------------------------------------------------------------------------
 
