@@ -11,12 +11,13 @@ on:
         description: "Truncate and rebuild"
         type: boolean
         default: true
-  workflow_run:
-    workflows: ["Aqar Scraper", "Bayut Scraper"]
-    types:
-      - completed
-    branches:
-      - main
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # workflow_run:
+    # workflows: ["Aqar Scraper", "Bayut Scraper"]
+    # types:
+      # - completed
+    # branches:
+      # - main
 
 concurrency:
   group: candidate-locations

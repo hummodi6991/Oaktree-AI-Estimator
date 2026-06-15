@@ -3,9 +3,10 @@ name: "Expansion Advisor: District Labels"
 on:
   workflow_dispatch: {}
   # Also run after the ArcGIS parcels ingest completes
-  workflow_run:
-    workflows: ["Ingest ArcGIS Riyadh Parcels"]
-    types: [completed]
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # workflow_run:
+    # workflows: ["Ingest ArcGIS Riyadh Parcels"]
+    # types: [completed]
 
 jobs:
   district-labels:

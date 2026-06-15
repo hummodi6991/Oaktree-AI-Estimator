@@ -11,8 +11,9 @@
 name: Ingest Black Marble VNP46A3
 
 on:
-  schedule:
-    - cron: "0 5 15 * *"  # 15th of each month at 05:00 UTC
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # schedule:
+    # - cron: "0 5 15 * *"  # 15th of each month at 05:00 UTC
   workflow_dispatch:
     inputs:
       year_month:

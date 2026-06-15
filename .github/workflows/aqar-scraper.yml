@@ -26,11 +26,12 @@ on:
           - showroom
           - warehouse
           - building
-  schedule:
-    # Daily at 02:17 UTC (05:17 Riyadh time) — off-peak, with a 17-minute
-    # offset from the top of the hour to stagger against other cron jobs
-    # and avoid hammering Aqar at a predictable moment.
-    - cron: '17 2 * * *'
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # schedule:
+    # # Daily at 02:17 UTC (05:17 Riyadh time) — off-peak, with a 17-minute
+    # # offset from the top of the hour to stagger against other cron jobs
+    # # and avoid hammering Aqar at a predictable moment.
+    # - cron: '17 2 * * *'
 
 concurrency:
   group: aqar-scraper

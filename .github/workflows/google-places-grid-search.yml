@@ -19,8 +19,9 @@ on:
         description: "Ignore previous progress, re-process all cells"
         type: boolean
         default: false
-  schedule:
-    - cron: "0 4 1 1,4,7,10 *"   # quarterly: Jan/Apr/Jul/Oct 1st @ 04:00 UTC
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # schedule:
+    # - cron: "0 4 1 1,4,7,10 *"   # quarterly: Jan/Apr/Jul/Oct 1st @ 04:00 UTC
 
 concurrency:
   group: google-places-grid
