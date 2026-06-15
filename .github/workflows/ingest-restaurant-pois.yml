@@ -23,8 +23,9 @@ on:
         description: "Specific delivery platforms (comma-separated, e.g. hungerstation,jahez,keeta). Empty = all."
         required: false
         default: ""
-  schedule:
-    - cron: "0 3 * * 1"  # Weekly Monday 03:00 UTC
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # schedule:
+    # - cron: "0 3 * * 1"  # Weekly Monday 03:00 UTC
 
 # Prevent two ingestion runs from overlapping
 concurrency:

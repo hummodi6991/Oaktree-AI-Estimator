@@ -19,12 +19,13 @@ on:
         description: "Seconds to sleep between requests"
         required: false
         default: "1.0"
-  schedule:
-    # Daily at 08:30 UTC (11:30 Riyadh time). The Aqar scraper runs at
-    # 02:17 UTC (05:17 Riyadh); the ~6h offset lets Aqar's
-    # candidate-locations refresh finish before Bayut starts writing
-    # rows that the next refresh will rejoin.
-    - cron: '30 8 * * *'
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # schedule:
+    # # Daily at 08:30 UTC (11:30 Riyadh time). The Aqar scraper runs at
+    # # 02:17 UTC (05:17 Riyadh); the ~6h offset lets Aqar's
+    # # candidate-locations refresh finish before Bayut starts writing
+    # # rows that the next refresh will rejoin.
+    # - cron: '30 8 * * *'
 
 concurrency:
   group: bayut-scraper

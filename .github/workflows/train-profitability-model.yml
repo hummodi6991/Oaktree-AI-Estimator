@@ -2,8 +2,9 @@ name: Train Profitability Model
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 6 * * 0"  # Weekly Sunday 06:00 UTC
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # schedule:
+    # - cron: "0 6 * * 0"  # Weekly Sunday 06:00 UTC
 
 jobs:
   train:

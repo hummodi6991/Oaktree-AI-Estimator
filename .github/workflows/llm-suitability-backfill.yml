@@ -11,12 +11,13 @@ on:
         description: "Reclassify rows that already have llm_classified_at"
         required: false
         default: "false"
-  workflow_run:
-    workflows:
-      - "Deploy to sccc (Alibaba Cloud Riyadh)"
-      - "Aqar Scraper"
-      - "Bayut Scraper"
-    types: [completed]
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # workflow_run:
+    # workflows:
+      # - "Deploy to sccc (Alibaba Cloud Riyadh)"
+      # - "Aqar Scraper"
+      # - "Bayut Scraper"
+    # types: [completed]
 
 jobs:
   backfill:

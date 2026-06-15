@@ -1,8 +1,9 @@
 name: "Expansion Advisor Data — Parking Context"
 
 on:
-  schedule:
-    - cron: "0 4 * * 2"  # Weekly on Tuesday at 04:00 UTC (offset from roads)
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # schedule:
+    # - cron: "0 4 * * 2"  # Weekly on Tuesday at 04:00 UTC (offset from roads)
   workflow_dispatch:
     inputs:
       replace_mode:

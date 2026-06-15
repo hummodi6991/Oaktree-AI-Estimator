@@ -1,18 +1,19 @@
 name: Deploy to sccc (Alibaba Cloud Riyadh)
 
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "app/**"
-      - "alembic/**"
-      - "frontend/**"
-      - "Dockerfile"
-      - ".github/workflows/deploy-sccc.yml"
-      - "k8s/**"
-      - "sql/**"
-      - "models/**"
-      - "Makefile"
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # push:
+    # branches: [ "main" ]
+    # paths:
+      # - "app/**"
+      # - "alembic/**"
+      # - "frontend/**"
+      # - "Dockerfile"
+      # - ".github/workflows/deploy-sccc.yml"
+      # - "k8s/**"
+      # - "sql/**"
+      # - "models/**"
+      # - "Makefile"
   workflow_dispatch:
 
 permissions:

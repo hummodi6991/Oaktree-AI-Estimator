@@ -1,8 +1,9 @@
 name: "Expansion Advisor Data — Competitor Quality"
 
 on:
-  schedule:
-    - cron: "0 7 * * 5"  # Weekly on Friday at 07:00 UTC
+  # [PAUSED 2026-06-15] project on indefinite hold — auto-trigger disabled; re-enable by uncommenting.
+  # schedule:
+    # - cron: "0 7 * * 5"  # Weekly on Friday at 07:00 UTC
   workflow_dispatch:
     inputs:
       refresh_google_reviews:
