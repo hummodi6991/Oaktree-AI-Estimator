@@ -1,292 +1,311 @@
-# Oaktree Estimator – Starter (GCP / KSA)
+# Oaktree Atlas — Geospatial Real-Estate Intelligence for Riyadh
 
-## Operator Quickstart (from a polygon to a memo)
-1. Start the API locally (or hit staging) and the React UI (Vite).
-2. In the UI, draw a site polygon (Riyadh default). Enter city/FAR/timeline.
-3. Click **Run Estimate** to compute land, costs, financing, revenues, and P5/P50/P95.
-4. Click **Open PDF Memo** to export.
-5. Use **Scenario** to test deltas (e.g., +x% price).
+> A full-stack geospatial decision platform that turns a map polygon or a plain-language brief into an investment-grade real-estate recommendation. Built end-to-end for **Riyadh, Saudi Arabia** — from PostGIS data pipelines through a deterministic scoring engine to a bilingual (Arabic/English) React map UI and exported PDF memos.
 
-FastAPI + PostgreSQL starter for Oaktree’s cost/revenue estimator app. Built to match the approved blueprint and phased plan. Runs locally via Docker and deploys to **Google Cloud Run** in **Dammam (me-central2)** using keyless GitHub OIDC.  [oai_citation:2‡AI App Blueprint .docx](file-service://file-ALgZg1S1QWVEsFVxeedqkv)  [oai_citation:3‡comprehensive, step‑by‑step, end‑to‑end build guide.docx](file-service://file-2mLQo2SYnT3iuikLqGJy8N)
+Oaktree Atlas (a.k.a. Oaktree Estimator) is a production-shaped application I designed and built across the entire stack: spatial data ingestion, a FastAPI/PostGIS backend, machine-learning and LLM-assisted scoring, a MapLibre front end, and Kubernetes deployment automation. This README is a guided tour of that work.
 
-## Quick start (local)
+---
+
+## Table of contents
+
+- [What it does](#what-it-does)
+- [Why it's interesting (engineering highlights)](#why-its-interesting-engineering-highlights)
+- [Architecture at a glance](#architecture-at-a-glance)
+- [Tech stack](#tech-stack)
+- [The two product surfaces](#the-two-product-surfaces)
+- [Data platform & ingestion](#data-platform--ingestion)
+- [Machine learning & LLM layer](#machine-learning--llm-layer)
+- [Repository map](#repository-map)
+- [API surface](#api-surface)
+- [Running it locally](#running-it-locally)
+- [Testing, CI & deployment](#testing-ci--deployment)
+- [Engineering principles I followed](#engineering-principles-i-followed)
+
+---
+
+## What it does
+
+The platform answers two high-value questions for real-estate operators in Riyadh:
+
+1. **"Is this site worth developing, and what does the pro-forma look like?"**
+   Draw or identify a parcel on the map, enter program assumptions (FAR, use mix, timeline), and the **Development Feasibility / Estimator** computes land cost, financing, revenue, parking compliance, FAR-driven build-up area, and a full feasibility distribution (P5/P50/P95) — exportable as a PDF memo in English or Arabic.
+
+2. **"Where should this brand open its next branch?"**
+   Describe a brand and its constraints (or paste a free-text brief), and the **Expansion Advisor** generates, scores, and ranks candidate locations across the city — with explainable gate logic, cannibalization analysis, delivery-market and competitor intelligence, economics/payback estimates, and a deterministic decision memo per candidate.
+
+Both surfaces are built on the same spatial backbone: a PostGIS database of Riyadh parcels, building footprints, roads, points of interest, rents, and demand proxies, surfaced through vector tiles and a `/v1/*` JSON API.
+
+---
+
+## Why it's interesting (engineering highlights)
+
+This isn't a CRUD app. The parts I'm most proud of:
+
+- **Real geospatial engineering.** Parcel identify-by-click, server-side vector-tile generation with zoom-based simplification, and metric computations done correctly via `EPSG:4326 ↔ EPSG:32638` transforms. Spatial joins against parcels, OSM roads, and parking assets feed an explainable access/frontage/visibility scoring model.
+- **A deterministic, explainable scoring engine.** The Expansion Advisor's ranking is reproducible and auditable: every candidate carries a `score_breakdown_json` (weights → inputs → weighted components → final score), a gate checklist split into `passed` / `failed` / `unknown` buckets, and a `feature_snapshot_json` that distinguishes *unavailable context* from *weak candidate quality*. Decision quality and explainability were treated as first-class requirements, not afterthoughts.
+- **ML where it earns its place.** Hedonic land-price models, restaurant-suitability and profitability models, and a demand heatmap — trained via dedicated pipelines (MLflow-tracked) and served behind feature flags so model changes can ship safely.
+- **An LLM layer that stays grounded.** GPT-based components extract structured search briefs from free text, draft decision memos, classify listing suitability, and re-rank candidates — but always on top of deterministic features, behind flags, with the heuristic engine as the source of truth.
+- **Bilingual, RTL-correct by construction.** Full i18next coverage (Arabic/English) on the front end, plus a genuinely hard piece of work: rendering **Arabic PDF memos** with correct contextual shaping (`arabic-reshaper`) and BiDi reordering (`python-bidi`).
+- **A serious data platform.** ~25 ingestion jobs pull and normalize ArcGIS parcels, Microsoft GlobalML building footprints, Overture buildings, OSM roads, Aqar/Bayut listings, REGA indicators, Black Marble night-lights radiance, and population density — orchestrated through GitHub Actions and Kubernetes CronJobs.
+- **Production deployment reality.** Dockerized, deployed to **Alibaba Cloud ACK** (sccc by stc, Riyadh `me-central-1`) via GitHub Actions, with Kubernetes manifests validated in CI before apply.
+
+**By the numbers:** ~143 Python modules · ~135 React/TypeScript files · 91 Alembic migrations · 132 test files · 37 CI/automation workflows.
+
+---
+
+## Architecture at a glance
+
+```
+                         ┌────────────────────────────────────────────┐
+                         │  React 18 + TypeScript + Vite + MapLibre GL │
+                         │  • Estimator (draw → pro-forma → PDF)       │
+                         │  • Expansion Advisor (brief → ranked sites) │
+                         │  • i18next (AR/EN, RTL)                      │
+                         └───────────────────┬────────────────────────┘
+                                             │  /v1/* JSON + vector tiles (.pbf)
+                         ┌───────────────────▼────────────────────────┐
+                         │            FastAPI (Python 3.11)            │
+                         │  api/  → routers   services/ → business     │
+                         │  security/ → auth modes & request guards    │
+                         │  ┌───────────────┬──────────────────────┐   │
+                         │  │ Estimator     │ Expansion Advisor     │  │
+                         │  │ costs/revenue │ candidate gen + gates │  │
+                         │  │ FAR/parking   │ scoring + memos       │  │
+                         │  │ financing/tax │ cannibalization       │  │
+                         │  └───────┬───────┴───────────┬───────────┘   │
+                         │     ml/ (hedonic, scoring)  LLM layer        │
+                         └──────────┬──────────────────────────────────┘
+                                    │ SQLAlchemy 2.0 / Alembic
+                         ┌──────────▼──────────────────────────────────┐
+                         │       PostgreSQL 15 + PostGIS                │
+                         │  parcels · buildings · roads · POIs · rents  │
+                         │  proxy & materialized views (app contract)  │
+                         └──────────▲──────────────────────────────────┘
+                                    │ ingest/  (≈25 jobs)
+                  ArcGIS · MS Buildings · Overture · OSM · Aqar/Bayut ·
+                  REGA · Black Marble radiance · population density
+```
+
+---
+
+## Tech stack
+
+| Layer | Technologies |
+|---|---|
+| **Backend** | Python 3.11, FastAPI, Pydantic v2, SQLAlchemy 2.0, Alembic |
+| **Database** | PostgreSQL 15 + PostGIS (proxy & materialized views) |
+| **Geospatial** | Shapely, pyproj, mapbox-vector-tile, h3, EPSG:4326 / EPSG:32638 |
+| **ML / data** | scikit-learn, pandas, numpy, pyarrow, MLflow, joblib |
+| **LLM** | OpenAI GPT-4o-mini (brief extraction, memos, suitability, rerank) — flag-gated |
+| **Frontend** | React 18, TypeScript, Vite, MapLibre GL, i18next, proj4 |
+| **PDF** | fpdf2 + arabic-reshaper + python-bidi (RTL Arabic rendering) |
+| **Observability** | OpenTelemetry (FastAPI + httpx instrumentation, OTLP export) |
+| **Testing** | pytest (backend), Vitest (frontend) |
+| **Tooling** | black, flake8 |
+| **Deploy** | Docker, Kubernetes on Alibaba Cloud ACK (Riyadh `me-central-1`), GitHub Actions |
+
+---
+
+## The two product surfaces
+
+### 1) Development Feasibility / Estimator
+
+From a polygon to a memo: draw or click-identify a parcel, set program inputs, and run an estimate that ties together a full development pro-forma.
+
+- **Land pricing** via a blended engine (Suhail anchor + Kaggle Aqar district medians, district-resolved once).
+- **FAR resolution** from polygon features first, falling back to a district-level FAR rules table.
+- **Build-up area & use mix** (residential / retail / office / mixed-use) with Riyadh-calibrated assumptions.
+- **Riyadh parking minimums** enforced from the municipal guide — required vs. provided stalls, with an optional `auto_add_basement` policy that resolves deficits by growing below-grade area (excluded from FAR scaling).
+- **Financing, tax, residual, and pro-forma** modules produce a P5/P50/P95 feasibility distribution.
+- **PDF memos** in English and Arabic (RTL-correct).
+- **Scenario deltas** to test sensitivity (e.g. ±x% price).
+
+Core code: `app/api/estimates.py`, `app/services/{costs,revenue,parking,far_rules,financing,tax,residual,proforma,land_price_engine,excel_method}.py`.
+
+### 2) Expansion Advisor
+
+The primary user-facing workflow — restaurant/retail location intelligence with a strong emphasis on **explainability**.
+
+- **Candidate generation** across a bounding box / target districts, respecting brand profile and service model (`qsr` / `dine_in` / `delivery_first` / `cafe`).
+- **Deterministic gates** — zoning fit, area fit, frontage/access, parking, district policy, cannibalization, delivery-market, economics, and an overall pass — each with explicit `passed` / `failed` / `unknown` reasoning (unknown context never silently fails a candidate).
+- **Scoring breakdown** exposing weights, inputs, weighted components, and the final score, so a ranking can always be defended.
+- **Cannibalization analysis** — deterministic, distance-based, adjusted by service model and existing branches.
+- **Provider & delivery-market intelligence** — provider density, whitespace, multi-platform presence, delivery competition.
+- **Economics** — estimated rent, fit-out, revenue index, payback band (`strong`/`promising`/`borderline`/`weak`).
+- **Decision memos & reports** — per-candidate memos with a `go`/`consider`/`caution` verdict, comparison endpoints, and an executive-style search report.
+- **Saved studies** — persist briefs, shortlists, and UI state for later hydration.
+
+Core code: `app/api/expansion_advisor.py`, `app/services/expansion_advisor*.py`, `app/services/expansion_rerank.py`, migrations under `alembic/versions/20260310_*…20260314_*`, and `frontend/src/features/expansion-advisor/`.
+
+---
+
+## Data platform & ingestion
+
+The app's intelligence comes from a curated Riyadh spatial corpus. `app/ingest/` contains ~25 jobs (run locally, via GitHub Actions, or as Kubernetes CronJobs):
+
+| Domain | Sources |
+|---|---|
+| **Parcels** | ArcGIS Riyadh parcels (production default, via `riyadh_parcels_arcgis_proxy`), Suhail tiles (resumable importer), inferred parcels from building footprints |
+| **Buildings** | Microsoft GlobalML Building Footprints (Riyadh-filtered), Overture buildings |
+| **Roads / context** | OSM roads & parking assets, expansion road/parking context tables |
+| **Listings & rents** | Aqar and Bayut scrapers, Kaggle Aqar comps, REGA indicators, rent comps |
+| **Demand proxies** | Black Marble night-lights radiance, population density, restaurant POIs, Google Places grid search |
+
+Parcel sourcing is configurable but defaults to ArcGIS production tables (`PARCEL_TILE_TABLE` / `PARCEL_IDENTIFY_TABLE`). Vector tiles are served at all zoom levels with zoom-based simplification and minimum-area filtering for legible low-zoom outlines.
+
+Detailed ingestion docs live in [`docs/`](docs/) (e.g. `arcgis_parcel_ingest.md`, `expansion_advisor_data_ingest.md`).
+
+---
+
+## Machine learning & LLM layer
+
+**Models** (`app/ml/`, trained via the `train-*` GitHub workflows, MLflow-tracked):
+
+- `hedonic_train.py` — hedonic land-price model
+- `restaurant_score_train.py` / `restaurant_heatmap_train.py` — suitability & demand heatmap
+- `profitability_train.py` — branch profitability
+- `name_normalization.py` — brand/POI name normalization
+
+**LLM components** (`app/services/llm_*.py`, all flag-gated, all grounded on deterministic features):
+
+- `llm_brief_extraction.py` — turn a free-text brand brief into a structured search request
+- `llm_decision_memo.py` — draft candidate decision memos on top of computed evidence
+- `llm_suitability.py` — GPT-4o-mini listing-suitability classification
+- `expansion_rerank.py` — optional LLM re-rank layered over the heuristic ranking
+
+The deterministic engine is always the source of truth; LLM output augments explainability rather than replacing scoring. Investigation/validation write-ups for many of these changes live in `docs/investigations/`.
+
+---
+
+## Repository map
+
+```
+app/
+  api/          FastAPI routers (estimates, expansion_advisor, search, tiles,
+                geo_portal, pricing, comps, indices, metadata, analytics, …)
+  services/     Business logic — costs, revenue, parking, FAR, financing, tax,
+                residual, proforma, land pricing, expansion scoring, memos, PDF
+  ml/           Model training & feature utilities
+  ingest/       Data ingestion / refresh / pipeline jobs (~25)
+  models/       SQLAlchemy models (tables.py)
+  db/           Engine / session wiring
+  core/         Runtime settings & feature flags (config.py)
+  security/     Auth modes (disabled / api_key / oidc) & request guards
+  connectors/   External data-source clients
+  delivery/     Delivery-market logic
+frontend/
+  src/features/expansion-advisor/   Advisor UI (forms, candidate cards, memos…)
+  src/map/                          MapLibre layers, parcel & overlay rendering
+  src/lib/api/                      Typed API clients + normalizers
+  src/i18n/                         i18next setup + en.json / ar.json
+  src/components, ui-v2, utils      Shared UI & helpers
+alembic/versions/   91 migrations (schema history)
+k8s/                Deployment, service, CronJobs (Alibaba ACK)
+.github/workflows/  37 workflows: CI, deploy, ingestion, model training
+docs/               Focused technical docs & investigation reports
+tests/              132 pytest modules
+sql/, scripts/      Helper SQL & operational scripts
+```
+
+---
+
+## API surface
+
+All application endpoints live under `/v1/*` and JSON list endpoints use `{ "items": [...] }`.
+
+**Estimator / feasibility**
+- `POST /v1/estimates` — full pro-forma (FAR, parking, financing, P5/P50/P95)
+- `POST /v1/geo/building-metrics` — coverage / floors proxy / BUA from footprints
+- `GET /v1/pricing/land`, `GET /v1/comps`, `GET /v1/indices/{cci,rates}`
+- `GET /v1/metadata/parking-rules`, `GET /v1/metadata/freshness`
+
+**Geo / map**
+- `GET /v1/tiles/parcels/{z}/{x}/{y}.pbf` — parcel vector tiles
+- `GET /v1/geo/identify?lng=&lat=&tol_m=` — parcel identify-by-click
+- `GET /v1/search` — bilingual (Arabic/English) parcel & place search
+
+**Expansion Advisor**
+- `POST /v1/expansion-advisor/searches` — generate ranked candidates
+- `GET  /v1/expansion-advisor/searches/{id}` · `/candidates` · `/report`
+- `POST /v1/expansion-advisor/candidates/compare`
+- `GET  /v1/expansion-advisor/candidates/{id}/memo`
+- `… /saved-searches` (full CRUD for saved studies)
+
+Interactive docs are served at `/docs` when the API is running. Response contracts are intentionally strict and deterministic — gate/score/feature JSON always include their default keys so the front end can render without defensive null-checking.
+
+---
+
+## Running it locally
+
+**Prerequisites:** Docker, Python 3.11, Node 18+.
 
 ```bash
+# Backend
 cp .env.example .env
-docker compose up -d db
+docker compose up -d db            # PostgreSQL 15 + PostGIS
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 alembic upgrade heads
 uvicorn app.main:app --reload --port 8000
 # open http://127.0.0.1:8000/docs
-pytest -q
 ```
 
-### Load sample data (optional)
+```bash
+# Frontend
+cd frontend
+npm install
+cp .env.development.example .env.development   # set VITE_API_BASE_URL
+npm run dev
+```
+
+Convenience targets (`Makefile`): `make db-up`, `make db-init`, `make api`, `make test`, `make fmt`, `make lint`, plus `make ingest-*` / `make fetch-*` for data jobs.
+
+**Optional sample data**
+
 ```bash
 python scripts/ingest_samples.py
 curl -fsS 127.0.0.1:8000/v1/metadata/freshness
 ```
 
-### Ingest shapefiles (external layers)
-Zip the `.shp/.shx/.dbf/.prj` components together, then upload them via the ingest API:
+**Geospatial smoke check**
 
 ```bash
-curl -F "file=@/path/to/rydpolygons.zip" "http://127.0.0.1:8000/v1/ingest/shapefile?layer=rydpolygons"
-curl -F "file=@/path/to/rydpoints.zip"   "http://127.0.0.1:8000/v1/ingest/shapefile?layer=rydpoints"
-```
-
-Each feature is stored in the `external_feature` table with GeoJSON geometry and original properties so the UI can surface them immediately.
-
-### Ingest FAR rules (CSV/Excel)
-If you maintain a tabular **district-level** FAR list (no geometry), load it via:
-
-```bash
-curl -F "file=@/path/to/far_rules_riyadh_v1.csv" "http://127.0.0.1:8000/v1/ingest/far_rules?city_default=Riyadh"
-```
-
-**CSV columns**
-```
-district,far_max,city,zoning,road_class,frontage_min_m,asof_date,source_url
-```
-Only `district` and `far_max` are required. When an estimate runs, the API first tries polygon features for FAR; if none are found, it falls back to this rules table by matching the inferred **district**.
-
-### ArcGIS parcels (default outlines + identify)
-ArcGIS parcels (`public.riyadh_parcels_arcgis_raw`) are the default geometry source via the proxy view
-`public.riyadh_parcels_arcgis_proxy`. Ensure the migration that creates the view and GiST index has run, or run:
-`alembic upgrade heads` before using the endpoints.
-
-Default settings (override via env vars as needed):
-- `PARCEL_TILE_TABLE=public.riyadh_parcels_arcgis_proxy`
-- `PARCEL_IDENTIFY_TABLE=public.riyadh_parcels_arcgis_proxy`
-- `PARCEL_IDENTIFY_GEOM_COLUMN=geom`
-- `PARCEL_TARGET_SRID=4326`
-
-Tiles from the ArcGIS proxy are served at all zoom levels with zoom-based simplification and minimum-area
-filters to keep low-zoom outlines readable.
-
-### Suhail parcel tiles import (resumable)
-- Workflow: trigger `.github/workflows/suhail-parcels-import.yml` (dispatch inputs: `zoom`, `layer`, `force_resume_from`, `max_tiles`). The job runs Alembic, ensures PostGIS, and resumes via `suhail_tile_ingest_state`.
-- Local check: `python -m app.ingest.suhail_parcels_tiles --zoom 15 --layer parcels-base --max-tiles 2`.
-- Parcel identify: set `PARCEL_IDENTIFY_TABLE=suhail_parcels_proxy` and `PARCEL_IDENTIFY_GEOM_COLUMN=geom` to route lookups through the Suhail proxy view.
-
-### Inferred parcels (optional outlines + identify)
-Inferred parcels are computed from building footprints (`public.inferred_parcels_v1`) and can be enabled for parcel
-outlines and identify by setting `PARCEL_TILE_TABLE=public.inferred_parcels_v1`,
-`PARCEL_IDENTIFY_TABLE=public.inferred_parcels_v1`, and `PARCEL_IDENTIFY_GEOM_COLUMN=geom`.
-
-**Smoke check (local)**
-```bash
-curl -fsS "http://127.0.0.1:8000/v1/tiles/parcels/15/20634/14062.pbf" -o /tmp/parcels.pbf
-ls -lh /tmp/parcels.pbf
+curl -fsS "http://127.0.0.1:8000/v1/tiles/parcels/15/20634/14062.pbf" -o /tmp/parcels.pbf && ls -lh /tmp/parcels.pbf
 curl -fsS "http://127.0.0.1:8000/v1/geo/identify?lng=46.675&lat=24.713&tol_m=25"
 ```
-Confirm the tile output is non-empty when `public.riyadh_parcels_arcgis_proxy` has rows and that the identify response includes a `parcel_id` from the ArcGIS proxy view.
 
-### Microsoft GlobalML Building Footprints (Saudi Arabia)
-- Download the Saudi Arabia `.csv.gz` files from the `dataset-links.csv` manifest in `microsoft/GlobalMLBuildingFootprints` (filter the CSV for `Saudi Arabia`).
-- Microsoft distributes building footprints as `.csv.gz`; each row/line includes a geometry (often GeoJSON), and some variants may be JSONL. The ingester auto-detects JSONL vs CSV and loads both.
+> Detailed ingestion recipes (shapefiles, FAR rules CSV, Microsoft buildings, Suhail tiles) are in [`docs/`](docs/).
 
-```bash
-MS_BUILDINGS_DIR=/path/to/saudi-arabia/files make ingest-ms-buildings
-```
+---
 
-### Microsoft GlobalML Building Footprints (Riyadh-only)
-Use the `dataset-links.csv` manifest to fetch only the Riyadh tiles, avoiding the blocked blob URLs and STAC `abfs://` links.
+## Testing, CI & deployment
 
-```bash
-make fetch-ms-buildings-riyadh-links
-make ingest-ms-buildings
-```
+- **Backend:** `make test` (pytest) — 132 test modules covering scoring determinism, gate logic, pricing, parking, and API contracts.
+- **Frontend:** `cd frontend && npm run test` (Vitest) and `npm run build` (tsc + Vite). Components, API normalizers, and i18n are unit-tested.
+- **CI:** `.github/workflows/ci.yml` runs lint + tests; ingestion and model-training workflows run on schedule/dispatch.
+- **Schema:** every schema change ships an Alembic migration; the upgrade path is validated as part of the workflow.
+- **Deploy:** pushes to `main` trigger `.github/workflows/deploy-sccc.yml`, which builds the Docker image, pushes to Alibaba Enterprise ACR, validates `k8s/` manifests with `kubectl apply --dry-run=client`, then applies them to the **ACK cluster in Riyadh (`me-central-1`)**.
 
-The fetch step writes Riyadh-only `.csv.gz` JSONL files into `data/ms_buildings/`, which the existing ingest pipeline loads into `public.ms_buildings_raw`.
+**Auth modes** (`app/security/`): `disabled`, `api_key`, and a placeholder `oidc` path — no secrets are committed; production credentials are injected via GitHub Actions variables/secrets.
 
-### Endpoints (MVP)
+---
 
-- `GET /health`
-- `GET /v1/indices/cci`
-- `GET /v1/indices/rates`
-- `GET /v1/comps`
-- `POST /v1/geo/building-metrics` (coverage, floors proxy stats, BUA from Overture buildings)
-- `POST /v1/estimates` (uses Overture-built FAR defaults + Excel-style outputs)
-  - Mixed-use (`m`) inputs: the API assumes **3.5 above-ground floors** and applies **Option B**
-    (scales above-ground `area_ratio` by `3.5 / baseline_floors`) so BUA/FAR reflect that.
-  - Land pricing defaults to **blended_v1** (Suhail anchor + Kaggle Aqar median, district-resolved once via `resolve_district`), shared with `GET /v1/pricing/land`.
+## Engineering principles I followed
 
-### Expansion Advisor API (v6.1)
+These are encoded in [`CLAUDE.md`](CLAUDE.md) and reflected throughout the history:
 
-Endpoints:
-- `POST /v1/expansion-advisor/searches`
-- `GET /v1/expansion-advisor/searches/{search_id}`
-- `GET /v1/expansion-advisor/searches/{search_id}/candidates`
-- `POST /v1/expansion-advisor/candidates/compare`
-- `GET /v1/expansion-advisor/candidates/{candidate_id}/memo`
-- `GET /v1/expansion-advisor/searches/{search_id}/report`
-- `POST /v1/expansion-advisor/saved-searches`
-- `GET /v1/expansion-advisor/saved-searches`
-- `GET /v1/expansion-advisor/saved-searches/{saved_id}`
-- `PATCH /v1/expansion-advisor/saved-searches/{saved_id}`
-- `DELETE /v1/expansion-advisor/saved-searches/{saved_id}`
+- **Riyadh-first correctness** — coordinate systems, parking/FAR rules, and rent/demand data are all calibrated to Riyadh; no non-Riyadh assumptions leak into shared logic.
+- **Smallest safe diff** — grounded, targeted fixes over speculative refactors; existing architecture preserved unless there's a strong reason.
+- **Explainability over black boxes** — provenance, evidence, and score breakdowns are surfaced, never silently dropped for convenience.
+- **Deterministic, testable contracts** — strict response shapes, default-populated JSON, and behavior that's verifiable from both the UI and the API.
+- **Front-end / back-end / schema kept in lock-step** — contract changes land on both sides in the same patch, with i18n keys updated in both locales.
 
-`POST /v1/expansion-advisor/searches` request fields:
-- `brand_name` (string)
-- `category` (string)
-- `service_model` (`qsr` | `dine_in` | `delivery_first` | `cafe`)
-- `min_area_m2`, `max_area_m2`, `target_area_m2` (numbers)
-- `target_districts` (string array; enforced if provided)
-- `existing_branches` (array of `{name?, lat, lon, district?}`)
-- `comparison_candidate_ids` (optional string array for client workflows)
-- `bbox` (`min_lon`, `min_lat`, `max_lon`, `max_lat`)
-- `limit` (1..100)
-- `brand_profile` (optional object) with fields: `price_tier`, `average_check_sar`, `primary_channel`, `parking_sensitivity`, `frontage_sensitivity`, `visibility_sensitivity`, `brand_archetype` (`delivery_led` | `street_flagship` | `neighborhood_local` | `balanced`; omitted/null is seeded server-side from `service_model`), `expansion_goal` (legacy — retired from the UI; non-default values map onto `brand_archetype`), `cannibalization_tolerance_m`, `preferred_districts`, `excluded_districts`. The resolved archetype is persisted with the search; with `EXPANSION_ARCHETYPE_PROFILES=true` (default false, v2 weight stack only) it selects the base component-weight profile.
+---
 
-Search/candidate responses now include (v6.1 adds on top of v5):
-- `existing_branches` in search payloads
-- candidate `district`, `cannibalization_score`, `distance_to_nearest_branch_m`
-- candidate economics fields: `estimated_rent_sar_m2_year`, `estimated_annual_rent_sar`, `estimated_fitout_cost_sar`, `estimated_revenue_index`, `economics_score`, `estimated_payback_months`, `payback_band`
-- candidate decision memo fields: `decision_summary`, `key_strengths_json`, `key_risks_json`
-- candidate `compare_rank` (stored ranked order)
-- candidate `rank_position` (explicit final ranked position)
-- candidate `brand_fit_score` and provider intelligence fields: `provider_density_score`, `provider_whitespace_score`, `multi_platform_presence_score`, `delivery_competition_score`
-- **new v6 decision layer fields**: `zoning_fit_score`, `frontage_score`, `access_score`, `parking_score`, `access_visibility_score`, `gate_reasons_json`, `feature_snapshot_json`
-- **new v6.1 decision output fields**: `score_breakdown_json`, `top_positives_json`, `top_risks_json`
-- `feature_snapshot_json` includes deterministic parcel/market context (parcel area/perimeter, district and land use, nearest major road distance, nearby road count, road touch signal, nearby parking amenities when available, provider counts/platform breadth, competitor count, nearest branch distance, and rent/economics context)
-- `feature_snapshot_json` now includes `context_sources`, `missing_context`, and `data_completeness_score` so consumers can distinguish unavailable context from weak candidate quality
+## License
 
-`POST /v1/expansion-advisor/candidates/compare` request:
-- `search_id` (string)
-- `candidate_ids` (2..6 candidate IDs from the same search)
+See [`LICENSE`](LICENSE).
 
-Compare response:
-- `items` in the same order as requested `candidate_ids`
-- deterministic per-item shape always includes `rank_position`, `confidence_grade`, `gate_status_json`, `gate_reasons_json`, `feature_snapshot_json`, `score_breakdown_json`, `top_positives_json`, `top_risks_json`, and `comparable_competitors_json`
-- `gate_reasons_json` always includes `passed`, `failed`, `unknown`, `thresholds`, `explanations`
-- `feature_snapshot_json` always includes `context_sources`, `missing_context`, `data_completeness_score`
-- `score_breakdown_json` always includes `weights`, `inputs`, `weighted_components`, `final_score`
-- `summary` always includes: best-overall, lowest-cannibalization, highest-demand, best-fit, best-economics, best-brand-fit, strongest-delivery-market, strongest-whitespace, lowest-rent-burden, fastest-payback, most-confident, and best-gate-pass candidate IDs
+---
 
-`GET /v1/expansion-advisor/candidates/{candidate_id}/memo` returns a deterministic decision memo with:
-- candidate economics + scoring breakdown
-- gate checklist, gate reasons, and feature snapshot
-- comparable competitors plus demand/cost thesis
-- deterministic recommendation verdict (`go` | `consider` | `caution`)
-- a headline, best-use-case branch format, and primary watchout
-- deterministic `market_research` summaries for delivery-market context, competitive context, and district fit
-
-`GET /v1/expansion-advisor/searches/{search_id}` returns a deterministic detail contract for legacy and new rows. It always includes: `target_districts` (array), `bbox` (object or null), `request_json` (object), `notes` (object), `existing_branches` (array), `brand_profile` (object), and `meta` with `version`, `parcel_source`, `excluded_sources`.
-
-`GET /v1/expansion-advisor/searches/{search_id}/report` returns a deterministic executive-style JSON recommendation with `meta.version = "expansion_advisor_v6.1"`, `top_candidates` (top 3 ordered by `rank_position`, then final score fallback), and `recommendation` keys always present (`best_candidate_id`, `runner_up_candidate_id`, `best_pass_candidate_id`, `best_confidence_candidate_id`, `why_best`, `main_risk`, `best_format`, `summary`, `report_summary`). `assumptions` is always present. Top candidates always include `id`, `final_score`, `rank_position`, `confidence_grade`, `gate_verdict`, top positives/risks (max 3), compact feature snapshot, and compact score breakdown.
-
-
-Saved studies payload fields:
-- `search_id`, `title`, `description?`, `status` (`draft` | `final`)
-- `selected_candidate_ids` (shortlist/favorites/compare set)
-- `filters_json` (brief form restore payload)
-- `ui_state_json` (lightweight map/list UI state restore)
-
-Saved study detail response includes linked `search` and `candidates` for frontend hydration. Saved-search responses are normalized for deterministic defaults: `selected_candidate_ids` (array), `filters_json` (object), `ui_state_json` (object), `description` (nullable), nested `search` normalized as above, and nested `candidates` normalized to include decision-layer defaults (`gate_reasons_json`, `feature_snapshot_json`, `score_breakdown_json`).
-
-Notes:
-- Expansion Advisor is now the primary user-facing workflow and replaces Restaurant Finder in navigation.
-- Restaurant Finder remains available only as a legacy/internal market-intelligence flow.
-- ArcGIS Riyadh parcels are the only supported parcel source.
-- Suhail and inferred parcels are intentionally excluded.
-- Cannibalization scoring is deterministic and distance-based, adjusted by service model.
-- Hard gates include zoning fit, area fit, frontage/access, parking, district policy, cannibalization, delivery-market, economics, plus overall pass.
-- Gate reasons are split into deterministic `passed`, `failed`, and `unknown` buckets.
-- API contracts are strict: `gate_status_json` is always an object; `gate_reasons_json`, `feature_snapshot_json`, and `score_breakdown_json` always include deterministic default keys; candidate text fields (`decision_summary`, `demand_thesis`, `cost_thesis`) default to empty strings when absent.
-- If a gate depends on unavailable context, it is marked `unknown` (not auto-failed).
-- `overall_pass` only fails when at least one gate truly fails; unknown-only context gates do not force failure when core gates pass.
-- Access/frontage/parking scoring is deterministic and explainable from ArcGIS parcels + OSM road/parking context, and falls back to neutral defaults when that context is unavailable.
-- Revenue index, provider intelligence, and payback are heuristic decision-support signals (not guaranteed revenue forecasts).
-
-Payback band meanings:
-- `strong`: <= 18 months
-- `promising`: > 18 and <= 28 months
-- `borderline`: > 28 and <= 40 months
-- `weak`: > 40 months
-
-### Rent benchmarks (Excel mode)
-
-The Excel pathway blends data sources for rent: if REGA city-level rents exist and Kaggle Aqar district medians are available, the API scales REGA by the district/city ratio from Aqar. When only Aqar rents exist, it falls back to the district median; otherwise the REGA city benchmark (or manual/template rents) is used. Load Kaggle-derived rent comps via `app/ingest/aqar_rent_comps.py` to enable the blend.
-
-## Frontend dev
-
-Start the API by following the Quick start above (or `make db-up && make db-init && make api`). Then run the Vite dev server:
-
-```bash
-cd frontend
-npm install
-cp .env.development.example .env.development
-# For Codespaces: open the forwarded 8000 port link and paste that as VITE_API_BASE_URL.
-npm run dev
-```
-
-Note: the UI now uses the live Esri basemap only; offline static tiles have been deprecated.
-
-If you're using Codespaces, the FastAPI URL will look like:
-
-```
-https://<your-codespace>-8000.app.github.dev
-```
-
-### Using the UI against staging (ACK)
-If the API is deployed on sccc/ACK, set:
-
-```
-VITE_API_BASE_URL=https://<your-loadbalancer-dns-or-ip>
-```
-
-### Frontend translations
-The React UI uses i18next via `frontend/src/i18n/` (`index.ts`, `en.json`, `ar.json`). Add new keys to both JSON files and reference them with `t(\"...\")` from `react-i18next`. The active locale is persisted in `localStorage` under `oaktree_locale`.
-
-## Deploy (sccc by stc / Alibaba Cloud Riyadh, me-central-1)
-
-1. In sccc by stc (Alibaba Cloud Riyadh), provision an ACK cluster in `me-central-1` and an **Enterprise ACR instance** (the registry should expose a domain such as `oaktree-ai-estimator-registry.me-central-1.cr.aliyuncs.com`).
-2. Until GitHub OIDC is enabled in the region, the workflow authenticates with AK/SK credentials. In GitHub → **Settings → Actions** configure:
-   - **Variables**: `ALIBABA_REGION=me-central-1`, `ACR_NAMESPACE`, `SERVICE_NAME`, `ACK_CLUSTER_ID`, `ACR_LOGIN_SERVER=<enterprise-acr-domain>`
-   - **Secrets**: `ALIBABA_CLOUD_ACR_INSTANCE_ID`, `ALIBABA_ACCESS_KEY_ID`, `ALIBABA_ACCESS_KEY_SECRET`
-3. Pushes to `main` trigger `.github/workflows/deploy-sccc.yml`. The workflow builds the Docker image, pushes it to the Enterprise ACR domain specified in `ACR_LOGIN_SERVER`, validates the Kubernetes manifests with `kubectl apply --dry-run=client -f k8s/`, then applies the manifests in `k8s/` to update the ACK deployment. (If you edit the manifests manually, keep `spec.template.spec.containers` as a YAML list — each container needs its own leading hyphen.)
-4. (Preferred, once available) Switch back to GitHub OIDC by providing `ALIBABA_CLOUD_RAM_ROLE_ARN` and `ALIBABA_CLOUD_RAM_OIDC_ARN` secrets and removing the AK/SK credentials.
-
-No secrets are committed. For production, switch the database to HA and add RBAC/SSO per the roadmap.  [oai_citation:5‡AI App Blueprint .docx](file-service://file-ALgZg1S1QWVEsFVxeedqkv)
-
-## Parking minimums (Riyadh)
-
-The API now enforces **minimum parking requirements for Riyadh** using the municipal guide
-(see `GET /v1/metadata/parking-rules` for the exact ruleset and source URL).
-
-### How it works
-- **Required spaces** are computed from the project program:
-  - Residential: uses `unit_mix` (1 space/unit if <180 m², 2 spaces/unit if ≥180 m²).
-  - Retail: 1 space per 45 m² GFA.
-  - Office: 1 space per 40 m² GFA.
-- **Provided spaces** are derived from below‑grade + explicit parking area using a gross
-  “m² per stall” conversion.
-- If there is a deficit and `parking_minimum_policy="auto_add_basement"` (default), the engine
-  **automatically increases `area_ratio.basement`** to eliminate the deficit (basement is excluded
-  from FAR scaling).
-
-### Inputs (excel_inputs)
-You can control the behavior with these optional keys:
-- `parking_apply` (bool, default `true`)
-- `parking_minimum_policy` (`"auto_add_basement"` | `"flag_only"` | `"disabled"`)
-- `parking_supply_gross_m2_per_space` (float, default `30`)
-- `parking_supply_layout_efficiency` (float, default `55`)
-  - If `<= 1.0`: treated as a **layout efficiency fraction** (e.g. 0.85)
-    and spaces are computed as: `parking_area * efficiency / gross_m2_per_space`
-  - If `> 1.0`: treated as an **effective gross m² per space** (e.g. 55),
-    and spaces are computed as: `parking_area / effective_gross_m2_per_space`
-  - The default `55` is calibrated to real Riyadh basement layouts (~34–36 spaces per ~1,980 m²)
-- `parking_assumed_avg_apartment_m2` (float, default `120`) – only used if `unit_mix` is missing/empty.
-
-### Outputs
-Parking fields are available in:
-- `totals.*` (high-level) and
-- `notes.excel_breakdown.*` and `notes.parking.*` (detailed).
-
-Key fields:
-- `parking_required_spaces`
-- `parking_provided_spaces`
-- `parking_deficit_spaces`
-- `parking_compliant`
+*Oaktree Atlas is a personal portfolio project demonstrating full-stack, geospatial, ML, and LLM engineering applied to a real, domain-specific problem. It is Riyadh-focused by design.*
